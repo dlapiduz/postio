@@ -87,7 +87,7 @@ async fn a_question_in_the_inbox_is_counted_as_needing_action() {
 pub(crate) async fn heard(
     session: &Session,
     secs: u64,
-    wanted: impl Fn(&postio_ffi::UiEvent) -> bool,
+    mut wanted: impl FnMut(&postio_ffi::UiEvent) -> bool,
 ) -> bool {
     tokio::time::timeout(Duration::from_secs(secs), async {
         while let Some(event) = session.next_event().await {
@@ -262,14 +262,28 @@ async fn list_keys_run_through_the_controller() {
         .await,
         "j moves the cursor"
     );
+    assert_eq!(session.undo_description(), None, "nothing done yet");
     session.invoke("toggle_read");
+    let mut toast = None;
     assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusToast { text, undoable: true, .. } if !text.is_empty()
-        ))
+        heard(&session, 10, |event| match event {
+            UiEvent::FocusToast {
+                text,
+                undoable: true,
+                ..
+            } if !text.is_empty() => {
+                toast = Some(text.clone());
+                true
+            }
+            _ => false,
+        })
         .await,
         "the host's words are the toast, and Undo can take it back"
+    );
+    assert_eq!(
+        session.undo_description(),
+        toast,
+        "Edit > Undo names what the toast said"
     );
     session.shutdown();
 }

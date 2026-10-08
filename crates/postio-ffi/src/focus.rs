@@ -88,6 +88,14 @@ impl Session {
             .input(postio_focus::Input::AtTop(at_top));
     }
 
+    /// What Undo would take back now, in the toast's words, or `None` when
+    /// nothing can be: what the Edit menu names its Undo item with. Read,
+    /// not taken; the engine's stack stays the only one (FR-041).
+    pub fn undo_description(&self) -> Option<String> {
+        let client = self.client()?;
+        blocking(client.undo_top()).ok().flatten()
+    }
+
     /// The header strip's words, read now.
     pub fn focus_strip(&self) -> Result<FocusStripFfi, SessionError> {
         let counts = self.focus_counts()?;
