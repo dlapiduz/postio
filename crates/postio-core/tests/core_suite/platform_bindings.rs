@@ -112,11 +112,17 @@ fn apple_gets_command_wherever_freedesktop_gets_control() {
     let linux = table(Platform::Freedesktop);
     let apple = table(Platform::Apple);
     assert_ne!(linux, apple, "nothing was translated at all");
+    // The one alternate the Mac keeps for itself: ⌘W closes the window in
+    // front there, where GTK's one window closing is quitting
+    // (`registry::alternate_offered_on`, specs/009-focus-macos T105).
+    let linux = as_the_mac_spells_it(&offered_on_the_mac(&linux))
+        .replace("quit\tcmd+q | cmd+w\n", "quit\tcmd+q\n");
     assert_eq!(
-        as_the_mac_spells_it(&offered_on_the_mac(&linux)),
+        linux,
         offered_on_the_mac(&apple),
         "the two tables differ somewhere other than the primary modifier and Delete"
     );
+    assert!(apple.contains("quit\tcmd+q\n"), "⌘W is not Quit on the Mac");
 }
 
 #[test]

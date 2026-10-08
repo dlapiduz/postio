@@ -2598,6 +2598,22 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
     )
 }
 
+/// Whether `platform` lets `action` take its alternate `binding` (as the
+/// registry spells it, before `mod+` is expanded).
+///
+/// One alternate is the desktop's and not the Mac's: `quit`'s `mod+w`.
+/// GTK's Postio has one window, so closing it is quitting (spec 007 T216);
+/// on the Mac ⌘W closes the window in front -- the message, digest or
+/// compose window over the list most of all -- through Window › Close, and
+/// the key monitor sees a key before any menu does, so a ⌘W resolved to
+/// `quit` ended the app (specs/009-focus-macos T105).
+pub fn alternate_offered_on(action: ActionId, binding: &str, platform: Platform) -> bool {
+    !matches!(
+        (action, binding, platform),
+        (ActionId::Builtin(CommandId::Quit), "mod+w", Platform::Apple)
+    )
+}
+
 /// Every command reachable in `context` for a window in `state`.
 ///
 /// What the palette, the cheat sheet and the key hints iterate. [`reachable`]

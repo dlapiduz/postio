@@ -454,9 +454,15 @@ fn a_command_has_the_same_key_in_every_app_that_offers_it() {
                 continue;
             }
             let keymap = Keymap::resolve_on(&KeyBindings::default(), platform);
+            // Less an alternate the platform keeps for itself: ⌘W closes
+            // the window in front on the Mac (`alternate_offered_on`).
             let expected: Vec<String> = spec
                 .bindings()
-                .map(|binding| expand_mod(binding, platform))
+                .enumerate()
+                .filter(|(at, binding)| {
+                    *at == 0 || registry::alternate_offered_on(spec.id.into(), binding, platform)
+                })
+                .map(|(_, binding)| expand_mod(binding, platform))
                 .collect();
             assert_eq!(
                 keymap.bindings(spec.id),
@@ -468,6 +474,20 @@ fn a_command_has_the_same_key_in_every_app_that_offers_it() {
             // BackSpace is the `Delete` it was written as (specs/009-focus-macos
             // M6). No registry default is a lone BackSpace, so that is
             // unambiguous; `mod+BackSpace` keeps its modifier and its key.
+            // Compared as the registry writes them, less an alternate some
+            // platform keeps for itself.
+            let reserved: Vec<String> = spec
+                .alternate_bindings
+                .iter()
+                .filter(|alternate| {
+                    [Platform::Freedesktop, Platform::Apple]
+                        .iter()
+                        .any(|platform| {
+                            !registry::alternate_offered_on(spec.id.into(), alternate, *platform)
+                        })
+                })
+                .map(|alternate| alternate.replace("mod+", "ctrl+"))
+                .collect();
             let as_written: Vec<String> = keymap
                 .bindings(spec.id)
                 .iter()
@@ -475,6 +495,7 @@ fn a_command_has_the_same_key_in_every_app_that_offers_it() {
                     "BackSpace" if platform_of(app) == Platform::Apple => "Delete".to_owned(),
                     other => other.replace("cmd+", "ctrl+"),
                 })
+                .filter(|binding| !reserved.contains(binding))
                 .collect();
             keys.push(((app, platform), as_written));
         }

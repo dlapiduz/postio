@@ -124,3 +124,32 @@ async fn a_rebound_key_is_in_the_key_map_and_the_menu_at_once() {
     );
     session.shutdown();
 }
+
+#[test]
+fn command_w_does_not_quit_on_the_mac() {
+    // `quit`'s alternate `mod+w` is GTK's (spec 007 T216: one window, so
+    // closing it is quitting). On the Mac ⌘W closes the window in front --
+    // the message window over the list most of all -- through Window ›
+    // Close, and the key monitor runs before the menu: resolved to Quit,
+    // ⌘W in the message window ended the app.
+    let session = Session::open(SessionOptions::in_memory()).expect("a session");
+    let command = postio_ffi::ModifiersFfi {
+        control: false,
+        option: false,
+        shift: false,
+        command: true,
+    };
+    for context in [postio_ffi::UiContext::List, postio_ffi::UiContext::Reader] {
+        let outcome = session.key(Some("w"), None, command, context, false);
+        assert!(
+            !matches!(&outcome, postio_ffi::KeyOutcomeFfi::Command { id } if id == "quit"),
+            "⌘W quits in {context:?}"
+        );
+    }
+    let outcome = session.key(Some("q"), None, command, postio_ffi::UiContext::List, false);
+    assert!(
+        matches!(&outcome, postio_ffi::KeyOutcomeFfi::Command { id } if id == "quit"),
+        "⌘Q still quits: {outcome:?}"
+    );
+    session.shutdown();
+}
