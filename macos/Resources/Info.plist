@@ -32,6 +32,11 @@
 	     that is the convention and Launch Services adds `.icns`. -->
 	<key>CFBundleIconFile</key>
 	<string>Postio</string>
+	<!-- Recipient completion asks for Contacts once, on the first
+	     keystroke in a recipient field (specs/009-focus-macos T078). Names
+	     and email addresses only, read for each answer and kept nowhere. -->
+	<key>NSContactsUsageDescription</key>
+	<string>Postio suggests recipients from your contacts as you type an address. Names and email addresses are read on this Mac, only while you type, and are never stored or sent anywhere.</string>
 	<!-- What makes Postio *the* mail client on a machine rather than *a*
 	     mail client on it. The GTK side claims the same thing through its
 	     .desktop file's `x-scheme-handler/mailto`.
