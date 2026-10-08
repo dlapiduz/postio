@@ -123,12 +123,38 @@ public enum MessageBodyMeasure {
         return answer as? Double
     }
 
+    /// The bottom of the body's content: the lowest edge of what the body
+    /// holds, less the scroll anchors the shared document lays down the page
+    /// for the classic reader's paging -- absolutely placed at multiples of
+    /// the viewport's height, they would make any body as tall as the
+    /// clamp, and a web view that tall drew nothing.
+    static let contentBottom = """
+        (function () {
+            let bottom = 0;
+            for (const child of document.body.children) {
+                if (child.tagName === 'A' && /^pos-/.test(child.id)) { continue; }
+                const style = getComputedStyle(child);
+                bottom = Math.max(bottom, child.getBoundingClientRect().bottom + window.scrollY
+                    + parseFloat(style.marginBottom || '0'));
+            }
+            const body = getComputedStyle(document.body);
+            return Math.ceil(bottom + parseFloat(body.paddingBottom || '0')
+                + parseFloat(body.marginBottom || '0'));
+        })()
+        """
+
+    /// How tall the body's content is, in CSS pixels.
+    public static func contentHeight(of view: WKWebView) async throws -> Double? {
+        let answer = try await view.evaluateJavaScript(contentBottom, in: nil, contentWorld: .defaultClient)
+        return answer as? Double
+    }
+
     /// The height once the document's faces have arrived: `postio-font:` is
     /// served asynchronously and `font-display: block` holds the text until
     /// it is, so a height read at the load is the fallback's.
     public static func settledHeight(of view: WKWebView) async throws -> Double? {
         let answer = try await view.callAsyncJavaScript(
-            "await document.fonts.ready; return document.documentElement.scrollHeight;",
+            "await document.fonts.ready; return \(contentBottom);",
             arguments: [:], in: nil, contentWorld: .defaultClient)
         return answer as? Double
     }
@@ -287,7 +313,7 @@ struct MessageWebView: NSViewRepresentable {
                         sentence, in: view, fill: MessageBodyMeasure.accent(alpha: 0.08),
                         line: MessageBodyMeasure.accent(alpha: 1))
                 }
-                if let height = try? await MessageBodyMeasure.size(of: view)?.height {
+                if let height = try? await MessageBodyMeasure.contentHeight(of: view) {
                     onHeight(BodyHeight.clamped(height * zoom))
                 }
                 if let height = try? await MessageBodyMeasure.settledHeight(of: view) {

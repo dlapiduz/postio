@@ -81,6 +81,20 @@ struct MessageBodyTests {
         #expect((width ?? 0) >= 640, "measured \(String(describing: width))")
     }
 
+    @Test func theScrollMarkersAreNotTheBodysHeight() async throws {
+        // The shared document lays scroll anchors down the page for the
+        // classic reader's paging, absolutely placed at multiples of the
+        // viewport's height. Measured as the page's scrollHeight they made
+        // a one-line body thousands of points tall, which drew nothing.
+        let (view, policy) = try await loaded(
+            "<html><body style='margin:0'><div class='postio-body'><p style='margin:0;height:40px'>"
+                + "One line.</p></div>"
+                + "<a id='pos-1' style='position:absolute;top:900vh'></a></body></html>")
+        defer { withExtendedLifetime(policy) {} }
+        let height = try await MessageBodyMeasure.contentHeight(of: view)
+        #expect((height ?? 0) >= 40 && (height ?? .infinity) < 100, "measured \(String(describing: height))")
+    }
+
     @Test func aWideNewsletterIsZoomedToItsColumnAndNoFurtherThanTheFloor() {
         // SPEC section 3 at 1024: a 640 layout in a 576 column is 0.9.
         #expect(PaperFit.zoom(column: 576, measured: 640, floor: 0.85) == 0.9)
