@@ -1051,8 +1051,8 @@ the branch.
 
 - [x] T125 [P] Regenerate `docs/keybindings.md` and check the "(not macOS)" annotations are gone (`crates/postio-ui/tests/ui_suite/keybindings_doc.rs`)
   - **As built:** nothing to regenerate. `docs/keybindings.md` already matched the registry (`POSTIO_UPDATE_DOCS=1` left it unchanged, both tests pass) and carries no "(not macOS)" note; `which_apps` in the test annotates only the terminal. Every Focus command is offered by the desktop app, the Mac and the terminal, so none needs one.
-- [ ] T126 [P] Update `macos/CLAUDE.md` for the Focus app: the targets, the intent applier, `macos-shot.sh`, and the no-AppKit rule in PostioKit
-- [ ] T127 [P] Add a dated note `docs/notes/<date>-focus-on-the-mac.md` listing the constraints future sessions must respect: one secondary window, the intents not the widgets, the treatment from the shared document. Add it to `docs/archive/engineering-notes.md`
+- [x] T126 [P] Update `macos/CLAUDE.md` for the Focus app: the targets, the intent applier, `macos-shot.sh`, and the no-AppKit rule in PostioKit
+- [ ] T127 [P] Add a dated note `docs/notes/<date>-focus-on-the-mac.md` listing the constraints future sessions must respect: one secondary window, the intents not the widgets, the treatment from the shared document. Add it to `docs/notes/README.md`
 - [ ] T128 Run quickstart.md's scenarios table end to end on the bundle over the demo store, then on real mail (the maintainer). Record the results on the PR
 - [ ] T129 Check `specs/009-focus-macos/spec.md` success criteria SC-001 to SC-007 one by one, and write the evidence for each into the PR body
 - [ ] T130 Land `feature/focus-macos` once: rebase onto `main`, then `scripts/issue-land.sh --detach --full-suite`, with the PR labelled `interactions-unreviewed` (FR-063). The PR body says what this spec closes and that the Mac storyboard runner is spec 008's later phase
