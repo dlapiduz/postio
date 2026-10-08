@@ -69,9 +69,6 @@ tracing = { workspace = true }
 # making `test-support` a default feature.
 postio-model = { path = "../postio-model", features = ["test-corpus"] }
 postio-storage = { path = ".", features = ["test-support"] }
-# The toolkit's main loop without the toolkit: `glib_main_context` proves a store
-# read is pollable on it with no tokio reactor.
-glib = { version = "0.22.9", features = ["v2_72"] }
 tempfile = { workspace = true }
 blake3 = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
@@ -88,3 +85,10 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "ti
 # bug that lint exists for.
 [lints]
 workspace = true
+
+# The toolkit's main loop without the toolkit: `glib_main_context` proves a store
+# read is pollable on it with no tokio reactor. Linux only, because only the
+# GTK app polls the store on that loop, and GLib is not installed on the Macs
+# that build this crate for the FFI.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+glib = { version = "0.22.9", features = ["v2_72"] }
