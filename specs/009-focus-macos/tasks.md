@@ -754,21 +754,168 @@ another app brings Postio forward on that message.
 
 ### Controller slice 12: the filtered, digest, rules and capture sub-states (**main·S12**)
 
-- [ ] T108 [US9] Write failing tests in `crates/postio-focus/tests/digest.rs`, `filtered.rs` and `capture.rs`:
+- [x] T108 [US9] Write failing tests in `crates/postio-focus/tests/digest.rs`, `filtered.rs` and `capture.rs`:
   - **filtered:** `g f` shows Filtered with tabs `1`–`7`; `R` sends `RestoreFiltered`.
   - **digest:** ↩ on a digest row opens the digest on its summary when a model is configured, else on its list (C6); `]`/`[` step the references; ↩ opens the reference's email with `host: DigestWindow`; Esc returns to the same reference; ⇧A archives all; `D` stops digesting with a `Confirm`.
   - **rules and capture:** `d` opens the rule dialog pre-filled; `t`/`n` open capture only with a vault (C9); ⌥S swaps in the subject.
   - **On the Mac (`stacking = false`):** a message from the digest's list opens in the digest window (M4).
-- [ ] T109 [US9] Move the per-surface state of `crates/postio-gtk/src/digest.rs` (83-112), `filtered.rs` (52-67), `capture.rs` (52-84), `rules.rs` and `rule_dialog.rs`, and `window.rs`'s digest, filtered and rules handlers (3133-3722), into `crates/postio-focus/src/{digest,filtered,capture}.rs`. The guards are focus_suite `filtered`, `digest`, `digest_summary`, `capture`, `rule_query` and `unsubscribe`. Make T108 green; land slice 12
+- [x] T109 [US9] Move the per-surface state of `crates/postio-gtk/src/digest.rs` (83-112), `filtered.rs` (52-67), `capture.rs` (52-84), `rules.rs` and `rule_dialog.rs`, and `window.rs`'s digest, filtered and rules handlers (3133-3722), into `crates/postio-focus/src/{digest,filtered,capture}.rs`. The guards are focus_suite `filtered`, `digest`, `digest_summary`, `capture`, `rule_query` and `unsubscribe`. Make T108 green; land slice 12
+
+  *As built (T108):* 23 tests in `tests/filtered.rs` (7), `tests/digest.rs` (10) and `tests/capture.rs` (6), plus 2 `perform` unit tests. All were seen red against the new types with their inputs stubbed, before any behaviour. One digest test passed vacuously at first, so it was tightened to assert the digest is up and the cursor is on a conversation. Beyond the list, the tests check that:
+  - a page for a tab since left is not drawn;
+  - the sweep counts first and moves only once confirmed;
+  - a confirmation answers once;
+  - Return over Filtered opens the message over it, and its `j` walks Filtered;
+  - a digest takes no verb meant for the list behind it;
+  - Create writes the rule, closes the dialog and toasts;
+  - `d` in a digest edits its own rule;
+  - `⌘↩` writes the vault's suggested project with the mail's due day;
+  - a `postio://` link is looked up, then opened or refused.
+
+  *As built (controller, T109):* `crates/postio-focus/src/{filtered,digest,capture,confirm}.rs`. The words are `postio_ui::{filtered, digest, capture, links, focus_target}`'s. New shared words, which were GTK literals, are `digest::{list_tab, FROM, DELIVER, MATCH_INSTEAD, LIKE_THIS}`, `capture::{added, from_line}` and `focus_target::STOP_DIGESTING`. The controller keeps what each surface holds, what each key does to it, and which read is current: every read is stamped, and its answer is kept whatever the list's generation.
+  - **Inputs:**
+    - Filtered: `FilteredPoint(index)` and `FilteredMore`.
+    - Digest: `DigestPoint(index)` and `DigestReference(index)`.
+    - `Confirmed(token)`.
+    - Rule dialog: `RuleQuery{text}`, `RuleMatchInstead`, `RuleLikeThis`, `RuleSchedule(Schedule)` and `RuleCreate`.
+    - Capture: `CaptureTyped{text}`, `CaptureDue(Option<NaiveDate>)`, `CaptureFilter{text}` and `CaptureProject(token)`.
+    - `OpenLink(uri)`.
+
+    The keys arrive as `Command`:
+    - `FilteredTab1`-`7`, `RestoreFiltered` and `SweepInbox`;
+    - `NextReference`/`PrevReference`, `ToggleDigestSummary`, `StopDigestingSender`, `Unsubscribe`, `ArchiveThread` and `DigestRule`;
+    - `CaptureTask`/`CaptureNote`, `CaptureUseSubject`, `CaptureChangeProject` and `CaptureWrite`;
+    - `Back`, `OpenMessage`, `j`/`k` and `GoToInbox` as each surface reads them.
+  - **Intents:**
+    - `ShowFiltered`, then `Filtered(Box<FilteredView>)` whole and `FilteredFocus(Option<u32>)`.
+    - `OpenDigest{row}`, then `Digest(Box<DigestView>)` whole.
+    - `Confirm(Confirm{token, heading, body, confirm, destructive})`.
+    - `OpenRule`/`Rule(Box<RuleView>)`.
+    - `OpenCapture`/`Capture(Box<CaptureView>)`.
+    - `OpenMessage` gains `host: Host` (`Own` or `Digest`).
+
+    Each surface closes with `CloseSurface(kind)`: Filtered, Digest, Dialog (the rule dialog) or Capture. The controller puts each one on the stack and takes it off. A frontend's `SurfaceClosed` for one forgets what it held, and so does the Mac's one-window rule replacing it.
+  - **Requests**, each with one `perform` arm:
+    - `FilteredTabs`, `Filtered{reason, offset, stamp}` (pages of `filtered::PAGE`) and `SweepPreview`;
+    - `DigestRead{delivery, summary, stamp}`: the delivery's messages, and its summary only when `summary`;
+    - `Unsubscribe(message)`;
+    - `DigestPreview{queries, since, stamp}`, `DigestLikeThis{message, stamp}` and `SaveDigestRule{replacing, draft, stamp}`;
+    - `Vault{subject, stamp}`, `CaptureTask{project, task, stamp}` and `CaptureNote{note, entry, stamp}`;
+    - `FindMessage(message)` (`message_rows`).
+
+    The writes are the existing `Post`: `RestoreFiltered{Messages([id]), restored}`, `SweepInbox`, `ArchiveDigest{delivery, archived}` and `StopDigestingSender{Messages([id]), stopped, kept: None}`.
+  - **`Rows::row(position) -> Option<FocusRow>`** is defaulted to `None`. It is what capture's source, `d`'s senders and a digest row's facts are read from. Without it, a digest row's facts come from the feed's surfaced rows.
+  - **Rules kept from GTK:**
+    - Filtered opens on All with the first row focused. A page is fifty rows. A number key narrows to a tab, and the focus is kept on its message across a re-read. Mail that moves while Filtered is up (`MessageListChanged`, `UndoPerformed`, `ActionCompleted`) re-reads it.
+    - Back or `g i` leaves Filtered with the list's cursor on row 0. Another `g` key leaves it and goes there.
+    - The digest opens on its summary when one is written, and on the list otherwise. `]`/`[` clamp at the ends, and the list's focus follows the reference. Tab toggles only while a summary exists.
+    - Over the email page, `j`/`k` step the digest's messages in place, citing a reference when one names the message. Esc goes back to the page it came from.
+    - `d` on the list makes a new rule for the senders aimed at. Like-this is offered only with a model's `like_this` and a single aim, and never while editing. `d` in a digest edits that rule, or toasts `RULE_MISSING`.
+    - Capture's text is the marker's sentence or the subject, and its due day is the marker's. The vault's suggestion is taken when it lands. The preview is `postio_vault::Task::line()` itself.
+  - **Decisions that differ from GTK:**
+    - C6 is enforced at the read: with no `[focus.model]` digest summary, the summary is not even read. GTK read it always and opened on it when one was there.
+    - On the Mac (`stacking = false`) a message from the digest's list opens in the digest's window, as its email page (M4). GTK opened its reading dialog, which Linux keeps.
+    - A message opened from Filtered or the digest's list (Linux) walks that list with `j`/`k`, and its verbs read their conversation from there.
+    - While Filtered, the digest or capture is on top, a verb meant for the list behind does nothing, as GTK's rules list already refused. Undo, the key map, the bar, Search and Quit still work.
+    - Back from a message over Filtered or a digest closes it without `KeyboardHome`: the keyboard goes back to what is under it.
+    - `t`, `n` and `d` are the controller's now. The #1754 surface test asserts that they do in the open message what they do on the list.
+  - **Not here:**
+    - The digest rules list (`g d`, GTK's `rules.rs`) and "Digest mail like this" from the list (`L`): no Mac task in this phase draws them, so they stay in `KNOWN_ORPHANS`.
+    - `remember_removed` for an archived digest's row: Undo still restores it, but the cursor does not return to it.
+    - Verbs on a message a link opened that is in no list (j/k step the list behind it).
+    - GTK has not adopted the slice, because it does not build on this Mac. The focus_suite guards (`filtered`, `digest`, `digest_summary`, `capture`, `rule_query`, `unsubscribe`) were not run.
 
 ### FFI: digest, vault, capture and links
 
-- [ ] T110 [US9] Write failing ffi_suite tests:
+- [x] T110 [US9] Write failing ffi_suite tests:
   - `digest_summary(delivery)` over the seed with a model stub returns statements with numbered references;
   - `vault(subject)` with no `[focus.vault]` fails with the configured sentence;
   - `capture_task` writes the exact line with the `postio://` link before the date (C21);
   - `parse_message_link("postio://message/42/")` is 42; `"postio://message/0"` is None.
-- [ ] T111 [US9] Export the digest, rule, vault and capture reads Swift draws directly (contracts/ffi-focus.md "Reads"), with `*Ffi` mirrors in `crates/postio-ffi/src/focus.rs`. Add `message_link`, `parse_message_link`, `link_unknown` and `link_gone` in `crates/postio-ffi/src/links.rs` over `postio_ui::links`. Make T110 green
+- [x] T111 [US9] Export the digest, rule, vault and capture reads Swift draws directly (contracts/ffi-focus.md "Reads"), with `*Ffi` mirrors in `crates/postio-ffi/src/focus.rs`. Add `message_link`, `parse_message_link`, `link_unknown` and `link_gone` in `crates/postio-ffi/src/links.rs` over `postio_ui::links`. Make T110 green
+
+  *As built (T110):* `ffi_suite/focus_surfaces.rs`, 8 tests. Six were seen red against stubbed reads and driver arms. The two link tests went green at once, since the API had no stub between not compiling and working; their assertions pin exact ids and words. Beyond T110's list, the tests check that:
+  - `g f` draws Filtered's seven tabs and Back leaves it;
+  - Return on a digest row opens the window on its list with no model (C6);
+  - `t` without a vault toasts `capture::NO_VAULT`, and with one opens capture, follows the text, and writes and toasts;
+  - a link opens its message, or toasts `links::GONE`.
+
+  The "model stub" is the summary a model would have written, stored for the delivery with `DigestRepository::set_summary`. No test configures `[focus.model]`, so nothing reaches for a model, loopback included.
+
+  *As built (FFI, for T113-T117):* `crates/postio-ffi/src/focus_surfaces.rs` and `links.rs`, the events in `event.rs`, and the driver in `focus_list.rs`.
+  - **Events** (appended to `UiEvent`):
+    - `FocusFiltered{view: FilteredViewFfi}`: draw Filtered whole in the list's place. It follows `FocusShowFiltered`, and comes again on every change.
+    - `FocusFilteredFocus{index: Option<u32>}`.
+    - `FocusDigest{view: DigestViewFfi}`: draw the digest window whole. It follows `FocusOpenDigest{delivery}`, and comes again on every change.
+    - `FocusConfirm{confirm: ConfirmFfi{token, heading, body, confirm, destructive}}`: an alert. On yes, call `focus_confirmed(token)`. On no, call nothing.
+    - `FocusOpenRule{view: RuleViewFfi}` and `FocusRule{view}`: the rule sheet. It closes on `FocusCloseSurface{kind: Dialog}`.
+    - `FocusOpenCapture{view: CaptureViewFfi}` and `FocusCapture{view}`. It closes on `FocusCloseSurface{kind: Capture}`.
+
+    Filtered and the digest close on `FocusCloseSurface{kind: Filtered | Digest}`. Any other way one closes (a window's close button) is `focus_surface_closed(kind)`.
+
+    A message hosted in the digest's window has no `FocusOpenMessage`. Draw `view.email` instead: `reader_document(email.message)` in the window, `email.banner` over it, and `email.excerpt` highlighted.
+  - **`FilteredViewFfi`** has these fields:
+    - `title`, `subtitle` and `note` (C4).
+    - `sweep` and `sweep_key`. A click is `invoke("sweep_inbox")`.
+    - `restore` and `restore_key`. A click is `invoke("restore_filtered")`.
+    - `tabs: [FilteredTabFfi{name, count, key, on}]`. A click on the n-th is `invoke("filtered_tab_<n>")`.
+    - `rows: [FilteredLineFfi{message, sender, subject, preview, pill, time, heading}]`.
+    - `focused`, and `more`: call `focus_filtered_more()` at the end of the rows.
+    - `footer: [FocusHintFfi{key, label}]`.
+  - **`DigestViewFfi`** has these fields:
+    - `delivery`, and `page: DigestPageFfi` (Summary, List or Email).
+    - `title` and `subtitle`. On the email page these are the email's subject and "Source 2 of 14".
+    - `archive` and `archive_key`. A click is `invoke("archive_thread")`.
+    - `rule_line` and `rule_key`. A click is `invoke("digest_rule")`.
+    - `tabs`, `list_tab` and `tab_key`. A tab click is `invoke("toggle_digest_summary")`.
+    - `rows: [DigestLineFfi{message, sender, subject, preview, time}]` and `focused`. A click is `focus_digest_point(i)`.
+    - `topics: [DigestTopicFfi{heading, statements: [DigestStatementFfi{index, text, number, message}]}]` and `focused_reference`. A click is `focus_digest_reference(statement.index)`.
+    - `card: Option<DigestCardFfi{title, hint, key}>` and `footer`.
+    - `email: Option<DigestEmailFfi{message, number, excerpt, banner}>`.
+    - `back` and `back_key`: "‹ Summary", or "‹ 3 messages", with Esc. A click is `invoke("back")`.
+    - `loading`.
+  - **`RuleViewFfi`** has these fields:
+    - `heading`, `from_label` and `from`: the senders, or `None` once the query field is up.
+    - `query`: the field's text. Set the field from it only when it differs.
+    - `placeholder`.
+    - `match_instead`: a click is `focus_rule_match_instead()`.
+    - `like_this`: a click is `focus_rule_like_this()`.
+    - `deliver_label`.
+    - `schedule: RuleScheduleFfi{cadence, weekday, month_day, at}`, with `cadences` and `weekdays` as the menus' items. Report every change with `focus_rule_schedule(schedule)`.
+    - `note`.
+    - `create` and `create_key`. A click, or Return, is `focus_rule_create()`.
+    - `preview_heading`, `preview: [RulePreviewLineFfi{subject, day}]` and `more`.
+    - `error`.
+  - **`CaptureViewFfi`** has these fields:
+    - `mode: CaptureModeFfi`. A segment click is `invoke("capture_task" | "capture_note")`.
+    - `from`, `field`, `text` (set the field only when it differs) and `subject_key` (`⌥S`).
+    - `has_due`, `due` ("YYYY-MM-DD") and `due_label`.
+    - `picks: [CapturePickFfi{words, day}]`. A click is `focus_capture_due(pick.day)`.
+    - `project_title`, `project`, `project_note` and `project_key` (`⌘P`, which is `invoke("capture_change_project")`).
+    - `projects_open`, `filter` (report it with `focus_capture_filter`) and `projects: [CaptureProjectFfi{token, name, note, open, chosen}]`. A click is `focus_capture_project(token)`.
+    - `preview_title`, `preview` (the exact line) and `footnote`.
+    - `button` and `button_key` (`⌘↩`, which is `invoke("capture_write")`).
+    - `error`.
+  - **Exports on `Session`:**
+    - `focus_filtered_point(index)` and `focus_filtered_more()`.
+    - `focus_digest_point(index)` and `focus_digest_reference(index)`.
+    - `focus_confirmed(token)`.
+    - `focus_rule_query(text)`, `focus_rule_match_instead()`, `focus_rule_like_this()`, `focus_rule_schedule(schedule)` and `focus_rule_create()`.
+    - `focus_capture_typed(text)`, `focus_capture_due(day)`, `focus_capture_filter(text)` and `focus_capture_project(token)`.
+    - `focus_open_link(uri)`: `FocusOpenMessage`, or a `FocusToast` saying `link_unknown()`/`link_gone()`.
+  - **Reads**, which block, so call them off the main actor. The surfaces do not need them, because their views carry the same:
+    - `digest_summary(delivery) -> Option<DigestSummaryFfi{statements: [SummaryStatementFfi{topic, text, number, message, excerpt}], messages, senders}>`.
+    - `vault(subject) -> VaultPictureFfi{projects, suggested, tasks_note}`. With no vault it fails with `StoreUnavailable{message}`, where the message is the host's sentence naming `[focus.vault]`.
+    - `capture_task(project, text, message, due) -> CapturedFfi{note, line}`.
+  - **Free functions** in `links.rs`: `message_link(id) -> String`, `parse_message_link(uri) -> Option<i64>` (`None` for `postio://message/0`), `link_unknown()` and `link_gone()`.
+  - **The driver** keeps each row with the `FocusRow` it was made from (`HeldRow`), so `Rows::row` works on the Mac. `FocusRowFfi` is unchanged.
+  - **Coverage:** `command_coverage` asks the controller with each of its surfaces up. Filtered's tabs, the digest's references and toggle, `t`/`n`/`d` and capture's keys left `KNOWN_ORPHANS`. `GoToDigestRules` and `DigestLikeThis` stay.
+  - **For the Swift agent:**
+    - Swift's `Intercepted` (mirrored in `registry::INTERCEPTED`) still catches `back`, `open_message` and `go_to_inbox`, as it did `search` before T085. While Filtered, the digest or capture is up, those keys must reach `invoke`. Drop them from both lists once the Mac's own uses are gone, or route them to `invoke` while `focus_surface_*` says such a surface is up.
+    - `FocusIntents.surface` must hear the new events.
+    - `FocusOpenDigest` is followed by `FocusDigest`. Open the window on the first and draw on the second.
+    - `ActionBar`'s `digest_rule` and `capture_task` already go through `invoke` and reach the controller.
+    - `HeaderStrip`'s `go_to_digest_rules` reaches nothing yet (`KNOWN_ORPHANS`).
 
 ### Mac: the surfaces
 
@@ -787,6 +934,22 @@ another app brings Postio forward on that message.
   - ⌘↩ writes it (Add task is a `labelColor`-filled default button).
 - [ ] T117 [US9] Register `postio` in `macos/Resources/Info.plist` (a second `CFBundleURLTypes` dict). Route it in `macos/Sources/Postio/URLHandling.swift`: `parse_message_link` leads to `command("open_message_by_id")`, or a pill with `link_unknown`/`link_gone`. Add a Swift test in `macos/Tests/PostioKitTests/LinkRoutingTests.swift`
 - [ ] T131 [US9] Give the Mac's settings window Focus's nav: export `[focus]` reads and patches over `postio_ui::settings` (as GTK's Filtering pane uses), draw the Filtering pane in `macos/Sources/PostioKit/SettingsPaneView.swift`, drop Appearance, and point `settings_sections` (`crates/postio-ffi/src/settings.rs`) at `crate::FRONTEND`. Update `SettingsStoreTests` and `ffi_suite/settings.rs` (Filtering in, Appearance out)
+
+  *As built (Rust half):* the Swift half (the pane, dropping Appearance, `SettingsStoreTests`) is open.
+  - `settings_sections()` is `Section::ALL` filtered by `shown_in(crate::FRONTEND)`. That gives Accounts, Filtering, Saved searches, Composing, Keyboard, Sync & storage, Privacy and Config file. The tests are `ffi_suite/settings.rs::the_nav_is_focus_s_filtering_in_and_appearance_out`, seen red, and the pane-table test, which now looks up `focus`.
+  - `settings_filtering(text, filtered_today: Option<u32>) -> Option<FilteringPageFfi>` is GTK's `postio_ui::filtering::page`, with the keymap the file resolves to. It is `None` for a file that will not parse. Pass `focus_counts().filtered_today`, or `None` until it is known.
+  - `FilteringPageFfi` has these fields:
+    - `switch` and `on`.
+    - `state`: the sentence under the switch.
+    - `filtered` (the heading) and `today`.
+    - `open` and `open_key`. A click is `invoke("go_to_filtered")`.
+    - `kept`.
+    - `keys: [KeyHintFfi]`.
+    - `never_heading`, `guards`, `never: [FilteringEntryFfi]` and `never_empty`.
+    - `stopped_heading`, `stopped` and `stopped_empty`.
+  - `FilteringEntryFfi` is `{says, acts, undo_label, undo: FilteringUndoFfi::Never{entry} | Marker{sender, kind}}`.
+  - `settings_patch_filtering(text, on)` and `settings_take_back_filter(text, undo)` return the file to save, the rest verbatim. They use `focus_edit::set_filtering`, `set_never` and `set_stop_marker`, as GTK's pane does.
+  - `settings_appearance`/`settings_patch_appearance` and `Session::appearance` stay until the Swift half stops calling them.
 - [ ] T118 [US9] Compare screens 21 to 25 (FR-061), recorded in `docs/notes/<date>-focus-macos-phase-9.md`
 
 ---
