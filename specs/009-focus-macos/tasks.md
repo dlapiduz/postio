@@ -448,11 +448,38 @@ chips, open a result, go to `in:Receipts`, and pick a label from the popover.
 
 ### Mac: the bar and the folders popover
 
-- [ ] T083 [P] [US5] Write storyboards `storyboards/search/slash-opens-search-cmd-k-opens-commands.toml` and `storyboards/search/tab-enters-the-chips.toml` (`apps = ["focus"]`). Run them on Linux
-- [ ] T084 [US5] Write failing Swift tests in `macos/Tests/PostioKitTests/CommandBarModelTests.swift`: results from `BarText` intents become one-line rows with keycaps; typing forwards `Typed{Bar}` facts; Esc emits `CloseBar`
-- [ ] T085 [US5] Implement `CommandBarPanel` in `macos/Sources/PostioAppKit/CommandBarPanel.swift`: a borderless, non-activating child `NSPanel` under the `NSSearchToolbarItem`, as wide as the field or 640, whichever is wider, with no dimming. The keyboard stays in the field. Its SwiftUI content goes in `macos/Sources/PostioKit/CommandBarView.swift`, rendering the chips. Make T084 green
-- [ ] T086 [US5] Implement the folders and labels popover in `macos/Sources/PostioAppKit/PlacesPopover.swift`: an `NSPopover` anchored to Inbox ▾, with SwiftUI content listing mailboxes, folders and labels with counts, filtered as you type; ↩ opens the place
-- [ ] T087 [US5] Compare screens 07 to 10 (FR-061), recorded in `docs/notes/<date>-focus-macos-phase-5.md`
+- [x] T083 [P] [US5] Write storyboards `storyboards/search/slash-opens-search-cmd-k-opens-commands.toml` and `storyboards/search/tab-enters-the-chips.toml` (`apps = ["focus"]`). Run them on Linux
+
+  *As built:* both lint clean. They are **not yet filmed**: this Mac cannot build GTK, so the Linux run is still owed. They check only fields GTK's runner observes today (`app.focus.bar.typed`, `.hints`, `.highlighted`, `keyboard.*`, `overlay.kind`, `cursor.index`); the chips themselves are the frame's to judge, because GTK has no `app.focus.bar.chips` field. Their `source` is `{ kind = "spec", ref = "specs/009-focus-macos US5" }`.
+- [x] T084 [US5] Write failing Swift tests in `macos/Tests/PostioKitTests/CommandBarModelTests.swift`: results from `BarText` intents become one-line rows with keycaps; typing forwards `Typed{Bar}` facts; Esc emits `CloseBar`
+
+  *As built:* the names are the FFI's (`FocusOpenBar`, `FocusBarLines`, `focusBarTyped`, `focusBarRun`, `focusBarTab`); the model is `macos/Sources/PostioKit/CommandBarModel.swift`. Every test was seen red against stubs first.
+  - **The tests:** each line becomes one row whose keycap is the binding in force (`binding(for:)` through `KeyCapSpelling`), falling back to the key the line names (a hint's `>`), and the chips, the echo and the heading are shown; typing forwards `focusBarTyped`, but not the echo of the controller's own text; Return runs the highlighted line's token, and a click runs its own; Escape is the controller's Back (`invoke("back")`), and the bar closes only when `FocusCloseSurface(.bar)` says so; Tab returns `focusBarTab()`, and `false` leaves the key to AppKit.
+  - **Beyond the list:** `FocusOpenBar`'s selection counts Rust `char`s and the field counts UTF-16, so it is converted through Unicode scalars (tested with `é` and an emoji). The arrows' highlight is the Mac's: the line the view names, else the one it was on if still drawn, else the first that runs. A saved pill's click runs `saved_search_<n>`. `CommandBarGeometry` places the panel. `BarCommand` names the registry ids the bar runs by name, each checked against the registry.
+- [x] T085 [US5] Implement `CommandBarPanel` in `macos/Sources/PostioAppKit/CommandBarPanel.swift`: a borderless, non-activating child `NSPanel` under the `NSSearchToolbarItem`, as wide as the field or 640, whichever is wider, with no dimming. The keyboard stays in the field. Its SwiftUI content goes in `macos/Sources/PostioKit/CommandBarView.swift`, rendering the chips. Make T084 green
+
+  *As built:*
+  - **Keys:** `search`, `command_palette`, `go_to_folders`, `go_to_inbox`/`drafts`/`sent`/`flagged`, and also `toggle_result_order` and `save_search` (which Swift never presented anything for, and which the controller answers while the bar is up) left `Intercepted` and `postio_ffi::registry::INTERCEPTED` together. The coverage sweep now asks the controller with the bar up too, which answers `BackToWords`, so it left `KNOWN_ORPHANS`.
+  - **The panel:** it can never become key (`canBecomeKey` is false), and its hosting view accepts the first mouse, so a click runs a line without taking the keyboard from the field. The toolbar's field is a `BarSearchField`; a click into it opens the bar as `/` does.
+    - The field's delegate hands ↑/↓, Return, Tab and Escape (`cancelOperation`, a fallback: the key monitor's Escape reaches Back first) to the model.
+    - Losing the keyboard while the bar is up (a click outside, Tab past the last chip) is the toolkit's close: `focusSurfaceClosed(.bar)`.
+  - **Its height** is the sum of fixed heights per kind (`CommandBarView.height`), capped by the window; the lines scroll beyond that.
+  - **Drawn in the panel:** the saved row, the chips row (with the echo and an `Esc` cap) only while there are chips, the heading and lines, and a footer in GTK's words. The typed words are in the toolbar's field, not drawn a second time in the panel.
+  - **Surface reports, reconciled with slice 8:** the controller puts the bar on its stack and takes it off, so the Mac reports neither `focusSurfaceOpened(.bar)` nor a close the controller made. Echoing a close is not harmless: a label's Go closes the bar and reopens it on the label's search, and an echo landing after the reopening would close the new bar. For that rule to hold, the controller's Back on the bar now dismisses it as running a line does, and sends `KeyboardHome`. Before, it said only `CloseSurface(Bar)` and kept the bar on the stack until the frontend reported, which left the keyboard in the field (`crates/postio-focus/src/lib.rs`, `back_closes_the_bar`).
+  - **Other intents:** `FocusRun{command}` goes to `Engine.run`, as a menu item's command would.
+  - **Retired:** `FinderBox`, `FinderResults` and `PaletteRow` (the old `>`/`#`/`@`/`+` box), the unused `SearchContext` and `SearchHint`, their tests, and the Swift wrappers for `paletteEntries` and `finder*`. `Palette.swift`'s `CheatSheet` stays for `?` (T106).
+- [x] T086 [US5] Implement the folders and labels popover in `macos/Sources/PostioAppKit/PlacesPopover.swift`: an `NSPopover` anchored to Inbox ▾, with SwiftUI content listing mailboxes, folders and labels with counts, filtered as you type; ↩ opens the place
+
+  *As built:*
+  - **The model:** `PlacesModel` (PostioKit, tested in `PlacesModelTests`) reads `focusPlaces(filter)` on `FocusOpenPlaces`, and again on `FocusPlacesChanged`. It keeps the filter, and keeps the highlight by name only when the arrows put it there: before the read lands, only the uncounted views are listed.
+  - **Marks:** a role's mark is an SF Symbol; a label's dot is drawn in its own colour, or in the secondary colour when it has none.
+  - **Opening a place:** Return or a click goes through `focusOpenPlace` and closes the popover. `FocusPlace{name}` renames the strip's Inbox ▾ (`HeaderStripWords(place:)`).
+  - **The popover:** the filter is an AppKit `NSSearchField`, whose delegate hands ↑/↓/Return to the model; `PlacesView` draws the list and the footer. It hangs from a `PlacesAnchor` view that `HeaderStrip` (now generic over it) draws behind the button.
+  - **Escape** is caught in `Engine.run` while the popover is up, because the popover is not a surface the controller keeps. Any close sends the keyboard home, unless the bar has taken it (a label opens as its search).
+  - **`FocusShowFiltered`** (`g f`, or Filtered in the popover) shows the notice "Filtered is not built on the Mac yet" and logs the kind. The view is T113's.
+- [x] T087 [US5] Compare screens 07 to 10 (FR-061), recorded in `docs/notes/<date>-focus-macos-phase-5.md`
+
+  *As built:* `docs/notes/2026-10-08-focus-macos-phase-5.md`. The panel and the popover are child windows, so they are in `screencapture -l`'s picture. Demo replays gained `⌘`/`⌥` prefixes, `↓`/`↑`, `␣`, and whole words typed into the field that is up.
 
 ---
 
