@@ -116,6 +116,7 @@ final class Engine {
             }
             makeBar(session)
             makePicker(session)
+            filtered = FilteredModel(engine: session)
             // The toolbar was built before there were bindings to spell.
             keycapsChanged?()
             state = .open
@@ -251,7 +252,11 @@ final class Engine {
     /// list, or the command bar while it is up. The controller answers with
     /// its own context while a surface it knows of is over the list; this
     /// is what a menu greys against.
-    var mainContext: UiContext { commandBar?.isOpen == true ? .search : .list }
+    var mainContext: UiContext {
+        if commandBar?.isOpen == true { return .search }
+        if filtered?.isOpen == true { return .filtered }
+        return .list
+    }
 
     /// Which surface the resolver should answer for. The window decides
     /// first; see `KeyboardContext`.
@@ -533,6 +538,12 @@ final class Engine {
     /// The strip's Inbox ▾, which the popover hangs from.
     @ObservationIgnored weak var placesAnchor: NSView?
 
+    // MARK: Filtered (T113)
+
+    /// Filtered, as the controller's intents leave it: drawn in the list's
+    /// place while it is up.
+    private(set) var filtered: FilteredModel?
+
     // MARK: the pickers at the row (T092)
 
     /// The picker up, as the controller's intents leave it.
@@ -810,6 +821,9 @@ final class Engine {
             apply(change)
             return
         }
+        // Filtered (T113), drawn in the list's place: its view, its focus,
+        // and its close, `FocusCloseSurface(.filtered)`.
+        if filtered?.apply(event) != nil { return }
         // The controller's intents: the cursor, the selection, `!`'s heading,
         // the toast (T049). The table draws what changed.
         if let change = focus.apply(event) {
@@ -865,11 +879,6 @@ final class Engine {
             // A line of the bar the controller hands back: Compose,
             // Settings, a host verb -- run as a menu item would run it.
             run(command)
-        case .focusShowFiltered:
-            // The Filtered view is a later phase (spec 009 T113).
-            Self.log.info("the Filtered view was asked for; not built on the Mac yet")
-            notice = Notice(kind: .refused, message: "Filtered is not built on the Mac yet.", undoable: false)
-            noticeToken += 1
         default:
             break
         }

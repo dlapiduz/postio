@@ -59,27 +59,17 @@ struct MainWindow: View {
     }
 
     private var inbox: some View {
-        VStack(spacing: 0) {
-            // Inbox ▾ is what the folders popover hangs from (T086).
-            HeaderStrip(
-                words: engine.stripWords,
-                placeAnchor: PlacesAnchor { engine.placesAnchor = $0 }
-            ) { engine.run($0) }
-            // First sync, offline, a refused password (screens 17 to 19):
-            // one full-width strip under the header strip, as the
-            // controller words it. Never in the way: the list stays live.
-            if let banner = engine.states.banner {
-                BannerStrip(words: BannerStripWords(banner)) { engine.run($0) }
-                    .transition(.opacity)
-            }
-            list
-            // While anything is selected (screen 01): the count, the verbs
-            // with their keys, and the selection's own keys.
-            if let words = engine.actionBarWords {
-                ActionBar(words: words) { engine.run($0) }
-                    .transition(.opacity)
+        ZStack {
+            inboxColumn
+            // Filtered (`g f`, screen 21) in the list's place, header and
+            // all, while the controller has it up. The list stays under it,
+            // so its scroll and its cursor are where they were on the way
+            // back.
+            if let filtered = engine.filtered, filtered.isOpen {
+                FilteredView(model: filtered)
             }
         }
+        .animation(nil, value: engine.filtered?.isOpen)
         // The command bar is a panel dropping from the toolbar's field
         // (`CommandBarPanel`, T085), a child window rather than an overlay.
         .background(MainToolbarInstaller(engine: engine))
@@ -119,7 +109,7 @@ struct MainWindow: View {
                     undo: { engine.run(Notice.undoCommand) },
                     dismiss: { engine.focus.dismissToast(token: $0) }
                 )
-                .padding(.bottom, engine.actionBarWords == nil ? 0 : ActionBar.height)
+                .padding(.bottom, engine.actionBarWords == nil || engine.filtered?.isOpen == true ? 0 : ActionBar.height)
             }
         }
         .overlay(alignment: .bottomTrailing) {
@@ -134,6 +124,30 @@ struct MainWindow: View {
                     .padding(12)
                     .transition(.opacity)
                     .accessibilityLabel("Waiting for the rest of \(pending)")
+            }
+        }
+    }
+
+    private var inboxColumn: some View {
+        VStack(spacing: 0) {
+            // Inbox ▾ is what the folders popover hangs from (T086).
+            HeaderStrip(
+                words: engine.stripWords,
+                placeAnchor: PlacesAnchor { engine.placesAnchor = $0 }
+            ) { engine.run($0) }
+            // First sync, offline, a refused password (screens 17 to 19):
+            // one full-width strip under the header strip, as the
+            // controller words it. Never in the way: the list stays live.
+            if let banner = engine.states.banner {
+                BannerStrip(words: BannerStripWords(banner)) { engine.run($0) }
+                    .transition(.opacity)
+            }
+            list
+            // While anything is selected (screen 01): the count, the verbs
+            // with their keys, and the selection's own keys.
+            if let words = engine.actionBarWords {
+                ActionBar(words: words) { engine.run($0) }
+                    .transition(.opacity)
             }
         }
     }
