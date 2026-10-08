@@ -834,6 +834,10 @@ final class Engine {
             focusTable?.pageArrived(page)
             listTakesTheKeyboard()
             replayDemoKeys()
+            if !listLanded {
+                listLanded = true
+                for route in waitingLinks.take() { follow(route) }
+            }
         case .keymapChanged:
             keymapVersion += 1
             focusTable?.keymapChanged()
@@ -1155,6 +1159,35 @@ final class Engine {
         // controller is told of (phase 4), so it is closed here.
         secondary.close(.message)
         compose.open(draft)
+    }
+
+    // MARK: postio:// links (T117)
+
+    /// Links that came before the list had landed, opened once it has: a
+    /// cold launch from a captured line has no session to ask until then.
+    @ObservationIgnored
+    private var waitingLinks = PostioLink.Waiting()
+
+    /// Whether the list's first page has landed, so a link can be opened.
+    @ObservationIgnored
+    private var listLanded = false
+
+    /// Follow a `postio://` link: the controller opens the message it names
+    /// in the message window (or says it is gone); any other link of
+    /// Postio's is said in the pill at once. The main window comes forward
+    /// first, since the link was clicked in another app.
+    func follow(_ route: PostioLink.Route) {
+        guard let session, listLanded else {
+            waitingLinks.hold(route)
+            return
+        }
+        mainWindow?.makeKeyAndOrderFront(nil)
+        switch route {
+        case let .open(uri, _):
+            session.focusOpenLink(uri: uri)
+        case let .unknown(words):
+            if focus.apply(PostioLink.toast(words)) != nil { refreshUndo() }
+        }
     }
 
     /// Open a composer on a `mailto:` link. `false` when there is nothing to

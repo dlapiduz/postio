@@ -31,6 +31,8 @@ struct PostioApp: App {
                 // is clicked, not what was true when the delegate was built.
                 .onAppear {
                     urls.write = { engine.write(mailto: $0) }
+                    // A captured task's `postio://` link (T117).
+                    urls.follow = { engine.follow($0) }
                     // Quitting is where the orderly shutdown belongs. The
                     // delegate is the only thing that hears it.
                     urls.stop = { engine.shutdown() }

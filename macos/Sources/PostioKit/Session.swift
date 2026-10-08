@@ -188,6 +188,53 @@ public final class PostioSession {
     /// Space on the picker's highlighted row `token`: a label on or off.
     public func focusPickerToggle(_ token: UInt64) { inner.focusPickerToggle(token: token) }
 
+    // MARK: Filtered, the digest, the rule sheet and capture (T113-T117)
+
+    /// Filtered's row `index` was clicked: the keyboard goes there.
+    public func focusFilteredPoint(_ index: UInt32) { inner.focusFilteredPoint(index: index) }
+
+    /// Filtered was scrolled to the end of the rows it has: read more.
+    public func focusFilteredMore() { inner.focusFilteredMore() }
+
+    /// The digest list's row `index` was clicked.
+    public func focusDigestPoint(_ index: UInt32) { inner.focusDigestPoint(index: index) }
+
+    /// The digest summary's reference `index` (in reading order) was clicked.
+    public func focusDigestReference(_ index: UInt32) { inner.focusDigestReference(index: index) }
+
+    /// Yes to the `FocusConfirm` named `token`.
+    public func focusConfirmed(_ token: UInt64) { inner.focusConfirmed(token: token) }
+
+    /// The rule sheet's query field holds `text` now.
+    public func focusRuleQuery(_ text: String) { inner.focusRuleQuery(text: text) }
+
+    /// "Match a list or a search instead…".
+    public func focusRuleMatchInstead() { inner.focusRuleMatchInstead() }
+
+    /// "Digest mail like this".
+    public func focusRuleLikeThis() { inner.focusRuleLikeThis() }
+
+    /// The rule sheet's schedule, as its controls hold it now.
+    public func focusRuleSchedule(_ schedule: RuleScheduleFfi) { inner.focusRuleSchedule(schedule: schedule) }
+
+    /// Create (or Save): write the rule.
+    public func focusRuleCreate() { inner.focusRuleCreate() }
+
+    /// Capture's text field holds `text` now.
+    public func focusCaptureTyped(_ text: String) { inner.focusCaptureTyped(text: text) }
+
+    /// Capture's due day, "YYYY-MM-DD", or `nil` for none.
+    public func focusCaptureDue(_ day: String?) { inner.focusCaptureDue(day: day) }
+
+    /// Capture's project filter holds `text` now.
+    public func focusCaptureFilter(_ text: String) { inner.focusCaptureFilter(text: text) }
+
+    /// Capture's project `token` was chosen.
+    public func focusCaptureProject(_ token: UInt64) { inner.focusCaptureProject(token: token) }
+
+    /// Open the message a `postio://` link names, or say why not.
+    public func focusOpenLink(uri: String) { inner.focusOpenLink(uri: uri) }
+
     /// The open message's More menu and find, as they are now: what Back
     /// closes first.
     public func focusReaderState(moreOpen: Bool, finding: Bool) {

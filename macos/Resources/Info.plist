@@ -52,6 +52,16 @@
 				<string>mailto</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Postio Message Link</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>postio</string>
+			</array>
+		</dict>
 	</array>
 </dict>
 </plist>
