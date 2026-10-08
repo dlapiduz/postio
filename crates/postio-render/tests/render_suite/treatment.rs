@@ -398,3 +398,43 @@ fn a_blocked_image_leaves_a_marked_strip_not_a_page_tall_hole() {
         second.rect.y0 - first.rect.y0
     );
 }
+
+/// The Mac cannot run `theme::guard`, so `postio_body` decides the same thing
+/// in the markup (spec 009 T060, T061). This holds the two to one answer: in
+/// each theme, the red of the fixture is kept by the renderer exactly where
+/// `guard_kept_colours` scopes it, and the surfaces it judged against are the
+/// grounds the renderer painted.
+#[test]
+fn the_markup_guard_decides_what_the_render_guard_decides() {
+    use postio_body::treatment::{SURFACES, Scheme, guard_kept_colours};
+
+    let body = postio_model::mime::parse(test_corpus::load("html-work-black-text").bytes()).body;
+    let rendered = document::body_html_treated(&body, RemoteImages::Blocked, None, None);
+    let guarded = guard_kept_colours(&rendered.html, &SURFACES);
+
+    for (theme, scheme) in [(LIGHT, Scheme::Light), (DARK, Scheme::Dark)] {
+        let doc = drawn("html-work-black-text", None, theme, 480.0);
+        let cluster = cluster_of(&doc, "Please confirm");
+        let surface = SURFACES.iter().find(|s| s.scheme == scheme).unwrap();
+        assert_eq!(
+            surface.background,
+            cluster.painted_ground.to_u8(),
+            "the surface postio-body judges against is the one painted"
+        );
+        let red_kept_by_render = cluster.color.to_u8() == hex("#c00000").to_u8();
+        let scoped = format!(
+            "@media (prefers-color-scheme: {}) {{ .postio-kept-0 {{ color: #c00000; }} }}",
+            if scheme == Scheme::Light {
+                "light"
+            } else {
+                "dark"
+            }
+        );
+        assert_eq!(
+            guarded.contains(&scoped),
+            red_kept_by_render,
+            "dark={}: {guarded}",
+            theme.dark
+        );
+    }
+}
