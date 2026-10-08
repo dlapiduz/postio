@@ -73,8 +73,9 @@ mod unsubscribe;
 
 pub use account::{AccountFfi, ConnectionReportFfi, RepairRouteFfi};
 pub use compose::{
-    AttachmentFfi, ComposeError, DraftFfi, DraftKindFfi, InlineImageFfi, PastedFfi, outgoing_shape,
-    recipient_summary,
+    AttachmentFfi, ComposeError, DraftFfi, DraftKindFfi, InlineImageFfi, PastedFfi, QuoteFoldFfi,
+    composer_title, draft_saved_words, draft_summary, fold_quote, outgoing_shape,
+    recipient_summary, remind_meaning, remind_presets,
 };
 pub use contacts::{ExternalContactFfi, RecipientSuggestionFfi};
 pub use conversation::{

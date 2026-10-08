@@ -110,6 +110,11 @@ pub struct DraftFfi {
     pub path: String,
     /// What is attached to it.
     pub attachments: Vec<AttachmentFfi>,
+    /// "Remind if no reply": when, in epoch milliseconds, sending it
+    /// sets a reminder on its conversation; `None` for none (spec 007 US3
+    /// scenario 5).
+    #[uniffi(default = None)]
+    pub remind_at: Option<i64>,
 }
 
 /// One file attached to a draft.
@@ -197,6 +202,7 @@ pub(crate) fn to_ffi(draft: &Draft, from: String, path: String) -> DraftFfi {
                 size: postio_ui::format::human_size(attachment.size),
             })
             .collect(),
+        remind_at: draft.remind_at.map(|at| at.timestamp_millis()),
     }
 }
 
@@ -236,6 +242,9 @@ pub(crate) fn from_ffi(base: Draft, edited: &DraftFfi) -> Draft {
     draft.subject = edited.subject.clone();
     draft.body = body_of(edited);
     draft.rich = edited.rich;
+    draft.remind_at = edited
+        .remind_at
+        .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis);
     draft
 }
 
@@ -384,6 +393,73 @@ pub fn schedule_presets() -> Vec<SchedulePresetFfi> {
         .map(|preset| SchedulePresetFfi {
             label: preset.label.to_owned(),
             when: preset.when.timestamp_millis(),
+        })
+        .collect()
+}
+
+/// A reply's quote, folded under what is being written (screen 06).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct QuoteFoldFfi {
+    /// Everything before the quote: what the person writes in.
+    pub written: String,
+    /// The attribution and the quoted lines; `written` then this is the
+    /// body as it was.
+    pub quote: String,
+    /// What the fold says: "On 2026-09-26, Lena Park wrote · 18 quoted
+    /// lines".
+    pub summary: String,
+}
+
+/// `body` with the quote it ends in folded away, or `None` when it ends in
+/// none. See [`postio_ui::compose::fold_quote`].
+#[uniffi::export]
+pub fn fold_quote(body: String) -> Option<QuoteFoldFfi> {
+    postio_ui::compose::fold_quote(&body).map(|fold| QuoteFoldFfi {
+        written: fold.written,
+        quote: fold.quote,
+        summary: fold.summary,
+    })
+}
+
+/// What the composer's title says it is: "New message", "Reply to all".
+#[uniffi::export]
+pub fn composer_title(kind: DraftKindFfi) -> String {
+    postio_ui::compose::title(kind.into()).to_owned()
+}
+
+/// What will be sent, counted: "Plain text · 58 words".
+#[uniffi::export]
+pub fn draft_summary(draft: DraftFfi) -> String {
+    let base = Draft::new(postio_model::AccountId::new(draft.account));
+    postio_ui::compose::summary(&from_ffi(base, &draft))
+}
+
+/// "Draft saved locally 16:12", for a save that landed at `at` (epoch
+/// milliseconds), in the local zone.
+#[uniffi::export]
+pub fn draft_saved_words(at: i64) -> String {
+    let at = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(at).unwrap_or_default();
+    postio_ui::compose::saved_at(at)
+}
+
+/// What the reminder verb says in full: "Remind if no reply", and the day
+/// once one is chosen ("Remind if no reply · Tue 29 Sep"); `at` in epoch
+/// milliseconds.
+#[uniffi::export]
+pub fn remind_meaning(at: Option<i64>) -> String {
+    postio_ui::compose::remind_meaning(
+        at.and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis),
+    )
+}
+
+/// The remind-if-no-reply picker's four times, worked out now.
+#[uniffi::export]
+pub fn remind_presets() -> Vec<SchedulePresetFfi> {
+    postio_ui::schedule::remind_presets(postio_ui::clock::now())
+        .into_iter()
+        .map(|(label, when)| SchedulePresetFfi {
+            label: label.to_owned(),
+            when: when.timestamp_millis(),
         })
         .collect()
 }

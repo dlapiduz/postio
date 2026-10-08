@@ -1131,6 +1131,7 @@ fn a_reply_all_to_a_list_does_not_look_like_a_reply() {
         in_reply_to: None,
         path: "/tmp/mail".to_owned(),
         attachments: Vec::new(),
+        remind_at: None,
     };
     assert_eq!(
         postio_ffi::recipient_summary(draft.clone()).as_deref(),
@@ -1320,4 +1321,85 @@ async fn a_drafts_message_row_leads_back_to_the_draft() {
         session.draft_for_message(message).await.is_none(),
         "a message somebody sent is not a draft to resume"
     );
+}
+
+// -- the composer's frame on the Mac (specs/009-focus-macos T079) ---------
+
+/// "Remind if no reply" rides on the draft: set in the composer, it is in
+/// the store when the draft is saved, and comes back when it is reopened.
+#[tokio::test(flavor = "multi_thread")]
+async fn remind_if_no_reply_is_kept_with_the_draft() {
+    let (session, database, message) = a_message_to_answer().await;
+    let mut draft = session.reply_draft(message, false).await.expect("a reply");
+    assert_eq!(draft.remind_at, None, "a reply asks for no reminder");
+    let tuesday = chrono::Utc::now().timestamp_millis() + 3 * 86_400_000;
+    draft.remind_at = Some(tuesday);
+    let saved = session.save_draft(draft).await.expect("saved");
+
+    let connection = database.connect().await.expect("a connection");
+    let stored = DraftRepository::new(&connection)
+        .get(postio_model::ids::DraftId::new(saved.id))
+        .await
+        .expect("a read")
+        .expect("the draft is in the store");
+    assert_eq!(
+        stored.remind_at.map(|at| at.timestamp_millis()),
+        Some(tuesday)
+    );
+    let again = session.draft(saved.id).await.expect("reopened");
+    assert_eq!(again.remind_at, Some(tuesday));
+}
+
+/// A reply's quote folds under what is written, and the fold says whose
+/// words it holds and how many lines; nothing is lost putting it back.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_replys_quote_folds_and_says_what_it_holds() {
+    let (session, _, message) = a_message_to_answer().await;
+    let draft = session.reply_draft(message, false).await.expect("a reply");
+    let fold = postio_ffi::fold_quote(draft.body.clone()).expect("a reply ends in its quote");
+    assert!(
+        fold.summary.contains("Ada Norwood wrote") && fold.summary.ends_with("1 quoted line"),
+        "{}",
+        fold.summary
+    );
+    assert_eq!(format!("{}{}", fold.written, fold.quote), draft.body);
+    assert_eq!(postio_ffi::fold_quote("Six is fine.".to_owned()), None);
+}
+
+/// The frame's words are the shared ones: the title, the word count, the
+/// saved note, and the reminder's verb with its day.
+#[test]
+fn the_composers_words_are_postio_uis() {
+    use postio_ffi::DraftKindFfi;
+    assert_eq!(postio_ffi::composer_title(DraftKindFfi::New), "New message");
+    assert_eq!(
+        postio_ffi::composer_title(DraftKindFfi::ReplyAll),
+        "Reply to all"
+    );
+    let draft = postio_ffi::DraftFfi {
+        id: 0,
+        account: 1,
+        kind: DraftKindFfi::New,
+        from: String::new(),
+        to: String::new(),
+        cc: String::new(),
+        bcc: String::new(),
+        subject: String::new(),
+        body: "Hi Ada,\n\nThe sheet is attached.".to_owned(),
+        body_html: None,
+        rich: false,
+        in_reply_to: None,
+        path: String::new(),
+        attachments: Vec::new(),
+        remind_at: None,
+    };
+    assert_eq!(
+        postio_ffi::draft_summary(draft),
+        "Plain text \u{b7} 6 words"
+    );
+    let at = chrono::Utc::now().timestamp_millis();
+    assert!(postio_ffi::draft_saved_words(at).starts_with("Draft saved locally "));
+    assert_eq!(postio_ffi::remind_meaning(None), "Remind if no reply");
+    assert!(postio_ffi::remind_meaning(Some(at)).starts_with("Remind if no reply \u{b7} "));
+    assert_eq!(postio_ffi::remind_presets().len(), 4);
 }
