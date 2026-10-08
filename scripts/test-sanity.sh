@@ -62,12 +62,24 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# The crates this host cannot build (the GTK app and what reaches it, on a
+# Mac), left out as issue-land.sh leaves them out, so the tier proves the
+# rest instead of stopping at glib-sys's build script.
+EXCLUDES=()
+if [ -x scripts/unbuildable-crates.sh ]; then
+    UNBUILDABLE=$(scripts/unbuildable-crates.sh | tr '\n' ' ')
+    for crate in $UNBUILDABLE; do
+        EXCLUDES+=(--exclude "$crate")
+    done
+    [ -n "${UNBUILDABLE// /}" ] && echo "note: excluding ${UNBUILDABLE}-- this host cannot build them."
+fi
+
 STARTED=$(date +%s)
 
 if [ -n "$FILTER" ]; then
-    cargo test --workspace --lib -- "$FILTER"
+    cargo test --workspace --lib ${EXCLUDES[@]+"${EXCLUDES[@]}"} -- "$FILTER"
 else
-    cargo test --workspace --lib
+    cargo test --workspace --lib ${EXCLUDES[@]+"${EXCLUDES[@]}"}
 fi
 
 echo
