@@ -132,7 +132,7 @@ public final class FocusListTable: NSObject {
     public func pageArrived(_ page: UInt32) {
         let changed = model.pageArrived(page)
         guard !changed.isEmpty else { return }
-        tableView.noteHeightOfRows(withIndexesChanged: changed)
+        noteHeights(changed)
         tableView.reloadData(forRowIndexes: changed, columnIndexes: IndexSet(integer: 0))
     }
 
@@ -194,8 +194,7 @@ public final class FocusListTable: NSObject {
         case .heading:
             // The day headings come or go, and with them the heights of the
             // rows that drew one.
-            tableView.noteHeightOfRows(
-                withIndexesChanged: IndexSet(integersIn: 0..<tableView.numberOfRows))
+            noteHeights(IndexSet(integersIn: 0..<tableView.numberOfRows))
             redrawVisible()
         case .listToTop:
             scrollToTop()
@@ -243,7 +242,20 @@ public final class FocusListTable: NSObject {
             let owed = self.heightsOwed.filteredIndexSet { $0 < self.tableView.numberOfRows }
             self.heightsOwed = []
             guard !owed.isEmpty else { return }
-            self.tableView.noteHeightOfRows(withIndexesChanged: owed)
+            self.noteHeights(owed)
+        }
+    }
+
+    /// Tell the table `rows` changed height, at once. `noteHeightOfRows`
+    /// animates by default, so a page landing after a delete re-read the
+    /// list slid every row it touched into place: the whole list appeared to
+    /// collapse and grow back. Transitions are 100 ms or absent; this one is
+    /// absent.
+    private func noteHeights(_ rows: IndexSet) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            context.allowsImplicitAnimation = false
+            tableView.noteHeightOfRows(withIndexesChanged: rows)
         }
     }
 
