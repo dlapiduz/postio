@@ -44,9 +44,10 @@ public enum MenuBar {
     public static func install(
         bindings: @escaping (String) -> [String],
         available: @escaping (String) -> Bool,
-        run: @escaping (String) -> Void
+        run: @escaping (String) -> Void,
+        undo: UndoRouter? = nil
     ) {
-        recipe = Recipe(bindings: bindings, available: available, run: run)
+        recipe = Recipe(bindings: bindings, available: available, run: run, undo: undo)
         mount()
     }
 
@@ -59,6 +60,9 @@ public enum MenuBar {
         let bindings: (String) -> [String]
         let available: (String) -> Bool
         let run: (String) -> Void
+        /// Where Edit › Undo goes: the engine's stack in the main window
+        /// (`UndoRouter`), AppKit's own everywhere else.
+        let undo: UndoRouter?
     }
 
     private static var recipe: Recipe?
@@ -102,7 +106,7 @@ public enum MenuBar {
             // -- so a future ⌘-binding of Postio's own would still win, and
             // these stay the fallback rather than becoming a race.
             if menu.section == .edit {
-                appendStandardEditing(to: submenu)
+                appendStandardEditing(to: submenu, undo: recipe.undo)
                 if !menu.items.isEmpty { submenu.addItem(.separator()) }
             }
             for planned in menu.items {
@@ -260,11 +264,17 @@ public enum MenuBar {
     /// `undo:` and `redo:` have no formal declaration to take a `#selector`
     /// of; they are `NSResponder`'s by convention, and the string is the
     /// spelling every application on this platform uses.
-    static func appendStandardEditing(to menu: NSMenu) {
-        menu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+    ///
+    /// With an `undo` router the two are aimed at it rather than at the
+    /// responder chain: in the main window they are the engine's stack
+    /// (T051), and the router hands everything else on down the chain.
+    static func appendStandardEditing(to menu: NSMenu, undo router: UndoRouter? = nil) {
+        let undo = menu.addItem(withTitle: "Undo", action: UndoRouter.undoAction, keyEquivalent: "z")
+        undo.target = router
         let redo = menu.addItem(
-            withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+            withTitle: "Redo", action: UndoRouter.redoAction, keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]
+        redo.target = router
         menu.addItem(.separator())
         menu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")

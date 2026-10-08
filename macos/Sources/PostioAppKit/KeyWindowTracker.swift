@@ -113,6 +113,14 @@ public final class KeyWindowTracker {
         return KeyWindow.allCases.first { identifier(for: $0) == name } ?? .main
     }
 
+    /// Whether `window` is Postio's main window, by its tag. Stricter than
+    /// `role(of:)`, which counts an untagged panel as the main window: what
+    /// asks this (Edit › Undo) must not act on the inbox from AppKit's
+    /// open panel.
+    public static func isMain(_ window: NSWindow?) -> Bool {
+        window?.identifier?.rawValue == identifier(for: .main)
+    }
+
     private static func identifier(for role: KeyWindow) -> String {
         switch role {
         case .main: return "postio.window.main"

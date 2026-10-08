@@ -246,19 +246,23 @@ action, and undo through ⌘Z and Edit › Undo.
 
   *As built:* the plan had `key(…) -> KeyPressFfi{handled, pending, intents}` returning intents from the key call. Keys stay as they were (`key` resolves a chord to a command, `invoke` runs it), and the intents arrive on `nextEvent` like every other event. That avoids a second path for the same intents (keys, menus, the bar and buttons all go through `invoke`), and keeps `key` free of side effects as its doc requires. `in_text_entry` is still the caller's, through `key`.
 - [ ] T047 [P] [US2] Write storyboards `storyboards/list/x-selects-without-moving.toml`, `storyboards/list/has-action-keeps-the-cursor.toml` and `storyboards/list/undo-after-the-pill-is-gone.toml` (`apps = ["focus"]`). Run them on Linux
-- [ ] T048 [US2] Write failing Swift tests:
+- [x] T048 [US2] Write failing Swift tests:
   - `macos/Tests/PostioKitTests/IntentApplierTests.swift`: applying `Cursor`, `Selection`, `Toast` and `KeyboardHome` to a fake main-window model changes exactly what the intent says;
   - `macos/Tests/PostioAppKitTests/UndoManagerTests.swift`: `PostioUndoManager.canUndo` is false with no description; with a description `undoMenuItemTitle` is "Undo <description>"; `undo()` invokes `undo`; `canRedo` is always false.
+
+  *As built:* `FocusIntentsTests.swift` rather than `IntentApplierTests.swift`, over the five Focus `UiEvent`s T046 built (there is no `KeyboardHome` event yet; it comes with the secondary windows), each compared as a whole snapshot before and after so "nothing else changed" is asserted, not assumed. `FocusListPointerTests.swift` adds the table's half: a click is reported and moves nothing, the ring and boxes follow the intents.
 - [x] T049 [US2] Implement `IntentApplier` in `macos/Sources/PostioKit/IntentApplier.swift`: the one switch over `IntentFfi`, on the main actor. The unknown-intent arm logs the name and does nothing
 
   *As built:* `FocusIntents` (`macos/Sources/PostioKit/FocusIntents.swift`), because T046 sends the intents as `UiEvent`s rather than `IntentFfi`: one switch over `FocusCursor`, `FocusSelection`, `FocusHeading`, `FocusListToTop` and `FocusToast`, returning what changed so `FocusListTable.apply` redraws only that. Every other event is `nil` and changes nothing, which is the unknown arm. `FocusListModel` reads its cursor, selection and heading from it and has no setters left; the table reports clicks (`focusPoint`, `focusPick`) and the top (`focusAtTop`, only on a change) and moves nothing itself. Its tests are `FocusIntentsTests` and `FocusListPointerTests`.
 - [ ] T050 [US2] Rework `macos/Sources/Postio/KeyMonitor.swift` to call the new `key(…)`: swallow when `handled`, show `pending` as the chord hint, and keep the IME and `TypingResponder` guards. Remove the `UiContext` argument, because the context is the controller's
-- [ ] T051 [US2] Implement `PostioUndoManager` (an `NSUndoManager` subclass) in `macos/Sources/PostioAppKit/PostioUndoManager.swift`:
+- [x] T051 [US2] Implement `PostioUndoManager` (an `NSUndoManager` subclass) in `macos/Sources/PostioAppKit/PostioUndoManager.swift`:
   - it caches `undo_description()`, refreshed on each `Toast`/`Notice` intent;
   - the main window's delegate returns it from `windowWillReturnUndoManager`;
   - text fields keep the field editor's own manager.
 
   Make T048 green
+
+  *As built:* `windowWillReturnUndoManager` cannot work for SwiftUI's window. It makes its `NSUndoManager` while the scene is built, before any view can reach the window, and an `NSWindow` that has one never asks its delegate again (measured: a forwarding delegate installed afterwards was never called). So Edit › Undo and Redo are aimed at an `UndoRouter` (`PostioUndoManager.swift`): in the main window, while its first responder takes no text, it is the engine's manager, titled "Undo <the toast's words>"; anywhere else it sends `undo:` on down the responder chain, so a field keeps its field editor's own undo. The cache is refreshed off the main actor on every `FocusToast` and whenever the main window becomes key. In the list ⌘Z still reaches `undo` through the key monitor first (`mod+z`); the menu's item is the same command.
 - [ ] T052 [US2] Implement the action bar (SwiftUI) in `macos/Sources/PostioKit/ActionBar.swift`: the count, the actions with keycaps (Archive `a`, Snooze `s`, Mark read `r`, Digest these… `d`, Task `t` only with a vault (C9), Label `l`, Move `m`), and the hints on the right. Add a minimal undo notice line (the pill proper is T093)
 - [ ] T053 [US2] Compare screen 03 (FR-061): `scripts/macos-shot.sh 03 --both` against `03-inbox-has-action-filter.png`. Record in `docs/notes/<date>-focus-macos-phase-2.md`
 

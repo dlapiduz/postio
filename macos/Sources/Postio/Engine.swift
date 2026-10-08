@@ -116,6 +116,18 @@ final class Engine {
             // (`postio://message/<id>`, later).
             notifications.open = { _, _ in }
             consumeEvents(from: session)
+            // The stack's top may have moved while another window had the
+            // keyboard, or an entry's window closed while nobody looked.
+            NotificationCenter.default.addObserver(
+                forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+            ) { [weak self] note in
+                guard let window = note.object as? NSWindow else { return }
+                MainActor.assumeIsolated {
+                    guard KeyWindowTracker.isMain(window) else { return }
+                    self?.refreshUndo()
+                }
+            }
+            refreshUndo()
             openFocus(.inbox)
             // Keystrokes, resolved by the core (#656), only once there is a
             // keymap to ask: a monitor that swallowed keys to answer nothing
@@ -163,6 +175,20 @@ final class Engine {
     /// Putting a broken account back in service. Held here because
     /// `update_credential` is a command, and a command cannot reach a view.
     let accountRepair = AccountRepair()
+
+    /// Edit › Undo: the engine's stack in the main window (T051).
+    @ObservationIgnored
+    private lazy var undoRouter = UndoRouter(
+        manager: PostioUndoManager { [weak self] in
+            self?.session?.invoke(Notice.undoCommand)
+        })
+
+    /// Read what Undo would take back, off this actor, for the Edit menu.
+    private func refreshUndo() {
+        guard let session else { return }
+        let manager = undoRouter.manager
+        Task { await manager.refresh { session.undoDescription() } }
+    }
 
     private let notifications = MailNotifications()
     private let reachability = Reachability()
@@ -498,6 +524,9 @@ final class Engine {
         // the toast (T049). The table draws what changed.
         if let change = focus.apply(event) {
             focusTable?.apply(change)
+            // Every verb and every undo says a toast, and either may have
+            // moved the stack's top.
+            if change == .toast { refreshUndo() }
             return
         }
         switch event {
@@ -586,7 +615,8 @@ final class Engine {
                 }
                 return session.isAvailable(id, in: self.context)
             },
-            run: { [weak self] id in self?.run(id) }
+            run: { [weak self] id in self?.run(id) },
+            undo: undoRouter
         )
     }
 
