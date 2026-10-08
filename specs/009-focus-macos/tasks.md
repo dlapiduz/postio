@@ -1049,7 +1049,8 @@ the branch.
 
 ## Phase 13: Polish and landing
 
-- [ ] T125 [P] Regenerate `docs/keybindings.md` and check the "(not macOS)" annotations are gone (`crates/postio-ui/tests/ui_suite/keybindings_doc.rs`)
+- [x] T125 [P] Regenerate `docs/keybindings.md` and check the "(not macOS)" annotations are gone (`crates/postio-ui/tests/ui_suite/keybindings_doc.rs`)
+  - **As built:** nothing to regenerate. `docs/keybindings.md` already matched the registry (`POSTIO_UPDATE_DOCS=1` left it unchanged, both tests pass) and carries no "(not macOS)" note; `which_apps` in the test annotates only the terminal. Every Focus command is offered by the desktop app, the Mac and the terminal, so none needs one.
 - [ ] T126 [P] Update `macos/CLAUDE.md` for the Focus app: the targets, the intent applier, `macos-shot.sh`, and the no-AppKit rule in PostioKit
 - [ ] T127 [P] Add a dated note `docs/notes/<date>-focus-on-the-mac.md` listing the constraints future sessions must respect: one secondary window, the intents not the widgets, the treatment from the shared document. Add it to `docs/archive/engineering-notes.md`
 - [ ] T128 Run quickstart.md's scenarios table end to end on the bundle over the demo store, then on real mail (the maintainer). Record the results on the PR
