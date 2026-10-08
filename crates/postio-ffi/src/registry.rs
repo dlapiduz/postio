@@ -284,9 +284,10 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::Settings,
         C::ScrollReaderDown,
         C::ScrollReaderUp,
-        // Where the keyboard is among the panes, and whether a message is
-        // drawn as its sender wrote it.
-        C::OpenMessage,
+        // Whether a message is drawn as its sender wrote it. Not
+        // `open_message`: Focus's controller opens the message from the
+        // list, from Filtered and from the digest's list, and the Mac has
+        // no handler of its own for it (specs/009-focus-macos T113-T114).
         C::PrevView,
         C::ViewOriginal,
         // Reader view for one message, the other half of the same choice.

@@ -47,11 +47,11 @@ public enum Intercepted {
     /// and the store has not seen most of it, which is why these stop here —
     /// `ComposeCommands` is the route from the id to the model.
     public static let composeVerbs = ComposeCommands.handled
-    /// Where the keyboard is among the panes, and whether a message is drawn
-    /// as its sender wrote it. Both are this frontend's state: there is no
-    /// drill-in to close and nothing is remembered about an original past the
-    /// view it was asked for in.
-    public static let openMessage = "open_message"
+    /// Whether a message is drawn as its sender wrote it: this frontend's
+    /// state, since nothing is remembered about an original past the view it
+    /// was asked for in. Not `open_message`: Focus's controller opens the
+    /// message from the list, from Filtered and from the digest's list, and
+    /// nothing here answers it (specs/009-focus-macos T113-T114).
     public static let prevView = "prev_view"
     public static let viewOriginal = "view_original"
     /// `⇧⌘O`: reader view for one message (spec 006 FR-031).
@@ -95,7 +95,7 @@ public enum Intercepted {
         back, settings,
         expandAll, toggleFold, nextInConversation, prevInConversation,
         scrollReaderDown, scrollReaderUp,
-        openMessage, prevView, viewOriginal, toggleReaderView, zoomIn, zoomOut, zoomReset,
+        prevView, viewOriginal, toggleReaderView, zoomIn, zoomOut, zoomReset,
         findInMessage, findNext, findPrevious,
         addAccount, editConfig, toggleAccountEnabled, removeAccount,
         updateCredential, rebuildAccountIndex, setDefaultAccount,
