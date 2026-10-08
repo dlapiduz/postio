@@ -1026,8 +1026,8 @@ async fn a_body_that_was_re_indexed_no_longer_matches_its_old_words() {
 async fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
     // #499: the list column says `Newest ▾` and has to be able to mean it.
     // Relevance is the default and stays ranked; asking for `Newest` must
-    // come back in plain date order even when bm25 would put an older,
-    // denser match first.
+    // come back in plain date order even when the ranking would put an
+    // older message first -- here, the one whose subject says the word.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -1050,22 +1050,22 @@ async fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
         .await;
     }
 
-    // Older, but saturated with the term: the far better bm25 match.
-    let dense = message(
+    // Older, and about the thing: its subject says it.
+    let dense = with_body(
         &connection,
         &account,
         mailbox,
-        "ada",
-        "report report report report report",
+        "Quarterly report",
+        "The figures are attached.",
         at(6),
     )
     .await;
-    // Newer, and a glancing match.
-    let recent = message(
+    // Newer, and a glancing match in passing.
+    let recent = with_body(
         &connection,
         &account,
         mailbox,
-        "bob",
+        "Notes",
         "One report among other things entirely",
         at(11),
     )
@@ -1088,8 +1088,8 @@ async fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
     assert_eq!(
         ranked.hits[0].message_id,
         dense.id,
-        "relevance still ranks: the dense match outweighs five hours of recency \
-         (scores: {:?})",
+        "relevance still ranks: the message about it outweighs five hours of \
+         recency (scores: {:?})",
         ranked
             .hits
             .iter()
@@ -1879,5 +1879,128 @@ async fn a_message_moved_today_is_as_old_as_its_own_date() {
         order,
         vec![newer.id, older.id],
         "the newer invoice first, though the older one arrived in its folder today"
+    );
+}
+
+/// One sender's issues, found by the sender's name: as good a match as each
+/// other, so the newest leads, whatever the bodies say or how often each of
+/// the sender's addresses was seen.
+#[tokio::test]
+async fn a_senders_mail_found_by_its_name_comes_newest_first() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    let now = Utc.with_ymd_and_hms(2026, 10, 8, 18, 0, 0).unwrap();
+    let days = |n: i64| now - chrono::TimeDelta::days(n);
+    for i in 0..20 {
+        message(
+            &connection,
+            &account,
+            mailbox,
+            "carol",
+            &format!("Unrelated {i}"),
+            days(40),
+        )
+        .await;
+    }
+    let repository = MessageRepository::new(&connection);
+    let mut issues = Vec::new();
+    for (age, subject, address) in [
+        (8, "Distributed databases", "weekly@news.example.com"),
+        (1, "Building resilient systems", "deep@news.example.com"),
+        (0, "The Pulse: a new trend", "pulse@news.example.com"),
+        (2, "The state of the industry", "deep@news.example.com"),
+    ] {
+        let mut issue = Message::new(account.id, mailbox, days(age));
+        issue.from = vec![EmailAddress::new(Some("The Weekly Engineer"), address)];
+        issue.subject = Some(subject.to_string());
+        issue.date = Some(days(age));
+        repository.create(&mut issue).await.expect("issue");
+        issues.push((age, issue.id));
+    }
+    let query = parse("weekly engineer", now.date_naive());
+    let ranked = search(
+        &connection,
+        &SearchRequest {
+            account: AccountScope::Account(account.id),
+            query: &query,
+            scope: Scope::AllMail,
+            limit: 10,
+            order: postio_search::ResultOrder::Relevance,
+        },
+        now,
+    )
+    .await
+    .expect("search");
+    issues.sort_by_key(|(age, _)| *age);
+    let newest_first: Vec<_> = issues.iter().map(|(_, id)| *id).collect();
+    let order: Vec<_> = ranked.hits.iter().map(|hit| hit.message_id).collect();
+    assert_eq!(order, newest_first);
+}
+
+/// A message whose subject says part of what was asked beats one that only
+/// mentions it all in passing, when the two are otherwise as good.
+#[tokio::test]
+async fn a_subject_that_says_part_of_the_query_beats_a_passing_mention() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    let now = Utc.with_ymd_and_hms(2026, 10, 8, 18, 0, 0).unwrap();
+    let days = |n: i64| now - chrono::TimeDelta::days(n);
+    for i in 0..20 {
+        with_body(
+            &connection,
+            &account,
+            mailbox,
+            &format!("Unrelated {i}"),
+            "nothing here",
+            days(40),
+        )
+        .await;
+    }
+    let lessons = with_body(
+        &connection,
+        &account,
+        mailbox,
+        "Re: Voice Lessons",
+        "Hello, I sent the zoom link again for the voice lessons on Tuesday.",
+        days(13),
+    )
+    .await;
+    let bingo = with_body(
+        &connection,
+        &account,
+        mailbox,
+        "Join us for musical bingo tomorrow",
+        "Bingo night! Voice lessons raffle, a zoom link for those at home, and more voice lessons news. Zoom link below.",
+        days(1),
+    )
+    .await;
+    let query = parse("zoom link voice lessons", now.date_naive());
+    let ranked = search(
+        &connection,
+        &SearchRequest {
+            account: AccountScope::Account(account.id),
+            query: &query,
+            scope: Scope::AllMail,
+            limit: 10,
+            order: postio_search::ResultOrder::Relevance,
+        },
+        now,
+    )
+    .await
+    .expect("search");
+    let order: Vec<_> = ranked.hits.iter().map(|hit| hit.message_id).collect();
+    assert_eq!(
+        order.first(),
+        Some(&lessons.id),
+        "{order:?} (bingo is {:?})",
+        bingo.id
     );
 }

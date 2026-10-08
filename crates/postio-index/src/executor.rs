@@ -179,11 +179,27 @@ const POOL_AGE_WEIGHT_PER_YEAR: f64 = 0.25;
 /// sender decide; a match clearly better than another still wins outright.
 const TEXT_TIE: f64 = 0.10;
 
+/// The tolerance among messages whose subject and sender say *every* word
+/// of the query: 50%.
+///
+/// They are each about what was asked -- one sender's newsletters found by
+/// its name, one studio's invoices -- and a person reads them as a dated
+/// series, newest first. Their scores still differ by more than
+/// [`TEXT_TIE`] when, say, one of the sender's addresses also spells a word
+/// of the query. Twice as good a match still leads.
+const SAID_TIE: f64 = 0.50;
+
 /// Each score in `bm25` (lower is better) replaced by the best of its band:
 /// the candidates within [`TEXT_TIE`] of a better one. A band is measured
 /// from its best, never from its last member, so a run of small steps
 /// cannot drift a weak match into a strong one's band.
 pub fn text_bands(bm25: &[f64]) -> Vec<f64> {
+    bands(bm25, TEXT_TIE)
+}
+
+/// [`text_bands`], with the tolerance named: each score replaced by the
+/// best of the run within `tie` of it.
+fn bands(bm25: &[f64], tie: f64) -> Vec<f64> {
     let mut order: Vec<usize> = (0..bm25.len()).collect();
     order.sort_by(|a, b| bm25[*a].total_cmp(&bm25[*b]));
     let mut banded = bm25.to_vec();
@@ -193,13 +209,50 @@ pub fn text_bands(bm25: &[f64]) -> Vec<f64> {
         let lead = match best {
             // Scores are negative, larger in magnitude when better: within
             // the tolerance means at least (1 - TEXT_TIE) of the best's size.
-            Some(lead) if lead < 0.0 && score <= lead * (1.0 - TEXT_TIE) => lead,
+            Some(lead) if lead < 0.0 && score <= lead * (1.0 - tie) => lead,
             _ => score,
         };
         best = Some(lead);
         banded[index] = lead;
     }
     banded
+}
+
+/// How much of the query a message's subject and sender say, from 0 to 1:
+/// the share of `terms` whose every word begins a word of `said`.
+///
+/// What separates the message *about* something from one that mentions it
+/// in passing, when their scores tie: the free-text score credits subject
+/// and sender only when every term is there, so "zoom link voice lessons"
+/// gave "Re: Voice Lessons" no credit for its subject at all. A prefix,
+/// so "invoice" covers "invoices" and "hannah" covers "Hannah's".
+pub fn coverage(terms: &[String], said: &str) -> f64 {
+    if terms.is_empty() {
+        return 0.0;
+    }
+    let words: Vec<String> = said
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .collect();
+    let covered = terms
+        .iter()
+        .filter(|term| {
+            term.split_whitespace().all(|part| {
+                let part = part.to_lowercase();
+                words.iter().any(|word| word.starts_with(&part))
+            })
+        })
+        .count();
+    covered as f64 / terms.len() as f64
+}
+
+/// How well a sender is known, in four steps of [`rank_score`]'s affinity:
+/// coarse on purpose, so a sender's two addresses seen four and five times
+/// are one step, while a correspondent seen eighty times is not a stranger.
+fn known(times_seen: i64) -> u8 {
+    let affinity = (1.0 + times_seen.max(0) as f64).ln() / (1.0 + 100f64).ln();
+    (affinity.min(1.0) * 4.0).floor().min(3.0) as u8
 }
 
 /// How old a message is, to the ranking: its own `Date`, when that is
@@ -306,17 +359,82 @@ pub async fn search(
 
     match request.order {
         postio_search::ResultOrder::Relevance => {
-            let bands = text_bands(
+            let texts = text_bands(
                 &candidates
                     .iter()
                     .map(|candidate| candidate.bm25)
                     .collect::<Vec<_>>(),
             );
-            for (candidate, text) in candidates.iter_mut().zip(bands) {
+            for (candidate, text) in candidates.iter_mut().zip(texts) {
                 candidate.score =
                     rank_score(text, candidate.aged_from, now, candidate.sender_times_seen);
             }
-            candidates.sort_by(|a, b| a.score.total_cmp(&b.score));
+            // Scores within [`TEXT_TIE`] of each other are one band: as good
+            // an answer as each other, so within it the message whose subject
+            // and sender say more of the query leads, then the newer one.
+            // Recency and affinity are too weak to order recent mail on their
+            // own -- a week is 0.02, and a sender seen four times rather than
+            // five is 0.04 -- so a sender's own newsletters came back in no
+            // order a person could see.
+            let terms: Vec<String> = request
+                .query
+                .text_terms()
+                .filter(|term| !term.negated)
+                .map(|term| term.value.clone())
+                .collect();
+            let said: Vec<f64> = candidates
+                .iter()
+                .map(|candidate| {
+                    let said = [
+                        candidate.subject.as_deref(),
+                        candidate.from_name.as_deref(),
+                        candidate.from_address.as_deref(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                    coverage(&terms, &said)
+                })
+                .collect();
+            // Those that say all of it are banded among themselves, more
+            // loosely ([`SAID_TIE`]); the rest by [`TEXT_TIE`].
+            let mut banded = vec![0.0; candidates.len()];
+            for all in [true, false] {
+                let members: Vec<usize> = (0..candidates.len())
+                    .filter(|index| (said[*index] >= 1.0) == all)
+                    .collect();
+                let scores: Vec<f64> = members
+                    .iter()
+                    .map(|index| candidates[*index].score)
+                    .collect();
+                let tie = if all { SAID_TIE } else { TEXT_TIE };
+                for (index, band) in members.into_iter().zip(bands(&scores, tie)) {
+                    banded[index] = band;
+                }
+            }
+            let mut keyed: Vec<(f64, f64, Candidate)> = banded
+                .into_iter()
+                .zip(said)
+                .zip(candidates)
+                .map(|((band, said), candidate)| (band, said, candidate))
+                .collect();
+            // In a band: what the subject and sender say, then how well the
+            // sender is known in coarse steps (a correspondent of eighty
+            // letters still leads a stranger, but four sightings against
+            // five is noise), then the newer.
+            keyed.sort_by(|(a_band, a_said, a), (b_band, b_said, b)| {
+                a_band
+                    .total_cmp(b_band)
+                    .then(b_said.total_cmp(a_said))
+                    .then(known(b.sender_times_seen).cmp(&known(a.sender_times_seen)))
+                    .then(b.aged_from.cmp(&a.aged_from))
+                    .then(a.score.total_cmp(&b.score))
+            });
+            candidates = keyed
+                .into_iter()
+                .map(|(_, _, candidate)| candidate)
+                .collect();
             // Why the order is what it is, in numbers and ids only: the
             // text match, the age, how often the sender was seen, and what
             // they came to.
@@ -1799,6 +1917,27 @@ mod tests {
             match_param: Some(turso::Value::Text("invoice".to_owned())),
             body_match_param: Some(turso::Value::Text("invoice".to_owned())),
         }
+    }
+
+    #[test]
+    fn coverage_is_the_share_of_terms_the_subject_and_sender_say() {
+        let terms = |words: &[&str]| words.iter().map(|w| (*w).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            coverage(
+                &terms(&["voice", "lessons", "zoom", "link"]),
+                "Re: Voice Lessons Ada ada@example.com"
+            ),
+            0.5
+        );
+        assert_eq!(
+            coverage(
+                &terms(&["hannah", "invoice"]),
+                "Lapiduz 9/26 Invoices Hannah's Music Studio"
+            ),
+            1.0
+        );
+        assert_eq!(coverage(&terms(&["bingo"]), "Re: Voice Lessons"), 0.0);
+        assert_eq!(coverage(&[], "anything"), 0.0);
     }
 
     #[test]
