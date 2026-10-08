@@ -507,10 +507,11 @@ is visible in both apps.
   keymap layer and the view models MUST be tested without a window.
 - **FR-063**: Every interaction this spec changes MUST be written as a
   storyboard in the toolkit-neutral format of spec 008, before it is built;
-  a storyboard Linux already has applies to the Mac unchanged. [NEEDS
-  CLARIFICATION: is a storyboard runner for the Mac app (spec 008's later
-  phase) in scope here, so the Mac's storyboards are filmed and reviewed, or
-  are they written now and filmed when that phase is built?]
+  a storyboard Linux already has applies to the Mac unchanged. Linux films
+  them, which also guards the shared controller. **Maintainer (2026-10-07):
+  the Mac storyboard runner (spec 008's later phase) is not in scope**; until
+  it exists, a Mac landing that changes an interaction is labelled
+  `interactions-unreviewed`, and FR-061's comparison is the Mac's check.
 
 ### Key Entities
 

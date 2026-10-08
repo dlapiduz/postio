@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -36,5 +36,5 @@
   on behaviour. Platform words a Mac user sees (Keychain, Contacts, the menu
   bar, traffic lights, ⌘ keys) are product vocabulary here, not
   implementation.
-- One clarification open: FR-063, whether the Mac storyboard runner is in
-  scope.
+- FR-063's clarification was answered by the maintainer (2026-10-07):
+  storyboards are written now and filmed on Linux; the Mac runner is later.
