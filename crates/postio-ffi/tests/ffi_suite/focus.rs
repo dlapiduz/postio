@@ -67,7 +67,7 @@ async fn a_question_in_the_inbox_is_counted_as_needing_action() {
         "Hi,\n\nCan you approve these by Friday so finance can close the quarter?\n\nThanks,\nAda",
     )
     .await;
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(10));
     let counts = loop {
         let counts = session.focus_counts().expect("the counts");
         if counts.has_action > 0 || Instant::now() > deadline {
@@ -111,7 +111,7 @@ async fn the_inbox_fills_with_focus_rows_that_carry_their_marker() {
     )
     .await;
     // The marker is the body stage's; wait for it before the list is read.
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(10));
     while session.focus_counts().expect("counts").has_action == 0 && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
