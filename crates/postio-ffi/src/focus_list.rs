@@ -722,6 +722,16 @@ impl FocusDriver {
             Intent::OpenPicker(view) => self.say(UiEvent::FocusOpenPicker { view: view.into() }),
             Intent::PickerRows(view) => self.say(UiEvent::FocusPickerRows { view: view.into() }),
             Intent::PickerField => self.say(UiEvent::FocusPickerField),
+            Intent::Banner(banner) => self.say(UiEvent::FocusBanner {
+                banner: banner.map(Into::into),
+            }),
+            Intent::SyncLabel(label) => self.say(UiEvent::FocusSyncLabel {
+                mark: crate::focus_states::SyncMarkFfi::of(&label),
+                text: label.text,
+            }),
+            Intent::Empty(page) => self.say(UiEvent::FocusEmpty {
+                page: page.map(Into::into),
+            }),
             Intent::SaveSearch { query } => {
                 let saved = self.save_search(&query);
                 self.input(Input::SearchSaved(saved));

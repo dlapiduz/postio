@@ -50,6 +50,7 @@ mod focus_list;
 mod focus_message;
 mod focus_pickers;
 mod focus_reader;
+mod focus_states;
 mod keys;
 mod list;
 mod logging;
@@ -100,6 +101,9 @@ pub use focus_pickers::{
     PickerAnchorFfi, PickerFieldFfi, PickerKindFfi, PickerRowFfi, PickerViewFfi,
 };
 pub use focus_reader::{FocusReaderDocumentFfi, RenderModeWordsFfi, TreatmentFfi};
+pub use focus_states::{
+    BannerButtonFfi, BannerFfi, BannerProgressFfi, EmptyPageFfi, EmptyShortcutFfi, SyncMarkFfi,
+};
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use list::{RowFfi, ScopeFfi};
 pub use logging::start_logging;

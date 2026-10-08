@@ -31,6 +31,7 @@ mod focus;
 mod focus_bar;
 mod focus_pickers;
 mod focus_scroll;
+mod focus_states;
 mod host;
 mod keys;
 mod notice;

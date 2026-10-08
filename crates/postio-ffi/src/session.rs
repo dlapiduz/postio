@@ -3872,9 +3872,9 @@ impl Session {
             if update.changed.focus {
                 *session.focus_config.lock().expect("focus config lock") =
                     service.config().focus.clone();
-                session.focus_list.input(postio_focus::Input::Filtering(
-                    service.config().focus.filtering,
-                ));
+                session
+                    .focus_list
+                    .input(postio_focus::Input::Config(service.config().focus.clone()));
                 session
                     ._host
                     .enable_focus(postio_host::FocusSetup::from_config(
@@ -3893,17 +3893,15 @@ impl Session {
 
     /// Tell Focus's controller what the configuration says it needs: the
     /// pinned saved searches (`alt+1`-`4`), the keys in force (the bar's
-    /// keycaps), whether Focus files mail away (the popover's Filtered), and
-    /// the file a saved search is written to. `follow_config` keeps them
+    /// keycaps), `[focus]` (whether Focus files mail away, and the digests an
+    /// empty inbox names), and the file a saved search is written to. `follow_config` keeps them
     /// current.
     fn prime_focus(&self, saved: Vec<(String, String)>, source: &ConfigSource) {
         let driver = &self.focus_list;
         driver.set_config_path(source.path());
         driver.input(postio_focus::Input::SavedSearches(saved));
         driver.input(postio_focus::Input::Keymap(self.keymap()));
-        driver.input(postio_focus::Input::Filtering(
-            self.focus_config().filtering,
-        ));
+        driver.input(postio_focus::Input::Config(self.focus_config()));
     }
 
     /// `[focus]` as it stands.

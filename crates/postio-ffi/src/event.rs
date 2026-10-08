@@ -344,6 +344,35 @@ pub enum UiEvent {
     },
     /// Put the keyboard in the picker's date field (`Tab`).
     FocusPickerField,
+    /// The banner under the header strip, full width, or none
+    /// (specs/009-focus-macos T096). Said only when it changes.
+    FocusBanner {
+        /// What it says, or `None` to take it away.
+        banner: Option<crate::focus_states::BannerFfi>,
+    },
+    /// What the toolbar's sync label says now. Said only when it changes.
+    FocusSyncLabel {
+        /// "Synced 09:30", "Syncing 1,200 of 8,400", "Offline".
+        text: String,
+        /// The mark beside it.
+        mark: crate::focus_states::SyncMarkFfi,
+    },
+    /// The page an empty list shows in its place, or the list again with
+    /// `None`. The list is what is drawn until this says otherwise.
+    FocusEmpty {
+        /// What the page says.
+        page: Option<crate::focus_states::EmptyPageFfi>,
+    },
+    /// How far filling in an account's message bodies has come
+    /// (specs/009-focus-macos T099). It crossed as `Other` before.
+    BackfillProgress {
+        /// The account.
+        account: i64,
+        /// Messages the queue has finished with.
+        done: u32,
+        /// Messages that have entered the queue.
+        total: u32,
+    },
 }
 
 /// How a Focus toast is drawn.
@@ -474,6 +503,16 @@ impl From<postio_core::Event> for UiEvent {
             // still arrives, named. `{:?}` would carry the payload, and rule 3
             // forbids that, so only the variant name crosses.
             Event::SurfacedChanged => UiEvent::SurfacedChanged,
+            Event::BackfillProgress {
+                account,
+                done,
+                total,
+                ..
+            } => UiEvent::BackfillProgress {
+                account: account.into(),
+                done,
+                total,
+            },
             other => UiEvent::Other {
                 kind: variant_name(&other).to_string(),
             },
