@@ -343,6 +343,10 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         // An open panel, and a picture that has to land at the caret of a
         // document only the window holds (#1571).
         C::InsertImage,
+        // ⌘H in the composer: the draft's own reminder, which only its
+        // window holds until it is saved (specs/009-focus-macos T079). On
+        // the list and the open message `h` is the controller's picker.
+        C::RemindIfNoReply,
         C::ExpandAll,
         C::ToggleFold,
         C::NextInConversation,

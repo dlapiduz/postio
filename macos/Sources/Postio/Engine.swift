@@ -257,19 +257,49 @@ final class Engine {
     /// refilled, or a new one as wide as screen 05's.
     private func showComposerWindow() {
         guard let composer, let model = composer.model, let session, let main = mainWindow else { return }
+        let close: () -> Void = { [weak self] in self?.secondary.close(.composer) }
         let content = ComposeView(
-            session: session, model: model,
+            // A demo never reads the address book: its mail is invented, and
+            // a photograph is no time for the system's prompt.
+            session: session, model: model, accounts: accounts,
+            contacts: DemoMode.seed == nil ? contacts : nil,
             edited: { [weak composer] in composer?.edited() },
-            close: { [weak self] in self?.secondary.close(.composer) }
+            close: close
         )
         .preferredColorScheme(colorScheme)
         let hosting = NSHostingView(rootView: content)
         hosting.sizingOptions = []
+        // Send and Send later close the window once the draft is on its
+        // way; the toolkit's close says so to the controller.
+        let chrome = ComposeWindowChrome(
+            model: model,
+            sendCap: KeyCapSpelling.cap(session.binding(for: "send")),
+            send: { [weak session, weak model] in
+                guard let session, let model, model.send(through: session) else { return }
+                close()
+            },
+            sendAt: { [weak session, weak model] when in
+                guard let session, let model else { return }
+                model.send(at: when, through: session)
+                if model.sent { close() }
+            })
+        composeChrome = chrome
         let width = min(Self.composerWidth, max(SecondaryWindowController.minimumHeight, main.frame.width - 80))
         secondary.show(
             .composer, content: hosting, width: width, title: model.title, over: main,
-            configure: { KeyWindowTracker.tag($0, as: .compose, draft: model.id) })
+            configure: { window in
+                KeyWindowTracker.tag(window, as: .compose, draft: model.id)
+                chrome.install(on: window)
+            })
+        // The same kind again keeps its window and its toolbar: the title
+        // area reads the new draft.
+        if let window = secondary.window, secondary.kind == .composer {
+            chrome.install(on: window)
+        }
     }
+
+    /// The composer's title area, while it is open.
+    @ObservationIgnored private var composeChrome: ComposeWindowChrome?
 
     /// What the settings window's account actions are doing, held here
     /// because their progress arrives as events and a window that owned
@@ -564,6 +594,7 @@ final class Engine {
             return
         }
         if kind == .composer {
+            composeChrome = nil
             // The close button or ⌘W, or Send and Discard closing it: the
             // controller ends the composition (and asks for its save).
             if composer?.closedByToolkit() == true { session?.focusSurfaceClosed(.composer) }
@@ -1209,6 +1240,12 @@ final class Engine {
             }
             return true
         }
+        // A composer the demo opened: characters are typed into To, where
+        // a new message has the keyboard, so screen 05's list can be shown.
+        if let composer, composer.isOpen, let model = composer.model, key.name == nil {
+            model.to += key.character ?? ""
+            return true
+        }
         if let bar = commandBar, bar.isOpen, let field = searchField {
             switch key.name {
             case "return": bar.runHighlighted()
@@ -1337,6 +1374,10 @@ final class Engine {
             }
         }
         switch id {
+        case Intercepted.back where keyWindow.current == .compose && composer?.model?.suggesting != nil:
+            // The recipient list first: Escape takes it down and leaves the
+            // words; the next Escape closes the composer.
+            composer?.model?.dismissSuggestions()
         case Intercepted.back where keyWindow.current == .message && messageWindow?.showingSource == true:
             // Esc from the raw source returns to the message (M4); the
             // controller does not know the source is up.
@@ -1398,6 +1439,8 @@ final class Engine {
                let composer = composer?.model,
                ComposeCommands.run(id, on: composer, through: session)
             {
+                // ⌘↩ queued it: the window closes, as Send's button closes it.
+                if composer.sent { secondary.close(.composer) }
                 return true
             }
             session?.invoke(id)

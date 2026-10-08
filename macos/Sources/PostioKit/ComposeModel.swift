@@ -1,6 +1,11 @@
 import Foundation
 import PostioFFI
 
+/// A recipient field, for completion.
+public enum RecipientField: Equatable, Sendable {
+    case to, cc, bcc
+}
+
 /// One message being written (#1272, canvas screen 26).
 ///
 /// Holds the draft the boundary handed over and whatever has been typed
@@ -65,6 +70,111 @@ public final class ComposeModel: Identifiable {
     /// It has gone to the Outbox, or been thrown away: nothing left to save.
     func markSent() { sent = true }
 
+    // MARK: the frame (T079; screens 05 and 06)
+
+    /// What the title says this is: "New message", "Reply to all".
+    public var heading: String { composerTitle(kind: draft.kind) }
+
+    /// "Draft saved locally 16:12", once a save has landed; nothing before.
+    public var savedWords: String? {
+        savedAt.map { draftSavedWords(at: Int64($0.timeIntervalSince1970 * 1000)) }
+    }
+
+    /// What will be sent, counted: "Plain text · 58 words".
+    public var summary: String { draftSummary(draft: edited) }
+
+    /// "Remind if no reply": when, in epoch milliseconds, or `nil` for none.
+    /// Saved and sent with the draft.
+    public var remindAt: Int64?
+
+    /// The footer's verb: "Remind if no reply", and its day once one is
+    /// chosen ("Remind if no reply · Tue 29 Sep").
+    public var remindWords: String { remindMeaning(at: remindAt) }
+
+    /// The quote a reply opened with, folded under what is written (screen
+    /// 06): `body` holds only what is written above it, and `edited` puts
+    /// it back, so what is saved and sent still quotes. `nil` once shown,
+    /// and for a draft that ends in no quote.
+    public private(set) var quoteFold: QuoteFoldFfi?
+
+    /// Unfold the quote into the body, where it can be edited.
+    public func showQuote() {
+        guard let fold = quoteFold else { return }
+        body += fold.quote
+        quoteFold = nil
+    }
+
+    /// The account it is written from, and its address as the From line
+    /// says it.
+    public private(set) var account: Int64
+    public private(set) var from: String
+
+    /// The From picker: write from `account` instead.
+    public func choose(account: AccountFfi) {
+        self.account = account.id
+        from = account.displayName.isEmpty
+            ? account.address : "\(account.displayName) <\(account.address)>"
+    }
+
+    // MARK: recipient completion
+
+    /// What completes the words in `suggesting`, best first; empty until a
+    /// recipient is typed (screen 06: no contact list until then).
+    public private(set) var suggestions: [RecipientSuggestionFfi] = []
+    /// The recipient field the list hangs under.
+    public private(set) var suggesting: RecipientField?
+    /// The row ↑↓ are on.
+    public private(set) var highlighted = 0
+
+    /// The text of `field` now.
+    public func text(of field: RecipientField) -> String {
+        switch field {
+        case .to: return to
+        case .cc: return cc
+        case .bcc: return bcc
+        }
+    }
+
+    private func set(_ field: RecipientField, to text: String) {
+        switch field {
+        case .to: to = text
+        case .cc: cc = text
+        case .bcc: bcc = text
+        }
+    }
+
+    /// The engine's answer for `text` in `field`: shown while the field
+    /// still holds those words, dropped otherwise.
+    public func suggest(_ answer: [RecipientSuggestionFfi], in field: RecipientField, for text: String) {
+        guard self.text(of: field) == text else { return }
+        suggestions = answer
+        suggesting = answer.isEmpty ? nil : field
+        highlighted = 0
+    }
+
+    /// ↑ or ↓ in the list.
+    public func moveSuggestion(by step: Int) {
+        guard !suggestions.isEmpty else { return }
+        highlighted = min(max(highlighted + step, 0), suggestions.count - 1)
+    }
+
+    /// Return or Tab: the highlighted suggestion becomes the field's whole
+    /// text, as the engine wrote it. `false` with nothing to accept.
+    @discardableResult
+    public func acceptSuggestion() -> Bool {
+        guard let field = suggesting, suggestions.indices.contains(highlighted) else { return false }
+        set(field, to: suggestions[highlighted].accepted)
+        dismissSuggestions()
+        return true
+    }
+
+    /// Esc, or the field left: the list goes, the words stay.
+    public func dismissSuggestions() {
+        suggestions = []
+        suggesting = nil
+        highlighted = 0
+    }
+
     public init(id: Int64, draft: DraftFfi) {
         self.id = id
         self.draft = draft
@@ -78,9 +188,20 @@ public final class ComposeModel: Identifiable {
         // everyone else.
         showsCopyFields = !draft.cc.isEmpty || !draft.bcc.isEmpty
         subject = draft.subject
-        body = draft.body
         bodyHtml = draft.bodyHtml
         rich = draft.rich
+        account = draft.account
+        from = draft.from
+        remindAt = draft.remindAt
+        // A plain reply's quote folds under what is written (screen 06). A
+        // rich draft keeps its document whole: the editing surface is the
+        // one `editor.js` shared with GTK, and is not cut here.
+        if !draft.rich, let fold = foldQuote(body: draft.body) {
+            body = fold.written
+            quoteFold = fold
+        } else {
+            body = draft.body
+        }
     }
 
     /// The window's title: the subject, or what an unnamed draft is called.
@@ -213,6 +334,10 @@ public final class ComposeModel: Identifiable {
     public private(set) var imageRequest: ImageRequest?
     private var imagesAsked = 0
 
+    /// Whether the reminder's times are being asked for (⌘H): a command
+    /// cannot put a list up, so the view does.
+    public var wantsRemind = false
+
     /// Whether the schedule-send picker is being asked for.
     ///
     /// The four times it offers are the boundary's — `schedulePresets()` —
@@ -342,9 +467,12 @@ public final class ComposeModel: Identifiable {
         edited.cc = cc
         edited.bcc = bcc
         edited.subject = subject
-        edited.body = body
+        edited.body = body + (quoteFold?.quote ?? "")
         edited.bodyHtml = bodyHtml
         edited.rich = rich
+        edited.account = account
+        edited.from = from
+        edited.remindAt = remindAt
         return edited
     }
 
@@ -417,6 +545,8 @@ public final class ComposeModel: Identifiable {
         draft.bodyHtml = saved.bodyHtml
         draft.rich = saved.rich
         draft.remindAt = saved.remindAt
+        draft.account = saved.account
+        draft.from = saved.from
         status = nil
         return true
     }
@@ -551,7 +681,9 @@ public final class ComposeModel: Identifiable {
         guard let session, let path = handedOffTo else { return }
         do {
             draft = try session.endHandoff(of: edited, at: path)
+            // The other editor had the whole body, quote and all.
             body = draft.body
+            quoteFold = nil
             handedOffTo = nil
             status = nil
         } catch {

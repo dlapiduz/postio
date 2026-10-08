@@ -75,7 +75,9 @@ fn show(_session: &Session, _state: &str) -> bool {
     false
 }
 
-/// `seed`, or `seed:screen` -- a store with the row screen 04 opens
+/// `seed`, or `seed:screen` -- `05`/`06` the composer's people and the
+/// Harbor thread to reply to (`postio_demo::compose_demo`); a store with
+/// the row screen 04 opens
 /// refiled as one of the handoff's HTML bodies (`postio_demo::treatment_demo`:
 /// `27` the newsletter on paper, `28` the work mail in app colours), which
 /// the message window's screens are photographed over; or a file that
@@ -93,6 +95,11 @@ fn open(name: &str) -> Result<Arc<Session>, SessionError> {
     let (database, account) = crate::session::blocking(postio_demo::seeded(seed));
     if let Some(screen @ ("27" | "28" | "29" | "30" | "31")) = screen {
         crate::session::blocking(postio_demo::treatment_demo(&database, account, screen));
+    }
+    // Screens 05 and 06: the people To completes to, and the Harbor
+    // thread's recipients and body, as GTK's `shot` adds them.
+    if matches!(screen, Some("05" | "06")) {
+        crate::session::blocking(postio_demo::compose_demo(&database, account));
     }
     let (config, vault) = demo_config(screen).map_err(|error| SessionError::StoreUnavailable {
         message: format!("The demo's vault could not be made: {error}"),
@@ -150,6 +157,24 @@ fn open(_seed: &str) -> Result<Arc<Session>, SessionError> {
 #[cfg(all(test, feature = "demo"))]
 mod tests {
     use super::*;
+
+    /// Screen 05's To completes to the people `compose_demo` adds, from
+    /// the shared rule's four letters (`MIN_COMPLETION_PREFIX`).
+    #[test]
+    fn screen_05s_people_complete_the_to_field() {
+        let session = Session::open_demo("small:05".to_owned()).expect("the demo opens");
+        let draft = crate::session::blocking(session.new_draft()).expect("a draft");
+        let said: Vec<String> = session
+            .recipient_suggestions(draft.account, "grac".to_owned(), 8, Vec::new())
+            .into_iter()
+            .map(|suggestion| suggestion.label)
+            .collect();
+        assert!(
+            said.iter().any(|label| label.contains("grace@example.org")),
+            "{said:?}"
+        );
+        session.shutdown();
+    }
 
     #[test]
     fn the_small_demo_opens_on_focus_s_inbox() {
