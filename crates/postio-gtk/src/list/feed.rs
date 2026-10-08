@@ -1,31 +1,28 @@
 //! Filling Focus's list from the store's host, and keeping it in step.
 //!
-//! The list asks for the pages it is about to draw ([`PageSource`]), and this
-//! reads them through the client -- the one way Focus reaches mail (ADR 0041)
-//! -- and hands them back on the main loop. The client's in-process
-//! transport answers through a oneshot, so its futures are awaited on GTK's
-//! own loop and the loop is never inside a query.
+//! The rules are the controller's (`postio_focus`, ADR 0045): what opening a
+//! place reads, how a page is shaped and spliced, what an engine event
+//! re-reads. This is their GTK driver. It hands the controller what happened,
+//! runs each request it asks for through `postio_focus::perform` on GTK's own
+//! loop -- the client's in-process transport answers through a oneshot, so
+//! the loop is never inside a query -- and applies what comes back to the
+//! list model.
 //!
-//! What an event does to the list is `postio_ui::paging`'s one policy: Focus's
-//! inbox never inserts an arrival at the top, because Focus may hold it for a
-//! digest or file it away first, and only a re-read of what is on screen can
-//! say which (`ListScope::reaction`).
+//! Staleness is the model's: a page is asked for under the model's
+//! generation, and the answer is delivered against it.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk::glib;
 use postio_client::Client;
+use postio_config::paths::Platform;
 use postio_core::Event;
-use postio_model::listing::{ListPage, MailStore, PageRequest};
-use postio_model::mailbox::MailboxRole;
-use postio_model::{FocusScope, ListScope};
-use postio_ui::paging::{Fetch, Paging, Plan};
-use postio_ui::surfaced::Spliced;
+use postio_focus::{Effect, FocusController, Input, Intent, Policy, Request, Ticket};
+use postio_model::ListScope;
 use postio_widgets::list_model::{PageSource, WindowedModel};
 
 use super::model::FocusList;
-use postio_ui::focus_list::{self, FocusRow};
 
 /// The list, and where its pages come from.
 #[derive(Clone)]
@@ -36,27 +33,12 @@ pub struct Feed {
 struct Inner {
     client: Client,
     list: FocusList,
-    paging: RefCell<Paging>,
-    /// The row count the store last gave for the scope in view.
-    total: Cell<u32>,
-    /// Every page asked of the store, in order: "only the visible window is
-    /// read" (US1 scenario 7) is a question about which pages.
-    pages_asked: RefCell<Vec<u32>>,
-    /// Whether the first page of the scope in view has landed.
-    landed: Cell<bool>,
-    /// Whether the scope in view was opened and its rows have not yet been
-    /// shown to a cursor: the window puts the cursor on the first row once
-    /// (`take_opened`).
-    opened: Cell<bool>,
+    /// Focus's rules for the list. Borrowed only to hand it something and
+    /// take its effects: never while they are applied, because applying them
+    /// calls the model, and the model calls back.
+    focus: RefCell<FocusController>,
     /// Called when a page lands or the list is re-read.
     on_filled: RefCell<Vec<Box<dyn Fn()>>>,
-    /// The rows Focus's inbox surfaces among its conversations, in the
-    /// order the host gave them: fired reminders (T095).
-    surfaced: RefCell<Vec<FocusRow>>,
-    /// Where they sit.
-    spliced: RefCell<Spliced>,
-    /// How many conversations the store holds, without the surfaced rows.
-    stored: Cell<u32>,
 }
 
 /// The `PageSource` the model holds: a handle on the feed, so a request can
@@ -65,11 +47,13 @@ struct Source(Rc<Inner>);
 
 impl PageSource for Source {
     fn total(&self) -> u32 {
-        self.0.total.get()
+        self.0.focus.borrow().list_total()
     }
 
     fn request(&self, page: u32) {
-        Rc::clone(&self.0).request(page);
+        let stamp = self.0.list.generation();
+        let effects = self.0.focus.borrow_mut().page_wanted(page, stamp);
+        Rc::clone(&self.0).apply(effects);
     }
 }
 
@@ -80,15 +64,10 @@ impl Feed {
             inner: Rc::new(Inner {
                 client,
                 list: FocusList::default(),
-                paging: RefCell::new(Paging::default()),
-                total: Cell::new(0),
-                pages_asked: RefCell::new(Vec::new()),
-                landed: Cell::new(false),
-                opened: Cell::new(false),
+                focus: RefCell::new(FocusController::new(Policy::for_platform(
+                    Platform::Freedesktop,
+                ))),
                 on_filled: RefCell::new(Vec::new()),
-                surfaced: RefCell::default(),
-                spliced: RefCell::default(),
-                stored: Cell::new(0),
             }),
         }
     }
@@ -100,36 +79,24 @@ impl Feed {
 
     /// The scope in view, once one is open.
     pub fn scope(&self) -> Option<ListScope> {
-        self.inner.paging.borrow().scope()
+        self.inner.focus.borrow().scope()
     }
 
     /// How many rows the scope in view has, as the store last said.
     pub fn total(&self) -> u32 {
-        self.inner.total.get()
+        self.inner.focus.borrow().list_total()
     }
 
     /// The cursor's `index` among the messages of a list of `total` rows,
     /// and how many messages it holds: digests are not counted, matching
     /// the strip, which counts what the store holds.
     pub fn message_place(&self, index: u32, total: u32) -> (u32, u32) {
-        let digests: Vec<usize> = self
-            .inner
-            .surfaced
-            .borrow()
-            .iter()
-            .enumerate()
-            .filter(|(_, row)| matches!(row, FocusRow::Digest(_)))
-            .map(|(which, _)| which)
-            .collect();
-        self.inner
-            .spliced
-            .borrow()
-            .message_place(&digests, index, total)
+        self.inner.focus.borrow().message_place(index, total)
     }
 
     /// Every page this feed has asked the store for, in order.
     pub fn pages_asked(&self) -> Vec<u32> {
-        self.inner.pages_asked.borrow().clone()
+        self.inner.focus.borrow().pages_asked().to_vec()
     }
 
     /// Call `handler` each time rows land: a first page, a re-read.
@@ -142,232 +109,103 @@ impl Feed {
     /// The rows already on screen stay until the new scope's first page
     /// lands (`replace_source`), so a change of place never flashes empty.
     pub fn open(&self, scope: ListScope) {
-        self.inner.paging.borrow_mut().open(scope);
-        self.inner.landed.set(false);
-        self.inner.opened.set(true);
-        let inner = Rc::clone(&self.inner);
-        glib::spawn_future_local(async move {
-            // Which folders are inboxes: what lets Focus's inbox ignore mail
-            // moving anywhere else rather than re-read on every arrival.
-            let mut folders = Vec::new();
-            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
-            // answers on its own runtime (ADR 0041).
-            if let Ok(accounts) = inner.client.accounts().await {
-                for account in accounts.iter().filter(|account| account.enabled) {
-                    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
-                    // answers on its own runtime (ADR 0041).
-                    if let Ok(mailboxes) = inner.client.mailboxes(account.id).await {
-                        folders.extend(
-                            mailboxes
-                                .iter()
-                                .map(|mailbox| (mailbox.id, mailbox.role == MailboxRole::Inbox)),
-                        );
-                    }
-                }
-            }
-            inner.paging.borrow_mut().set_folders(folders);
-            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
-            // answers on its own runtime (ADR 0041).
-            let total = match inner.client.list_count(scope).await {
-                Ok(total) => total,
-                Err(error) => {
-                    tracing::warn!(%error, "Focus could not count its list: {error}");
-                    0
-                }
-            };
-            // POSTIO-GLIB-SAFE: read_surfaced awaits only a client call, a
-            // oneshot receive (ADR 0041).
-            Rc::clone(&inner).read_surfaced().await;
-            if inner.paging.borrow().scope() != Some(scope) {
-                // Another place was opened while this one was being counted.
-                return;
-            }
-            inner.stored.set(total);
-            inner.total.set(inner.spliced.borrow().total(total));
-            let source: Rc<dyn PageSource> = Rc::new(Source(Rc::clone(&inner)));
-            inner.list.replace_source(source, false);
-            // Asked for here rather than left to the view: rows already on
-            // screen stay until this page lands and the list changes over,
-            // and nothing else would ask for it (the feed's rule).
-            // An empty scope's first page is empty, which is the change-over
-            // to nothing.
-            Rc::clone(&inner).request(0);
-        });
+        let effects = self.inner.focus.borrow_mut().open(scope);
+        Rc::clone(&self.inner).apply(effects);
     }
 
     /// Whether a scope was opened and its first page has landed since this
     /// was last asked: true once per opening, so the cursor goes to the new
     /// list's first row once and a later re-read leaves it where it is.
     pub fn take_opened(&self) -> bool {
-        self.inner.landed.get() && self.inner.opened.replace(false)
+        self.inner.focus.borrow_mut().take_opened()
     }
 
     /// Whether the first page of the scope in view has landed: a list still
     /// waiting for it is loading, not empty.
     pub fn has_landed(&self) -> bool {
-        self.inner.landed.get()
+        self.inner.focus.borrow().has_landed()
     }
 
     /// Whether `mailbox` is one of the inboxes Focus's own inbox is made of.
     pub fn is_inbox(&self, mailbox: postio_model::MailboxId) -> bool {
-        self.inner.paging.borrow().is_inbox(mailbox)
+        self.inner.focus.borrow().is_inbox(mailbox)
     }
 
-    /// Bring the list into step with `event`, by `postio_ui::paging`'s table.
+    /// Bring the list into step with `event`, by the controller's rules.
     pub fn handle(&self, event: &Event) {
-        if let Event::MessagesRemoved {
-            mailbox, messages, ..
-        } = event
-        {
-            // Said before the list re-reads, so the store's own caches have
-            // already let go of what left.
-            self.inner.client.note_removed(*mailbox, messages.clone());
-        }
-        let surfaced_moved = matches!(event, Event::SurfacedChanged);
-        let plan = self.inner.paging.borrow().plan(event);
-        match plan {
-            Plan::Ignore if !surfaced_moved => {}
-            _ if self.inner.splices() => {
-                // What is surfaced may have moved with the mail -- an
-                // archived reminder's row goes with its conversation -- so
-                // it is read again before the pages are.
-                let inner = Rc::clone(&self.inner);
-                glib::spawn_future_local(async move {
-                    // POSTIO-GLIB-SAFE: read_surfaced awaits only a client
-                    // call, a oneshot receive (ADR 0041).
-                    Rc::clone(&inner).read_surfaced().await;
-                    inner.list.refresh();
-                });
-            }
-            Plan::Ignore => {}
-            Plan::InsertAtTop(_) | Plan::Refetch(_) | Plan::Reload => self.inner.list.refresh(),
-        }
+        let effects = self
+            .inner
+            .focus
+            .borrow_mut()
+            .handle(Input::Event(event.clone()));
+        Rc::clone(&self.inner).apply(effects);
     }
 }
 
 impl Inner {
-    /// Whether the scope in view has rows spliced among its conversations:
-    /// Focus's own inbox.
-    fn splices(&self) -> bool {
-        self.paging.borrow().scope() == Some(ListScope::Focus(FocusScope::Inbox))
-    }
-
-    /// Read the surfaced rows, when the scope in view has them, and place
-    /// them; none otherwise.
-    async fn read_surfaced(self: Rc<Self>) {
-        let mut rows = Vec::new();
-        let mut positions = Vec::new();
-        if self.splices() {
-            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
-            // answers on its own runtime (ADR 0041).
-            let read = self.client.surfaced().await;
-            match read {
-                Ok(surfaced) => {
-                    for row in &surfaced {
-                        if let Some(focus_row) = FocusRow::surfaced(row) {
-                            positions.push(row.position());
-                            rows.push(focus_row);
-                        }
-                    }
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "Focus could not read its surfaced rows: {error}");
-                }
+    /// Do what the controller said, in order.
+    fn apply(self: Rc<Self>, effects: Vec<Effect>) {
+        for effect in effects {
+            match effect {
+                Effect::Show(intent) => Rc::clone(&self).show(intent),
+                Effect::Ask(ticket, request) => Rc::clone(&self).ask(ticket, request),
+                // The feed sets no timers.
+                _ => {}
             }
         }
-        self.spliced.replace(Spliced::new(&positions));
-        self.surfaced.replace(rows);
-        self.total
-            .set(self.spliced.borrow().total(self.stored.get()));
     }
 
-    /// Ask the store for `page` of the scope in view, and deliver the answer
-    /// when it lands.
-    fn request(self: Rc<Self>, page: u32) {
-        let Some(Fetch::Scope(request)) = self.paging.borrow().fetch_for(page) else {
-            self.list.give_up(self.list.generation(), page);
-            return;
-        };
-        // The page's positions, in the store's terms: which of them are
-        // surfaced rows, and which run of conversations fills the rest.
-        // The store's total may have moved since it was last read, so the
-        // run asked for assumes conversations fill every position that is
-        // not a surfaced row, and the answer's own total places them.
-        let (start, count) = (request.offset, request.limit);
-        let asked = self.spliced.borrow().page(start, count, u32::MAX);
-        let surfaced = self.surfaced.borrow().clone();
-        self.list.note_pending(page);
-        self.pages_asked.borrow_mut().push(page);
-        let generation = self.list.generation();
-        let client = self.client.clone();
-        let wanted = PageRequest {
-            scope: request.scope,
-            offset: asked.offset,
-            limit: asked.limit.max(1),
+    fn show(self: Rc<Self>, intent: Intent) {
+        match intent {
+            Intent::ReplaceSource { .. } => {
+                let source: Rc<dyn PageSource> = Rc::new(Source(Rc::clone(&self)));
+                self.list.replace_source(source, false);
+                // Asked for here rather than left to the view: rows already
+                // on screen stay until this page lands and the list changes
+                // over, and nothing else would ask for it. An empty scope's
+                // first page is empty, which is the change-over to nothing.
+                let stamp = self.list.generation();
+                let effects = self.focus.borrow_mut().page_wanted(0, stamp);
+                self.apply(effects);
+            }
+            Intent::PagePending { page, .. } => {
+                self.list.note_pending(page);
+            }
+            Intent::DeliverPage {
+                stamp,
+                page,
+                total,
+                rows,
+            } => self.list.deliver_page(stamp, total, page, rows),
+            Intent::AbandonPage { stamp, page } => self.list.abandon_page(stamp, page),
+            Intent::GiveUp { stamp, page } => self.list.give_up(stamp, page),
+            Intent::RefreshList => self.list.refresh(),
+            Intent::Filled => {
+                for handler in self.on_filled.borrow().iter() {
+                    handler();
+                }
+            }
+            // Not the feed's: the window draws the rest.
+            _ => {}
+        }
+    }
+
+    fn ask(self: Rc<Self>, ticket: Ticket, request: Request) {
+        // A post is said now, before anything after it is asked.
+        let request = match postio_focus::perform_now(&self.client, request) {
+            Ok(reply) => {
+                let effects = self.focus.borrow_mut().handle(Input::Reply(ticket, reply));
+                self.apply(effects);
+                return;
+            }
+            Err(request) => request,
         };
         glib::spawn_future_local(async move {
-            // POSTIO-GLIB-SAFE: the client's in-process transport runs the
-            // read on the host's runtime and answers through a oneshot, which
-            // any executor can await (postio-host's `Local`).
-            match client.list_page(wanted).await {
-                Ok(ListPage::Threads(answer)) => {
-                    // The page's label pills, for every row at once: one
-                    // round trip, one statement at the store (T043).
-                    let threads = focus_list::label_threads(&answer.rows);
-                    // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
-                    // answers on its own runtime (ADR 0041).
-                    let labelled = match client.thread_labels(threads).await {
-                        Ok(labelled) => labelled,
-                        Err(error) => {
-                            tracing::warn!(page, %error, "Focus could not read a page's labels");
-                            Vec::new()
-                        }
-                    };
-                    let stored = focus_list::conversations(answer.rows, labelled);
-                    let placed = self.spliced.borrow().page(start, count, answer.total);
-                    let rows = focus_list::place(&placed.slots, &surfaced, &stored);
-                    let total = self.spliced.borrow().total(answer.total);
-                    if generation == self.list.generation() {
-                        self.stored.set(answer.total);
-                        self.total.set(total);
-                    }
-                    self.list.deliver_page(generation, total, page, rows);
-                    self.landed.set(true);
-                    self.filled();
-                }
-                Ok(ListPage::Messages(answer)) => {
-                    // Drafts lists messages, not conversations (a draft is
-                    // edited, not read in a thread): each is a row of its
-                    // own, with no label pills and nothing spliced in.
-                    let rows: Vec<FocusRow> = answer
-                        .rows
-                        .into_iter()
-                        .map(|message| FocusRow::conversation(focus_list::lone(message)))
-                        .collect();
-                    if generation == self.list.generation() {
-                        self.stored.set(answer.total);
-                        self.total.set(answer.total);
-                    }
-                    self.list.deliver_page(generation, answer.total, page, rows);
-                    self.landed.set(true);
-                    self.filled();
-                }
-                Err(error) => {
-                    tracing::warn!(page, %error, "Focus could not read a page: {error}");
-                    if self.paging.borrow_mut().retry(page) {
-                        self.list.abandon_page(generation, page);
-                        Rc::clone(&self).request(page);
-                    } else {
-                        self.list.give_up(generation, page);
-                    }
-                }
-            }
+            // POSTIO-GLIB-SAFE: perform awaits only client calls, each a
+            // oneshot receive; the host answers on its own runtime (ADR 0041).
+            let reply = postio_focus::perform(&self.client, request).await;
+            let effects = self.focus.borrow_mut().handle(Input::Reply(ticket, reply));
+            self.apply(effects);
         });
-    }
-
-    fn filled(&self) {
-        for handler in self.on_filled.borrow().iter() {
-            handler();
-        }
     }
 }
