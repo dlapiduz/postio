@@ -387,16 +387,6 @@ public final class PostioSession {
         inner.isAvailable(id: id, context: context)
     }
 
-    /// The palette's rows for `query`, best first.
-    ///
-    /// Already ranked and already filtered to what `context` can run.
-    /// **Do not sort or filter these again**: the ranking is
-    /// `postio_ui::palette`'s, and a second one means the same query offers
-    /// different things on each platform.
-    public func paletteEntries(_ query: String, in context: UiContext) -> [PaletteEntryFfi] {
-        inner.paletteEntries(query: query, context: context)
-    }
-
     /// Every command reachable in `context`, with the binding in force.
     ///
     /// The same list the palette reads, unfiltered — one list read two ways.
@@ -416,16 +406,6 @@ public final class PostioSession {
     public func cheatSheetSections(in context: UiContext) -> [CheatSectionFfi] {
         inner.cheatSheetSections(context: context)
     }
-
-    /// `#` in the search box: folders matching `query`, best first, and
-    /// what to say when none do.
-    public func finderFolders(_ query: String) -> FinderAnswerFfi { inner.finderFolders(query: query) }
-
-    /// `@` in the search box: correspondents matching `query`.
-    public func finderContacts(_ query: String) -> FinderAnswerFfi { inner.finderContacts(query: query) }
-
-    /// `+` in the search box: labels matching `query`.
-    public func finderLabels(_ query: String) -> FinderAnswerFfi { inner.finderLabels(query: query) }
 
     /// Put `label` on the selection, or on the message under the cursor when
     /// nothing is marked.

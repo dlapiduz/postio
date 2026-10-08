@@ -95,6 +95,7 @@ final class Engine {
             messageWindow = MessageWindowModel(source: session) { [weak session] more, finding in
                 session?.focusReaderState(moreOpen: more, finding: finding)
             }
+            makeBar(session)
             // The toolbar was built before there were bindings to spell.
             keycapsChanged?()
             state = .open
@@ -203,8 +204,10 @@ final class Engine {
     let keyWindow = KeyWindowTracker()
 
     /// Which surface the resolver answers for inside the main window: the
-    /// list, or the search field while it has the keyboard.
-    var mainContext: UiContext { showingSearch || finding != nil ? .search : .list }
+    /// list, or the command bar while it is up. The controller answers with
+    /// its own context while a surface it knows of is over the list; this
+    /// is what a menu greys against.
+    var mainContext: UiContext { commandBar?.isOpen == true ? .search : .list }
 
     /// Which surface the resolver should answer for. The window decides
     /// first; see `KeyboardContext`.
@@ -285,7 +288,9 @@ final class Engine {
         // On while the controller's `!` heading stands: the toggle is the
         // controller's (`toggle_has_action`), and its heading is how it says
         // so.
-        return HeaderStripWords(strip: focusStrip, hasActionOn: focus.heading != nil) {
+        return HeaderStripWords(
+            strip: focusStrip, place: places?.placeName ?? "Inbox", hasActionOn: focus.heading != nil
+        ) {
             [weak self] command in self?.session?.binding(for: command)
         }
     }
@@ -480,99 +485,122 @@ final class Engine {
         )
     }
 
-    /// The toolbar's search field, as the engine reaches it: its text, the
-    /// keyboard, and its keycap's spelling. The field is AppKit's, so the
-    /// toolbar hands these over when it is installed.
-    var fieldText: ((String) -> Void)?
-    var focusField: (() -> Void)?
+    /// The keycap in the toolbar's search field, spelled again when the
+    /// bindings change. The toolbar hands this over when it is installed.
     var keycapsChanged: (() -> Void)?
 
-    /// Whether the search field has the keyboard. Moves the key context with
-    /// it: a key typed there must not resolve as the list.
-    var showingSearch = false
+    // MARK: the command bar and the folders popover (T085, T086)
 
-    /// The question the search field is asking -- `>`, `#`, `@` or `+` and
-    /// what follows it -- or `nil` while it is a search (`FinderBox`).
-    private(set) var finding: FinderBox.Asking?
-    /// Which row of the answer the keyboard is on.
-    private(set) var finderBox = FinderBox()
-    /// The rows for what the field is asking, and what to say when there
-    /// are none. Read once per change of the text, not per draw.
-    private(set) var finderAnswer = (rows: [FinderRow](), empty: "")
+    /// The command bar's state, as the controller's intents leave it.
+    private(set) var commandBar: CommandBarModel?
+    /// The folders popover's state, and the place the list shows.
+    private(set) var places: PlacesModel?
+    /// The panel the bar is drawn in, under the toolbar's field.
+    @ObservationIgnored private var barPanel: CommandBarPanel?
+    /// The popover the places are listed in, under Inbox ▾.
+    @ObservationIgnored private var placesPopover: PlacesPopover?
+    /// The toolbar's search field: the bar's, which keeps the keyboard.
+    @ObservationIgnored weak var searchField: BarSearchField?
+    /// The strip's Inbox ▾, which the popover hangs from.
+    @ObservationIgnored weak var placesAnchor: NSView?
 
-    /// Put `text` in the search field.
-    private func askField(_ text: String) {
-        fieldText?(text)
+    private func makeBar(_ session: PostioSession) {
+        let bar = CommandBarModel(engine: session)
+        commandBar = bar
+        barPanel = CommandBarPanel(model: bar) { [weak session] in
+            KeyCapSpelling.cap(session?.binding(for: BarCommand.saveSearch))
+        }
+        let places = PlacesModel(engine: session)
+        self.places = places
+        placesPopover = PlacesPopover(model: places) { [weak self] in self?.placesClosed() }
     }
 
-    /// The field's report: what it is asking, or `nil` when it is a search.
-    func findingChanged(_ asking: FinderBox.Asking?) {
-        guard asking != finding else { return }
-        finding = asking
-        finderBox.queryChanged()
-        finderAnswer = answer(for: asking)
-    }
-
-    private func answer(for asking: FinderBox.Asking?) -> (rows: [FinderRow], empty: String) {
-        guard let asking, let session else { return ([], "") }
-        switch asking.mode {
-        case .command:
-            let rows = session.paletteEntries(asking.text, in: .list).map {
-                FinderRow(id: $0.id, title: $0.title, detail: nil, positions: $0.positions, binding: $0.binding)
+    /// What the controller said about the bar.
+    private func apply(_ change: CommandBarModel.Change) {
+        switch change {
+        case let .open(text, selection):
+            guard let field = searchField else { return }
+            field.stringValue = text
+            keycapsChanged?()
+            barPanel?.show(under: field)
+            if field.currentEditor() == nil {
+                field.window?.makeFirstResponder(field)
             }
-            return (rows, "No command matches “\(asking.text)”")
-        case .folder:
-            return rows(of: session.finderFolders(asking.text))
-        case .contact:
-            return rows(of: session.finderContacts(asking.text))
-        case .label:
-            return rows(of: session.finderLabels(asking.text))
+            field.currentEditor()?.selectedRange = selection
+        case .lines:
+            barPanel?.relayout()
+        case .close:
+            barPanel?.hide()
+            searchField?.stringValue = ""
+            keycapsChanged?()
         }
     }
 
-    private func rows(of answer: FinderAnswerFfi) -> (rows: [FinderRow], empty: String) {
-        let rows = answer.hits.map {
-            FinderRow(
-                id: $0.query ?? String($0.id), title: $0.title, detail: $0.detail,
-                positions: $0.positions, binding: nil)
+    /// The toolbar's field took the keyboard. A click into it opens the
+    /// bar, as `/` does; `/` and ⌘K focus it once the bar is up already.
+    func searchFieldFocused() {
+        guard let bar = commandBar, !bar.isOpen else { return }
+        run(BarCommand.search)
+    }
+
+    /// The field's words changed.
+    func searchFieldTyped(_ text: String) {
+        commandBar?.typed(text)
+    }
+
+    /// The field gave up the keyboard -- a click outside, Tab past it. If
+    /// the bar was up, that closed it, and the controller is told.
+    func searchFieldLeft() {
+        guard let bar = commandBar, bar.closedByToolkit() else { return }
+        barPanel?.hide()
+        searchField?.stringValue = ""
+        keycapsChanged?()
+        session?.focusSurfaceClosed(.bar)
+    }
+
+    /// A key the field's editor would act on, while the bar is up: the
+    /// arrows walk the lines, Return runs one, Tab steps into the chips
+    /// (or is the toolkit's), Escape is Back. `false` leaves it to AppKit.
+    func searchFieldCommand(_ selector: Selector) -> Bool {
+        guard let bar = commandBar, bar.isOpen else { return false }
+        switch selector {
+        case #selector(NSResponder.moveUp(_:)):
+            bar.move(by: -1)
+        case #selector(NSResponder.moveDown(_:)):
+            bar.move(by: 1)
+        case #selector(NSResponder.insertNewline(_:)):
+            bar.runHighlighted()
+        case #selector(NSResponder.insertTab(_:)):
+            return bar.tab()
+        case #selector(NSResponder.cancelOperation(_:)):
+            bar.back()
+        default:
+            return false
         }
-        return (rows, answer.empty)
+        return true
     }
 
-    /// ↑ or ↓ in the field.
-    func moveFinder(by delta: Int) {
-        finderBox.move(by: delta, among: finderAnswer.rows.count)
-    }
-
-    /// Return in the field: the highlighted row.
-    func pickHighlighted() {
-        pick(finderBox.highlighted)
-    }
-
-    /// A row chosen, by Return or by a click.
-    func pick(_ index: Int) {
-        guard let asking = finding, index < finderAnswer.rows.count, let session else { return }
-        let row = finderAnswer.rows[index]
-        leaveFinder()
-        dismissOverlays()
-        switch asking.mode {
-        case .command:
-            run(row.id)
-        case .label:
-            if let id = Int64(row.id) { session.applyLabel(id) }
-        case .folder, .contact:
-            // Focus's places and a correspondent's mail open in the command
-            // bar's lists, which come with it (FR-013). A pick that appeared
-            // to work and showed nothing would be worse than a beep.
-            NSSound.beep()
+    /// What the controller said about the places.
+    private func apply(_ change: PlacesModel.Change) {
+        switch change {
+        case .open:
+            placesPopover?.anchor = placesAnchor
+            placesPopover?.show()
+        case .entries:
+            placesPopover?.reload()
+        case .place:
+            // The strip reads `places.placeName`.
+            break
         }
     }
 
-    private func leaveFinder() {
-        guard finding != nil else { return }
-        finding = nil
-        finderAnswer = ([], "")
-        askField("")
+    /// The popover closed: the keyboard goes back to the list, unless what
+    /// was opened from it is the bar (a label is its search), which holds
+    /// the keyboard now.
+    private func placesClosed() {
+        guard commandBar?.isOpen != true else { return }
+        guard let table = focusTable?.tableView, let window = table.window else { return }
+        window.makeFirstResponder(table)
     }
 
     // MARK: what Postio says back
@@ -666,6 +694,15 @@ final class Engine {
             notice = Notice.winner(showing: notice, arriving: arriving)
             noticeToken += 1
         }
+        // The command bar and the folders popover (T085, T086).
+        if let change = commandBar?.apply(event) {
+            apply(change)
+            return
+        }
+        if let change = places?.apply(event) {
+            apply(change)
+            return
+        }
         // The controller's intents: the cursor, the selection, `!`'s heading,
         // the toast (T049). The table draws what changed.
         if let change = focus.apply(event) {
@@ -711,6 +748,15 @@ final class Engine {
         case let .syncProgress(_, done, total):
             syncing = done < total
             syncProgress = syncing ? (done, total) : nil
+        case let .focusRun(command):
+            // A line of the bar the controller hands back: Compose,
+            // Settings, a host verb -- run as a menu item would run it.
+            run(command)
+        case .focusShowFiltered:
+            // The Filtered view is a later phase (spec 009 T113).
+            Self.log.info("the Filtered view was asked for; not built on the Mac yet")
+            notice = Notice(kind: .refused, message: "Filtered is not built on the Mac yet.", undoable: false)
+            noticeToken += 1
         case let .connectionChanged(_, state):
             // A connection that has gone means nothing is in flight.
             if isOffline { syncing = false }
@@ -744,11 +790,47 @@ final class Engine {
             for key in keys {
                 try? await Task.sleep(nanoseconds: 400_000_000)
                 guard let self, let session = self.session else { return }
+                if self.replayIntoField(key) { continue }
                 if case let .command(id) = session.key(key, in: .list, typing: false) {
                     self.run(id)
                 }
             }
         }
+    }
+
+    /// A replayed key, given to the bar's or the popover's field while one
+    /// is up, as a press there would be: words typed, the arrows, Return,
+    /// Tab, Escape. `false` for a key the resolver should have.
+    private func replayIntoField(_ key: KeyEvent.Reduced) -> Bool {
+        let plain = !key.modifiers.command && !key.modifiers.control && !key.modifiers.option
+        guard plain else { return false }
+        if let popover = placesPopover, popover.isShown {
+            switch key.name {
+            case "return": popover.openHighlighted()
+            case "down": places?.move(by: 1)
+            case "up": places?.move(by: -1)
+            case "escape": popover.close()
+            case nil: popover.type(key.character ?? "")
+            default: return false
+            }
+            return true
+        }
+        if let bar = commandBar, bar.isOpen, let field = searchField {
+            switch key.name {
+            case "return": bar.runHighlighted()
+            case "down": bar.move(by: 1)
+            case "up": bar.move(by: -1)
+            case "tab": _ = bar.tab()
+            case "escape": run(BarCommand.back)
+            case nil:
+                field.stringValue += key.character ?? ""
+                searchFieldTyped(field.stringValue)
+                keycapsChanged?()
+            default: return false
+            }
+            return true
+        }
+        return false
     }
 
     /// Mail arrived, left, or changed state.
@@ -814,32 +896,18 @@ final class Engine {
     @discardableResult
     func run(_ id: String, on target: Int64? = nil) -> Bool {
         switch id {
-        case Intercepted.palette:
-            // The search field, asked for a command: the commands appear
-            // under it as the name is typed (`FinderBox`).
-            showingCheatSheet = false
-            askField(FinderBox.commands)
-            showingSearch = true
-            focusField?()
         case Intercepted.cheatSheet:
-            leaveFinder()
             showingCheatSheet = true
-        case Intercepted.search:
-            showingSearch = true
-            focusField?()
         case Intercepted.back where keyWindow.current == .message && messageWindow?.showingSource == true:
             // Esc from the raw source returns to the message (M4); the
             // controller does not know the source is up.
             messageWindow?.closeSource()
-        case Intercepted.back where keyWindow.current == .main && finding != nil:
-            // Out of command mode and out of the field: `>` was a question,
-            // and Escape is "never mind".
-            leaveFinder()
-            dismissOverlays()
+        case Intercepted.back where placesPopover?.isShown == true:
+            // The folders popover is not a surface the controller keeps:
+            // Escape closes it here, and the keyboard goes home.
+            placesPopover?.close()
         case Intercepted.back where keyWindow.current == .main && showingCheatSheet:
             showingCheatSheet = false
-        case Intercepted.back where keyWindow.current == .main && showingSearch:
-            dismissOverlays()
         case Intercepted.settings:
             // A request the main window turns into `openWindow(id:)`,
             // because only a view can open a window (#1261).
@@ -936,7 +1004,6 @@ final class Engine {
     /// list.
     func dismissOverlays() {
         showingCheatSheet = false
-        showingSearch = false
         if let table = focusTable?.tableView { table.window?.makeFirstResponder(table) }
     }
 

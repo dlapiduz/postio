@@ -322,4 +322,15 @@ struct CommandBarModelTests {
         #expect(frame.minY >= window.minY + CommandBarGeometry.margin)
         #expect(frame.width == 640)
     }
+
+    @Test func theCommandsTheBarRunsByNameAreRealCommands() {
+        // A literal that no longer matches the registry is a key that does
+        // nothing, with no error anywhere to say why.
+        let known = Set(PostioRegistry.commands.map(\.id))
+        let named = [BarCommand.search, BarCommand.palette, BarCommand.back, BarCommand.saveSearch,
+                     BarCommand.folders] + CommandBarModel.savedCommands
+        for id in named {
+            #expect(known.contains(id), "`\(id)` is not a command")
+        }
+    }
 }

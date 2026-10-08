@@ -24,6 +24,22 @@ public protocol CommandBarEngine: AnyObject {
 
 extension PostioSession: CommandBarEngine {}
 
+/// The registry commands the bar and its field run by name. Not
+/// `Intercepted`: every one goes to `invoke`, and Focus's controller
+/// answers it (`CommandBarModelTests` checks each is a real command).
+public enum BarCommand {
+    /// `/`: the bar on search. A click into the toolbar's field runs it too.
+    public static let search = "search"
+    /// ⌘K: the bar on commands, `>` typed.
+    public static let palette = "command_palette"
+    /// Escape: the bar closes through the controller's Back.
+    public static let back = "back"
+    /// ⌘S: the current query, saved.
+    public static let saveSearch = "save_search"
+    /// `g o`: the folders popover.
+    public static let folders = "go_to_folders"
+}
+
 /// The command bar's state, as the controller's intents leave it
 /// (specs/009-focus-macos T084, T085; screens 07 to 09).
 ///
@@ -164,7 +180,7 @@ public final class CommandBarModel {
 
     /// Escape: the controller's Back, which closes the bar and says so.
     public func back() {
-        engine.invoke("back")
+        engine.invoke(BarCommand.back)
     }
 
     /// `Tab`: whether the bar used it. `false` leaves it to the toolkit.

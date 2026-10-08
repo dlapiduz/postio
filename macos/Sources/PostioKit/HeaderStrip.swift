@@ -56,16 +56,22 @@ public struct HeaderStripWords: Equatable, Sendable {
 ///
 /// Semantic colours only. The accent is the toggle's, and only while it is
 /// on (FR-017); off, it stands on the quaternary fill.
-public struct HeaderStrip: View {
+///
+/// `placeAnchor` is drawn behind Inbox ▾: the AppKit layer puts a view
+/// there for the folders popover to hang from (`PlacesAnchor`), which this
+/// target cannot name.
+public struct HeaderStrip<PlaceAnchor: View>: View {
     let words: HeaderStripWords
     let run: (String) -> Void
+    let placeAnchor: PlaceAnchor
 
-    public init(words: HeaderStripWords, run: @escaping (String) -> Void) {
+    public init(words: HeaderStripWords, placeAnchor: PlaceAnchor, run: @escaping (String) -> Void) {
         self.words = words
+        self.placeAnchor = placeAnchor
         self.run = run
     }
 
-    public static let height: CGFloat = 36
+    public static var height: CGFloat { 36 }
 
     public var body: some View {
         HStack(spacing: 10) {
@@ -78,6 +84,7 @@ public struct HeaderStrip: View {
                 .foregroundStyle(.primary)
             }
             .buttonStyle(.plain)
+            .background(placeAnchor)
             .accessibilityLabel("\(words.place), folders")
             if let cap = words.placeCap { KeyCap(cap) }
             if let counts = words.counts {
@@ -135,5 +142,11 @@ public struct HeaderStrip: View {
         .frame(maxWidth: .infinity)
         .background(.background)
         .overlay(alignment: .bottom) { Divider() }
+    }
+}
+
+extension HeaderStrip where PlaceAnchor == EmptyView {
+    public init(words: HeaderStripWords, run: @escaping (String) -> Void) {
+        self.init(words: words, placeAnchor: EmptyView(), run: run)
     }
 }

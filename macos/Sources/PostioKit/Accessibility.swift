@@ -18,11 +18,11 @@ import PostioFFI
 /// Keeping the list short is what stops it becoming the hand-maintained
 /// command table #657 exists to prevent.
 public enum Intercepted {
-    public static let palette = "command_palette"
+    // Not `/`, ⌘K, `g o` or the go-to keys: Focus's controller opens the
+    // command bar and the folders popover and goes to each place, and this
+    // frontend draws what it says (specs/009-focus-macos T085, T086).
     public static let cheatSheet = "cheat_sheet"
-    public static let search = "search"
     public static let back = "back"
-    public static let goToFolders = "go_to_folders"
     /// The Settings window. Both frontends put settings in a window; ADR 0031
     /// is why, and why the model behind it is shared.
     public static let settings = "settings"
@@ -47,10 +47,6 @@ public enum Intercepted {
     /// and the store has not seen most of it, which is why these stop here —
     /// `ComposeCommands` is the route from the id to the model.
     public static let composeVerbs = ComposeCommands.handled
-    public static let goToInbox = "go_to_inbox"
-    public static let goToDrafts = "go_to_drafts"
-    public static let goToSent = "go_to_sent"
-    public static let goToFlagged = "go_to_flagged"
     /// Where the keyboard is among the panes, and whether a message is drawn
     /// as its sender wrote it. Both are this frontend's state: there is no
     /// drill-in to close and nothing is remembered about an original past the
@@ -68,12 +64,6 @@ public enum Intercepted {
     public static let findInMessage = "find_in_message"
     public static let findNext = "find_next"
     public static let findPrevious = "find_previous"
-    /// Re-ask the query the other way round. Intercepted rather than sent,
-    /// because it is the *list* that has to be told to redraw afterwards.
-    public static let toggleResultOrder = "toggle_result_order"
-    /// Saving a search patches `config.toml`, which this side reads at the
-    /// moment it acts.
-    public static let saveSearch = "save_search"
     /// The reader's `i i`: the one-view render the notice's Show button runs, so
     /// the key, the palette row and the notice's Show button cannot drift.
     public static let showImages = "show_images"
@@ -102,15 +92,14 @@ public enum Intercepted {
 
     /// Every id above, for the test that checks they still exist.
     public static let all = [
-        palette, cheatSheet, search, back, goToFolders, settings,
+        cheatSheet, back, settings,
         expandAll, toggleFold, nextInConversation, prevInConversation,
         scrollReaderDown, scrollReaderUp,
-        goToInbox, goToDrafts, goToSent, goToFlagged,
         openMessage, prevView, viewOriginal, toggleReaderView, zoomIn, zoomOut, zoomReset,
         findInMessage, findNext, findPrevious,
         addAccount, editConfig, toggleAccountEnabled, removeAccount,
         updateCredential, rebuildAccountIndex, setDefaultAccount,
-        toggleResultOrder, saveSearch, showImages,
+        showImages,
         quit, unsubscribe, alwaysShowImages,
         compose, reply, replyAll, forward,
     ] + composeVerbs

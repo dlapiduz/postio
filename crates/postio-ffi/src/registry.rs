@@ -275,18 +275,15 @@ impl From<&'static postio_core::registry::CommandSpec> for CommandSpecFfi {
 pub const INTERCEPTED: &[postio_core::CommandId] = {
     use postio_core::CommandId as C;
     &[
-        C::CommandPalette,
+        // Not `/`, `mod+k`, `g o` or the go-to keys: Focus's controller
+        // opens the command bar and the folders popover and goes to each
+        // place (specs/009-focus-macos T082), and the Mac draws what it says
+        // (T085, T086).
         C::CheatSheet,
-        C::Search,
         C::Back,
-        C::GoToFolders,
         C::Settings,
         C::ScrollReaderDown,
         C::ScrollReaderUp,
-        C::GoToInbox,
-        C::GoToDrafts,
-        C::GoToSent,
-        C::GoToFlagged,
         // Where the keyboard is among the panes, and whether a message is
         // drawn as its sender wrote it.
         C::OpenMessage,
@@ -314,14 +311,9 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         // one deliberate act, from the keyboard and the palette (#1706).
         C::AlwaysShowImages,
         C::Unsubscribe,
-        // The list has to be told to redraw after the query is re-asked.
-        C::ToggleResultOrder,
         // The picker is a surface, and the four times it offers come from
         // the boundary so both frontends mean the same thing by them.
         C::ScheduleSend,
-        // Saving a search patches `config.toml` through the frontend-facing
-        // function rather than the bus.
-        C::SaveSearch,
         // The settings window's account verbs. Each acts on the row that
         // window's keyboard is on -- a cursor no session holds -- and adding
         // an account, replacing a credential and opening `config.toml` all

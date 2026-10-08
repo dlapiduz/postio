@@ -65,8 +65,6 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
         CommandId::ToggleReadingPane,
         "specs/009-focus-macos M4 (the reading pane beside the list comes after parity)",
     ),
-    // The command bar's chip editor.
-    (CommandId::BackToWords, "specs/009-focus-macos T085"),
     // Pickers at the row.
     (CommandId::PickerChoose1, "specs/009-focus-macos T089"),
     (CommandId::PickerChoose2, "specs/009-focus-macos T089"),
@@ -103,13 +101,23 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     (CommandId::CaptureWrite, "specs/009-focus-macos T116"),
 ];
 
-/// Whether Focus's controller answers `id` on the Mac's list, with nothing
-/// over it: what `Session::invoke` routes to it first.
+/// Whether Focus's controller answers `id` on the Mac's list -- with
+/// nothing over it, or with the command bar up: what `Session::invoke`
+/// routes to it first.
+///
+/// The bar counts because the Mac draws it (`CommandBarPanel`, T085): its
+/// own keys -- `BackToWords`, the result order, saving -- reach the
+/// controller only while it is up, which is the only time they mean
+/// anything.
 fn the_controller_answers(id: CommandId) -> bool {
-    postio_focus::FocusController::new(postio_focus::Policy::for_platform(
+    let mut focus = postio_focus::FocusController::new(postio_focus::Policy::for_platform(
         postio_config::paths::Platform::Apple,
-    ))
-    .answers(id)
+    ));
+    if focus.answers(id) {
+        return true;
+    }
+    let _ = focus.handle(postio_focus::Input::Command(CommandId::Search));
+    focus.answers(id)
 }
 
 /// Whether the Mac offers `id` at all. See the module note.

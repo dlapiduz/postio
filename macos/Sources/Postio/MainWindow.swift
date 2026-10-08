@@ -54,7 +54,11 @@ struct MainWindow: View {
 
     private var inbox: some View {
         VStack(spacing: 0) {
-            HeaderStrip(words: engine.stripWords) { engine.run($0) }
+            // Inbox ▾ is what the folders popover hangs from (T086).
+            HeaderStrip(
+                words: engine.stripWords,
+                placeAnchor: PlacesAnchor { engine.placesAnchor = $0 }
+            ) { engine.run($0) }
             list
             // While anything is selected (screen 01): the count, the verbs
             // with their keys, and the selection's own keys.
@@ -63,22 +67,9 @@ struct MainWindow: View {
                     .transition(.opacity)
             }
         }
+        // The command bar is a panel dropping from the toolbar's field
+        // (`CommandBarPanel`, T085), a child window rather than an overlay.
         .background(MainToolbarInstaller(engine: engine))
-        // The commands the search field offers while it holds `>`, just
-        // under the field. The keyboard stays in the field; the command bar
-        // proper (a panel dropping from it, FR-013) replaces this later.
-        .overlay(alignment: .topTrailing) {
-            if engine.finding != nil {
-                FinderResults(
-                    rows: engine.finderAnswer.rows,
-                    empty: engine.finderAnswer.empty,
-                    highlighted: engine.finderBox.highlighted,
-                    pick: { engine.pick($0) }
-                )
-                .padding(.top, 4)
-                .padding(.trailing, 12)
-            }
-        }
         .sheet(isPresented: Binding(
             get: { engine.showingCheatSheet },
             set: { engine.showingCheatSheet = $0 }
@@ -89,7 +80,6 @@ struct MainWindow: View {
         }
         // `PRODUCT.md` §18: ≤100 ms or absent, and Reduce Motion is honoured.
         .animation(.easeOut(duration: Motion.current), value: engine.pendingChord)
-        .animation(.easeOut(duration: Motion.current), value: engine.finding != nil)
         .animation(.easeOut(duration: Motion.current), value: engine.noticeToken)
         .animation(.easeOut(duration: Motion.current), value: engine.actionBarWords != nil)
         .animation(.easeOut(duration: Motion.current), value: engine.focus.toastToken)
@@ -230,7 +220,7 @@ private struct MainToolbarInstaller: NSViewRepresentable {
 final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
     private let engine: Engine
     private let toolbar = NSToolbar(identifier: "PostioFocusMain")
-    private weak var field: NSSearchField?
+    private weak var field: BarSearchField?
     private weak var window: NSWindow?
     private let cap = KeyCapView("")
 
@@ -263,16 +253,9 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
                 window.toolbar = self.toolbar
             }
         }
-        // The engine asks the field for text (⌘K types `>`) and for the
-        // keyboard (`/`); the field is AppKit's, so these are its hands.
-        engine.fieldText = { [weak self] text in
-            self?.field?.stringValue = text
-            self?.fieldChanged()
-        }
-        engine.focusField = { [weak self] in
-            guard let field = self?.field else { return }
-            field.window?.makeFirstResponder(field)
-        }
+        // The field is the command bar's (T085): the engine puts the
+        // controller's words in it and gives it the keyboard.
+        engine.searchField = field
         engine.keycapsChanged = { [weak self] in self?.respell() }
         respell()
     }
@@ -308,8 +291,11 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
             return item
         case Self.search:
             let item = NSSearchToolbarItem(itemIdentifier: identifier)
+            // A click into it opens the bar, as `/` does.
+            let field = BarSearchField()
+            field.onFocus = { [weak self] in self?.engine.searchFieldFocused() }
+            item.searchField = field
             item.preferredWidthForSearchField = 320
-            let field = item.searchField
             field.placeholderString = "Search mail or run a command"
             field.delegate = self
             field.sendsSearchStringImmediately = false
@@ -321,6 +307,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
                 cap.centerYAnchor.constraint(equalTo: field.centerYAnchor),
             ])
             self.field = field
+            engine.searchField = field
             respell()
             return item
         default:
@@ -341,7 +328,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
     /// The keycap in the field and the compose tip, from the bindings in
     /// force: at install, when a session opens, and when `[keys]` changes.
     private func respell() {
-        let palette = KeyCapSpelling.cap(engine.session?.binding(for: Intercepted.palette))
+        let palette = KeyCapSpelling.cap(engine.session?.binding(for: BarCommand.palette))
         cap.text = palette ?? ""
         cap.isHidden = palette == nil || !(field?.stringValue.isEmpty ?? true)
         for item in toolbar.items where item.itemIdentifier == Self.compose {
@@ -351,37 +338,18 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
 
     // MARK: NSSearchFieldDelegate
 
-    func controlTextDidBeginEditing(_ obj: Notification) {
-        engine.showingSearch = true
-    }
-
     func controlTextDidEndEditing(_ obj: Notification) {
-        engine.showingSearch = false
+        engine.searchFieldLeft()
     }
 
     func controlTextDidChange(_ obj: Notification) {
-        fieldChanged()
-    }
-
-    private func fieldChanged() {
         let text = field?.stringValue ?? ""
         cap.isHidden = cap.text.isEmpty || !text.isEmpty
-        engine.findingChanged(FinderBox.asking(in: text))
+        engine.searchFieldTyped(text)
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-        guard engine.finding != nil else { return false }
-        switch selector {
-        case #selector(NSResponder.moveUp(_:)):
-            engine.moveFinder(by: -1)
-        case #selector(NSResponder.moveDown(_:)):
-            engine.moveFinder(by: 1)
-        case #selector(NSResponder.insertNewline(_:)):
-            engine.pickHighlighted()
-        default:
-            return false
-        }
-        return true
+        engine.searchFieldCommand(selector)
     }
 }
 
