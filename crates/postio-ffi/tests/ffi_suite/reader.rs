@@ -541,3 +541,17 @@ async fn a_kept_colour_is_guarded_in_the_document() {
     );
     session.shutdown();
 }
+
+/// `v` asks for the message's source by name. With nothing on this machine
+/// and no server to ask, it says why rather than answering with nothing
+/// (a zero-byte "source" reads as an empty message).
+#[tokio::test(flavor = "multi_thread")]
+async fn raw_source_says_why_when_there_is_none() {
+    let (session, id) = with_body("<p>hello</p>").await;
+    let answer = session.raw_source(id);
+    assert!(
+        matches!(&answer, Err(postio_ffi::SessionError::StoreUnavailable { message }) if !message.is_empty()),
+        "an error with a sentence: {answer:?}"
+    );
+    session.shutdown();
+}

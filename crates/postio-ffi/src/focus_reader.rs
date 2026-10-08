@@ -102,6 +102,24 @@ impl Session {
         crate::session::blocking(self.focus_reader_answers(message, remote, chosen, main_width))
     }
 
+    /// `message`'s raw RFC 822 source, every byte as the server sent it:
+    /// what `v` shows in place of the content (M4). Read from this machine
+    /// when it is here; otherwise fetched from the server on this call, the
+    /// person having asked for these bytes by name -- so never from the main
+    /// actor.
+    pub fn raw_source(&self, message: i64) -> Result<Vec<u8>, crate::SessionError> {
+        let client = self
+            .client()
+            .ok_or_else(|| crate::SessionError::StoreUnavailable {
+                message: "The store is closed.".to_owned(),
+            })?;
+        crate::session::blocking(client.raw_source(message.into())).map_err(|error| {
+            crate::SessionError::StoreUnavailable {
+                message: error.to_string(),
+            }
+        })
+    }
+
     /// Always draw `sender`'s mail in `treatment`, or forget the choice with
     /// `None`: "Always for this sender". Saved beside the remote-image
     /// grants, where GTK's reader keeps it.
