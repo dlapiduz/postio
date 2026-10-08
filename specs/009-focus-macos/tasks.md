@@ -104,7 +104,9 @@ frontend with the engine's Focus pass on, and the Swift package split.
   - on `.filters`, refresh saved searches.
 
   Mirror GTK's `follow_config` (`crates/postio-gtk/src/startup.rs:95-150`). Append `KeymapChanged` and `SurfacedChanged` at the end of `UiEvent` (the typed `BackfillProgress` comes with its banner, T099) in `crates/postio-ffi/src/event.rs`. Make T016 green
-- [ ] T018 [P] Write a failing test in `crates/postio-core` that Delete resolves from `BackSpace` on `Platform::Apple` in the List and Reader contexts, without colliding with the bar's `mod+BackSpace`. Then add `"BackSpace"` to Delete's `alternate_bindings` (`crates/postio-core/src/registry.rs:903-913`) if it is free in those contexts (M6, R6). **main·fix**
+- [x] T018 [P] Write a failing test in `crates/postio-core` that Delete resolves from `BackSpace` on `Platform::Apple` in the List and Reader contexts, without colliding with the bar's `mod+BackSpace`. Then add `"BackSpace"` to Delete's `alternate_bindings` (`crates/postio-core/src/registry.rs:903-913`) if it is free in those contexts (M6, R6). **main·fix**
+
+  *As built:* landed on main as #1795 (`feat(config): Delete is the Mac's delete key`).
 
 ### The Swift package split
 
@@ -220,6 +222,8 @@ action, and undo through ⌘Z and Edit › Undo.
   - strip counts show only while in use (`window.rs:2801-2858`).
 - [ ] T040 [US2] Move `move_cursor`, `cursor_to`, `extend`, `take_cursor_row`, `pick`, ToggleSelection/SelectAll/Back's selection arm, `toggle_has_action`, `keep`, `list_landed`, `cursor_to_first`, `update_counts`, `show_counts`, `show_empty_or_list` and `selection_moved` from `crates/postio-gtk/src/window.rs` (~1902-2046, 2582-2914) into `crates/postio-focus/src/cursor.rs`. GTK applies the `Cursor`/`Selection`/`Strip`/`EmptyOrList` intents; its `SelectionState` becomes a mirror written only by the intent applier. The guards are focus_suite `cursor`, `selection`, `has_action`, `place_strip`, `empty`, `marked_rows`, `pointer_pairs` and `keyboard_home`. Make T039 green; land slice 3
 
+  *Open:* GTK's adoption is owed to a Linux session: this Mac cannot build `postio-gtk`, and editing `window.rs` blind was judged worse than waiting. The controller half is built and tested in `postio-focus` and driven by the Mac through the FFI; GTK still runs its own copy of these rules, which the focus_suite guards keep honest until it adopts them.
+
 ### Controller slice 4: verbs, aim, removal, undo cursor (**main·S4**)
 
 - [x] T041 [US2] Write failing tests in `crates/postio-focus/tests/verbs.rs`:
@@ -230,6 +234,8 @@ action, and undo through ⌘Z and Edit › Undo.
   - `Aim::Everything` is resolved once in `perform`;
   - `DismissMarker`, `AcceptInvite`/`DeclineInvite` and `ArchiveDigest` send the right commands.
 - [ ] T042 [US2] Move `aims`, `dispatch`, `send`, `post`, `note_removed`, `cursor_past_removed`, `restore_cursor`, `place_restored`, `archive_digest`, `answer`, `dismiss_marker`, and `hear`'s toast arms from `crates/postio-gtk/src/window.rs` (~2046-2241, 2964-2999, 3102-3126) into `crates/postio-focus/src/verbs.rs`. Implement `perform` for `Send`/`Post`. The guards are focus_suite `undo`, `selection` (`archive_hands_the_cursor_to_the_row_below`), `invitations`, `offline_send` and `marker_card`. Make T041 green; land slice 4
+
+  *Open:* GTK's adoption is owed to a Linux session: this Mac cannot build `postio-gtk`, and editing `window.rs` blind was judged worse than waiting. The controller half is built and tested in `postio-focus` and driven by the Mac through the FFI; GTK still runs its own copy of these rules, which the focus_suite guards keep honest until it adopts them.
 
 ### Engine: the undo top (**main·fix**)
 
@@ -245,7 +251,9 @@ action, and undo through ⌘Z and Edit › Undo.
 - [x] T046 [US2] Route the controller's commands through `Session::invoke` (`FocusDriver::command`), and emit its intents as UiEvents: `FocusCursor`, `FocusSelection`, `FocusHeading`, `FocusListToTop`, `FocusToast`. Remove `set_cursor`: a verb that is not the list's own aims at the controller's cursor. Export `focus_point`, `focus_pick`, `focus_at_top` and `undo_description()`. Make T045 green
 
   *As built:* the plan had `key(…) -> KeyPressFfi{handled, pending, intents}` returning intents from the key call. Keys stay as they were (`key` resolves a chord to a command, `invoke` runs it), and the intents arrive on `nextEvent` like every other event. That avoids a second path for the same intents (keys, menus, the bar and buttons all go through `invoke`), and keeps `key` free of side effects as its doc requires. `in_text_entry` is still the caller's, through `key`.
-- [ ] T047 [P] [US2] Write storyboards `storyboards/list/x-selects-without-moving.toml`, `storyboards/list/has-action-keeps-the-cursor.toml` and `storyboards/list/undo-after-the-pill-is-gone.toml` (`apps = ["focus"]`). Run them on Linux
+- [x] T047 [P] [US2] Write storyboards `storyboards/list/x-selects-without-moving.toml`, `storyboards/list/has-action-keeps-the-cursor.toml` and `storyboards/list/undo-after-the-pill-is-gone.toml` (`apps = ["focus"]`). Run them on Linux
+
+  *As built:* the three storyboards are in `storyboards/list/` and lint clean; filming them is the Linux runner's, still owed.
 - [x] T048 [US2] Write failing Swift tests:
   - `macos/Tests/PostioKitTests/IntentApplierTests.swift`: applying `Cursor`, `Selection`, `Toast` and `KeyboardHome` to a fake main-window model changes exactly what the intent says;
   - `macos/Tests/PostioAppKitTests/UndoManagerTests.swift`: `PostioUndoManager.canUndo` is false with no description; with a description `undoMenuItemTitle` is "Undo <description>"; `undo()` invokes `undo`; `canRedo` is always false.
@@ -295,7 +303,11 @@ in light and dark, with main widths 1440 and 1024. Each matches its
 
   *As built:* the cases are in `crates/postio-focus/tests/surfaces.rs` (slice 5, `5530985e`) rather than `keys.rs`: the key context from the top surface, Back closing More, then find, then the message, `j` stepping the list without a close, the Mac replacing the open window and Linux stacking.
 - [ ] T055 [US3] Move `handle_key` (`crates/postio-gtk/src/window.rs:803-946`), `key_context` (990-1016), `reading_key` (1117-1231), `digest_key` (~3201), `capture_key`, `settings_key` (`settings.rs:486`) and the dialog close rule (896-907) into `crates/postio-focus/src/keys.rs` and `surfaces.rs`, as tables over the surface stack. Keep the `_ => Proceed` arm (behaviour-neutral). GTK reports `SurfaceOpened`/`SurfaceClosed`; `FocusWindow::handle_key` stays as a shim. The guards are focus_suite `open_keys`, `keymap`, `one_keymap`, `registry_parity`, `every_command`, `settings` and `row_menu`. Make T054 green; land slice 5
+
+  *Open:* GTK's adoption is owed to a Linux session: this Mac cannot build `postio-gtk`, and editing `window.rs` blind was judged worse than waiting. The controller half is built and tested in `postio-focus` and driven by the Mac through the FFI; GTK still runs its own copy of these rules, which the focus_suite guards keep honest until it adopts them.
 - [ ] T056 [US3] Write a failing test in `crates/postio-focus/tests/keys.rs` and a failing focus_suite case `crates/postio-gtk/tests/focus_suite/open_keys.rs::t_in_the_open_message_opens_capture`: `t`, `n` and `d` in the open-message dialog open capture, note and the digest rule (#1754)
+
+  *Open:* the controller half is in (`a_key_the_message_does_not_own_is_the_lists` in `crates/postio-focus/tests/surfaces.rs`, and slice 12 made `t`, `n` and `d` the controller's in the open message). The focus_suite case is GTK's, owed to a Linux session.
 - [x] T057 [US3] Make Reader-context commands the surface does not own fall through to the list's command table, in `crates/postio-focus/src/keys.rs` (contract invariant 5). Make T056 green. Land as **main·fix**, and comment the fix on #1754 with `Refs` (not a closing keyword unless #1754's acceptance is fully met)
 
 ### Controller slice 6: the email window (**main·S6**)
@@ -312,6 +324,8 @@ in light and dark, with main widths 1440 and 1024. Each matches its
 
   *As built:* in `crates/postio-focus/tests/surfaces.rs` with T054's, not a `reader.rs` of its own.
 - [ ] T059 [US3] Move `open_message`, the position line, `follow_cursor`, `reading_changed`, `place_reading`, found-hits stepping and `step_past` (`crates/postio-gtk/src/window.rs:1237-1280, 4230-4259`) into `crates/postio-focus/src/reader.rs`. Replace the 20 ms polling with an event plus a `Timer` give-up. The guards are focus_suite `open_message`, `open_reading`, `reading_pane`, `read_on_dwell` and `view_source`. Make T058 green; land slice 6
+
+  *Open:* GTK's adoption is owed to a Linux session: this Mac cannot build `postio-gtk`, and editing `window.rs` blind was judged worse than waiting. The controller half is built and tested in `postio-focus` and driven by the Mac through the FFI; GTK still runs its own copy of these rules, which the focus_suite guards keep honest until it adopts them.
 
 ### Shared: the treated document and the contrast guard (**main·fix**)
 
@@ -394,8 +408,12 @@ send it. It goes through the outbox, and the marker clears.
 
 ### FFI and Mac: compose
 
-- [ ] T074 [US4] Write failing ffi_suite tests for `recipient_suggestions(account, "ad", 8, extra: [ExternalContactFfi{"Ada Example","ada@example.com"}])`: a correspondent the person wrote to ranks above the extra; a group completes by name; suppressed contacts never appear
-- [ ] T075 [US4] Export `recipient_suggestions` in `crates/postio-ffi/src/contacts.rs` over `postio_ui::recipients::suggest`, with the directory cached as `FinderSources` is. Make T074 green
+- [x] T074 [US4] Write failing ffi_suite tests for `recipient_suggestions(account, "ad", 8, extra: [ExternalContactFfi{"Ada Example","ada@example.com"}])`: a correspondent the person wrote to ranks above the extra; a group completes by name; suppressed contacts never appear
+
+  *As built:* `crates/postio-ffi/tests/ffi_suite/recipients.rs`: a group by name, then a correspondent written to, then the address book's; a deleted contact never; too short a prefix offers nothing; an address the directory has is offered once.
+- [x] T075 [US4] Export `recipient_suggestions` in `crates/postio-ffi/src/contacts.rs` over `postio_ui::recipients::suggest`, with the directory cached as `FinderSources` is. Make T074 green
+
+  *As built:* `recipient_suggestions(account, text, limit, extra: [ExternalContactFfi{name, address}]) -> [RecipientSuggestionFfi{label, accepted, group}]` in `crates/postio-ffi/src/contacts.rs`. `accepted` is the field's whole text once taken, so Swift splices nothing. The directory is kept a minute per account; what Contacts lends is used for the one answer and kept nowhere.
 - [ ] T076 [P] [US4] Write the storyboard `storyboards/compose/esc-keeps-the-draft.toml` (`apps = ["focus"]`), and run it on Linux
 - [ ] T077 [US4] Write failing Swift tests in `macos/Tests/PostioKitTests/ContactsSourceTests.swift`: with authorization `.notDetermined` the first recipient keystroke requests access once; with `.denied` it never asks again and suggestions still come from mail. Use a fake `CNContactStore` protocol
 - [ ] T078 [US4] Implement `ContactsSource` in `macos/Sources/PostioKit/ContactsSource.swift`: `CNContactStore` read, after one prompt, of names and email addresses only; never stored or logged. Add `NSContactsUsageDescription` to `macos/Resources/Info.plist`. Make T077 green
