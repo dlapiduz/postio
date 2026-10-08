@@ -22,12 +22,23 @@ impl Session {
     }
 }
 
+/// `seed`, or `seed:screen` -- a store with the row screen 04 opens
+/// refiled as one of the handoff's HTML bodies (`postio_demo::treatment_demo`:
+/// `27` the newsletter on paper, `28` the work mail in app colours), which
+/// the message window's screens are photographed over.
 #[cfg(feature = "demo")]
-fn open(seed: &str) -> Result<Arc<Session>, SessionError> {
+fn open(name: &str) -> Result<Arc<Session>, SessionError> {
+    let (seed, screen) = match name.split_once(':') {
+        Some((seed, screen)) => (seed, Some(screen)),
+        None => (name, None),
+    };
     let seed = postio_demo::Seed::from_id(seed).ok_or_else(|| SessionError::StoreUnavailable {
-        message: format!("There is no demo store called \u{201c}{seed}\u{201d}."),
+        message: format!("There is no demo store called \u{201c}{name}\u{201d}."),
     })?;
-    let (database, _account) = crate::session::blocking(postio_demo::seeded(seed));
+    let (database, account) = crate::session::blocking(postio_demo::seeded(seed));
+    if let Some(screen) = screen {
+        crate::session::blocking(postio_demo::treatment_demo(&database, account, screen));
+    }
     Session::open(
         crate::SessionOptions::in_memory_with(database)
             .with_config_for_test(&postio_demo::config()),
@@ -50,6 +61,30 @@ mod tests {
         let session = Session::open_demo("small".to_owned()).expect("the demo opens");
         let counts = session.focus_counts().expect("its counts");
         assert!(counts.conversations > 5, "{counts:?}");
+        session.shutdown();
+    }
+
+    /// The row the inbox's Harbor draft stands in, refiled as one of the
+    /// handoff's HTML bodies, as GTK's screens 27-31 have it: `small:27` is
+    /// the newsletter that paints its own page, and the message window's
+    /// paper screens are photographed over it.
+    #[test]
+    fn a_screen_after_the_seed_refiles_the_opened_row() {
+        let session = Session::open_demo("small:27".to_owned()).expect("the demo opens");
+        session.open_focus(crate::FocusScopeFfi::Inbox);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let found = loop {
+            let found = (0..12).any(|row| {
+                session
+                    .focus_row_at(row)
+                    .is_some_and(|row| row.subject == "Issue 48: The quiet season")
+            });
+            if found || std::time::Instant::now() > deadline {
+                break found;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        assert!(found, "the newsletter is in the inbox");
         session.shutdown();
     }
 
