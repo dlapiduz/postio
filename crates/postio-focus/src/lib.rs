@@ -26,6 +26,7 @@ mod cursor;
 mod feed;
 mod perform;
 mod pickers;
+mod states;
 mod surfaces;
 mod verbs;
 
@@ -36,6 +37,7 @@ pub use perform::{perform, perform_now};
 pub use pickers::{
     Anchor, FoldersRead, LabelsRead, PickerField, PickerKind, PickerRow, PickerView,
 };
+pub use states::{AccountsRead, BannerButton, BannerView};
 pub use surfaces::{ReaderVerb, SurfaceKind};
 pub use verbs::{Everything, ToastKind};
 
@@ -166,6 +168,9 @@ pub enum Input {
         /// When it leaves, when not at once.
         at: Option<chrono::DateTime<chrono::Utc>>,
     },
+    /// `[focus]` as it stands: the digests an empty inbox names, and
+    /// whether Focus files mail away.
+    Config(postio_config::FocusConfig),
 }
 
 /// What the frontend does next.
@@ -334,6 +339,13 @@ pub enum Intent {
     PickerRows(PickerView),
     /// Put the keyboard in the picker's date field (`Tab`).
     PickerField,
+    /// The banner under the header strip, or none.
+    Banner(Option<BannerView>),
+    /// What the sync label says now.
+    SyncLabel(postio_ui::focus_state::SyncLabel),
+    /// The page an empty list shows in its place, or the list again with
+    /// `None`.
+    Empty(Option<postio_ui::focus_state::EmptyInbox>),
 }
 
 /// What the controller needs from the engine. [`perform()`] is the one place
@@ -436,6 +448,9 @@ pub enum Request {
     },
     /// Keep `mailbox` among the recent destinations.
     NoteMove(MailboxId),
+    /// Who every enabled account is -- where it signs in, as whom -- and
+    /// when mail last synced before this run: what a banner names.
+    Accounts,
 }
 
 /// The engine's answer to a [`Request`]. A failure is carried as its
@@ -507,6 +522,8 @@ pub enum Reply {
         /// What was read.
         answer: Result<FoldersRead, String>,
     },
+    /// The answer to [`Request::Accounts`].
+    Accounts(Result<AccountsRead, String>),
 }
 
 /// Focus's behaviour for one window. `Send`, and plain data: no toolkit
@@ -527,6 +544,7 @@ pub struct FocusController {
     toast_undo: Option<postio_model::DraftId>,
     /// The strip's counts, as the host last said.
     counts: Option<FocusCounts>,
+    states: states::States,
 }
 
 impl FocusController {
@@ -544,6 +562,7 @@ impl FocusController {
             pickers: pickers::Pickers::default(),
             toast_undo: None,
             counts: None,
+            states: states::States::default(),
         }
     }
 
@@ -630,10 +649,18 @@ impl FocusController {
                 let steps = self.cursor.pick(position, range, rows, total);
                 self.effects(steps)
             }
+            // Who the accounts are is true whatever was invalidated since:
+            // the list's generation is no stamp on it.
+            Input::Reply(_, Reply::Accounts(read)) => {
+                let steps = self.accounts_read(read);
+                self.effects(steps)
+            }
             Input::Reply(ticket, _) if ticket.generation != self.generation => Vec::new(),
             Input::Reply(_, Reply::FocusCounts(Ok(counts))) => {
                 self.counts = Some(counts);
-                vec![Effect::Show(Intent::Counts(counts))]
+                let mut steps = vec![feed::Step::Show(Intent::Counts(counts))];
+                steps.extend(self.show_empty());
+                self.effects(steps)
             }
             Input::Reply(_, Reply::FocusCounts(Err(error))) => {
                 tracing::debug!(%error, "focus counts unavailable");
@@ -681,6 +708,12 @@ impl FocusController {
             Input::Event(event) => {
                 let mut steps = self.verbs.event(&event);
                 steps.extend(self.feed.event(&event));
+                steps.extend(self.hear_sync(&event));
+                self.effects(steps)
+            }
+            Input::Config(config) => {
+                let mut steps = self.bar_input(Input::Filtering(config.filtering), rows);
+                steps.extend(self.set_config(config));
                 self.effects(steps)
             }
             Input::Clock(clock) => {
@@ -761,6 +794,7 @@ impl FocusController {
             }
             None => {}
         }
+        steps.extend(self.show_empty());
         let mut effects = self.effects(steps);
         effects.push(self.refresh_counts());
         effects
@@ -937,6 +971,12 @@ impl FocusController {
         self.cursor.has_action()
     }
 
+    /// The bindings in force: what every keycap the controller spells
+    /// says.
+    pub fn keymap(&self) -> &postio_core::Keymap {
+        self.bar.keymap()
+    }
+
     /// The strip's counts, as the host last said.
     pub fn counts(&self) -> Option<FocusCounts> {
         self.counts
@@ -1001,6 +1041,9 @@ impl FocusController {
                     if matches!(intent, Intent::Toast { .. }) {
                         self.toast_undo = None;
                     }
+                    if let Intent::Place { name } = &intent {
+                        self.note_place(name);
+                    }
                     Effect::Show(intent)
                 }
                 feed::Step::Ask(request) => Effect::Ask(self.ticket(), request),
@@ -1037,8 +1080,11 @@ impl FocusController {
 mod tests {
     use super::*;
 
+    /// An inbox of ten conversations, `has_action` of them marked: one
+    /// with mail in it, so no empty page follows the counts.
     fn counts(has_action: u32) -> FocusCounts {
         FocusCounts {
+            conversations: 10,
             has_action,
             ..FocusCounts::default()
         }

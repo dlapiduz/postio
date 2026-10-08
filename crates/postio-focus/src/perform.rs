@@ -190,7 +190,37 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
             }
             Reply::Noted
         }
+        Request::Accounts => Reply::Accounts(accounts(client).await),
     }
+}
+
+/// Who every enabled account is, as a banner names it, and the newest of
+/// their folders' last completed syncs: when mail last arrived before this
+/// run. GTK's window read the same when its accounts landed.
+async fn accounts(client: &Client) -> Result<crate::AccountsRead, String> {
+    let accounts = client.accounts().await.map_err(|error| error.to_string())?;
+    let mut read = crate::AccountsRead::default();
+    for account in accounts.iter().filter(|account| account.enabled) {
+        read.facts.push(postio_ui::focus_state::AccountFacts {
+            id: account.id,
+            server: account.incoming.host.clone(),
+            address: account.address.address.clone(),
+            name: if account.display_name.is_empty() {
+                account.address.address.clone()
+            } else {
+                account.display_name.clone()
+            },
+        });
+        if let Ok(mailboxes) = client.mailboxes(account.id).await {
+            read.last_synced = read.last_synced.max(
+                mailboxes
+                    .iter()
+                    .filter_map(|mailbox| mailbox.last_synced_at)
+                    .max(),
+            );
+        }
+    }
+    Ok(read)
 }
 
 /// Every place there is to go, in one round: each enabled account's
