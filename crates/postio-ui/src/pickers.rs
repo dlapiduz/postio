@@ -360,10 +360,17 @@ mod tests {
             "space toggles a label \u{b7} Return closes \u{b7} typing a name that \
              doesn\u{2019}t exist offers \u{201c}Create label\u{201d}."
         );
-        assert_eq!(
-            move_footnote(Keymap::defaults()),
-            "Return moves the message and it leaves the inbox \u{b7} ctrl+z undoes."
-        );
+        // Undo is `mod+z`, spelled for each platform: both asserted from
+        // either host, so a Mac run is not a red Linux expectation.
+        for (platform, undo) in [
+            (postio_config::paths::Platform::Freedesktop, "ctrl+z"),
+            (postio_config::paths::Platform::Apple, "cmd+z"),
+        ] {
+            assert_eq!(
+                move_footnote(&Keymap::resolve_on(&Default::default(), platform)),
+                format!("Return moves the message and it leaves the inbox \u{b7} {undo} undoes.")
+            );
+        }
     }
 
     #[test]
