@@ -484,6 +484,10 @@ async fn a_newsletter_opens_on_paper_and_can_be_switched_and_remembered() {
         .render_mode
         .expect("an HTML body names its treatment");
     assert_eq!(words.title, "Original layout, on paper");
+    assert_eq!(
+        words.always, None,
+        "the rule's own choice offers nothing to keep"
+    );
     assert_eq!(document.sender_choice, None);
     // A 1440-wide main window: the message window is 720 wide, and paper's
     // column is 640 of it.
@@ -500,6 +504,13 @@ async fn a_newsletter_opens_on_paper_and_can_be_switched_and_remembered() {
     assert_eq!(switched.treatment_shown, TreatmentFfi::AppColours);
     assert_eq!(switched.treatment_classified, TreatmentFfi::Paper);
     assert_eq!(switched.column_width, 560, "app colours' column");
+    let offered = switched.render_mode.expect("still HTML");
+    assert!(offered.offer_always);
+    assert_eq!(
+        offered.always.as_deref(),
+        Some(shared::ALWAYS_FOR_SENDER),
+        "a switch can be kept for the sender, in the reader's words"
+    );
 
     session.always_treatment("news@example.com".into(), Some(TreatmentFfi::AppColours));
     let remembered = session.focus_reader_document(id, RemoteImagesFfi::Blocked, None, 1440);

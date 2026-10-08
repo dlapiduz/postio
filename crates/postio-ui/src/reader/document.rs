@@ -724,6 +724,10 @@ impl Treated {
     };
 }
 
+/// The render-mode line's button that keeps the treatment shown for every
+/// message from this sender (T213), while [`RenderModeWords::offer_always`].
+pub const ALWAYS_FOR_SENDER: &str = "Always for this sender";
+
 /// What the render-mode line above an HTML body says (T213; the handoff's
 /// screens 03, 11-13): the treatment, why, and the way to the other one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

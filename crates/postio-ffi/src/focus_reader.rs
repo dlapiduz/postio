@@ -54,6 +54,8 @@ pub struct RenderModeWordsFfi {
     pub action: String,
     /// Whether to offer "Always for this sender".
     pub offer_always: bool,
+    /// That button's words, while it is offered.
+    pub always: Option<String>,
 }
 
 /// One message as Focus's message window draws it.
@@ -242,6 +244,9 @@ impl Session {
                     detail: words.detail.to_owned(),
                     action: words.action.to_owned(),
                     offer_always: words.offer_always,
+                    always: words
+                        .offer_always
+                        .then(|| postio_ui::reader::document::ALWAYS_FOR_SENDER.to_owned()),
                 }),
             sender_choice: remembered.map(Into::into),
             sender,
