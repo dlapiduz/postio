@@ -13,7 +13,7 @@ use postio_core::{Command, CommandId, Event, MessageTarget};
 use postio_model::{AccountId, MessageId};
 use postio_ui::focus_target::{Aim, AimRow, Dispatch};
 
-use crate::cursor::{Cursor, Rows};
+use crate::cursor::{Cursor, RowFacts, Rows};
 use crate::feed::Step;
 use crate::{Intent, Request};
 
@@ -73,6 +73,39 @@ pub(crate) struct Verbs {
 impl Verbs {
     pub(crate) fn set_at_top(&mut self, at_top: bool) {
         self.at_top = at_top;
+    }
+
+    /// A command the verbs answer for the open message alone -- not the
+    /// selection, which the message's window does not show -- or `None`
+    /// when it is not one of theirs. An archive or delete is remembered for
+    /// the undo; stepping past it is the open message's.
+    pub(crate) fn command_on(&mut self, id: CommandId, row: &RowFacts) -> Option<Vec<Step>> {
+        let Dispatch::OnMail(command) = postio_ui::focus_target::dispatch(id)? else {
+            return None;
+        };
+        let at = AimRow {
+            id: row.id,
+            threads: row.threads.clone(),
+            digest: row.digest,
+        };
+        let Aim::Targets(aims) = postio_ui::focus_target::aim_by(
+            &Selection::These(Vec::new()),
+            &Default::default(),
+            Some(&at),
+        ) else {
+            return Some(Vec::new());
+        };
+        if aims.is_empty() {
+            return Some(Vec::new());
+        }
+        if matches!(command, Command::Archive { .. } | Command::Delete { .. }) {
+            self.note_removed(&Selection::These(Vec::new()), Some(&at));
+        }
+        Some(vec![Step::Ask(Request::Send {
+            command,
+            aims,
+            everything: None,
+        })])
     }
 
     /// A command the verbs answer, or `None` when it is not one of theirs.

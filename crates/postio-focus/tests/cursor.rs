@@ -26,6 +26,7 @@ impl List {
                     id: MessageId::new(100 + at),
                     digest: digests.contains(&at),
                     threads: vec![ThreadId::new(500 + at)],
+                    writes: false,
                 })
                 .collect(),
         }
@@ -219,6 +220,7 @@ fn has_action_clears_the_selection_and_keeps_the_cursor_on_its_message() {
             id: MessageId::new(102),
             digest: false,
             threads: Vec::new(),
+            writes: false,
         }],
     };
     let effects = focus.landed(&narrowed, true);

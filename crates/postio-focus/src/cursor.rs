@@ -27,6 +27,9 @@ pub struct RowFacts {
     pub digest: bool,
     /// The conversations it stands for, every copy (spec 007 T161).
     pub threads: Vec<ThreadId>,
+    /// Whether opening it writes rather than reads: a draft not yet on its
+    /// way (spec 007 US11 scenario 3).
+    pub writes: bool,
 }
 
 impl RowFacts {
@@ -36,6 +39,9 @@ impl RowFacts {
             id: row.id(),
             digest: matches!(row, FocusRow::Digest(_)),
             threads: row.threads(),
+            writes: row.as_conversation().is_some_and(|row| {
+                !postio_ui::focus_dialog::opens_to_read(row.summary.representative.send_state)
+            }),
         }
     }
 }
@@ -115,6 +121,13 @@ impl Cursor {
     /// Put the cursor on `position`.
     pub(crate) fn place(&mut self, position: u32, rows: &dyn Rows) -> Vec<Step> {
         self.to(Some(position), rows)
+    }
+
+    /// Move the cursor `by` rows, as `j`/`k` do; whether it moved.
+    pub(crate) fn step(&mut self, by: i32, rows: &dyn Rows) -> (Vec<Step>, bool) {
+        let before = self.position;
+        let steps = self.by(by, rows);
+        (steps, self.position != before)
     }
 
     pub(crate) fn set_accounts(&mut self, accounts: Vec<AccountId>) {

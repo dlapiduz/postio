@@ -24,11 +24,13 @@ use postio_ui::focus_list::FocusRow;
 mod cursor;
 mod feed;
 mod perform;
+mod surfaces;
 mod verbs;
 
 pub use cursor::{NoRows, RowFacts, Rows};
 pub use feed::{Opened, PageAnswer};
 pub use perform::{perform, perform_now};
+pub use surfaces::{ReaderVerb, SurfaceKind};
 pub use verbs::{Everything, ToastKind};
 
 /// What differs between platforms, as policy rather than as a fork
@@ -101,6 +103,18 @@ pub enum Input {
         position: u32,
         /// Shift was held.
         range: bool,
+    },
+    /// The frontend showed a surface over the list.
+    SurfaceOpened(SurfaceKind),
+    /// A surface over the list closed, however it was closed.
+    SurfaceClosed(SurfaceKind),
+    /// The open message's More menu and find, as they are now: what Back
+    /// closes first.
+    ReaderState {
+        /// The More menu is up.
+        more_open: bool,
+        /// Find is up.
+        finding: bool,
     },
 }
 
@@ -199,6 +213,35 @@ pub enum Intent {
     RefreshList,
     /// Rows landed: a first page, or a re-read.
     Filled,
+    /// Show `message` in the message surface -- opening it, or in place of
+    /// the one it shows -- at `index` of `total` in the list.
+    OpenMessage {
+        /// The message.
+        message: MessageId,
+        /// Its row's place in the list.
+        index: u32,
+        /// How many rows the list draws.
+        total: u32,
+    },
+    /// A digest's row opens its window: the row is named by its delivery,
+    /// negated, as [`RowFacts::id`] names it.
+    OpenDigest {
+        /// The row.
+        row: MessageId,
+    },
+    /// A draft not yet on its way opens in the composer, to be written.
+    OpenDraft {
+        /// The draft's message.
+        message: MessageId,
+    },
+    /// Close this surface; the frontend says [`Input::SurfaceClosed`] when
+    /// it has.
+    CloseSurface(SurfaceKind),
+    /// The open message does this.
+    Reader(ReaderVerb),
+    /// Nothing is over the list any more: the keyboard goes back to it, on
+    /// the cursor's row.
+    KeyboardHome,
     /// Leave the app.
     Quit,
 }
@@ -294,6 +337,7 @@ pub struct FocusController {
     feed: feed::Feed,
     cursor: cursor::Cursor,
     verbs: verbs::Verbs,
+    surfaces: surfaces::Surfaces,
     /// The strip's counts, as the host last said.
     counts: Option<FocusCounts>,
 }
@@ -308,6 +352,7 @@ impl FocusController {
             feed: feed::Feed::default(),
             cursor: cursor::Cursor::default(),
             verbs: verbs::Verbs::default(),
+            surfaces: surfaces::Surfaces::default(),
             counts: None,
         }
     }
@@ -328,20 +373,30 @@ impl FocusController {
     pub fn handle_on(&mut self, input: Input, rows: &dyn Rows) -> Vec<Effect> {
         match input {
             Input::Command(CommandId::Quit) => vec![Effect::Show(Intent::Quit)],
+            Input::Command(id) if self.surfaces.top().is_some() => {
+                match self.surface_command(id, rows) {
+                    Some(steps) => self.effects(steps),
+                    None => self.list_command(id, rows),
+                }
+            }
             // Back's last rung: the surfaces above the list are still the
             // frontend's to close first.
             Input::Command(CommandId::Back) => {
                 let steps = self.cursor.clear(self.feed.total());
                 self.effects(steps)
             }
-            Input::Command(id) => {
-                let has_action = self.counts.map(|counts| counts.has_action);
-                let total = self.feed.total();
-                let steps = self
-                    .cursor
-                    .command(id, rows, self.feed.scope(), total, has_action)
-                    .or_else(|| self.verbs.command(id, &mut self.cursor, rows, total));
-                steps.map(|steps| self.effects(steps)).unwrap_or_default()
+            Input::Command(id) => self.list_command(id, rows),
+            Input::SurfaceOpened(kind) => {
+                let steps = self.surfaces.opened(kind, self.policy.caps.stacking);
+                self.effects(steps)
+            }
+            Input::SurfaceClosed(kind) => {
+                let steps = self.surfaces.closed(kind);
+                self.effects(steps)
+            }
+            Input::ReaderState { more_open, finding } => {
+                self.surfaces.reader_state(more_open, finding);
+                Vec::new()
             }
             Input::Accounts(accounts) => {
                 self.cursor.set_accounts(accounts);
@@ -413,15 +468,109 @@ impl FocusController {
     pub fn landed(&mut self, rows: &dyn Rows, opened: bool) -> Vec<Effect> {
         let mut steps = self.cursor.landed(rows, opened);
         steps.extend(self.verbs.landed(&mut self.cursor, rows));
+        match self.surfaces.landed(rows) {
+            Some(surfaces::Landing::Open(index)) => {
+                steps.extend(self.cursor.place(index, rows));
+                steps.extend(self.open_at(index, rows));
+            }
+            Some(surfaces::Landing::Close) => {
+                steps.push(feed::Step::Show(Intent::CloseSurface(SurfaceKind::Message)));
+                steps.push(feed::Step::Show(Intent::KeyboardHome));
+            }
+            None => {}
+        }
         let mut effects = self.effects(steps);
         effects.push(self.refresh_counts());
         effects
+    }
+
+    /// The key context in force: the top surface's, or the list's.
+    pub fn key_context(&self) -> postio_ui::keymap::KeyContext {
+        self.surfaces.key_context()
+    }
+
+    /// The message the open message surface shows, while it is on top.
+    pub fn reading(&self) -> Option<MessageId> {
+        self.surfaces.reading()
+    }
+
+    /// A command on the list, by the cursor's and the verbs' rules.
+    fn list_command(&mut self, id: CommandId, rows: &dyn Rows) -> Vec<Effect> {
+        if id == CommandId::OpenMessage {
+            let steps = self
+                .cursor
+                .position()
+                .map(|position| self.open_at(position, rows))
+                .unwrap_or_default();
+            return self.effects(steps);
+        }
+        let has_action = self.counts.map(|counts| counts.has_action);
+        let total = self.feed.total();
+        let steps = self
+            .cursor
+            .command(id, rows, self.feed.scope(), total, has_action)
+            .or_else(|| self.verbs.command(id, &mut self.cursor, rows, total));
+        steps.map(|steps| self.effects(steps)).unwrap_or_default()
+    }
+
+    /// Open the row at `position`: a message to read, a draft to write, a
+    /// digest's window.
+    fn open_at(&mut self, position: u32, rows: &dyn Rows) -> Vec<feed::Step> {
+        let Some(row) = rows.facts(position) else {
+            return Vec::new();
+        };
+        if row.digest {
+            return vec![feed::Step::Show(Intent::OpenDigest { row: row.id })];
+        }
+        let (index, total) = self.feed.message_place(position, rows.len());
+        self.surfaces
+            .open(&row, index, total, self.policy.caps.stacking)
+    }
+
+    /// A command while a surface is over the list, or `None` when the
+    /// surface has no say and the list's rules apply (contract invariant 5).
+    fn surface_command(&mut self, id: CommandId, rows: &dyn Rows) -> Option<Vec<feed::Step>> {
+        if self.surfaces.top() != Some(SurfaceKind::Message) {
+            return self.surfaces.close_top(id);
+        }
+        if let Some(steps) = self.surfaces.reader_key(id) {
+            return Some(steps);
+        }
+        let reading = self.surfaces.reading()?;
+        let position = rows.position_of(reading);
+        match id {
+            // `j`/`k` step the list behind the message, and the message
+            // follows the cursor; nothing closes.
+            CommandId::NextMessage | CommandId::PrevMessage => {
+                let by = if id == CommandId::NextMessage { 1 } else { -1 };
+                let (mut steps, moved) = self.cursor.step(by, rows);
+                if moved && let Some(at) = self.cursor.position() {
+                    steps.extend(self.open_at(at, rows));
+                }
+                Some(steps)
+            }
+            // `Return` on the message on screen: it is open.
+            CommandId::OpenMessage => Some(Vec::new()),
+            _ => {
+                let row = position.and_then(|at| rows.facts(at))?;
+                let steps = self.verbs.command_on(id, &row)?;
+                if matches!(id, CommandId::Archive | CommandId::Delete)
+                    && let Some(at) = position
+                {
+                    self.surfaces.step_past(at, row.id);
+                }
+                Some(steps)
+            }
+        }
     }
 
     /// Whether `id` is one of the controller's own commands: the cursor's,
     /// the selection's, `!`, and the verbs on the list. A frontend sends the
     /// rest -- a surface's commands, the composer's -- where it always did.
     pub fn answers(&self, id: CommandId) -> bool {
+        if let Some(answer) = self.surfaces.answers(id) {
+            return answer;
+        }
         matches!(
             id,
             CommandId::NextMessage
@@ -437,6 +586,7 @@ impl FocusController {
                 | CommandId::AcceptInvite
                 | CommandId::DeclineInvite
                 | CommandId::DismissMarker
+                | CommandId::OpenMessage
         ) || postio_ui::focus_target::dispatch(id).is_some()
     }
 

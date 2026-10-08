@@ -33,6 +33,7 @@ impl List {
                     } else {
                         vec![ThreadId::new(1000 + id)]
                     },
+                    writes: false,
                 })
                 .collect(),
         }
