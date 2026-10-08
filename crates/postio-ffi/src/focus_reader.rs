@@ -277,6 +277,11 @@ fn flow(document: &str, shown: Treatment) -> String {
     let mut css = String::from(MAC_FLOW_PALETTE);
     css.push_str(FLOW_CSS);
     if shown == Treatment::AppColours {
+        // WebKit resolves the system's colours, and its own form controls,
+        // as dark only for a page that says it can be drawn so; without
+        // this the ink was the light appearance's black on a dark window.
+        // Paper says nothing: its web view is light whatever the window.
+        css.push_str(":root { color-scheme: light dark; }\n");
         css.push_str(FLOW_FLAT_CSS);
     }
     document.replacen("</style>", &format!("{css}</style>"), 1)

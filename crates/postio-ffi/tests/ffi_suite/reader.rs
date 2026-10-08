@@ -607,6 +607,10 @@ async fn the_mac_flows_the_body_in_its_column() {
         app.html.contains("--r-ink: -apple-system-label"),
         "the platform's ink, which follows the appearance"
     );
+    assert!(
+        app.html.contains("color-scheme: light dark"),
+        "WebKit resolves the system's colours as dark only for a page that says it can be"
+    );
     session.shutdown();
 
     let (session, id) = with_body_from(NEWSLETTER, "news@example.com").await;
