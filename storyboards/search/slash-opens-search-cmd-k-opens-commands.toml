@@ -1,0 +1,45 @@
+# `/` opens the command bar on search, and ⌘K opens the same bar on
+# commands with `>` already typed (spec 007 C24; specs/009-focus-macos US5,
+# screens 07 and 09).
+#
+# One bar opened two ways, not two surfaces. On the Mac both keys used to
+# stop at the frontend: `/` put the keyboard in the toolbar's field, and ⌘K
+# typed `>` there over a list of the frontend's own. Both reach Focus's
+# controller now (T082), so the bar says the same thing on each platform.
+# Escape closes it through the controller's Back, and the keyboard goes home
+# to the row it left, with the cursor where it was.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/009-focus-macos US5" }
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+id      = "row"
+command = "next_message"
+check   = { cursor.index = 1 }
+
+[[step]]
+command = "search"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true, app.focus.bar.typed = "", app.focus.bar.hints = 3 }
+expect  = "`/` opens the bar on an empty field: the saved searches, then three lines saying what typing does (search mail, `>` for commands, `@` for people). Nothing is typed for the person."
+
+[[step]]
+command = "back"
+check   = { overlay.kind = "none", keyboard.region = "list", cursor.index = { same_as = "row" } }
+expect  = "Escape closes the bar, and the keyboard is back on the second row."
+
+[[step]]
+command = "command_palette"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true, app.focus.bar.typed = ">", app.focus.bar.highlighted = "command" }
+expect  = "⌘K opens the same bar with `>` typed: only commands are listed, each with its key, and the first is highlighted."
+
+[[step]]
+type    = "arch"
+check   = { app.focus.bar.typed = ">arch", app.focus.bar.highlighted = "command" }
+expect  = "Typing after `>` filters the commands as it goes: Archive leads with its key beside it, and nothing but commands is offered."
+
+[[step]]
+command = "back"
+check   = { overlay.kind = "none", keyboard.region = "list", cursor.index = { same_as = "row" }, rows.count = { same_as = "row" } }
+expect  = "Escape closes the commands. Nothing ran, and the cursor is still on the second row."

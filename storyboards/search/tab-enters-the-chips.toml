@@ -1,0 +1,42 @@
+# Tab steps from the words into the chips they were lowered to, then from
+# chip to chip, and ⌘⌫ goes back to the words as they were typed
+# (specs/009-focus-macos US5, screen 07; GTK's chip editor, moved into the
+# controller in T082).
+#
+# Tab is the toolkit's focus key everywhere else, and the registry binds
+# nothing to it in the bar (`tab_belongs_to_the_pane_that_owns_it`). The bar
+# takes it only while there is a chip to step into, and lets it through
+# otherwise. While a chip is edited, the echo under the field says which one,
+# and names the keys that move on and go back.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/009-focus-macos US5" }
+
+[[step]]
+command = "search"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+
+[[step]]
+id      = "words"
+type    = "from:ada  invoice"
+check   = { app.focus.bar.typed = "from:ada  invoice" }
+expect  = "The words are drawn as two chips, `from:ada` and `invoice`, and the echo under the field says what was typed."
+
+[[step]]
+key     = "Tab"
+check   = { keyboard.region = "search", keyboard.typing = true, overlay.kind = "finder", app.focus.bar.typed = "from:ada invoice" }
+expect  = "Tab steps into the first chip. The field holds the chips with `from:ada` selected, and the echo says it is editing `from:`, with Tab for the next chip and ⌘⌫ for the plain words."
+
+[[step]]
+key     = "Tab"
+check   = { keyboard.region = "search", keyboard.typing = true, app.focus.bar.typed = "from:ada invoice" }
+expect  = "Tab again moves to the second chip, `invoice` selected. The keyboard stays in the bar."
+
+[[step]]
+command = "back_to_words"
+check   = { keyboard.region = "search", keyboard.typing = true, app.focus.bar.typed = { same_as = "words" } }
+expect  = "⌘⌫ puts back the words exactly as typed, double space and all, and no chip is being edited."
+
+[[step]]
+command = "back"
+check   = { overlay.kind = "none", keyboard.region = "list" }
+expect  = "Escape closes the bar, and the list has the keyboard."
