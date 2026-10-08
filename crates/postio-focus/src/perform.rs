@@ -6,8 +6,10 @@
 //! reply are decided here once (research R1).
 
 use postio_client::Client;
+use postio_model::listing::{ListPage, MailStore};
+use postio_model::mailbox::MailboxRole;
 
-use crate::{Reply, Request};
+use crate::{Opened, PageAnswer, Reply, Request};
 
 /// Ask the engine; return what the controller is to be told.
 pub async fn perform(client: &Client, request: Request) -> Reply {
@@ -18,6 +20,79 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .map_err(|error| error.to_string()),
         ),
+        Request::OpenScope { scope, splices } => {
+            // Which folders are inboxes: what lets Focus's inbox ignore mail
+            // moving anywhere else rather than re-read on every arrival.
+            let mut folders = Vec::new();
+            if let Ok(accounts) = client.accounts().await {
+                for account in accounts.iter().filter(|account| account.enabled) {
+                    if let Ok(mailboxes) = client.mailboxes(account.id).await {
+                        folders.extend(
+                            mailboxes
+                                .iter()
+                                .map(|mailbox| (mailbox.id, mailbox.role == MailboxRole::Inbox)),
+                        );
+                    }
+                }
+            }
+            let total = client
+                .list_count(scope)
+                .await
+                .map_err(|error| error.to_string());
+            let surfaced = match splices {
+                true => Some(client.surfaced().await.map_err(|error| error.to_string())),
+                false => None,
+            };
+            Reply::Opened(Opened {
+                scope,
+                folders,
+                total,
+                surfaced,
+            })
+        }
+        Request::Page {
+            page,
+            stamp,
+            start,
+            count,
+            wanted,
+        } => {
+            let answer = match client.list_page(wanted).await {
+                Ok(ListPage::Threads(answer)) => {
+                    // The page's label pills, for every row at once: one round
+                    // trip, one statement at the store (spec 007 T043).
+                    let threads = postio_ui::focus_list::label_threads(&answer.rows);
+                    let labels = client.thread_labels(threads).await.unwrap_or_else(|error| {
+                        tracing::warn!(page, %error, "Focus could not read a page's labels");
+                        Vec::new()
+                    });
+                    Ok(PageAnswer::Threads {
+                        total: answer.total,
+                        rows: answer.rows,
+                        labels,
+                    })
+                }
+                Ok(ListPage::Messages(answer)) => Ok(PageAnswer::Messages {
+                    total: answer.total,
+                    rows: answer.rows,
+                }),
+                Err(error) => Err(error.to_string()),
+            };
+            Reply::Page {
+                page,
+                stamp,
+                start,
+                count,
+                answer,
+            }
+        }
+        Request::Surfaced => {
+            Reply::Surfaced(client.surfaced().await.map_err(|error| error.to_string()))
+        }
+        Request::NoteRemoved { mailbox, messages } => {
+            client.note_removed(mailbox, messages);
+            Reply::Noted
+        }
     }
 }
 

@@ -15,10 +15,15 @@ use std::time::Duration;
 
 use postio_client::protocol::FocusCounts;
 use postio_config::paths::Platform;
-use postio_core::CommandId;
+use postio_core::{CommandId, Event};
+use postio_model::listing::{PageRequest, Surfaced};
+use postio_model::{ListScope, MailboxId, MessageId};
+use postio_ui::focus_list::FocusRow;
 
+mod feed;
 mod perform;
 
+pub use feed::{Opened, PageAnswer};
 pub use perform::perform;
 
 /// What differs between platforms, as policy rather than as a fork
@@ -74,6 +79,8 @@ pub enum Input {
     Command(CommandId),
     /// The answer to an earlier [`Effect::Ask`].
     Reply(Ticket, Reply),
+    /// Something the engine said, from the client's one event stream.
+    Event(Event),
 }
 
 /// What the frontend does next.
@@ -102,6 +109,49 @@ pub enum Effect {
 pub enum Intent {
     /// The header strip's counts changed.
     Counts(FocusCounts),
+    /// The place opened has been counted: the list changes over to it,
+    /// keeping the rows on screen until its first page lands, and asks for
+    /// that page ([`FocusController::page_wanted`]).
+    ReplaceSource {
+        /// How many rows the new place draws.
+        total: u32,
+    },
+    /// A page has been asked for under the list's `stamp`.
+    PagePending {
+        /// The list's own stamp, echoed.
+        stamp: u64,
+        /// Which page.
+        page: u32,
+    },
+    /// A page's rows, for the list to take if `stamp` is still its own.
+    DeliverPage {
+        /// The stamp the page was asked under.
+        stamp: u64,
+        /// Which page.
+        page: u32,
+        /// How many rows the place draws now.
+        total: u32,
+        /// The rows, conversations and surfaced rows in list order.
+        rows: Vec<FocusRow>,
+    },
+    /// A page could not be read and is being asked for again.
+    AbandonPage {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// Which page.
+        page: u32,
+    },
+    /// A page could not be read and will not be asked for again.
+    GiveUp {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// Which page.
+        page: u32,
+    },
+    /// Re-read the pages on screen, keeping the scroll position.
+    RefreshList,
+    /// Rows landed: a first page, or a re-read.
+    Filled,
     /// Leave the app.
     Quit,
 }
@@ -113,6 +163,36 @@ pub enum Intent {
 pub enum Request {
     /// The header strip's counts.
     FocusCounts,
+    /// Open a place: which folders are inboxes, how many rows it holds, and
+    /// -- when it `splices` -- what Focus surfaces among them.
+    OpenScope {
+        /// The place.
+        scope: ListScope,
+        /// Whether to read the surfaced rows too.
+        splices: bool,
+    },
+    /// One page of the place in view, with its label pills.
+    Page {
+        /// Which page of the list.
+        page: u32,
+        /// The list's stamp, echoed in the answer.
+        stamp: u64,
+        /// The page's first position, in the list's terms.
+        start: u32,
+        /// How many positions the page spans.
+        count: u32,
+        /// The run of conversations to read, in the store's terms.
+        wanted: PageRequest,
+    },
+    /// What Focus surfaces in its inbox, read again.
+    Surfaced,
+    /// Mail left `mailbox`: said to the store before the list re-reads.
+    NoteRemoved {
+        /// The folder it left.
+        mailbox: MailboxId,
+        /// What left.
+        messages: Vec<MessageId>,
+    },
 }
 
 /// The engine's answer to a [`Request`]. A failure is carried as its
@@ -122,6 +202,25 @@ pub enum Request {
 pub enum Reply {
     /// The answer to [`Request::FocusCounts`].
     FocusCounts(Result<FocusCounts, String>),
+    /// The answer to [`Request::OpenScope`].
+    Opened(Opened),
+    /// The answer to [`Request::Page`], with the request's own terms.
+    Page {
+        /// Which page.
+        page: u32,
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// The page's first position.
+        start: u32,
+        /// How many positions it spans.
+        count: u32,
+        /// The rows, or why there are none.
+        answer: Result<PageAnswer, String>,
+    },
+    /// The answer to [`Request::Surfaced`].
+    Surfaced(Result<Vec<Surfaced>, String>),
+    /// A post was made; nothing to answer.
+    Noted,
 }
 
 /// Focus's behaviour for one window. `Send`, and plain data: no toolkit
@@ -131,6 +230,7 @@ pub struct FocusController {
     policy: Policy,
     generation: u64,
     next_ticket: u64,
+    feed: feed::Feed,
 }
 
 impl FocusController {
@@ -140,6 +240,7 @@ impl FocusController {
             policy,
             generation: 0,
             next_ticket: 0,
+            feed: feed::Feed::default(),
         }
     }
 
@@ -161,7 +262,93 @@ impl FocusController {
                 tracing::debug!(%error, "focus counts unavailable");
                 Vec::new()
             }
+            Input::Reply(_, Reply::Opened(opened)) => {
+                let steps = self.feed.opened(opened);
+                self.effects(steps)
+            }
+            Input::Reply(
+                _,
+                Reply::Page {
+                    page,
+                    stamp,
+                    start,
+                    count,
+                    answer,
+                },
+            ) => {
+                let steps = self.feed.page(page, stamp, start, count, answer);
+                self.effects(steps)
+            }
+            Input::Reply(_, Reply::Surfaced(surfaced)) => {
+                let steps = self.feed.resurfaced(surfaced);
+                self.effects(steps)
+            }
+            Input::Reply(_, Reply::Noted) => Vec::new(),
+            Input::Event(event) => {
+                let steps = self.feed.event(&event);
+                self.effects(steps)
+            }
         }
+    }
+
+    /// Show `scope` in the list: counted first, then the list changes over.
+    pub fn open(&mut self, scope: ListScope) -> Vec<Effect> {
+        let request = self.feed.open(scope);
+        vec![Effect::Ask(self.ticket(), request)]
+    }
+
+    /// The list wants `page`, under its own `stamp` (GTK's model generation,
+    /// the Mac's window generation): every answer for it carries the stamp
+    /// back for the list to check.
+    pub fn page_wanted(&mut self, page: u32, stamp: u64) -> Vec<Effect> {
+        let steps = self.feed.wanted(page, stamp);
+        self.effects(steps)
+    }
+
+    /// The place in view, once one is open.
+    pub fn scope(&self) -> Option<ListScope> {
+        self.feed.scope()
+    }
+
+    /// How many rows the place in view draws, as the store last said.
+    pub fn list_total(&self) -> u32 {
+        self.feed.total()
+    }
+
+    /// Every page asked of the store, in order.
+    pub fn pages_asked(&self) -> &[u32] {
+        self.feed.pages_asked()
+    }
+
+    /// Whether the first page of the place in view has landed.
+    pub fn has_landed(&self) -> bool {
+        self.feed.has_landed()
+    }
+
+    /// True once per opening, after its first page lands.
+    pub fn take_opened(&mut self) -> bool {
+        self.feed.take_opened()
+    }
+
+    /// Whether `mailbox` is one of the inboxes Focus's inbox is made of.
+    pub fn is_inbox(&self, mailbox: MailboxId) -> bool {
+        self.feed.is_inbox(mailbox)
+    }
+
+    /// The cursor's `index` among the messages of a list of `total` rows,
+    /// and how many messages it holds, digests not counted.
+    pub fn message_place(&self, index: u32, total: u32) -> (u32, u32) {
+        self.feed.message_place(index, total)
+    }
+
+    fn effects(&mut self, steps: Vec<feed::Step>) -> Vec<Effect> {
+        steps
+            .into_iter()
+            .map(|step| match step {
+                feed::Step::Show(intent) => Effect::Show(intent),
+                feed::Step::Ask(request) => Effect::Ask(self.ticket(), request),
+            })
+            .collect()
     }
 
     /// Ask for the header strip's counts.
