@@ -20,8 +20,8 @@ import PostioFFI
 public enum Intercepted {
     // Not `/`, ⌘K, `g o` or the go-to keys: Focus's controller opens the
     // command bar and the folders popover and goes to each place, and this
-    // frontend draws what it says (specs/009-focus-macos T085, T086).
-    public static let cheatSheet = "cheat_sheet"
+    // frontend draws what it says (specs/009-focus-macos T085, T086). Not
+    // `?` either: the controller opens and closes the key map (T106).
     public static let back = "back"
     /// The Settings window. Both frontends put settings in a window; ADR 0031
     /// is why, and why the model behind it is shared.
@@ -92,7 +92,7 @@ public enum Intercepted {
 
     /// Every id above, for the test that checks they still exist.
     public static let all = [
-        cheatSheet, back, settings,
+        back, settings,
         expandAll, toggleFold, nextInConversation, prevInConversation,
         scrollReaderDown, scrollReaderUp,
         openMessage, prevView, viewOriginal, toggleReaderView, zoomIn, zoomOut, zoomReset,

@@ -686,8 +686,16 @@ final class Engine {
 
     // MARK: what Postio says back
 
-    /// Whether the key map is open.
-    var showingCheatSheet = false
+    /// The key map (`?`, T106): the controller opens and closes it; this
+    /// holds what it said for the main window's panel.
+    let keyMap = KeyMapModel()
+
+    /// The key map was closed by a click outside it: the controller is told,
+    /// and sends the keyboard home.
+    func keyMapDismissed() {
+        guard keyMap.closedByToolkit() else { return }
+        session?.focusSurfaceClosed(.keyMap)
+    }
 
     /// The chords of a half-typed sequence, shown while it waits.
     private(set) var pendingChord: String?
@@ -784,6 +792,10 @@ final class Engine {
             apply(change)
             return
         }
+        // The key map (T106), before the surfaces: its close is
+        // `FocusCloseSurface(.keyMap)`. The controller put it on its stack,
+        // so its opening is not reported back.
+        if keyMap.apply(event) != nil { return }
         // The pickers at the row (T092), before the surfaces: its close is
         // `FocusCloseSurface(.picker)`.
         if let change = picker?.apply(event) {
@@ -818,8 +830,10 @@ final class Engine {
             keymapVersion += 1
             focusTable?.keymapChanged()
             keycapsChanged?()
-            // The menus show the new keys (T105).
+            // The menus show the new keys (T105), and an open key map draws
+            // them (T106): the session has the new keymap by now.
             if menuPlan.apply(event) { mountMenuBar() }
+            if keyMap.isOpen, let session { keyMap.refresh(session.focusKeyMap()) }
         case .surfacedChanged:
             // The list re-reads what it surfaces and says so itself; the
             // strip's counts may have moved with it.
@@ -1041,8 +1055,6 @@ final class Engine {
             }
         }
         switch id {
-        case Intercepted.cheatSheet:
-            showingCheatSheet = true
         case Intercepted.back where keyWindow.current == .message && messageWindow?.showingSource == true:
             // Esc from the raw source returns to the message (M4); the
             // controller does not know the source is up.
@@ -1051,8 +1063,6 @@ final class Engine {
             // The folders popover is not a surface the controller keeps:
             // Escape closes it here, and the keyboard goes home.
             placesPopover?.close()
-        case Intercepted.back where keyWindow.current == .main && showingCheatSheet:
-            showingCheatSheet = false
         case Intercepted.settings:
             // A request the main window turns into `openWindow(id:)`,
             // because only a view can open a window (#1261).
@@ -1152,13 +1162,6 @@ final class Engine {
     private func replyDraft(all: Bool, to target: Int64? = nil) -> DraftFfi? {
         guard let session, let message = target ?? focusCursorMessage else { return nil }
         return session.replyDraft(to: message, all: all)
-    }
-
-    /// Close whatever overlay is open, and give the keyboard back to the
-    /// list.
-    func dismissOverlays() {
-        showingCheatSheet = false
-        if let table = focusTable?.tableView { table.window?.makeFirstResponder(table) }
     }
 
     /// Stop the engines and drop the store, in that order. Called from the

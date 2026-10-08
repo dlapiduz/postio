@@ -278,8 +278,8 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         // Not `/`, `mod+k`, `g o` or the go-to keys: Focus's controller
         // opens the command bar and the folders popover and goes to each
         // place (specs/009-focus-macos T082), and the Mac draws what it says
-        // (T085, T086).
-        C::CheatSheet,
+        // (T085, T086). Not `?` either: the controller opens and closes the
+        // key map, and the Mac draws it (T103, T106).
         C::Back,
         C::Settings,
         C::ScrollReaderDown,

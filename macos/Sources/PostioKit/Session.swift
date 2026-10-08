@@ -404,25 +404,9 @@ public final class PostioSession {
         inner.isAvailable(id: id, context: context)
     }
 
-    /// Every command reachable in `context`, with the binding in force.
-    ///
-    /// The same list the palette reads, unfiltered — one list read two ways.
-    public func cheatSheet(in context: UiContext) -> [PaletteEntryFfi] {
-        inner.cheatSheet(context: context)
-    }
-
-    /// The `?` sheet, grouped the way the product groups it: Everywhere, the
-    /// box's prefixes, the reader's own surface, then one section per
-    /// extension namespace.
-    ///
-    /// The grouping is `postio_ui::cheatsheet::sections`' — the same
-    /// function the GTK overlay draws from, so the two frontends teach the
-    /// same sheet. The flat `cheatSheet` above predates it, and a `?`
-    /// overlay drawing that is an ungrouped wall of keys where the other
-    /// platform has headings.
-    public func cheatSheetSections(in context: UiContext) -> [CheatSectionFfi] {
-        inner.cheatSheetSections(context: context)
-    }
+    /// The key map as the controller would open it now (`focus_key_map`):
+    /// what an open key map draws again after `[keys]` changes (T106).
+    public func focusKeyMap() -> KeyMapSheetFfi { inner.focusKeyMap() }
 
     /// Put `label` on the selection, or on the message under the cursor when
     /// nothing is marked.

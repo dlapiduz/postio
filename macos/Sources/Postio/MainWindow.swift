@@ -25,7 +25,13 @@ struct MainWindow: View {
         Group {
             // A fresh install is the wizard, not an empty inbox: with no
             // account there is nothing for the list to show (canvas 09).
-            if let firstRun = engine.firstRun, engine.accounts.isEmpty {
+            if case let .refused(model) = engine.state {
+                // The store would not open (T100): why, and the way forward,
+                // in place of the whole inbox -- with no store there is no
+                // strip to count and no list to show.
+                StoreRefusalPage(model: model)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let firstRun = engine.firstRun, engine.accounts.isEmpty {
                 FirstRunView(
                     model: firstRun,
                     otherWays: { engine.run(Intercepted.addAccount) },
@@ -86,14 +92,6 @@ struct MainWindow: View {
                 PasswordSheet(account: account, repair: engine.bannerRepair, session: engine.session)
             }
         }
-        .sheet(isPresented: Binding(
-            get: { engine.showingCheatSheet },
-            set: { engine.showingCheatSheet = $0 }
-        )) {
-            if let session = engine.session {
-                CheatSheet(session: session, context: .list, dismiss: { engine.dismissOverlays() })
-            }
-        }
         // `PRODUCT.md` §18: ≤100 ms or absent, and Reduce Motion is honoured.
         .animation(.easeOut(duration: Motion.current), value: engine.pendingChord)
         .animation(.easeOut(duration: Motion.current), value: engine.noticeToken)
@@ -102,6 +100,15 @@ struct MainWindow: View {
         .animation(.easeOut(duration: Motion.current), value: engine.focus.toastToken)
         .animation(.easeOut(duration: Motion.current), value: engine.focus.toast == nil)
         .overlay(alignment: .bottomLeading) { NoticeBanner(engine: engine) }
+        // The key map (`?`, screen 20): a panel over the dimmed list, opened
+        // and closed by the controller; a click outside closes it too.
+        .overlay {
+            if let words = engine.keyMap.words {
+                KeyMapPanel(words: words, dismiss: { engine.keyMapDismissed() })
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: Motion.current), value: engine.keyMap.isOpen)
         // What a verb did, with Undo while the stack can take it back: the
         // controller's toast, as the pill at the bottom centre (T093,
         // screen 15). Above the action bar when there is one.
@@ -151,9 +158,9 @@ struct MainWindow: View {
             } else if let table = engine.focusTable {
                 FocusListView(table: table)
             }
-        case let .refused(model):
-            // The store would not open: why, and the way forward (T100).
-            StoreRefusalPage(model: model)
+        case .refused:
+            // Drawn in the inbox's place, above.
+            EmptyView()
         }
     }
 }

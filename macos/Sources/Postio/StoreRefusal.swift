@@ -24,6 +24,11 @@ struct StoreRefusalPage: View {
                 Task { await model.act() }
             }
             .keyboardShortcut(.defaultAction)
+            // A default button is filled with the label colour, lettered
+            // in the background's (contracts/mac-surfaces.md): the accent
+            // stays the markers' and the focus ring's.
+            .buttonStyle(.borderedProminent)
+            .tint(.primary)
             .disabled(model.working)
         }
     }
