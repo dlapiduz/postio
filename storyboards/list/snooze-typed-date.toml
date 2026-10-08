@@ -1,0 +1,44 @@
+# Snooze to a typed date, from the picker at the row, and take it back
+# (specs/009-focus-macos US6, screen 11; the controller's pickers, T089).
+#
+# `s` opens "Snooze until" at the cursor's row: four presets numbered 1 to
+# 4, and a date field under them that says "Tab to type". Tab puts the
+# keyboard in the field, the words typed there are read as a date as they
+# are typed, and Return snoozes until that date. The row leaves the inbox,
+# the toast offers Undo, and Undo puts it back where it was.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/009-focus-macos US6" }
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", overlay.kind = "none" }
+
+[[step]]
+id      = "row"
+command = "next_message"
+check   = { cursor.index = 1 }
+
+[[step]]
+command = "snooze"
+check   = { overlay.kind = "picker", keyboard.region = "picker", cursor.index = 1 }
+expect  = "\"Snooze until\" hangs from the cursor's row at the subject column, naming the row's sender and subject on the right. It lists Later today, Tomorrow morning, Monday morning and Next week, each with its time and its number key 1 to 4, the first highlighted. Under them the date field says \"Or type a date\" and \"Tab to type\", and the footnote says where snoozed mail goes."
+
+[[step]]
+key     = "Tab"
+check   = { overlay.kind = "picker", keyboard.region = "picker", keyboard.typing = true }
+expect  = "The keyboard is in the date field. No preset is highlighted now: Return would take the typed date."
+
+[[step]]
+type    = "tue 9am"
+check   = { overlay.kind = "picker", keyboard.typing = true }
+expect  = "The field holds \"tue 9am\", and the line under it reads the date back: the coming Tuesday, 09:00."
+
+[[step]]
+key     = "Return"
+check   = { overlay.kind = "none", keyboard.region = "list", notice.undo = true }
+expect  = "The picker closes, the row leaves the inbox and the one below takes its place under the ring. The toast says it was snoozed and offers Undo with its key."
+
+[[step]]
+command = "undo"
+check   = { keyboard.region = "list", cursor.id = { same_as = "row" } }
+expect  = "The snoozed row is back in its place with the cursor ring on it, and the toast says it was undone."
