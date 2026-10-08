@@ -793,6 +793,7 @@ final class Engine {
             refreshCounts()
         case let .focusPageReady(page):
             focusTable?.pageArrived(page)
+            listTakesTheKeyboard()
             replayDemoKeys()
         case .keymapChanged:
             keymapVersion += 1
@@ -841,6 +842,24 @@ final class Engine {
         default:
             break
         }
+    }
+
+    /// Whether the list has been given the keyboard since the session
+    /// opened.
+    @ObservationIgnored
+    private var listHadKeyboard = false
+
+    /// Once, when the list's first page lands: the table takes the keyboard
+    /// (C30, the cursor's row is where the keys go). Left to AppKit, the
+    /// window's first key view had it -- Inbox ▾, ringed, which Space
+    /// would press -- until a surface sent the keyboard home.
+    private func listTakesTheKeyboard() {
+        guard !listHadKeyboard, let table = focusTable?.tableView, let window = table.window else { return }
+        listHadKeyboard = true
+        guard commandBar?.isOpen != true, picker?.isOpen != true,
+              !(window.firstResponder is NSTextView)
+        else { return }
+        window.makeFirstResponder(table)
     }
 
     /// The keys a demo was asked to press (`DemoMode.keys`), until they

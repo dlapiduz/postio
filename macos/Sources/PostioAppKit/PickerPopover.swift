@@ -38,7 +38,7 @@ public final class PickerPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
     private let keyView = PickerKeyView()
     private let filter: NSSearchField
     private let date: NSTextField
-    private let hosting: NSHostingView<PickerView<PickerFieldHost>>
+    private let hosting: NSHostingController<PickerView<PickerFieldHost>>
     private let controller = NSViewController()
 
     /// Whether it is on screen.
@@ -51,10 +51,12 @@ public final class PickerPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
         let date = NSTextField()
         self.filter = filter
         self.date = date
-        hosting = NSHostingView(rootView: PickerView(model: model) { kind in
+        hosting = NSHostingController(rootView: PickerView(model: model) { kind in
             PickerFieldHost(field: kind == .filter ? filter : date)
         })
         super.init()
+        // The popover's size is set from `sizeThatFits`, never left to the
+        // content's constraints.
         hosting.sizingOptions = []
 
         filter.delegate = self
@@ -73,20 +75,21 @@ public final class PickerPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
         date.cell?.wraps = false
 
         keyView.model = model
+        let content = hosting.view
         keyView.translatesAutoresizingMaskIntoConstraints = false
-        hosting.translatesAutoresizingMaskIntoConstraints = false
+        content.translatesAutoresizingMaskIntoConstraints = false
         let container = NSView()
         container.addSubview(keyView)
-        container.addSubview(hosting)
+        container.addSubview(content)
         NSLayoutConstraint.activate([
             keyView.topAnchor.constraint(equalTo: container.topAnchor),
             keyView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             keyView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             keyView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            hosting.topAnchor.constraint(equalTo: container.topAnchor),
-            hosting.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            hosting.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            hosting.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            content.topAnchor.constraint(equalTo: container.topAnchor),
+            content.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            content.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
         controller.view = container
         popover.contentViewController = controller
@@ -151,9 +154,20 @@ public final class PickerPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
         }
     }
 
+    /// Size the popover to what it draws: now, and again once SwiftUI has
+    /// taken the model's change in -- the hosting controller answers
+    /// `sizeThatFits` from the view it last updated, so a measure taken in
+    /// the same turn as a redraw is the old rows' (the move picker's rows
+    /// arrived into a popover sized for none).
     private func resize() {
-        let fitting = hosting.fittingSize
-        let height = fitting.height > 0 ? fitting.height : 240
+        measure()
+        DispatchQueue.main.async { [weak self] in self?.measure() }
+    }
+
+    private func measure() {
+        hosting.view.layoutSubtreeIfNeeded()
+        let fitting = hosting.sizeThatFits(in: NSSize(width: PickerMetrics.width, height: 10_000))
+        let height = fitting.height > 0 ? ceil(fitting.height) : 240
         popover.contentSize = NSSize(width: PickerMetrics.width, height: height)
     }
 
