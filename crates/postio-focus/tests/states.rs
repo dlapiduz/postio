@@ -258,7 +258,11 @@ fn a_refused_password_offers_to_update_it() {
             button: Some(BannerButton {
                 label: "Update password\u{2026}".to_owned(),
                 command: CommandId::UpdateCredential,
-                key: key(&focus, CommandId::UpdateCredential),
+                // `update_credential`'s `c` is the settings window's
+                // accounts list's; over the list `c` composes, so the
+                // banner names no key rather than one that does something
+                // else.
+                key: None,
             }),
             progress: None,
             error: true,

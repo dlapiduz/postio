@@ -212,7 +212,13 @@ impl FocusController {
                 BannerButton {
                     label: label.to_owned(),
                     command,
-                    key: postio_ui::hints::key(self.keymap(), command),
+                    // Only a key that runs it from the list the banner is
+                    // over: `update_credential`'s `c` is the settings
+                    // window's, and over the list `c` composes.
+                    key: postio_core::registry::get(command)
+                        .available_in(postio_core::Context::List)
+                        .then(|| postio_ui::hints::key(self.keymap(), command))
+                        .flatten(),
                 }
             }),
             progress: match banner {
