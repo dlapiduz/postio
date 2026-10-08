@@ -159,6 +159,37 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
             Reply::Folder { stamp, count, rows }
         }
         Request::RoleFolder(role) => Reply::RoleFolder(role_folder(client, role).await),
+        Request::Labels {
+            message,
+            account,
+            threads,
+            stamp,
+        } => Reply::Labels {
+            stamp,
+            answer: labels(client, message, account, threads).await,
+        },
+        Request::CreateLabel {
+            account,
+            name,
+            stamp,
+        } => Reply::LabelCreated {
+            stamp,
+            answer: match client.create_label(account, name).await {
+                Ok(Some(label)) => Ok(label),
+                Ok(None) => Err("the label was not made".to_owned()),
+                Err(error) => Err(error.to_string()),
+            },
+        },
+        Request::Folders { stamp } => Reply::Folders {
+            stamp,
+            answer: folders(client).await,
+        },
+        Request::NoteMove(mailbox) => {
+            if let Err(error) = client.note_move(mailbox).await {
+                tracing::warn!(%error, "Focus could not keep a recent move");
+            }
+            Reply::Noted
+        }
     }
 }
 
@@ -259,6 +290,61 @@ async fn search(
         instead: results.instead,
         held,
     })
+}
+
+/// What the label picker lists, in one round: the labels of `message`'s
+/// account -- a message can carry only its own account's (T170) -- or of
+/// `account`, or of the first enabled one; how many conversations carry
+/// each; and which of them `threads` carry.
+async fn labels(
+    client: &Client,
+    message: Option<postio_model::MessageId>,
+    account: Option<postio_model::AccountId>,
+    threads: Vec<postio_model::ThreadId>,
+) -> Result<crate::LabelsRead, String> {
+    let owner = match message {
+        Some(message) => client.account_of(message).await.ok().flatten(),
+        None => None,
+    };
+    let account = match owner.or(account) {
+        Some(account) => account,
+        None => client
+            .accounts()
+            .await
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|account| account.enabled)
+            .map(|account| account.id)
+            .ok_or_else(|| "there is no account to label in".to_owned())?,
+    };
+    let labels = client
+        .labels(account)
+        .await
+        .map_err(|error| error.to_string())?;
+    let counts = client.label_counts(account).await.unwrap_or_default();
+    let carried = if threads.is_empty() {
+        Vec::new()
+    } else {
+        client.thread_labels(threads).await.unwrap_or_default()
+    };
+    Ok(crate::LabelsRead {
+        account,
+        labels,
+        counts,
+        carried,
+    })
+}
+
+/// What the move picker lists, in one round: every enabled account's
+/// folders, and the last destinations.
+async fn folders(client: &Client) -> Result<crate::FoldersRead, String> {
+    let accounts = client.accounts().await.map_err(|error| error.to_string())?;
+    let mut folders = Vec::new();
+    for account in accounts.iter().filter(|account| account.enabled) {
+        folders.extend(client.mailboxes(account.id).await.unwrap_or_default());
+    }
+    let recent = client.move_recent().await.unwrap_or_default();
+    Ok(crate::FoldersRead { folders, recent })
 }
 
 /// A folder's first page, as the bar lists it.

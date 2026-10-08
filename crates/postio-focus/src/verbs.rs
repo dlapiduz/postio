@@ -44,6 +44,23 @@ pub enum ToastKind {
     Notice,
 }
 
+impl ToastKind {
+    /// How long a toast of this kind stays, in seconds: long enough to
+    /// read and reach for Undo, far short of the undo stack's own expiry,
+    /// so Undo works on once the toast has gone -- unless its Undo lasts a
+    /// window of its own, which it then stays exactly as long as (spec 007
+    /// FR-102). The Mac's toast and GTK's are both this long.
+    pub fn seconds(&self) -> u32 {
+        match self {
+            ToastKind::Completed {
+                seconds: Some(seconds),
+                ..
+            } => *seconds,
+            _ => postio_ui::focus_target::TOAST_SECONDS,
+        }
+    }
+}
+
 /// Rows an undo will bring back, waiting for the list to have them.
 #[derive(Debug, Clone)]
 struct Restoring {

@@ -277,6 +277,11 @@ impl Bar {
         self.mode.is_some()
     }
 
+    /// The bindings in force, as the bar's keycaps say them.
+    pub(crate) fn keymap(&self) -> &Keymap {
+        &self.keymap
+    }
+
     pub(crate) fn set_keymap(&mut self, keymap: postio_core::Keymap) {
         self.keymap = keymap;
     }

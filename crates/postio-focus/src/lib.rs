@@ -25,6 +25,7 @@ mod bar;
 mod cursor;
 mod feed;
 mod perform;
+mod pickers;
 mod surfaces;
 mod verbs;
 
@@ -32,6 +33,9 @@ pub use bar::{BarLine, BarLineKind, BarMode, BarView, Found, FoundRow, PlacesRea
 pub use cursor::{NoRows, RowFacts, Rows};
 pub use feed::{Opened, PageAnswer};
 pub use perform::{perform, perform_now};
+pub use pickers::{
+    Anchor, FoldersRead, LabelsRead, PickerField, PickerKind, PickerRow, PickerView,
+};
 pub use surfaces::{ReaderVerb, SurfaceKind};
 pub use verbs::{Everything, ToastKind};
 
@@ -140,6 +144,28 @@ pub enum Input {
     Keymap(postio_core::Keymap),
     /// Whether Focus files mail away: the places list Filtered while it does.
     Filtering(bool),
+    /// The clock stopped at this instant, or running again with `None`:
+    /// what a picker's presets and a typed date count from. Unset, it is
+    /// `postio_ui::clock::now()`.
+    Clock(Option<chrono::DateTime<chrono::Local>>),
+    /// The picker's field holds `text` now: the date typed, or the filter.
+    PickerTyped {
+        /// The field's text.
+        text: String,
+    },
+    /// The picker's row with this token was chosen: a click, or Return on
+    /// the row highlighted.
+    PickerChoose(u64),
+    /// `Space` on the picker's row with this token: a label on or off.
+    PickerToggle(u64),
+    /// A draft was queued to send, now or at `at`: the toast says so, and
+    /// its Undo cancels the send.
+    SendQueued {
+        /// The draft.
+        draft: postio_model::DraftId,
+        /// When it leaves, when not at once.
+        at: Option<chrono::DateTime<chrono::Utc>>,
+    },
 }
 
 /// What the frontend does next.
@@ -302,6 +328,12 @@ pub enum Intent {
     /// Run this command as the frontend's own: a line of the bar that is
     /// not the controller's to answer.
     Run(CommandId),
+    /// Show this picker, hung from its anchor.
+    OpenPicker(PickerView),
+    /// Redraw the picker that is up, whole.
+    PickerRows(PickerView),
+    /// Put the keyboard in the picker's date field (`Tab`).
+    PickerField,
 }
 
 /// What the controller needs from the engine. [`perform()`] is the one place
@@ -374,6 +406,36 @@ pub enum Request {
     /// The folder of `role` in the account Focus writes from: the first
     /// enabled account with one.
     RoleFolder(MailboxRole),
+    /// What the label picker lists: the labels of `message`'s account (or
+    /// of `account`, or the first enabled one), how many conversations
+    /// carry each, and which of them `threads` carry.
+    Labels {
+        /// The message the picker opened on, whose account it is.
+        message: Option<MessageId>,
+        /// The account to read when no message says.
+        account: Option<AccountId>,
+        /// The conversations the picker acts on.
+        threads: Vec<postio_model::ThreadId>,
+        /// The picker's stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// Make a label called `name` in `account`.
+    CreateLabel {
+        /// The account.
+        account: AccountId,
+        /// Its name, trimmed.
+        name: String,
+        /// The picker's stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// What the move picker lists: every enabled account's destinations,
+    /// and the last few moved to.
+    Folders {
+        /// The picker's stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// Keep `mailbox` among the recent destinations.
+    NoteMove(MailboxId),
 }
 
 /// The engine's answer to a [`Request`]. A failure is carried as its
@@ -424,6 +486,27 @@ pub enum Reply {
     },
     /// The answer to [`Request::RoleFolder`]: the folder and its name.
     RoleFolder(Option<(MailboxId, String)>),
+    /// The answer to [`Request::Labels`].
+    Labels {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// What was read.
+        answer: Result<LabelsRead, String>,
+    },
+    /// The answer to [`Request::CreateLabel`].
+    LabelCreated {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// The label made.
+        answer: Result<postio_model::Label, String>,
+    },
+    /// The answer to [`Request::Folders`].
+    Folders {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// What was read.
+        answer: Result<FoldersRead, String>,
+    },
 }
 
 /// Focus's behaviour for one window. `Send`, and plain data: no toolkit
@@ -438,6 +521,10 @@ pub struct FocusController {
     verbs: verbs::Verbs,
     surfaces: surfaces::Surfaces,
     bar: bar::Bar,
+    pickers: pickers::Pickers,
+    /// The draft the toast showing can take back: a queued send's own Undo,
+    /// which Undo runs before the stack's, until a newer toast replaces it.
+    toast_undo: Option<postio_model::DraftId>,
     /// The strip's counts, as the host last said.
     counts: Option<FocusCounts>,
 }
@@ -454,6 +541,8 @@ impl FocusController {
             verbs: verbs::Verbs::default(),
             surfaces: surfaces::Surfaces::default(),
             bar: bar::Bar::new(policy.platform),
+            pickers: pickers::Pickers::default(),
+            toast_undo: None,
             counts: None,
         }
     }
@@ -484,6 +573,12 @@ impl FocusController {
     }
 
     fn handle_input(&mut self, input: Input, rows: &dyn Rows) -> Vec<Effect> {
+        // A picker's keys are its own while it is up.
+        if let Input::Command(id) = &input
+            && let Some(steps) = self.picker_command(*id)
+        {
+            return self.effects(steps);
+        }
         match input {
             Input::Command(CommandId::Quit) => vec![Effect::Show(Intent::Quit)],
             Input::Command(id) if self.surfaces.top().is_some() => {
@@ -507,7 +602,11 @@ impl FocusController {
                 if kind == SurfaceKind::Bar {
                     self.bar.close();
                 }
-                let steps = self.surfaces.closed(kind);
+                let mut steps = Vec::new();
+                if kind == SurfaceKind::Picker {
+                    steps.extend(self.picker_gone(false));
+                }
+                steps.extend(self.surfaces.closed(kind));
                 self.effects(steps)
             }
             Input::ReaderState { more_open, finding } => {
@@ -584,6 +683,45 @@ impl FocusController {
                 steps.extend(self.feed.event(&event));
                 self.effects(steps)
             }
+            Input::Clock(clock) => {
+                self.pickers.clock = clock;
+                Vec::new()
+            }
+            Input::PickerTyped { text } => {
+                let steps = self.picker_typed(text);
+                self.effects(steps)
+            }
+            Input::PickerChoose(token) => {
+                let steps = self.picker_choose(token);
+                self.effects(steps)
+            }
+            Input::PickerToggle(token) => {
+                let steps = self.picker_toggle(token);
+                self.effects(steps)
+            }
+            Input::SendQueued { draft, at } => {
+                let text = match at {
+                    Some(_) => postio_ui::sending::SEND_SCHEDULED,
+                    None => postio_ui::sending::QUEUED_TO_SEND,
+                };
+                let effects = self.effects(vec![feed::Step::Show(Intent::Toast {
+                    text: text.to_owned(),
+                    kind: ToastKind::Completed {
+                        undoable: true,
+                        seconds: None,
+                    },
+                })]);
+                // After its own toast, which would otherwise replace it.
+                self.toast_undo = Some(draft);
+                effects
+            }
+            Input::Reply(
+                _,
+                reply @ (Reply::Labels { .. } | Reply::LabelCreated { .. } | Reply::Folders { .. }),
+            ) => {
+                let steps = self.picker_reply(reply);
+                self.effects(steps)
+            }
             input @ (Input::Typed { .. }
             | Input::BarRun(_)
             | Input::BarTab
@@ -652,6 +790,18 @@ impl FocusController {
     /// What a command on the list does: the bar's and the places', the
     /// cursor's, then the verbs'.
     fn list_steps(&mut self, id: CommandId, rows: &dyn Rows) -> Vec<feed::Step> {
+        // A toast with an Undo of its own -- a send, queued -- is the last
+        // thing said, so Undo takes that back first (#1752).
+        if id == CommandId::Undo
+            && let Some(draft) = self.toast_undo.take()
+        {
+            return vec![feed::Step::Ask(Request::Post(Command::CancelSend {
+                draft: Some(draft),
+            }))];
+        }
+        if let Some(steps) = self.picker_on_list(id, rows) {
+            return steps;
+        }
         if id == CommandId::OpenMessage {
             return self
                 .cursor
@@ -721,6 +871,8 @@ impl FocusController {
             }
             // `Return` on the message on screen: it is open.
             CommandId::OpenMessage => Some(Vec::new()),
+            // A picker hangs from the message, aimed at it alone.
+            _ if pickers::opens_picker(id) => self.picker_on_message(id, reading, rows),
             _ => {
                 let row = position
                     .and_then(|at| rows.facts(at))
@@ -743,6 +895,9 @@ impl FocusController {
         if self.surfaces.top() == Some(SurfaceKind::Bar) && bar::bar_key(id) {
             return true;
         }
+        if pickers::picker_key(id) {
+            return true;
+        }
         if let Some(answer) = self.surfaces.answers(id) {
             return answer;
         }
@@ -763,6 +918,7 @@ impl FocusController {
                 | CommandId::DismissMarker
                 | CommandId::OpenMessage
         ) || bar::goes(id)
+            || pickers::opens_picker(id)
             || postio_ui::focus_target::dispatch(id).is_some()
     }
 
@@ -840,7 +996,13 @@ impl FocusController {
         steps
             .into_iter()
             .map(|step| match step {
-                feed::Step::Show(intent) => Effect::Show(intent),
+                feed::Step::Show(intent) => {
+                    // Every toast replaces the one showing, and its Undo.
+                    if matches!(intent, Intent::Toast { .. }) {
+                        self.toast_undo = None;
+                    }
+                    Effect::Show(intent)
+                }
                 feed::Step::Ask(request) => Effect::Ask(self.ticket(), request),
                 feed::Step::Open(scope) => {
                     let request = self.feed.open(scope);

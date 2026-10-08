@@ -59,6 +59,12 @@ pub trait Rows {
     fn facts(&self, position: u32) -> Option<RowFacts>;
     /// Where `message`'s row is, when it is in a landed page.
     fn position_of(&self, message: MessageId) -> Option<u32>;
+    /// The row at `position` as a picker names what it acts on: its
+    /// sender and its subject. `None` -- the default -- for a frontend
+    /// with no words for it, and the picker names nothing.
+    fn said(&self, _position: u32) -> Option<(String, String)> {
+        None
+    }
 }
 
 /// No list: for inputs that need none.

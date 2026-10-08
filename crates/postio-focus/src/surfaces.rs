@@ -77,12 +77,13 @@ impl SurfaceKind {
     }
 
     /// Whether Back closes it from the controller. The composer's Back is
-    /// its own (it keeps the draft), and a picker's or menu's is its
-    /// field's. The bar's closes it, as GTK's window did.
+    /// its own (it keeps the draft), and a menu's is its own. The bar's
+    /// closes it, as GTK's window did, and a picker's, as GTK's picker did.
     fn back_closes(self) -> bool {
         matches!(
             self,
             SurfaceKind::Bar
+                | SurfaceKind::Picker
                 | SurfaceKind::Digest
                 | SurfaceKind::Capture
                 | SurfaceKind::Settings
