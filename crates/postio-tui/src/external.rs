@@ -104,7 +104,8 @@ mod tests {
         std::fs::write(
             &script,
             format!(
-                "#!/bin/sh\nstat -c %a \"$1\" > '{}'\nprintf 'Added by the editor\\n' >> \"$1\"\n",
+                // GNU `stat -c`, or BSD's `-f` on a Mac.
+                "#!/bin/sh\n{{ stat -c %a \"$1\" 2>/dev/null || stat -f %Lp \"$1\"; }} > '{}'\nprintf 'Added by the editor\\n' >> \"$1\"\n",
                 dir.join("mode").display()
             ),
         )
