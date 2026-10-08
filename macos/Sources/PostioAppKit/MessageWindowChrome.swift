@@ -37,6 +37,9 @@ public final class MessageWindowChrome: NSObject, NSToolbarDelegate {
         window.titleVisibility = .hidden
         window.toolbarStyle = .unified
         window.toolbar = toolbar
+        // The title area and the action row are one tinted band (SPEC
+        // section 2); the hairline is under the action row, not between.
+        window.titlebarSeparatorStyle = .none
         window.backgroundColor = .windowBackgroundColor
     }
 

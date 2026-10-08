@@ -275,6 +275,10 @@ public struct MessageWindowView<BodyView: View>: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(MessageSurface.content)
         }
+        // The keyboard is the key monitor's, through the controller: a
+        // focus ring on the first button would claim a focus nobody moved
+        // there, and the accent is for the list's cursor (FR-017).
+        .focusEffectDisabled()
     }
 
     @ViewBuilder
