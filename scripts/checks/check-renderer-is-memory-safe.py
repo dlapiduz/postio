@@ -42,6 +42,13 @@ BUILD_TOOLS = {"cc", "cmake", "bindgen"}
 IMAGE_REFUSED = {"avif", "avif-native", "tiff", "exr", "bmp", "ico"}
 
 TRACE = "find which feature pulled it in (`cargo tree -p postio-render -e features -i {pkg}`) and turn it off"
+# The graph a product build of the renderer resolves, which is Linux's: the
+# renderer ships only in the GTK app (spec 006 is Linux-scoped; the Mac
+# reads in WKWebView, spec 009 M5). Resolving for the host instead fails on
+# a Mac, where chrono's iana-time-zone pulls core-foundation-sys into a
+# graph no Mac build ever links.
+TARGET = "x86_64-unknown-linux-gnu"
+
 FONTS = "fonts come from FontSet via fontdb, not the system font stack (research R3)"
 
 
@@ -49,6 +56,7 @@ def graph() -> dict[str, set[str]]:
     """Every package in the product graph, with its resolved features."""
     out = subprocess.run(
         ["cargo", "tree", "-q", "-p", CRATE, "-e", "normal,build",
+         "--target", TARGET,
          "--prefix", "none", "--no-dedupe", "-f", "{p}|{f}"],
         cwd=ROOT, capture_output=True, text=True, check=True,
     ).stdout
@@ -74,6 +82,7 @@ def links() -> dict[str, str]:
 def links_renderer(package: str) -> bool:
     out = subprocess.run(
         ["cargo", "tree", "-q", "-p", package, "-e", "normal,build",
+         "--target", TARGET,
          "--prefix", "none", "-f", "{p}"],
         cwd=ROOT, capture_output=True, text=True, check=True,
     ).stdout
