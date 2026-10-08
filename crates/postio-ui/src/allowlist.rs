@@ -275,11 +275,6 @@ impl RemoteImageAllowList {
         &mut self.inner
     }
 
-    /// The grants themselves.
-    pub fn grants(&self) -> &AllowList {
-        &self.inner
-    }
-
     /// Every sender allowed by name, in address order -- what a settings
     /// pane lists to manage (#871).
     pub fn senders(&self) -> impl Iterator<Item = &str> {
