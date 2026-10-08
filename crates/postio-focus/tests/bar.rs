@@ -312,6 +312,31 @@ fn typing_offers_the_one_search_row_and_asks_the_index() {
     assert!(typed(&mut focus, "tide", &rows).is_empty());
 }
 
+#[test]
+fn a_single_letter_asks_the_index_nothing_yet() {
+    // The first keystroke of "southwest" is "s": in most of a mailbox, and
+    // over a large store a search for it ran for minutes and held every
+    // later keystroke's search behind it.
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = bar_open(&mut focus, CommandId::Search, &rows);
+    let effects = typed(&mut focus, "s", &rows);
+    assert!(
+        !asked(&effects)
+            .iter()
+            .any(|request| matches!(request, Request::Search { .. })),
+        "{:?}",
+        asked(&effects)
+    );
+    let effects = typed(&mut focus, "so", &rows);
+    assert!(
+        asked(&effects)
+            .iter()
+            .any(|request| matches!(request, Request::Search { .. })),
+        "two letters are a word"
+    );
+}
+
 // -- What a row runs -------------------------------------------------------
 
 #[test]

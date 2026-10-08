@@ -378,7 +378,7 @@ pub async fn search(
             // order a person could see.
             let terms: Vec<String> = request
                 .query
-                .text_terms()
+                .searchable_terms()
                 .filter(|term| !term.negated)
                 .map(|term| term.value.clone())
                 .collect();
@@ -529,7 +529,7 @@ async fn suggestion_for(
 ) -> Result<Option<postio_search::suggest::Suggestion>> {
     use std::collections::{HashMap, HashSet};
 
-    let mut terms = query.text_terms();
+    let mut terms = query.searchable_terms();
     let Some(term) = terms.next() else {
         return Ok(None);
     };
@@ -1079,7 +1079,7 @@ impl Plan {
 
         let positive = request
             .query
-            .text_terms()
+            .searchable_terms()
             .filter(|term| !term.negated)
             .map(|term| fts_literal(&term.value))
             .collect::<Vec<_>>();

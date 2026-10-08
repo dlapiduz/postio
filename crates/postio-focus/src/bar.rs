@@ -372,11 +372,18 @@ impl Bar {
             rules::Route::Blend => {
                 let parsed = self.lower(&typed);
                 self.chips = rules::chips(&parsed).unwrap_or_default();
-                asks.push(Step::Ask(Request::Search {
-                    query: parsed,
-                    order: self.order,
-                    stamp: self.stamp,
-                }));
+                // A single letter is not yet a search: it is in most of a
+                // mailbox, and asking for it on the first keystroke held
+                // every later one behind it (`ParsedQuery::searchable_terms`).
+                if parsed.is_searchable() {
+                    asks.push(Step::Ask(Request::Search {
+                        query: parsed,
+                        order: self.order,
+                        stamp: self.stamp,
+                    }));
+                } else {
+                    self.results.clear();
+                }
             }
             rules::Route::Plain | rules::Route::Correspondent(_) => {}
         }
@@ -576,8 +583,12 @@ impl Bar {
         if typed.is_empty() || rules::route(&typed) != rules::Route::Blend {
             return Vec::new();
         }
+        let query = self.lower(&typed);
+        if !query.is_searchable() {
+            return Vec::new();
+        }
         vec![Step::Ask(Request::Search {
-            query: self.lower(&typed),
+            query,
             order: self.order,
             stamp: self.stamp,
         })]
