@@ -52,8 +52,8 @@ built (FR-063).
   - capture with `screencapture -l<windowid>` into `Design/review/focus-macos/<screen>-<appearance>.png`.
 
   Document it in quickstart.md
-- [ ] T005 [P] Add `crates/postio-focus/` to the workspace (root `Cargo.toml` `members` and `default-members`), with an empty `lib.rs` and `Cargo.toml` depending on `postio-ui`, `postio-client`, `postio-core`, `postio-model`, `postio-config`, `postio-search`, `chrono`, `tracing`. Land it in the slice-1 PR (T008)
-- [ ] T006 Add the `postio-focus` rule to `scripts/checks/check-crate-boundaries.py`:
+- [x] T005 [P] Add `crates/postio-focus/` to the workspace (root `Cargo.toml` `members` and `default-members`), with an empty `lib.rs` and `Cargo.toml` depending on `postio-ui`, `postio-client`, `postio-core`, `postio-model`, `postio-config`, `postio-search`, `chrono`, `tracing`. Land it in the slice-1 PR (T008)
+- [x] T006 Add the `postio-focus` rule to `scripts/checks/check-crate-boundaries.py`:
   - **banned:** gtk4/gdk4/libadwaita/webkit6 (+`-sys`), `turso*`, `rusqlite`, `libsqlite3-sys`, `io-imap`, `postio-host`/`-session`/`-storage`/`-runtime`/`-widgets`/`-gtk`, `uniffi`;
   - **not allowed as direct dependencies:** `tokio`, `glib`, `async-std`.
 
@@ -68,15 +68,15 @@ frontend with the engine's Focus pass on, and the Swift package split.
 
 ### Controller slice 1: skeleton and geometry by platform (**main·S1**)
 
-- [ ] T007 Write failing tests in `crates/postio-ui/src/focus_dialog.rs` for `Platform::Apple` geometry (data-model.md table):
+- [x] T007 Write failing tests in `crates/postio-ui/src/focus_dialog.rs` for `Platform::Apple` geometry (data-model.md table):
   - W 1024→656, 1280→720, 1440→720, 1920→720;
   - text column `min(560, w−80)`; paper `min(640, w−80)`; More below 700;
   - digest = the message size with a 560 column;
   - Linux values unchanged (the existing tests stay).
 
   Loop over both platforms (`docs/notes/2026-09-05-the-gate-that-runs-cannot-see-the-platform-that-does-not.md`)
-- [ ] T008 Give `dialog_width`, `dialog_height`, `column_width`, `folds_into_more` and the digest size in `crates/postio-ui/src/focus_dialog.rs` a `Platform` parameter. Update GTK call sites in `crates/postio-gtk/src/open.rs`, `digest.rs` and `reading_pane.rs` to pass `Platform::Freedesktop`. Land T005, T006, T007 and T008 as slice 1
-- [ ] T009 Define the controller's public types in `crates/postio-focus/src/lib.rs` per contracts/focus-controller.md: `FocusController`, `Policy{platform, caps{reading_pane, stacking}}`, `Input`, `Effect`, `Intent`, `Request`, `Reply`, `Ticket`, `Press`, `trait Rows`, `FocusView`. `perform` goes in `crates/postio-focus/src/perform.rs`. Add a test asserting `FocusController: Send`. **main·S1**
+- [x] T008 Add `Geometry` (`Geometry::for_platform`, `LINUX`, `MAC`, with `dialog_width`, `dialog_height`, `folds_into_more`, `column_width`, `digest_size`) to `crates/postio-ui/src/focus_dialog.rs`. The existing free functions delegate to `Geometry::LINUX` and keep their API, so GTK changes nothing in this slice. GTK moves onto `Geometry` with the slice that moves its call sites (S6). Land T005-T009 as slice 1
+- [x] T009 Define the controller's public types in `crates/postio-focus/src/lib.rs` per contracts/focus-controller.md: `FocusController`, `Policy{platform, caps{reading_pane, stacking}}`, `Input`, `Effect`, `Intent`, `Request`, `Reply`, `Ticket`, `Press`, `trait Rows`, `FocusView`. `perform` goes in `crates/postio-focus/src/perform.rs`. Add a test asserting `FocusController: Send`. **main·S1**
 
 ### The FFI becomes a Focus frontend
 

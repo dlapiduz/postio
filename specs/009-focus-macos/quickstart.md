@@ -46,7 +46,7 @@ app to that screen's state through the FFI's scripted inputs, and writes
    explained by a decision (C*, M*).
 4. For the email window (04, 22, 23), also compare it with every PNG in
    `message-window/screens/`, and capture it with a 1024-wide main window:
-   the window is 656 and the plain column is 560.
+   the window is 655 and the plain column is 560.
 
 ## Scenarios that prove each phase
 

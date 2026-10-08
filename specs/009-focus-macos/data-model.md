@@ -69,9 +69,11 @@ Validation rules:
 | digest window | 980 × 820 | the message window's size, column 560 |
 | paper zoom floor | 0.85 | 0.85 |
 
-Test values (Apple): W = 1024 → 656; 1280 → 720; 1440 → 720; 1920 → 720. At
+Test values (Apple): W = 1024 → 655; 1280 → 720; 1440 → 720; 1920 → 720. At
 1440 the text column is 560 and paper is 640. At 1024 the text column is 560
-and paper is 576 (a 640 newsletter at 0.9).
+and paper is 575 (a 640 newsletter at about 0.9). The pack draws 1024 as 656
+and paper as 576: its own formula rounded up, where Postio rounds to the
+nearest pixel as Linux does. The 1px is listed in the phase-3 comparison.
 
 ## Records that cross the FFI
 
