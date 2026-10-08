@@ -408,13 +408,6 @@ impl FocusController {
         self.cursor.selection()
     }
 
-    /// The conversations each selected row stands for.
-    pub fn selection_reach(
-        &self,
-    ) -> &std::collections::HashMap<MessageId, Vec<postio_model::ThreadId>> {
-        self.cursor.reach()
-    }
-
     /// Whether the list is narrowed to the rows with a marker (`!`).
     pub fn has_action(&self) -> bool {
         self.cursor.has_action()
