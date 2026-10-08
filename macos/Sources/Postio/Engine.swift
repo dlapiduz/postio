@@ -28,8 +28,9 @@ final class Engine {
         case opening
         /// A live session; Focus's list is `focusTable`.
         case open
-        /// No session, and the sentence explaining why.
-        case unavailable(String)
+        /// No session: the store was refused, and the page that says why
+        /// and offers the way forward (T100).
+        case refused(StoreRefusalModel)
     }
 
     private(set) var state: State = .opening
@@ -74,11 +75,29 @@ final class Engine {
         // Before the store, deliberately: a bar installed after it was
         // AppKit's stock one for the whole of the Keychain's wait (#1262).
         installMenuBar()
+        openStore()
+    }
+
+    /// Open the store off this actor, then take up what opened -- at
+    /// launch, and again from the refusal page's button.
+    private func openStore(after started: StartedOverFfi? = nil) {
+        state = .opening
         Task.detached(priority: .userInitiated) {
             let opened = Result {
                 try DemoMode.seed.map(PostioSession.openDemo) ?? PostioSession.open()
             }
-            await MainActor.run { [weak self] in self?.adopt(opened) }
+            await MainActor.run { [weak self] in
+                self?.adopt(opened)
+                // Where the old store went, once the fresh one is open: it
+                // was set aside, not deleted, and this is how anyone finds
+                // it again (GTK says the same).
+                if let started, let self, case .open = self.state {
+                    self.notice = Notice(
+                        kind: .completed, message: startedOverWords(setAside: started.setAside),
+                        undoable: false)
+                    self.noticeToken += 1
+                }
+            }
         }
     }
 
@@ -152,9 +171,20 @@ final class Engine {
         case let .failure(error):
             // The boundary's sentence, not one invented here: a locked
             // keychain says how to unlock it, and a broken store says what
-            // broke.
-            state = .unavailable(String(describing: error))
+            // broke. A store from another build cannot be got past by trying
+            // again, so its page offers a fresh store instead (T100). The
+            // case only, in the log: the sentence may name a path.
+            Self.log.error("the store did not open")
+            let words = storeRefusalWords()
             session = nil
+            state = .refused(
+                StoreRefusalModel(
+                    refusal: StoreRefusal(error, words: words), words: words,
+                    // `start_over` blocks on the Keychain and the disk; the
+                    // model calls it off this actor. The usual path, as
+                    // `PostioSession.open` opens.
+                    startOver: { try PostioFFI.startOver(storePath: nil) },
+                    reopen: { [weak self] started in self?.openStore(after: started) }))
         }
     }
 

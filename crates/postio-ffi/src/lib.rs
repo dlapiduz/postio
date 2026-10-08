@@ -192,6 +192,46 @@ pub fn start_over(store_path: Option<String>) -> Result<StartedOverFfi, SessionE
     })
 }
 
+/// The words of the page a store that will not open shows
+/// (specs/009-focus-macos T100), `postio_ui::focus_state`'s, as GTK's
+/// window says them.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct StoreRefusalWordsFfi {
+    /// The heading when trying again can help.
+    pub cant_open: String,
+    /// Its button.
+    pub try_again: String,
+    /// The heading for [`SessionError::StoreFromAnotherBuild`].
+    pub from_another_build: String,
+    /// What that page says: why, what a fresh store keeps, what stays.
+    pub start_over_sentence: String,
+    /// Its button, which runs [`start_over`].
+    pub start_over: String,
+    /// The button while [`start_over`] runs.
+    pub starting_over: String,
+}
+
+/// The refusal page's words. No session: there is none while it shows.
+#[uniffi::export]
+pub fn store_refusal_words() -> StoreRefusalWordsFfi {
+    use postio_ui::focus_state as words;
+    StoreRefusalWordsFfi {
+        cant_open: words::CANT_OPEN_MAIL.to_owned(),
+        try_again: words::TRY_AGAIN.to_owned(),
+        from_another_build: words::STORE_FROM_ANOTHER_VERSION.to_owned(),
+        start_over_sentence: words::START_OVER.to_owned(),
+        start_over: words::START_A_FRESH_STORE.to_owned(),
+        starting_over: words::STARTING_A_FRESH_STORE.to_owned(),
+    }
+}
+
+/// What is said once [`start_over`] has set the old store aside at
+/// `set_aside` and the fresh one has opened.
+#[uniffi::export]
+pub fn started_over_words(set_aside: String) -> String {
+    postio_ui::focus_state::started_over(&set_aside)
+}
+
 /// Answers with the name of this application.
 ///
 /// A deliberate placeholder: the boundary needs one real export before it has

@@ -606,8 +606,47 @@ pub fn empty_pane(keymap: &Keymap) -> EmptyInbox {
     }
 }
 
+/// The page a store that will not open shows, when trying again can help.
+pub const CANT_OPEN_MAIL: &str = "Postio can\u{2019}t open your mail";
+
+/// Its button: open the store again.
+pub const TRY_AGAIN: &str = "Try again";
+
+/// The page's heading when the store was written at a schema no update
+/// carries forward (`postio_session::Remedy::StartOver`).
+pub const STORE_FROM_ANOTHER_VERSION: &str = "Your mail store is from another version of Postio";
+
+/// What that page says before "Start a fresh store" is chosen: why trying
+/// again cannot help, what a fresh store keeps, and what stays behind.
+pub const START_OVER: &str = "This version of Postio can\u{2019}t read the store an earlier \
+     build wrote, and no update carries it forward, so trying again won\u{2019}t help. \
+     A fresh store keeps your accounts and settings and syncs your mail again from the \
+     server. Snoozes, reminders, Focus\u{2019}s filing history, and drafts or changes \
+     not yet sent stay in the old store, which is set aside, not deleted.";
+
+/// Its button: set the store aside and start a fresh one.
+pub const START_A_FRESH_STORE: &str = "Start a fresh store";
+
+/// The button while that runs.
+pub const STARTING_A_FRESH_STORE: &str = "Starting a fresh store\u{2026}";
+
+/// What is said once a fresh store has opened: where the old one went.
+pub fn started_over(set_aside: &str) -> String {
+    format!("Started a fresh store. The old one is in {set_aside}")
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_store_started_over_says_where_the_old_one_is() {
+        assert_eq!(
+            started_over("/stores/set-aside/when"),
+            "Started a fresh store. The old one is in /stores/set-aside/when"
+        );
+        assert!(START_OVER.contains("set aside, not deleted"));
+    }
+
     use chrono::{FixedOffset, TimeZone, Utc};
 
     use super::*;

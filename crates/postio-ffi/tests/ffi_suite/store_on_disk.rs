@@ -264,3 +264,22 @@ fn starting_over_a_store_from_another_build_leaves_one_that_opens() {
     assert!(session.is_open());
     session.shutdown();
 }
+
+#[test]
+fn the_refusal_is_worded_once_for_both_apps() {
+    // The page a refused store shows on the Mac (T100) says what GTK's
+    // says: the words are `postio_ui::focus_state`'s, and the Mac reads
+    // them here rather than keeping a copy that drifts.
+    use postio_ui::focus_state as words;
+    let said = postio_ffi::store_refusal_words();
+    assert_eq!(said.cant_open, words::CANT_OPEN_MAIL);
+    assert_eq!(said.try_again, words::TRY_AGAIN);
+    assert_eq!(said.from_another_build, words::STORE_FROM_ANOTHER_VERSION);
+    assert_eq!(said.start_over_sentence, words::START_OVER);
+    assert_eq!(said.start_over, words::START_A_FRESH_STORE);
+    assert_eq!(said.starting_over, words::STARTING_A_FRESH_STORE);
+    assert_eq!(
+        postio_ffi::started_over_words("/stores/set-aside/when".to_owned()),
+        "Started a fresh store. The old one is in /stores/set-aside/when"
+    );
+}

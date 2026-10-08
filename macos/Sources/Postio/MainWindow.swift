@@ -151,12 +151,9 @@ struct MainWindow: View {
             } else if let table = engine.focusTable {
                 FocusListView(table: table)
             }
-        case let .unavailable(reason):
-            ContentUnavailableView {
-                Label("The engine did not open", systemImage: "exclamationmark.triangle")
-            } description: {
-                Text(reason)
-            }
+        case let .refused(model):
+            // The store would not open: why, and the way forward (T100).
+            StoreRefusalPage(model: model)
         }
     }
 }
