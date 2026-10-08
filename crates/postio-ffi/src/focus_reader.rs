@@ -138,7 +138,7 @@ impl Session {
         let mut list = postio_ui::allowlist::RemoteImageAllowList::load_from(&path);
         list.set_treatment(&sender, treatment.map(Into::into));
         if let Err(error) = list.save_to(&path) {
-            tracing::error!(%error, "a sender's treatment could not be saved");
+            tracing::error!(%error, "a sender's treatment could not be saved: {error}");
         }
     }
 }
