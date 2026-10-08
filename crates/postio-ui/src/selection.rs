@@ -26,7 +26,7 @@
 //! That is why [`summary`] takes the total as an argument instead of counting:
 //! counting is the thing the predicate exists to avoid.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use postio_core::state::Selection;
@@ -54,7 +54,122 @@ pub struct Reach {
     pub omitted: Vec<String>,
 }
 
-/// The selection, the anchor a range extends from, and who to tell.
+/// The selection and the anchor a range extends from, as plain data: the
+/// rules of [`SelectionState`] with nobody to tell. `Send`, so a controller
+/// that is not tied to one thread can own one (specs/009-focus-macos R3).
+///
+/// Every change answers whether anything changed, which is what a caller
+/// that redraws -- or a [`SelectionState`] that announces -- needs to know.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Selector {
+    selection: Selection,
+    /// What the view could show when `Everything` was made. Meaningless for
+    /// any other selection, which is why [`Selector::reach`] answers from
+    /// the selection rather than from this alone.
+    reach: Reach,
+    /// Where a range extension counts from -- the last row the user pointed
+    /// at deliberately, rather than wherever the cursor has since wandered.
+    anchor: Option<MessageId>,
+}
+
+impl Selector {
+    /// What is selected right now.
+    pub fn selection(&self) -> Selection {
+        self.selection.clone()
+    }
+
+    /// Whether an action would hit nothing.
+    pub fn is_empty(&self) -> bool {
+        self.selection.is_empty()
+    }
+
+    /// Whether `message` is in the selection.
+    pub fn contains(&self, message: MessageId) -> bool {
+        self.selection.contains(message)
+    }
+
+    /// The row a range extends from.
+    pub fn anchor(&self) -> Option<MessageId> {
+        self.anchor
+    }
+
+    /// Select exactly `message` -- a plain click, or opening one.
+    pub fn select_only(&mut self, message: MessageId) -> bool {
+        self.anchor = Some(message);
+        self.replace(Selection::These(vec![message]))
+    }
+
+    /// Add `message` if it is out, take it out if it is in -- `x`, and
+    /// Ctrl-click.
+    pub fn toggle(&mut self, message: MessageId) -> bool {
+        self.anchor = Some(message);
+        self.mutate(|selection| selection.toggle(message))
+    }
+
+    /// Add `message`, leaving it alone if it is already in -- `J` and `K`.
+    ///
+    /// The anchor does not move: extending is one gesture however many times
+    /// it is repeated, so a later Shift-click still counts from where the
+    /// user started rather than from the last row it reached.
+    pub fn extend_to(&mut self, message: MessageId) -> bool {
+        if self.anchor.is_none() {
+            self.anchor = Some(message);
+        }
+        self.mutate(|selection| selection.insert(message))
+    }
+
+    /// Add every message in `messages` -- a Shift-click over a range.
+    pub fn extend_over(&mut self, messages: impl IntoIterator<Item = MessageId>) -> bool {
+        self.mutate(|selection| {
+            for message in messages {
+                selection.insert(message);
+            }
+        })
+    }
+
+    /// Select everything the list is showing, without naming any of it.
+    /// See [`SelectionState::select_all`] for why `reach` is recorded now.
+    pub fn select_all(&mut self, reach: Reach) -> bool {
+        self.reach = reach;
+        self.replace(Selection::Everything { except: Vec::new() })
+    }
+
+    /// What the current whole-view selection was scoped to.
+    pub fn reach(&self) -> Reach {
+        match &self.selection {
+            Selection::Everything { .. } => self.reach.clone(),
+            Selection::These(_) => Reach::default(),
+        }
+    }
+
+    /// Drop the selection, and the anchor with it.
+    pub fn clear(&mut self) -> bool {
+        self.anchor = None;
+        self.replace(Selection::default())
+    }
+
+    /// Replace the selection wholesale.
+    pub fn set(&mut self, selection: Selection) -> bool {
+        self.replace(selection)
+    }
+
+    fn replace(&mut self, selection: Selection) -> bool {
+        if self.selection == selection {
+            return false;
+        }
+        self.selection = selection;
+        true
+    }
+
+    fn mutate(&mut self, change: impl FnOnce(&mut Selection)) -> bool {
+        let before = self.selection.clone();
+        change(&mut self.selection);
+        self.selection != before
+    }
+}
+
+/// The selection, the anchor a range extends from, and who to tell: a
+/// [`Selector`] shared on one thread, announcing each change.
 ///
 /// Cheap to clone: every clone is the same selection, which is what lets the
 /// rows, the header and the command handlers all hold one.
@@ -65,14 +180,7 @@ pub struct SelectionState {
 
 #[derive(Default)]
 struct Inner {
-    selection: RefCell<Selection>,
-    /// What the view could show when `Everything` was made. Meaningless for
-    /// any other selection, which is why [`SelectionState::reach`] answers
-    /// from the selection rather than from this alone.
-    reach: RefCell<Reach>,
-    /// Where a range extension counts from — the last row the user pointed
-    /// at deliberately, rather than wherever the cursor has since wandered.
-    anchor: Cell<Option<MessageId>>,
+    selector: RefCell<Selector>,
     observers: RefCell<Vec<Observer>>,
 }
 
@@ -80,7 +188,7 @@ impl std::fmt::Debug for SelectionState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SelectionState")
             .field("selection", &self.selection())
-            .field("anchor", &self.inner.anchor.get())
+            .field("anchor", &self.anchor())
             .finish_non_exhaustive()
     }
 }
@@ -93,22 +201,22 @@ impl SelectionState {
 
     /// What is selected right now.
     pub fn selection(&self) -> Selection {
-        self.inner.selection.borrow().clone()
+        self.inner.selector.borrow().selection()
     }
 
     /// Whether an action would hit nothing.
     pub fn is_empty(&self) -> bool {
-        self.inner.selection.borrow().is_empty()
+        self.inner.selector.borrow().is_empty()
     }
 
     /// Whether `message` is in the selection.
     pub fn contains(&self, message: MessageId) -> bool {
-        self.inner.selection.borrow().contains(message)
+        self.inner.selector.borrow().contains(message)
     }
 
     /// The row a range extends from.
     pub fn anchor(&self) -> Option<MessageId> {
-        self.inner.anchor.get()
+        self.inner.selector.borrow().anchor()
     }
 
     /// Called whenever the selection changes.
@@ -116,38 +224,26 @@ impl SelectionState {
         self.inner.observers.borrow_mut().push(Box::new(observer));
     }
 
-    /// Select exactly `message` — a plain click, or opening one.
+    /// Select exactly `message` -- a plain click, or opening one.
     pub fn select_only(&self, message: MessageId) {
-        self.inner.anchor.set(Some(message));
-        self.replace(Selection::These(vec![message]));
+        self.change(|selector| selector.select_only(message));
     }
 
-    /// Add `message` if it is out, take it out if it is in — `x`, and
+    /// Add `message` if it is out, take it out if it is in -- `x`, and
     /// Ctrl-click.
     pub fn toggle(&self, message: MessageId) {
-        self.inner.anchor.set(Some(message));
-        self.mutate(|selection| selection.toggle(message));
+        self.change(|selector| selector.toggle(message));
     }
 
-    /// Add `message`, leaving it alone if it is already in — `J` and `K`.
-    ///
-    /// The anchor does not move: extending is one gesture however many times
-    /// it is repeated, so a later Shift-click still counts from where the
-    /// user started rather than from the last row it reached.
+    /// Add `message`, leaving it alone if it is already in -- `J` and `K`.
+    /// The anchor does not move ([`Selector::extend_to`]).
     pub fn extend_to(&self, message: MessageId) {
-        if self.inner.anchor.get().is_none() {
-            self.inner.anchor.set(Some(message));
-        }
-        self.mutate(|selection| selection.insert(message));
+        self.change(|selector| selector.extend_to(message));
     }
 
-    /// Add every message in `messages` — a Shift-click over a range.
+    /// Add every message in `messages` -- a Shift-click over a range.
     pub fn extend_over(&self, messages: impl IntoIterator<Item = MessageId>) {
-        self.mutate(|selection| {
-            for message in messages {
-                selection.insert(message);
-            }
-        });
+        self.change(|selector| selector.extend_over(messages));
     }
 
     /// Select everything the list is showing, without naming any of it.
@@ -159,8 +255,7 @@ impl SelectionState {
     /// *grows* cannot be spotted in the summary (#811, ADR 0005 Q10).
     /// [`Reach::default()`] for every view that is not an aggregate.
     pub fn select_all(&self, reach: Reach) {
-        self.inner.reach.replace(reach);
-        self.replace(Selection::Everything { except: Vec::new() });
+        self.change(|selector| selector.select_all(reach));
     }
 
     /// What the current whole-view selection was scoped to.
@@ -169,42 +264,31 @@ impl SelectionState {
     /// every other selection either names its rows or is relative to a view
     /// that is within one account already.
     pub fn reach(&self) -> Reach {
-        match &*self.inner.selection.borrow() {
-            Selection::Everything { .. } => self.inner.reach.borrow().clone(),
-            Selection::These(_) => Reach::default(),
-        }
+        self.inner.selector.borrow().reach()
     }
 
     /// Drop the selection, and the anchor with it.
     pub fn clear(&self) {
-        self.inner.anchor.set(None);
-        self.replace(Selection::default());
+        self.change(Selector::clear);
     }
 
-    /// Replace the selection wholesale — what an event from the command bus
+    /// Replace the selection wholesale -- what an event from the command bus
     /// will do once `postio-agr` makes the bus the writer.
     pub fn set(&self, selection: Selection) {
-        self.replace(selection);
+        self.change(|selector| selector.set(selection));
     }
 
-    fn replace(&self, selection: Selection) {
-        if *self.inner.selection.borrow() == selection {
-            return;
-        }
-        self.inner.selection.replace(selection);
-        self.announce();
-    }
-
-    fn mutate(&self, change: impl FnOnce(&mut Selection)) {
-        let before = self.inner.selection.borrow().clone();
-        change(&mut self.inner.selection.borrow_mut());
-        if *self.inner.selection.borrow() != before {
+    /// Apply `change`, and tell every observer when it changed anything.
+    /// The borrow ends before anyone is told, so an observer may read.
+    fn change(&self, change: impl FnOnce(&mut Selector) -> bool) {
+        let changed = change(&mut self.inner.selector.borrow_mut());
+        if changed {
             self.announce();
         }
     }
 
     fn announce(&self) {
-        let selection = self.inner.selection.borrow().clone();
+        let selection = self.selection();
         for observer in self.inner.observers.borrow().iter() {
             observer(&selection);
         }
@@ -338,6 +422,75 @@ pub fn survivor_below(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
+    // -- Selector: the same rules as plain data (specs/009-focus-macos R3) --
+
+    fn msg(n: i64) -> MessageId {
+        MessageId::new(n)
+    }
+
+    #[test]
+    fn a_selector_is_send_so_a_controller_can_hold_one() {
+        fn send<T: Send>() {}
+        send::<Selector>();
+    }
+
+    #[test]
+    fn a_selector_says_whether_anything_changed() {
+        let mut selector = Selector::default();
+        assert!(selector.toggle(msg(1)), "x on an unselected row selects it");
+        assert_eq!(selector.anchor(), Some(msg(1)));
+        assert!(selector.extend_to(msg(2)), "J adds the next row");
+        assert_eq!(
+            selector.anchor(),
+            Some(msg(1)),
+            "extending keeps the anchor"
+        );
+        assert!(!selector.extend_to(msg(2)), "already in: nothing changed");
+        assert!(selector.toggle(msg(1)), "x again takes it out");
+        assert!(!selector.contains(msg(1)));
+        assert!(selector.clear());
+        assert!(selector.is_empty());
+        assert_eq!(selector.anchor(), None, "clearing drops the anchor");
+        assert!(!selector.clear(), "clearing nothing changes nothing");
+    }
+
+    #[test]
+    fn select_all_is_a_predicate_with_its_reach() {
+        let mut selector = Selector::default();
+        let reach = Reach {
+            accounts: vec![AccountId::new(1)],
+            omitted: vec!["Work".to_owned()],
+        };
+        assert!(selector.select_all(reach.clone()));
+        assert!(matches!(selector.selection(), Selection::Everything { .. }));
+        assert_eq!(selector.reach(), reach);
+        assert!(selector.select_only(msg(3)));
+        assert_eq!(
+            selector.reach(),
+            Reach::default(),
+            "a named selection reaches nothing"
+        );
+    }
+
+    #[test]
+    fn the_observable_state_announces_only_changes() {
+        let state = SelectionState::new();
+        let heard = std::rc::Rc::new(std::cell::Cell::new(0));
+        let counter = std::rc::Rc::clone(&heard);
+        state.connect_changed(move |_| counter.set(counter.get() + 1));
+        state.toggle(msg(1));
+        state.extend_to(msg(1));
+        state.clear();
+        state.clear();
+        assert_eq!(
+            heard.get(),
+            2,
+            "toggle and the first clear; the repeats were no change"
+        );
+    }
+
     use super::*;
 
     fn id(value: i64) -> MessageId {
