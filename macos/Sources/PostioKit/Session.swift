@@ -139,6 +139,58 @@ public final class PostioSession {
     /// The header strip's words, composed by the engine (`focus_strip`).
     public func focusStrip() throws -> FocusStripFfi { try inner.focusStrip() }
 
+    // MARK: Focus's surfaces
+
+    /// A surface opened over the list: the keys are its now (the
+    /// controller's Reader context for the message window), and on the
+    /// Mac it replaces the secondary window that was open (M4).
+    public func focusSurfaceOpened(_ kind: SurfaceKindFfi) { inner.focusSurfaceOpened(kind: kind) }
+
+    /// A surface over the list closed, however it closed: ⌘W, its close
+    /// button, or the controller's own `FocusCloseSurface`.
+    public func focusSurfaceClosed(_ kind: SurfaceKindFfi) { inner.focusSurfaceClosed(kind: kind) }
+
+    /// The open message's More menu and find, as they are now: what Back
+    /// closes first.
+    public func focusReaderState(moreOpen: Bool, finding: Bool) {
+        inner.focusReaderState(moreOpen: moreOpen, finding: finding)
+    }
+
+    /// Always draw `sender`'s mail in `treatment`, or forget the choice
+    /// with `nil`: "Always for this sender", in the file GTK keeps it in.
+    public func alwaysTreatment(sender: String, treatment: TreatmentFfi?) {
+        inner.alwaysTreatment(sender: sender, treatment: treatment)
+    }
+
+    /// What the message window draws around `message`'s body, shown from
+    /// row `index` of `total`: composed in Rust (`focus_message_view`). A
+    /// store read; never on the main actor.
+    public nonisolated func focusMessageView(
+        message: Int64, index: UInt32, total: UInt32
+    ) -> FocusMessageViewFfi {
+        inner.focusMessageView(message: message, index: index, total: total)
+    }
+
+    /// `message`'s treated body, in `chosen` when `O` switched it, and the
+    /// message window's geometry beside a main window `mainWidth` wide
+    /// (M1). A store read; never on the main actor.
+    public nonisolated func focusReaderDocument(
+        message: Int64, remote: RemoteImagesFfi, chosen: TreatmentFfi?, mainWidth: Int32
+    ) -> FocusReaderDocumentFfi {
+        inner.focusReaderDocument(
+            message: message, remote: remote, chosen: chosen, mainWidth: mainWidth)
+    }
+
+    /// `message`'s raw source, for `v`. May fetch it from the server, the
+    /// person having asked for these bytes by name: never on the main
+    /// actor.
+    public nonisolated func rawSource(_ message: Int64) throws -> Data {
+        try inner.rawSource(message: message)
+    }
+
+    /// One of the reader's vendored faces by name, for `postio-font:`.
+    public nonisolated func readerFont(_ name: String) -> Data? { inner.readerFont(name: name) }
+
     /// Tell the engine whether the machine currently has a connection.
     ///
     /// Reachability is a platform question, asked in the platform's own

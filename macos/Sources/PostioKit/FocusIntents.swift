@@ -142,6 +142,47 @@ public final class FocusIntents {
         }
     }
 
+    /// What the controller says about the windows over the list (T070): a
+    /// message to show, a surface to close, what the open message does, and
+    /// the keyboard going home.
+    public enum Surface: Equatable {
+        /// `FocusOpenMessage`: show `message`, row `index` of `total`, in
+        /// the message window, opening it or in place of what it shows.
+        case openMessage(message: Int64, index: UInt32, total: UInt32)
+        /// `FocusOpenDraft`: a draft not yet on its way opens in the composer.
+        case openDraft(message: Int64)
+        /// `FocusOpenDigest`: a digest's window (a later phase).
+        case openDigest(delivery: Int64)
+        /// `FocusCloseSurface`: close it, then say `focusSurfaceClosed`.
+        case close(SurfaceKindFfi)
+        /// `FocusReader`: the open message does this.
+        case reader(ReaderVerbFfi)
+        /// `FocusKeyboardHome`: the list's table takes the keyboard.
+        case keyboardHome
+    }
+
+    /// `event` as a window over the list hears it, or `nil` for any other
+    /// event. The list's switch is `apply`; this one changes nothing here,
+    /// because the message window's state is `MessageWindowModel`'s.
+    public static func surface(_ event: UiEvent) -> Surface? {
+        switch event {
+        case let .focusOpenMessage(message, index, total):
+            return .openMessage(message: message, index: index, total: total)
+        case let .focusOpenDraft(message):
+            return .openDraft(message: message)
+        case let .focusOpenDigest(delivery):
+            return .openDigest(delivery: delivery)
+        case let .focusCloseSurface(kind):
+            return .close(kind)
+        case let .focusReader(verb):
+            return .reader(verb)
+        case .focusKeyboardHome:
+            return .keyboardHome
+        default:
+            return nil
+        }
+    }
+
     /// Take the toast down, if `token` is still the one showing.
     public func dismissToast(token: Int) {
         guard token == toastToken else { return }

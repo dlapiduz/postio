@@ -159,4 +159,41 @@ struct FocusIntentsTests {
         focus.listResized(count: 5)
         #expect(focus.cursor == 4)
     }
+
+    // MARK: the surfaces (T070)
+
+    @Test func theOpenMessagesIntentsAreSurfacesNotTheLists() {
+        // The list's model holds the list; what opens, closes and acts on
+        // a window over it is another switch, and applying one here must
+        // not move the cursor or the selection.
+        let focus = Self.busy()
+        let before = focus.snapshot
+        let events: [UiEvent] = [
+            .focusOpenMessage(message: 7, index: 2, total: 9),
+            .focusOpenDraft(message: 8),
+            .focusOpenDigest(delivery: 3),
+            .focusCloseSurface(kind: .message),
+            .focusReader(verb: .switchTreatment),
+            .focusKeyboardHome,
+        ]
+        for event in events {
+            #expect(focus.apply(event) == nil)
+        }
+        #expect(focus.snapshot == before)
+        let expected: [FocusIntents.Surface?] = [
+            .openMessage(message: 7, index: 2, total: 9),
+            .openDraft(message: 8),
+            .openDigest(delivery: 3),
+            .close(.message),
+            .reader(.switchTreatment),
+            .keyboardHome,
+        ]
+        #expect(events.map(FocusIntents.surface) == expected)
+    }
+
+    @Test func aListEventIsNoSurfaces() {
+        #expect(FocusIntents.surface(.focusCursor(position: 1, toTop: false)) == nil)
+        #expect(FocusIntents.surface(.focusPageReady(page: 0)) == nil)
+        #expect(FocusIntents.surface(.keymapChanged) == nil)
+    }
 }
