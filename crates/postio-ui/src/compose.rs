@@ -670,15 +670,23 @@ pub fn fold_quote(body: &str) -> Option<QuoteFold> {
         starts.push((at, line));
         at += line.len() + 1;
     }
+    // Blank lines after the quote are the quote's: a body often ends in a
+    // newline.
+    let trailing = starts
+        .iter()
+        .rev()
+        .take_while(|(_, line)| line.trim().is_empty())
+        .count();
     let quoted = starts
         .iter()
         .rev()
+        .skip(trailing)
         .take_while(|(_, line)| line.starts_with('>'))
         .count();
     if quoted == 0 {
         return None;
     }
-    let (start, attribution) = *starts.iter().rev().nth(quoted)?;
+    let (start, attribution) = *starts.iter().rev().nth(trailing + quoted)?;
     let said = attribution.trim_end().strip_suffix(':')?;
     if !said.ends_with("wrote") {
         return None;
@@ -715,6 +723,13 @@ mod frame_tests {
             body,
             "nothing lost"
         );
+
+        // A quote that ends in a newline, as a message body often does.
+        let trailing = "\n\nOn 2026-09-26, Ada wrote:\n> Hi\n";
+        let fold = fold_quote(trailing).expect("a trailing newline is still the quote's");
+        assert_eq!(fold.written, "\n\n");
+        assert!(fold.summary.ends_with("1 quoted line"), "{}", fold.summary);
+        assert_eq!(format!("{}{}", fold.written, fold.quote), trailing);
 
         let one = fold_quote("Thanks.\nOn 2026-09-26, Ada wrote:\n> Hi").expect("folds");
         assert_eq!(one.written, "Thanks.\n");
