@@ -685,12 +685,38 @@ impl FocusDriver {
                 self.list.lock().expect("list lock").abandon(stamp, page);
             }
             Intent::RefreshList => {
-                let total = {
+                // Re-read the pages held, in place, as GTK's refresh does:
+                // each keeps drawing until its page comes back, and the page
+                // replaces it there. Blanking them first drew the whole list
+                // collapsing and growing back on every delete.
+                let (held, stamp) = {
                     let mut list = self.list.lock().expect("list lock");
-                    list.invalidate();
-                    list.total()
+                    let held: Vec<u32> = list
+                        .resident_pages()
+                        .into_iter()
+                        .filter(|page| list.note_pending(*page))
+                        .collect();
+                    (held, list.generation())
                 };
-                self.say(UiEvent::FocusListChanged { total });
+                if held.is_empty() {
+                    // Nothing held to keep: read the top, which carries the
+                    // count, the way a first read does.
+                    let total = {
+                        let mut list = self.list.lock().expect("list lock");
+                        list.invalidate();
+                        list.total()
+                    };
+                    self.say(UiEvent::FocusListChanged { total });
+                    return;
+                }
+                for page in held {
+                    let effects = self
+                        .focus
+                        .lock()
+                        .expect("focus lock")
+                        .page_wanted(page, stamp);
+                    self.apply(effects);
+                }
             }
             Intent::Filled => {
                 // The list landed: the cursor goes to its first row, back to

@@ -660,3 +660,109 @@ async fn the_message_window_s_chrome_is_composed_in_rust() {
     assert!(chip.later.is_some(), "] is offered from an earlier message");
     session.shutdown();
 }
+
+/// The key labelled Delete on a Mac (⌫, which AppKit reports as `backspace`)
+/// deletes the cursor's conversation, as `Delete` does on Linux (#1795).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_macs_delete_key_deletes_the_cursors_row() {
+    use postio_ffi::{KeyOutcomeFfi, ModifiersFfi, UiContext, UiEvent};
+    let none = ModifiersFfi {
+        control: false,
+        option: false,
+        shift: false,
+        command: false,
+    };
+    let session = inbox_with_trash(&["First", "Second"]).await;
+    cursor_on_the_first_row(&session).await;
+    let outcome = session.key(None, Some("backspace"), none, UiContext::List, false);
+    assert_eq!(
+        outcome,
+        KeyOutcomeFfi::Command {
+            id: "delete".to_owned()
+        },
+        "⌫ is Delete on the Mac"
+    );
+    session.invoke("delete");
+    let mut said = String::new();
+    assert!(
+        heard(&session, 10, |event| match event {
+            UiEvent::FocusToast { text, .. } => {
+                said = text.clone();
+                true
+            }
+            _ => false,
+        })
+        .await,
+        "the delete says what it did"
+    );
+    assert!(
+        said.starts_with("Deleted") || said.contains("Trash"),
+        "a delete, not a refusal: {said}"
+    );
+    session.shutdown();
+}
+
+/// A delete re-reads the list without blanking it: the rows on screen stay
+/// drawn until their page comes back, and the page is put back in place, as
+/// GTK's refresh does. Blanking every row and re-reading drew the whole
+/// list collapsing and growing back on every delete.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delete_rereads_the_list_without_blanking_it() {
+    use postio_ffi::UiEvent;
+    let session = inbox_with_trash(&["First", "Second", "Third"]).await;
+    cursor_on_the_first_row(&session).await;
+    assert!(
+        session.focus_row_at(0).is_some(),
+        "the first page has landed"
+    );
+
+    session.invoke("delete");
+    let mut blanked = Vec::new();
+    let settled = heard(&session, 10, |event| {
+        if matches!(
+            event,
+            UiEvent::FocusListChanged { .. } | UiEvent::FocusPageReady { .. }
+        ) {
+            let total = session.focus_row_count();
+            if (0..total).any(|position| session.focus_row_at(position).is_none()) {
+                blanked.push(format!("{event:?}"));
+            }
+        }
+        matches!(event, UiEvent::FocusListChanged { total: 2 }) && session.focus_row_count() == 2
+    })
+    .await;
+    assert!(settled, "the deleted row leaves the list");
+    assert!(
+        blanked.is_empty(),
+        "no row on screen went blank while the list re-read: {blanked:?}"
+    );
+    session.shutdown();
+}
+
+/// [`inbox_of`], in an account with a Trash folder for a delete to reach.
+async fn inbox_with_trash(subjects: &[&str]) -> std::sync::Arc<Session> {
+    let database = test_support::memory().await;
+    {
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let _trash = test_support::mailbox(&connection, &account, "Trash").await;
+        let repository = MessageRepository::new(&connection);
+        let threads = postio_storage::repository::ThreadRepository::new(&connection);
+        for (age, subject) in subjects.iter().enumerate() {
+            let at = Utc::now() - chrono::TimeDelta::minutes(age as i64 + 1);
+            let mut message = Message::new(account.id, inbox, at);
+            message.subject = Some((*subject).to_owned());
+            message.date = Some(at);
+            message.from = vec![postio_model::EmailAddress::new(
+                Some("Ada"),
+                "ada@example.com",
+            )];
+            let id = repository.create(&mut message).await.expect("a message");
+            let mut thread = postio_model::Thread::new(account.id);
+            thread.subject = message.subject.clone();
+            threads.create(&mut thread).await.expect("a thread");
+            threads.add_message(thread.id, id).await.expect("threaded");
+        }
+    }
+    Session::open(SessionOptions::in_memory_with(database)).expect("a session")
+}
