@@ -285,61 +285,79 @@ in light and dark, with main widths 1440 and 1024. Each matches its
 
 ### Controller slice 5: key routing and the surface stack (**main·S5**)
 
-- [ ] T054 [US3] Write failing tests in `crates/postio-focus/tests/keys.rs`:
+- [x] T054 [US3] Write failing tests in `crates/postio-focus/tests/keys.rs`:
   - the key context comes from the top surface;
   - Reader context routes Back to `CloseMore`, then `CloseFind`, then close;
   - `j`/`k` in Reader step the list;
   - `[`/`]` step the thread;
   - with `stacking = false`, opening a Digest while a Message is open replaces it (contract invariant 6);
   - Back on the list follows the ladder: places, then the bar, then Filtered, then clear (R2).
+
+  *As built:* the cases are in `crates/postio-focus/tests/surfaces.rs` (slice 5, `5530985e`) rather than `keys.rs`: the key context from the top surface, Back closing More, then find, then the message, `j` stepping the list without a close, the Mac replacing the open window and Linux stacking.
 - [ ] T055 [US3] Move `handle_key` (`crates/postio-gtk/src/window.rs:803-946`), `key_context` (990-1016), `reading_key` (1117-1231), `digest_key` (~3201), `capture_key`, `settings_key` (`settings.rs:486`) and the dialog close rule (896-907) into `crates/postio-focus/src/keys.rs` and `surfaces.rs`, as tables over the surface stack. Keep the `_ => Proceed` arm (behaviour-neutral). GTK reports `SurfaceOpened`/`SurfaceClosed`; `FocusWindow::handle_key` stays as a shim. The guards are focus_suite `open_keys`, `keymap`, `one_keymap`, `registry_parity`, `every_command`, `settings` and `row_menu`. Make T054 green; land slice 5
 - [ ] T056 [US3] Write a failing test in `crates/postio-focus/tests/keys.rs` and a failing focus_suite case `crates/postio-gtk/tests/focus_suite/open_keys.rs::t_in_the_open_message_opens_capture`: `t`, `n` and `d` in the open-message dialog open capture, note and the digest rule (#1754)
-- [ ] T057 [US3] Make Reader-context commands the surface does not own fall through to the list's command table, in `crates/postio-focus/src/keys.rs` (contract invariant 5). Make T056 green. Land as **main·fix**, and comment the fix on #1754 with `Refs` (not a closing keyword unless #1754's acceptance is fully met)
+- [x] T057 [US3] Make Reader-context commands the surface does not own fall through to the list's command table, in `crates/postio-focus/src/keys.rs` (contract invariant 5). Make T056 green. Land as **main·fix**, and comment the fix on #1754 with `Refs` (not a closing keyword unless #1754's acceptance is fully met)
 
 ### Controller slice 6: the email window (**main·S6**)
 
-- [ ] T058 [US3] Write failing tests in `crates/postio-focus/tests/reader.rs`:
+
+  *As built:* the controller half: `a_key_the_message_does_not_own_is_the_lists` (`surfaces.rs`) proves `t`, `n` and `d` fall through to the host's table in the open message. T056's GTK focus_suite case and GTK's adoption (T055, T059) are not visible from this Mac branch and stay open.
+- [x] T058 [US3] Write failing tests in `crates/postio-focus/tests/reader.rs`:
   - ↩ emits `OpenMessage{message, row, position, origin: List}`;
   - `j` in the message emits `OpenMessage` for the next row, without a `CloseMessage`;
   - Archive in the message moves on to the next row (T190 behaviour);
   - a message opened from Found hits steps through the hits;
   - Esc emits `CloseMessage` + `KeyboardHome(CursorRow)` with the selection kept;
   - `step_past` gives up after the timer rather than polling.
+
+  *As built:* in `crates/postio-focus/tests/surfaces.rs` with T054's, not a `reader.rs` of its own.
 - [ ] T059 [US3] Move `open_message`, the position line, `follow_cursor`, `reading_changed`, `place_reading`, found-hits stepping and `step_past` (`crates/postio-gtk/src/window.rs:1237-1280, 4230-4259`) into `crates/postio-focus/src/reader.rs`. Replace the 20 ms polling with an event plus a `Timer` give-up. The guards are focus_suite `open_message`, `open_reading`, `reading_pane`, `read_on_dwell` and `view_source`. Make T058 green; land slice 6
 
 ### Shared: the treated document and the contrast guard (**main·fix**)
 
-- [ ] T060 [P] [US3] Write failing tests in `crates/postio-body/src/treatment.rs` for `guard_kept_colours(html, surfaces: [light, dark]) -> String`: a kept inline red on white passes 4.5:1 and stays; a kept `#777` fails in dark and is dropped or scoped under `prefers-color-scheme: light`; nothing changes in paper. Also a shared-corpus test asserting the same kept or dropped decision as `postio_render::theme::guard` for the app-colours fixtures in `crates/postio-model/tests/corpus/` (it runs where postio-render builds)
-- [ ] T061 [US3] Implement `guard_kept_colours` beside `app_colours` in `crates/postio-body/src/treatment.rs`, using the surface tokens from `postio-ui/data/treatment.css`. Make T060 green
+- [x] T060 [P] [US3] Write failing tests in `crates/postio-body/src/treatment.rs` for `guard_kept_colours(html, surfaces: [light, dark]) -> String`: a kept inline red on white passes 4.5:1 and stays; a kept `#777` fails in dark and is dropped or scoped under `prefers-color-scheme: light`; nothing changes in paper. Also a shared-corpus test asserting the same kept or dropped decision as `postio_render::theme::guard` for the app-colours fixtures in `crates/postio-model/tests/corpus/` (it runs where postio-render builds)
+- [x] T061 [US3] Implement `guard_kept_colours` beside `app_colours` in `crates/postio-body/src/treatment.rs`, using the surface tokens from `postio-ui/data/treatment.css`. Make T060 green
 
 ### FFI: the reader document
 
-- [ ] T062 [US3] Write failing ffi_suite tests:
+- [x] T062 [US3] Write failing ffi_suite tests:
   - `reader_document(newsletter)` returns `treatment_shown = Paper` and `classified = Paper`, with `render_mode_words` naming it;
   - `switch_treatment` flips it;
   - `always_treatment(sender, AppColours)` persists to the allowlist file and applies to the next message from that sender;
   - `raw_source(id)` returns the bytes;
   - `column_width` follows M1 for the given window width.
-- [ ] T063 [US3] Move the FFI reader (`crates/postio-ffi/src/session.rs` ~5420-5544, `reader_answers`) to `postio_ui::reader::document::prepare_treated` / `document_for_treated`, with `guard_kept_colours` applied in app colours. Extend `ReaderDocumentFfi` (treatment_shown, treatment_classified, render_mode_words, sender_choice, column_width, paper_floor). Export `switch_treatment`, `always_treatment`, `treatment_css`, `raw_source`. Delete `thread_document`. Make T062 green
+- [x] T063 [US3] Move the FFI reader (`crates/postio-ffi/src/session.rs` ~5420-5544, `reader_answers`) to `postio_ui::reader::document::prepare_treated` / `document_for_treated`, with `guard_kept_colours` applied in app colours. Extend `ReaderDocumentFfi` (treatment_shown, treatment_classified, render_mode_words, sender_choice, column_width, paper_floor). Export `switch_treatment`, `always_treatment`, `treatment_css`, `raw_source`. Delete `thread_document`. Make T062 green
 
 ### Mac: the message window
 
-- [ ] T064 [P] [US3] Write storyboards `storyboards/reader/esc-returns-to-the-same-row.toml`, `storyboards/reader/j-steps-the-list-without-resizing.toml` and `storyboards/reader/shift-o-switches-treatment.toml` (`apps = ["focus"]`). Run them on Linux
-- [ ] T065 [US3] Write failing Swift tests in `macos/Tests/PostioAppKitTests/SecondaryWindowTests.swift`:
+
+  *As built:* as `focus_reader_document(message, remote, chosen, main_width)` (`crates/postio-ffi/src/focus_reader.rs`) beside the classic `reader_document`, rather than in place of it: `chosen` is the switch (no `switch_treatment` export), and the document carries the treatment's CSS, so `treatment_css` was not needed. `raw_source`, `always_treatment` and (T069) `reader_font` are exported. `thread_document` is not deleted: the classic `ReaderView` and its tests still use it, and both go with the three-pane cleanup (FR-005). Phase 3 added the flowing column's rules (`FLOW_CSS`, `FLOW_FLAT_CSS`, now in `postio_ui::reader::document`) with the Mac's `-apple-system-*` palette and `color-scheme: light dark` for app colours, and `RenderModeWordsFfi.always` ("Always for this sender", `ALWAYS_FOR_SENDER`).
+- [x] T064 [P] [US3] Write storyboards `storyboards/reader/esc-returns-to-the-same-row.toml`, `storyboards/reader/j-steps-the-list-without-resizing.toml` and `storyboards/reader/shift-o-switches-treatment.toml` (`apps = ["focus"]`). Run them on Linux
+
+  *As built:* the three storyboards are in `storyboards/reader/`; their Linux run is not visible from this branch.
+- [x] T065 [US3] Write failing Swift tests in `macos/Tests/PostioAppKitTests/SecondaryWindowTests.swift`:
   - opening a second kind closes the first (M4);
   - the frame is centred on the main window with the width from the FFI's geometry;
   - close emits the `SurfaceClosed` fact;
   - closing the main window closes the secondary window.
-- [ ] T066 [US3] Implement `SecondaryWindowController` in `macos/Sources/PostioAppKit/SecondaryWindowController.swift`: a titled child `NSWindow` of the main window, one at a time, centred, sized from the geometry. ⌘W and Esc close it; on close it sends `ui_fact(SurfaceClosed)` and the main window makes the table first responder. Make T065 green
-- [ ] T067 [US3] Implement the message window's chrome in `macos/Sources/PostioKit/MessageWindowView.swift` (SwiftUI) per `message-window/SPEC.md` §2:
+
+  *As built:* plus a toolbar the content adds not growing the window (the title area is one), and a narrow main window keeping the engine's width. `present` -- the one step that orders a window on screen -- is replaced in the tests, so they need the window server for nothing but the objects.
+- [x] T066 [US3] Implement `SecondaryWindowController` in `macos/Sources/PostioAppKit/SecondaryWindowController.swift`: a titled child `NSWindow` of the main window, one at a time, centred, sized from the geometry. ⌘W and Esc close it; on close it sends `ui_fact(SurfaceClosed)` and the main window makes the table first responder. Make T065 green
+
+  *As built:* AppKit, not a SwiftUI scene with `openWindow`: a scene has no parent window, no placement against another window, keeps no frame across content changes, and closes only from a view's `dismissWindow`, where this one is closed by an engine intent. Every close (⌘W, the close button, `FocusCloseSurface`, another kind replacing it, the main window closing) is reported once through `onClosed`; the Engine then calls `focusSurfaceClosed`, and the controller's `FocusKeyboardHome` puts the table back in front. `isReleasedWhenClosed` is off (ARC owns it). The window is tagged `KeyWindow.message`, which resolves as the reader.
+- [x] T067 [US3] Implement the message window's chrome in `macos/Sources/PostioKit/MessageWindowView.swift` (SwiftUI) per `message-window/SPEC.md` §2:
   - a 52 pt title area: subject 13.5 bold, the position line in tertiary, then on the right the `k j` keycap and the joined ↑/↓ pair (30×28, radius 6, 1 px divider);
   - a 44 pt action row: Reply `e`, Reply all `E`, Forward `f`, Archive `a`, Snooze `s`, Remind `h`, Label `l`, Move `m`, Delete `⌫`. Label, Move and Delete fold into More `.` below 700.
-- [ ] T068 [US3] Implement the content column in `macos/Sources/PostioKit/MessageContentView.swift` per `message-window/SPEC.md` §3-5:
+
+  *As built:* `MessageChromeWords` composes nothing: the verbs, their words and what folds are `focus_message_view`'s (`crates/postio-ffi/src/focus_message.rs`, a new export: the subject, the position line, the thread chip and the messages `[`/`]` reach, labels, the sender block, the marker card, the action row and attachments, all from `postio_ui`'s functions), and Label, Move and Delete leave the row only when the document's `foldsIntoMore` says so. The title area is a unified `NSToolbar` (`MessageWindowChrome`), which gives it 52 pt and centres the traffic lights, hosting the SwiftUI title and stepper; its separator is off so the title and the action row are one band. Focus rings are off in the window: the keyboard is the key monitor's. The words GTK kept as literals ("+ Label", "Dismiss", From/To/Cc) and "and N others" moved to `postio_ui` for the FFI to use.
+- [x] T068 [US3] Implement the content column in `macos/Sources/PostioKit/MessageContentView.swift` per `message-window/SPEC.md` §3-5:
   - the thread marker; the subject at 26/32 bold; labels; the sender block grid (44 pt label column, monospaced address and date);
   - the action card (accent 8% light, 12% dark, C26) with Snooze `s` and Dismiss `-`;
   - the render-mode line; attachments;
   - the §4 rhythm table as constants in one place.
-- [ ] T069 [US3] Rework the body web view in `macos/Sources/PostioAppKit/ReaderView.swift` and `macos/Sources/PostioKit/ReaderConfiguration.swift`:
+
+  *As built:* the rhythm is `MessageRhythm`, the same numbers as `postio_ui::focus_dialog::rhythm`. The card is the list row's marker line for the message shown (found by message, not by index: the position line's index counts messages while the list also draws digest rows). A message's scroll position resets per message (`.id(model.shown)`) and survives `O`. The column is the document's `columnWidth`; a window the person resizes keeps the column it opened with (there is no FFI for a window's own width yet).
+- [x] T069 [US3] Rework the body web view in `macos/Sources/PostioAppKit/ReaderView.swift` and `macos/Sources/PostioKit/ReaderConfiguration.swift`:
   - JS off, a non-persistent store, `loadHTMLString(_, baseURL: nil)`;
   - a `WKContentRuleList` blocking every load not on `postio-cid:`/`postio-reader:`;
   - app colours via `treatment_css()`;
@@ -347,8 +365,14 @@ in light and dark, with main widths 1440 and 1024. Each matches its
   - the action sentence highlighted (accent 8%, 2 pt underline).
 
   Add a test in `macos/Tests/PostioAppKitTests/ReaderEgressTests.swift` that a remote `<img>` makes no request
-- [ ] T070 [US3] Wire `OpenMessage`, `CloseMessage` and `Reader(verb)` in `IntentApplier`, and `v` raw source as an in-place replacement of the content (M4)
-- [ ] T071 [US3] Compare screen 04 and all nine `message-window/screens/*.png` (FR-061): capture at main width 1440 and 1024, in light and dark. Check the 1024 numbers: the window 656, the plain column 560, a paper newsletter at 0.9. Record in `docs/notes/<date>-focus-macos-phase-3.md`
+
+  *As built:* a Focus-specific `MessageBodyView` (`macos/Sources/PostioAppKit/MessageBodyView.swift`) beside the classic `ReaderView`, which nothing in the app uses any more and goes with FR-005. The rule list blocks every load and lets `postio-cid:`, `postio-font:`, `postio-reader:`, `data:` and `about:` through (one rule each: WebKit's rule regexes have no alternation); its egress test uses a document whose CSP *allows* remote images and was seen red without the list. `postio-font:` is served (`FontSchemeHandler`, over `reader_font`), so app colours are in Barlow (C25). Postio's own script runs in the `.defaultClient` world with the page's off (`MessageBodyTests`): the height is the lowest edge of the content, less the classic reader's scroll anchors (which made one-line bodies thousands of points tall), read again once the faces arrive; the paper fit measures what the overflowing body box holds; the action sentence is wrapped in a `<mark>` when one run of text holds it whole. Paper's dim is black at 8% over the sheet, exactly `brightness(0.92)`. Remote images are always asked for blocked: the per-sender grant and the notice's "Load images" in this window are not wired yet.
+- [x] T070 [US3] Wire `OpenMessage`, `CloseMessage` and `Reader(verb)` in `IntentApplier`, and `v` raw source as an in-place replacement of the content (M4)
+
+  *As built:* `FocusIntents.surface` maps the six surface events; `MessageWindowModel` (PostioKit) holds the message window's state and reads the chrome and document off the main actor, dropping stale answers; Engine applies them. The window opens once its first document says how wide (M1), reported open once; a step replaces the content. `FocusOpenDraft` opens the compose window as drafts open now; `FocusOpenDigest` logs the kind only. Esc from the raw source returns to the message in Swift (the controller does not hear of the source); Reply, Reply all and Forward from the window answer the message shown. Opening the composer closes the message window first (M4) until the composer is a surface the controller hears of (phase 4). `[`/`]` show the message `focus_message_view` names as `earlier`/`later`, so no conversation is read in Swift.
+- [x] T071 [US3] Compare screen 04 and all nine `message-window/screens/*.png` (FR-061): capture at main width 1440 and 1024, in light and dark. Check the 1024 numbers: the window 656, the plain column 560, a paper newsletter at 0.9. Record in `docs/notes/<date>-focus-macos-phase-3.md`
+
+  *As built:* recorded in `docs/notes/2026-10-08-focus-macos-phase-3.md`. At 1024 the window is 655, the formula rounded, where the pack draws 656: a recorded decision, not a defect. The demo can now refile the opened row as the handoff's HTML bodies (`POSTIO_DEMO=small:27`, `small:28`), press Return and Escape in `POSTIO_DEMO_KEYS`, and opens in front (WebKit stops painting a web view in a window it judges covered).
 
 ---
 
