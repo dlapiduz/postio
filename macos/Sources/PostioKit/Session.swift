@@ -45,6 +45,12 @@ public final class PostioSession {
         PostioSession(inner: try Session.openAt(storePath: nil))
     }
 
+    /// Opens a session over the demo store `seed` names, in memory
+    /// (`DemoMode`). Reads no Keychain; refused by a build without demos.
+    public static func openDemo(_ seed: String) throws -> PostioSession {
+        PostioSession(inner: try Session.openDemo(seed: seed))
+    }
+
     private init(inner: Session) {
         self.inner = inner
     }

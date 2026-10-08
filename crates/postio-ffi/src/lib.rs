@@ -39,6 +39,7 @@ mod account;
 mod compose;
 mod conversation;
 mod cost;
+mod demo;
 mod dwell;
 mod event;
 mod finder;

@@ -74,7 +74,9 @@ final class Engine {
         // AppKit's stock one for the whole of the Keychain's wait (#1262).
         installMenuBar()
         Task.detached(priority: .userInitiated) {
-            let opened = Result { try PostioSession.open() }
+            let opened = Result {
+                try DemoMode.seed.map(PostioSession.openDemo) ?? PostioSession.open()
+            }
             await MainActor.run { [weak self] in self?.adopt(opened) }
         }
     }
@@ -93,7 +95,9 @@ final class Engine {
             mailboxes = session.mailboxes
             // Nothing is fetched until an engine starts (#648); the list
             // repaints from events rather than from anything awaited here.
-            _ = try? session.startSyncing()
+            // A demo never syncs: its mail is invented and its account has
+            // no server (`DemoMode`).
+            if DemoMode.seed == nil { _ = try? session.startSyncing() }
             // An account added while this runs gets its engine here, which is
             // what makes it sync without a relaunch (#1299).
             settingsActions.accountAdded = { [weak self] in

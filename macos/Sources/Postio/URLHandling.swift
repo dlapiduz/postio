@@ -23,6 +23,12 @@ final class URLHandler: NSObject, NSApplicationDelegate {
     /// *after* the scene's first update rather than in the middle of it
     /// (#1262).
     func applicationDidFinishLaunching(_: Notification) {
+        // A demo is photographed in the appearance it was told (`DemoMode`).
+        switch DemoMode.appearance {
+        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        default: break
+        }
         MenuBar.reassert()
         DispatchQueue.main.async { MenuBar.reassert() }
     }

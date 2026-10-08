@@ -4792,6 +4792,7 @@ dependencies = [
  "postio-client",
  "postio-config",
  "postio-core",
+ "postio-demo",
  "postio-ffi",
  "postio-focus",
  "postio-host",

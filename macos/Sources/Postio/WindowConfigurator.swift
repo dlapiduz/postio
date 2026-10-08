@@ -45,8 +45,15 @@ struct WindowConfigurator: NSViewRepresentable {
             // wants an empty title bar: a compose window says who it is
             // writing to, and the settings window says "Settings".
             guard role == .main else { return }
-            window.setFrameAutosaveName(Self.autosaveName)
             hideTitle(of: window)
+            // A demo is photographed at a size it was told, not one a
+            // person left it at (`DemoMode`).
+            if DemoMode.seed != nil {
+                window.setContentSize(DemoMode.windowSize)
+                window.center()
+                return
+            }
+            window.setFrameAutosaveName(Self.autosaveName)
             recover(window)
         }
         return view

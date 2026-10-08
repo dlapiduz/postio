@@ -17,8 +17,15 @@ cd "$REPO_ROOT"
 OUT="${1:-target/ffi-bindings}"
 
 # The cdylib carries the metadata `uniffi-bindgen` reads in library mode, so it
-# has to exist before the generator runs.
-cargo build -p postio-ffi
+# has to exist before the generator runs. Built with whatever features the
+# caller built it with (`POSTIO_FFI_FEATURES`, as macos-build.sh takes it):
+# building it here without them would put a library without them back where
+# the bundle copies it from.
+FEATURE_ARGS=()
+if [ -n "${POSTIO_FFI_FEATURES:-}" ]; then
+    FEATURE_ARGS=(--features "$POSTIO_FFI_FEATURES")
+fi
+cargo build -p postio-ffi ${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"}
 
 LIB=""
 for candidate in \
@@ -34,7 +41,7 @@ if [ -z "$LIB" ]; then
 fi
 
 mkdir -p "$OUT"
-cargo run -q -p postio-ffi --bin uniffi-bindgen -- \
+cargo run -q -p postio-ffi ${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"} --bin uniffi-bindgen -- \
     generate --library "$LIB" --language swift --out-dir "$OUT"
 
 echo "swift bindings -> $OUT"

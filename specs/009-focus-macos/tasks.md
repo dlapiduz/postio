@@ -48,7 +48,7 @@ built (FR-063).
 - [x] T001 Write ADR 0045 "Focus's behaviour lives in `postio-focus`; frontends draw its intents" in `docs/decisions/0045-focus-behaviour-lives-in-postio-focus.md`: the rule, the crate boundary from contracts/focus-controller.md, and "no Focus rule in a window" (plan.md, ADR). Add its row to `docs/decisions/README.md`
 - [x] T002 [P] Amend `docs/decisions/0019-macos-frontend.md`: set the status to "partly superseded by spec 009". Its boundary, SwiftPM, packaging and Linux-stays-green rules hold; its three-pane surface and read-only framing go
 - [x] T003 [P] Fold `specs/007-postio-focus/macos.md` into spec 009: anything still true and not already in spec.md or research.md goes into spec.md's Context. Delete the file, and update every link to it (`grep -rn "007-postio-focus/macos.md"`), including `crates/postio-ffi/tests/ffi_suite/command_coverage.rs` KNOWN_ORPHANS comments
-- [ ] T004 [P] Add `scripts/macos-shot.sh <screen> [--dark|--light|--both] [--width W]`:
+- [x] T004 [P] (Built over an in-memory demo store, not a copy on disk: `postio-demo`'s seeds, opened by `Session.openDemo` behind the FFI's `demo` feature, so no Keychain is read.) Add `scripts/macos-shot.sh <screen> [--dark|--light|--both] [--width W]`:
   - copy the seeded demo store (`postio_storage::seed`) to a scratch directory;
   - launch `macos/build/Postio.app/Contents/MacOS/Postio` with `POSTIO_STORE`/`POSTIO_CONFIG`, with `-AppleInterfaceStyle Dark` for dark;
   - size the main window to 1440×900, or the given width;
@@ -167,7 +167,7 @@ differences listed. A 10k-conversation store scrolls without dropped frames.
 
 ### Mac: the inbox
 
-- [ ] T029 [P] [US1] Write a storyboard `storyboards/list/inbox-opens-on-the-first-row.toml` (`apps = ["focus"]`): launch, the cursor on index 0, and the keyboard region the list (C30). Run it on Linux with `scripts/storyboards.sh run` to see it pass there
+- [x] T029 [P] [US1] (Already written: `storyboards/list/launch-keyboard-on-first-row.toml` asserts it, and applies to the Mac unchanged.) Write a storyboard `storyboards/list/inbox-opens-on-the-first-row.toml` (`apps = ["focus"]`): launch, the cursor on index 0, and the keyboard region the list (C30). Run it on Linux with `scripts/storyboards.sh run` to see it pass there
 - [x] T030 [US1] Write failing Swift tests in `macos/Tests/PostioKitTests/FocusRowModelTests.swift` for the row view model built from `FocusRowFfi`:
   - the row kind is header, one-line or two-line;
   - at most two pills;

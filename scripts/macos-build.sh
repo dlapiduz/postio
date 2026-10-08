@@ -46,8 +46,14 @@ TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 scripts/install-shims.sh
 
 echo "--- cargo: postio-ffi ---"
+# `POSTIO_FFI_FEATURES=demo` builds the demo stores in, for `macos-shot.sh`
+# (specs/009-focus-macos T004). Never for a bundle anyone ships.
+FEATURE_ARGS=""
+if [ -n "${POSTIO_FFI_FEATURES:-}" ]; then
+    FEATURE_ARGS="--features $POSTIO_FFI_FEATURES"
+fi
 # shellcheck disable=SC2086  # deliberate: see CARGO_PROFILE_ARGS above
-cargo build -p postio-ffi $CARGO_PROFILE_ARGS
+cargo build -p postio-ffi $CARGO_PROFILE_ARGS $FEATURE_ARGS
 
 # The bindings are generated every time rather than tracked, so the generator
 # and the `uniffi` runtime are the same version by construction (#571). They
