@@ -35,6 +35,7 @@ extensions_to_enable              # crates/postio-account/src/imap/dispatch.rs:1
 failing_tls                       # crates/postio-account/src/imap/transport.rs:618
 for_platform                      # crates/postio-ui/src/focus_dialog.rs, crates/postio-focus/src/lib.rs -- spec 009 slice 1; the FFI's Focus driver calls both (tasks.md T027, T063)
 fts_match                         # crates/postio-search/src/query.rs:417
+guard_kept_colours              # crates/postio-body/src/treatment.rs -- spec 009 T060/T061; the Mac FFI calls it (tasks.md T063)
 has_name                          # crates/postio-account/src/backend/capability.rs:180
 has_pending                       # crates/postio-storage/src/repository/operations.rs:435
 idles                             # crates/postio-sync/src/watch.rs:290

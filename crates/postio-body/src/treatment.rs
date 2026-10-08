@@ -647,6 +647,201 @@ pub fn app_colours(html: &str) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
+/// Which of the app's two colour schemes a [`Surface`] is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scheme {
+    /// `prefers-color-scheme: light`.
+    Light,
+    /// `prefers-color-scheme: dark`.
+    Dark,
+}
+
+impl Scheme {
+    fn media(self) -> &'static str {
+        match self {
+            Scheme::Light => "light",
+            Scheme::Dark => "dark",
+        }
+    }
+}
+
+/// A ground the message body is drawn on: the scheme it belongs to, and the
+/// colour behind the text. The app's ink needs no field -- a colour that
+/// fails the floor is taken out of the markup, and the text falls back to
+/// the stylesheet's ink.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Surface {
+    /// The scheme this is the ground of.
+    pub scheme: Scheme,
+    /// The opaque colour behind the body text.
+    pub background: [u8; 3],
+}
+
+/// The reader's ground in light: `--r-ground` in
+/// `postio-ui/data/reader-tokens.css`. `postio-body` cannot depend on
+/// `postio-ui`, so the number is copied; keep the two in step.
+pub const LIGHT_SURFACE: Surface = Surface {
+    scheme: Scheme::Light,
+    background: [0xf5, 0xf5, 0xf8],
+};
+
+/// The reader's ground in dark: `--r-ground` under `prefers-color-scheme:
+/// dark` in `postio-ui/data/reader-tokens.css`.
+pub const DARK_SURFACE: Surface = Surface {
+    scheme: Scheme::Dark,
+    background: [0x2e, 0x2e, 0x31],
+};
+
+/// Both grounds, in the order the rules are written.
+pub const SURFACES: [Surface; 2] = [LIGHT_SURFACE, DARK_SURFACE];
+
+/// The contrast the app holds text to (WCAG AA), the renderer's floor in
+/// every theme but high contrast.
+pub const CONTRAST_FLOOR: f64 = 4.5;
+
+/// The class prefix [`guard_kept_colours`] marks an element with.
+pub const KEPT_CLASS: &str = "postio-kept-";
+
+/// WCAG contrast ratio of two colours, `1.0..=21.0`. Alpha is ignored; see
+/// [`guard_kept_colours`] for how a translucent colour is judged.
+pub fn contrast_ratio(a: Colour, b: Colour) -> f64 {
+    let (la, lb) = (a.luminance(), b.luminance());
+    let (hi, lo) = if la >= lb { (la, lb) } else { (lb, la) };
+    (hi + 0.05) / (lo + 0.05)
+}
+
+/// The contrast guard of the app-colours treatment, decided in the markup
+/// (T060, T061) for a webview that cannot run `postio-render`'s guard.
+///
+/// Takes the output of [`app_colours`]. Each element still carrying an
+/// inline `color` loses it, and is marked `postio-kept-N` (N counting up in
+/// document order from 0). One `<style>` appended to the fragment gives that
+/// class the colour only in the schemes whose surface it reaches
+/// [`CONTRAST_FLOOR`] against: a plain rule when it reads on every surface,
+/// a `@media (prefers-color-scheme: ...)` rule when only some, and nothing
+/// when none -- the text then takes the app's ink, as `postio_render`'s
+/// guard does. This needs no script, so it holds in a webview with
+/// JavaScript off.
+///
+/// A colour with alpha is judged as drawn, composited over each surface. A
+/// colour that cannot be parsed is dropped. Markup with no kept colour comes
+/// back byte for byte.
+pub fn guard_kept_colours(html: &str, surfaces: &[Surface]) -> String {
+    let dom = parse_document(RcDom::default(), ParseOpts::default()).one(html);
+    let Some(body) = find_body(&dom.document) else {
+        return html.to_owned();
+    };
+    let mut rules = Vec::new();
+    let mut changed = false;
+    guard_node(&body, surfaces, &mut rules, &mut changed);
+    if !changed {
+        return html.to_owned();
+    }
+    let mut bytes = Vec::new();
+    let handle: SerializableHandle = body.into();
+    let options = SerializeOpts {
+        traversal_scope: TraversalScope::ChildrenOnly(None),
+        ..SerializeOpts::default()
+    };
+    // Writing into a Vec cannot fail.
+    let _ = serialize(&mut bytes, &handle, options);
+    let mut out = String::from_utf8_lossy(&bytes).into_owned();
+    let sheet: String = rules.concat();
+    if !sheet.is_empty() {
+        out.push_str("<style>");
+        out.push_str(&sheet);
+        out.push_str("</style>");
+    }
+    out
+}
+
+fn guard_node(node: &Handle, surfaces: &[Surface], rules: &mut Vec<String>, changed: &mut bool) {
+    if let NodeData::Element { attrs, .. } = &node.data {
+        let mut attrs = attrs.borrow_mut();
+        let colour = attrs
+            .iter()
+            .find(|attr| attr.name.local.as_ref().eq_ignore_ascii_case("style"))
+            .and_then(|style| {
+                declarations(&style.value)
+                    .into_iter()
+                    .find(|(property, _)| property == "color")
+            });
+        if let Some((_, value)) = colour {
+            *changed = true;
+            if let Some(style) = attrs
+                .iter_mut()
+                .find(|attr| attr.name.local.as_ref().eq_ignore_ascii_case("style"))
+            {
+                let rest: Vec<String> = declarations(&style.value)
+                    .into_iter()
+                    .filter(|(property, _)| property != "color")
+                    .map(|(property, value)| format!("{property}: {value}"))
+                    .collect();
+                style.value = StrTendril::from(rest.join("; "));
+            }
+            attrs.retain(|attr| {
+                !(attr.name.local.as_ref().eq_ignore_ascii_case("style")
+                    && attr.value.trim().is_empty())
+            });
+            let reads: Vec<Scheme> = parse_colour(&value)
+                .map(|colour| {
+                    surfaces
+                        .iter()
+                        .filter(|surface| reads_on(colour, surface))
+                        .map(|surface| surface.scheme)
+                        .collect()
+                })
+                .unwrap_or_default();
+            if let (Some(colour), false) = (parse_colour(&value), reads.is_empty()) {
+                let class = format!("{KEPT_CLASS}{}", rules.len());
+                add_class(&mut attrs, &class);
+                let [r, g, b] = colour.rgb;
+                let paint = if colour.alpha < 1.0 {
+                    format!("rgba({r}, {g}, {b}, {})", colour.alpha)
+                } else {
+                    format!("#{r:02x}{g:02x}{b:02x}")
+                };
+                let rule = format!(".{class} {{ color: {paint}; }}");
+                rules.push(if reads.len() == surfaces.len() {
+                    rule
+                } else {
+                    let media: Vec<String> = reads
+                        .iter()
+                        .map(|scheme| {
+                            format!(
+                                "@media (prefers-color-scheme: {}) {{ {rule} }}",
+                                scheme.media()
+                            )
+                        })
+                        .collect();
+                    media.concat()
+                });
+            }
+        }
+    }
+    for child in node.children.borrow().iter() {
+        guard_node(child, surfaces, rules, changed);
+    }
+}
+
+/// Whether `colour`, composited over the surface, reaches the floor.
+fn reads_on(colour: Colour, surface: &Surface) -> bool {
+    let a = f64::from(colour.alpha);
+    let mix =
+        |over: u8, under: u8| (f64::from(over) * a + f64::from(under) * (1.0 - a)).round() as u8;
+    let [r, g, b] = colour.rgb;
+    let [ur, ug, ub] = surface.background;
+    let drawn = Colour {
+        rgb: [mix(r, ur), mix(g, ug), mix(b, ub)],
+        alpha: 1.0,
+    };
+    let ground = Colour {
+        rgb: surface.background,
+        alpha: 1.0,
+    };
+    contrast_ratio(drawn, ground) >= CONTRAST_FLOOR
+}
+
 fn find_body(node: &Handle) -> Option<Handle> {
     if let NodeData::Element { name, .. } = &node.data
         && name.local.as_ref() == "body"
@@ -1295,5 +1490,124 @@ mod tests {
         let found = items(css);
         assert_eq!(found.len(), 3, "{found:?}");
         assert_eq!(found[2], Item::Statement("@import x"));
+    }
+
+    // ---- the contrast guard (T060) ----
+
+    /// Black on white is the widest ratio there is.
+    #[test]
+    fn contrast_ratio_of_black_on_white_is_21() {
+        let black = parse_colour("#000").unwrap();
+        let white = parse_colour("#ffffff").unwrap();
+        assert!((contrast_ratio(black, white) - 21.0).abs() < 1e-9);
+        assert!((contrast_ratio(white, black) - 21.0).abs() < 1e-9);
+        assert!((contrast_ratio(white, white) - 1.0).abs() < 1e-9);
+    }
+
+    /// The tests' premises, checked once so a changed surface fails here and
+    /// not as a puzzling assertion below.
+    #[test]
+    fn the_fixture_colours_read_where_the_tests_say() {
+        let on = |hex: &str, s: Surface| {
+            contrast_ratio(
+                parse_colour(hex).unwrap(),
+                Colour {
+                    rgb: s.background,
+                    alpha: 1.0,
+                },
+            )
+        };
+        assert!(on("#cc0000", LIGHT_SURFACE) >= CONTRAST_FLOOR);
+        assert!(on("#cc0000", DARK_SURFACE) < CONTRAST_FLOOR);
+        assert!(on("#990000", LIGHT_SURFACE) >= CONTRAST_FLOOR);
+        assert!(on("#990000", DARK_SURFACE) < CONTRAST_FLOOR);
+        assert!(on("#ff8080", DARK_SURFACE) >= CONTRAST_FLOOR);
+        assert!(on("#ff8080", LIGHT_SURFACE) < CONTRAST_FLOOR);
+        assert!(on("#808000", LIGHT_SURFACE) < CONTRAST_FLOOR);
+        assert!(on("#808000", DARK_SURFACE) < CONTRAST_FLOOR);
+    }
+
+    fn kept(colour: &str) -> String {
+        format!("<p>Please <span style=\"color: {colour}\">confirm</span> today.</p>")
+    }
+
+    #[test]
+    fn a_red_that_reads_on_light_stays_in_light_only() {
+        let out = guard_kept_colours(&kept("#cc0000"), &SURFACES);
+        assert!(out.contains("class=\"postio-kept-0\""), "{out}");
+        assert!(
+            !out.contains("style=\"color"),
+            "inline colour is gone: {out}"
+        );
+        assert!(
+            out.contains(
+                "@media (prefers-color-scheme: light) { .postio-kept-0 { color: #cc0000; } }"
+            ),
+            "{out}"
+        );
+        assert!(!out.contains("prefers-color-scheme: dark"), "{out}");
+    }
+
+    /// No colour reads on both of the app's grounds (they sit either side of
+    /// mid grey), so the plain rule is what a single surface gets.
+    #[test]
+    fn a_colour_that_reads_on_every_surface_given_gets_a_plain_rule() {
+        let out = guard_kept_colours(&kept("#cc0000"), &[LIGHT_SURFACE]);
+        assert!(out.contains(".postio-kept-0 { color: #cc0000; }"), "{out}");
+        assert!(!out.contains("@media"), "{out}");
+    }
+
+    #[test]
+    fn a_colour_failing_on_dark_is_scoped_to_light() {
+        let out = guard_kept_colours(&kept("#990000"), &SURFACES);
+        assert!(
+            out.contains(
+                "@media (prefers-color-scheme: light) { .postio-kept-0 { color: #990000; } }"
+            ),
+            "{out}"
+        );
+        assert!(!out.contains("prefers-color-scheme: dark"), "{out}");
+    }
+
+    #[test]
+    fn a_colour_failing_on_light_is_scoped_to_dark() {
+        let out = guard_kept_colours(&kept("#ff8080"), &SURFACES);
+        assert!(out.contains("prefers-color-scheme: dark"), "{out}");
+        assert!(!out.contains("prefers-color-scheme: light"), "{out}");
+    }
+
+    #[test]
+    fn a_colour_failing_on_both_is_removed_entirely() {
+        let out = guard_kept_colours(&kept("#808000"), &SURFACES);
+        assert!(!out.contains("808000"), "{out}");
+        assert!(!out.contains("postio-kept"), "{out}");
+        assert!(!out.contains("<style>"), "{out}");
+        assert!(out.contains("confirm"), "the words stay: {out}");
+    }
+
+    #[test]
+    fn markup_with_no_kept_colour_is_returned_unchanged() {
+        let html = "<p>Hello <b>Ada</b>, <a href=\"https://example.com/\">see this</a>.</p>";
+        assert_eq!(guard_kept_colours(html, &SURFACES), html);
+    }
+
+    #[test]
+    fn classes_count_up_in_document_order_and_keep_other_styles() {
+        let html = "<p><span style=\"color: #cc0000; font-weight: bold\" class=\"x\">a</span> \
+                    <span style=\"color: #990000\">b</span></p>";
+        let out = guard_kept_colours(html, &SURFACES);
+        assert!(out.contains("class=\"x postio-kept-0\""), "{out}");
+        assert!(out.contains("font-weight: bold"), "{out}");
+        assert!(out.contains("postio-kept-1\">b"), "{out}");
+        assert_eq!(out, guard_kept_colours(html, &SURFACES), "deterministic");
+    }
+
+    #[test]
+    fn the_guard_composes_with_app_colours() {
+        let sent =
+            "<p style=\"color: #333333\">Hi <font style=\"color: #cc0000\">URGENT</font></p>";
+        let out = guard_kept_colours(&app_colours(sent), &SURFACES);
+        assert!(out.contains("postio-kept-0"), "{out}");
+        assert!(!out.contains("333333"), "{out}");
     }
 }
