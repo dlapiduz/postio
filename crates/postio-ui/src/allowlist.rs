@@ -268,6 +268,18 @@ impl RemoteImageAllowList {
         self.inner.is_empty()
     }
 
+    /// The grants themselves, to change in memory -- a domain grant, a
+    /// revoke -- without losing the treatments beside them when the list
+    /// is saved.
+    pub fn grants_mut(&mut self) -> &mut AllowList {
+        &mut self.inner
+    }
+
+    /// The grants themselves.
+    pub fn grants(&self) -> &AllowList {
+        &self.inner
+    }
+
     /// Every sender allowed by name, in address order -- what a settings
     /// pane lists to manage (#871).
     pub fn senders(&self) -> impl Iterator<Item = &str> {
@@ -598,6 +610,28 @@ mod tests {
         assert!(
             !reloaded.is_allowed("news@example.com"),
             "choosing paper allowed the sender's images"
+        );
+    }
+
+    #[test]
+    fn a_grant_changed_through_the_shell_keeps_the_treatments() {
+        // The Mac changed its grants through `AllowList` alone, whose
+        // render has no `[Treatment]` section: a revoke there would have
+        // forgotten every sender's chosen treatment.
+        let path = scratch("treatment-kept-by-grants");
+        let mut list = RemoteImageAllowList::default();
+        list.set_treatment("news@example.com", Some(Treatment::Paper));
+        list.save_to(&path).unwrap();
+
+        let mut list = RemoteImageAllowList::load_from(&path);
+        list.grants_mut().allow_domain("example.org");
+        list.save_to(&path).unwrap();
+
+        let reloaded = RemoteImageAllowList::load_from(&path);
+        assert!(reloaded.is_allowed("bea@example.org"));
+        assert_eq!(
+            reloaded.treatment_for("news@example.com"),
+            Some(Treatment::Paper)
         );
     }
 
