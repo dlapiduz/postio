@@ -76,7 +76,6 @@ recount                           # crates/postio-storage/src/repository/mailbox
 recount_account                   # crates/postio-storage/src/repository/mailboxes.rs:303
 recovers_on_its_own               # crates/postio-sync/src/connect.rs:209
 refresh_capabilities              # crates/postio-account/src/imap/mod.rs:300
-refresh_counts                    # crates/postio-focus/src/lib.rs -- spec 009 slice 1; the feed calls it after each landing (tasks.md T024)
 rejected_recipient                # crates/postio-smtp/src/error.rs:255
 remove_member                     # crates/postio-storage/src/repository/contact_groups.rs:105
 reports_destination_uid           # crates/postio-account/src/imap/dispatch.rs:181
