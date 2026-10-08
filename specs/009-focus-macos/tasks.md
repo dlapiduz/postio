@@ -133,15 +133,15 @@ differences listed. A 10k-conversation store scrolls without dropped frames.
 
 ### Controller slice 2: the feed (**main·S2**)
 
-- [ ] T023 [US1] Write failing tests in `crates/postio-focus/tests/feed.rs`:
+- [x] T023 [US1] Write failing tests in `crates/postio-focus/tests/feed.rs`:
   - opening the inbox asks for accounts, the count, surfaced and page 0;
   - a reply for an old generation is dropped;
   - a scope switch during the count discards it;
   - a page retry gives up after the limit;
   - `NewMail` at the top inserts, and `MessageListChanged` reloads (the `postio_ui::paging::Paging::plan` table);
   - `SurfacedChanged` re-reads surfaced rows and splices them at their `position`.
-- [ ] T024 [US1] Move the feed logic from `crates/postio-gtk/src/list/feed.rs` (`Inner`, lines 37-60; the open-scope sequence 136-196; pages 264-336; the event reaction 217) into `crates/postio-focus/src/feed.rs`. Implement `perform` for `OpenScope`, `Page`, `FocusCounts` and `Surfaced` in `crates/postio-focus/src/perform.rs`. Make T023 green
-- [ ] T025 [US1] Reduce `crates/postio-gtk/src/list/feed.rs` to a driver: it runs `perform` with `glib::spawn_future_local`, feeds back `Input::Reply`, and applies `DeliverPage`/`RefreshList` to `WindowedModel`. The guards are `focus_suite` cases `list_contract`, `list_reload`, `reload`, `surfaced`, `rows` and `startup_reads` (CI). Land slice 2
+- [x] T024 [US1] Move the feed logic from `crates/postio-gtk/src/list/feed.rs` (`Inner`, lines 37-60; the open-scope sequence 136-196; pages 264-336; the event reaction 217) into `crates/postio-focus/src/feed.rs`. Implement `perform` for `OpenScope`, `Page`, `FocusCounts` and `Surfaced` in `crates/postio-focus/src/perform.rs`. Make T023 green
+- [x] T025 [US1] Reduce `crates/postio-gtk/src/list/feed.rs` to a driver: it runs `perform` with `glib::spawn_future_local`, feeds back `Input::Reply`, and applies `DeliverPage`/`RefreshList` to `WindowedModel`. The guards are `focus_suite` cases `list_contract`, `list_reload`, `reload`, `surfaced`, `rows` and `startup_reads` (CI). Land slice 2
 
 ### FFI: Focus rows and the controller driver
 

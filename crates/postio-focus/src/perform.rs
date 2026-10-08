@@ -11,6 +11,24 @@ use postio_model::mailbox::MailboxRole;
 
 use crate::{Opened, PageAnswer, Reply, Request};
 
+/// Answer `request` now, when it needs no await: a post, said before
+/// anything that follows it is asked. `Err` hands the request back for
+/// [`perform`].
+///
+/// Order is the point. Mail that left a folder is said to the store before
+/// the list re-reads (`Request::NoteRemoved`), so the store's own caches
+/// have let go of it first; spawned on an executor, the saying could run
+/// after the re-read it was meant to precede.
+pub fn perform_now(client: &Client, request: Request) -> Result<Reply, Request> {
+    match request {
+        Request::NoteRemoved { mailbox, messages } => {
+            client.note_removed(mailbox, messages);
+            Ok(Reply::Noted)
+        }
+        other => Err(other),
+    }
+}
+
 /// Ask the engine; return what the controller is to be told.
 pub async fn perform(client: &Client, request: Request) -> Reply {
     match request {

@@ -24,7 +24,7 @@ mod feed;
 mod perform;
 
 pub use feed::{Opened, PageAnswer};
-pub use perform::perform;
+pub use perform::{perform, perform_now};
 
 /// What differs between platforms, as policy rather than as a fork
 /// (ADR 0045 rule 4).
