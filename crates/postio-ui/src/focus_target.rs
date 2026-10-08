@@ -45,6 +45,9 @@ pub const NO_CONFIG_TO_SAVE: &str = "There is no config.toml to save the search 
 /// Said when writing a saved search to the configuration failed.
 pub const SEARCH_NOT_WRITTEN: &str = "Focus could not write the search to config.toml";
 
+/// The stop-digesting question's button.
+pub const STOP_DIGESTING: &str = "Stop digesting";
+
 /// What stopping a sender's digesting does, under its title.
 pub const STOP_DIGESTING_BODY: &str = "Their mail comes to the inbox again, and what the digest holds from them now comes back with it.";
 

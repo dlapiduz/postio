@@ -216,9 +216,58 @@ pub fn footnote(mode: Mode, place: &str, due: Option<NaiveDate>) -> String {
     }
 }
 
+/// What capture says once its line is written: "Task added to Review ·
+/// due Fri", "Note added to Inbox".
+pub fn added(mode: Mode, place: &str, due: Option<NaiveDate>) -> String {
+    match (mode, due) {
+        (Mode::Task, Some(day)) => format!("Task added to {place} \u{b7} due {}", day.format("%a")),
+        (Mode::Task, None) => format!("Task added to {place}"),
+        (Mode::Note, _) => format!("Note added to {place}"),
+    }
+}
+
+/// The capture window's line naming its message: "From Ada · Quarterly
+/// review · Mon".
+pub fn from_line(source: &Source) -> String {
+    format!(
+        "From {} \u{b7} {} \u{b7} {}",
+        source.sender, source.subject, source.when
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_a_capture_says_once_written_names_its_place_and_its_day() {
+        let friday = NaiveDate::from_ymd_opt(2026, 10, 2).expect("a day");
+        assert_eq!(
+            added(Mode::Task, "Review", Some(friday)),
+            "Task added to Review \u{b7} due Fri"
+        );
+        assert_eq!(added(Mode::Task, INBOX, None), "Task added to Inbox");
+        assert_eq!(
+            added(Mode::Note, "Review", Some(friday)),
+            "Note added to Review"
+        );
+    }
+
+    #[test]
+    fn the_from_line_names_the_sender_the_subject_and_when() {
+        let source = Source {
+            message: MessageId::new(42),
+            sender: "Ada".to_owned(),
+            subject: "Quarterly review".to_owned(),
+            when: "Mon".to_owned(),
+            sentence: None,
+            due: None,
+        };
+        assert_eq!(
+            from_line(&source),
+            "From Ada \u{b7} Quarterly review \u{b7} Mon"
+        );
+    }
 
     fn day(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).expect("a day")
