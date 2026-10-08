@@ -198,13 +198,21 @@ pub fn suggest<'a>(typed: &str, vocabulary: impl Iterator<Item = Term<'a>>) -> O
 /// This is the one place a query is widened rather than answered with an
 /// offer, and only for the command bar's interactive search: ADR 0037, as
 /// amended. A rule's query never comes here.
+///
+/// A word the vocabulary holds is not corrected: spelled right, `tour` meant
+/// tour, and `your`, one edit away and in every other message, would drown
+/// it. Only the words it begins -- `tours` -- are near it then.
 pub fn near<'a>(
     typed: &str,
     vocabulary: impl Iterator<Item = Term<'a>>,
     most: usize,
 ) -> Vec<String> {
     let typed = typed.to_lowercase();
-    let limit = tolerance(&typed);
+    let vocabulary: Vec<Term<'a>> = vocabulary.collect();
+    let held = vocabulary
+        .iter()
+        .any(|term| term.text.to_lowercase() == typed);
+    let limit = if held { 0 } else { tolerance(&typed) };
     let completes = typed.chars().count() >= SHORTEST_BEGINNING;
 
     // Ranked: the word itself, then a completion, then a correction by how
@@ -406,5 +414,16 @@ mod tests {
             Vec::<String>::new()
         );
         assert_eq!(near("ban", vocabulary().into_iter(), 8), ["banana"]);
+    }
+
+    #[test]
+    fn a_word_the_vocabulary_holds_is_near_only_what_it_begins() {
+        // "tour" is spelled right, so "your" -- one edit away and in every
+        // other message -- is not what was meant; "tours" may be.
+        let vocabulary: Vec<Term<'static>> = [("tour", 3), ("tours", 2), ("your", 900)]
+            .into_iter()
+            .map(|(text, documents)| Term { text, documents })
+            .collect();
+        assert_eq!(near("tour", vocabulary.into_iter(), 8), ["tour", "tours"]);
     }
 }

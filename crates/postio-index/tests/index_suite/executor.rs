@@ -2148,6 +2148,65 @@ async fn a_forgiving_search_finds_a_misspelling_in_a_body() {
     );
 }
 
+/// A mailbox where a misspelling's neighbours are mostly the wrong word:
+/// sixty trips beside one girl scout troop, and every message saying "your".
+async fn crowded_world() -> (
+    postio_storage::Store,
+    postio_model::Account,
+    Vec<(&'static str, postio_model::MessageId)>,
+) {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    for i in 0..60 {
+        with_body(
+            &connection,
+            &account,
+            mailbox,
+            &format!("Your trip {i}"),
+            "Pack light",
+            at(1),
+        )
+        .await;
+    }
+    let mut made = Vec::new();
+    for (name, subject, body, hour) in [
+        ("troop", "Girl scout troop meeting", "Bring the cookies", 3),
+        ("tour", "Redfin home tour confirmed", "See you Saturday", 4),
+        ("your home", "Your Redfin home value", "Updated estimate", 5),
+    ] {
+        let message = with_body(&connection, &account, mailbox, subject, body, at(hour)).await;
+        made.push((name, message.id));
+    }
+    drop(connection);
+    (database, account, made)
+}
+
+#[tokio::test]
+async fn a_misspelling_is_read_beside_the_words_around_it() {
+    // "trop" is one edit from "trip", which sixty messages hold, and from
+    // "troop", which one does; the words beside it say which was meant.
+    let (database, account, made) = crowded_world().await;
+    assert_eq!(
+        searched(&database, &account, "girl scout trop", true).await,
+        vec![id(&made, "troop")]
+    );
+}
+
+#[tokio::test]
+async fn a_word_spelled_right_is_not_widened_to_its_neighbours() {
+    // "tour" is a word the mailbox holds: "your", one edit away, is not
+    // what was meant.
+    let (database, account, made) = crowded_world().await;
+    assert_eq!(
+        searched(&database, &account, "redfn home tour", true).await,
+        vec![id(&made, "tour")]
+    );
+}
+
 #[tokio::test]
 async fn a_rule_or_saved_search_stays_exact() {
     // ADR 0037: a rule acts on what its query says, never on a near miss.

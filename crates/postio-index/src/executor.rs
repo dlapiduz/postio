@@ -574,7 +574,7 @@ async fn suggestion_for(
     if terms.next().is_some() || term.negated || term.quoted || query.filters().next().is_some() {
         return Ok(None);
     }
-    let counts = words_near(connection, &term.value).await?;
+    let counts = words_near(connection, &term.value, &[]).await?;
     Ok(postio_search::suggest::suggest(
         &term.value,
         counts
@@ -598,21 +598,47 @@ async fn suggestion_for(
 async fn words_near(
     connection: &Connection,
     typed: &str,
+    beside: &[&str],
 ) -> Result<std::collections::HashMap<String, u64>> {
     use std::collections::{HashMap, HashSet};
 
-    let Some(metadata_query) = postio_search::suggest::widened(typed) else {
+    let Some(widened) = postio_search::suggest::widened(typed) else {
         return Ok(HashMap::new());
     };
+    // The words typed beside it, bare, so the index reads the whole thing as
+    // one query of bare words -- the only kind it expands `~N` in -- and the
+    // documents read are the ones that best match all of it. Without them,
+    // "trop" read fifty of the thousand messages saying "trip" and never
+    // reached the one girl scout troop.
+    let beside: Vec<String> = beside
+        .iter()
+        .map(|word| word.to_lowercase())
+        .filter(|word| !word.is_empty() && word.chars().all(char::is_alphanumeric))
+        .collect();
+    let metadata_query = std::iter::once(widened.clone())
+        .chain(beside.iter().cloned())
+        .collect::<Vec<_>>()
+        .join(" ");
     // The body column is folded on the way in, so its query is folded the
     // same way — the rule every body query here keeps (ADR 0038).
-    let body_query = postio_search::suggest::widened(&postio_model::fold::fold(typed));
+    let body_query =
+        postio_search::suggest::widened(&postio_model::fold::fold(typed)).map(|widened| {
+            std::iter::once(widened)
+                .chain(beside.iter().map(|word| postio_model::fold::fold(word)))
+                .collect::<Vec<_>>()
+                .join(" ")
+        });
 
+    // Best first, so a common neighbour cannot crowd the meant word out of
+    // what is read. `fts_score` is projected bare and with the match's own
+    // parameter, or it answers 0.0 (see `HITS_JOIN`).
     let mut texts: Vec<Vec<Option<String>>> = sql::all(
         connection,
-        "SELECT sender, recipients, subject, filenames, list_id
+        "SELECT sender, recipients, subject, filenames, list_id,
+                fts_score(sender, recipients, subject, filenames, list_id, ?1) AS score
            FROM search_documents
           WHERE fts_match(sender, recipients, subject, filenames, list_id, ?1)
+          ORDER BY score DESC
           LIMIT ?2",
         (metadata_query, SUGGESTION_DOCUMENTS),
         |row| {
@@ -630,8 +656,10 @@ async fn words_near(
         texts.extend(
             sql::all(
                 connection,
-                "SELECT body_search FROM message_search_bodies
+                "SELECT body_search, fts_score(body_search, ?1) AS score
+                   FROM message_search_bodies
                   WHERE fts_match(body_search, ?1)
+                  ORDER BY score DESC
                   LIMIT ?2",
                 (body_query, SUGGESTION_DOCUMENTS),
                 |row| Ok(vec![row.opt_text(0)?]),
@@ -671,11 +699,29 @@ async fn near_words(
     request: &SearchRequest<'_>,
 ) -> Result<std::collections::HashMap<String, Vec<String>>> {
     let mut near = std::collections::HashMap::new();
+    let words: Vec<&str> = request
+        .query
+        .searchable_terms()
+        .filter(|term| !term.negated)
+        .map(|term| term.value.as_str())
+        .collect();
     for term in request.query.searchable_terms() {
         if term.negated || term.quoted || near.contains_key(&term.value) {
             continue;
         }
-        let counts = words_near(connection, &term.value).await?;
+        let beside: Vec<&str> = words
+            .iter()
+            .copied()
+            .filter(|word| *word != term.value)
+            .collect();
+        let mut counts = words_near(connection, &term.value, &beside).await?;
+        // Whether the word is one the mailbox holds decides whether it is
+        // corrected (`suggest::near`), so it is asked, not left to whether
+        // the documents read happened to say it.
+        let typed = term.value.to_lowercase();
+        if !counts.contains_key(&typed) && holds(connection, &typed).await? {
+            counts.insert(typed, 1);
+        }
         let words = postio_search::suggest::near(
             &term.value,
             counts
@@ -691,6 +737,24 @@ async fn near_words(
         }
     }
     Ok(near)
+}
+
+/// Whether any message holds `word` exactly, in either index.
+async fn holds(connection: &Connection, word: &str) -> Result<bool> {
+    let literal = fts_literal(word);
+    Ok(sql::exists(
+        connection,
+        "SELECT 1 FROM search_documents
+          WHERE fts_match(sender, recipients, subject, filenames, list_id, ?1)",
+        (literal.clone(),),
+    )
+    .await?
+        || sql::exists(
+            connection,
+            "SELECT 1 FROM message_search_bodies WHERE fts_match(body_search, ?1)",
+            (postio_model::fold::fold(&literal),),
+        )
+        .await?)
 }
 
 /// How many words one typed word is read as in a forgiving search.
