@@ -427,11 +427,15 @@ impl Bar {
         rules::blend_lines(&blend)
     }
 
-    /// `typed`, read as plain English against today and the address book.
+    /// `typed`, read as plain English against today and the address book,
+    /// and asked the forgiving way: a person searching wants "tickt" to
+    /// find the ticket. A saved search keeps the words, not this, so the
+    /// rules made from them stay exact (ADR 0037, as amended).
     fn lower(&self, typed: &str) -> postio_search::ParsedQuery {
         postio_search::natural::lower(typed, postio_ui::clock::now().date_naive(), &|name| {
             self.names.lookup(name)
         })
+        .forgiving()
     }
 
     fn token(&mut self) -> u64 {

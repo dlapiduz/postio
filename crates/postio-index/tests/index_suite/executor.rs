@@ -2004,3 +2004,161 @@ async fn a_subject_that_says_part_of_the_query_beats_a_passing_mention() {
         bingo.id
     );
 }
+
+// ---------------------------------------------------------------------------
+// Phrases, and the forgiving search the command bar asks for (ADR 0037 as
+// amended): exact first, then near words -- never for a rule.
+// ---------------------------------------------------------------------------
+
+async fn forgiving_world() -> (
+    postio_storage::Store,
+    postio_model::Account,
+    Vec<(&'static str, postio_model::MessageId)>,
+) {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    for i in 0..20 {
+        with_body(
+            &connection,
+            &account,
+            mailbox,
+            &format!("Unrelated {i}"),
+            "nothing here",
+            at(1),
+        )
+        .await;
+    }
+    let mut made = Vec::new();
+    for (name, subject, body, hour) in [
+        (
+            "phone bill",
+            "Factura telefonica mama",
+            "La factura del mes",
+            3,
+        ),
+        (
+            "bill phone",
+            "Telefonica: nueva factura",
+            "Adjuntamos la factura",
+            4,
+        ),
+        (
+            "tickets",
+            "Buy two, get movie tickets half off",
+            "Offer inside",
+            5,
+        ),
+        ("ticket", "Your ticket for Saturday", "See you there", 6),
+        (
+            "southwest",
+            "Your Southwest flight tomorrow",
+            "Boarding at 9",
+            7,
+        ),
+    ] {
+        let message = with_body(&connection, &account, mailbox, subject, body, at(hour)).await;
+        made.push((name, message.id));
+    }
+    drop(connection);
+    (database, account, made)
+}
+
+async fn searched(
+    database: &postio_storage::Store,
+    account: &postio_model::Account,
+    text: &str,
+    forgiving: bool,
+) -> Vec<postio_model::MessageId> {
+    let connection = database.connect().await.expect("checkout");
+    let mut query = parse(text, at(12).date_naive());
+    if forgiving {
+        query = query.forgiving();
+    }
+    search(
+        &connection,
+        &SearchRequest {
+            account: AccountScope::Account(account.id),
+            query: &query,
+            scope: Scope::AllMail,
+            limit: 10,
+            order: postio_search::ResultOrder::Relevance,
+        },
+        at(12),
+    )
+    .await
+    .expect("search")
+    .hits
+    .iter()
+    .map(|hit| hit.message_id)
+    .collect()
+}
+
+fn id(made: &[(&str, postio_model::MessageId)], name: &str) -> postio_model::MessageId {
+    made.iter().find(|(n, _)| *n == name).expect("made").1
+}
+
+#[tokio::test]
+async fn a_quoted_phrase_matches_those_words_together() {
+    let (database, account, made) = forgiving_world().await;
+    assert_eq!(
+        searched(&database, &account, "\"factura telefonica\"", false).await,
+        vec![id(&made, "phone bill")],
+        "the words side by side, in that order; not \"Telefonica: nueva factura\""
+    );
+    assert_eq!(
+        searched(&database, &account, "factura telefonica", false)
+            .await
+            .len(),
+        2,
+        "unquoted, both words anywhere"
+    );
+}
+
+#[tokio::test]
+async fn a_forgiving_search_finds_a_plural() {
+    let (database, account, made) = forgiving_world().await;
+    let found = searched(&database, &account, "ticket", true).await;
+    assert_eq!(
+        found,
+        vec![id(&made, "ticket"), id(&made, "tickets")],
+        "the exact word first, then the plural"
+    );
+}
+
+#[tokio::test]
+async fn a_forgiving_search_finds_a_misspelling() {
+    let (database, account, made) = forgiving_world().await;
+    assert_eq!(
+        searched(&database, &account, "southwset flight", true).await,
+        vec![id(&made, "southwest")]
+    );
+}
+
+#[tokio::test]
+async fn a_forgiving_search_finds_a_misspelling_in_a_body() {
+    let (database, account, made) = forgiving_world().await;
+    assert_eq!(
+        searched(&database, &account, "boardng", true).await,
+        vec![id(&made, "southwest")],
+        "the body index is folded, and its near words are read from it"
+    );
+}
+
+#[tokio::test]
+async fn a_rule_or_saved_search_stays_exact() {
+    // ADR 0037: a rule acts on what its query says, never on a near miss.
+    let (database, account, made) = forgiving_world().await;
+    assert_eq!(
+        searched(&database, &account, "ticket", false).await,
+        vec![id(&made, "ticket")]
+    );
+    assert!(
+        searched(&database, &account, "southwset", false)
+            .await
+            .is_empty()
+    );
+}

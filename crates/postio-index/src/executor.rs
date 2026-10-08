@@ -316,8 +316,46 @@ pub async fn search(
     request: &SearchRequest<'_>,
     now: DateTime<Utc>,
 ) -> Result<SearchResults> {
+    let exact = search_as(connection, request, now, &Default::default()).await?;
+    // The forgiving search the command bar asks for (ADR 0037, as amended):
+    // the words as typed first, and only when they do not fill the page,
+    // the words near them -- a plural, an unfinished word, a misspelling --
+    // after every exact match. A rule's query is never forgiving.
+    if !request.query.is_forgiving() || exact.hits.len() >= request.limit as usize {
+        return Ok(exact);
+    }
     let start = Instant::now();
-    let plan = Plan::build(request);
+    let words = near_words(connection, request).await?;
+    if words.is_empty() {
+        return Ok(exact);
+    }
+    let near = search_as(connection, request, now, &words).await?;
+    let mut merged = exact;
+    let have: std::collections::HashSet<MessageId> =
+        merged.hits.iter().map(|hit| hit.message_id).collect();
+    let room = (request.limit as usize).saturating_sub(merged.hits.len());
+    merged.hits.extend(
+        near.hits
+            .into_iter()
+            .filter(|hit| !have.contains(&hit.message_id))
+            .take(room),
+    );
+    merged.total_hits = merged.total_hits.max(near.total_hits);
+    merged.total_hits_capped |= near.total_hits_capped;
+    merged.elapsed += start.elapsed();
+    Ok(merged)
+}
+
+/// [`search`], once: exactly, or with each word `near` names read as any of
+/// the words near it ([`near_words`]).
+async fn search_as(
+    connection: &Connection,
+    request: &SearchRequest<'_>,
+    now: DateTime<Utc>,
+    near: &std::collections::HashMap<String, Vec<String>>,
+) -> Result<SearchResults> {
+    let start = Instant::now();
+    let plan = Plan::build_near(request, near);
 
     let total_hits = plan.count(connection).await?;
     let total_hits_capped = total_hits >= TOTAL_HITS_CAP;
@@ -517,8 +555,9 @@ pub async fn search(
 /// This replaced a vocabulary rebuilt from the newest 5,000 senders and
 /// subjects: a sample, so a list whose mail was older than that was never
 /// offered, and a word only a body held never was either. The widened query
-/// is only ever run here, on a search that found nothing — the query itself
-/// stays exact, which is ADR 0037's whole point.
+/// runs here, on a search that found nothing, and in [`near_words`], for the
+/// command bar's forgiving search -- never for a rule's query, which stays
+/// exact, ADR 0037's whole point.
 ///
 /// Documents are counted within what was read, which is at most
 /// [`SUGGESTION_DOCUMENTS`] of each half: enough to rank candidates against
@@ -527,8 +566,6 @@ async fn suggestion_for(
     connection: &Connection,
     query: &postio_search::ParsedQuery,
 ) -> Result<Option<postio_search::suggest::Suggestion>> {
-    use std::collections::{HashMap, HashSet};
-
     let mut terms = query.searchable_terms();
     let Some(term) = terms.next() else {
         return Ok(None);
@@ -537,12 +574,39 @@ async fn suggestion_for(
     if terms.next().is_some() || term.negated || term.quoted || query.filters().next().is_some() {
         return Ok(None);
     }
-    let Some(metadata_query) = postio_search::suggest::widened(&term.value) else {
-        return Ok(None);
+    let counts = words_near(connection, &term.value).await?;
+    Ok(postio_search::suggest::suggest(
+        &term.value,
+        counts
+            .iter()
+            .map(|(text, documents)| postio_search::suggest::Term {
+                text,
+                documents: *documents,
+            }),
+    ))
+}
+
+/// The words the index holds that are near `typed`, each with how many of
+/// the documents read hold it -- the vocabulary [`suggestion_for`] ranks an
+/// offer from and [`near_words`] a forgiving search's words. Empty when
+/// `typed` cannot be widened at all.
+///
+/// The index expands `typed~N` or `typed*` against its own dictionary (see
+/// [`suggestion_for`]), and since it answers with rows rather than with the
+/// terms it expanded to, the words are recovered from the text of at most
+/// [`SUGGESTION_DOCUMENTS`] documents of each half.
+async fn words_near(
+    connection: &Connection,
+    typed: &str,
+) -> Result<std::collections::HashMap<String, u64>> {
+    use std::collections::{HashMap, HashSet};
+
+    let Some(metadata_query) = postio_search::suggest::widened(typed) else {
+        return Ok(HashMap::new());
     };
     // The body column is folded on the way in, so its query is folded the
     // same way — the rule every body query here keeps (ADR 0038).
-    let body_query = postio_search::suggest::widened(&postio_model::fold::fold(&term.value));
+    let body_query = postio_search::suggest::widened(&postio_model::fold::fold(typed));
 
     let mut texts: Vec<Vec<Option<String>>> = sql::all(
         connection,
@@ -595,16 +659,45 @@ async fn suggestion_for(
         }
     }
 
-    Ok(postio_search::suggest::suggest(
-        &term.value,
-        counts
-            .iter()
-            .map(|(text, documents)| postio_search::suggest::Term {
-                text,
-                documents: *documents,
-            }),
-    ))
+    Ok(counts)
 }
+
+/// The words each unquoted, positive word of a forgiving search is read as
+/// ([`postio_search::suggest::near`]), keyed by the word as typed. A word
+/// with nothing near it beyond itself is left out, and so is one that
+/// cannot be widened: it is searched for as typed.
+async fn near_words(
+    connection: &Connection,
+    request: &SearchRequest<'_>,
+) -> Result<std::collections::HashMap<String, Vec<String>>> {
+    let mut near = std::collections::HashMap::new();
+    for term in request.query.searchable_terms() {
+        if term.negated || term.quoted || near.contains_key(&term.value) {
+            continue;
+        }
+        let counts = words_near(connection, &term.value).await?;
+        let words = postio_search::suggest::near(
+            &term.value,
+            counts
+                .iter()
+                .map(|(text, documents)| postio_search::suggest::Term {
+                    text,
+                    documents: *documents,
+                }),
+            NEAR_WORDS,
+        );
+        if words.iter().any(|word| *word != term.value.to_lowercase()) {
+            near.insert(term.value.clone(), words);
+        }
+    }
+    Ok(near)
+}
+
+/// How many words one typed word is read as in a forgiving search.
+///
+/// Enough for a plural, a completion and a misspelling or two; each is one
+/// more term in the index's disjunction, so not the whole neighbourhood.
+const NEAR_WORDS: usize = 8;
 
 /// Whether every message in the searched scope has a body to search.
 ///
@@ -997,6 +1090,10 @@ struct Plan {
     /// Whether a positive free-text `MATCH` is part of `conditions`, in which
     /// case `messages_fts` must be joined so `bm25()`/`snippet()` can read it.
     has_match: bool,
+    /// Whether the words were widened to the words near them: then the
+    /// probed shape is never taken, since it would run the disjunction once
+    /// per message walked rather than once.
+    widened: bool,
     /// The free-text `MATCH` expression itself, when `has_match` is set.
     ///
     /// Kept separately rather than found by position in `params`: a filter
@@ -1016,6 +1113,16 @@ struct Plan {
 
 impl Plan {
     fn build(request: &SearchRequest<'_>) -> Self {
+        Self::build_near(request, &Default::default())
+    }
+
+    /// The plan with each word `near` names read as any of its words: the
+    /// forgiving search's second pass. Every word is still a quoted literal,
+    /// so the index reads the disjunction exactly as written.
+    fn build_near(
+        request: &SearchRequest<'_>,
+        near: &std::collections::HashMap<String, Vec<String>>,
+    ) -> Self {
         // `AccountScope::Unified` names no account, so the predicate is
         // absent rather than widened -- which is why migration 0012 exists:
         // without `idx_messages_recency` the recency path has no index that
@@ -1081,7 +1188,23 @@ impl Plan {
             .query
             .searchable_terms()
             .filter(|term| !term.negated)
-            .map(|term| fts_literal(&term.value))
+            .map(
+                |term| match near.get(&term.value).filter(|_| !term.quoted) {
+                    // `("ticket" OR "tickets")`: a disjunction of literals
+                    // rather than the index's own `ticket~1`, which it expands
+                    // only in a query of bare words and reads as plain text
+                    // beside a quoted one or an AND.
+                    Some(words) => format!(
+                        "({})",
+                        words
+                            .iter()
+                            .map(|word| fts_literal(word))
+                            .collect::<Vec<_>>()
+                            .join(" OR ")
+                    ),
+                    None => fts_literal(&term.value),
+                },
+            )
             .collect::<Vec<_>>();
         if !positive.is_empty() {
             let expr = positive.join(" AND ");
@@ -1131,6 +1254,7 @@ impl Plan {
             params,
             account,
             has_match,
+            widened: !near.is_empty(),
             match_param,
             body_match_param,
         }
@@ -1234,7 +1358,7 @@ impl Plan {
     /// index, with `messages_fts` tested one row at a time as a cheap
     /// point lookup rather than scanned.
     fn fetch_form(&self, rank_by_relevance: bool, total_hits: u64) -> Form {
-        if rank_by_relevance || total_hits <= PROBED_FORM_LIMIT {
+        if rank_by_relevance || self.widened || total_hits <= PROBED_FORM_LIMIT {
             Form::Driven
         } else {
             Form::Probed
@@ -1914,6 +2038,7 @@ mod tests {
             params: Vec::new(),
             account: AccountScope::Unified,
             has_match: true,
+            widened: false,
             match_param: Some(turso::Value::Text("invoice".to_owned())),
             body_match_param: Some(turso::Value::Text("invoice".to_owned())),
         }

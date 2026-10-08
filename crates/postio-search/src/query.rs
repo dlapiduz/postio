@@ -378,9 +378,31 @@ impl Token {
 pub struct ParsedQuery {
     pub(crate) input: String,
     pub(crate) tokens: Vec<Token>,
+    /// Whether a near word counts too: see [`forgiving`](Self::forgiving).
+    pub(crate) forgiving: bool,
 }
 
 impl ParsedQuery {
+    /// This query, asked the forgiving way: after the words it says, the
+    /// words near them -- a plural, an unfinished word, a misspelling --
+    /// ranked below every exact match (ADR 0037, as amended).
+    ///
+    /// For a person searching, never for a rule. A query *string* is always
+    /// exact, so a saved search, a virtual folder and a rule mean exactly
+    /// what they say however they are run; only the caller that is showing
+    /// results to somebody watching marks the query forgiving, and nothing
+    /// typed can.
+    #[must_use]
+    pub fn forgiving(mut self) -> Self {
+        self.forgiving = true;
+        self
+    }
+
+    /// Whether near words count: [`forgiving`](Self::forgiving).
+    pub fn is_forgiving(&self) -> bool {
+        self.forgiving
+    }
+
     /// The query string this was parsed from.
     pub fn input(&self) -> &str {
         &self.input
@@ -626,6 +648,7 @@ mod tests {
         let parsed = ParsedQuery {
             input: "from:ada docker".to_owned(),
             tokens: Vec::new(),
+            forgiving: false,
         };
         assert_eq!(parsed.input(), "from:ada docker");
     }

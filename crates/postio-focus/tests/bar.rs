@@ -337,6 +337,21 @@ fn a_single_letter_asks_the_index_nothing_yet() {
     );
 }
 
+#[test]
+fn what_the_bar_searches_for_forgives_a_near_word() {
+    // A person searching: "tickt" should still find the ticket. A rule's
+    // query is never forgiving (ADR 0037, as amended), so it is the bar
+    // that asks for it.
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = bar_open(&mut focus, CommandId::Search, &rows);
+    let effects = typed(&mut focus, "tickt", &rows);
+    let forgiving = asked(&effects)
+        .iter()
+        .any(|request| matches!(request, Request::Search { query, .. } if query.is_forgiving()));
+    assert!(forgiving, "{:?}", asked(&effects));
+}
+
 // -- What a row runs -------------------------------------------------------
 
 #[test]
