@@ -391,6 +391,27 @@ async fn the_open_message_is_the_controllers() {
     session.shutdown();
 }
 
+/// `!` narrows the list through the controller, and a verb the host aims
+/// resolves against the narrowed list, not the inbox it came from.
+#[tokio::test(flavor = "multi_thread")]
+async fn has_action_is_the_list_a_verb_aims_at() {
+    use postio_ffi::UiEvent;
+    let session = inbox_of(&["First", "Second"]).await;
+    cursor_on_the_first_row(&session).await;
+    assert!(!session.focus_aims_at_has_action_for_test());
+    session.invoke("toggle_has_action");
+    assert!(
+        heard(&session, 5, |event| matches!(
+            event,
+            UiEvent::FocusHeading { text: Some(_) }
+        ))
+        .await,
+        "the list narrows under one heading"
+    );
+    assert!(session.focus_aims_at_has_action_for_test());
+    session.shutdown();
+}
+
 /// Open Focus's inbox and wait until the cursor is on its first row: where
 /// a verb with nothing selected acts, as a person would find it.
 pub(crate) async fn cursor_on_the_first_row(session: &Session) {

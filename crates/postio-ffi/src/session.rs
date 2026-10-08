@@ -4137,6 +4137,17 @@ impl Session {
         Some((wiring.store.clone(), wiring.runtime.clone()))
     }
 
+    /// Whether the list a verb aims at is Has action. Test-only.
+    #[cfg(feature = "testing")]
+    pub fn focus_aims_at_has_action_for_test(&self) -> bool {
+        matches!(
+            self.focus_list.scope(),
+            Some(postio_model::ListScope::Focus(
+                postio_model::FocusScope::HasAction
+            ))
+        )
+    }
+
     /// How many pages of Focus's list have been read from the store.
     /// Test-only.
     #[cfg(feature = "testing")]

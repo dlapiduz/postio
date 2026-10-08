@@ -394,8 +394,6 @@ impl postio_focus::Rows for RowsView<'_> {
 pub(crate) struct FocusDriver {
     focus: Mutex<FocusController>,
     list: Mutex<ListWindow<FocusRowFfi>>,
-    /// The place the list is showing, for aiming a verb at it.
-    scope: Mutex<Option<ListScope>>,
     client: Client,
     runtime: tokio::runtime::Handle,
     local: async_channel::Sender<UiEvent>,
@@ -412,7 +410,6 @@ impl FocusDriver {
         Arc::new(FocusDriver {
             focus: Mutex::new(FocusController::new(Policy::for_platform(Platform::Apple))),
             list: Mutex::new(ListWindow::new()),
-            scope: Mutex::new(None),
             client,
             runtime,
             local,
@@ -422,7 +419,6 @@ impl FocusDriver {
 
     /// Show `scope`: counted first, then the list changes over.
     pub(crate) fn open(self: &Arc<Self>, scope: ListScope) {
-        *self.scope.lock().expect("scope lock") = Some(scope);
         let effects = self.focus.lock().expect("focus lock").open(scope);
         self.apply(effects);
     }
@@ -477,9 +473,10 @@ impl FocusDriver {
             .map(|row| postio_model::MessageId::new(row.id))
     }
 
-    /// The place the list is showing, once one has been opened.
+    /// The place the list is showing, once one has been opened: the
+    /// controller's, which `!` changes as well as `open`.
     pub(crate) fn scope(&self) -> Option<ListScope> {
-        *self.scope.lock().expect("scope lock")
+        self.focus.lock().expect("focus lock").scope()
     }
 
     /// The list, as a source of facts about its rows: what `aim` asks to
