@@ -67,7 +67,7 @@ async fn after_an_archive_ctrl_z_puts_the_message_back() {
 
     // `ctrl+z` as crossterm reports it in raw mode, through the terminal's
     // own keys -- the same path every key it reads takes.
-    let (mut keys, problems) = Keys::new(&postio_core::Keymap::resolve(&Default::default()));
+    let (mut keys, problems) = Keys::new(&postio_core::Keymap::for_terminal(&Default::default()));
     assert!(problems.is_empty(), "{problems:?}");
     let pressed = keys.press(
         &KeyEvent {
