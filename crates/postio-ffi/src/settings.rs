@@ -313,7 +313,10 @@ pub struct FilterFfi {
 pub fn settings_sections() -> Vec<SettingsSectionFfi> {
     Section::ALL
         .into_iter()
-        .filter(|section| section.shown_in(crate::FRONTEND))
+        // The Mac's settings window keeps its own nav until it gains Focus's
+        // Filtering pane (specs/009-focus-macos T131): Focus's nav would list
+        // a pane this window cannot draw yet.
+        .filter(|section| section.shown_in(postio_core::Frontend::Macos))
         .map(|section| SettingsSectionFfi {
             key: section.key().to_string(),
             label: section.label().to_string(),

@@ -85,7 +85,7 @@ frontend with the engine's Focus pass on, and the Swift package split.
 
 - [x] T010 Write a failing test in `crates/postio-ffi/tests/ffi_suite/command_coverage.rs`: `offered_on_the_mac` means `Frontend::Focus` on `Platform::Apple`; Focus commands are owed and no `ThreePane` command is offered
 - [x] T011 Write a failing test in `crates/postio-core/tests/core_suite/one_keymap.rs` that resolves the whole Focus keymap for both `Platform::Freedesktop` and `Platform::Apple`, with no unparseable binding. Delete Macos from `APPS`
-- [ ] T012 Remove `Frontend::Macos` and `Requirement::ThreePane` from `crates/postio-core/src/registry.rs` (lines ~242-299, ~375-377), with the 19 ThreePane-only commands (ToggleRail, ToggleSidebar, CyclePane, CyclePaneBack, NextFolder, PrevFolder, ToggleFolder, RenameSavedSearch, MoveSavedSearchUp/Down, DeleteSavedSearch, OpenParts, NextPart, PrevPart, OpenPart, SavePart, SaveAllParts, OpenPartExternally, RenderPartOnce) and their `CommandId` variants. Fix:
+- [ ] T012 (Done with T028 and T034 in US1, not here: while the three-pane Swift shell still exists, removing its commands leaves it drawing keys that do nothing.) Remove `Frontend::Macos` and `Requirement::ThreePane` from `crates/postio-core/src/registry.rs` (lines ~242-299, ~375-377), with the 19 ThreePane-only commands (ToggleRail, ToggleSidebar, CyclePane, CyclePaneBack, NextFolder, PrevFolder, ToggleFolder, RenameSavedSearch, MoveSavedSearchUp/Down, DeleteSavedSearch, OpenParts, NextPart, PrevPart, OpenPart, SavePart, SaveAllParts, OpenPartExternally, RenderPartOnce) and their `CommandId` variants. Fix:
   - `postio-ui/src/{keymap_sheet.rs,settings.rs:214,palette.rs:370}`;
   - `postio-core/tests/core_suite/command_registry.rs`;
   - `postio-ui/tests/ui_suite/{keymap_api.rs,keybindings_doc.rs}`;
@@ -94,7 +94,7 @@ frontend with the engine's Focus pass on, and the Swift package split.
   It lands on `feature/focus-macos`, **not** `main`: until that branch
   lands, `main`'s Mac app is still the three-pane app and uses these
   commands every day
-- [ ] T013 Point the FFI at `Frontend::Focus` in `crates/postio-ffi/src/session.rs:422,4365` and `crates/postio-ffi/src/settings.rs:316`. Update `INTERCEPTED` (`crates/postio-ffi/src/registry.rs:275-345`) and its Swift mirror `Intercepted` (`macos/Sources/PostioKit/Accessibility.swift`) to drop the three-pane entries. Make T010 green
+- [x] T013 Point the FFI at `Frontend::Focus` (settings sections stay the Mac's until T131 draws Focus's Filtering pane) in `crates/postio-ffi/src/session.rs:422,4365` and `crates/postio-ffi/src/settings.rs:316`. Update `INTERCEPTED` (`crates/postio-ffi/src/registry.rs:275-345`) and its Swift mirror `Intercepted` (`macos/Sources/PostioKit/Accessibility.swift`) to drop the three-pane entries. Make T010 green
 - [x] T014 Write a failing ffi_suite test: a session opened with `[focus]` enabled files a seeded promotion and marks a seeded question (the markers appear in `focus_counts().has_action`)
 - [x] T015 (`feature/focus-macos` only: on `main` it would start filing the three-pane Mac app's mail away) Call `Host::enable_focus(FocusSetup::from_config(config.focus, Some(config_path)))` in `crates/postio-ffi/src/session.rs` after the host starts and before `start_syncing`, as `crates/postio-gtk/src/startup.rs:116,174` does (R8). Make T014 green
 - [x] T016 Write a failing ffi_suite test: rewriting `[keys]` in the session's `config.toml` changes what `key()` resolves within 1 s, and emits `UiEvent::KeymapChanged`
@@ -518,6 +518,7 @@ another app brings Postio forward on that message.
   - the exact line as a preview;
   - ⌘↩ writes it (Add task is a `labelColor`-filled default button).
 - [ ] T117 [US9] Register `postio` in `macos/Resources/Info.plist` (a second `CFBundleURLTypes` dict). Route it in `macos/Sources/Postio/URLHandling.swift`: `parse_message_link` leads to `command("open_message_by_id")`, or a pill with `link_unknown`/`link_gone`. Add a Swift test in `macos/Tests/PostioKitTests/LinkRoutingTests.swift`
+- [ ] T131 [US9] Give the Mac's settings window Focus's nav: export `[focus]` reads and patches over `postio_ui::settings` (as GTK's Filtering pane uses), draw the Filtering pane in `macos/Sources/PostioKit/SettingsPaneView.swift`, drop Appearance, and point `settings_sections` (`crates/postio-ffi/src/settings.rs`) at `crate::FRONTEND`. Update `SettingsStoreTests` and `ffi_suite/settings.rs` (Filtering in, Appearance out)
 - [ ] T118 [US9] Compare screens 21 to 25 (FR-061), recorded in `docs/notes/<date>-focus-macos-phase-9.md`
 
 ---
