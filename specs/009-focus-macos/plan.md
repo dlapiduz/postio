@@ -96,7 +96,7 @@ One new ADR, because it is a rule that outlives this feature:
 
 ADR 0019 is amended (Status: partly superseded by spec 009). Its boundary,
 packaging and Linux-stays-green rules still hold; its three-pane surface and
-read-only framing do not. `specs/007-postio-focus/macos.md` is folded into
+read-only framing do not. Spec 007's Mac brief (`macos.md`) is folded into
 this spec and deleted in the same branch.
 
 ## Project Structure

@@ -176,7 +176,6 @@ specs/007-postio-focus/
 │   └── requirements.md
 ├── screens.md           # each PNG comparison, and the designs with no PNG
 ├── classic-parity.md    # what the classic app does, where Focus does it, and its retirement
-├── macos.md             # a starting brief for Focus on the Mac
 └── tasks.md             # the queue
 ```
 

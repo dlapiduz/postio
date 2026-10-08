@@ -1,11 +1,9 @@
 # ADR 0019 — A native macOS frontend over `postio-session`
 
-- **Status:** Accepted — maintainer-directed (2026-08-27), **Q5a added
-  2026-08-27** ([#570](https://github.com/dlapiduz/postio/issues/570)),
-  **Q6 amended 2026-09-01** by ADR 0023
-  ([#768](https://github.com/dlapiduz/postio/issues/768)); **built** as the
-  read-only slice the decision line describes (`macos/`,
-  `crates/postio-ffi`; compose still deferred)
+- **Status:** Accepted, maintainer-directed (2026-08-27); built (`macos/`,
+  `crates/postio-ffi`). Since spec 009 (2026-10-07) the Mac app is a Focus
+  interface: what it draws is Focus's, and what Focus does lives in
+  `postio-focus` ([ADR 0045](0045-focus-behaviour-lives-in-postio-focus.md)).
 - **Date:** 2026-08-27
 - **Issue:** [#557](https://github.com/dlapiduz/postio/issues/557), under
   [#15](https://github.com/dlapiduz/postio/issues/15) and epic
@@ -16,12 +14,12 @@
   ADR 0014 (the store's key comes from the OS keyring), ADR 0006 Q3 (the
   consent screen opens in the user's browser), `docs/ARCHITECTURE.md` §9
   (the two enforced crate boundaries)
-- **Decision:** Postio grows a **native Swift (SwiftUI + AppKit) frontend**
-  over the same Rust engine, through a **UniFFI boundary in a new
-  `postio-ffi`**, with the toolkit-free presentation logic currently
-  trapped in `postio-gtk` extracted into a new shared **`postio-ui`**.
-  The first shipping slice is **read-only** — sign in, sync, three-pane
-  shell, list, reader, search, keyboard — with compose deferred. The
+- **Decision:** Postio has a **native Swift (SwiftUI + AppKit) frontend**
+  over the same Rust engine, through a **UniFFI boundary in `postio-ffi`**.
+  Toolkit-free presentation logic is shared through **`postio-ui`**, and
+  Focus's behaviour through **`postio-focus`** (ADR 0045). The Mac app is
+  Focus, Postio's one desktop design (ADR 0043, `specs/009-focus-macos`),
+  in native chrome: its own windows, popovers, toolbar and menu bar. The
   architectural model is [Ghostty](https://github.com/ghostty-org/ghostty),
   which solves the same problem and has lived with the consequences.
 
@@ -70,9 +68,8 @@ and `postio-app`.
 > (`Cargo.toml` members), `postio-ffi` and `postio-ui` among them, and the
 > exclusion set is still the GTK crates, the only ones behind `glib-2.0`:
 > today `postio-gtk` (the desktop app) and `postio-widgets`. The Swift frontend this ADR plans is built —
-> `macos/Package.swift`, `macos/Sources/Postio` and `macos/Sources/PostioKit`
-> over `crates/postio-ffi` — as the read-only slice the decision line
-> describes; compose is still deferred.
+> `macos/Package.swift` and `macos/Sources/` over `crates/postio-ffi`, and
+> spec 009 rebuilds it as Focus.
 
 Two consequences. The port has no porting phase — it begins at the extraction
 and the boundary. And the enforced crate boundaries turn out to have done

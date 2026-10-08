@@ -23,7 +23,7 @@ the Mac app as Focus, so that all three interfaces are the same product over
 the same engine.
 
 What the Mac has today, and what it lacks for Focus
-(`specs/007-postio-focus/macos.md`, which this spec folds in):
+(spec 007 kept a starting brief for this; it is folded in here and deleted):
 
 | Today | For Focus |
 |---|---|
