@@ -29,6 +29,11 @@ final class URLHandler: NSObject, NSApplicationDelegate {
         case "light": NSApp.appearance = NSAppearance(named: .aqua)
         default: break
         }
+        // And in front, as a person would have it: launched from a script
+        // it opens behind the terminal, and WebKit stops painting a web
+        // view whose window it thinks is covered -- the message window's
+        // body came out blank or not, by where the terminal stood.
+        if DemoMode.seed != nil { NSApp.activate(ignoringOtherApps: true) }
         MenuBar.reassert()
         DispatchQueue.main.async { MenuBar.reassert() }
     }
