@@ -392,6 +392,9 @@ public struct DigestBack: View {
         if let view = model.view, view.page == .email {
             Button(action: model.back) {
                 HStack(spacing: 5) {
+                    // The controller's words are "Summary", "3 messages";
+                    // the chevron is the drawing's, as Filtered's "‹ Inbox".
+                    Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold))
                     Text(view.back).font(.system(size: 13.5, weight: .semibold))
                     if let cap = model.backCap { KeyCap(cap) }
                 }
