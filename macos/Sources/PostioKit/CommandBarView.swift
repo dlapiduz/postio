@@ -289,7 +289,10 @@ private struct MessageLine: View {
                 .frame(width: CommandBarView.Metrics.sender, alignment: .leading)
             Text(row.title).font(.system(size: 13, weight: .medium)).layoutPriority(1)
             if let detail = row.detail {
+                // At least a few words of it, or a lone letter is left
+                // standing after a long subject.
                 Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+                    .frame(minWidth: 56, alignment: .leading)
                     .layoutPriority(-1)
             }
             Spacer(minLength: 8)
