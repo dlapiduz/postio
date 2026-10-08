@@ -65,14 +65,6 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
         CommandId::ToggleReadingPane,
         "specs/009-focus-macos M4 (the reading pane beside the list comes after parity)",
     ),
-    // Pickers at the row.
-    (CommandId::PickerChoose1, "specs/009-focus-macos T089"),
-    (CommandId::PickerChoose2, "specs/009-focus-macos T089"),
-    (CommandId::PickerChoose3, "specs/009-focus-macos T089"),
-    (CommandId::PickerChoose4, "specs/009-focus-macos T089"),
-    (CommandId::PickerTypeDate, "specs/009-focus-macos T089"),
-    (CommandId::PickerToggle, "specs/009-focus-macos T089"),
-    (CommandId::PickerConfirm, "specs/009-focus-macos T089"),
     // The Filtered view. `g f` is the controller's now (`FocusShowFiltered`),
     // and the view it shows is T113's.
     (CommandId::FilteredTab1, "specs/009-focus-macos T113"),

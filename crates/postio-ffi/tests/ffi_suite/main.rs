@@ -29,6 +29,7 @@ mod finder;
 mod first_run;
 mod focus;
 mod focus_bar;
+mod focus_pickers;
 mod focus_scroll;
 mod host;
 mod keys;

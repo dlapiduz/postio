@@ -48,6 +48,7 @@ mod focus;
 mod focus_bar;
 mod focus_list;
 mod focus_message;
+mod focus_pickers;
 mod focus_reader;
 mod keys;
 mod list;
@@ -94,6 +95,9 @@ pub use focus_list::{
 pub use focus_message::{
     FocusAttachmentFfi, FocusFieldFfi, FocusMessageViewFfi, FocusPersonFfi, FocusThreadChipFfi,
     FocusVerbFfi,
+};
+pub use focus_pickers::{
+    PickerAnchorFfi, PickerFieldFfi, PickerKindFfi, PickerRowFfi, PickerViewFfi,
 };
 pub use focus_reader::{FocusReaderDocumentFfi, RenderModeWordsFfi, TreatmentFfi};
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};

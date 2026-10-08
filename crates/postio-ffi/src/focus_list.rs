@@ -388,6 +388,13 @@ impl postio_focus::Rows for RowsView<'_> {
     fn position_of(&self, message: postio_model::MessageId) -> Option<u32> {
         self.0.position_of(message)
     }
+    /// A picker names the row by its sender column and subject.
+    fn said(&self, position: u32) -> Option<(String, String)> {
+        self.0
+            .resident_at(position)
+            .filter(|row| row.kind != FocusRowKindFfi::Digest)
+            .map(|row| (row.sender.clone(), row.subject.clone()))
+    }
 }
 
 /// Focus's list for the Mac: the controller, and the rows it delivered.
@@ -474,6 +481,12 @@ impl FocusDriver {
     /// reads, when it reads a file.
     pub(crate) fn set_config_path(&self, path: Option<std::path::PathBuf>) {
         *self.config_path.lock().expect("config path lock") = path;
+    }
+
+    /// Whether a picker's filter is up and holds nothing: where a bare digit
+    /// or space is the picker's rather than typing.
+    pub(crate) fn in_empty_filter(&self) -> bool {
+        self.focus.lock().expect("focus lock").in_empty_filter()
     }
 
     /// The key context the controller has in force, when a surface it knows
@@ -677,16 +690,14 @@ impl FocusDriver {
             Intent::KeyboardHome => self.say(UiEvent::FocusKeyboardHome),
             Intent::ListToTop => self.say(UiEvent::FocusListToTop),
             Intent::Toast { text, kind } => {
-                let (kind, undoable, seconds) = match kind {
-                    postio_focus::ToastKind::Completed { undoable, seconds } => {
-                        (crate::event::ToastKindFfi::Completed, undoable, seconds)
+                // How long it stays is the controller's, always said.
+                let seconds = Some(kind.seconds());
+                let (kind, undoable) = match kind {
+                    postio_focus::ToastKind::Completed { undoable, .. } => {
+                        (crate::event::ToastKindFfi::Completed, undoable)
                     }
-                    postio_focus::ToastKind::Undone => {
-                        (crate::event::ToastKindFfi::Undone, false, None)
-                    }
-                    postio_focus::ToastKind::Notice => {
-                        (crate::event::ToastKindFfi::Notice, false, None)
-                    }
+                    postio_focus::ToastKind::Undone => (crate::event::ToastKindFfi::Undone, false),
+                    postio_focus::ToastKind::Notice => (crate::event::ToastKindFfi::Notice, false),
                 };
                 self.say(UiEvent::FocusToast {
                     text,
@@ -708,6 +719,9 @@ impl FocusDriver {
             Intent::Run(command) => self.say(UiEvent::FocusRun {
                 command: command.to_string(),
             }),
+            Intent::OpenPicker(view) => self.say(UiEvent::FocusOpenPicker { view: view.into() }),
+            Intent::PickerRows(view) => self.say(UiEvent::FocusPickerRows { view: view.into() }),
+            Intent::PickerField => self.say(UiEvent::FocusPickerField),
             Intent::SaveSearch { query } => {
                 let saved = self.save_search(&query);
                 self.input(Input::SearchSaved(saved));

@@ -327,6 +327,23 @@ pub enum UiEvent {
         /// The registry command.
         command: String,
     },
+    /// Show this picker, hung from its anchor, in a transient popover
+    /// (specs/009-focus-macos T089). Say `focus_surface_opened(Picker)` once
+    /// it shows; the controller has already put it on the stack, so that
+    /// changes nothing. It closes on `FocusCloseSurface { kind: Picker }`,
+    /// and any other way it closes is `focus_surface_closed(Picker)`.
+    FocusOpenPicker {
+        /// Everything it draws.
+        view: crate::focus_pickers::PickerViewFfi,
+    },
+    /// Redraw the picker up, whole: its rows read, a label toggled, the
+    /// field's text and hint changed. Its row tokens replace the last.
+    FocusPickerRows {
+        /// Everything it draws.
+        view: crate::focus_pickers::PickerViewFfi,
+    },
+    /// Put the keyboard in the picker's date field (`Tab`).
+    FocusPickerField,
 }
 
 /// How a Focus toast is drawn.

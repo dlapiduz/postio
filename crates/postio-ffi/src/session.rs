@@ -3507,7 +3507,14 @@ impl Session {
             .queue_send(&mut draft, chrono::Utc::now())
             .await
         {
-            Ok(_) => None,
+            Ok(_) => {
+                // The toast says so, and its Undo takes the send back.
+                self.focus_list.input(postio_focus::Input::SendQueued {
+                    draft: draft.id,
+                    at: None,
+                });
+                None
+            }
             Err(error) => {
                 tracing::error!(%error, "could not queue the draft for sending: {error}");
                 Some("The draft could not be queued for sending.".to_owned())
@@ -3563,7 +3570,13 @@ impl Session {
             .queue_send_at(&mut draft, now, when)
             .await
         {
-            Ok(_) => None,
+            Ok(_) => {
+                self.focus_list.input(postio_focus::Input::SendQueued {
+                    draft: draft.id,
+                    at: Some(when),
+                });
+                None
+            }
             Err(error) => {
                 tracing::error!(%error, "could not schedule the draft: {error}");
                 Some("The draft could not be scheduled.".to_owned())
@@ -3753,6 +3766,21 @@ impl Session {
         let key_context = self.focus_list.key_context().unwrap_or_else(|| {
             postio_ui::keymap::KeyContext::from(postio_core::Context::from(context))
         });
+        // In a picker, a digit or a space typed into an empty filter is the
+        // picker's (`1` chooses, Space toggles): there is nothing to type
+        // into yet. Typed after a letter, it is typing, as everywhere.
+        let in_text_entry = if key_context == postio_ui::keymap::KeyContext::Picker {
+            let bare = !(modifiers.control || modifiers.option || modifiers.command);
+            let digit_or_space = character.is_some_and(|c| c.is_ascii_digit() || c == ' ');
+            postio_ui::pickers::is_typing(
+                in_text_entry,
+                self.focus_list.in_empty_filter(),
+                bare,
+                digit_or_space,
+            )
+        } else {
+            in_text_entry
+        };
         let outcome = self.resolver.lock().expect("resolver lock").press(
             &chord,
             key_context,
