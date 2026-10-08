@@ -81,8 +81,10 @@ struct ReaderEgressTests {
     /// to give a fetch that must not happen every chance to happen.
     /// Shortening it would weaken these cases; lengthening it would only make
     /// a passing run slower.
-    private func renderCompletely(_ html: String) async throws {
-        let finished = await render(html) { $0.loaded }
+    private func renderCompletely(
+        _ html: String, configuration: WKWebViewConfiguration? = nil
+    ) async throws {
+        let finished = await render(html, configuration: configuration) { $0.loaded }
         try #require(
             finished,
             "the document never finished loading, so a zero-connection result proves nothing"
@@ -125,10 +127,11 @@ struct ReaderEgressTests {
     @discardableResult
     private func render(
         _ html: String,
+        configuration given: WKWebViewConfiguration? = nil,
         within limit: Duration = .seconds(15),
         until done: @escaping @MainActor (Progress) -> Bool
     ) async -> Bool {
-        let configuration = ReaderConfiguration.hardened(
+        let configuration = given ?? ReaderConfiguration.hardened(
             cidHandler: ClosedSchemeHandler(),
             baseHandler: ClosedSchemeHandler()
         )
@@ -222,6 +225,33 @@ struct ReaderEgressTests {
         )
 
         #expect(beacon.connections == 0, "a script ran and reached the network")
+    }
+
+    @Test func theMessageWindowFetchesNoRemoteImageEvenWhereThePolicyWouldAllowIt() async throws {
+        // Focus's body view (T069) blocks by mechanism as well as by policy:
+        // a content rule list refuses every load that is not one of
+        // Postio's own schemes. The document here *allows* remote images
+        // in its CSP, so the only thing standing between it and the
+        // beacon is the rule list -- the case where the policy is wrong,
+        // which is the case a second layer exists for.
+        let beacon = try Beacon()
+        defer { beacon.stop() }
+        let port = await beacon.port()
+        #expect(port != 0, "the beacon never got a port, so this proves nothing")
+
+        let policy = "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; "
+            + "img-src postio-cid: data: http: https:; font-src postio-font:; base-uri 'none'; "
+            + "form-action 'none'; frame-src 'none'; connect-src 'none'"
+        let configuration = try await ReaderConfiguration.focus(
+            cidHandler: ClosedSchemeHandler(),
+            fontHandler: ClosedSchemeHandler(),
+            baseHandler: ClosedSchemeHandler())
+        try await renderCompletely(document(policy: policy, port: port), configuration: configuration)
+
+        #expect(
+            beacon.connections == 0,
+            "the message window fetched a remote image its rule list should have refused"
+        )
     }
 
     private func document(policy: String, port: UInt16) -> String {
