@@ -112,8 +112,8 @@ pub use focus_surfaces::{
     CaptureModeFfi, CapturePickFfi, CaptureProjectFfi, CaptureViewFfi, CapturedFfi, ConfirmFfi,
     DigestCardFfi, DigestEmailFfi, DigestLineFfi, DigestPageFfi, DigestStatementFfi,
     DigestSummaryFfi, DigestTopicFfi, DigestViewFfi, FilteredLineFfi, FilteredTabFfi,
-    FilteredViewFfi, FocusHintFfi, RulePreviewLineFfi, RuleScheduleFfi, RuleViewFfi,
-    SummaryStatementFfi, VaultPictureFfi, VaultProjectFfi,
+    FilteredViewFfi, FocusDigestGeometryFfi, FocusHintFfi, RulePreviewLineFfi, RuleScheduleFfi,
+    RuleViewFfi, SummaryStatementFfi, VaultPictureFfi, VaultProjectFfi, focus_digest_geometry,
 };
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use links::{link_gone, link_unknown, message_link, parse_message_link};

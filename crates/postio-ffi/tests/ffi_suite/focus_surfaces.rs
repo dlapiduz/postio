@@ -394,3 +394,20 @@ async fn inbox_with_config(subjects: &[&str], config: &str) -> Arc<Session> {
     Session::open(SessionOptions::in_memory_with(database).with_config_for_test(config))
         .expect("a session")
 }
+
+/// The digest's window is the message window's size with a 560 column
+/// (M1), so opening a reference inside it never resizes it: the Mac asks
+/// the one geometry rather than keeping the numbers itself.
+#[test]
+fn the_digest_window_is_the_message_window_s_width_with_a_560_column() {
+    let at = postio_ffi::focus_digest_geometry;
+    // Screen 22: 720 at 1440.
+    assert_eq!(at(1440).window_width, 720);
+    assert_eq!(at(1440).column_width, 560);
+    // The formula, rounded, between its ends.
+    assert_eq!(at(1024).window_width, 655);
+    assert_eq!(at(1024).column_width, 560);
+    // Never narrower than 640, and the column keeps its inset.
+    assert_eq!(at(700).window_width, 640);
+    assert_eq!(at(700).column_width, 560);
+}

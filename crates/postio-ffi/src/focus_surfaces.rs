@@ -854,3 +854,29 @@ impl Session {
         })
     }
 }
+
+/// The digest window's size across, and its reading column's (M1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct FocusDigestGeometryFfi {
+    /// The window's width.
+    pub window_width: i32,
+    /// The summary's column.
+    pub column_width: i32,
+}
+
+/// The digest's window beside a main window `main_width` wide, on the
+/// Mac: the message window's width (`clamp(640, W − 2·max(96, 0.18·W),
+/// 720)`), so a reference opened inside it never resizes it, and the
+/// summary's column, `min(560, w − 80)` (M1). Its height is the message
+/// window's as well, which the window controller already keeps.
+#[uniffi::export]
+pub fn focus_digest_geometry(main_width: i32) -> FocusDigestGeometryFfi {
+    let geometry =
+        postio_ui::focus_dialog::Geometry::for_platform(postio_config::paths::Platform::Apple);
+    let (window_width, _) = geometry.digest_size(main_width, 0);
+    FocusDigestGeometryFfi {
+        window_width,
+        column_width: geometry
+            .column_width(window_width, postio_body::treatment::Treatment::AppColours),
+    }
+}
