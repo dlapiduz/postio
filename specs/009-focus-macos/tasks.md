@@ -108,15 +108,15 @@ frontend with the engine's Focus pass on, and the Swift package split.
 
 ### The Swift package split
 
-- [ ] T019 Add a `PostioAppKit` target to `macos/Package.swift` (it depends on `PostioKit` and `PostioFFI`), and a `PostioAppKitTests` test target. `Postio` depends on both
-- [ ] T020 Move the AppKit-importing files from `macos/Sources/PostioKit/` to `macos/Sources/PostioAppKit/`, with their tests to `macos/Tests/PostioAppKitTests/`:
+- [x] T019 Add a `PostioAppKit` target to `macos/Package.swift` (it depends on `PostioKit` and `PostioFFI`), and a `PostioAppKitTests` test target. `Postio` depends on both
+- [x] T020 Move the AppKit-importing files from `macos/Sources/PostioKit/` to `macos/Sources/PostioAppKit/`, with their tests to `macos/Tests/PostioAppKitTests/`:
   - `KeyEvent`, `KeyWindowTracker`, `TypingResponder`, `ViewTreeFocus`;
   - `MenuBar`, `ComposeEditor`, `ComposeHandoff`, `ComposeView`;
   - `ReaderView`, `ReaderPolicy`.
 
   Split `Accessibility.swift`: `Intercepted` stays in PostioKit, and `Motion` (NSWorkspace) moves. Run `scripts/macos-test.sh` green
-- [ ] T021 Write a Swift test in `macos/Tests/PostioKitTests/NoAppKitTests.swift` that fails if any file under `macos/Sources/PostioKit/` contains `import AppKit` or `import Cocoa` (#1264)
-- [ ] T022 [P] Write a Swift test in `macos/Tests/PostioKitTests/SemanticColourTests.swift` that fails on a hex colour literal or `Color(red:` / `NSColor(red:` under `macos/Sources/` (contracts/mac-surfaces.md, FR-017)
+- [x] T021 Write a Swift test in `macos/Tests/PostioKitTests/NoAppKitTests.swift` that fails if any file under `macos/Sources/PostioKit/` contains `import AppKit` or `import Cocoa` (#1264)
+- [x] T022 [P] Write a Swift test in `macos/Tests/PostioKitTests/SemanticColourTests.swift` that fails on a hex colour literal or `Color(red:` / `NSColor(red:` under `macos/Sources/` (contracts/mac-surfaces.md, FR-017)
 
 **Checkpoint**: the FFI is a Focus frontend, Focus's engine pass runs on the
 Mac, the controller crate exists on `main`, and the Swift package is split.
