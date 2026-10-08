@@ -67,7 +67,7 @@ fn commands_are_handled_in_the_order_they_were_sent() {
         },
         Command::Undo,
         Command::Refresh,
-        Command::ToggleSidebar,
+        Command::ToggleFold,
     ];
     for command in &sent {
         commands.send(command.clone()).expect("running");
@@ -146,12 +146,12 @@ fn work_offloaded_onto_the_runtime_does_not_delay_the_next_command() {
     bridge.commands().send(Command::Refresh).expect("running");
     bridge
         .commands()
-        .send(Command::ToggleSidebar)
+        .send(Command::ToggleFold)
         .expect("running");
 
     let start = Instant::now();
     assert_eq!(description(&next_event(&events)), "refresh");
-    assert_eq!(description(&next_event(&events)), "toggle_sidebar");
+    assert_eq!(description(&next_event(&events)), "toggle_fold");
     assert!(
         start.elapsed() < Duration::from_millis(250),
         "the spawned sleep stalled the queue"

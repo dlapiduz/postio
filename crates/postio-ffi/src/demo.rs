@@ -29,7 +29,8 @@ fn open(seed: &str) -> Result<Arc<Session>, SessionError> {
     })?;
     let (database, _account) = crate::session::blocking(postio_demo::seeded(seed));
     Session::open(
-        crate::SessionOptions::in_memory_with(database).with_config_for_test(&postio_demo::config()),
+        crate::SessionOptions::in_memory_with(database)
+            .with_config_for_test(&postio_demo::config()),
     )
 }
 

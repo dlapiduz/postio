@@ -103,11 +103,7 @@ pub use reader::{
     reader_page_after, reader_page_fragment, reader_scroll_markers,
 };
 pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
-pub use saved_search::{
-    PromptFfi, ReorderFfi, SavedSearchEditFfi, SavedSearchFfi, delete_saved_search,
-    move_saved_search, rename_saved_search, save_search, saved_search_delete_prompt,
-    saved_search_rename_prompt, saved_searches,
-};
+pub use saved_search::{SavedSearchEditFfi, SavedSearchFfi, save_search, saved_searches};
 pub use search::{ChipFfi, MatchRangeFfi, SnippetFfi, query_chips};
 pub use session::{Session, SessionError, SessionOptions};
 pub use settings::{

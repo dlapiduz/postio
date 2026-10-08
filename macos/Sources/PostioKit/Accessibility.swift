@@ -74,7 +74,7 @@ public enum Intercepted {
     /// Saving a search patches `config.toml`, which this side reads at the
     /// moment it acts.
     public static let saveSearch = "save_search"
-    /// The reader's `i i`: the same one-view render as `renderPartOnce`, so
+    /// The reader's `i i`: the one-view render the notice's Show button runs, so
     /// the key, the palette row and the notice's Show button cannot drift.
     public static let showImages = "show_images"
     /// The palette's "Quit Postio"; AppKit answers `⌘Q` from the menu itself.

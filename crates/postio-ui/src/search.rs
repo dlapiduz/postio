@@ -146,107 +146,6 @@ impl Outcome {
     }
 }
 
-/// The readout, as the canvas writes it: `14 hits · 11 ms`.
-///
-/// No thousands separators, because the canvas' own scope counts are written
-/// `4291` and two number formats in one column would read as two kinds of
-/// number. A capped count is written `10000+ hits` rather than a bare figure,
-/// so a floor never passes for a total.
-/// A corpus still filling adds `· still syncing`, and nothing otherwise.
-///
-/// The wording is a *state that ends*, which is the whole of #352's design
-/// call. ADR 0016 backfills every folder to completion by default, so "you do
-/// not have this mail" would be false — the honest thing is that the answer is
-/// not final yet. A count was rejected for the same reason: it would be a
-/// draining queue reported as an alarm.
-///
-/// It says so once, here, rather than per result: a caveat repeated down a
-/// list of hits stops being read by the third one.
-pub fn readout(outcome: &Outcome) -> String {
-    let mut line = format!("{} · {}", hits(outcome), elapsed(outcome.elapsed));
-    if !outcome.corpus_complete {
-        line.push_str(" · still syncing");
-    }
-    // Both, when both are true. They are different facts with different
-    // fixes -- one ends on its own under ADR 0016, the other needs the
-    // account to come back -- so neither may hide the other.
-    match outcome.unreachable.as_slice() {
-        [] => {}
-        // One name fits and is worth more than a count: it says which
-        // account to go and look at.
-        [only] => line.push_str(&format!(" · {only} unreachable")),
-        // Past one it does not fit, and a fixed slot is what keeps the field
-        // from breathing per keystroke. The count still says there is more
-        // than one to fix; `spoken_readout` carries the names.
-        many => line.push_str(&format!(" · {} unreachable", many.len())),
-    }
-    line
-}
-
-/// The readout as a screen reader should hear it — the same facts, in words,
-/// because "·" and "ms" are punctuation and an abbreviation rather than
-/// something to read aloud.
-pub fn spoken_readout(outcome: &Outcome) -> String {
-    let elapsed = outcome.elapsed.as_millis();
-    let counted = match elapsed {
-        0 => format!("{}, in under a millisecond", hits(outcome)),
-        1 => format!("{}, in 1 millisecond", hits(outcome)),
-        _ => format!("{}, in {elapsed} milliseconds", hits(outcome)),
-    };
-    // The spoken form carries the sentence the visible one has no room for.
-    // Three words are enough to *flag* a state beside a number; they are not
-    // enough to explain one to somebody who cannot see the rest of the
-    // window.
-    let mut spoken = counted;
-    if !outcome.corpus_complete {
-        spoken.push_str(
-            ". This account is still syncing, so messages whose text has not \
-             arrived yet could not be searched.",
-        );
-    }
-    // Every name, which is the whole reason the spoken form exists: the
-    // visible caveat has room to flag the state and, past one account, not to
-    // say which ones.
-    if !outcome.unreachable.is_empty() {
-        spoken.push_str(&format!(
-            ". {} could not be searched, so this answer may be short.",
-            and_list(&outcome.unreachable)
-        ));
-    }
-    spoken
-}
-
-/// `a`, `a and b`, `a, b and c` — a list as somebody reads it aloud.
-fn and_list(items: &[String]) -> String {
-    match items.split_last() {
-        None => String::new(),
-        Some((last, [])) => last.clone(),
-        Some((last, head)) => format!("{} and {last}", head.join(", ")),
-    }
-}
-
-fn hits(outcome: &Outcome) -> String {
-    match (outcome.hits, outcome.capped) {
-        (_, true) => format!("{}+ hits", outcome.hits),
-        (0, _) => "no hits".to_string(),
-        (1, _) => "1 hit".to_string(),
-        (hits, _) => format!("{hits} hits"),
-    }
-}
-
-/// A duration, in the unit that makes it readable.
-///
-/// Sub-millisecond is written `<1 ms` rather than `0 ms`: the search did
-/// happen, and a zero would read as one that did not.
-fn elapsed(elapsed: Duration) -> String {
-    let millis = elapsed.as_millis();
-    match millis {
-        0 => "<1 ms".to_string(),
-        1..=9_999 => format!("{millis} ms"),
-        _ => format!("{:.1} s", elapsed.as_secs_f64()),
-    }
-}
-
 /// What a search's refinements say when there are none to offer.
 ///
 /// Never a blank space and never a shrug: the two reasons a shortlist can be
@@ -463,28 +362,37 @@ mod tests {
 /// The commands the search bar hints at, and the canvas's labels for them
 /// (canvas 05: `Ret open · Tab refine · C-s save as folder`).
 ///
-/// Three, and each is a registry command rather than a string: a footer that
-/// taught a key nothing answers is worse than one that taught none, which is
-/// the same argument `row::hints` makes one pane over.
-const HINT_COMMANDS: [(postio_core::CommandId, &str); 3] = [
+/// Two are registry commands rather than strings: a footer that taught a key
+/// nothing answers is worse than one that taught none, which is the same
+/// argument `row::hints` makes one pane over. The third, Tab into the chips,
+/// is the search bar's own: it was bare Tab's pane cycle before the
+/// three-pane app's commands went (specs/009-focus-macos R5), and now no
+/// command owns it, so it is fixed and `hints` places it between the two.
+const HINT_COMMANDS: [(postio_core::CommandId, &str); 2] = [
     (postio_core::CommandId::OpenMessage, "open"),
-    (postio_core::CommandId::CyclePane, "refine"),
     (postio_core::CommandId::SaveSearch, "save as folder"),
 ];
+
+/// The search bar's own Tab, into the refine chips.
+const REFINE_HINT: (&str, &str) = ("Tab", "refine");
 
 /// The key hints the search bar announces, as `(key, label)` pairs.
 ///
 /// Read from the keymap, so a rebinding reaches the footer. A command with
 /// no binding in force is left out rather than drawn without one.
 pub fn hints(keymap: &postio_core::Keymap) -> Vec<(String, &'static str)> {
-    HINT_COMMANDS
-        .iter()
-        .filter_map(|(command, label)| {
-            keymap
-                .binding(*command)
-                .map(|key| (key.to_string(), *label))
-        })
-        .collect()
+    let bound = |(command, label): (postio_core::CommandId, &'static str)| {
+        keymap.binding(command).map(|key| (key.to_string(), label))
+    };
+    let [open, save] = HINT_COMMANDS;
+    [
+        bound(open),
+        Some((REFINE_HINT.0.to_owned(), REFINE_HINT.1)),
+        bound(save),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 #[cfg(test)]
@@ -501,7 +409,7 @@ mod hint_tests {
         // is drawn from.
         let keymap = postio_core::Keymap::defaults();
         let hints = hints(keymap);
-        assert_eq!(hints.len(), HINT_COMMANDS.len());
+        assert_eq!(hints.len(), HINT_COMMANDS.len() + 1);
         assert!(
             hints.iter().all(|(key, _)| !key.is_empty()),
             "a hint drawn with no key on it: {hints:?}"
@@ -538,42 +446,6 @@ mod hint_tests {
             Some(key.as_str()),
             postio_core::Keymap::defaults().binding(postio_core::CommandId::SaveSearch),
             "the override changed nothing, so this proves nothing"
-        );
-    }
-}
-
-/// What a screen reader says for one row of the scope rail — `Inbox only,
-/// 2 matches` (#1157).
-///
-/// A sentence rather than a label beside a number, because the number is the
-/// point: the rail says what switching *would* find before anybody switches.
-/// A zero is said too, for the reason the rail draws one — an empty scope is
-/// worth knowing about before choosing it. Shared, so both rails say it the
-/// same way.
-pub fn scope_spoken(scope: postio_search::facets::Scope, hits: u64) -> String {
-    match hits {
-        1 => format!("{}, 1 match", scope.label()),
-        hits => format!("{}, {hits} matches", scope.label()),
-    }
-}
-
-#[cfg(test)]
-mod scope_tests {
-    use super::*;
-    use postio_search::facets::Scope;
-
-    #[test]
-    fn a_scope_row_says_its_count_in_words() {
-        assert_eq!(scope_spoken(Scope::Inbox, 2), "Inbox only, 2 matches");
-        assert_eq!(
-            scope_spoken(Scope::AllMail, 1),
-            "All mail, 1 match",
-            "one is not plural"
-        );
-        assert_eq!(
-            scope_spoken(Scope::Lists, 0),
-            "Lists, 0 matches",
-            "a zero is said, not hidden"
         );
     }
 }

@@ -307,16 +307,17 @@ pub struct FilterFfi {
     pub pinned: bool,
 }
 
-/// Every settings section the Mac shows ([`Section::shown_in`]), in canvas
-/// 3f's nav order.
+/// Every settings section the Mac shows, in canvas 3f's nav order: all of
+/// them but Filtering.
 #[uniffi::export]
 pub fn settings_sections() -> Vec<SettingsSectionFfi> {
     Section::ALL
         .into_iter()
         // The Mac's settings window keeps its own nav until it gains Focus's
-        // Filtering pane (specs/009-focus-macos T131): Focus's nav would list
-        // a pane this window cannot draw yet.
-        .filter(|section| section.shown_in(postio_core::Frontend::Macos))
+        // Filtering pane and drops Appearance (specs/009-focus-macos T131):
+        // `Section::shown_in(Frontend::Focus)` would hide Appearance, which
+        // this window draws, and list Filtering, which it cannot yet.
+        .filter(|section| *section != Section::Filtering)
         .map(|section| SettingsSectionFfi {
             key: section.key().to_string(),
             label: section.label().to_string(),

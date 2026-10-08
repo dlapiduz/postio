@@ -461,9 +461,8 @@ fn the_account_row_actions_are_commands_in_the_account_list() {
             Recovery::None,
         ),
         // Destructive, and the only one of the three that is: it soft-deletes
-        // an account. `Delete` matches DeleteSavedSearch's spelling in the
-        // neighbouring list, which is the same verb on the same shape of row,
-        // and the message verb's: "delete" has one key.
+        // an account. `Delete` matches the message verb's spelling:
+        // "delete" has one key.
         (CommandId::RemoveAccount, "Delete", true, Recovery::Undo),
         // `c` for credential. ADR 0005 Q6c asked for no binding at all; that
         // rested on "ten commands already have none", and none do. PRODUCT.md
@@ -553,9 +552,6 @@ const WITHOUT_A_STORE: &[CommandId] = &[
     CommandId::CommandPalette,
     CommandId::CheatSheet,
     CommandId::Back,
-    CommandId::ToggleSidebar,
-    CommandId::CyclePane,
-    CommandId::CyclePaneBack,
     CommandId::EditConfig,
     // Leaving means the same with no store as with one (T039).
     CommandId::Quit,
@@ -630,12 +626,12 @@ fn the_vocabulary_before_the_store_is_the_chrome_and_nothing_else() {
     let closed = Availability {
         scope: account,
         store_open: false,
-        frontend: postio_core::Frontend::Macos,
+        frontend: postio_core::Frontend::Focus,
     };
     let open = Availability {
         scope: account,
         store_open: true,
-        frontend: postio_core::Frontend::Macos,
+        frontend: postio_core::Frontend::Focus,
     };
 
     let before: Vec<CommandId> = registry::reachable_in(Context::List, closed)
@@ -696,12 +692,12 @@ fn a_command_can_need_more_than_one_thing_at_once() {
     let unified_and_open = Availability {
         scope: Scope::Unified,
         store_open: true,
-        frontend: postio_core::Frontend::Macos,
+        frontend: postio_core::Frontend::Focus,
     };
     let account_and_closed = Availability {
         scope: Scope::Account(AccountId::new(1)),
         store_open: false,
-        frontend: postio_core::Frontend::Macos,
+        frontend: postio_core::Frontend::Focus,
     };
     for unmet in [unified_and_open, account_and_closed] {
         assert!(
@@ -807,20 +803,21 @@ fn the_reading_commands_are_registered_as_the_contract_says() {
     }
 }
 
-/// Four apps share one registry (specs/007-postio-focus research R4), and
-/// what an app is decides what it offers: a command only Focus has is
-/// unreachable to the classic app, the terminal and macOS, and the two
-/// requirements that already split the frontends keep their meaning across
-/// four. Read through `reachable_in`'s own test, `RequirementSet::met_by`,
-/// so this is what the palette and the cheat sheet see.
+/// Two apps share one registry (specs/007-postio-focus research R4;
+/// specs/009-focus-macos R5, which folded the Mac into Focus), and what an
+/// app is decides what it offers: a command only Focus has is unreachable to
+/// the terminal's pixels, and the requirements that split the frontends keep
+/// their meaning. Read through `reachable_in`'s own test,
+/// `RequirementSet::met_by`, so this is what the palette and the cheat sheet
+/// see.
 #[test]
-fn a_focus_only_command_is_offered_to_focus_and_to_no_other_app() {
+fn a_focus_only_command_is_offered_to_focus_and_the_terminal_that_draws_it() {
     use postio_core::registry::{Frontend, RequirementSet};
     let at = |frontend| Availability {
         frontend,
         ..Availability::open(Scope::Unified)
     };
-    let apps = [Frontend::Terminal, Frontend::Focus, Frontend::Macos];
+    let apps = [Frontend::Terminal, Frontend::Focus];
     let offered_to = |requirement| {
         let set = RequirementSet::from_slice(&[requirement]);
         apps.into_iter()
@@ -835,14 +832,8 @@ fn a_focus_only_command_is_offered_to_focus_and_to_no_other_app() {
     assert_eq!(offered_to(Requirement::Terminal), [Frontend::Terminal]);
     assert_eq!(
         offered_to(Requirement::Graphical),
-        [Frontend::Focus, Frontend::Macos],
+        [Frontend::Focus],
         "every app that draws a message as pixels can zoom and darken it"
-    );
-    assert_eq!(
-        offered_to(Requirement::ThreePane),
-        [Frontend::Macos],
-        "a folder sidebar, panes and the parts panel are the three-pane app's; \
-         Focus, in either toolkit, has one list and dialogs"
     );
     let in_apps = |id| {
         let set = registry::get(id).requires;
@@ -859,10 +850,5 @@ fn a_focus_only_command_is_offered_to_focus_and_to_no_other_app() {
         in_apps(CommandId::CaptureTask),
         [Frontend::Terminal, Frontend::Focus],
         "a Focus row is reachable in the terminal"
-    );
-    assert!(
-        in_apps(CommandId::ToggleSidebar)
-            .iter()
-            .all(|a| *a != Frontend::Terminal)
     );
 }

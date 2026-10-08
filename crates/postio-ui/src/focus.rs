@@ -11,30 +11,6 @@
 
 use postio_core::Context;
 
-/// The pane after `from`, wrapping: sidebar, list, reader, round.
-///
-/// Three panes, always the same three. The conversation is inside the
-/// reading pane, so it holds the list's place in the cycle — Tab from a
-/// conversation goes to the reader, and back goes to the sidebar — and a
-/// context that is not one of the panes (the composer, the palette, a
-/// settings list) gets `None`: Tab does not resolve to the cycle there, so
-/// an answer would mean the keymap and the registry disagree, and guessing
-/// a pane is worse than doing nothing (#494).
-///
-/// Wrapping rather than stopping: a user who has tabbed to the reader
-/// expects one more press to come back round rather than to do nothing.
-pub fn next_pane(from: Context, forward: bool) -> Option<Context> {
-    Some(match (from, forward) {
-        (Context::Sidebar, true) => Context::List,
-        (Context::List | Context::Conversation, true) => Context::Reader,
-        (Context::Reader, true) => Context::Sidebar,
-        (Context::Sidebar, false) => Context::Reader,
-        (Context::List | Context::Conversation, false) => Context::Sidebar,
-        (Context::Reader, false) => Context::List,
-        _ => return None,
-    })
-}
-
 /// Where the keyboard was before it went into a nested surface — the folder
 /// list, the parts panel, a list in settings — so leaving puts it back where
 /// it was rather than guessing.
@@ -86,51 +62,6 @@ impl Returns {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn tab_walks_sidebar_list_reader_and_comes_back_round() {
-        assert_eq!(next_pane(Context::Sidebar, true), Some(Context::List));
-        assert_eq!(next_pane(Context::List, true), Some(Context::Reader));
-        assert_eq!(
-            next_pane(Context::Reader, true),
-            Some(Context::Sidebar),
-            "the cycle has to come back round"
-        );
-    }
-
-    #[test]
-    fn shift_tab_walks_the_other_way() {
-        assert_eq!(next_pane(Context::Sidebar, false), Some(Context::Reader));
-        assert_eq!(next_pane(Context::Reader, false), Some(Context::List));
-        assert_eq!(next_pane(Context::List, false), Some(Context::Sidebar));
-    }
-
-    #[test]
-    fn the_conversation_holds_the_lists_place_in_the_cycle() {
-        assert_eq!(
-            next_pane(Context::Conversation, true),
-            Some(Context::Reader)
-        );
-        assert_eq!(
-            next_pane(Context::Conversation, false),
-            Some(Context::Sidebar)
-        );
-    }
-
-    #[test]
-    fn a_context_that_is_not_a_pane_has_no_next_pane() {
-        for context in [
-            Context::Composer,
-            Context::Search,
-            Context::Palette,
-            Context::Parts,
-            Context::Accounts,
-            Context::Keys,
-        ] {
-            assert_eq!(next_pane(context, true), None, "{context:?}");
-            assert_eq!(next_pane(context, false), None, "{context:?}");
-        }
-    }
 
     #[test]
     fn entering_a_surface_records_the_way_back() {

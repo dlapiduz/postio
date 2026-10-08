@@ -2,7 +2,7 @@
 //!
 //! A saved search is a `[saved_searches]` entry in `config.toml`, so **Swift never
 //! parses or writes TOML** applies here exactly as it does to the settings
-//! panes (ADR 0031): what crosses is a list of rows and four verbs, and the
+//! panes (ADR 0031): what crosses is a list of rows and the verb that adds one, and the
 //! file is read, patched and written on this side by
 //! [`postio_ui::saved_search`] — the same code the classic app ran, so a search
 //! saved on a Mac and one saved on Linux are the same edit.
@@ -19,10 +19,9 @@
 //!
 //! # What is not here
 //!
-//! Running a saved search. Picking a row hands its
-//! [`SavedSearchFfi::query`] to `Session::search`, which is the same
-//! function the search field calls — a saved search is a query that was
-//! written down, not a second kind of thing to open.
+//! Running a saved search, and renaming, reordering or deleting one: the
+//! sidebar that did those went with the three-pane app, and Focus runs a
+//! saved search from the command bar (specs/009-focus-macos T082).
 
 use postio_ui::saved_search::{self, Verb};
 
@@ -55,28 +54,6 @@ impl From<saved_search::SavedSearch> for SavedSearchFfi {
     }
 }
 
-/// Which way [`move_saved_search`] walks a row.
-///
-/// One function and a direction rather than two functions, because the two
-/// command ids differ by exactly this and nothing else — a second copy of the
-/// body is a second place for the reorder rule to drift.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum ReorderFfi {
-    /// Toward the front of the list.
-    Up,
-    /// Toward the back.
-    Down,
-}
-
-impl From<ReorderFfi> for saved_search::Reorder {
-    fn from(direction: ReorderFfi) -> Self {
-        match direction {
-            ReorderFfi::Up => saved_search::Reorder::Up,
-            ReorderFfi::Down => saved_search::Reorder::Down,
-        }
-    }
-}
-
 /// What a saved-search verb left behind.
 ///
 /// The rows to draw now, always — a verb that did nothing still answers with
@@ -94,35 +71,6 @@ pub struct SavedSearchEditFfi {
     /// the row that moved, not on the position it vacated, and `None` is how
     /// a frontend knows not to flash a change that did not happen.
     pub changed: Option<String>,
-}
-
-/// The words a confirmation asks in.
-///
-/// Wording crosses because wording drifts (ADR 0019 Q6), and the two
-/// platforms writing their own sentence for a destructive verb is two
-/// products. Saved searches are the first two questions to cross; the record
-/// is shaped for the next one rather than for these two.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct PromptFfi {
-    /// The question.
-    pub title: String,
-    /// What it costs, when the title does not already say.
-    pub body: Option<String>,
-    /// The button that goes through with it.
-    pub confirm: String,
-    /// The button that does not.
-    pub cancel: String,
-}
-
-impl From<saved_search::Prompt> for PromptFfi {
-    fn from(prompt: saved_search::Prompt) -> Self {
-        Self {
-            title: prompt.title.to_owned(),
-            body: prompt.body.map(str::to_owned),
-            confirm: prompt.confirm.to_owned(),
-            cancel: prompt.cancel.to_owned(),
-        }
-    }
 }
 
 /// Every saved search in the file at `path`, in sidebar order.
@@ -152,75 +100,9 @@ pub fn save_search(path: String, query: String) -> Result<SavedSearchEditFfi, Se
     run(&path, Verb::Save { query: &query })
 }
 
-/// Give the saved search under `key` a display name of its own.
-///
-/// Blank, or the key typed back, clears the name rather than storing one:
-/// the row falls back to drawing its key, which is what it did before anyone
-/// renamed it.
-#[uniffi::export]
-pub fn rename_saved_search(
-    path: String,
-    key: String,
-    name: String,
-) -> Result<SavedSearchEditFfi, SettingsError> {
-    run(
-        &path,
-        Verb::Rename {
-            key: &key,
-            name: &name,
-        },
-    )
-}
-
-/// Move the saved search under `key` one place.
-///
-/// Nothing to confirm and nothing to undo: moving it back is the same verb
-/// once more, which is why `CommandId::MoveSavedSearchUp` declares
-/// `Recovery::None`.
-#[uniffi::export]
-pub fn move_saved_search(
-    path: String,
-    key: String,
-    direction: ReorderFfi,
-) -> Result<SavedSearchEditFfi, SettingsError> {
-    run(
-        &path,
-        Verb::Move {
-            key: &key,
-            direction: direction.into(),
-        },
-    )
-}
-
-/// Remove the saved search under `key`.
-///
-/// Ask first — [`saved_search_delete_prompt`] has the words. A config-file
-/// edit has no undo stack to reach, so `CommandId::DeleteSavedSearch`
-/// declares `Recovery::Confirm` and a frontend that deleted without asking
-/// would be breaking the invariant `PRODUCT.md` states: destructive
-/// operations are confirmed or undoable, and this one cannot be the second.
-#[uniffi::export]
-pub fn delete_saved_search(path: String, key: String) -> Result<SavedSearchEditFfi, SettingsError> {
-    run(&path, Verb::Delete { key: &key })
-}
-
-/// What to ask before deleting a saved search.
-#[uniffi::export]
-pub fn saved_search_delete_prompt() -> PromptFfi {
-    saved_search::DELETE_PROMPT.into()
-}
-
-/// What to ask when renaming one. The entry is pre-filled with
-/// [`SavedSearchFfi::name`], which the sidebar already holds.
-#[uniffi::export]
-pub fn saved_search_rename_prompt() -> PromptFfi {
-    saved_search::RENAME_PROMPT.into()
-}
-
 /// Run `verb` against the file at `path` and shape the answer for a frontend.
 ///
-/// One place, so the five exported functions above are each a verb and
-/// nothing else.
+/// One place, so the exported verbs above are each a verb and nothing else.
 fn run(path: &str, verb: Verb<'_>) -> Result<SavedSearchEditFfi, SettingsError> {
     saved_search::apply(std::path::Path::new(path), verb)
         .map(|edit| SavedSearchEditFfi {

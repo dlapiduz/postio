@@ -282,46 +282,9 @@ impl Rail {
         self.marked
     }
 
-    /// A new conversation is being shown.
-    pub fn set_conversation(&mut self, count: usize) {
-        self.count = count;
-        self.marked = None;
-        // A scroll belonging to the conversation that just went away must not
-        // go on silencing the observer in the one that replaced it.
-        self.suppressed = None;
-    }
-
     /// A rail row was activated, or `J`/`K` moved. The pane follows.
     pub fn activate(&mut self, index: usize) -> Effect {
         self.mark(index, true)
-    }
-
-    /// `J`: walk to the next message. Stops at the last one rather than
-    /// wrapping — a thread has an oldest and a newest, and jumping from the
-    /// newest back to the oldest is not what the key means.
-    ///
-    /// Named for the message rather than as `next`, because a `next` taking
-    /// `&mut self` on a non-iterator reads as one and clippy says so.
-    pub fn next_message(&mut self) -> Effect {
-        match self.marked {
-            Some(index) if index + 1 < self.count => self.activate(index + 1),
-            None if self.count > 0 => self.activate(0),
-            _ => Effect::Nothing,
-        }
-    }
-
-    /// `K`: walk to the previous message, stopping at the first.
-    ///
-    /// With nothing marked it starts at the **last** message, as `J` starts at
-    /// the first — the rule `Conversation::step` already shipped for the
-    /// stacked pane. Starting both at the first would make `K` in a
-    /// freshly-opened thread walk forwards.
-    pub fn previous_message(&mut self) -> Effect {
-        match self.marked {
-            Some(index) if index > 0 => self.activate(index - 1),
-            None if self.count > 0 => self.activate(self.count - 1),
-            _ => Effect::Nothing,
-        }
     }
 
     /// The observer reported what is on screen. The pane does not follow —
@@ -546,54 +509,6 @@ mod tests {
         rail.observed(Some(2));
         assert_eq!(rail.observed(None), Effect::Nothing);
         assert_eq!(rail.marked(), Some(2));
-    }
-
-    #[test]
-    fn walking_the_thread_stops_at_the_ends() {
-        // No wrapping: a thread has a first and a last message, and jumping
-        // from the newest back to the oldest is not what J means.
-        let mut rail = Rail::new(2);
-        activate(&mut rail, 1);
-        assert_eq!(rail.next_message(), Effect::Nothing);
-        assert_eq!(rail.marked(), Some(1));
-        activate(&mut rail, 0);
-        assert_eq!(rail.previous_message(), Effect::Nothing);
-        assert_eq!(rail.marked(), Some(0));
-    }
-
-    #[test]
-    fn a_new_conversation_forgets_the_old_mark() {
-        // Message 3 of the thread you just left is not message 3 of this one.
-        let mut rail = Rail::new(6);
-        rail.observed(Some(3));
-        rail.set_conversation(4);
-        assert_eq!(rail.marked(), None);
-    }
-
-    #[test]
-    fn a_new_conversation_forgets_a_scroll_in_flight() {
-        // Selecting another conversation while a scroll is still travelling
-        // would otherwise leave the observer muted in the new one, and the
-        // mark would sit on nothing until the reader happened to press a key.
-        let mut rail = Rail::new(6);
-        activate(&mut rail, 3);
-        rail.set_conversation(4);
-        assert_eq!(rail.observed(Some(1)), Effect::Mark);
-        assert_eq!(rail.marked(), Some(1));
-    }
-
-    #[test]
-    fn walking_from_nothing_starts_at_the_end_you_came_from() {
-        // The rule `Conversation::step` already shipped: with nothing marked,
-        // `J` starts at the first message and `K` at the last. Landing on the
-        // first for both would make `K` in a fresh thread walk forwards.
-        let mut rail = Rail::new(6);
-        assert_eq!(rail.next_message(), Effect::MarkAndScroll(Settle(1)));
-        assert_eq!(rail.marked(), Some(0), "J starts at the beginning");
-
-        let mut rail = Rail::new(6);
-        rail.previous_message();
-        assert_eq!(rail.marked(), Some(5), "K starts at the end");
     }
 
     #[test]

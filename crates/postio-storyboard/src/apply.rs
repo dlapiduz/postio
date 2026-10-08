@@ -311,10 +311,8 @@ mod tests {
     }
 
     #[test]
-    fn focus_provides_what_only_focus_has_and_not_the_panes() {
+    fn focus_provides_what_only_focus_has() {
         assert!(provides(App::Focus, CommandId::ToggleHasAction));
-        // Focus has no panes to cycle (classic-parity.md row 1).
-        assert!(!provides(App::Focus, CommandId::CyclePane));
         // Flag is every app's since C13.
         assert!(provides(App::Focus, CommandId::Flag));
     }

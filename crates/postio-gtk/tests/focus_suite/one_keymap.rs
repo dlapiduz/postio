@@ -37,7 +37,7 @@ fn context_of(contexts: ContextSet) -> KeyContext {
         .unwrap_or(KeyContext::Global)
 }
 
-const APPS: [Frontend; 3] = [Frontend::Terminal, Frontend::Focus, Frontend::Macos];
+const APPS: [Frontend; 2] = [Frontend::Terminal, Frontend::Focus];
 
 pub fn a_registered_command_reaches_the_key_map_with_its_key() {
     crate::gtk_case(async {

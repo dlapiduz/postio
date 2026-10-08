@@ -245,19 +245,8 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::QuoteBlock => None,
         // The terminal composer's (`Requirement::Terminal`).
         C::EditExternally | C::TogglePreview => None,
-        // The three-pane apps' surfaces (`Requirement::ThreePane`): the
-        // sidebar, the panes, and the parts panel. Focus has none.
-        C::ToggleSidebar | C::CyclePane | C::CyclePaneBack | C::OpenParts => None,
         // A stacked conversation pane's, which Focus's dialog is not.
-        C::ToggleFold | C::ExpandAll | C::ToggleRail => None,
-        // The folder list's own keys.
-        C::NextFolder
-        | C::PrevFolder
-        | C::ToggleFolder
-        | C::RenameSavedSearch
-        | C::MoveSavedSearchUp
-        | C::MoveSavedSearchDown
-        | C::DeleteSavedSearch => None,
+        C::ToggleFold | C::ExpandAll => None,
         // The account list's own keys.
         C::ToggleAccountEnabled
         | C::RemoveAccount
@@ -265,14 +254,6 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::RebuildAccountIndex
         | C::SetDefaultAccount
         | C::MapMailboxRole => None,
-        // The parts panel's own keys.
-        C::NextPart
-        | C::PrevPart
-        | C::OpenPart
-        | C::SavePart
-        | C::SaveAllParts
-        | C::OpenPartExternally
-        | C::RenderPartOnce => None,
     }
 }
 
@@ -490,10 +471,6 @@ mod tests {
             .iter()
             .flat_map(|(_, rows)| rows.iter().map(|row| row.action))
             .collect();
-        assert!(
-            !rows.contains(&CommandId::OpenParts.into()),
-            "a three-pane verb"
-        );
         assert!(
             rows.contains(&CommandId::Flag.into()),
             "Focus flags on `*` (C13)"
