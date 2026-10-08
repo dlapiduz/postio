@@ -103,6 +103,20 @@ impl Cursor {
         &self.reach
     }
 
+    pub(crate) fn accounts(&self) -> &[AccountId] {
+        &self.accounts
+    }
+
+    /// The cursor's row, once its page has landed.
+    pub(crate) fn row(&self, rows: &dyn Rows) -> Option<RowFacts> {
+        self.cursor_row(rows)
+    }
+
+    /// Put the cursor on `position`.
+    pub(crate) fn place(&mut self, position: u32, rows: &dyn Rows) -> Vec<Step> {
+        self.to(Some(position), rows)
+    }
+
     pub(crate) fn set_accounts(&mut self, accounts: Vec<AccountId>) {
         self.accounts = accounts;
     }

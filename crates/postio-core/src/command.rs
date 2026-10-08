@@ -29,6 +29,13 @@ use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, DraftId, LabelId, MailboxId, MailboxRole, MessageId, OperationRange, ThreadId,
 };
+
+/// How long an answer to an invitation waits in the outbox before it may
+/// leave, and so how long it can be taken back (specs/007-postio-focus
+/// FR-102, research R9): about ten seconds, the toast's own life. Here
+/// rather than with the verb that applies it, so every frontend's toast
+/// says the same window the engine keeps.
+pub const RSVP_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 macro_rules! command_ids {

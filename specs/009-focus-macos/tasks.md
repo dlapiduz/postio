@@ -222,7 +222,7 @@ action, and undo through ⌘Z and Edit › Undo.
 
 ### Controller slice 4: verbs, aim, removal, undo cursor (**main·S4**)
 
-- [ ] T041 [US2] Write failing tests in `crates/postio-focus/tests/verbs.rs`:
+- [x] T041 [US2] Write failing tests in `crates/postio-focus/tests/verbs.rs`:
   - `a` sends Archive aimed at the selection, else the cursor's row;
   - after removal the cursor goes to the survivor below;
   - `ActionCompleted` yields `Toast{text, undoable}`;

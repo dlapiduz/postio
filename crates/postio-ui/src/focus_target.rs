@@ -118,6 +118,32 @@ pub fn aim(
     reach: &HashMap<MessageId, Vec<ThreadId>>,
     cursor: Option<&FocusRow>,
 ) -> Aim {
+    let cursor = cursor.map(|row| AimRow {
+        id: row.id(),
+        threads: row.threads(),
+        digest: matches!(row, FocusRow::Digest(_)),
+    });
+    aim_by(selection, reach, cursor.as_ref())
+}
+
+/// The cursor's row as [`aim_by`] needs it: what a frontend that keeps its
+/// rows as something other than [`FocusRow`] can say about one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AimRow {
+    /// The row's message.
+    pub id: MessageId,
+    /// The conversations it stands for, every copy.
+    pub threads: Vec<ThreadId>,
+    /// Whether it is a digest's row.
+    pub digest: bool,
+}
+
+/// [`aim`], with the cursor's row given as an [`AimRow`].
+pub fn aim_by(
+    selection: &Selection,
+    reach: &HashMap<MessageId, Vec<ThreadId>>,
+    cursor: Option<&AimRow>,
+) -> Aim {
     match selection {
         Selection::Everything { except } => Aim::Everything {
             except: except.clone(),
@@ -143,9 +169,12 @@ pub fn aim(
         Selection::These(_) => Aim::Targets(match cursor {
             // A digest stands for its delivery, which its own verbs name; a
             // message verb has nothing to aim at there.
-            Some(FocusRow::Digest(_)) | None => Vec::new(),
-            Some(row) if !row.threads().is_empty() => vec![MessageTarget::Threads(row.threads())],
-            Some(row) => vec![MessageTarget::Messages(vec![row.id()])],
+            Some(row) if row.digest => Vec::new(),
+            None => Vec::new(),
+            Some(row) if !row.threads.is_empty() => {
+                vec![MessageTarget::Threads(row.threads.clone())]
+            }
+            Some(row) => vec![MessageTarget::Messages(vec![row.id])],
         }),
     }
 }

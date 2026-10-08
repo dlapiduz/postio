@@ -9,6 +9,9 @@ use postio_client::Client;
 use postio_model::listing::{ListPage, MailStore};
 use postio_model::mailbox::MailboxRole;
 
+use postio_core::state::{SharedState, ViewScope};
+use postio_core::{Command, MessageTarget};
+
 use crate::{Opened, PageAnswer, Reply, Request};
 
 /// Answer `request` now, when it needs no await: a post, said before
@@ -19,6 +22,9 @@ use crate::{Opened, PageAnswer, Reply, Request};
 /// the list re-reads (`Request::NoteRemoved`), so the store's own caches
 /// have let go of it first; spawned on an executor, the saying could run
 /// after the re-read it was meant to precede.
+// The request comes back whole, unboxed, because every caller hands it
+// straight to `perform`: boxing it would only be unboxed again.
+#[allow(clippy::result_large_err)]
 pub fn perform_now(client: &Client, request: Request) -> Result<Reply, Request> {
     match request {
         Request::NoteRemoved { mailbox, messages } => {
@@ -111,7 +117,56 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
             client.note_removed(mailbox, messages);
             Reply::Noted
         }
+        Request::Send {
+            command,
+            aims,
+            everything,
+        } => Reply::Sent(send(client, command, aims, everything).await),
+        Request::Post(command) => Reply::Sent(
+            client
+                .send(command)
+                .await
+                .map_err(|error| error.to_string()),
+        ),
     }
+}
+
+/// A verb, to each aim in turn; or, for a whole-view selection, once at the
+/// selection the host is told about with it -- the one place a frontend's
+/// "select all" becomes the host's (GTK and the FFI each had a copy).
+async fn send(
+    client: &Client,
+    command: Command,
+    aims: Vec<MessageTarget>,
+    everything: Option<crate::Everything>,
+) -> Result<(), String> {
+    if let Some(everything) = everything {
+        let state = SharedState::default();
+        let (sink, _) = postio_core::bridge::event_channel();
+        state.update(&sink, |app| {
+            let mut events = app.open_view(ViewScope::Focus {
+                accounts: everything.accounts.clone(),
+            });
+            events.extend(app.select_all());
+            for message in &everything.except {
+                events.extend(app.toggle_selection(*message));
+            }
+            events
+        });
+        return client
+            .clone()
+            .with_state(state)
+            .send(command.with_target(MessageTarget::Selection))
+            .await
+            .map_err(|error| error.to_string());
+    }
+    for aim in aims {
+        client
+            .send(command.clone().with_target(aim))
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

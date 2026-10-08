@@ -16,7 +16,7 @@ use std::time::Duration;
 use postio_client::protocol::FocusCounts;
 use postio_config::paths::Platform;
 use postio_core::state::Selection;
-use postio_core::{CommandId, Event};
+use postio_core::{Command, CommandId, Event, MessageTarget};
 use postio_model::listing::{PageRequest, Surfaced};
 use postio_model::{AccountId, ListScope, MailboxId, MessageId};
 use postio_ui::focus_list::FocusRow;
@@ -24,10 +24,12 @@ use postio_ui::focus_list::FocusRow;
 mod cursor;
 mod feed;
 mod perform;
+mod verbs;
 
 pub use cursor::{NoRows, RowFacts, Rows};
 pub use feed::{Opened, PageAnswer};
 pub use perform::{perform, perform_now};
+pub use verbs::{Everything, ToastKind};
 
 /// What differs between platforms, as policy rather than as a fork
 /// (ADR 0045 rule 4).
@@ -87,6 +89,9 @@ pub enum Input {
     /// The accounts Focus's inbox is made of: what "select everything"
     /// reaches.
     Accounts(Vec<AccountId>),
+    /// Whether the list stands scrolled to its very top: where it goes back
+    /// to after an undo brings rows in above.
+    AtTop(bool),
 }
 
 /// What the frontend does next.
@@ -132,6 +137,15 @@ pub enum Intent {
     /// The list's one heading, while `!` narrows it ("Has action · 7"), or
     /// back to the day headings with `None`.
     SingleHeading(Option<String>),
+    /// Scroll the list back to its very top.
+    ListToTop,
+    /// Say something in the toast.
+    Toast {
+        /// What to say: the host's words.
+        text: String,
+        /// How to draw it, and how long it stays.
+        kind: ToastKind,
+    },
     /// The place opened has been counted: the list changes over to it,
     /// keeping the rows on screen until its first page lands, and asks for
     /// that page ([`FocusController::page_wanted`]).
@@ -209,6 +223,18 @@ pub enum Request {
     },
     /// What Focus surfaces in its inbox, read again.
     Surfaced,
+    /// Send a verb, aimed: at each of `aims` in turn, or -- with
+    /// `everything` -- at a whole-view selection the host resolves.
+    Send {
+        /// The verb.
+        command: Command,
+        /// Where it goes, in the order to send it.
+        aims: Vec<MessageTarget>,
+        /// A whole-view selection, instead of `aims`.
+        everything: Option<Everything>,
+    },
+    /// Send a command as it is: one that aims at nothing (`Undo`).
+    Post(Command),
     /// Mail left `mailbox`: said to the store before the list re-reads.
     NoteRemoved {
         /// The folder it left.
@@ -244,6 +270,8 @@ pub enum Reply {
     Surfaced(Result<Vec<Surfaced>, String>),
     /// A post was made; nothing to answer.
     Noted,
+    /// A command was sent, or why it could not be.
+    Sent(Result<(), String>),
 }
 
 /// Focus's behaviour for one window. `Send`, and plain data: no toolkit
@@ -255,6 +283,7 @@ pub struct FocusController {
     next_ticket: u64,
     feed: feed::Feed,
     cursor: cursor::Cursor,
+    verbs: verbs::Verbs,
     /// The strip's counts, as the host last said.
     counts: Option<FocusCounts>,
 }
@@ -268,6 +297,7 @@ impl FocusController {
             next_ticket: 0,
             feed: feed::Feed::default(),
             cursor: cursor::Cursor::default(),
+            verbs: verbs::Verbs::default(),
             counts: None,
         }
     }
@@ -296,13 +326,19 @@ impl FocusController {
             }
             Input::Command(id) => {
                 let has_action = self.counts.map(|counts| counts.has_action);
-                let steps =
-                    self.cursor
-                        .command(id, rows, self.feed.scope(), self.feed.total(), has_action);
+                let total = self.feed.total();
+                let steps = self
+                    .cursor
+                    .command(id, rows, self.feed.scope(), total, has_action)
+                    .or_else(|| self.verbs.command(id, &mut self.cursor, rows, total));
                 steps.map(|steps| self.effects(steps)).unwrap_or_default()
             }
             Input::Accounts(accounts) => {
                 self.cursor.set_accounts(accounts);
+                Vec::new()
+            }
+            Input::AtTop(at_top) => {
+                self.verbs.set_at_top(at_top);
                 Vec::new()
             }
             Input::Reply(ticket, _) if ticket.generation != self.generation => Vec::new(),
@@ -336,8 +372,15 @@ impl FocusController {
                 self.effects(steps)
             }
             Input::Reply(_, Reply::Noted) => Vec::new(),
+            Input::Reply(_, Reply::Sent(result)) => {
+                if let Err(error) = result {
+                    tracing::warn!(%error, "Focus could not send a command");
+                }
+                Vec::new()
+            }
             Input::Event(event) => {
-                let steps = self.feed.event(&event);
+                let mut steps = self.verbs.event(&event);
+                steps.extend(self.feed.event(&event));
                 self.effects(steps)
             }
         }
@@ -348,7 +391,8 @@ impl FocusController {
     /// the first row, or back to the message `!` kept, and the strip's
     /// counts are asked for again.
     pub fn landed(&mut self, rows: &dyn Rows, opened: bool) -> Vec<Effect> {
-        let steps = self.cursor.landed(rows, opened);
+        let mut steps = self.cursor.landed(rows, opened);
+        steps.extend(self.verbs.landed(&mut self.cursor, rows));
         let mut effects = self.effects(steps);
         effects.push(self.refresh_counts());
         effects
