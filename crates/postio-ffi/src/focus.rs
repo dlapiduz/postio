@@ -32,6 +32,22 @@ impl From<postio_client::protocol::FocusCounts> for FocusCountsFfi {
     }
 }
 
+/// The header strip's words, composed by the functions GTK's strip uses
+/// (`postio_ui::focus_row`, `postio_ui::filtered`), under the same rules: the
+/// filtered count only while filtering is on and something was filed today,
+/// the digest rules only while there are some (spec 007 C10).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FocusStripFfi {
+    /// "312 · 41 unread".
+    pub counts: String,
+    /// "Has action · 7".
+    pub has_action: String,
+    /// "186 filtered today", or nothing.
+    pub filtered_today: Option<String>,
+    /// "4 digest rules", or nothing.
+    pub digest_rules: Option<String>,
+}
+
 #[uniffi::export]
 impl Session {
     /// Show one of Focus's lists: counted first, then `FocusListChanged`.
@@ -49,6 +65,20 @@ impl Session {
     /// table calls for every visible row.
     pub fn focus_row_at(&self, position: u32) -> Option<crate::FocusRowFfi> {
         self.focus_driver().row_at(position)
+    }
+
+    /// The header strip's words, read now.
+    pub fn focus_strip(&self) -> Result<FocusStripFfi, SessionError> {
+        let counts = self.focus_counts()?;
+        let config = self.focus_config();
+        let rules = config.digests.len();
+        Ok(FocusStripFfi {
+            counts: postio_ui::focus_row::strip_counts(counts.conversations, counts.unread),
+            has_action: postio_ui::focus_row::has_action_label(Some(counts.has_action)),
+            filtered_today: (config.filtering && counts.filtered_today > 0)
+                .then(|| postio_ui::filtered::today(counts.filtered_today)),
+            digest_rules: (rules > 0).then(|| postio_ui::focus_row::digest_rules(rules)),
+        })
     }
 
     /// The header strip's counts, read now.

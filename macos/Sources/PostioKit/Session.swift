@@ -131,6 +131,9 @@ public final class PostioSession {
     /// The header strip's counts, read now.
     public func focusCounts() throws -> FocusCountsFfi { try inner.focusCounts() }
 
+    /// The header strip's words, composed by the engine (`focus_strip`).
+    public func focusStrip() throws -> FocusStripFfi { try inner.focusStrip() }
+
     /// Tell the engine whether the machine currently has a connection.
     ///
     /// Reachability is a platform question, asked in the platform's own

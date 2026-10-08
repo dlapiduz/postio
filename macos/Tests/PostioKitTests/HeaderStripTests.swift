@@ -15,60 +15,45 @@ import Testing
         "go_to_digest_rules": "g d",
     ]
 
-    static func strip(
-        _ conversations: UInt32, unread: UInt32, hasAction: UInt32 = 7, filtered: UInt32 = 0,
-        on: Bool = false
-    ) -> HeaderStripWords {
-        HeaderStripWords(
-            counts: FocusCountsFfi(
-                conversations: conversations, unread: unread, hasAction: hasAction,
-                filteredToday: filtered),
-            hasActionOn: on
-        ) { keys[$0] }
-    }
+    static let strip = FocusStripFfi(
+        counts: "312 \u{b7} 41 unread", hasAction: "Has action \u{b7} 7",
+        filteredToday: "186 filtered today", digestRules: "4 digest rules")
 
-    @Test func theInboxSaysItsConversationsAndHowManyAreUnread() {
-        let words = Self.strip(312, unread: 41)
+    @Test func theWordsAreTheEnginesAsTheyCame() {
+        // Composed in Rust by the functions GTK's strip uses; nothing here
+        // words a count of its own (spec 009 FR-004).
+        let words = HeaderStripWords(strip: Self.strip, hasActionOn: false) { Self.keys[$0] }
         #expect(words.place == "Inbox")
         #expect(words.counts == "312 \u{b7} 41 unread")
         #expect(words.hasAction == "Has action \u{b7} 7")
+        #expect(words.filtered == "186 filtered today")
+        #expect(words.digestRules == "4 digest rules")
     }
 
-    @Test func nothingUnreadIsTheConversationsAlone() {
-        #expect(Self.strip(312, unread: 0).counts == "312")
-    }
-
-    @Test func aLargeCountIsGrouped() {
-        #expect(Self.strip(12_480, unread: 1_204).counts == "12,480 \u{b7} 1,204 unread")
-    }
-
-    @Test func theFilteredCountIsShownOnlyWhileItSaysSomething() {
-        // C10: header counts only while in use.
-        #expect(Self.strip(312, unread: 41, filtered: 0).filtered == nil)
-        #expect(Self.strip(312, unread: 41, filtered: 186).filtered == "186 filtered today")
-    }
-
-    @Test func digestRulesAreNotDrawnUntilTheirCountCrosses() {
-        // No FFI says how many digest rules there are yet, and a made-up
-        // count would be a claim about the user's configuration.
-        #expect(Self.strip(312, unread: 41).digestRules == nil)
+    @Test func whatTheEngineLeavesOutIsNotDrawn() {
+        // C10: the filtered and digest counts only while in use, decided in Rust.
+        let quiet = FocusStripFfi(
+            counts: "312", hasAction: "Has action \u{b7} 0", filteredToday: nil, digestRules: nil)
+        let words = HeaderStripWords(strip: quiet, hasActionOn: false) { Self.keys[$0] }
+        #expect(words.filtered == nil)
+        #expect(words.digestRules == nil)
     }
 
     @Test func everyCapIsTheUsersBinding() {
-        let words = Self.strip(312, unread: 41, filtered: 3)
+        let words = HeaderStripWords(strip: Self.strip, hasActionOn: false) { Self.keys[$0] }
         #expect(words.placeCap == "g o")
         #expect(words.hasActionCap == "!")
         #expect(words.filteredCap == "g f")
-        let rebound = HeaderStripWords(
-            counts: FocusCountsFfi(conversations: 1, unread: 0, hasAction: 0, filteredToday: 0),
-            hasActionOn: false
-        ) { $0 == "toggle_has_action" ? "shift+1" : nil }
+        #expect(words.digestRulesCap == "g d")
+        let rebound = HeaderStripWords(strip: Self.strip, hasActionOn: false) {
+            $0 == "toggle_has_action" ? "shift+1" : nil
+        }
         #expect(rebound.hasActionCap == "⇧1")
         #expect(rebound.placeCap == nil)
     }
 
-    @Test func beforeTheCountsArriveTheStripSaysNoNumber() {
-        let words = HeaderStripWords(counts: nil, hasActionOn: false) { _ in nil }
+    @Test func beforeTheWordsArriveTheStripSaysNoNumber() {
+        let words = HeaderStripWords(strip: nil, hasActionOn: false) { _ in nil }
         #expect(words.counts == nil)
         #expect(words.hasAction == "Has action")
     }

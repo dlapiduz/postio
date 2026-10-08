@@ -166,3 +166,30 @@ async fn the_inbox_fills_with_focus_rows_that_carry_their_marker() {
     );
     session.shutdown();
 }
+
+/// The header strip's words cross composed, by the functions GTK's strip
+/// uses (spec 009 FR-004): Swift words nothing itself.
+#[test]
+fn the_strip_says_what_gtk_s_strip_says() {
+    let session = Session::open(SessionOptions::in_memory().with_config_for_test(
+        "[focus]\nfiltering = true\n\n[[focus.digests]]\nname = \"Newsletters\"\nqueries = [\"from:news@ledger.example\"]\ncadence = \"weekly\"\n",
+    ))
+    .expect("a session");
+    let strip = session.focus_strip().expect("the strip");
+    assert_eq!(strip.counts, "0");
+    assert_eq!(strip.has_action, "Has action \u{b7} 0");
+    assert_eq!(
+        strip.filtered_today, None,
+        "nothing filtered says nothing (C10)"
+    );
+    assert_eq!(strip.digest_rules.as_deref(), Some("1 digest rule"));
+    session.shutdown();
+
+    let session = Session::open(SessionOptions::in_memory()).expect("a session");
+    assert_eq!(
+        session.focus_strip().expect("the strip").digest_rules,
+        None,
+        "no rules, no count (C10)"
+    );
+    session.shutdown();
+}

@@ -91,6 +91,8 @@ final class Engine {
             if accounts.isEmpty { firstRun = FirstRunModel(session: session) }
             vouch()
             focusTable = makeFocusTable(session)
+            // The toolbar was built before there were bindings to spell.
+            keycapsChanged?()
             state = .open
             mailboxes = session.mailboxes
             // Nothing is fetched until an engine starts (#648); the list
@@ -197,9 +199,9 @@ final class Engine {
     /// Which of Focus's lists is open.
     private(set) var focusScope: FocusScopeFfi = .inbox
 
-    /// The header strip's numbers, read off this actor when they may have
+    /// The header strip's words, read off this actor when they may have
     /// moved.
-    private(set) var focusCounts: FocusCountsFfi?
+    private(set) var focusStrip: FocusStripFfi?
 
     /// Bumped when `[keys]` changes, so every keycap is spelled again.
     private(set) var keymapVersion = 0
@@ -222,7 +224,7 @@ final class Engine {
     /// The header strip's words, from the counts and the bindings in force.
     var stripWords: HeaderStripWords {
         _ = keymapVersion
-        return HeaderStripWords(counts: focusCounts, hasActionOn: focusScope == .hasAction) {
+        return HeaderStripWords(strip: focusStrip, hasActionOn: focusScope == .hasAction) {
             [weak self] command in self?.session?.binding(for: command)
         }
     }
@@ -252,9 +254,9 @@ final class Engine {
         }
         countsReading = true
         Task {
-            let counts = await Task.detached { try? session.focusCounts() }.value
+            let strip = await Task.detached { try? session.focusStrip() }.value
             countsReading = false
-            if let counts { focusCounts = counts }
+            if let strip { focusStrip = strip }
             if countsOwed {
                 countsOwed = false
                 refreshCounts()

@@ -880,6 +880,9 @@ pub struct Session {
     /// for this host (specs/009-focus-macos R8). Held for as long as the
     /// session is, as the GTK app and the terminal hold theirs.
     _focus: postio_host::FocusHandle,
+    /// `[focus]` as it stands: what the strip's words depend on (filtering
+    /// on, how many digest rules), kept current by `follow_config`.
+    focus_config: Mutex<postio_config::FocusConfig>,
     /// `config.toml`, watched while the session lives: a change to `[keys]`
     /// rebinds at once and a change to `[focus]` reaches the engine, as in
     /// the GTK app (`follow_config`). `None` for a session given a document
@@ -2315,6 +2318,7 @@ impl Session {
                 link: Mutex::new(Some(link)),
                 wired: host.wired(),
                 _focus: engage_focus(&host, &config.focus, &source),
+                focus_config: Mutex::new(config.focus.clone()),
                 _host: host,
                 config_watch: Mutex::new(None),
                 focus_list: crate::focus_list::FocusDriver::new(
@@ -2421,6 +2425,7 @@ impl Session {
             link: Mutex::new(Some(link)),
             wired: host.wired(),
             _focus: engage_focus(&host, &focus_config, &source),
+            focus_config: Mutex::new(focus_config.clone()),
             _host: host,
             #[cfg(feature = "testing")]
             _scratch: None,
@@ -4452,6 +4457,8 @@ impl Session {
                 let _ = session.local.0.try_send(UiEvent::KeymapChanged);
             }
             if update.changed.focus {
+                *session.focus_config.lock().expect("focus config lock") =
+                    service.config().focus.clone();
                 session
                     ._host
                     .enable_focus(postio_host::FocusSetup::from_config(
@@ -4466,6 +4473,11 @@ impl Session {
                 tracing::warn!(%error, "config.toml will not be watched; edits need a restart")
             }
         }
+    }
+
+    /// `[focus]` as it stands.
+    pub(crate) fn focus_config(&self) -> postio_config::FocusConfig {
+        self.focus_config.lock().expect("focus config lock").clone()
     }
 
     /// Focus's list.

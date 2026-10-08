@@ -7,11 +7,8 @@ import SwiftUI
 /// and digest counts while they say something (C10). Every keycap is the
 /// user's binding for the command the control runs.
 ///
-/// **An FFI gap, mirrored.** The words are `postio_ui::focus_row`'s
-/// (`strip_counts`, `has_action_label`, `filtered::today`); the boundary
-/// hands over the numbers (`focusCounts`) but not the sentences, so they
-/// are composed here to the same rules until it does. The digest rules'
-/// count has no FFI at all, and is not drawn rather than guessed.
+/// The words are the engine's (`focusStrip`, composed by `postio_ui`'s
+/// strip functions as GTK's strip is): this holds none of its own.
 public struct HeaderStripWords: Equatable, Sendable {
     /// The command each control runs: the registry's ids.
     public enum Command {
@@ -33,30 +30,20 @@ public struct HeaderStripWords: Equatable, Sendable {
     /// "186 filtered today", only while something was.
     public let filtered: String?
     public let filteredCap: String?
-    /// "4 digest rules": `nil` until an FFI counts them.
+    /// "4 digest rules", only while there are some.
     public let digestRules: String?
     public let digestRulesCap: String?
 
-    public init(counts: FocusCountsFfi?, hasActionOn: Bool, binding: (String) -> String?) {
+    public init(strip: FocusStripFfi?, hasActionOn: Bool, binding: (String) -> String?) {
         place = "Inbox"
         placeCap = KeyCapSpelling.cap(binding(Command.folders))
-        if let counts {
-            let conversations = Counted.grouped(counts.conversations)
-            self.counts = counts.unread == 0
-                ? conversations
-                : "\(conversations) \u{b7} \(Counted.grouped(counts.unread)) unread"
-            hasAction = "Has action \u{b7} \(Counted.grouped(counts.hasAction))"
-            filtered = counts.filteredToday > 0
-                ? "\(Counted.grouped(counts.filteredToday)) filtered today" : nil
-        } else {
-            self.counts = nil
-            hasAction = "Has action"
-            filtered = nil
-        }
+        counts = strip?.counts
+        hasAction = strip?.hasAction ?? "Has action"
         hasActionCap = KeyCapSpelling.cap(binding(Command.hasAction))
         self.hasActionOn = hasActionOn
+        filtered = strip?.filteredToday
         filteredCap = KeyCapSpelling.cap(binding(Command.filtered))
-        digestRules = nil
+        digestRules = strip?.digestRules
         digestRulesCap = KeyCapSpelling.cap(binding(Command.digestRules))
     }
 }
