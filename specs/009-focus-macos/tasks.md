@@ -268,7 +268,9 @@ action, and undo through ⌘Z and Edit › Undo.
 - [x] T052 [US2] Implement the action bar (SwiftUI) in `macos/Sources/PostioKit/ActionBar.swift`: the count, the actions with keycaps (Archive `a`, Snooze `s`, Mark read `r`, Digest these… `d`, Task `t` only with a vault (C9), Label `l`, Move `m`), and the hints on the right. Add a minimal undo notice line (the pill proper is T093)
 
   *As built:* `ActionBarWords` holds the verbs in screen 01's order (`postio_ui::focus_dialog::BULK` less Delete, which the screen does not draw; the boundary does not export the table, so the Swift copy says so). The count is the controller's `FocusSelection.summary`. Task is left out: nothing across the boundary says yet whether capture has a vault (C9), and `ActionBarWords(vault:)` takes the answer once something does. The hints are `toggle`, `extend` and `clear`, as GTK's bulk bar words them, with caps from `KeyCapSpelling`, so they read `J K` and `⎋` where the screen draws `⇧J ⇧K` and `Esc` (C22's spelling; the shared `hints::short` is not exported). `UndoNoticeLine` draws the controller's `FocusToast` with Undo and its ⌘Z cap while the stack can take it back; in the main window completions, undos and refusals are now only the toast, and `Notice` is left for failures (`Notice.shownBesideFocusToast`), so one archive is announced once.
-- [ ] T053 [US2] Compare screen 03 (FR-061): `scripts/macos-shot.sh 03 --both` against `03-inbox-has-action-filter.png`. Record in `docs/notes/<date>-focus-macos-phase-2.md`
+- [x] T053 [US2] Compare screen 03 (FR-061): `scripts/macos-shot.sh 03 --both` against `03-inbox-has-action-filter.png`. Record in `docs/notes/<date>-focus-macos-phase-2.md`
+
+  *As built:* recorded in `docs/notes/2026-10-08-focus-macos-phase-2.md`. The state is reached with `POSTIO_DEMO_KEYS` (demo builds only), which presses keys once the list has landed: `'!'` for 03, `'x J J'` and `'x J J a'` for the bar and the undo line. Screen 03 itself shows no selection, so the bar is compared with screen 01's.
 
 ---
 
