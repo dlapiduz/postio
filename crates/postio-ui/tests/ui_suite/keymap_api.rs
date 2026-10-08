@@ -193,7 +193,14 @@ fn a_key_another_app_keeps_is_bound_to_nothing_here() {
 
     let now = std::time::Instant::now();
     let press = |frontend: Frontend, context: Context, key: &str| {
-        let (mut resolver, problems) = Resolver::from_commands_for(Commands::defaults(), frontend);
+        // Each app resolved for its own platform: the Mac's three-pane app on
+        // Apple, Focus and the terminal on Linux, whichever host runs this.
+        let platform = match frontend {
+            Frontend::Macos => Platform::Apple,
+            _ => Platform::Freedesktop,
+        };
+        let commands = Commands::resolve_on(&Default::default(), platform);
+        let (mut resolver, problems) = Resolver::from_commands_for(&commands, frontend);
         assert!(problems.is_empty(), "{frontend:?}: {problems:?}");
         resolver.press(&chord(key), KeyContext::from(context), false, now)
     };
@@ -221,7 +228,7 @@ fn a_key_another_app_keeps_is_bound_to_nothing_here() {
         "Focus answered the three-pane app's `ctrl+b`"
     );
     assert_eq!(
-        press(Frontend::Macos, Context::List, "ctrl+b"),
+        press(Frontend::Macos, Context::List, "cmd+b"),
         Outcome::Command("toggle_sidebar".to_owned())
     );
 }

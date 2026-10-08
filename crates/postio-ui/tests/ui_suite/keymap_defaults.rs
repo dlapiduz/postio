@@ -15,9 +15,13 @@ use postio_config::paths::Platform;
 use postio_core::{CommandId, Context};
 use postio_ui::keymap::{Binding, KeyContext, Keymap, Outcome, Resolver};
 
-/// The whole default set, resolved with no user overrides.
+/// The whole default set, resolved with no user overrides, for Linux: the
+/// tests below press Linux's spellings (`ctrl+…`), whichever host runs them.
 fn defaults() -> (Keymap, Vec<String>) {
-    Keymap::from_commands(&postio_core::Keymap::resolve(&KeyBindings::default()))
+    Keymap::from_commands(&postio_core::Keymap::resolve_on(
+        &KeyBindings::default(),
+        Platform::Freedesktop,
+    ))
 }
 
 fn resolver() -> Resolver {
@@ -295,7 +299,10 @@ fn a_keys_override_reaches_the_resolver_and_frees_the_default() {
         .overrides_mut()
         .insert("archive".to_owned(), "y".to_owned());
 
-    let (keymap, problems) = Keymap::from_commands(&postio_core::Keymap::resolve(&overrides));
+    let (keymap, problems) = Keymap::from_commands(&postio_core::Keymap::resolve_on(
+        &overrides,
+        Platform::Freedesktop,
+    ));
     assert!(problems.is_empty(), "{problems:?}");
     let mut resolver = Resolver::new(keymap);
 
@@ -317,7 +324,7 @@ fn an_unusable_override_leaves_the_command_its_default() {
         .overrides_mut()
         .insert("archive".to_owned(), "ctrl+".to_owned());
 
-    let resolved = postio_core::Keymap::resolve(&overrides);
+    let resolved = postio_core::Keymap::resolve_on(&overrides, Platform::Freedesktop);
     assert!(
         !resolved.problems().is_empty(),
         "the settings panel has to be able to say why"

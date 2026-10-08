@@ -267,8 +267,10 @@ fn a_broken_file_leaves_the_working_keys_alone() {
         Some("archive"),
         "the last good keymap stays in force"
     );
+    // The service resolves for the host, so `mod+e` is spelled for it.
+    let edit = postio_config::keys::expand_mod("mod+e", postio_config::paths::Platform::host());
     assert_eq!(
-        command(&mut resolver, "ctrl+e").as_deref(),
+        command(&mut resolver, &edit).as_deref(),
         Some("edit_config"),
         "including the key that opens the file to fix it"
     );
