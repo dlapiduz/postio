@@ -56,7 +56,7 @@ struct PostioApp: App {
         // Size and position across launches: the frame is `NSWindow`'s own
         // autosave, which is the only thing that survives a window being
         // closed and reopened rather than the app being quit.
-        .windowResizability(.contentSize)
+        .windowResizability(.contentMinSize)
 
         // A real window, not an overlay on the main one: `⌘,` has opened one
         // on this platform since Mac OS X 10.0, and ADR 0019 Q1 rejected the

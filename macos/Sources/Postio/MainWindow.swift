@@ -35,6 +35,9 @@ struct MainWindow: View {
                 inbox
             }
         }
+        // The inbox fills the window: without a size of its own the table
+        // reports almost none, and the window shrank to a strip of rows.
+        .frame(minWidth: 800, idealWidth: 1440, minHeight: 500, idealHeight: 900)
         // A count rather than a flag: two `⌘,` presses are two openings, and
         // `onChange` compares values (see `WindowRequest`).
         .onChange(of: engine.settingsWindow) { _, request in
