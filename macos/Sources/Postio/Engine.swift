@@ -206,16 +206,28 @@ final class Engine {
     /// Bumped when `[keys]` changes, so every keycap is spelled again.
     private(set) var keymapVersion = 0
 
+    /// The controller's cursor, selection, heading and toast, as its
+    /// intents left them: what the table, the action bar and the toast
+    /// line read (T049).
+    let focus = FocusIntents()
+
     private func makeFocusTable(_ session: PostioSession) -> FocusListTable {
         let table = FocusListTable(
-            model: FocusListModel(source: session) { [weak session] command in
+            model: FocusListModel(source: session, focus: focus) { [weak session] command in
                 session?.binding(for: command)
             })
+        // The pointer is told to the controller; the ring and the boxes move
+        // when its intents come back, never here.
+        table.onPoint = { [weak session] row in session?.focusPoint(row) }
+        table.onPick = { [weak session] row, range in session?.focusPick(row, range: range) }
+        table.onAtTop = { [weak session] atTop in session?.focusAtTop(atTop) }
         table.onAction = { [weak self, weak table] command, row in
-            // An answer on a row is about that row: the cursor goes there
-            // first, so the verb lands where the click did.
-            table?.cursor = row
-            self?.run(command, on: self?.focusCursorMessage)
+            // An answer on a row is about that row: the controller's cursor
+            // goes there first (synchronously, on the other side), so a verb
+            // that aims at the cursor lands where the click did, and one
+            // answered here is aimed at that row's message.
+            self?.session?.focusPoint(row)
+            self?.run(command, on: table?.model.row(at: row)?.id)
         }
         return table
     }
@@ -223,7 +235,10 @@ final class Engine {
     /// The header strip's words, from the counts and the bindings in force.
     var stripWords: HeaderStripWords {
         _ = keymapVersion
-        return HeaderStripWords(strip: focusStrip, hasActionOn: focusScope == .hasAction) {
+        // On while the controller's `!` heading stands: the toggle is the
+        // controller's (`toggle_has_action`), and its heading is how it says
+        // so.
+        return HeaderStripWords(strip: focusStrip, hasActionOn: focus.heading != nil) {
             [weak self] command in self?.session?.binding(for: command)
         }
     }
@@ -233,7 +248,6 @@ final class Engine {
         guard let session else { return }
         focusScope = scope
         focusListed = false
-        focusTable?.model.openOnFirstRow()
         session.openFocus(scope)
         refreshCounts()
     }
@@ -480,6 +494,12 @@ final class Engine {
             notice = Notice.winner(showing: notice, arriving: arriving)
             noticeToken += 1
         }
+        // The controller's intents: the cursor, the selection, `!`'s heading,
+        // the toast (T049). The table draws what changed.
+        if let change = focus.apply(event) {
+            focusTable?.apply(change)
+            return
+        }
         switch event {
         case let .focusListChanged(total):
             focusCount = total
@@ -603,11 +623,6 @@ final class Engine {
         case Intercepted.search:
             showingSearch = true
             focusField?()
-        case HeaderStripWords.Command.hasAction:
-            // Until the controller's commands cross the FFI (T040), the
-            // toggle is the one Focus verb the window answers itself: it
-            // opens the other list.
-            openFocus(focusScope == .hasAction ? .inbox : .hasAction)
         case Intercepted.back where finding != nil:
             // Out of command mode and out of the field: `>` was a question,
             // and Escape is "never mind".

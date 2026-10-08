@@ -249,7 +249,9 @@ action, and undo through ⌘Z and Edit › Undo.
 - [ ] T048 [US2] Write failing Swift tests:
   - `macos/Tests/PostioKitTests/IntentApplierTests.swift`: applying `Cursor`, `Selection`, `Toast` and `KeyboardHome` to a fake main-window model changes exactly what the intent says;
   - `macos/Tests/PostioAppKitTests/UndoManagerTests.swift`: `PostioUndoManager.canUndo` is false with no description; with a description `undoMenuItemTitle` is "Undo <description>"; `undo()` invokes `undo`; `canRedo` is always false.
-- [ ] T049 [US2] Implement `IntentApplier` in `macos/Sources/PostioKit/IntentApplier.swift`: the one switch over `IntentFfi`, on the main actor. The unknown-intent arm logs the name and does nothing
+- [x] T049 [US2] Implement `IntentApplier` in `macos/Sources/PostioKit/IntentApplier.swift`: the one switch over `IntentFfi`, on the main actor. The unknown-intent arm logs the name and does nothing
+
+  *As built:* `FocusIntents` (`macos/Sources/PostioKit/FocusIntents.swift`), because T046 sends the intents as `UiEvent`s rather than `IntentFfi`: one switch over `FocusCursor`, `FocusSelection`, `FocusHeading`, `FocusListToTop` and `FocusToast`, returning what changed so `FocusListTable.apply` redraws only that. Every other event is `nil` and changes nothing, which is the unknown arm. `FocusListModel` reads its cursor, selection and heading from it and has no setters left; the table reports clicks (`focusPoint`, `focusPick`) and the top (`focusAtTop`, only on a change) and moves nothing itself. Its tests are `FocusIntentsTests` and `FocusListPointerTests`.
 - [ ] T050 [US2] Rework `macos/Sources/Postio/KeyMonitor.swift` to call the new `key(…)`: swallow when `handled`, show `pending` as the chord hint, and keep the IME and `TypingResponder` guards. Remove the `UiContext` argument, because the context is the controller's
 - [ ] T051 [US2] Implement `PostioUndoManager` (an `NSUndoManager` subclass) in `macos/Sources/PostioAppKit/PostioUndoManager.swift`:
   - it caches `undo_description()`, refreshed on each `Toast`/`Notice` intent;

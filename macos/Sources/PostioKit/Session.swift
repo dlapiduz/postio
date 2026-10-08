@@ -111,6 +111,28 @@ public final class PostioSession {
     /// says how long it is; pages follow as `FocusPageReady`.
     public func openFocus(_ scope: FocusScopeFfi) { inner.openFocus(scope: scope) }
 
+    /// A plain click put the cursor on `position`. The controller answers
+    /// with `FocusCursor` on `nextEvent`; nothing moves before that.
+    public func focusPoint(_ position: Int) {
+        guard let row = UInt32(exactly: position) else { return }
+        inner.focusPoint(position: row)
+    }
+
+    /// A modified click on `position`: `range` for ⇧ (from the anchor), a
+    /// toggle for ⌘. Answered with `FocusSelection` and `FocusCursor`.
+    public func focusPick(_ position: Int, range: Bool) {
+        guard let row = UInt32(exactly: position) else { return }
+        inner.focusPick(position: row, range: range)
+    }
+
+    /// Whether the list stands scrolled to its very top: where an undo
+    /// that brings rows in above leaves it.
+    public func focusAtTop(_ atTop: Bool) { inner.focusAtTop(atTop: atTop) }
+
+    /// What Undo would take back now, in the toast's words, or `nil`. A
+    /// store read: off the main actor (`PostioUndoManager.refresh`).
+    public nonisolated func undoDescription() -> String? { inner.undoDescription() }
+
     /// The header strip's counts, read now.
     public func focusCounts() throws -> FocusCountsFfi { try inner.focusCounts() }
 

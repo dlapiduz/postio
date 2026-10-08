@@ -12,7 +12,8 @@ import SwiftUI
 /// model already knows, so laying the table out never fetches a page.
 ///
 /// **The table's own selection is off.** The cursor and Focus's selection
-/// are the controller's and arrive as intents (T040); `NSTableView`'s
+/// are the controller's and arrive as intents (`FocusIntents`); a click is
+/// reported to it (`onPoint`, `onPick`) and moves nothing here. `NSTableView`'s
 /// selection would be a second opinion about both, and a blue fill the
 /// design does not draw. The cursor is an accent ring drawn by the row
 /// view, around that row only, and a selected row shows a checked box in
@@ -26,6 +27,23 @@ public final class FocusListTable: NSObject {
     /// Run a row's action -- a click on Reply, Accept, Snooze -- with the
     /// row it was on.
     public var onAction: ((String, Int) -> Void)?
+
+    /// A plain click on a row: `focusPoint`. The ring moves when the
+    /// controller's `FocusCursor` comes back, never here.
+    public var onPoint: ((Int) -> Void)?
+
+    /// A modified click on a row: `focusPick`, with `range` for ⇧ and a
+    /// toggle for ⌘.
+    public var onPick: ((Int, Bool) -> Void)?
+
+    /// Whether the list stands at its very top, said when that changes:
+    /// `focusAtTop`. An undo that brings rows in above keeps the list there
+    /// only if it was there.
+    public var onAtTop: ((Bool) -> Void)?
+
+    /// What was last said through `onAtTop`, so a scroll that stays on the
+    /// same side of the top says nothing.
+    private var saidAtTop: Bool?
 
     /// How many cells were made rather than reused, so reuse can be
     /// asserted rather than eyeballed (T035).
@@ -75,6 +93,24 @@ public final class FocusListTable: NSObject {
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = true
         scrollView.backgroundColor = .textBackgroundColor
+
+        // A click is the table's `action`, read with the modifiers held:
+        // its own selection is off, so this is the only thing a click does.
+        tableView.target = self
+        tableView.action = #selector(rowClicked)
+
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(boundsChanged),
+            name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
+    }
+
+    @objc private func rowClicked() {
+        clicked(row: tableView.clickedRow, modifiers: NSApp.currentEvent?.modifierFlags ?? [])
+    }
+
+    @objc private func boundsChanged() {
+        scrolled()
     }
 
     // MARK: what the engine says
@@ -86,6 +122,7 @@ public final class FocusListTable: NSObject {
         heightsOwed = []
         tableView.reloadData()
         if let cursor = model.cursor { tableView.scrollRowToVisible(cursor) }
+        scrolled()
     }
 
     /// `FocusPageReady`: redraw that page's rows, and tell the table which of
@@ -107,24 +144,66 @@ public final class FocusListTable: NSObject {
 
     // MARK: cursor and selection
 
-    /// The row the keyboard is on: the first when the list opens (C30).
-    public var cursor: Int? {
-        get { model.cursor }
-        set {
-            let before = model.cursor
-            model.moveCursor(to: newValue)
-            redraw(rows: [before, model.cursor].compactMap { $0 })
-            if let row = model.cursor { tableView.scrollRowToVisible(row) }
+    /// The row the keyboard is on: the controller's, as its last
+    /// `FocusCursor` said (`FocusIntents`).
+    public var cursor: Int? { model.cursor }
+
+    /// The conversations marked, drawn as the checked box.
+    public var selected: Set<Int64> { model.selected }
+
+    /// A click on `row` with `modifiers` held: told to the controller, which
+    /// answers with the intents that move the ring and the boxes. ⌘ toggles
+    /// the row, ⇧ takes the range from the anchor, a plain click points.
+    public func clicked(row: Int, modifiers: NSEvent.ModifierFlags) {
+        guard row >= 0, row < model.count else { return }
+        if modifiers.contains(.shift) {
+            onPick?(row, true)
+        } else if modifiers.contains(.command) {
+            onPick?(row, false)
+        } else {
+            onPoint?(row)
         }
     }
 
-    /// The conversations marked, drawn as the checked box.
-    public var selected: Set<Int64> {
-        get { model.selected }
-        set {
-            model.select(newValue)
+    /// Draw what one of the controller's intents changed
+    /// (`FocusIntents.apply`): only the rows it moved, and the scroll.
+    public func apply(_ change: FocusIntents.Change) {
+        switch change {
+        case let .cursor(previous, toTop):
+            redraw(rows: [previous, model.cursor].compactMap { $0 })
+            if toTop {
+                scrollToTop()
+            } else if let row = model.cursor, row < tableView.numberOfRows {
+                tableView.scrollRowToVisible(row)
+            }
+        case .selection:
             redrawVisible()
+        case .heading:
+            // The day headings come or go, and with them the heights of the
+            // rows that drew one.
+            tableView.noteHeightOfRows(
+                withIndexesChanged: IndexSet(integersIn: 0..<tableView.numberOfRows))
+            redrawVisible()
+        case .listToTop:
+            scrollToTop()
+        case .toast:
+            break
         }
+    }
+
+    private func scrollToTop() {
+        scrollView.contentView.scroll(to: .zero)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    /// Say whether the list stands at its very top, when that changed.
+    func scrolled() {
+        // Nothing is remembered as said until somebody is listening.
+        guard let onAtTop else { return }
+        let atTop = scrollView.contentView.bounds.origin.y <= 0
+        guard atTop != saidAtTop else { return }
+        saidAtTop = atTop
+        onAtTop(atTop)
     }
 
     private func redraw(rows: [Int]) {
@@ -203,7 +282,7 @@ extension FocusListTable: NSTableViewDelegate {
     ) -> NSView? {
         let cell = cell(reusing: tableView.makeView(withIdentifier: Self.cellIdentifier, owner: self))
         let shown = model.row(at: row)
-        cell.show(shown, picked: shown.map { model.selected.contains($0.id) } ?? false)
+        cell.show(shown, picked: shown.map { model.isPicked($0.id) } ?? false)
         cell.onAction = { [weak self] command in self?.onAction?(command, row) }
         // A row redrawn in place keeps its row view, which must follow.
         if let rowView = tableView.rowView(atRow: row, makeIfNecessary: false) as? FocusRowView {
@@ -226,7 +305,7 @@ extension FocusListTable: NSTableViewDelegate {
     private func dress(_ rowView: FocusRowView, row: Int, shown: FocusRowModel?) {
         rowView.isCursor = row == model.cursor
         rowView.heading = shown?.heading != nil
-        rowView.isPicked = shown.map { model.selected.contains($0.id) } ?? false
+        rowView.isPicked = shown.map { model.isPicked($0.id) } ?? false
     }
 }
 

@@ -272,13 +272,20 @@ public final class FocusListModel {
     /// How many rows the list draws.
     public private(set) var count = 0
 
-    /// Where the keyboard is: the first row when the list opens (C30), and
-    /// nothing in an empty list. The controller moves it later (T040).
-    public private(set) var cursor: Int?
+    /// The controller's cursor, selection and heading, as its intents left
+    /// them (`FocusIntents`). Read here; written only by the intents.
+    public let focus: FocusIntents
 
-    /// The conversations marked, drawn as the checked box in the gutter.
-    /// Empty until the controller's selection reaches the Mac (T040).
-    public private(set) var selected: Set<Int64> = []
+    /// Where the keyboard is: the first row when the list opens (C30), and
+    /// nothing in an empty list. The controller's (`FocusIntents`).
+    public var cursor: Int? { focus.cursor }
+
+    /// The messages marked, drawn as the checked box in the gutter.
+    public var selected: Set<Int64> { focus.selected }
+
+    /// Whether the row for `message` draws the checked box: marked by id,
+    /// or everything selected (C19).
+    public func isPicked(_ message: Int64) -> Bool { focus.isPicked(message) }
 
     /// What has been learned about a row: its shape, and its day.
     private struct Shape {
@@ -292,8 +299,13 @@ public final class FocusListModel {
     /// row's actions on every redraw.
     private var caps: [String: String?] = [:]
 
-    public init(source: FocusRowSource, binding: @escaping (String) -> String?) {
+    public init(
+        source: FocusRowSource,
+        focus: FocusIntents = FocusIntents(),
+        binding: @escaping (String) -> String?
+    ) {
         self.source = source
+        self.focus = focus
         self.binding = binding
     }
 
@@ -305,27 +317,7 @@ public final class FocusListModel {
         shapes = [:]
         // A re-read keeps the keyboard where it was, inside the list; an
         // empty list has nowhere for it to be.
-        cursor = count == 0 ? nil : min(cursor ?? 0, count - 1)
-    }
-
-    /// Open on the first row, as every list does (C30).
-    public func openOnFirstRow() {
-        cursor = count == 0 ? nil : 0
-    }
-
-    /// Put the keyboard on `index`, inside the list. Where it goes is the
-    /// controller's to decide (T040); this only holds the answer.
-    public func moveCursor(to index: Int?) {
-        guard let index, count > 0 else {
-            cursor = nil
-            return
-        }
-        cursor = min(max(index, 0), count - 1)
-    }
-
-    /// Mark exactly `ids`. The controller's selection, held for drawing.
-    public func select(_ ids: Set<Int64>) {
-        selected = ids
+        focus.listResized(count: count)
     }
 
     /// `[keys]` changed: every cap may spell something else now.
@@ -347,8 +339,7 @@ public final class FocusListModel {
         {
             learn(before, at: index - 1)
         }
-        let headed = startsADay(index)
-        return FocusRowModel(row, heading: headed == true ? row.dayHeading : nil) { [self] command in
+        return FocusRowModel(row, heading: heading(at: index, day: row.dayHeading)) { [self] command in
             lookUp(command)
         }
     }
@@ -358,7 +349,16 @@ public final class FocusListModel {
     /// says otherwise.
     public func height(at index: Int) -> Double {
         let layout = shapes[index]?.layout ?? .oneLine
-        return FocusRowMetrics.height(layout, headed: startsADay(index) ?? (index == 0))
+        let headed = focus.heading != nil ? index == 0 : startsADay(index) ?? (index == 0)
+        return FocusRowMetrics.height(layout, headed: headed)
+    }
+
+    /// The heading drawn over the row at `index`: `!`'s one heading over
+    /// the first row while it narrows the list (screen 03), else the day's
+    /// over the first row of each day.
+    private func heading(at index: Int, day: String) -> String? {
+        if let single = focus.heading { return index == 0 ? single : nil }
+        return startsADay(index) == true ? day : nil
     }
 
     /// A page landed: learn its rows, and say which rows to redraw -- the
