@@ -1,0 +1,37 @@
+# Esc closes the open message and the keyboard is back on the row it came
+# from, with the selection as it was (specs/009-focus-macos T064; contract
+# invariant 7).
+#
+# Back takes one rung at a time: the open message first, then -- on a later
+# press -- the selection. Closing the message must not move the cursor,
+# scroll the list, or drop the rows a person had selected before reading.
+apps   = ["focus"]
+source = { kind = "flow", ref = "Esc returns to the same row" }
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "toggle_selection"
+check   = { selection.count = 1 }
+
+[[step]]
+id      = "row"
+command = "next_message"
+check   = { cursor.index = 1 }
+
+[[step]]
+command = "open_message"
+settle  = { until = { view = "reader" } }
+check   = { view = "reader", keyboard.region = "reader" }
+expect  = "The second row's message is open over the list."
+
+[[step]]
+command = "back"
+check   = { view = "list", keyboard.region = "list", cursor.index = { same_as = "row" }, cursor.id = { same_as = "row" }, selection.count = 1 }
+expect  = "The message has closed. The cursor ring is on the row it was opened from and the first row is still selected; nothing scrolled."
+
+[[step]]
+command = "back"
+check   = { keyboard.region = "list", cursor.index = { same_as = "row" }, selection.count = 0 }
+expect  = "A second Esc clears the selection and leaves the cursor where it is."

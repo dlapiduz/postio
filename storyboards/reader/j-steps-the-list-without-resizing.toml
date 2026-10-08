@@ -1,0 +1,37 @@
+# `j` in the open message shows the next row's message in the same place,
+# at the same size, and the list's cursor follows behind it
+# (specs/009-focus-macos T064; the Mac pack's message window §1: "width
+# comes from the main window, never from the message, so j/k never resize
+# it").
+#
+# The window is not closed and reopened between messages: one message gives
+# way to the next, and a newsletter on paper does not widen the window.
+apps   = ["focus"]
+source = { kind = "flow", ref = "j steps the list without resizing" }
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "open_message"
+settle  = { until = { view = "reader" } }
+check   = { view = "reader", cursor.index = 0 }
+expect  = "The first row's message is open."
+
+[[step]]
+command = "next_message"
+settle  = { watch_ms = 400 }
+check   = { view = "reader", keyboard.region = "reader", cursor.index = 1 }
+expect  = "The second row's message is shown in the same window, at the same size; the list's cursor moved to the second row behind it."
+
+[[step]]
+command = "next_message"
+settle  = { watch_ms = 400 }
+check   = { view = "reader", cursor.index = 2 }
+expect  = "And the third: still the same window, the same width, the position line counting on."
+
+[[step]]
+command = "prev_message"
+settle  = { watch_ms = 400 }
+check   = { view = "reader", cursor.index = 1 }
+expect  = "k steps back the same way."
