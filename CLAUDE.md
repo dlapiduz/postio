@@ -572,3 +572,17 @@ never "Starred". v1 scope: Linux, IMAP+SMTP, one provider preset table, and no A
 in Postio itself; a local model the user runs and connects is optional and
 never required (constitution, Scope). Other AI is deferred to epic E12. OAuth
 is in scope — ADR 0006, tracked under #2.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on this repo, filed and claimed through `scripts/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five triage roles map onto this repo's own labels (`ready`, `needs-maintainer`, `question`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` at the root, decisions in `docs/decisions/` and `specs/`. See `docs/agents/domain.md`.
