@@ -1,0 +1,355 @@
+import AppKit
+import PostioFFI
+import Testing
+
+@testable import PostioAppKit
+@testable import PostioKit
+
+/// A row source that answers from a dictionary, so the table's behaviour can
+/// be asserted without a store, a session or the Keychain.
+///
+/// The *model* — paging, read-ahead, the bounded cache, the generation guard —
+/// is tested in Rust where it lives. What is checked here is narrower and
+/// entirely Swift's: how many rows the table claims, what it draws for one
+/// that has not arrived, and whether it reuses its cells.
+final class StubRowSource: MessageRowSource {
+    var rowCount: UInt32
+    var rows: [UInt32: RowFfi]
+    /// The messages the *model* says are marked, which is not the same thing
+    /// as the row the table has highlighted.
+    var marked: Set<Int64> = []
+    /// Excerpts, when this stands in for a search rather than a folder.
+    var snippets: [Int64: SnippetFfi] = [:]
+    private(set) var asked: [UInt32] = []
+
+    init(rowCount: UInt32, rows: [UInt32: RowFfi] = [:]) {
+        self.rowCount = rowCount
+        self.rows = rows
+    }
+
+    func row(at position: UInt32) -> RowFfi? {
+        asked.append(position)
+        return rows[position]
+    }
+
+    func isSelected(_ message: Int64) -> Bool { marked.contains(message) }
+
+    func snippet(for message: Int64) -> SnippetFfi? { snippets[message] }
+}
+
+private func makeRow(
+    id: Int64 = 1,
+    from: String? = "ada@example.com",
+    subject: String? = "A subject",
+    preview: String? = "A preview",
+    seen: Bool = true,
+    flagged: Bool = false,
+    threadCount: UInt32 = 1,
+    participants: String = "",
+    isThread: Bool = false
+) -> RowFfi {
+    RowFfi(
+        id: id,
+        thread: nil,
+        // The discriminator the verbs need, added on `main` while the macOS
+        // branch was out: a thread row's `id` is its newest message, so
+        // `thread` being set is not on its own the answer to "is this a
+        // conversation row". Defaulted to a message row here because that is
+        // what these tests are about.
+        isThread: isThread,
+        from: from,
+        fromAddress: from.map { "\($0.lowercased().replacingOccurrences(of: " ", with: "."))@example.com" },
+        initials: "AL",
+        subject: subject,
+        preview: preview,
+        receivedAt: 0,
+        seen: seen,
+        flagged: flagged,
+        answered: false,
+        // `Option<String>` on the boundary, not a bool: "which state" rather
+        // than "is a draft", so macOS can draw what GTK draws (spec 003 US4).
+        // Nil here — these tests are about ordinary mail.
+        sendState: nil,
+        hasAttachments: false,
+        threadCount: threadCount,
+        participants: participants
+    )
+}
+
+@MainActor
+struct MessageTableTests {
+    @Test func theRowCountComesFromTheEngineNotAnArray() {
+        // A hundred thousand rows with two of them resident. If the table
+        // sized itself from what it holds it would claim two, and the whole
+        // windowing arrangement would be pointless.
+        let source = StubRowSource(rowCount: 100_000, rows: [0: makeRow(), 1: makeRow()])
+        let controller = MessageTableController(source: source)
+        let table = NSTableView()
+
+        #expect(controller.numberOfRows(in: table) == 100_000)
+    }
+
+    @Test func aRowThatHasNotArrivedDrawsAPlaceholder() {
+        // Not a blank. A blank row and a row that is genuinely empty look
+        // identical, and only one of them is worth waiting for.
+        let source = StubRowSource(rowCount: 10)
+        let controller = MessageTableController(source: source)
+
+        let shown = controller.presentation(at: 3)
+        #expect(shown.isPlaceholder)
+        #expect(shown == .placeholder)
+    }
+
+    @Test func aDeliveredRowDrawsItsContents() {
+        let source = StubRowSource(
+            rowCount: 1,
+            rows: [0: makeRow(from: "grace@example.com", subject: "Compiler", seen: false)]
+        )
+        let controller = MessageTableController(source: source)
+
+        let shown = controller.presentation(at: 0)
+        #expect(!shown.isPlaceholder)
+        #expect(shown.sender == "grace@example.com")
+        #expect(shown.subject == "Compiler")
+        #expect(shown.unread)
+    }
+
+    @Test func aConversationOfOneShowsNoBadge() {
+        // The badge means "there is more here than this" (ADR 0015), so at one
+        // it says nothing. A "1" beside every row is noise that reads as data.
+        let alone = RowPresentation(row: makeRow(threadCount: 1))
+        #expect(alone.threadBadge == nil)
+
+        let several = RowPresentation(row: makeRow(threadCount: 4))
+        #expect(several.threadBadge == "4")
+    }
+
+    @Test func aMessageWithNoSenderOrSubjectSaysSo() {
+        // Both happen. A blank column reads as a rendering failure, which
+        // sends the reader looking in the wrong place.
+        let bare = RowPresentation(row: makeRow(from: nil, subject: "   ", preview: nil))
+        #expect(bare.sender == "(no sender)")
+        #expect(bare.subject == "(no subject)")
+        #expect(bare.preview.isEmpty)
+    }
+
+    @Test func anOfferedCellIsReusedRatherThanRebuilt() throws {
+        // Counted, not eyeballed: a table building a fresh view per row
+        // scrolls acceptably in a demo and badly in a real mailbox, and
+        // nothing about the appearance says which it is doing.
+        //
+        // This asserts the half that is ours. Whether `NSTableView` offers a
+        // view back needs a real row lifecycle and is Apple's to get right;
+        // whether we *take* the offer is the part that can be written wrong.
+        let controller = MessageTableController(source: StubRowSource(rowCount: 200))
+
+        let made = controller.cell(reusing: nil)
+        #expect(controller.cellsCreated == 1)
+
+        let again = controller.cell(reusing: made)
+        #expect(again === made, "an offered cell was discarded")
+        #expect(
+            controller.cellsCreated == 1,
+            "a second cell was built for a row that could have reused the first"
+        )
+    }
+
+    @Test func somethingThatIsNotOneOfOurCellsIsNotReused() throws {
+        // AppKit can hand back a view registered under the same identifier by
+        // something else. Casting it blindly would crash; ignoring it and
+        // building our own is the only safe reading.
+        let controller = MessageTableController(source: StubRowSource(rowCount: 1))
+        let foreign = NSView()
+
+        let made = controller.cell(reusing: foreign)
+        #expect(made is MessageRowCell)
+        #expect(controller.cellsCreated == 1)
+    }
+
+    @Test func aCellShowsThisRowAndNotTheLastOne() {
+        // The classic recycled-cell bug: a cell that only sets the fields it
+        // has keeps the previous row's subject under this row's sender. It
+        // looks like a data problem and is a drawing one.
+        let cell = MessageRowCell()
+        cell.show(RowPresentation(row: makeRow(from: "ada@example.com", subject: "First")))
+        cell.show(RowPresentation(row: makeRow(from: "grace@example.com", subject: nil)))
+
+        // Nothing of the first row survives into the second.
+        let rendered = cell.renderedForTesting
+        #expect(rendered.sender == "grace@example.com")
+        #expect(rendered.subject == "(no subject)")
+        #expect(!rendered.subject.contains("First"))
+    }
+}
+
+
+/// The cursor and the selection, which are not the same thing.
+///
+/// `docs/PRODUCT.md` §9. The model lives behind the boundary and is asserted
+/// there (`ffi_suite/selection.rs`); what Swift has to get right is that the
+/// table *draws* it rather than keeping its own — and that the mark is
+/// cleared on reuse, which is the classic recycled-cell bug wearing a
+/// different hat.
+@MainActor
+@Suite struct SelectionDrawingTests {
+    @Test func aMarkedRowIsDrawnMarked() {
+        let source = StubRowSource(rowCount: 2, rows: [0: makeRow(id: 7), 1: makeRow(id: 8)])
+        source.marked = [8]
+        let controller = MessageTableController(source: source)
+
+        #expect(controller.presentation(at: 0).selected == false)
+        #expect(controller.presentation(at: 1).selected == true)
+    }
+
+    @Test func theMarkComesFromTheModelOnEveryDraw() {
+        // Not cached. A controller holding its own copy is how a table ends
+        // up drawing a selection the engine would not act on, and the
+        // engine's answer is the one an action uses.
+        let source = StubRowSource(rowCount: 1, rows: [0: makeRow(id: 7)])
+        let controller = MessageTableController(source: source)
+        #expect(controller.presentation(at: 0).selected == false)
+
+        source.marked = [7]
+        #expect(controller.presentation(at: 0).selected == true)
+    }
+
+    @Test func aReusedCellDoesNotKeepTheLastRowsMark() {
+        // The recycled-cell bug, applied to the one field that misreports
+        // what an action is about to hit.
+        let cell = MessageRowCell()
+        cell.show(RowPresentation(row: makeRow(id: 7), selected: true))
+        #expect(cell.isMarkedForTesting == true)
+
+        cell.show(RowPresentation(row: makeRow(id: 8), selected: false))
+        #expect(cell.isMarkedForTesting == false)
+    }
+
+    @Test func aRowThatHasNotArrivedIsNotMarked() {
+        // A placeholder stands for a message nobody has seen an id for, so
+        // claiming it is marked would be a claim about nothing.
+        #expect(RowPresentation.placeholder.selected == false)
+    }
+}
+
+
+/// A row has to be tall enough for what it draws.
+///
+/// The bug this exists for was a literal `62` in the table against a cell that
+/// lays out to about 68: every row after the first had its sender clipped.
+/// Invisible to every other test here — they all assert *what* a cell shows,
+/// and this is about whether it fits.
+@MainActor
+@Suite struct RowHeightTests {
+    @Test func aRowIsTallEnoughForItsContents() {
+        let cell = MessageRowCell()
+        cell.show(
+            RowPresentation(
+                sender: "ada@example.com",
+                subject: "A subject long enough to need its own line",
+                preview: "And a preview under it, which is the third line",
+                unread: true,
+                flagged: true,
+                threadBadge: "12",
+                isPlaceholder: false
+            )
+        )
+        // A realistic width: narrow enough to be a list column, wide enough
+        // that nothing wraps and the height is the three lines.
+        cell.frame = NSRect(x: 0, y: 0, width: 360, height: MessageRowCell.preferredHeight())
+        cell.layoutSubtreeIfNeeded()
+
+        let clipped = "the cell lays out to \(cell.fittingSize.height) in a row of "
+            + "\(MessageRowCell.preferredHeight()), so its top line is clipped"
+        #expect(
+            cell.fittingSize.height <= MessageRowCell.preferredHeight(),
+            Comment(rawValue: clipped)
+        )
+    }
+
+    @Test func theRowHeightIsNotAbsurd() {
+        // The other direction: a derived number that ran away would give a
+        // list of six enormous rows, which is its own kind of broken.
+        #expect(MessageRowCell.preferredHeight() > 40)
+        #expect(MessageRowCell.preferredHeight() < 120)
+    }
+
+    // -- a reload keeps the cursor's row selected (found using the app) ----
+
+    private func mounted(rows: UInt32) -> MessageTableController {
+        let controller = MessageTableController(source: StubRowSource(rowCount: rows))
+        let scroll = MessageListView.makeTable(controller: controller)
+        controller.tableView = scroll.documentView as? NSTableView
+        controller.tableView?.reloadData()
+        return controller
+    }
+
+    @Test func aReloadPutsTheSelectionBackOnTheCursorsRow() {
+        // Reading an unread message marks it read after a few seconds; the
+        // change reloads the list, and `reloadData()` dropped the selection
+        // the cursor had made -- the highlight vanished from under the
+        // message being read. The boundary still had the cursor there.
+        let controller = mounted(rows: 10)
+        controller.showCursor(on: 3)
+        controller.tableView?.deselectAll(nil)  // what the reload did
+
+        controller.reload(keepingCursorOn: 3)
+
+        #expect(controller.tableView?.selectedRow == 3)
+    }
+
+    @Test func puttingTheSelectionBackIsNotReportedAsAMove() {
+        // The cursor did not move, so nothing is said to the boundary about
+        // it -- a report would re-open the conversation it is already on.
+        let controller = mounted(rows: 10)
+        var reported: [UInt32?] = []
+        controller.onCursorRowChanged = { reported.append($0) }
+        controller.showCursor(on: 3)
+        controller.tableView?.deselectAll(nil)
+        reported = []
+
+        controller.reload(keepingCursorOn: 3)
+
+        #expect(reported.isEmpty)
+    }
+
+    @Test func aMarkChangeRedrawsTheMarkWhereTheCursorIs() throws {
+        // `x` marks the row the cursor is on. The model changed and nothing
+        // redrew the row, so the tint the cell knows how to draw was never
+        // drawn -- the user saw no sign that anything was marked.
+        let source = StubRowSource(
+            rowCount: 3,
+            rows: [0: makeRow(id: 10), 1: makeRow(id: 11), 2: makeRow(id: 12)]
+        )
+        let controller = MessageTableController(source: source)
+        let scroll = MessageListView.makeTable(controller: controller)
+        // In a window, so the rows are real cells drawn once -- the question
+        // is whether a mark change draws them *again*.
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 600),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = scroll
+        controller.tableView = scroll.documentView as? NSTableView
+        let table = try #require(controller.tableView)
+        table.reloadData()
+        scroll.layoutSubtreeIfNeeded()
+        controller.showCursor(on: 1)
+        let before = try #require(table.view(atColumn: 0, row: 1, makeIfNecessary: false) as? MessageRowCell)
+        #expect(!before.isMarkedForTesting)
+        var reported: [UInt32?] = []
+        controller.onCursorRowChanged = { reported.append($0) }
+
+        source.marked = [11]
+        controller.marksChanged()
+
+        let cell = try #require(table.view(atColumn: 0, row: 1, makeIfNecessary: false) as? MessageRowCell)
+        #expect(cell.isMarkedForTesting, "the mark is drawn")
+        #expect(table.selectedRow == 1, "and the cursor stays where it was")
+        #expect(reported.isEmpty, "which is not a move")
+    }
+
+    @Test func aReloadWithNoCursorSelectsNothing() {
+        let controller = mounted(rows: 10)
+        controller.reload(keepingCursorOn: nil)
+        #expect(controller.tableView?.selectedRow == -1)
+    }
+}

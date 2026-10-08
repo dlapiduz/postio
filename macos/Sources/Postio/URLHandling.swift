@@ -1,4 +1,5 @@
 import AppKit
+import PostioAppKit
 import PostioKit
 
 /// What Postio does when the system hands it a `mailto:` link.

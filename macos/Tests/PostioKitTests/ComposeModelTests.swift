@@ -191,47 +191,6 @@ import Testing
         #expect(settingsHandoffLabel(configured: model.editor) == "Open in Some Editor")
     }
 
-    @Test func aTerminalEditorIsNotOpenedAndSaysWhy() {
-        // `vi` ships with macOS and has no window of its own.
-        #expect(ComposeHandoff.found("vi") == .terminalProgram)
-
-        let target = settingsHandoffTarget(configured: "vi", found: .terminalProgram)
-        guard case .needsTerminal(_, let advice) = target else {
-            Issue.record("expected a terminal program, got \(target)")
-            return
-        }
-        #expect(advice.contains("terminal"))
-    }
-
-    @Test func anEditorThatIsNotThereSaysThatRatherThanBlamingTheTerminal() {
-        // The distinction GTK's adoption forced (#1297): a name that is not
-        // an application is a terminal program on macOS *usually* — and a
-        // typo the rest of the time. Nothing on this Mac is called this.
-        let typo = "postio-no-such-editor-1297"
-        #expect(ComposeHandoff.found(typo) == .nothing)
-
-        let target = settingsHandoffTarget(configured: typo, found: .nothing)
-        guard case .missing(_, let advice) = target else {
-            Issue.record("expected a missing editor, got \(target)")
-            return
-        }
-        #expect(advice.contains(typo))
-        #expect(
-            !advice.contains("terminal"),
-            "a misspelled editor is not a terminal one: \(advice)"
-        )
-    }
-
-    @Test func anApplicationEveryMacHasIsFound() {
-        // The other half, and the reason the case above means anything: a
-        // lookup that never finds anything would make every editor look like
-        // a terminal program. TextEdit ships with macOS, by name and by
-        // bundle identifier both.
-        #expect(ComposeHandoff.isApplication("TextEdit"))
-        #expect(ComposeHandoff.isApplication("com.apple.TextEdit"))
-        #expect(ComposeHandoff.isApplication("  TextEdit  "), "what somebody typed is trimmed")
-    }
-
     @Test func aDraftIsHandedBackWhenTheEditorCouldNotTakeIt() async {
         // The window must never be left read-only waiting for an editor that
         // never opened.

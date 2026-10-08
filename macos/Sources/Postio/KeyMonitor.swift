@@ -1,5 +1,6 @@
 import AppKit
 import PostioFFI
+import PostioAppKit
 import PostioKit
 
 /// The window-level `NSEvent` monitor that dispatches every keystroke.

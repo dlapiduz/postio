@@ -1,4 +1,5 @@
 import PostioFFI
+import PostioAppKit
 import PostioKit
 import SwiftUI
 

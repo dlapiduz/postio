@@ -17,6 +17,7 @@ let package = Package(
     products: [
         .executable(name: "Postio", targets: ["Postio"]),
         .library(name: "PostioKit", targets: ["PostioKit"]),
+        .library(name: "PostioAppKit", targets: ["PostioAppKit"]),
     ],
     targets: [
         // The C side of the boundary: the header and module map `uniffi`
@@ -33,11 +34,20 @@ let package = Package(
             path: "Sources/PostioFFI"
         ),
 
-        // Everything hand-written that is not a view.
+        // Models, plans and policy: no AppKit, so the package can reach iOS
+        // (#1264). `NoAppKitTests` holds the line.
         .target(name: "PostioKit", dependencies: ["PostioFFI"]),
 
-        .executableTarget(name: "Postio", dependencies: ["PostioKit"]),
+        // The AppKit layer: tables, windows, key handling, the menu bar. It
+        // depends on PostioKit and never the other way round.
+        .target(name: "PostioAppKit", dependencies: ["PostioKit", "PostioFFI"]),
+
+        .executableTarget(name: "Postio", dependencies: ["PostioKit", "PostioAppKit"]),
 
         .testTarget(name: "PostioKitTests", dependencies: ["PostioKit"]),
+        .testTarget(
+            name: "PostioAppKitTests",
+            dependencies: ["PostioAppKit", "PostioKit", "PostioFFI"]
+        ),
     ]
 )
