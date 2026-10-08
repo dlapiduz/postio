@@ -20,6 +20,15 @@ import PostioFFI
 /// this frontend owns, unsaved, and the store has not seen most of it. So
 /// these are `Intercepted`, and the coverage sweep counts them as answered
 /// for that reason.
+/// The four verbs that write: the controller's (T073), named for the
+/// toolbar's compose button and its tip.
+public enum WritingCommand {
+    public static let compose = "compose"
+    public static let reply = "reply"
+    public static let replyAll = "reply_all"
+    public static let forward = "forward"
+}
+
 @MainActor
 public enum ComposeCommands {
     /// The marks that are a request to the editing surface rather than a call.

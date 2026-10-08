@@ -29,13 +29,9 @@ public enum Intercepted {
     /// The conversation pane's own four. They are commands like any other —
     /// bound, rebindable, in the menu — but what they act on is a fold this
     /// frontend is holding, so the boundary has nothing to do with them.
-    /// Writing mail: the four verbs that open a compose window (#1272). The
-    /// draft is the boundary's; the *window* is this frontend's, which is why
-    /// these are handled here rather than dispatched.
-    public static let compose = "compose"
-    public static let reply = "reply"
-    public static let replyAll = "reply_all"
-    public static let forward = "forward"
+    // Not `c`, `e`, `E` or `f`: Focus's controller opens the composer and
+    // says what it answers (specs/009-focus-macos T073), and this frontend
+    // draws it (`ComposerWindow`, T079).
     /// Paging the reading pane. Here rather than dispatched because the
     /// document is this frontend's — and because a hardened web view has no
     /// scroll call, so the jump between the shared anchors happens in the
@@ -101,6 +97,5 @@ public enum Intercepted {
         updateCredential, rebuildAccountIndex, setDefaultAccount,
         showImages,
         quit, unsubscribe, alwaysShowImages,
-        compose, reply, replyAll, forward,
     ] + composeVerbs
 }

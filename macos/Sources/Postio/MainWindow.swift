@@ -50,12 +50,6 @@ struct MainWindow: View {
             guard request.wasRaised else { return }
             openWindow(id: request.id)
         }
-        // A compose window per draft: the store holds the draft, this is
-        // what can open a window for it.
-        .onChange(of: engine.compose.request) { _, request in
-            guard request.wasRaised, let draft = engine.compose.requested else { return }
-            openWindow(id: WindowId.compose, value: draft)
-        }
     }
 
     private var inbox: some View {
@@ -355,12 +349,12 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
     }
 
     @objc private func compose() {
-        engine.run(Intercepted.compose)
+        engine.run(WritingCommand.compose)
     }
 
     /// "Compose · c", as `postio_ui::focus_row::compose_tooltip` says it.
     private func composeTip() -> String {
-        KeyCapSpelling.cap(engine.session?.binding(for: Intercepted.compose))
+        KeyCapSpelling.cap(engine.session?.binding(for: WritingCommand.compose))
             .map { "Compose \u{b7} \($0)" } ?? "Compose"
     }
 

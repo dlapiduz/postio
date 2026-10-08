@@ -58,6 +58,13 @@ public final class ComposeModel: Identifiable {
     /// Whether the window may close without asking.
     public private(set) var sent = false
 
+    /// When what is written was last saved: the title's "Draft saved
+    /// locally 16:12".
+    public internal(set) var savedAt: Date?
+
+    /// It has gone to the Outbox, or been thrown away: nothing left to save.
+    func markSent() { sent = true }
+
     public init(id: Int64, draft: DraftFfi) {
         self.id = id
         self.draft = draft
@@ -383,12 +390,35 @@ public final class ComposeModel: Identifiable {
     /// composer that forgot it would insert a new row on every autosave and
     /// fill the Drafts folder with one half-written message.
     public func save(through session: PostioSession) {
-        guard let saved = session.saveDraft(edited) else {
-            status = "This draft could not be saved."
-            return
+        _ = save { session.saveDraft($0) }
+    }
+
+    /// What the status line, and the toast, say when a save failed.
+    public static let notSaved = "This draft could not be saved."
+
+    /// Write what has been typed through `write`, and keep the id it
+    /// answers with; `false` when it could not be written.
+    @discardableResult
+    public func save(with write: (DraftFfi) -> DraftFfi?) -> Bool {
+        guard let saved = write(edited) else {
+            status = Self.notSaved
+            return false
         }
-        draft = saved
+        // Only what the store owns: what is being typed stays as typed.
+        draft.id = saved.id
+        draft.attachments = saved.attachments
+        draft.path = saved.path
+        // Everything else is what was just written.
+        draft.to = saved.to
+        draft.cc = saved.cc
+        draft.bcc = saved.bcc
+        draft.subject = saved.subject
+        draft.body = saved.body
+        draft.bodyHtml = saved.bodyHtml
+        draft.rich = saved.rich
+        draft.remindAt = saved.remindAt
         status = nil
+        return true
     }
 
     /// Attach files chosen in an open panel.
@@ -546,44 +576,4 @@ public final class ComposeModel: Identifiable {
         status = nil
         return true
     }
-}
-
-/// The compose windows that are open.
-///
-/// A store rather than a window per view, because only a view can open a
-/// window and a command can be run from anywhere: `⌘N` in the main window
-/// asks for a compose window, and this is where the draft waits until one
-/// exists to draw it.
-@MainActor
-@Observable
-public final class ComposeStore {
-    private var models: [Int64: ComposeModel] = [:]
-    private var nextId: Int64 = 1
-
-    /// The window most recently asked for, as a count that changes even when
-    /// two requests are for the same thing — see `WindowRequest`.
-    public private(set) var request = WindowRequest(id: "compose")
-    /// Which draft that request is about.
-    public private(set) var requested: Int64?
-
-    public init() {}
-
-    /// Take a draft and ask for a window to write it in.
-    public func open(_ draft: DraftFfi) {
-        let id = nextId
-        nextId += 1
-        models[id] = ComposeModel(id: id, draft: draft)
-        requested = id
-        request.raise()
-    }
-
-    /// The model a window is drawing, if it is still open.
-    public func model(_ id: Int64) -> ComposeModel? { models[id] }
-
-    /// Forget a window that has closed.
-    public func close(_ id: Int64) { models[id] = nil }
-
-    /// How many are open, for the tests and for anything that has to know
-    /// whether closing the last one means anything.
-    public var count: Int { models.count }
 }

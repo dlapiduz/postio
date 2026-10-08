@@ -120,6 +120,7 @@ final class Engine {
             digest = DigestModel(engine: session, source: session)
             ruleSheet = RuleSheetModel(engine: session)
             capture = CaptureModel(engine: session)
+            composer = ComposerWindow(engine: session)
             // The toolbar was built before there were bindings to spell.
             keycapsChanged?()
             state = .open
@@ -202,8 +203,73 @@ final class Engine {
     /// what can actually open one.
     private(set) var settingsWindow = WindowRequest(id: WindowId.settings)
 
-    /// The messages being written, and the windows they are waiting for.
-    let compose = ComposeStore()
+    // MARK: the composer (T079)
+
+    /// The composer, as the controller's intents leave it: one at a time,
+    /// in the secondary window (M4).
+    private(set) var composer: ComposerWindow?
+
+    /// The address book, lent to recipient completion after one prompt
+    /// (T078). Read for each answer and kept nowhere.
+    @ObservationIgnored
+    private lazy var contacts = ContactsSource(book: SystemContactBook())
+
+    /// How wide the composer is over a 1440 main window (screen 05): wider
+    /// than the message window, since it is written in, not read.
+    static let composerWidth: CGFloat = 980
+
+    /// What the controller said about the composer.
+    private func apply(_ change: ComposerWindow.Change) {
+        switch change {
+        case let .open(kind, message):
+            openComposer(kind, answering: message)
+        case let .save(composition):
+            guard let session else { return }
+            composer?.save(composition) { session.saveDraft($0) }
+        case .close:
+            secondary.close(.composer)
+        }
+    }
+
+    /// Make the draft the controller asked for and show it. With no draft
+    /// to show -- no account to write from, a message gone -- the stack is
+    /// put right and nothing opens.
+    private func openComposer(_ kind: ComposerKindFfi, answering message: Int64?) {
+        guard let session, let composer else { return }
+        let draft: DraftFfi?
+        switch kind {
+        case .new: draft = session.newDraft()
+        case .reply: draft = message.flatMap { session.replyDraft(to: $0, all: false) }
+        case .replyAll: draft = message.flatMap { session.replyDraft(to: $0, all: true) }
+        case .forward: draft = message.flatMap { session.forwardDraft($0) }
+        case .draft: draft = message.flatMap { session.draftForMessage($0) }
+        }
+        guard let draft else {
+            NSSound.beep()
+            composer.couldNotOpen()
+            return
+        }
+        composer.show(draft)
+        showComposerWindow()
+    }
+
+    /// The composer's window over the main window (M4): in the open one,
+    /// refilled, or a new one as wide as screen 05's.
+    private func showComposerWindow() {
+        guard let composer, let model = composer.model, let session, let main = mainWindow else { return }
+        let content = ComposeView(
+            session: session, model: model,
+            edited: { [weak composer] in composer?.edited() },
+            close: { [weak self] in self?.secondary.close(.composer) }
+        )
+        .preferredColorScheme(colorScheme)
+        let hosting = NSHostingView(rootView: content)
+        hosting.sizingOptions = []
+        let width = min(Self.composerWidth, max(SecondaryWindowController.minimumHeight, main.frame.width - 80))
+        secondary.show(
+            .composer, content: hosting, width: width, title: model.title, over: main,
+            configure: { KeyWindowTracker.tag($0, as: .compose, draft: model.id) })
+    }
 
     /// What the settings window's account actions are doing, held here
     /// because their progress arrives as events and a window that owned
@@ -373,12 +439,6 @@ final class Engine {
         }
     }
 
-    /// The message under the Focus cursor, if its row has arrived.
-    var focusCursorMessage: Int64? {
-        guard let table = focusTable, let row = table.cursor else { return nil }
-        return table.model.row(at: row)?.id
-    }
-
     // MARK: the message window
 
     /// The message window's state (specs/009-focus-macos US3), once a
@@ -415,17 +475,6 @@ final class Engine {
         run(command)
     }
 
-    /// The message the open message window shows, while it has the
-    /// keyboard: what Reply, Reply all and Forward answer from it.
-    private var messageInFront: Int64? {
-        if keyWindow.current == .message { return messageWindow?.shown }
-        // The email open in the digest's window, while it has the keyboard.
-        if secondary.kind == .digest, secondary.window?.isKeyWindow == true {
-            return digest?.view?.email?.message
-        }
-        return nil
-    }
-
     /// Do what the controller said about the windows over the list (T070).
     private func apply(_ surface: FocusIntents.Surface) {
         switch surface {
@@ -446,8 +495,6 @@ final class Engine {
             guard let table = focusTable?.tableView, let window = table.window else { return }
             window.makeKeyAndOrderFront(nil)
             window.makeFirstResponder(table)
-        case let .openDraft(message):
-            write(session?.draftForMessage(message))
         case .openDigest:
             // `DigestModel` hears `FocusOpenDigest` first and opens the
             // digest's window (T114); this is reached only before a session
@@ -514,6 +561,12 @@ final class Engine {
     private func secondaryClosed(_ kind: SurfaceKindFfi) {
         if kind == .capture {
             if capture?.closedByToolkit() == true { session?.focusSurfaceClosed(.capture) }
+            return
+        }
+        if kind == .composer {
+            // The close button or ⌘W, or Send and Discard closing it: the
+            // controller ends the composition (and asks for its save).
+            if composer?.closedByToolkit() == true { session?.focusSurfaceClosed(.composer) }
             return
         }
         if kind == .digest {
@@ -1010,6 +1063,12 @@ final class Engine {
             apply(change)
             return
         }
+        // The composer (T079): `FocusComposer`, `FocusSaveDraft`, and
+        // `FocusCloseSurface(.composer)`.
+        if let change = composer?.apply(event) {
+            apply(change)
+            return
+        }
         // The controller's intents: the cursor, the selection, `!`'s heading,
         // the toast (T049). The table draws what changed.
         if let change = focus.apply(event) {
@@ -1290,16 +1349,6 @@ final class Engine {
             // A request the main window turns into `openWindow(id:)`,
             // because only a view can open a window (#1261).
             settingsWindow.raise()
-        case Intercepted.compose:
-            write(session?.newDraft())
-        case Intercepted.reply:
-            write(replyDraft(all: false, to: target ?? messageInFront))
-        case Intercepted.replyAll:
-            write(replyDraft(all: true, to: target ?? messageInFront))
-        case Intercepted.forward:
-            guard let session, let message = target ?? messageInFront ?? focusCursorMessage
-            else { return false }
-            write(session.forwardDraft(message))
         // -- the settings window's accounts pane ------------------------
         //
         // All aim at the row that window's keyboard is on, and a missing
@@ -1346,8 +1395,7 @@ final class Engine {
             // A compose window in front gets first refusal on the composer's
             // own verbs — and only the one with the keyboard.
             if keyWindow.current == .compose,
-               let draft = keyWindow.currentDraft,
-               let composer = compose.model(draft),
+               let composer = composer?.model,
                ComposeCommands.run(id, on: composer, through: session)
             {
                 return true
@@ -1355,21 +1403,6 @@ final class Engine {
             session?.invoke(id)
         }
         return true
-    }
-
-    /// Open a compose window for `draft`, or say why there is none: on a
-    /// fresh install there is no account to write from, and a `⌘N` that
-    /// appeared to do nothing is a bug this port has produced three times.
-    private func write(_ draft: DraftFfi?) {
-        guard let draft else {
-            NSSound.beep()
-            return
-        }
-        // One secondary window at a time (M4): the composer replaces the
-        // message it answers. The composer is not yet a surface the
-        // controller is told of (phase 4), so it is closed here.
-        secondary.close(.message)
-        compose.open(draft)
     }
 
     // MARK: postio:// links (T117)
@@ -1404,16 +1437,12 @@ final class Engine {
     /// Open a composer on a `mailto:` link. `false` when there is nothing to
     /// open one from, which the caller says out loud.
     func write(mailto: Mailto) -> Bool {
-        guard let session, let draft = session.mailtoDraft(mailto) else { return false }
-        compose.open(draft)
+        guard let session, let composer, let draft = session.mailtoDraft(mailto) else { return false }
+        // The Mac made this draft, so the controller is told the composer
+        // is up (it ends the composition the composer held first).
+        composer.open(own: draft)
+        showComposerWindow()
         return true
-    }
-
-    /// A reply to `target`, or to the message the cursor is on — the cursor,
-    /// not the selection: replying to twelve marked messages is not a thing.
-    private func replyDraft(all: Bool, to target: Int64? = nil) -> DraftFfi? {
-        guard let session, let message = target ?? focusCursorMessage else { return nil }
-        return session.replyDraft(to: message, all: all)
     }
 
     /// Stop the engines and drop the store, in that order. Called from the

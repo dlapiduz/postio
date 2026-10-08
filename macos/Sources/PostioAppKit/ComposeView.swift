@@ -16,6 +16,7 @@ import PostioKit
 public struct ComposeView: View {
     private let session: PostioSession
     private let model: ComposeModel
+    private let edited: () -> Void
     private let close: () -> Void
 
     @FocusState private var focus: Field?
@@ -39,10 +40,12 @@ public struct ComposeView: View {
     public init(
         session: PostioSession,
         model: ComposeModel,
+        edited: @escaping () -> Void,
         close: @escaping () -> Void
     ) {
         self.session = session
         self.model = model
+        self.edited = edited
         self.close = close
     }
 
@@ -128,14 +131,10 @@ public struct ComposeView: View {
             if model.isHandedOff { model.takeBack(through: session) }
         }
         // Autosave, because unsaved words are the thing a compose window must
-        // never lose. On a pause rather than a keystroke: a save is one row,
-        // but it is also one write lock, and typing is not the time to take
-        // one.
-        .onChange(of: model.edited) { _, _ in scheduleSave() }
-        .onDisappear {
-            if model.isDirty, !model.sent { model.save(through: session) }
-            close()
-        }
+        // never lose. On a pause rather than a keystroke: the controller
+        // waits out the quiet period and says when (`FocusSaveDraft`), and
+        // saves at once when the composer closes.
+        .onChange(of: model.edited) { _, _ in edited() }
     }
 
     /// What is attached, each with a way off again.
@@ -468,10 +467,6 @@ public struct ComposeView: View {
         panel.allowedContentTypes = [.image]
         guard panel.runModal() == .OK, let file = panel.url else { return }
         model.insertImage(from: file, through: session)
-    }
-
-    private func scheduleSave() {
-        model.save(through: session)
     }
 
     private func accelerator(_ command: String) -> String? {

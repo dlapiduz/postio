@@ -137,13 +137,12 @@ public final class FocusIntents {
 
     /// What the controller says about the windows over the list (T070): a
     /// message to show, a surface to close, what the open message does, and
-    /// the keyboard going home.
+    /// the keyboard going home. The composer's own events are
+    /// `ComposerWindow`'s (T079).
     public enum Surface: Equatable {
         /// `FocusOpenMessage`: show `message`, row `index` of `total`, in
         /// the message window, opening it or in place of what it shows.
         case openMessage(message: Int64, index: UInt32, total: UInt32)
-        /// `FocusOpenDraft`: a draft not yet on its way opens in the composer.
-        case openDraft(message: Int64)
         /// `FocusOpenDigest`: a digest's window (a later phase).
         case openDigest(delivery: Int64)
         /// `FocusCloseSurface`: close it, then say `focusSurfaceClosed`.
@@ -161,8 +160,6 @@ public final class FocusIntents {
         switch event {
         case let .focusOpenMessage(message, index, total):
             return .openMessage(message: message, index: index, total: total)
-        case let .focusOpenDraft(message):
-            return .openDraft(message: message)
         case let .focusOpenDigest(delivery):
             return .openDigest(delivery: delivery)
         case let .focusCloseSurface(kind):

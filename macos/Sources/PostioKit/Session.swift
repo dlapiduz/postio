@@ -155,7 +155,26 @@ public final class PostioSession {
     /// button, or the controller's own `FocusCloseSurface`.
     public func focusSurfaceClosed(_ kind: SurfaceKindFfi) { inner.focusSurfaceClosed(kind: kind) }
 
-    // MARK: the command bar and the folders popover (T084-T086)
+    // MARK: the composer (T079)
+
+    /// Something was written in the composer: said on every edit.
+    public func focusComposerEdited() { inner.focusComposerEdited() }
+
+    /// How the save `FocusSaveDraft { composition }` asked for went.
+    public func focusDraftSaved(_ composition: UInt64, kept: Bool, error: String?) {
+        inner.focusDraftSaved(composition: composition, kept: kept, error: error)
+    }
+
+    /// What completes `text` in a recipient field of `account`'s draft:
+    /// mail's correspondents and groups, with what Contacts lent ranked
+    /// among them (T075). Blocks on the store: off the main actor.
+    public nonisolated func recipientSuggestions(
+        account: Int64, text: String, limit: UInt32, extra: [ExternalContactFfi]
+    ) -> [RecipientSuggestionFfi] {
+        inner.recipientSuggestions(account: account, text: text, limit: limit, extra: extra)
+    }
+
+        // MARK: the command bar and the folders popover (T084-T086)
 
     /// The bar's field holds `text` now: said on every change.
     public func focusBarTyped(_ text: String) { inner.focusBarTyped(text: text) }

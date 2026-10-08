@@ -79,14 +79,6 @@ struct PostioApp: App {
         .defaultSize(width: 900, height: 560)
         .windowResizability(.contentSize)
 
-        // Compose: its own window, several at once, each in the Window menu
-        // (canvas screen 26). `WindowGroup` rather than `Window` for exactly
-        // that reason — a `Window` is a singleton, and writing two messages
-        // at once is ordinary.
-        WindowGroup(id: WindowId.compose, for: Int64.self) { $draft in
-            ComposeWindow(engine: engine, draft: draft)
-        }
-        .defaultSize(width: 640, height: 520)
     }
 }
 
@@ -147,27 +139,6 @@ private struct SettingsWindow: View {
             guard let session = engine.session else { return }
             let today = await Task.detached { try? session.focusCounts().filteredToday }.value
             settings.filteredToday = today
-        }
-    }
-}
-
-/// One compose window's content, for the same reason as `SettingsWindow`:
-/// its reads -- the open drafts, the session, the theme -- belong to this
-/// window, not to the scene graph the menu bar is built from.
-private struct ComposeWindow: View {
-    let engine: Engine
-    let draft: Int64?
-
-    var body: some View {
-        if let draft, let model = engine.compose.model(draft), let session = engine.session {
-            ComposeView(
-                session: session,
-                model: model,
-                close: { engine.compose.close(draft) }
-            )
-            .preferredColorScheme(engine.colorScheme)
-            .navigationTitle(model.title)
-            .background(WindowConfigurator(role: .compose, draft: draft))
         }
     }
 }

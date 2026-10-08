@@ -170,7 +170,6 @@ struct FocusIntentsTests {
         let before = focus.snapshot
         let events: [UiEvent] = [
             .focusOpenMessage(message: 7, index: 2, total: 9),
-            .focusOpenDraft(message: 8),
             .focusOpenDigest(delivery: 3),
             .focusCloseSurface(kind: .message),
             .focusReader(verb: .switchTreatment),
@@ -182,7 +181,6 @@ struct FocusIntentsTests {
         #expect(focus.snapshot == before)
         let expected: [FocusIntents.Surface?] = [
             .openMessage(message: 7, index: 2, total: 9),
-            .openDraft(message: 8),
             .openDigest(delivery: 3),
             .close(.message),
             .reader(.switchTreatment),

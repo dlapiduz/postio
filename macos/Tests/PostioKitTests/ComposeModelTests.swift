@@ -91,39 +91,6 @@ import Testing
         #expect(!model.edited.rich)
     }
 
-    @Test func aStoreHandsOutOneWindowPerDraft() {
-        let store = ComposeStore()
-        store.open(draft(subject: "First"))
-        let first = store.requested
-        store.open(draft(subject: "Second"))
-
-        #expect(store.count == 2, "several compose windows at once, as the canvas says")
-        #expect(first != store.requested, "each is its own window")
-        #expect(store.model(store.requested!)?.title == "Second")
-    }
-
-    @Test func twoRequestsForAWindowAreTwoRequests() {
-        // `onChange` compares values, so a second `⌘N` must not look like
-        // nothing happened — the same trap `⌘,` fell into (#1261).
-        let store = ComposeStore()
-        store.open(draft())
-        let first = store.request
-        store.open(draft())
-
-        #expect(store.request != first)
-    }
-
-    @Test func closingAWindowForgetsItsDraft() {
-        let store = ComposeStore()
-        store.open(draft())
-        let id = store.requested!
-
-        store.close(id)
-
-        #expect(store.count == 0)
-        #expect(store.model(id) == nil)
-    }
-
     @Test func attachingWithNoSessionChangesNothing() {
         // The window cannot outlive its session, but the model can be asked
         // anyway, and a crash is not an answer.
