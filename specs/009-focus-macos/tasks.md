@@ -37,6 +37,9 @@ built (FR-063).
   every difference in `docs/notes/<date>-focus-macos-phase-<n>.md`, fixed or
   explained by a decision (C*, M*).
 - **Before any cargo command on this Mac**, `unset RUSTUP_TOOLCHAIN`.
+- **Uncalled public functions.** Slice 1 lists `digest_size`, `for_platform`
+  and `refresh_counts` in `scripts/checks/uncalled-pub-fn-baseline.txt`, each
+  naming the task that first calls it. That task removes the line.
 
 ---
 

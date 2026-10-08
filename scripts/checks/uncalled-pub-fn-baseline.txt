@@ -26,10 +26,12 @@ can_redo                          # crates/postio-body/src/edit.rs:118
 check_budget                      # crates/postio-core/src/perf_budget.rs:65
 closing_after                     # crates/postio-account/src/imap/transport.rs:634
 conformance_cases                 # crates/postio-core/src/aim.rs:346
+digest_size                       # crates/postio-ui/src/focus_dialog.rs -- spec 009 slice 1; the Mac's digest window calls it (tasks.md T114)
 dispatch_ext                      # crates/postio-core/src/dispatch.rs:458
 extend_selection_to               # crates/postio-core/src/state.rs:562
 extensions_to_enable              # crates/postio-account/src/imap/dispatch.rs:197
 failing_tls                       # crates/postio-account/src/imap/transport.rs:618
+for_platform                      # crates/postio-ui/src/focus_dialog.rs, crates/postio-focus/src/lib.rs -- spec 009 slice 1; the FFI's Focus driver calls both (tasks.md T027, T063)
 fts_match                         # crates/postio-search/src/query.rs:417
 has_name                          # crates/postio-account/src/backend/capability.rs:180
 has_pending                       # crates/postio-storage/src/repository/operations.rs:435
@@ -72,6 +74,7 @@ recount                           # crates/postio-storage/src/repository/mailbox
 recount_account                   # crates/postio-storage/src/repository/mailboxes.rs:303
 recovers_on_its_own               # crates/postio-sync/src/connect.rs:209
 refresh_capabilities              # crates/postio-account/src/imap/mod.rs:300
+refresh_counts                    # crates/postio-focus/src/lib.rs -- spec 009 slice 1; the feed calls it after each landing (tasks.md T024)
 rejected_recipient                # crates/postio-smtp/src/error.rs:255
 remove_member                     # crates/postio-storage/src/repository/contact_groups.rs:105
 reports_destination_uid           # crates/postio-account/src/imap/dispatch.rs:181
