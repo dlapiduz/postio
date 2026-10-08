@@ -12,10 +12,6 @@ repository.workspace = true
 postio-client = { workspace = true }
 postio-config = { workspace = true }
 postio-core = { workspace = true }
-postio-model = { workspace = true }
-postio-search = { workspace = true }
-postio-ui = { workspace = true }
-chrono = { workspace = true }
 tracing = { workspace = true }
 
 
