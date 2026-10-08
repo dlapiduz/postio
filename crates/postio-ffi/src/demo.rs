@@ -78,7 +78,9 @@ fn show(_session: &Session, _state: &str) -> bool {
 /// `seed`, or `seed:screen` -- a store with the row screen 04 opens
 /// refiled as one of the handoff's HTML bodies (`postio_demo::treatment_demo`:
 /// `27` the newsletter on paper, `28` the work mail in app colours), which
-/// the message window's screens are photographed over.
+/// the message window's screens are photographed over; or a file that
+/// configures what a screen needs (`22`/`23` a model for the digest's
+/// summary, `25` a vault, [`demo_config`]).
 #[cfg(feature = "demo")]
 fn open(name: &str) -> Result<Arc<Session>, SessionError> {
     let (seed, screen) = match name.split_once(':') {
@@ -89,14 +91,54 @@ fn open(name: &str) -> Result<Arc<Session>, SessionError> {
         message: format!("There is no demo store called \u{201c}{name}\u{201d}."),
     })?;
     let (database, account) = crate::session::blocking(postio_demo::seeded(seed));
-    if let Some(screen) = screen {
+    if let Some(screen @ ("27" | "28" | "29" | "30" | "31")) = screen {
         crate::session::blocking(postio_demo::treatment_demo(&database, account, screen));
     }
-    Session::open(
-        crate::SessionOptions::in_memory_with(database)
-            .with_config_for_test(&postio_demo::config()),
-    )
+    let (config, vault) = demo_config(screen).map_err(|error| SessionError::StoreUnavailable {
+        message: format!("The demo's vault could not be made: {error}"),
+    })?;
+    if let Some(vault) = vault
+        && let Ok(mut kept) = DEMO_VAULT.lock()
+    {
+        *kept = Some(vault);
+    }
+    Session::open(crate::SessionOptions::in_memory_with(database).with_config_for_test(&config))
 }
+
+/// A model on this computer that nothing answers at: a socket path that
+/// does not exist, so configuring it connects to nothing, anywhere. Only
+/// the digest summary is switched on, and the demo's summary is already
+/// written (`postio_demo`), so nothing ever asks it anything; the inbox
+/// keeps the built-in detector.
+#[cfg(feature = "demo")]
+const DEMO_MODEL: &str = "\n[focus.model]\nendpoint = \"unix:/nonexistent/postio-demo-model.sock\"\n\
+model = \"demo\"\nneeds_action = false\ndigest_summary = true\nlike_this = false\n";
+
+/// The demo's file for `screen`, and the vault it names, if any: the
+/// demo's own (`postio_demo::config`), with a model for the digest's
+/// summary on screens 22 and 23 (C6), and a throwaway vault with projects
+/// on screen 25 (C9), as GTK's `shot` makes one.
+#[cfg(feature = "demo")]
+fn demo_config(screen: Option<&str>) -> std::io::Result<(String, Option<tempfile::TempDir>)> {
+    let base = postio_demo::config();
+    match screen {
+        Some("22" | "23") => Ok((format!("{base}{DEMO_MODEL}"), None)),
+        Some("25") => {
+            let vault = postio_demo::demo_vault()?;
+            let text = format!(
+                "{base}\n[focus.vault]\npath = \"{}\"\nprojects = \"Projects\"\n",
+                vault.path().display()
+            );
+            Ok((text, Some(vault)))
+        }
+        _ => Ok((base, None)),
+    }
+}
+
+/// The vault the demo session writes into, kept for the life of the
+/// process: it is a throwaway, but the session reads it until it quits.
+#[cfg(feature = "demo")]
+static DEMO_VAULT: std::sync::Mutex<Option<tempfile::TempDir>> = std::sync::Mutex::new(None);
 
 #[cfg(not(feature = "demo"))]
 fn open(_seed: &str) -> Result<Arc<Session>, SessionError> {
@@ -139,6 +181,44 @@ mod tests {
         };
         assert!(found, "the newsletter is in the inbox");
         session.shutdown();
+    }
+
+    /// Screen 22 is the digest on its summary, which the Mac opens only
+    /// with a model configured for it (C6); screen 25 is capture, which
+    /// opens only with a vault (C9). `small:22`/`small:23` and `small:25`
+    /// say so in the demo's file -- a model nothing can reach, and a
+    /// throwaway vault with projects -- and leave the store as seeded.
+    #[test]
+    fn the_digest_and_capture_screens_have_a_model_and_a_vault() {
+        let (text, vault) = demo_config(Some("22")).expect("a config");
+        let config = postio_config::Config::from_toml_str(&text).expect("it parses");
+        assert!(
+            config
+                .focus
+                .model_for(postio_config::model::ModelFeature::DigestSummary)
+                .is_some(),
+            "{text}"
+        );
+        assert!(
+            config
+                .focus
+                .model_for(postio_config::model::ModelFeature::NeedsAction)
+                .is_none(),
+            "the inbox keeps the built-in detector: {text}"
+        );
+        assert!(vault.is_none());
+
+        let (text, vault) = demo_config(Some("25")).expect("a config");
+        let config = postio_config::Config::from_toml_str(&text).expect("it parses");
+        let vault = vault.expect("a vault");
+        let configured = config.focus.vault.expect("[focus.vault]");
+        assert_eq!(configured.root().as_deref(), Some(vault.path()));
+        assert!(vault.path().join("Projects/Harbor.md").exists());
+        assert!(config.focus.model.is_none(), "{text}");
+
+        let (text, vault) = demo_config(None).expect("a config");
+        assert_eq!(text, postio_demo::config());
+        assert!(vault.is_none());
     }
 
     /// Whether the session says an event `wanted` picks, draining what it
