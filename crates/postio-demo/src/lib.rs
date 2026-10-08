@@ -86,7 +86,7 @@ impl Seed {
 /// A store seeded as `seed` asks, and the account its mail is in.
 ///
 /// The store half only: a backfill in flight is an event, which
-/// [`storyboard`] says once the host is up.
+/// `postio-gtk`'s `demo::storyboard` says once the host is up.
 pub async fn seeded(seed: Seed) -> (Store, AccountId) {
     match seed {
         Seed::Empty => empty_demo().await,
