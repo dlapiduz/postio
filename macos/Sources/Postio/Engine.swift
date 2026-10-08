@@ -117,6 +117,7 @@ final class Engine {
             makeBar(session)
             makePicker(session)
             filtered = FilteredModel(engine: session)
+            digest = DigestModel(engine: session, source: session)
             // The toolbar was built before there were bindings to spell.
             keycapsChanged?()
             state = .open
@@ -413,7 +414,12 @@ final class Engine {
     /// The message the open message window shows, while it has the
     /// keyboard: what Reply, Reply all and Forward answer from it.
     private var messageInFront: Int64? {
-        keyWindow.current == .message ? messageWindow?.shown : nil
+        if keyWindow.current == .message { return messageWindow?.shown }
+        // The email open in the digest's window, while it has the keyboard.
+        if secondary.kind == .digest, secondary.window?.isKeyWindow == true {
+            return digest?.view?.email?.message
+        }
+        return nil
     }
 
     /// Do what the controller said about the windows over the list (T070).
@@ -439,9 +445,10 @@ final class Engine {
         case let .openDraft(message):
             write(session?.draftForMessage(message))
         case .openDigest:
-            // The digest's window is a later phase (spec 009 US9). The kind
-            // only: a log never carries which delivery, let alone what it holds.
-            Self.log.info("a digest window was asked for; not built on the Mac yet")
+            // `DigestModel` hears `FocusOpenDigest` first and opens the
+            // digest's window (T114); this is reached only before a session
+            // has made one, when there is no window to open.
+            break
         }
     }
 
@@ -501,6 +508,13 @@ final class Engine {
     /// A secondary window closed, however it did: tell the engine, which
     /// sends the keyboard home.
     private func secondaryClosed(_ kind: SurfaceKindFfi) {
+        if kind == .digest {
+            digestChrome = nil
+            // Only a close the toolkit made -- the close button, ⌘W -- is
+            // said: the controller's own `FocusCloseSurface` already left.
+            if digest?.closedByToolkit() == true { session?.focusSurfaceClosed(.digest) }
+            return
+        }
         guard kind == .message else { return }
         messageChrome = nil
         messageWindow?.closed()
@@ -543,6 +557,92 @@ final class Engine {
     /// Filtered, as the controller's intents leave it: drawn in the list's
     /// place while it is up.
     private(set) var filtered: FilteredModel?
+
+    // MARK: the digest's window (T114)
+
+    /// The digest's window, as the controller's intents leave it.
+    private(set) var digest: DigestModel?
+    /// Its title area, while it is open.
+    @ObservationIgnored private var digestChrome: DigestWindowChrome?
+
+    /// What the controller said about the digest's window.
+    private func apply(_ change: DigestModel.Change) {
+        switch change {
+        case .open:
+            showDigest()
+        case .redraw:
+            // The views read the model; the window's title is for the
+            // Window menu and VoiceOver.
+            if let title = digest?.view?.title, secondary.kind == .digest {
+                secondary.window?.title = title
+            }
+        case .close:
+            secondary.close(.digest)
+        }
+    }
+
+    /// Open the digest's window over the main window, the message window's
+    /// size with a 560 column (M1), replacing whatever secondary window is
+    /// up (M4).
+    private func showDigest() {
+        guard let model = digest, let session, let main = mainWindow else { return }
+        let width = Int32(main.frame.width)
+        model.mainWidth = width
+        let geometry = focusDigestGeometry(mainWidth: width)
+        let binding: (String) -> String? = { [weak session] in session?.binding(for: $0) }
+        let run: (String) -> Void = { [weak self] in self?.run($0) }
+        let chrome = DigestWindowChrome(model: model)
+        digestChrome = chrome
+        let content = DigestWindowView(
+            model: model, column: CGFloat(geometry.columnWidth), binding: binding, run: run
+        ) { [weak session, weak model] document, highlight in
+            MessageBodyView(
+                message: model?.emailView?.message ?? 0,
+                document: document,
+                sentence: highlight,
+                find: nil,
+                onFound: { _ in },
+                resolveCid: { session?.resolveCid(message: $0, contentId: $1) },
+                resolveFont: { session?.readerFont($0) })
+        }
+        .preferredColorScheme(colorScheme)
+        let hosting = NSHostingView(rootView: content)
+        // The window's size is the geometry's (M1), never the content's.
+        hosting.sizingOptions = []
+        secondary.show(
+            .digest, content: hosting, width: CGFloat(geometry.windowWidth),
+            title: model.view?.title ?? "", over: main,
+            configure: { chrome.install(on: $0) })
+    }
+
+    // MARK: questions (FocusConfirm)
+
+    /// The question being asked, while its alert is up: every key is the
+    /// alert's until it is answered.
+    @ObservationIgnored private var asking: ConfirmQuestion?
+
+    /// Ask what the controller asked, as a sheet on the window with the
+    /// keyboard: yes is `focus_confirmed`, Cancel is nothing.
+    private func ask(_ question: ConfirmQuestion) {
+        guard let session else { return }
+        let alert = NSAlert()
+        alert.messageText = question.heading
+        alert.informativeText = question.body
+        let yes = alert.addButton(withTitle: question.confirm)
+        yes.hasDestructiveAction = question.destructive
+        alert.addButton(withTitle: "Cancel")
+        asking = question
+        let answer: (NSApplication.ModalResponse) -> Void = { [weak self, weak session] response in
+            self?.asking = nil
+            guard let session else { return }
+            question.answer(response == .alertFirstButtonReturn, to: session)
+        }
+        if let window = NSApp.keyWindow ?? mainWindow {
+            alert.beginSheetModal(for: window, completionHandler: answer)
+        } else {
+            answer(alert.runModal())
+        }
+    }
 
     // MARK: the pickers at the row (T092)
 
@@ -824,6 +924,12 @@ final class Engine {
         // Filtered (T113), drawn in the list's place: its view, its focus,
         // and its close, `FocusCloseSurface(.filtered)`.
         if filtered?.apply(event) != nil { return }
+        // The digest's window (T114): `FocusOpenDigest`, every
+        // `FocusDigest`, and `FocusCloseSurface(.digest)`.
+        if let change = digest?.apply(event) {
+            apply(change)
+            return
+        }
         // The controller's intents: the cursor, the selection, `!`'s heading,
         // the toast (T049). The table draws what changed.
         if let change = focus.apply(event) {
@@ -875,6 +981,8 @@ final class Engine {
             // The settings window asked for this, and it is the only thing
             // that draws it.
             settingsActions.reindexProgressed(done: done, total: total)
+        case let .focusConfirm(confirm):
+            ask(ConfirmQuestion(confirm))
         case let .focusRun(command):
             // A line of the bar the controller hands back: Compose,
             // Settings, a host verb -- run as a menu item would run it.
@@ -1065,6 +1173,8 @@ final class Engine {
         // its field and its buttons -- Return saves, Escape cancels --
         // rather than the list behind it.
         if bannerRepair.asking != nil { return false }
+        // A question's alert is up: Return and Escape are its buttons'.
+        if asking != nil { return false }
         // Space and Return in a picker are about the highlighted row, which
         // only the popover knows; Escape is its Back, before any surface of
         // the Mac's own is asked.
