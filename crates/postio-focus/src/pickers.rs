@@ -246,6 +246,9 @@ pub(crate) struct Pickers {
     /// one is for a picker no longer up.
     stamp: u64,
     next_token: u64,
+    /// This session's moves, most recent first: recent before the store's
+    /// own note of them lands, which a quick second `m` can beat.
+    moved: Vec<MailboxId>,
 }
 
 /// The number keys, in order: the first four numbered rows answer to them.
@@ -695,6 +698,9 @@ impl FocusController {
                     target: MessageTarget::Selection,
                     to: Some(folder),
                 });
+                self.pickers.moved.retain(|moved| *moved != folder);
+                self.pickers.moved.insert(0, folder);
+                self.pickers.moved.truncate(words::RECENT);
                 steps.push(Step::Ask(Request::NoteMove(folder)));
                 steps
             }
@@ -913,7 +919,12 @@ impl FocusController {
                 folders.retain(words::is_destination);
                 words::order_destinations(&mut folders);
                 open.folders = folders;
-                open.recent = read.recent;
+                let moved = &self.pickers.moved;
+                open.recent = moved
+                    .iter()
+                    .copied()
+                    .chain(read.recent.into_iter().filter(|id| !moved.contains(id)))
+                    .collect();
                 self.redraw_picker()
             }
             _ => Vec::new(),

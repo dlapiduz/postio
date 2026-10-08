@@ -618,6 +618,56 @@ fn move_offers_the_recent_folders_as_one_and_two() {
 }
 
 #[test]
+fn a_move_just_made_is_recent_before_the_store_has_noted_it() {
+    // The note that a folder was moved to is its own write; a person who
+    // presses `m` again at once can be faster than it. The picker does not
+    // wait on that race: this session's moves are recent already.
+    let rows = List::of(2);
+    let mut focus = mac();
+    focus.handle_on(Input::Point(0), &rows);
+    let folders = || {
+        vec![
+            folder(3, "Travel", MailboxRole::Regular),
+            folder(7, "Receipts", MailboxRole::Regular),
+        ]
+    };
+    let effects = run(&mut focus, CommandId::Move, &rows);
+    let effects = answer(&mut focus, &effects, &rows, |stamp| Reply::Folders {
+        stamp,
+        answer: Ok(FoldersRead {
+            folders: folders(),
+            recent: Vec::new(),
+        }),
+    });
+    let _ = focus.handle_on(
+        Input::PickerChoose(token(&view(&effects), "Receipts")),
+        &rows,
+    );
+
+    let effects = run(&mut focus, CommandId::Move, &rows);
+    let effects = answer(&mut focus, &effects, &rows, |stamp| Reply::Folders {
+        stamp,
+        // The store has not noted the move yet.
+        answer: Ok(FoldersRead {
+            folders: folders(),
+            recent: vec![MailboxId::new(3)],
+        }),
+    });
+    let listed = view(&effects);
+    let numbered: Vec<(&str, Option<&str>)> = listed
+        .rows
+        .iter()
+        .filter(|row| row.key.is_some())
+        .map(|row| (row.name.as_str(), row.key.as_deref()))
+        .collect();
+    assert_eq!(
+        numbered,
+        [("Receipts", Some("1")), ("Travel", Some("2"))],
+        "the move just made first, then what the store remembers"
+    );
+}
+
+#[test]
 fn what_is_chosen_goes_where_the_picker_aimed_when_it_opened() {
     let rows = List::of(3);
     let mut focus = mac();
