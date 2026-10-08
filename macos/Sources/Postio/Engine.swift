@@ -118,6 +118,7 @@ final class Engine {
             makePicker(session)
             filtered = FilteredModel(engine: session)
             digest = DigestModel(engine: session, source: session)
+            ruleSheet = RuleSheetModel(engine: session)
             // The toolbar was built before there were bindings to spell.
             keycapsChanged?()
             state = .open
@@ -615,6 +616,38 @@ final class Engine {
             configure: { chrome.install(on: $0) })
     }
 
+    // MARK: the digest-this-sender sheet (T115)
+
+    /// The sheet, as the controller's intents leave it.
+    private(set) var ruleSheet: RuleSheetModel?
+
+    /// The sheet's window, on the window with the keyboard.
+    @ObservationIgnored
+    private lazy var ruleSheetWindow = FocusSheet { [weak self] in
+        guard let self, self.ruleSheet?.closedByToolkit() == true else { return }
+        self.session?.focusSurfaceClosed(.dialog)
+    }
+
+    /// What the controller said about the sheet.
+    private func apply(_ change: RuleSheetModel.Change) {
+        switch change {
+        case .open:
+            guard let model = ruleSheet else { return }
+            // On the digest's window when `d` was pressed there (it edits
+            // that digest's rule), else on the main window.
+            let digestWindow = secondary.kind == .digest ? secondary.window : nil
+            guard let window = digestWindow?.isKeyWindow == true ? digestWindow : mainWindow else { return }
+            let back = KeyCapSpelling.cap(session?.binding(for: Intercepted.back))
+            ruleSheetWindow.show(
+                DigestRuleSheet(model: model, backCap: back).preferredColorScheme(colorScheme),
+                on: window)
+        case .redraw:
+            break
+        case .close:
+            ruleSheetWindow.close()
+        }
+    }
+
     // MARK: questions (FocusConfirm)
 
     /// The question being asked, while its alert is up: every key is the
@@ -930,6 +963,12 @@ final class Engine {
             apply(change)
             return
         }
+        // The digest-this-sender sheet (T115): `FocusOpenRule`, every
+        // `FocusRule`, and `FocusCloseSurface(.dialog)`.
+        if let change = ruleSheet?.apply(event) {
+            apply(change)
+            return
+        }
         // The controller's intents: the cursor, the selection, `!`'s heading,
         // the toast (T049). The table draws what changed.
         if let change = focus.apply(event) {
@@ -1175,6 +1214,18 @@ final class Engine {
         if bannerRepair.asking != nil { return false }
         // A question's alert is up: Return and Escape are its buttons'.
         if asking != nil { return false }
+        // The rule sheet holds the keyboard (a dialog takes every key in
+        // the controller, which answers only Back): Escape is Back, which
+        // closes it; Return is Create; every other key is the sheet's
+        // fields' and menus'.
+        if let sheet = ruleSheet, sheet.isOpen {
+            switch id {
+            case Intercepted.back: session?.invoke(id)
+            case "open_message", "picker_confirm": sheet.create()
+            default: return false
+            }
+            return true
+        }
         // Space and Return in a picker are about the highlighted row, which
         // only the popover knows; Escape is its Back, before any surface of
         // the Mac's own is asked.
