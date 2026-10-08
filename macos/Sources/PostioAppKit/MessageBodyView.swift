@@ -100,6 +100,29 @@ public enum MessageBodyMeasure {
         return CGSize(width: pair[0], height: pair[1])
     }
 
+    /// How wide the sender's layout is, in CSS pixels: what the paper fit
+    /// divides the column by.
+    ///
+    /// The page's own width is not it: the reader's body box scrolls
+    /// sideways on its own (`overflow-x: auto`), so the page is always the
+    /// column's width and what overflows is inside the box. The width is
+    /// the page's, plus what the widest scrolling box holds beyond its own.
+    public static func layoutWidth(of view: WKWebView) async throws -> Double? {
+        let answer = try await view.evaluateJavaScript(
+            """
+            (function () {
+                const page = document.documentElement;
+                let beyond = 0;
+                for (const box of document.querySelectorAll('.postio-body, .postio-canvas')) {
+                    beyond = Math.max(beyond, box.scrollWidth - box.clientWidth);
+                }
+                return Math.max(page.scrollWidth, page.clientWidth + beyond);
+            })()
+            """,
+            in: nil, contentWorld: .defaultClient)
+        return answer as? Double
+    }
+
     /// The height once the document's faces have arrived: `postio-font:` is
     /// served asynchronously and `font-display: block` holds the text until
     /// it is, so a height read at the load is the fallback's.
@@ -255,8 +278,8 @@ struct MessageWebView: NSViewRepresentable {
             Task { @MainActor [weak view] in
                 guard let view else { return }
                 var zoom = 1.0
-                if paper, let size = try? await MessageBodyMeasure.size(of: view) {
-                    zoom = PaperFit.zoom(column: column, measured: size.width, floor: floor)
+                if paper, let width = try? await MessageBodyMeasure.layoutWidth(of: view) {
+                    zoom = PaperFit.zoom(column: column, measured: CGFloat(width), floor: floor)
                     view.pageZoom = zoom
                 }
                 if let sentence {

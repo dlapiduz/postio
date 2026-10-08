@@ -68,6 +68,19 @@ struct MessageBodyTests {
         #expect(!marked)
     }
 
+    @Test func aLayoutWiderThanItsBoxIsMeasuredWhole() async throws {
+        // The reader's body box scrolls sideways on its own (`overflow-x:
+        // auto`), so the page's own width is the column's whatever the
+        // sender laid out: the fit has to read what the box holds, or a 640
+        // newsletter in a 576 column is cut rather than drawn at 0.9.
+        let (view, policy) = try await loaded(
+            "<html><body style='margin:0'><div class='postio-body' style='overflow-x:auto'>"
+                + "<table width='640'><tr><td>Issue 48</td></tr></table></div></body></html>")
+        defer { withExtendedLifetime(policy) {} }
+        let width = try await MessageBodyMeasure.layoutWidth(of: view)
+        #expect((width ?? 0) >= 640, "measured \(String(describing: width))")
+    }
+
     @Test func aWideNewsletterIsZoomedToItsColumnAndNoFurtherThanTheFloor() {
         // SPEC section 3 at 1024: a 640 layout in a 576 column is 0.9.
         #expect(PaperFit.zoom(column: 576, measured: 640, floor: 0.85) == 0.9)
