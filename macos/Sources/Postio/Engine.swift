@@ -823,9 +823,15 @@ final class Engine {
             case "tab": _ = bar.tab()
             case "escape": run(BarCommand.back)
             case nil:
-                field.stringValue += key.character ?? ""
-                searchFieldTyped(field.stringValue)
-                keycapsChanged?()
+                // Through the field's editor, as a key press types: the
+                // caret moves on, and the field says it changed.
+                if let editor = field.currentEditor() as? NSTextView {
+                    editor.insertText(key.character ?? "", replacementRange: editor.selectedRange())
+                } else {
+                    field.stringValue += key.character ?? ""
+                    searchFieldTyped(field.stringValue)
+                    keycapsChanged?()
+                }
             default: return false
             }
             return true

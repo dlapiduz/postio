@@ -168,4 +168,21 @@ struct PlacesModelTests {
         #expect(model.filter.isEmpty)
         #expect(model.entries.count == Self.screen10.count)
     }
+
+    @Test func theFirstReadLandingPutsTheHighlightOnTheFirstPlace() {
+        // Before the read lands only the uncounted views are listed; the
+        // highlight on the first of them is not a choice to keep (screen 10
+        // opens on Inbox).
+        let (model, engine) = Self.model()
+        let snoozed = Self.entry(9, "Mailboxes", "Snoozed", mark: .role(role: .snoozed))
+        var full = engine.places
+        full.insert(snoozed, at: 2)
+        engine.places = [snoozed]
+        model.apply(.focusOpenPlaces)
+        #expect(model.entries.first?.name == "Snoozed")
+        engine.places = full
+        model.apply(.focusPlacesChanged)
+        #expect(model.highlighted == 0)
+        #expect(model.entries.first?.name == "Inbox")
+    }
 }

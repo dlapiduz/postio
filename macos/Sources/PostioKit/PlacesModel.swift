@@ -86,6 +86,9 @@ public final class PlacesModel {
     }
 
     @ObservationIgnored private let engine: PlacesEngine
+    /// Whether the arrows put the highlight where it is: only then is it
+    /// kept when the places are read again.
+    @ObservationIgnored private var moved = false
 
     public init(engine: PlacesEngine) {
         self.engine = engine
@@ -99,12 +102,13 @@ public final class PlacesModel {
         case .focusOpenPlaces:
             isOpen = true
             filter = ""
+            moved = false
             placeholder = engine.focusPlacesPlaceholder()
             read(keeping: nil)
             return .open
         case .focusPlacesChanged:
             guard isOpen else { return nil }
-            read(keeping: highlighted.map { entries[$0].name })
+            read(keeping: moved ? highlighted.map { entries[$0].name } : nil)
             return .entries
         case let .focusPlace(name):
             placeName = name
@@ -118,12 +122,14 @@ public final class PlacesModel {
     public func filterChanged(_ text: String) {
         guard isOpen, text != filter else { return }
         filter = text
+        moved = false
         read(keeping: nil)
     }
 
     /// ↑ or ↓, stopping at either end.
     public func move(by delta: Int) {
         guard !entries.isEmpty else { return }
+        moved = true
         highlighted = min(max((highlighted ?? 0) + delta, 0), entries.count - 1)
     }
 

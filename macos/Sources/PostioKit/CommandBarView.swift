@@ -116,16 +116,23 @@ public struct CommandBarView: View {
                     .overlay(Capsule().strokeBorder(.separator, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
+                // A name is never cut: the hint on the right gives way.
+                .fixedSize()
             }
             Spacer(minLength: 8)
             if let saveCap {
-                HStack(spacing: 4) {
-                    KeyCap(saveCap)
-                    Text("saves the current query")
+                // Said whole or not at all: the footer names the key too.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 4) {
+                        KeyCap(saveCap)
+                        Text("saves the current query")
+                    }
+                    .fixedSize()
+                    Color.clear.frame(width: 0, height: 0)
                 }
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
-                .lineLimit(1)
+                .layoutPriority(-1)
             }
         }
         .padding(.horizontal, 14)
@@ -283,18 +290,22 @@ private struct MessageLine: View {
             Text(row.title).font(.system(size: 13, weight: .medium)).layoutPriority(1)
             if let detail = row.detail {
                 Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+                    .layoutPriority(-1)
             }
             Spacer(minLength: 8)
+            // Where it is, whole: the subject's first line gives way first.
             VStack(alignment: .trailing, spacing: 0) {
                 ForEach(row.wheres, id: \.self) { place in
                     Text(place).font(.system(size: row.wheres.count > 1 ? 10 : 11, design: .monospaced))
                 }
             }
             .foregroundStyle(.secondary)
+            .fixedSize()
             Text(row.time ?? "")
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .frame(width: CommandBarView.Metrics.time, alignment: .trailing)
+                .fixedSize()
         }
         .lineLimit(1)
     }
