@@ -144,10 +144,14 @@ async fn the_inbox_fills_with_focus_rows_that_carry_their_marker() {
     assert_eq!(row.subject, "Atlas Q3 budget");
     assert_eq!(row.sender, "Ada");
     assert!(row.unread, "unread is bold");
-    assert!(
-        row.day_heading.starts_with("Today \u{b7} "),
-        "{}",
-        row.day_heading
+    // The heading of the day the message arrived (an hour ago), whichever
+    // side of midnight this runs on: the words are the presenter's.
+    let arrived = (Utc::now() - chrono::TimeDelta::hours(1))
+        .with_timezone(&chrono::Local)
+        .date_naive();
+    assert_eq!(
+        row.day_heading,
+        postio_ui::focus_row::day_heading(arrived, chrono::Local::now().date_naive())
     );
     let marker = row.marker.expect("the question's marker line");
     assert_eq!(marker.chip, "Question");
