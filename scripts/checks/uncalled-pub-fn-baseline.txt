@@ -33,7 +33,6 @@ dispatch_ext                      # crates/postio-core/src/dispatch.rs:458
 extend_selection_to               # crates/postio-core/src/state.rs:562
 extensions_to_enable              # crates/postio-account/src/imap/dispatch.rs:197
 failing_tls                       # crates/postio-account/src/imap/transport.rs:618
-for_platform                      # crates/postio-ui/src/focus_dialog.rs, crates/postio-focus/src/lib.rs -- spec 009 slice 1; the FFI's Focus driver calls both (tasks.md T027, T063)
 fts_match                         # crates/postio-search/src/query.rs:417
 guard_kept_colours              # crates/postio-body/src/treatment.rs -- spec 009 T060/T061; the Mac FFI calls it (tasks.md T063)
 has_name                          # crates/postio-account/src/backend/capability.rs:180

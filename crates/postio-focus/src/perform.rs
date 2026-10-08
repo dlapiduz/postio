@@ -13,7 +13,7 @@ use crate::{Opened, PageAnswer, Reply, Request};
 
 /// Answer `request` now, when it needs no await: a post, said before
 /// anything that follows it is asked. `Err` hands the request back for
-/// [`perform`].
+/// [`perform()`].
 ///
 /// Order is the point. Mail that left a folder is said to the store before
 /// the list re-reads (`Request::NoteRemoved`), so the store's own caches

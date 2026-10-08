@@ -4818,6 +4818,8 @@ dependencies = [
  "postio-client",
  "postio-config",
  "postio-core",
+ "postio-model",
+ "postio-ui",
  "tracing",
 ]
 
