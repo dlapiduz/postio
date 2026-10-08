@@ -492,14 +492,109 @@ to a folder, and undo each with the pill and ⌘Z.
 
 ### Controller slice 9: pickers, the row menu, toast policy (**main·S9**)
 
-- [ ] T088 [US6] Write failing tests in `crates/postio-focus/tests/pickers.rs`:
+- [x] T088 [US6] Write failing tests in `crates/postio-focus/tests/pickers.rs`:
   - `s`, `h`, `l` and `m` emit `OpenPicker{kind, anchor: Row(pos), aim}`, or `anchor: OpenMessage` from the email window;
   - a number key picks a preset;
   - Tab plus typed "tue 9am" resolves through `postio_search::date::parse_when` to the same instant on both platforms;
   - Label toggles with Space and creates a label;
   - Move offers recent folders as `1` and `2`;
   - toast policy: a new toast replaces the old, the timeout is 8 s, and the undo of a queued send runs first.
-- [ ] T089 [US6] Move `open_when`, `open_labels`, `open_moves`, the picker-chosen → `Send` path and `row_menu_alone` (`crates/postio-gtk/src/window.rs:4821-5077`, `move_picker.rs`, `label_picker.rs`), plus the toast policy from `crates/postio-widgets/src/widgets/toast.rs` (`activate_undo` 244, `show_action_completed_for` 155, `rehome` 378), into `crates/postio-focus/src/pickers.rs`. The guards are focus_suite `pickers`, `row_menu` and `undo`. Make T088 green; land slice 9
+
+  *As built:* 17 tests. The first 15 were seen red against the new types before any behaviour. Two more were seen red when the FFI suite found a race: a label named and confirmed before the labels' read lands. Beyond the list, the tests check that:
+  - the label and move pickers read what they list as they open;
+  - what is chosen goes where the picker aimed when it opened, even after a click moves the cursor;
+  - an answer for a picker since closed changes nothing;
+  - a picker with nothing to aim at does not open;
+  - the picker keys are the controller's even with no picker up;
+  - a name that turns out to exist is put on, not made again.
+
+  The clock is injected with `Input::Clock(Some(..))`. No test reads the clock.
+- [x] T089 [US6] Move `open_when`, `open_labels`, `open_moves`, the picker-chosen → `Send` path and `row_menu_alone` (`crates/postio-gtk/src/window.rs:4821-5077`, `move_picker.rs`, `label_picker.rs`), plus the toast policy from `crates/postio-widgets/src/widgets/toast.rs` (`activate_undo` 244, `show_action_completed_for` 155, `rehome` 378), into `crates/postio-focus/src/pickers.rs`. The guards are focus_suite `pickers`, `row_menu` and `undo`. Make T088 green; land slice 9
+
+  *As built (controller):* `crates/postio-focus/src/pickers.rs`. The words, the times, the rows and what a typed date means stay with `postio_ui::pickers` and `postio_ui::schedule`. Two new shared items were added there: `date_hint`, `TYPE_A_DATE` and `NOT_A_DATE`, plus `postio_ui::sending::{QUEUED_TO_SEND, SEND_SCHEDULED}`. They were GTK literals. The controller keeps which picker is up, what it acts on, what each row on screen does, and which reads are current. It numbers the rows itself.
+  - **Inputs:**
+    - `PickerTyped{text}`. The same text again does nothing.
+    - `PickerChoose(token)`: a click, or Return on the highlighted row.
+    - `PickerToggle(token)`: Space on the highlighted row.
+    - `Clock(Option<DateTime<Local>>)`: what presets and a typed date count from. Unset, it is `postio_ui::clock::now()`.
+    - `SendQueued{draft, at}`.
+    - The picker keys arrive as `Command`: `PickerChoose1`-`4`, `PickerTypeDate`, `PickerConfirm`, and `Back` while a picker is on top.
+  - **Intents:**
+    - `OpenPicker(PickerView)`.
+    - `PickerRows(PickerView)`, a redraw of the whole picker.
+    - `PickerField`: Tab, in a date picker.
+
+    A `PickerView` carries `kind`, `anchor`, `title`, `target`, `field`, `placeholder`, `typed`, `hint`, `rows` and `footnote`. Each `PickerRow` carries `token`, `section`, `name`, `detail`, `key`, `dot`, `color`, `applied` and `create`. The picker closes with `CloseSurface(Picker)`, then `KeyboardHome` when nothing else is up. The controller puts it on the stack and takes it off, as it does the bar. Back closes it, and `SurfaceKind::Picker` joins `back_closes`.
+  - **Requests**, each answered once in `perform` and stamped so a closed picker's answer is dropped:
+    - `Labels{message, account, threads, stamp}`: one round. It reads the message's account (`account_of`) or the first enabled one, then its labels, its label counts, and the labels the threads carry.
+    - `CreateLabel{account, name, stamp}`.
+    - `Folders{stamp}`: every enabled account's mailboxes, plus `move_recent`. The controller keeps the destinations.
+    - `NoteMove(mailbox)`.
+
+    The choice itself is the existing `Send{command, aims, everything}`: `Snooze{until}`, `RemindIfNoReply{at}`, `AddLabel{label, on}` or `Move{to}`.
+  - **`Rows::said(position)`** is a defaulted trait method: a row's `(sender, subject)`, for the target "Ada · Subject". A frontend that does not implement it gets an empty target.
+  - **Rules kept from GTK:**
+    - A picker from the list aims as a verb would: the selection, else the cursor's row. From the open message it aims at that message alone.
+    - The anchor is `Row(cursor)` or `OpenMessage`.
+    - Snooze and remind list the four presets, numbered `1`-`4`. Their hint is `date_hint`.
+    - A label is `✓ applied` when every conversation aimed at carries it. Space or a click toggles it and the picker stays up. A filter that names no label offers "Create label" first.
+    - Move offers Recent, at most two and numbered `1`-`2`, then All folders, with the archive first. Choosing one also keeps it recent.
+    - Over the list, a label picker lets the selection go when it closes, however it closes. The other pickers let it go once they act.
+  - **Decisions that differ from GTK:**
+    - The aim is captured when the picker opens. GTK re-read it when a row was chosen, and a click behind the picker could change it.
+    - In the label picker, Return with nothing highlighted makes and applies a label the filter names that nobody has, then closes. GTK only did that from a highlighted Create row, so a typed new name followed by Return closed without making it. Otherwise Return closes.
+    - A name confirmed before the labels' read lands waits for the read. Then it is put on if it exists (in any case), or made and put on.
+  - **Toast policy:**
+    - `ToastKind::seconds()` is `TOAST_SECONDS` (8), or a `Completed{seconds}` window when one is set.
+    - Every `Intent::Toast` replaces the one showing, and takes away the queued send's own Undo.
+    - `SendQueued` toasts `QUEUED_TO_SEND` or `SEND_SCHEDULED` with Undo. While that toast is the last said, `Undo` sends `Post(CancelSend{draft})` instead of the stack's `Undo`, once (#1752). As in GTK, the timeout does not end that offer; only a newer toast or the Undo itself does.
+  - **Not here:**
+    - The row menu (`row_menu_alone`, its verbs and words) did not fit. Its words depend on whether the row is flagged, which the Mac's `FocusRowFfi` does not carry, and no Mac task in this phase draws it. It stays GTK's, and is owed with the row facts it needs.
+    - The undo of a queued send cancels the send. It does not reopen the composer on the draft as GTK's does: the draft goes back to Drafts. Reopening it belongs with compose (slice 7).
+    - GTK has not adopted the slice, because it cannot be built on this Mac. So the focus_suite guards (`pickers`, `row_menu`, `undo`) were not run, and GTK's pickers and toast stay its own until a Linux session switches them over.
+
+  *As built (FFI, for T091-T093):* `crates/postio-ffi/src/focus_pickers.rs`, the events in `event.rs`, and the driver in `focus_list.rs`.
+  - **Events** (appended to `UiEvent`):
+    - `FocusOpenPicker{view: PickerViewFfi}`: show the picker in a `.transient` popover hung from its anchor. Say `focus_surface_opened(Picker)` once it shows; that is a harmless repeat.
+    - `FocusPickerRows{view: PickerViewFfi}`: redraw it whole. Its tokens replace the last.
+    - `FocusPickerField`: Tab, so put the keyboard in the date field.
+
+    It closes on `FocusCloseSurface{kind: Picker}`, followed by `FocusKeyboardHome` unless the message window is still open under it. Any other way it closes (a click outside, the popover dismissing itself) is `focus_surface_closed(Picker)`.
+  - **`PickerViewFfi`** has these fields:
+    - `kind: PickerKindFfi`: `Snooze`, `Remind`, `Label` or `Move`.
+    - `anchor: PickerAnchorFfi`: `Row{position}`, the cursor's row, or `OpenMessage`, the message window's action row.
+    - `title`.
+    - `target`: "Ada · First", "2 conversations" or "Every conversation".
+    - `field: PickerFieldFfi`: `Date`, under the rows, which takes the keyboard on `FocusPickerField`; or `Filter`, above the rows, which holds the keyboard from the start.
+    - `placeholder`.
+    - `typed`: set the field from it only when it differs.
+    - `hint: Option<String>`: the date field's line, such as "Tab to type", "Tue 29 Sep, 09:00" or "A day and a time: “tue 9am”".
+    - `rows: Vec<PickerRowFfi>`: a label or move picker opens with none, and `FocusPickerRows` brings them.
+    - `footnote`.
+  - **`PickerRowFfi`** has these fields:
+    - `token: u64`: never reused.
+    - `section: Option<String>`: a heading drawn above the row ("Recent", "All folders").
+    - `name`, in bold.
+    - `detail`, on the right: a time, a count, or "✓ applied".
+    - `key: Option<String>`: the keycap of the number key that chooses it.
+    - `dot: bool` and `color: Option<String>`: a label's dot. A `None` colour means pick one from the name, as `PlaceMarkFfi::Dot` does.
+    - `applied: bool`.
+    - `create: bool`: the "Create label" row.
+  - **Exports on `Session`:**
+    - `focus_picker_typed(text)`, on every change of the field.
+    - `focus_picker_choose(token)`, for a click, or Return with a row highlighted. A preset or folder acts and closes; a label toggles and stays.
+    - `focus_picker_toggle(token)`, for Space with a row highlighted.
+  - **Keys:** while a picker is up, `key()` resolves in the picker's context. In a filter that holds nothing, a bare digit or space is the picker's even with `in_text_entry` set. Swift handles three of the resolved commands itself:
+    - `picker_toggle`: Swift calls `focus_picker_toggle(highlighted)`. The controller does not know the highlight, so `invoke("picker_toggle")` does nothing.
+    - `picker_confirm`: with a row highlighted, Swift calls `focus_picker_choose(highlighted)`; otherwise `invoke("picker_confirm")`, which takes the typed date, or makes the typed label, or closes.
+    - The arrows: they move the highlight, which is Swift's.
+
+    `picker_choose_1`-`4`, `picker_type_date` and `back` go through `invoke`. `invoke("snooze" | "remind_if_no_reply" | "add_label" | "move")` opens the picker, from the list or from the message window.
+  - **Toast:**
+    - `FocusToast.seconds` is always `Some` now (8, or an answer's window). `Toast.defaultSeconds` in `FocusIntents.swift` (6, 4 and 2) is dead and can go.
+    - Every `FocusToast` replaces the one showing.
+    - A successful `send_draft` or `send_draft_later` now raises `FocusToast{"Message queued to send" | "Send scheduled", Completed, undoable: true, 8}`. Its Undo is the ordinary `invoke("undo")`, which cancels that send first. T093's pill needs nothing special for it.
+  - **Coverage:** the seven picker keys left `KNOWN_ORPHANS`.
 
 ### Mac: the popovers and the pill
 
