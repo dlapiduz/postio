@@ -126,6 +126,7 @@ public final class KeyWindowTracker {
         case .main: return "postio.window.main"
         case .compose: return "postio.window.compose"
         case .settings: return "postio.window.settings"
+        case .message: return "postio.window.message"
         }
     }
 }

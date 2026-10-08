@@ -13,6 +13,8 @@ public enum KeyWindow: Equatable, Sendable, CaseIterable {
     case compose
     /// The settings window.
     case settings
+    /// Focus's message window (specs/009-focus-macos US3).
+    case message
 }
 
 /// Which surface a keystroke resolves as.
@@ -56,6 +58,11 @@ public enum KeyboardContext {
             // the list's verbs must not resolve here, so `d` in settings
             // removes nothing from a mailbox.
             return .accounts
+        case .message:
+            // The controller answers with its own Reader context while the
+            // window is reported open; this is the context before it is,
+            // and the one a menu greys against. Never the list's.
+            return .reader
         }
     }
 }
