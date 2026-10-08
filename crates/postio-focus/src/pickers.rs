@@ -229,6 +229,9 @@ struct Open {
     applied: HashSet<LabelId>,
     /// A label being made closes the picker once it is on.
     closing: bool,
+    /// A label asked for before the labels landed -- its name, and whether
+    /// the picker closes once it is on -- made or put on when they do.
+    pending: Option<(String, bool)>,
     folders: Vec<Mailbox>,
     recent: Vec<MailboxId>,
 }
@@ -580,6 +583,7 @@ impl FocusController {
             counts: HashMap::new(),
             applied: HashSet::new(),
             closing: false,
+            pending: None,
             folders: Vec::new(),
             recent: Vec::new(),
         });
@@ -591,6 +595,15 @@ impl FocusController {
         }
         steps.extend(ask.map(Step::Ask));
         steps
+    }
+
+    /// Whether a picker with a filter is up and its filter holds nothing:
+    /// where a bare digit or space is the picker's key rather than typing
+    /// (`postio_ui::pickers::is_typing`).
+    pub fn in_empty_filter(&self) -> bool {
+        self.pickers.open.as_ref().is_some_and(|open| {
+            matches!(open.kind, PickerKind::Label | PickerKind::Move) && open.typed.is_empty()
+        })
     }
 
     /// Redraw the picker up.
@@ -760,8 +773,10 @@ impl FocusController {
         let Some(open) = self.pickers.open.as_mut() else {
             return Vec::new();
         };
-        // The labels are an account's: not read yet, none can be made.
+        // The labels are an account's: until they are read, the name waits
+        // for them -- it may be one of them.
         let Some(account) = open.account else {
+            open.pending = Some((name, closing));
             return Vec::new();
         };
         open.closing = closing;
@@ -828,7 +843,33 @@ impl FocusController {
                 open.account = Some(read.account);
                 open.labels = read.labels;
                 open.counts = read.counts.into_iter().collect();
-                self.redraw_picker()
+                let Some((name, closing)) = open.pending.take() else {
+                    return self.redraw_picker();
+                };
+                // Asked for before the labels landed: put on when it is one
+                // of them, in any case, and made when it is not.
+                let wanted = name.to_lowercase();
+                let found = open
+                    .labels
+                    .iter()
+                    .find(|label| label.name.to_lowercase() == wanted)
+                    .cloned();
+                match found {
+                    Some(label) => {
+                        let mut steps = Vec::new();
+                        if !open.applied.contains(&label.id) {
+                            steps.extend(self.picker_label(label));
+                        }
+                        if closing {
+                            steps.extend(self.close_picker(true));
+                        } else if let Some(open) = self.pickers.open.as_mut() {
+                            open.typed.clear();
+                            steps.extend(self.redraw_picker());
+                        }
+                        steps
+                    }
+                    None => self.picker_create(name, closing),
+                }
             }
             Reply::LabelCreated { answer, .. } => {
                 let label = match answer {

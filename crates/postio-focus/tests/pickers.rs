@@ -765,3 +765,79 @@ fn a_queued_sends_own_undo_runs_first_until_a_new_toast_replaces_it() {
         "the new toast replaced the old, and its Undo with it"
     );
 }
+
+#[test]
+fn a_label_typed_before_the_labels_land_is_made_once_they_do() {
+    let rows = List::of(1);
+    let mut focus = mac();
+    focus.handle_on(Input::Point(0), &rows);
+    let opening = run(&mut focus, CommandId::AddLabel, &rows);
+    // Typed and confirmed before the read lands: no account to make it in.
+    focus.handle_on(
+        Input::PickerTyped {
+            text: "Receipts".to_owned(),
+        },
+        &rows,
+    );
+    let early = run(&mut focus, CommandId::PickerConfirm, &rows);
+    assert!(asked(&early).is_empty(), "{early:?}");
+    assert!(!closes_the_picker(&early), "it waits for the labels");
+    let effects = answer(&mut focus, &opening, &rows, |stamp| Reply::Labels {
+        stamp,
+        answer: Ok(labels_read()),
+    });
+    assert!(
+        asked(&effects).iter().any(|request| matches!(
+            request,
+            Request::CreateLabel { name, .. } if name == "Receipts"
+        )),
+        "made once the account is known: {effects:?}"
+    );
+    let effects = answer(&mut focus, &effects, &rows, |stamp| Reply::LabelCreated {
+        stamp,
+        answer: Ok(label(3, "Receipts")),
+    });
+    assert!(closes_the_picker(&effects), "and Return's close follows");
+    assert_eq!(
+        sent(&effects).0,
+        Command::AddLabel {
+            target: MessageTarget::Selection,
+            label: Some(LabelId::new(3)),
+            on: Some(true),
+        }
+    );
+}
+
+#[test]
+fn a_name_typed_early_that_turns_out_to_exist_is_put_on_not_made() {
+    let rows = List::of(1);
+    let mut focus = mac();
+    focus.handle_on(Input::Point(0), &rows);
+    let opening = run(&mut focus, CommandId::AddLabel, &rows);
+    focus.handle_on(
+        Input::PickerTyped {
+            text: "harbor".to_owned(),
+        },
+        &rows,
+    );
+    run(&mut focus, CommandId::PickerConfirm, &rows);
+    let effects = answer(&mut focus, &opening, &rows, |stamp| Reply::Labels {
+        stamp,
+        answer: Ok(labels_read()),
+    });
+    assert!(
+        !asked(&effects)
+            .iter()
+            .any(|request| matches!(request, Request::CreateLabel { .. })),
+        "Harbor exists, in any case: {effects:?}"
+    );
+    assert_eq!(
+        sent(&effects).0,
+        Command::AddLabel {
+            target: MessageTarget::Selection,
+            label: Some(LabelId::new(2)),
+            on: Some(true),
+        }
+    );
+    assert!(closes_the_picker(&effects));
+}
