@@ -117,6 +117,18 @@ final class Engine {
             loadZoom()
             self.appearance = appearance
             state = .open(controller)
+            let table = FocusListTable(
+                model: FocusListModel(source: session) { [weak session] command in
+                    session?.binding(for: command)
+                })
+            table.onAction = { [weak self] command, row in
+                // An answer on a row is about that row: the cursor goes
+                // there first, so the verb lands where the click did.
+                table.cursor = row
+                self?.focusCursorMoved()
+                self?.run(command, on: self?.focusCursorMessage)
+            }
+            focusTable = table
             // Nothing was ever fetched before this: the store opened and
             // stayed empty because no engine had been started (#648).
             mailboxes = session.mailboxes
@@ -142,6 +154,7 @@ final class Engine {
                 self?.open(mailbox: mailbox)
             }
             consumeEvents(from: session)
+            openFocus(.inbox)
             // Keystrokes, resolved by the core (#656). Installed only on the
             // open path: with no session there is no keymap to ask and
             // nothing for a command to act on, and a monitor that swallowed
@@ -446,6 +459,7 @@ final class Engine {
 
     private func askField(_ text: String) {
         fieldRequest = FieldRequest(serial: fieldRequest.serial + 1, text: text)
+        fieldText?(text)
     }
 
     /// The field's report: what it is asking, or `nil` when it is a search.
@@ -847,6 +861,98 @@ final class Engine {
     /// by reading a `last_synced_at` that only moves when a pass *completes*.
     private(set) var syncing = false
 
+    /// How far the sync pass in flight has come, for the sync label.
+    private(set) var syncProgress: (done: UInt32, total: UInt32)?
+
+    // MARK: Focus
+
+    /// Focus's list, once a session has opened (specs/009-focus-macos US1).
+    private(set) var focusTable: FocusListTable?
+
+    /// How many rows Focus's list draws, observed: SwiftUI decides between
+    /// the list and the empty inbox on it, and the table's own count is
+    /// behind the FFI where nothing can observe it.
+    private(set) var focusCount: UInt32 = 0
+
+    /// Whether the list has said how long it is yet. Until it has, an empty
+    /// count is "not counted", not "empty".
+    private(set) var focusListed = false
+
+    /// Which of Focus's lists is open.
+    private(set) var focusScope: FocusScopeFfi = .inbox
+
+    /// The header strip's numbers, read off this actor when they may have
+    /// moved.
+    private(set) var focusCounts: FocusCountsFfi?
+
+    /// Bumped when `[keys]` changes, so every keycap is spelled again.
+    private(set) var keymapVersion = 0
+
+    /// The header strip's words, from the counts and the bindings in force.
+    var stripWords: HeaderStripWords {
+        _ = keymapVersion
+        return HeaderStripWords(counts: focusCounts, hasActionOn: focusScope == .hasAction) {
+            [weak self] command in self?.session?.binding(for: command)
+        }
+    }
+
+    /// The toolbar's sync label.
+    var syncLabel: SyncLabel {
+        SyncLabel(
+            offline: isOffline,
+            failing: failure != nil,
+            syncing: syncing ? syncProgress : nil,
+            lastSynced: mailboxes.compactMap(\.lastSyncedAt).max()
+        )
+    }
+
+    /// The toolbar's search field, as the engine reaches it: its text, the
+    /// keyboard, and its keycap's spelling. The field is AppKit's, so the
+    /// toolbar hands these over when it is installed.
+    var fieldText: ((String) -> Void)?
+    var focusField: (() -> Void)?
+    var keycapsChanged: (() -> Void)?
+
+    /// Show one of Focus's lists, from its first row (C30).
+    func openFocus(_ scope: FocusScopeFfi) {
+        guard let session else { return }
+        focusScope = scope
+        focusListed = false
+        session.openFocus(scope)
+        refreshCounts()
+    }
+
+    /// Whether a count read is in flight, and whether another was asked for
+    /// while it was: events come in bursts during a sync, and one read per
+    /// burst is the right number.
+    private var countsReading = false
+    private var countsOwed = false
+
+    /// Read the strip's counts again, off this actor: they are a query.
+    func refreshCounts() {
+        guard let session else { return }
+        guard !countsReading else {
+            countsOwed = true
+            return
+        }
+        countsReading = true
+        Task {
+            let counts = await Task.detached { try? session.focusCounts() }.value
+            countsReading = false
+            if let counts { focusCounts = counts }
+            if countsOwed {
+                countsOwed = false
+                refreshCounts()
+            }
+        }
+    }
+
+    /// The message under the Focus cursor, if its row has arrived.
+    var focusCursorMessage: Int64? {
+        guard let table = focusTable, let row = table.cursor else { return nil }
+        return table.model.row(at: row)?.id
+    }
+
     /// Why this account cannot sign in, or `nil` while it can.
     ///
     /// Not the same as [`isOffline`](Self.isOffline), which is the
@@ -944,6 +1050,7 @@ final class Engine {
         // reach it.
         if SidebarCounts.movedBy(event) {
             mailboxes = session?.mailboxes ?? []
+            refreshCounts()
         }
         // Before the switch for the same reason: what the application says
         // back is not one arm's business, and an arm here is a decision
@@ -953,6 +1060,25 @@ final class Engine {
             noticeToken += 1
         }
         switch event {
+        case let .focusListChanged(total):
+            focusCount = total
+            focusListed = true
+            focusTable?.listChanged(total: total)
+            focusCursorMoved()
+            refreshCounts()
+        case let .focusPageReady(page):
+            focusTable?.pageArrived(page)
+            // The cursor's row may be the one that just arrived.
+            if focusTable?.cursor != nil { focusCursorMoved() }
+        case .keymapChanged:
+            keymapVersion += 1
+            focusTable?.keymapChanged()
+            keycapsChanged?()
+            installMenuBar()
+        case .surfacedChanged:
+            // The list re-reads what it surfaces and says so itself; the
+            // strip's counts may have moved with it.
+            refreshCounts()
         case .newMail:
             // Counted as a list change as well as a notification: mail
             // arriving into the folder on screen is exactly the case where
@@ -1036,6 +1162,7 @@ final class Engine {
             settingsActions.reindexProgressed(done: done, total: total)
         case let .syncProgress(_, done, total):
             syncing = done < total
+            syncProgress = syncing ? (done, total) : nil
         case let .connectionChanged(_, state):
             // A connection that has gone means nothing is in flight, whatever
             // the last progress event said.
@@ -1164,12 +1291,19 @@ final class Engine {
             askField(FinderBox.commands)
             showingSearch = true
             searchFocusAsks += 1
+            focusField?()
         case Intercepted.cheatSheet:
             leaveFinder()
             showingCheatSheet = true
         case Intercepted.search:
             showingSearch = true
             searchFocusAsks += 1
+            focusField?()
+        case HeaderStripWords.Command.hasAction:
+            // Until the controller's commands cross the FFI (T040), the
+            // toggle is the one Focus verb the window answers itself: it
+            // opens the other list.
+            openFocus(focusScope == .hasAction ? .inbox : .hasAction)
         case Intercepted.back where finding != nil:
             // Out of command mode and out of the box: the `>` was a question,
             // and Escape is "never mind".
@@ -1657,7 +1791,7 @@ final class Engine {
     /// Reply under message three of an eight-message thread composed a reply
     /// to the thread's representative message: the wrong recipient, silently.
     private func replyDraft(all: Bool, to target: Int64? = nil) -> DraftFfi? {
-        guard let session, let message = target ?? cursorShowing else { return nil }
+        guard let session, let message = target ?? focusCursorMessage ?? cursorShowing else { return nil }
         return session.replyDraft(to: message, all: all)
     }
 
@@ -1713,6 +1847,14 @@ final class Engine {
         readerView.clear()
         openingSince = ContinuousClock.now
         session.openConversation(thread)
+    }
+
+    /// Tell the engine which message the Focus cursor is on, so a verb with
+    /// nothing marked acts on it (`PRODUCT.md` §9: the cursor, not the
+    /// selection).
+    func focusCursorMoved() {
+        guard let message = focusCursorMessage else { return }
+        session?.setCursor(message)
     }
 
     /// Say where the keyboard is, so a verb with nothing marked knows which
