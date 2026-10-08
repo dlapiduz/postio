@@ -1,0 +1,48 @@
+# Esc keeps the draft, says so, and the draft opens again to be finished
+# (specs/009-focus-macos US4, screens 05 and 06; the controller's compose
+# slice, T073).
+#
+# Reply to the first row, write a line, and press Esc: the composer closes
+# without asking, the keyboard goes back to the row it left, and the toast
+# says the draft was saved locally, at what time ("Draft saved locally
+# 16:12", the design's words; no Undo, since nothing was undone). The draft
+# is a row of Drafts (`g t`), and Return on it opens it in the composer
+# again, the line still there, to be sent.
+#
+# The words are the controller's: GTK's composer says "Draft saved to
+# Drafts (g t)" until it adopts slice 7 (`body-typing-is-not-eaten.toml`
+# pins those meanwhile), so the toast is the frame's to judge here rather
+# than a `notice.text` check.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/009-focus-macos US4" }
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { cursor.index = 0, keyboard.region = "list", composer.open = false }
+
+[[step]]
+id      = "reply"
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body", keyboard.typing = true }
+expect  = "The reply opens in its own window over the list, pre-filled: To holds the sender, the subject is \"Re:\" the original, the quoted text is folded under the caret, and no list of contacts is showing."
+
+[[step]]
+type    = "Thanks, I will look on Monday."
+check   = { composer.open = true, keyboard.field = "body", cursor.index = 0 }
+
+[[step]]
+id      = "kept"
+command = "back"
+check   = { composer.open = false, keyboard.region = "list", cursor.index = 0, notice.undo = false }
+expect  = "The composer closes without asking, the keyboard is back on the row it left, and the toast says \"Draft saved locally\" with the time, offering no Undo."
+
+[[step]]
+command = "go_to_drafts"
+check   = { keyboard.region = "list", cursor.index = 0 }
+expect  = "Drafts lists the reply just written, at the top."
+
+[[step]]
+id      = "again"
+command = "open_message"
+check   = { composer.open = true, keyboard.field = "body" }
+expect  = "The draft opens in the composer again, the line written still in its body, ready to send."
