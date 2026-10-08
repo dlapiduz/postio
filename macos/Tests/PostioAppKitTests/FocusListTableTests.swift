@@ -29,7 +29,8 @@ struct FocusListTableTests {
                 ? MarkerLineFfi(
                     chip: "Question", date: nil, quote: "Do you have the numbers?", status: nil,
                     actions: [FocusRowActionFfi(command: "reply", label: "Reply")])
-                : nil)
+                : nil,
+            writes: false)
     }
 
     static func table(_ rows: [FocusRowFfi?]) -> FocusListTable {

@@ -47,7 +47,8 @@ import Testing
             hasAttachments: false,
             sendState: nil,
             pills: pills,
-            marker: marker
+            marker: marker,
+            writes: false
         )
     }
 

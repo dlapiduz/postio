@@ -57,7 +57,8 @@ struct FocusListScrollTests {
                         chip: "Question", date: nil, quote: "Do you have the numbers?",
                         status: nil,
                         actions: [FocusRowActionFfi(command: "reply", label: "Reply")])
-                    : nil)
+                    : nil,
+                writes: false)
         }
 
         /// The pages missed since the last call have arrived; say which.
