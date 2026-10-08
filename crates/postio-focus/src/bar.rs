@@ -1260,10 +1260,6 @@ impl FocusController {
                     })],
                 }
             }
-            Input::Keymap(keymap) => {
-                self.bar.set_keymap(keymap);
-                Vec::new()
-            }
             Input::Filtering(filtering) => {
                 self.bar.set_filtering(filtering);
                 Vec::new()
@@ -1272,7 +1268,7 @@ impl FocusController {
         }
     }
 
-    fn redraw_bar(&self) -> Vec<Step> {
+    pub(crate) fn redraw_bar(&self) -> Vec<Step> {
         if self.bar.is_open() {
             vec![self.bar.draw(None)]
         } else {

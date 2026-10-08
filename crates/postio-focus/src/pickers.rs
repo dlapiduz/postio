@@ -607,7 +607,7 @@ impl FocusController {
     }
 
     /// Redraw the picker up.
-    fn redraw_picker(&mut self) -> Vec<Step> {
+    pub(crate) fn redraw_picker(&mut self) -> Vec<Step> {
         self.pickers
             .view(self.bar.keymap())
             .map(|view| Step::Show(Intent::PickerRows(view)))

@@ -181,11 +181,9 @@ impl Surfaces {
             SurfaceKind::Message => {
                 (id == CommandId::Back || reader_verb(id).is_some()).then_some(true)
             }
-            SurfaceKind::KeyMap | SurfaceKind::Dialog
-                if matches!(id, CommandId::Back | CommandId::CheatSheet) =>
-            {
-                Some(true)
-            }
+            // They take the keyboard: every key but Quit is theirs, and
+            // only their close keys do anything.
+            SurfaceKind::KeyMap | SurfaceKind::Dialog => Some(crate::keys::key_map_takes(id)),
             kind if id == CommandId::Back => Some(kind.back_closes()),
             // The composer, the bar, a picker and a menu take their own keys.
             SurfaceKind::Composer
@@ -249,6 +247,12 @@ impl Surfaces {
             self.stepping = None;
         }
         true
+    }
+
+    /// Whether the surface on top takes the keyboard whole: the key map,
+    /// and a dialog.
+    pub(crate) fn takes_keyboard(&self) -> bool {
+        matches!(self.top(), Some(SurfaceKind::KeyMap | SurfaceKind::Dialog))
     }
 
     /// Back, or the key map's own key, on a surface that closes on it.

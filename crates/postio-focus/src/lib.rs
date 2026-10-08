@@ -24,6 +24,7 @@ use postio_ui::focus_list::FocusRow;
 mod bar;
 mod cursor;
 mod feed;
+mod keys;
 mod perform;
 mod pickers;
 mod states;
@@ -346,6 +347,9 @@ pub enum Intent {
     /// The page an empty list shows in its place, or the list again with
     /// `None`.
     Empty(Option<postio_ui::focus_state::EmptyInbox>),
+    /// Show the key map (`?`). The controller has put it on the stack; it
+    /// closes with [`Intent::CloseSurface`]`(KeyMap)`.
+    OpenKeyMap,
 }
 
 /// What the controller needs from the engine. [`perform()`] is the one place
@@ -545,6 +549,7 @@ pub struct FocusController {
     /// The strip's counts, as the host last said.
     counts: Option<FocusCounts>,
     states: states::States,
+    keys: keys::Keys,
 }
 
 impl FocusController {
@@ -563,6 +568,7 @@ impl FocusController {
             toast_undo: None,
             counts: None,
             states: states::States::default(),
+            keys: keys::Keys::default(),
         }
     }
 
@@ -755,13 +761,16 @@ impl FocusController {
                 let steps = self.picker_reply(reply);
                 self.effects(steps)
             }
+            Input::Keymap(keymap) => {
+                let steps = self.set_keymap(keymap);
+                self.effects(steps)
+            }
             input @ (Input::Typed { .. }
             | Input::BarRun(_)
             | Input::BarTab
             | Input::OpenPlace(_)
             | Input::SavedSearches(_)
             | Input::SearchSaved(_)
-            | Input::Keymap(_)
             | Input::Filtering(_)) => {
                 let steps = self.bar_input(input, rows);
                 self.effects(steps)
@@ -833,6 +842,9 @@ impl FocusController {
                 draft: Some(draft),
             }))];
         }
+        if id == CommandId::CheatSheet {
+            return self.open_key_map();
+        }
         if let Some(steps) = self.picker_on_list(id, rows) {
             return steps;
         }
@@ -878,7 +890,11 @@ impl FocusController {
             return Some(self.dismiss_bar(false));
         }
         if self.surfaces.top() != Some(SurfaceKind::Message) {
-            return self.surfaces.close_top(id);
+            return self.surfaces.close_top(id).or_else(|| {
+                // The key map and a dialog take the keyboard: what does not
+                // close them does nothing (GTK's dialog close rule).
+                (self.surfaces.takes_keyboard() && keys::key_map_takes(id)).then(Vec::new)
+            });
         }
         if let Some(steps) = self.surfaces.reader_key(id) {
             return Some(steps);
@@ -951,6 +967,7 @@ impl FocusController {
                 | CommandId::DeclineInvite
                 | CommandId::DismissMarker
                 | CommandId::OpenMessage
+                | CommandId::CheatSheet
         ) || bar::goes(id)
             || pickers::opens_picker(id)
             || postio_ui::focus_target::dispatch(id).is_some()
@@ -972,7 +989,7 @@ impl FocusController {
     }
 
     /// The bindings in force: what every keycap the controller spells
-    /// says.
+    /// says, and what [`press`](Self::press) resolves.
     pub fn keymap(&self) -> &postio_core::Keymap {
         self.bar.keymap()
     }
