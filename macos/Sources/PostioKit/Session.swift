@@ -150,6 +150,27 @@ public final class PostioSession {
     /// button, or the controller's own `FocusCloseSurface`.
     public func focusSurfaceClosed(_ kind: SurfaceKindFfi) { inner.focusSurfaceClosed(kind: kind) }
 
+    // MARK: the command bar and the folders popover (T084-T086)
+
+    /// The bar's field holds `text` now: said on every change.
+    public func focusBarTyped(_ text: String) { inner.focusBarTyped(text: text) }
+
+    /// Run the bar's line `token`: Return on the highlighted line, or a click.
+    public func focusBarRun(_ token: UInt64) { inner.focusBarRun(token: token) }
+
+    /// `Tab` in the bar's field; `false` leaves the key to the toolkit.
+    public func focusBarTab() -> Bool { inner.focusBarTab() }
+
+    /// The folders popover's places whose names hold `filter`, read now
+    /// from the last read (ask again on `FocusPlacesChanged`).
+    public func focusPlaces(_ filter: String) -> [PlaceEntryFfi] { inner.focusPlaces(filter: filter) }
+
+    /// Go to the popover's place `token`.
+    public func focusOpenPlace(_ token: UInt64) { inner.focusOpenPlace(token: token) }
+
+    /// What the popover's filter says before anything is typed.
+    public func focusPlacesPlaceholder() -> String { inner.focusPlacesPlaceholder() }
+
     /// The open message's More menu and find, as they are now: what Back
     /// closes first.
     public func focusReaderState(moreOpen: Bool, finding: Bool) {
