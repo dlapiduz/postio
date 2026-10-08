@@ -95,6 +95,12 @@ public struct HeaderStrip: View {
                     RoundedRectangle(cornerRadius: 6).fill(
                         words.hasActionOn ? AnyShapeStyle(.tint.opacity(0.12)) : AnyShapeStyle(.quaternary))
                 )
+                // On, it is outlined in the accent as well (screen 03).
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(.tint, lineWidth: 1)
+                        .opacity(words.hasActionOn ? 1 : 0)
+                )
             }
             .buttonStyle(.plain)
             .accessibilityAddTraits(words.hasActionOn ? .isSelected : [])
