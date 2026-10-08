@@ -41,12 +41,22 @@ public enum DemoMode {
         // from a real press.
         return said.split(separator: " ").map { word in
             let key = String(word)
+            // Return and Escape by their glyphs: named keys, as
+            // `KeyEvent.reduce` reports them from a real press.
+            if let name = namedKeys[key] {
+                return KeyEvent.Reduced(
+                    character: nil, name: name,
+                    modifiers: ModifiersFfi(control: false, option: false, shift: false, command: false))
+            }
             let shifted = key != key.lowercased() || "!@#$%^&*()_+{}|:\"<>?~".contains(key)
             return KeyEvent.Reduced(
                 character: key, name: nil,
                 modifiers: ModifiersFfi(control: false, option: false, shift: shifted, command: false))
         }
     }
+
+    /// The glyphs a replay may name a key by.
+    static let namedKeys = ["⏎": "return", "↩": "return", "⎋": "escape", "⇥": "tab", "⌫": "backspace"]
 
     static func appearance(in environment: [String: String]) -> String? {
         environment["POSTIO_APPEARANCE"].flatMap { ["light", "dark"].contains($0) ? $0 : nil }

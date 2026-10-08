@@ -42,4 +42,14 @@ struct DemoModeTests {
         #expect(keys.map(\.modifiers.shift) == [true, false, true])
         #expect(keys.allSatisfy { !$0.modifiers.command && !$0.modifiers.control && $0.name == nil })
     }
+
+    @Test func returnAndEscapeAreReplayedAsTheNamedKeys() {
+        // Screen 04 is the message window, which Return opens and Escape
+        // closes: keys with names, not characters, as `KeyEvent.reduce`
+        // reports them from a real press.
+        let keys = DemoMode.keys(in: ["POSTIO_DEMO": "small", "POSTIO_DEMO_KEYS": "j ⏎ O ⎋"])
+        #expect(keys.map(\.name) == [nil, "return", nil, "escape"])
+        #expect(keys.map(\.character) == ["j", nil, "O", nil])
+        #expect(keys.map(\.modifiers.shift) == [false, false, true, false])
+    }
 }
