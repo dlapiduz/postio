@@ -4,66 +4,6 @@ import PostioFFI
 // next to the row it describes; the classic list's `Announcements` went with
 // that list (specs/009-focus-macos T034).
 
-/// The three panes, in the order the keyboard walks them.
-///
-/// The order is the *visual* one — sidebar, list, reader — because a focus
-/// order that disagrees with the layout is the classic way a keyboard-first
-/// application becomes unusable without a mouse. It is here rather than in a
-/// view so it can be asserted; a cycle that skipped a pane or looped early is
-/// invisible in a screenshot.
-public enum Pane: CaseIterable, Sendable {
-    case sidebar
-    case list
-    case reader
-
-    /// The pane after this one, wrapping.
-    ///
-    /// The engine's table (`postio_ui::focus::next_pane`, through the
-    /// boundary's `nextPane`), the same one the GTK window walks, so Tab
-    /// means one thing on both. Wrapping rather than stopping: a user who
-    /// has tabbed to the reader expects one more press to come back rather
-    /// than to do nothing.
-    public func next(_ forward: Bool = true) -> Pane {
-        // A pane's context is always a pane, so the boundary always answers;
-        // `self` is only the type checker's fallback, never a path taken.
-        nextPane(context: context, forward: forward).flatMap(Pane.init(context:)) ?? self
-    }
-
-    /// The pane a context names, or `nil` for a context that is not one of
-    /// the three — the conversation is inside the reading pane, and the
-    /// composer, palette and settings lists are not panes Tab walks.
-    public init?(context: UiContext) {
-        switch context {
-        case .sidebar: self = .sidebar
-        case .list: self = .list
-        case .reader: self = .reader
-        default: return nil
-        }
-    }
-
-    /// The surface this pane resolves keys as.
-    ///
-    /// The keyboard's context follows focus, or a key pressed in the sidebar
-    /// would resolve against the list — which is how `j` ends up moving the
-    /// wrong thing.
-    public var context: UiContext {
-        switch self {
-        case .sidebar: return .sidebar
-        case .list: return .list
-        case .reader: return .reader
-        }
-    }
-
-    /// What a screen reader calls it.
-    public var label: String {
-        switch self {
-        case .sidebar: return "Folders"
-        case .list: return "Messages"
-        case .reader: return "Message"
-        }
-    }
-}
-
 /// The commands this frontend presents a surface for, rather than sending on.
 ///
 /// Almost everything goes to `invoke`, where the boundary decides whether it
@@ -82,8 +22,6 @@ public enum Intercepted {
     public static let cheatSheet = "cheat_sheet"
     public static let search = "search"
     public static let back = "back"
-    public static let cyclePane = "cycle_pane"
-    public static let cyclePaneBack = "cycle_pane_back"
     public static let goToFolders = "go_to_folders"
     /// The Settings window. Both frontends put settings in a window; ADR 0031
     /// is why, and why the model behind it is shared.
@@ -98,10 +36,6 @@ public enum Intercepted {
     public static let reply = "reply"
     public static let replyAll = "reply_all"
     public static let forward = "forward"
-    public static let toggleSidebar = "toggle_sidebar"
-    /// The conversation rail, hidden or shown -- `⇧I`, the reader's choice
-    /// for this window (FR-047). The rail is this frontend's to draw.
-    public static let toggleRail = "toggle_rail"
     /// Paging the reading pane. Here rather than dispatched because the
     /// document is this frontend's — and because a hardened web view has no
     /// scroll call, so the jump between the shared anchors happens in the
@@ -113,13 +47,6 @@ public enum Intercepted {
     /// and the store has not seen most of it, which is why these stop here —
     /// `ComposeCommands` is the route from the id to the model.
     public static let composeVerbs = ComposeCommands.handled
-    /// The classic sidebar's keyboard. The sidebar went with the three-pane
-    /// shell (specs/009-focus-macos T034); these stay listed until the
-    /// registry drops the commands (T012), and nothing on the Mac answers
-    /// them meanwhile.
-    public static let nextFolder = "next_folder"
-    public static let prevFolder = "prev_folder"
-    public static let toggleFolder = "toggle_folder"
     public static let goToInbox = "go_to_inbox"
     public static let goToDrafts = "go_to_drafts"
     public static let goToSent = "go_to_sent"
@@ -141,26 +68,12 @@ public enum Intercepted {
     public static let findInMessage = "find_in_message"
     public static let findNext = "find_next"
     public static let findPrevious = "find_previous"
-    /// The classic parts panel, gone with the three-pane shell (T034) and
-    /// listed until the registry drops its commands (T012).
     /// Re-ask the query the other way round. Intercepted rather than sent,
     /// because it is the *list* that has to be told to redraw afterwards.
     public static let toggleResultOrder = "toggle_result_order"
-    /// Saved searches. All five patch `config.toml`, which this side reads
-    /// at the moment it acts; two of them ask a question first.
+    /// Saving a search patches `config.toml`, which this side reads at the
+    /// moment it acts.
     public static let saveSearch = "save_search"
-    public static let renameSavedSearch = "rename_saved_search"
-    public static let deleteSavedSearch = "delete_saved_search"
-    public static let moveSavedSearchUp = "move_saved_search_up"
-    public static let moveSavedSearchDown = "move_saved_search_down"
-    public static let openParts = "open_parts"
-    public static let nextPart = "next_part"
-    public static let prevPart = "prev_part"
-    public static let savePart = "save_part"
-    public static let saveAllParts = "save_all_parts"
-    public static let openPartExternally = "open_part_externally"
-    public static let openPart = "open_part"
-    public static let renderPartOnce = "render_part_once"
     /// The reader's `i i`: the same one-view render as `renderPartOnce`, so
     /// the key, the palette row and the notice's Show button cannot drift.
     public static let showImages = "show_images"
@@ -189,20 +102,16 @@ public enum Intercepted {
 
     /// Every id above, for the test that checks they still exist.
     public static let all = [
-        palette, cheatSheet, search, back, cyclePane, cyclePaneBack, goToFolders, settings,
-        toggleSidebar, expandAll, toggleFold, nextInConversation, prevInConversation,
+        palette, cheatSheet, search, back, goToFolders, settings,
+        expandAll, toggleFold, nextInConversation, prevInConversation,
         scrollReaderDown, scrollReaderUp,
-        nextFolder, prevFolder, toggleFolder,
         goToInbox, goToDrafts, goToSent, goToFlagged,
         openMessage, prevView, viewOriginal, toggleReaderView, zoomIn, zoomOut, zoomReset,
         findInMessage, findNext, findPrevious,
         addAccount, editConfig, toggleAccountEnabled, removeAccount,
         updateCredential, rebuildAccountIndex, setDefaultAccount,
-        toggleResultOrder, saveSearch, renameSavedSearch, deleteSavedSearch,
-        moveSavedSearchUp, moveSavedSearchDown,
-        openParts, nextPart, prevPart,
-        savePart, saveAllParts, openPartExternally, openPart, renderPartOnce, showImages,
+        toggleResultOrder, saveSearch, showImages,
         quit, unsubscribe, alwaysShowImages,
-        compose, reply, replyAll, forward, toggleRail,
+        compose, reply, replyAll, forward,
     ] + composeVerbs
 }

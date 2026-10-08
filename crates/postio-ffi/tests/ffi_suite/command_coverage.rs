@@ -12,19 +12,22 @@
 //! else here asserts that a thing works; this asserts that nothing was left
 //! out, which is the only shape that catches a command *not* wired.
 //!
-//! A command is answered if one of three things is true:
+//! A command is answered if one of two things is true:
 //!
-//! 1. The boundary handles it itself — [`postio_ffi::HANDLED_HERE`], the
-//!    cursor and selection verbs, which move state that lives on this side.
-//! 2. The bus has a handler for it — `Dispatcher::wired`.
-//! 3. The Swift frontend presents a surface for it rather than dispatching
+//! 1. The bus has a handler for it — `Dispatcher::wired`.
+//! 2. The Swift frontend presents a surface for it rather than dispatching
 //!    it — [`INTERCEPTED`], which is `PostioKit`'s `Intercepted.all`. A
 //!    session cannot open a window, so those stop here by design.
 //!
-//! Or it is not offered on the Mac at all — `postio_core::registry::offered_on`
-//! — because the Mac's design has no surface for it. Settled rather than
-//! answered: no menu item, no key, no palette row, so nothing is drawn that
-//! does nothing. That is a decision recorded in the registry, not debt.
+//! Or it is not offered on the Mac at all — `postio_core::registry::offered_on`,
+//! or a requirement Focus on Apple does not meet — because the Mac has no
+//! surface for it. Settled rather than answered: no menu item, no key, no
+//! palette row, so nothing is drawn that does nothing. That is a decision
+//! recorded in the registry, not debt.
+//!
+//! The Mac is Focus (specs/009-focus-macos), so every command Focus offers is
+//! owed here; the ones whose surface a later task builds are `KNOWN_ORPHANS`,
+//! each citing that task.
 //!
 //! Anything else is an orphan.
 
@@ -33,45 +36,105 @@ use postio_core::CommandId;
 /// The one list, read from the library rather than written again here.
 const INTERCEPTED: &[CommandId] = postio_ffi::registry::INTERCEPTED;
 
-/// Commands nothing answers on macOS yet, each with the issue that will.
+/// Commands nothing answers on macOS yet, each with the task that will.
 ///
 /// **Debt, not permission.** The list may only shrink: a command that gains a
 /// handler and is still listed fails the second assertion below, the same way
 /// a command that loses one fails the first. That is what stops this becoming
-/// a place orphans go to be forgotten — which is exactly what happened
+/// a place orphans go to be forgotten -- which is exactly what happened
 /// without a sweep at all.
 ///
-/// **Empty**, as the classic app's command-wiring test's is: every command reaches a
-/// handler, a window or this boundary, or is scoped away from the Mac by
-/// `postio_core::registry::offered_on`. A new entry here is a regression
-/// with an issue number, not a place to park one.
+/// Every entry is a Focus command whose surface the Mac builds in a later
+/// task of specs/009-focus-macos; the task that builds it deletes the line.
 const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
-    // The one keymap's go-to keys and pinned searches (spec 007, offered by
-    // every app), which arrived with the merge of the macOS frontend and
-    // which no Mac surface answers yet.
-    (CommandId::GoToArchive, "specs/009-focus-macos"),
-    (CommandId::GoToSnoozed, "specs/009-focus-macos"),
-    (CommandId::SavedSearch1, "specs/009-focus-macos"),
-    (CommandId::SavedSearch2, "specs/009-focus-macos"),
-    (CommandId::SavedSearch3, "specs/009-focus-macos"),
-    (CommandId::SavedSearch4, "specs/009-focus-macos"),
+    // The controller's cursor and selection, driven from the Mac's keys.
+    (CommandId::NextMessage, "specs/009-focus-macos T040"),
+    (CommandId::PrevMessage, "specs/009-focus-macos T040"),
+    (CommandId::FirstMessage, "specs/009-focus-macos T040"),
+    (CommandId::LastMessage, "specs/009-focus-macos T040"),
+    (CommandId::ToggleSelection, "specs/009-focus-macos T040"),
+    (CommandId::ExtendSelectionDown, "specs/009-focus-macos T040"),
+    (CommandId::ExtendSelectionUp, "specs/009-focus-macos T040"),
+    (CommandId::SelectAll, "specs/009-focus-macos T040"),
+    (CommandId::ToggleHasAction, "specs/009-focus-macos T040"),
+    // The message window's raw source and treatment switch.
+    (CommandId::ViewSource, "specs/009-focus-macos T070"),
+    (CommandId::SwitchTreatment, "specs/009-focus-macos T070"),
+    // The message window's More menu.
+    (CommandId::MoreActions, "specs/009-focus-macos T067"),
+    // The message window's attachments and links.
+    (
+        CommandId::OpenAttachmentOrLink,
+        "specs/009-focus-macos T068",
+    ),
+    (
+        CommandId::ToggleReadingPane,
+        "specs/009-focus-macos M4 (the reading pane beside the list comes after parity)",
+    ),
+    // The command bar's chip editor.
+    (CommandId::BackToWords, "specs/009-focus-macos T085"),
+    // Go-to keys and pinned searches (spec 007, offered by every app).
+    (CommandId::GoToArchive, "specs/009-focus-macos T082"),
+    (CommandId::GoToSnoozed, "specs/009-focus-macos T082"),
+    (CommandId::GoToOutbox, "specs/009-focus-macos T082"),
+    (CommandId::GoToJunk, "specs/009-focus-macos T082"),
+    (CommandId::GoToTrash, "specs/009-focus-macos T082"),
+    (CommandId::SavedSearch1, "specs/009-focus-macos T082"),
+    (CommandId::SavedSearch2, "specs/009-focus-macos T082"),
+    (CommandId::SavedSearch3, "specs/009-focus-macos T082"),
+    (CommandId::SavedSearch4, "specs/009-focus-macos T082"),
+    // Pickers at the row.
+    (CommandId::PickerChoose1, "specs/009-focus-macos T089"),
+    (CommandId::PickerChoose2, "specs/009-focus-macos T089"),
+    (CommandId::PickerChoose3, "specs/009-focus-macos T089"),
+    (CommandId::PickerChoose4, "specs/009-focus-macos T089"),
+    (CommandId::PickerTypeDate, "specs/009-focus-macos T089"),
+    (CommandId::PickerToggle, "specs/009-focus-macos T089"),
+    (CommandId::PickerConfirm, "specs/009-focus-macos T089"),
+    // The Filtered view.
+    (CommandId::GoToFiltered, "specs/009-focus-macos T113"),
+    (CommandId::FilteredTab1, "specs/009-focus-macos T113"),
+    (CommandId::FilteredTab2, "specs/009-focus-macos T113"),
+    (CommandId::FilteredTab3, "specs/009-focus-macos T113"),
+    (CommandId::FilteredTab4, "specs/009-focus-macos T113"),
+    (CommandId::FilteredTab5, "specs/009-focus-macos T113"),
+    (CommandId::FilteredTab6, "specs/009-focus-macos T113"),
+    (CommandId::FilteredTab7, "specs/009-focus-macos T113"),
+    // The digest window.
+    (CommandId::GoToDigestRules, "specs/009-focus-macos T114"),
+    (CommandId::NextReference, "specs/009-focus-macos T114"),
+    (CommandId::PrevReference, "specs/009-focus-macos T114"),
+    (CommandId::ToggleDigestSummary, "specs/009-focus-macos T114"),
+    // The digest-this-sender sheet.
+    (CommandId::DigestRule, "specs/009-focus-macos T115"),
+    (CommandId::DigestLikeThis, "specs/009-focus-macos T115"),
+    // The capture window.
+    (CommandId::CaptureTask, "specs/009-focus-macos T116"),
+    (CommandId::CaptureNote, "specs/009-focus-macos T116"),
+    (
+        CommandId::CaptureChangeProject,
+        "specs/009-focus-macos T116",
+    ),
+    (CommandId::CaptureUseSubject, "specs/009-focus-macos T116"),
+    (CommandId::CaptureWrite, "specs/009-focus-macos T116"),
 ];
 
 /// Whether the Mac offers `id` at all. See the module note.
 ///
-/// Two ways not to: scoped away from the platform, or asking for something a
-/// graphical frontend never is -- the terminal composer's own verbs
+/// Focus on Apple: the registry's own question, asked the way the session asks
+/// it. Scoped away from the platform (`offered_on`), or requiring what the
+/// Mac's frontend is not -- the terminal composer's own verbs
 /// (`Requirement::Terminal`) are in no Mac menu, key or palette, so they owe
-/// it nothing.
+/// it nothing. A single account is assumed in view, so a command that needs
+/// one is owed too.
 fn offered_on_the_mac(id: CommandId) -> bool {
-    use postio_core::registry::Requirement;
-    let requires = postio_core::registry::get(id).requires;
-    // Not the terminal's own commands, nor Focus's (spec 007): this
-    // boundary is the three-pane frontend's until the Mac builds Focus's
-    // design (specs/009-focus-macos).
+    let state = postio_core::Availability {
+        scope: postio_core::Scope::Account(postio_model::ids::AccountId::new(1)),
+        store_open: true,
+        frontend: postio_ffi::FRONTEND,
+    };
     postio_core::registry::offered_on(id.into(), postio_config::paths::Platform::Apple)
-        && !requires.contains(Requirement::Terminal)
-        && !requires.contains(Requirement::Focus)
+        && postio_core::registry::get(id).requires.met_by(state)
 }
 
 /// The bus the FFI session builds, asked what it answers.
@@ -104,7 +167,6 @@ async fn every_command_reaches_a_handler_a_window_or_this_boundary() {
         .copied()
         .filter(|id| {
             !wired.contains(id)
-                && !postio_ffi::HANDLED_HERE.contains(id)
                 && !INTERCEPTED.contains(id)
                 && !known.contains(id)
                 && offered_on_the_mac(*id)
@@ -116,8 +178,7 @@ async fn every_command_reaches_a_handler_a_window_or_this_boundary() {
         "these commands reach nothing on macOS, so the menu item, the key and \
          the palette entry all do nothing: {orphans:?}. Wire each one in \
          `postio_session::actions` (or `refresh`), answer it in \
-         `Session::handle_locally` and list it in `HANDLED_HERE`, give the \
-         Swift frontend a surface for it and add it to `Intercepted`, or -- \
+         the controller, give the Swift frontend a surface for it and add it to `Intercepted`, or -- \
          if it is genuinely not built yet -- put it in `KNOWN_ORPHANS` with \
          the issue that will build it."
     );
@@ -130,34 +191,13 @@ async fn a_command_that_gained_a_handler_leaves_the_orphan_list() {
     // application, and the next reader believes it.
     let wired = wired().await;
     for &(id, issue) in KNOWN_ORPHANS {
-        let answered = wired.contains(&id)
-            || postio_ffi::HANDLED_HERE.contains(&id)
-            || INTERCEPTED.contains(&id)
-            || !offered_on_the_mac(id);
+        let answered = wired.contains(&id) || INTERCEPTED.contains(&id) || !offered_on_the_mac(id);
         assert!(
             !answered,
             "{id} is in KNOWN_ORPHANS citing {issue}, and it is answered now \
              -- delete the line so this sweep keeps meaning something"
         );
     }
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn nothing_is_answered_twice_by_the_boundary_and_the_bus() {
-    // `handle_locally` returns before the send, so an id in both places is
-    // one the bus can never see -- a handler that was written, is tested on
-    // its own, and is unreachable through the application.
-    let wired = wired().await;
-    let both: Vec<CommandId> = postio_ffi::HANDLED_HERE
-        .iter()
-        .copied()
-        .filter(|id| wired.contains(id))
-        .collect();
-    assert!(
-        both.is_empty(),
-        "the boundary answers these before the bus can, so the bus's handler \
-         is unreachable: {both:?}"
-    );
 }
 
 #[test]
@@ -172,7 +212,7 @@ fn nothing_the_mac_does_not_offer_is_also_answered_on_it() {
         .filter(|id| !offered_on_the_mac(*id))
     {
         assert!(
-            !INTERCEPTED.contains(&id) && !postio_ffi::HANDLED_HERE.contains(&id),
+            !INTERCEPTED.contains(&id),
             "`{id}` is not offered on the Mac and is answered there anyway"
         );
     }

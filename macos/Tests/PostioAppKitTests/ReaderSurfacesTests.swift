@@ -50,7 +50,7 @@ extension ReaderWebViews {
             func resolveCid(message: Int64, contentId: String) -> InlinePart? { nil }
 
             func threadDocument(thread: Int64, reduced: [Int64]) -> ThreadDocumentFfi {
-                ThreadDocumentFfi(html: "", messages: [], rail: [])
+                ThreadDocumentFfi(html: "", messages: [])
             }
         }
 
@@ -74,7 +74,7 @@ extension ReaderWebViews {
             func resolveCid(message: Int64, contentId: String) -> InlinePart? { nil }
 
             func threadDocument(thread: Int64, reduced: [Int64]) -> ThreadDocumentFfi {
-                ThreadDocumentFfi(html: "", messages: [], rail: [])
+                ThreadDocumentFfi(html: "", messages: [])
             }
         }
 

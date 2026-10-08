@@ -75,7 +75,7 @@ import Testing
             kind: .completed, message: "Archived 12 messages", undoable: true
         )
         #expect(Notice(event) == Notice(kind: .completed, message: "Archived 12 messages", undoable: true))
-        #expect(Notice(.pageReady(page: 0)) == nil, "only a notice is a notice")
+        #expect(Notice(.keymapChanged) == nil, "only a notice is a notice")
     }
 
     @Test func theUndoButtonRunsTheRegistrysUndo() {

@@ -131,8 +131,6 @@ pub struct ThreadDocumentFfi {
     pub html: String,
     /// The messages in the order the page stacks them, oldest first.
     pub messages: Vec<ThreadAnchorFfi>,
-    /// The rail's rows, one per message, from the thread itself (FR-040).
-    pub rail: Vec<crate::RailRowFfi>,
 }
 
 /// One message's place in a [`ThreadDocumentFfi`].

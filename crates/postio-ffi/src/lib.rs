@@ -51,17 +51,14 @@ mod logging;
 mod mailbox;
 mod notify;
 mod palette;
-mod panes;
 mod parts;
 mod provisioning;
-mod rail;
 mod reader;
 pub mod registry;
 mod saved_search;
 mod search;
 mod session;
 mod settings;
-mod sidebar;
 mod unsubscribe;
 
 pub use account::{AccountFfi, ConnectionReportFfi, RepairRouteFfi};
@@ -94,17 +91,12 @@ pub use notify::{
     decide_notification,
 };
 pub use palette::{CheatRowFfi, CheatSectionFfi, PaletteEntryFfi};
-pub use panes::next_pane;
-pub use parts::{
-    MessagePartsFfi, PartFfi, PartsError, SavedPartsFfi, part_cursor_after, part_held_back_note,
-    part_note,
-};
+pub use parts::PartsError;
 pub use provisioning::{
     DiscoveredFfi, NewAccountFfi, ProviderHintFfi, RouteFfi, ScopesFfi, SecurityFfi, ServerFfi,
     SignInProgressFfi, SyncWindowChoiceFfi, SyncWindowFfi, looks_like_an_address, provider_hint,
     sign_in_scopes, sync_window_choices, write_initial_sync_window,
 };
-pub use rail::{RailEffectFfi, RailFfi, RailPresentationFfi, RailRowFfi, rail_presentation};
 pub use reader::{
     ConversationActionFfi, GrantFfi, InlinePart, MessageFactsFfi, ReaderActionFfi,
     ReaderDocumentFfi, ReaderNoticeFfi, RecipientsFfi, RemoteImagesFfi, middle_truncate,
@@ -116,11 +108,8 @@ pub use saved_search::{
     move_saved_search, rename_saved_search, save_search, saved_search_delete_prompt,
     saved_search_rename_prompt, saved_searches,
 };
-pub use search::{
-    ChipFfi, EmptyPlateFfi, MatchRangeFfi, OutcomeFfi, RefinementFfi, ScopeCountFfi,
-    SearchFacetsFfi, SearchScopeFfi, SnippetFfi, query_chips,
-};
-pub use session::{HANDLED_HERE, Session, SessionError, SessionOptions};
+pub use search::{ChipFfi, MatchRangeFfi, SnippetFfi, query_chips};
+pub use session::{Session, SessionError, SessionOptions};
 pub use settings::{
     AppearanceFfi, AttachmentFetchFfi, BodyFetchFfi, CheckForMailFfi, ComposingFfi, DensityFfi,
     FilterFfi, FoundEditorFfi, GroupFfi, HandoffTargetFfi, KeyHintFfi, RowActionFfi, RowMetricsFfi,
@@ -131,7 +120,6 @@ pub use settings::{
     settings_patch_composing, settings_patch_filter, settings_patch_syncing, settings_path,
     settings_remove_filter, settings_save, settings_sections, settings_status, settings_syncing,
 };
-pub use sidebar::{ActivityFfi, sidebar_status};
 pub use unsubscribe::{UnsubscribeActivationFfi, UnsubscribeOfferFfi};
 
 /// Every command the registry knows, in cheat-sheet order.

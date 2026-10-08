@@ -99,7 +99,7 @@ public struct ReaderView: NSViewRepresentable {
         // decoration.
         view.setAccessibilityRole(.group)
         view.setAccessibilityRoleDescription("article")
-        view.setAccessibilityLabel(Pane.reader.label)
+        view.setAccessibilityLabel("Message")
         view.pageZoom = zoom
         coordinator.load(into: view, message: message, remote: remoteImages, reduced: reduced)
         return view

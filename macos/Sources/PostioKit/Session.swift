@@ -86,10 +86,6 @@ public final class PostioSession {
     /// Every configured account, as the settings pane lists them.
     public func accounts() -> [AccountFfi] { inner.accounts() }
 
-    /// Show `scope`, and answer the generation the window is now on.
-    @discardableResult
-    public func openScope(_ scope: ScopeFfi) -> UInt64 { inner.openScope(scope: scope) }
-
     /// Read a conversation into the reading pane.
     ///
     /// Returns at once. `UiEvent.conversationReady` says when there is
@@ -108,19 +104,6 @@ public final class PostioSession {
     /// conversation costs, one web view each, and `postio_ui::conversation`
     /// answers it for both frontends.
     public var conversation: ConversationFfi? { inner.conversation() }
-
-    /// How many rows the current scope has.
-    ///
-    /// A `COUNT` on the other side, not the length of anything: a hundred
-    /// thousand rows are a number here, never a hundred thousand structs.
-    public var rowCount: UInt32 { inner.rowCount() }
-
-    /// The row at `position`, or `nil` while its page is on its way.
-    ///
-    /// Synchronous and does no I/O. A `nil` means draw a placeholder — the
-    /// fetch is already running by the time this returns, and
-    /// `UiEvent.pageReady` says when to ask again.
-    public func row(at position: UInt32) -> RowFfi? { inner.rowAt(position: position) }
 
     // MARK: Focus's list
 
@@ -166,16 +149,6 @@ public final class PostioSession {
     /// which is exactly what `ExpandedMessage.task(id:)` does.
     public nonisolated func messageFacts(_ message: Int64) -> MessageFactsFfi {
         inner.messageFacts(message: message)
-    }
-
-    /// One message as a row, by id rather than by list position.
-    ///
-    /// What the single-message pane draws its header from: a message the
-    /// store has not threaded belongs to no conversation and arrives as an
-    /// id, with no list under it to index into. `nil` for a message that is
-    /// not there — a row full of blanks reads as a message with no sender.
-    public func rowFor(_ message: Int64) -> RowFfi? {
-        inner.rowFor(message: message)
     }
 
     /// The whole document for a message, ready to hand a web view.
@@ -308,82 +281,6 @@ public final class PostioSession {
     /// separate, and moving down the list must not build a selection.
     public func setCursor(_ message: Int64?) { inner.setCursor(message: message) }
 
-    /// Run `query`, and show its hits as the list.
-    ///
-    /// **One query language.** `postio-search` parses the operators, behind
-    /// the boundary, for both frontends — Swift does not re-implement
-    /// `from:` or `is:unread`, or the two platforms would accept different
-    /// queries. Answers the generation the window is now on, the same as
-    /// `openScope`, and the rows page in behind exactly as a folder's do:
-    /// a search matching forty thousand messages is a count and a few
-    /// resident pages.
-    @discardableResult
-    public func search(_ query: String) -> UInt64 { inner.search(query: query) }
-
-    /// Leave search and restore the scope that was open.
-    ///
-    /// Restores rather than reloads: the boundary remembered what was on
-    /// screen, so this costs nothing where re-opening the folder would cost a
-    /// count and a page.
-    @discardableResult
-    public func clearSearch() -> UInt64 { inner.clearSearch() }
-
-    /// What the last search turned out to be, or `nil` outside a search.
-    ///
-    /// The wording is `postio_ui::search::readout`'s, including its caveats —
-    /// "still syncing" is a state that ends (#352), and an account named
-    /// unreachable is ADR 0005 Q10's promise that a view says what it left
-    /// out. Neither is worth a second frontend re-deriving.
-    public var searchOutcome: OutcomeFfi? { inner.searchOutcome() }
-
-    /// Whether the list is showing search results rather than a folder.
-    public var isSearching: Bool { inner.isSearching() }
-
-    /// The query the rows on screen came from, or `nil` over a mailbox.
-    ///
-    /// What *Save search as folder* keeps. Not the text in the field: that
-    /// is whatever has been typed since the last run.
-    public var searchQuery: String? { inner.searchQuery() }
-
-    /// Which order the results are in, as the sort control says it —
-    /// "Relevance" or "Newest". The boundary's word, so this control and
-    /// GTK's own say the same thing.
-    public var resultOrderLabel: String { inner.resultOrderLabel() }
-
-    /// The scope rail's counts and the refine chips for the results on
-    /// screen, from one pass over the index (#1157). A second pass, so off
-    /// the main actor: search is budgeted under 100 ms and paying for this
-    /// inline spent that budget twice on one keystroke.
-    public nonisolated func searchFacets() -> SearchFacetsFfi { inner.searchFacets() }
-
-    /// Which scope the search is looking in — All mail unless the rail said
-    /// otherwise, and All mail again for every new search.
-    public var searchScope: SearchScopeFfi { inner.searchScope() }
-
-    /// Look in `scope` and ask the same query again there. The scope is not
-    /// written into the query, so what was typed stays what was typed.
-    @discardableResult
-    public func setSearchScope(_ scope: SearchScopeFfi) -> UInt64 {
-        inner.setSearchScope(scope: scope)
-    }
-
-    /// Read the results the other way round — best first, or newest first.
-    ///
-    /// Re-asks the same query rather than re-sorting what is on screen, and
-    /// does nothing over a mailbox. Answers with the list's new generation.
-    @discardableResult
-    public func toggleResultOrder() -> UInt64 { inner.toggleResultOrder() }
-
-    /// What to draw over a list with nothing in it, when the boundary has
-    /// something to say about *why* it is empty.
-    ///
-    /// `nil` for an empty folder — that plate is this frontend's own and says
-    /// something different. The case the boundary has to answer is a search
-    /// that matched nothing: its row count is zero exactly like an empty
-    /// mailbox's, so a list keyed on the count alone says "no mail" about a
-    /// mailbox holding thousands (ADR 0005 Q10).
-    public var emptyPlate: EmptyPlateFfi? { inner.emptyPlate() }
-
     /// Throw a draft away — the row and the server copy.
     ///
     /// Discarding one that is already gone is not an error: a retried
@@ -391,50 +288,6 @@ public final class PostioSession {
     /// expected case, and the window has closed either way.
     @discardableResult
     public func discardDraft(_ draft: Int64) -> String? { inner.discardDraft(draft: draft) }
-
-    /// A message's parts, as a tree with the rows already laid out.
-    ///
-    /// The prefixes, the labels, what each row *says*, and above all the
-    /// filename a part is safe to be written under are all the boundary's:
-    /// a sender's `filename=` is attacker-controlled text, and two frontends
-    /// making it safe differently is two answers to a security question.
-    public func messageParts(_ message: Int64) -> MessagePartsFfi {
-        inner.messageParts(message: message)
-    }
-
-    /// Write one part to `path`, which the user chose.
-    ///
-    /// The path is exact — a save panel's answer. Asking for a part that has
-    /// not arrived is what fetches it, so this can take a moment.
-    public func savePart(_ message: Int64, partId: String, to path: String) throws {
-        try inner.savePart(message: message, partId: partId, path: path)
-    }
-
-    /// Write every savable part into `directory`, and say how it went.
-    public func saveAllParts(_ message: Int64, into directory: String) throws -> SavedPartsFfi {
-        try inner.saveAllParts(message: message, directory: directory)
-    }
-
-    /// Write one part into `directory` under a name **Postio** chooses, and
-    /// answer where it landed.
-    ///
-    /// The directory only. This is the route where bytes leave Postio's own
-    /// window — handed to another application — so the frontend does not get
-    /// to pass the sender's filename through to the filesystem.
-    public func exportPart(_ message: Int64, partId: String, into directory: String) throws
-        -> String
-    {
-        try inner.exportPart(message: message, partId: partId, directory: directory)
-    }
-
-    /// The excerpt for `message`, with the match located.
-    ///
-    /// Text and byte ranges, never marked-up text — the same decision the
-    /// palette's highlighting makes, and for the same reason: one answer
-    /// about what matched, drawn each frontend's own way.
-    public func snippet(for message: Int64) -> SnippetFfi? {
-        inner.snippetFor(message: message)
-    }
 
     /// Whether `id` can run in `context`, given the open view.
     ///
@@ -476,37 +329,6 @@ public final class PostioSession {
         inner.cheatSheetSections(context: context)
     }
 
-    /// Whether `message` is *marked*.
-    ///
-    /// Not whether it is under the cursor: `PRODUCT.md` §9 keeps those apart,
-    /// and `NSTableView`'s own selection is the cursor here. Answered without
-    /// enumerating a whole-view selection, which is what makes "select all,
-    /// then deselect three" cost three ids rather than a hundred thousand.
-    public func isSelected(_ message: Int64) -> Bool { inner.isSelected(message: message) }
-
-    /// What to show above the list — "12 selected" — or nothing.
-    ///
-    /// From the model, which knows the answer for a whole-view selection
-    /// without listing it. Counting ids on this side could not draw the one
-    /// case that most needs a count.
-    public var selectionSummary: String? { inner.selectionSummary() }
-
-    /// The row the cursor is on, or `nil` when the list has none.
-    public var cursorRow: UInt32? { inner.cursorRow() }
-
-    /// The message the cursor is on, if its page has arrived.
-    public var cursorMessage: Int64? { inner.cursorMessage() }
-
-    /// Land on the first row when the list has mail and nothing is under the
-    /// cursor, or name the cursor's message once its page arrives. Asked
-    /// after every change to the list; a cursor somebody placed stays put.
-    /// The landing raises `cursorMoved` with `chosen` false.
-    public func settleCursor() { inner.settleCursor() }
-
-    /// Whether a person put the cursor where it is, rather than the list
-    /// landing on its first row. Only a chosen row is read by dwell (#601).
-    public var cursorChosen: Bool { inner.cursorChosen() }
-
     /// `#` in the search box: folders matching `query`, best first, and
     /// what to say when none do.
     public func finderFolders(_ query: String) -> FinderAnswerFfi { inner.finderFolders(query: query) }
@@ -530,18 +352,6 @@ public final class PostioSession {
     public func markReadOnDwell(_ message: Int64) {
         inner.markReadOnDwell(message: message)
     }
-
-    /// Put the cursor on `row` — what a click on the list means.
-    ///
-    /// The position, not just the message: after a click, `j` has to move
-    /// from where the user clicked.
-    public func setCursorRow(_ row: UInt32?) { inner.setCursorRow(row: row) }
-
-    /// Mark `message`, or take it out of the selection again.
-    public func toggleSelection(_ message: Int64) { inner.toggleSelection(message: message) }
-
-    /// Unmark everything.
-    public func clearSelection() { inner.clearSelection() }
 
     /// The binding in force for a command, for drawing an accelerator.
     ///

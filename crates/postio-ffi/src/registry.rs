@@ -279,18 +279,10 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::CheatSheet,
         C::Search,
         C::Back,
-        C::CyclePane,
-        C::CyclePaneBack,
         C::GoToFolders,
         C::Settings,
-        C::ToggleSidebar,
         C::ScrollReaderDown,
         C::ScrollReaderUp,
-        // The sidebar's keyboard. The tree, which rows are collapsed and
-        // where the keyboard is inside it are this frontend's state.
-        C::NextFolder,
-        C::PrevFolder,
-        C::ToggleFolder,
         C::GoToInbox,
         C::GoToDrafts,
         C::GoToSent,
@@ -311,16 +303,6 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::FindInMessage,
         C::FindNext,
         C::FindPrevious,
-        // The parts panel: a surface, a cursor this side holds, and verbs
-        // that each need a dialog or a launcher.
-        C::OpenParts,
-        C::NextPart,
-        C::PrevPart,
-        C::SavePart,
-        C::SaveAllParts,
-        C::OpenPartExternally,
-        C::RenderPartOnce,
-        C::OpenPart,
         // "Show remote images" is render-once under the reader's own name:
         // this message, this view, no grant written (#1706).
         C::ShowImages,
@@ -337,14 +319,9 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         // The picker is a surface, and the four times it offers come from
         // the boundary so both frontends mean the same thing by them.
         C::ScheduleSend,
-        // Saved searches: all five patch `config.toml` through the
-        // frontend-facing functions rather than the bus, and two of them ask
-        // a question no session can put on screen.
+        // Saving a search patches `config.toml` through the frontend-facing
+        // function rather than the bus.
         C::SaveSearch,
-        C::RenameSavedSearch,
-        C::DeleteSavedSearch,
-        C::MoveSavedSearchUp,
-        C::MoveSavedSearchDown,
         // The settings window's account verbs. Each acts on the row that
         // window's keyboard is on -- a cursor no session holds -- and adding
         // an account, replacing a credential and opening `config.toml` all
@@ -377,8 +354,6 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::ToggleFold,
         C::NextInConversation,
         C::PrevInConversation,
-        // The conversation rail, hidden or shown for this window (FR-047).
-        C::ToggleRail,
         C::Compose,
         C::Reply,
         C::ReplyAll,

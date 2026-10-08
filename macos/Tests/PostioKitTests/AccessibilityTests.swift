@@ -11,32 +11,6 @@ import Testing
 /// be testing AppKit's property storage — the same trap
 /// `docs/archive/engineering-notes.md` records on the GTK side.
 @Suite struct AccessibilityTests {
-    @Test func theFocusOrderIsTheVisualOrder() {
-        // A focus order that disagrees with the layout is the classic way a
-        // keyboard-first application becomes unusable without a mouse.
-        #expect(Pane.allCases == [.sidebar, .list, .reader])
-        #expect(Pane.sidebar.next() == .list)
-        #expect(Pane.list.next() == .reader)
-        #expect(Pane.reader.next() == .sidebar, "the cycle has to come back round")
-        #expect(Pane.sidebar.next(false) == .reader)
-    }
-
-    @Test func everyPaneResolvesKeysAsItself() {
-        // The keyboard's context follows focus, or `j` in the sidebar moves
-        // the message list.
-        #expect(Pane.sidebar.context == .sidebar)
-        #expect(Pane.list.context == .list)
-        #expect(Pane.reader.context == .reader)
-    }
-
-    @Test func everyPaneIsNamed() {
-        // A pane a screen reader calls "group" is a pane nobody can navigate
-        // to on purpose.
-        for pane in Pane.allCases {
-            #expect(!pane.label.isEmpty)
-        }
-    }
-
     @Test func everyInterceptedCommandIsInTheRegistry() {
         // The frontend presents a surface for these rather than sending them
         // on, and it matches them by *string*. A literal that no longer names

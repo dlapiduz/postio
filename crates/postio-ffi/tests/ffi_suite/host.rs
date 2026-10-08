@@ -8,7 +8,7 @@
 //! over the store it opened. These hold that, with no bus of the test's own.
 
 use chrono::Utc;
-use postio_ffi::{ScopeFfi, Session, SessionOptions};
+use postio_ffi::{Session, SessionOptions};
 use postio_model::{Mailbox, MailboxRole, Message};
 use postio_storage::repository::{MailboxRepository, MessageRepository};
 use postio_storage::test_support;
@@ -47,15 +47,7 @@ async fn archiving_through_the_boundary_moves_the_message() {
     // which is what `Session::open_at` -- the Swift constructor -- gets.
     let session =
         Session::open(SessionOptions::in_memory_with(database.clone())).expect("a session");
-    session.open_scope(ScopeFfi::Mailbox {
-        mailbox: inbox.into(),
-    });
-    let _ = session.row_at(0);
-    session.settle_for_test();
-    let row = session.row_at(0).expect("the message's row is resident");
-    assert_eq!(row.id, message, "the fixture's one row is its one message");
-
-    session.set_cursor(Some(row.id));
+    session.set_cursor(Some(message));
     session.invoke("archive");
 
     let deadline =

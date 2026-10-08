@@ -7,7 +7,7 @@
 //! and the sentence to show when there are none.
 
 use chrono::Utc;
-use postio_ffi::{ScopeFfi, Session, SessionOptions};
+use postio_ffi::{Session, SessionOptions};
 use postio_model::{EmailAddress, Label, Message};
 use postio_storage::repository::{ContactRepository, LabelRepository, MessageRepository};
 use postio_storage::test_support;
@@ -50,11 +50,6 @@ async fn world() -> World {
 
     let session = Session::open(SessionOptions::in_memory_with(database.clone()))
         .expect("a session over the store");
-    session.open_scope(ScopeFfi::Mailbox {
-        mailbox: inbox.get(),
-    });
-    let _ = session.row_at(0);
-    session.settle_for_test();
     World {
         session,
         database,
@@ -141,7 +136,7 @@ async fn a_picked_label_goes_on_the_message_under_the_cursor() {
     let found = world.session.finder_labels("tax".to_owned()).await;
     assert_eq!(found.hits.first().map(|hit| hit.id), Some(world.label));
 
-    world.session.invoke("first_message");
+    world.session.set_cursor(Some(world.message));
     world.session.apply_label(world.label);
 
     let labelled = settle_until(async || {

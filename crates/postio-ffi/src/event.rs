@@ -124,56 +124,14 @@ pub enum UiEvent {
     },
     /// The conversation asked for has been read and can now be drawn.
     ///
-    /// Boundary-local, for the same reason [`UiEvent::PageReady`] is: the
-    /// reading pane's read is this frontend's, and the engine has no event
-    /// for it. Carries the thread so a pane that has moved on can drop a
+    /// Boundary-local: the reading pane's read is this frontend's, and the
+    /// engine has no event for it. Carries the thread so a pane that has moved on can drop a
     /// read that arrived late rather than drawing the wrong conversation
     /// under someone's cursor.
     ConversationReady {
         /// The conversation that was read.
         thread: i64,
     },
-    /// A page of list rows arrived and its rows can now be drawn.
-    ///
-    /// Boundary-local: `postio-core` has no such event and should not gain
-    /// one. Paging is how *this* frontend reads a list, not something the
-    /// engine does — the GTK frontend drives the same `ListWindow` with no
-    /// event at all, because its model and its widget are in one process.
-    /// Putting it in the core's vocabulary would be a frontend's concern
-    /// leaking into everyone's, which is a thing shared layers accumulate and
-    /// do not shed.
-    PageReady {
-        /// The page whose rows are now resident.
-        page: u32,
-    },
-    /// The cursor moved, and to where.
-    ///
-    /// Raised by this boundary rather than by the engine: `j` and `k` move
-    /// the frontend's own state, and the frontend learns where they left it
-    /// the same way it learns everything else. `row` is where the cursor is;
-    /// `message` is what is there, and is `None` while that row's page is
-    /// still on its way — a real state, not an error.
-    CursorMoved {
-        /// The row, or `None` when the list has none.
-        row: Option<u32>,
-        /// The message on it, if its page has arrived.
-        message: Option<i64>,
-        /// Whether a person put it there -- a key, a click, a verb -- rather
-        /// than the list landing on its first row by itself
-        /// ([`Session::settle_cursor`](crate::Session::settle_cursor)). The
-        /// pane shows either; only a chosen row starts the read clock
-        /// (#601, #71).
-        chosen: bool,
-    },
-    /// What is marked changed -- `x`, a shift-extension, select-all, or
-    /// `Escape` clearing it.
-    ///
-    /// No payload: the rows ask `is_selected` as they draw and the bar asks
-    /// `selection_summary`, so what the frontend needs is only *that* it
-    /// changed. Raised by this boundary, which is where the selection is;
-    /// without it the Mac's list drew no mark at all (the cursor moving is
-    /// [`CursorMoved`](Self::CursorMoved), and marks nothing).
-    SelectionChanged,
     /// An account's connection changed.
     ConnectionChanged {
         /// The account.
@@ -183,7 +141,7 @@ pub enum UiEvent {
     },
     /// How far a re-index has got.
     ///
-    /// Boundary-local, like `PageReady`: re-indexing is something a person
+    /// Boundary-local: re-indexing is something a person
     /// asked this window for, not something the engine does on its own. A
     /// pass over five thousand messages takes long enough that a button with
     /// no progress is indistinguishable from a button that does nothing
