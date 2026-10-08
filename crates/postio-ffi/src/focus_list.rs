@@ -356,8 +356,38 @@ fn conversation_row(
     }
 }
 
+/// A row the driver holds: the words it crossed with, and the row they
+/// were made from -- what the controller reads a capture's source, `d`'s
+/// senders and a digest's delivery from (`Rows::row`).
+#[derive(Debug, Clone)]
+pub(crate) struct HeldRow {
+    /// What the table draws.
+    pub(crate) ffi: FocusRowFfi,
+    /// What it was made from.
+    pub(crate) row: FocusRow,
+}
+
+impl HeldRow {
+    fn of(row: FocusRow) -> Self {
+        HeldRow {
+            ffi: FocusRowFfi::of(&row),
+            row,
+        }
+    }
+}
+
+impl postio_ui::list::ListRow for HeldRow {
+    fn id(&self) -> Option<postio_model::MessageId> {
+        self.ffi.id()
+    }
+
+    fn thread(&self) -> Option<postio_model::ThreadId> {
+        self.ffi.thread()
+    }
+}
+
 /// The Mac's rows, as the controller asks about them.
-struct RowsView<'a>(&'a ListWindow<FocusRowFfi>);
+struct RowsView<'a>(&'a ListWindow<HeldRow>);
 
 impl RowsView<'_> {
     /// The id the controller knows a row by: a digest's is its delivery,
@@ -383,7 +413,9 @@ impl postio_focus::Rows for RowsView<'_> {
         self.0.total()
     }
     fn facts(&self, position: u32) -> Option<postio_focus::RowFacts> {
-        self.0.resident_at(position).map(Self::facts_of)
+        self.0
+            .resident_at(position)
+            .map(|held| Self::facts_of(&held.ffi))
     }
     fn position_of(&self, message: postio_model::MessageId) -> Option<u32> {
         self.0.position_of(message)
@@ -392,15 +424,19 @@ impl postio_focus::Rows for RowsView<'_> {
     fn said(&self, position: u32) -> Option<(String, String)> {
         self.0
             .resident_at(position)
+            .map(|held| &held.ffi)
             .filter(|row| row.kind != FocusRowKindFfi::Digest)
             .map(|row| (row.sender.clone(), row.subject.clone()))
+    }
+    fn row(&self, position: u32) -> Option<FocusRow> {
+        self.0.resident_at(position).map(|held| held.row.clone())
     }
 }
 
 /// Focus's list for the Mac: the controller, and the rows it delivered.
 pub(crate) struct FocusDriver {
     focus: Mutex<FocusController>,
-    list: Mutex<ListWindow<FocusRowFfi>>,
+    list: Mutex<ListWindow<HeldRow>>,
     client: Client,
     runtime: tokio::runtime::Handle,
     local: async_channel::Sender<UiEvent>,
@@ -524,6 +560,7 @@ impl FocusDriver {
         let list = self.list.lock().expect("list lock");
         let position = self.focus.lock().expect("focus lock").cursor()?;
         list.resident_at(position)
+            .map(|held| &held.ffi)
             .filter(|row| row.kind != FocusRowKindFfi::Digest)
             .map(|row| postio_model::MessageId::new(row.id))
     }
@@ -537,7 +574,7 @@ impl FocusDriver {
     /// The list, as a source of facts about its rows: what `aim` asks to
     /// tell a conversation row from a message. Held only while a verb is
     /// aimed.
-    pub(crate) fn rows(&self) -> std::sync::MutexGuard<'_, ListWindow<FocusRowFfi>> {
+    pub(crate) fn rows(&self) -> std::sync::MutexGuard<'_, ListWindow<HeldRow>> {
         self.list.lock().expect("list lock")
     }
 
@@ -566,7 +603,7 @@ impl FocusDriver {
     pub(crate) fn row_of(&self, message: i64) -> Option<FocusRowFfi> {
         let list = self.list.lock().expect("list lock");
         let position = list.position_of(postio_model::MessageId::new(message))?;
-        list.resident_at(position).cloned()
+        list.resident_at(position).map(|held| held.ffi.clone())
     }
 
     pub(crate) fn row_at(self: &Arc<Self>, position: u32) -> Option<FocusRowFfi> {
@@ -574,7 +611,7 @@ impl FocusDriver {
             let mut list = self.list.lock().expect("list lock");
             let stamp = list.generation();
             match list.row_at(position)? {
-                Lookup::Resident(row) => return Some(row.clone()),
+                Lookup::Resident(held) => return Some(held.ffi.clone()),
                 Lookup::Missing { request } => (request, stamp),
             }
         };
@@ -627,7 +664,7 @@ impl FocusDriver {
                 total,
                 rows,
             } => {
-                let rows = rows.iter().map(FocusRowFfi::of).collect();
+                let rows = rows.into_iter().map(HeldRow::of).collect();
                 let (delivered, resized) = {
                     let mut list = self.list.lock().expect("list lock");
                     let resized = (list.generation() == stamp)
@@ -757,6 +794,34 @@ impl FocusDriver {
                 let sheet = crate::focus_keymap::sheet(&self.keymap());
                 self.say(UiEvent::FocusOpenKeyMap { sheet });
             }
+            // The digest's window draws its own email: `FocusDigest`
+            // carries it, so a message hosted there has no event of its own.
+            Intent::OpenMessage {
+                host: postio_focus::Host::Digest,
+                ..
+            } => {}
+            Intent::Filtered(view) => self.say(UiEvent::FocusFiltered {
+                view: (*view).into(),
+            }),
+            Intent::FilteredFocus(index) => self.say(UiEvent::FocusFilteredFocus { index }),
+            Intent::Digest(view) => self.say(UiEvent::FocusDigest {
+                view: (*view).into(),
+            }),
+            Intent::Confirm(confirm) => self.say(UiEvent::FocusConfirm {
+                confirm: confirm.into(),
+            }),
+            Intent::OpenRule(view) => self.say(UiEvent::FocusOpenRule {
+                view: (*view).into(),
+            }),
+            Intent::Rule(view) => self.say(UiEvent::FocusRule {
+                view: (*view).into(),
+            }),
+            Intent::OpenCapture(view) => self.say(UiEvent::FocusOpenCapture {
+                view: (*view).into(),
+            }),
+            Intent::Capture(view) => self.say(UiEvent::FocusCapture {
+                view: (*view).into(),
+            }),
             Intent::SaveSearch { query } => {
                 let saved = self.save_search(&query);
                 self.input(Input::SearchSaved(saved));

@@ -65,51 +65,44 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
         CommandId::ToggleReadingPane,
         "specs/009-focus-macos M4 (the reading pane beside the list comes after parity)",
     ),
-    // The Filtered view. `g f` is the controller's now (`FocusShowFiltered`),
-    // and the view it shows is T113's.
-    (CommandId::FilteredTab1, "specs/009-focus-macos T113"),
-    (CommandId::FilteredTab2, "specs/009-focus-macos T113"),
-    (CommandId::FilteredTab3, "specs/009-focus-macos T113"),
-    (CommandId::FilteredTab4, "specs/009-focus-macos T113"),
-    (CommandId::FilteredTab5, "specs/009-focus-macos T113"),
-    (CommandId::FilteredTab6, "specs/009-focus-macos T113"),
-    (CommandId::FilteredTab7, "specs/009-focus-macos T113"),
-    // The digest window.
+    // The digest rules list (`g d`), and "Digest mail like this" from the
+    // list (`L`): slice 12 built the rule sheet and its like-this button,
+    // not these two ways in.
     (CommandId::GoToDigestRules, "specs/009-focus-macos T114"),
-    (CommandId::NextReference, "specs/009-focus-macos T114"),
-    (CommandId::PrevReference, "specs/009-focus-macos T114"),
-    (CommandId::ToggleDigestSummary, "specs/009-focus-macos T114"),
-    // The digest-this-sender sheet.
-    (CommandId::DigestRule, "specs/009-focus-macos T115"),
     (CommandId::DigestLikeThis, "specs/009-focus-macos T115"),
-    // The capture window.
-    (CommandId::CaptureTask, "specs/009-focus-macos T116"),
-    (CommandId::CaptureNote, "specs/009-focus-macos T116"),
-    (
-        CommandId::CaptureChangeProject,
-        "specs/009-focus-macos T116",
-    ),
-    (CommandId::CaptureUseSubject, "specs/009-focus-macos T116"),
-    (CommandId::CaptureWrite, "specs/009-focus-macos T116"),
 ];
 
-/// Whether Focus's controller answers `id` on the Mac's list -- with
-/// nothing over it, or with the command bar up: what `Session::invoke`
-/// routes to it first.
+/// Whether Focus's controller answers `id` on the Mac: on the list with
+/// nothing over it, with the command bar up, or over one of the surfaces it
+/// keeps (Filtered, the digest's window, capture), whose keys are theirs
+/// only while they are up. What `Session::invoke` routes to it first.
 ///
 /// The bar counts because the Mac draws it (`CommandBarPanel`, T085): its
 /// own keys -- `BackToWords`, the result order, saving -- reach the
 /// controller only while it is up, which is the only time they mean
 /// anything.
 fn the_controller_answers(id: CommandId) -> bool {
-    let mut focus = postio_focus::FocusController::new(postio_focus::Policy::for_platform(
-        postio_config::paths::Platform::Apple,
-    ));
-    if focus.answers(id) {
-        return true;
-    }
-    let _ = focus.handle(postio_focus::Input::Command(CommandId::Search));
-    focus.answers(id)
+    use postio_focus::{FocusController, Input, Policy, SurfaceKind};
+    let fresh =
+        || FocusController::new(Policy::for_platform(postio_config::paths::Platform::Apple));
+    let with_bar = || {
+        let mut focus = fresh();
+        let _ = focus.handle(Input::Command(CommandId::Search));
+        focus.answers(id)
+    };
+    fresh().answers(id)
+        || with_bar()
+        || [
+            SurfaceKind::Filtered,
+            SurfaceKind::Digest,
+            SurfaceKind::Capture,
+        ]
+        .into_iter()
+        .any(|kind| {
+            let mut focus = fresh();
+            let _ = focus.handle(Input::SurfaceOpened(kind));
+            focus.answers(id)
+        })
 }
 
 /// Whether the Mac offers `id` at all. See the module note.

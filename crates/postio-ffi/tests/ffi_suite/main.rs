@@ -33,6 +33,7 @@ mod focus_keymap;
 mod focus_pickers;
 mod focus_scroll;
 mod focus_states;
+mod focus_surfaces;
 mod host;
 mod keys;
 mod notice;

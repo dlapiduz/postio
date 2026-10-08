@@ -382,6 +382,58 @@ pub enum UiEvent {
         /// What it draws.
         sheet: crate::focus_keymap::KeyMapSheetFfi,
     },
+    /// Draw Filtered, whole, in the list's place (specs/009-focus-macos
+    /// T109, screen 21). It follows `FocusShowFiltered`, and again whenever
+    /// its tabs, rows or focus change. It closes on
+    /// `FocusCloseSurface { kind: Filtered }`.
+    FocusFiltered {
+        /// What it draws.
+        view: crate::focus_surfaces::FilteredViewFfi,
+    },
+    /// Filtered's keyboard moved to the row at `index` (`j`/`k`, a click).
+    FocusFilteredFocus {
+        /// The row, an index into the view's `rows`.
+        index: Option<u32>,
+    },
+    /// Draw the digest's window, whole (screens 22 and 23). It follows
+    /// `FocusOpenDigest`, and again for every change: the reads landing,
+    /// a reference stepped to, the page switched, an email opened in place.
+    /// It closes on `FocusCloseSurface { kind: Digest }`.
+    FocusDigest {
+        /// What it draws.
+        view: crate::focus_surfaces::DigestViewFfi,
+    },
+    /// Ask before doing it: an alert with Cancel and one button. On yes,
+    /// say `focus_confirmed(confirm.token)`; on no, nothing.
+    FocusConfirm {
+        /// What it asks.
+        confirm: crate::focus_surfaces::ConfirmFfi,
+    },
+    /// Show the digest-this-sender sheet (screen 24). The controller has
+    /// put it on the stack as a `Dialog`; it closes on
+    /// `FocusCloseSurface { kind: Dialog }`, and any other way it closes is
+    /// `focus_surface_closed(Dialog)`.
+    FocusOpenRule {
+        /// What it draws.
+        view: crate::focus_surfaces::RuleViewFfi,
+    },
+    /// Redraw the rule sheet, whole.
+    FocusRule {
+        /// What it draws.
+        view: crate::focus_surfaces::RuleViewFfi,
+    },
+    /// Show the capture window (screen 25), replacing the secondary window
+    /// open (M4). The controller has put it on the stack; it closes on
+    /// `FocusCloseSurface { kind: Capture }`.
+    FocusOpenCapture {
+        /// What it draws.
+        view: crate::focus_surfaces::CaptureViewFfi,
+    },
+    /// Redraw the capture window, whole.
+    FocusCapture {
+        /// What it draws.
+        view: crate::focus_surfaces::CaptureViewFfi,
+    },
 }
 
 /// How a Focus toast is drawn.

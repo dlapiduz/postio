@@ -44,6 +44,7 @@ postio-client.workspace = true
 postio-host.workspace = true
 postio-runtime.workspace = true
 postio-ui.workspace = true
+postio-vault.workspace = true
 postio-model.workspace = true
 # The query language's "today", for a relative date operator like
 # `after:yesterday`. One clock, on this side, so both frontends resolve a

@@ -52,7 +52,9 @@ mod focus_message;
 mod focus_pickers;
 mod focus_reader;
 mod focus_states;
+mod focus_surfaces;
 mod keys;
+mod links;
 mod list;
 mod logging;
 mod mailbox;
@@ -106,7 +108,15 @@ pub use focus_reader::{FocusReaderDocumentFfi, RenderModeWordsFfi, TreatmentFfi}
 pub use focus_states::{
     BannerButtonFfi, BannerFfi, BannerProgressFfi, EmptyPageFfi, EmptyShortcutFfi, SyncMarkFfi,
 };
+pub use focus_surfaces::{
+    CaptureModeFfi, CapturePickFfi, CaptureProjectFfi, CaptureViewFfi, CapturedFfi, ConfirmFfi,
+    DigestCardFfi, DigestEmailFfi, DigestLineFfi, DigestPageFfi, DigestStatementFfi,
+    DigestSummaryFfi, DigestTopicFfi, DigestViewFfi, FilteredLineFfi, FilteredTabFfi,
+    FilteredViewFfi, FocusHintFfi, RulePreviewLineFfi, RuleScheduleFfi, RuleViewFfi,
+    SummaryStatementFfi, VaultPictureFfi, VaultProjectFfi,
+};
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
+pub use links::{link_gone, link_unknown, message_link, parse_message_link};
 pub use list::{RowFfi, ScopeFfi};
 pub use logging::start_logging;
 pub use mailbox::{MailboxFfi, MailboxRoleFfi, mailbox_role_name};
