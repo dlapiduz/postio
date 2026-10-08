@@ -1,0 +1,31 @@
+# Undo still works after the toast that offered it has gone
+# (specs/009-focus-macos T047; FR-041).
+#
+# The toast is a reminder, not the undo itself: the engine's undo stack is
+# the only one, and `mod+z` (Edit › Undo on the Mac, named for the action)
+# takes the last unit back for as long as the stack keeps it. The rows come
+# back with the cursor on the first of them.
+apps   = ["focus"]
+source = { kind = "flow", ref = "undo after the pill is gone" }
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+id      = "second"
+command = "next_message"
+check   = { cursor.index = 1 }
+
+[[step]]
+command = "archive"
+check   = { cursor.index = 1, notice.undo = true }
+expect  = "The row is gone, the one below takes its place under the ring, and the toast offers Undo."
+
+[[step]]
+wait    = { ms = 12000 }
+expect  = "The toast has gone; the list is as the archive left it."
+
+[[step]]
+command = "undo"
+check   = { keyboard.region = "list", cursor.index = { same_as = "second" }, cursor.id = { same_as = "second" } }
+expect  = "The archived row is back in its place with the cursor ring on it, and the toast says it was undone."
