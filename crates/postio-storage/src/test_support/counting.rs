@@ -41,8 +41,8 @@
 //!
 //! Behind the `test-support` feature, like the rest of this module. Counting
 //! is always on when the feature is compiled in: there is no hook to install,
-//! so [`install`] and [`install_on`] are kept only so the suites that call
-//! them still read sensibly, and do nothing.
+//! so [`install`] is kept only so the suites that call it still read
+//! sensibly, and does nothing.
 
 use std::cell::Cell;
 
