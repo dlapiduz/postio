@@ -13,7 +13,7 @@ use chrono::Utc;
 use postio_config::paths::Platform;
 use postio_core::CommandId;
 use postio_focus::{
-    BarLine, BarLineKind, BarMode, BarView, Effect, FocusController, Found, FoundRow, Input,
+    BarLine, BarLineKind, BarMode, BarView, Effect, FocusController, Found, FoundRow, Host, Input,
     Intent, Opened, PageAnswer, PlacesRead, Policy, Reply, Request, RowFacts, Rows, SurfaceKind,
     Ticket, ToastKind,
 };
@@ -880,7 +880,8 @@ fn a_hit_opens_walks_the_results_and_closing_it_reopens_the_bar_on_it() {
             Intent::OpenMessage {
                 message: MessageId::new(2),
                 index: 1,
-                total: 2
+                total: 2,
+                host: Host::Own,
             }
         ]
     );
@@ -892,7 +893,8 @@ fn a_hit_opens_walks_the_results_and_closing_it_reopens_the_bar_on_it() {
         vec![Intent::OpenMessage {
             message: MessageId::new(1),
             index: 0,
-            total: 2
+            total: 2,
+            host: Host::Own,
         }]
     );
     // Back closes it, and the bar comes back on the words, the highlight

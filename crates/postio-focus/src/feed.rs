@@ -299,6 +299,14 @@ impl Feed {
     }
 
     /// The place in view, once one is open.
+    /// The digest whose row is `row`, among what Focus surfaces.
+    pub(crate) fn digest(&self, row: postio_model::MessageId) -> Option<focus_list::Digest> {
+        self.surfaced.iter().find_map(|surfaced| match surfaced {
+            FocusRow::Digest(digest) if surfaced.id() == row => Some(digest.clone()),
+            _ => None,
+        })
+    }
+
     pub(crate) fn scope(&self) -> Option<ListScope> {
         self.paging.scope()
     }

@@ -4824,6 +4824,7 @@ dependencies = [
  "postio-model",
  "postio-search",
  "postio-ui",
+ "postio-vault",
  "tracing",
 ]
 

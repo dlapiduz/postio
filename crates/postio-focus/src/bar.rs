@@ -947,7 +947,7 @@ impl FocusController {
                 ),
                 None => Vec::new(),
             },
-            CommandId::GoToFiltered => vec![Step::Show(Intent::ShowFiltered)],
+            CommandId::GoToFiltered => self.show_filtered(),
             CommandId::GoToFolders => {
                 vec![Step::Show(Intent::OpenPlaces), Step::Ask(Request::Places)]
             }

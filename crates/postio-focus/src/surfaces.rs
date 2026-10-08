@@ -94,6 +94,19 @@ impl SurfaceKind {
     }
 }
 
+/// Where a message is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Host {
+    /// Its own surface: the message window on the Mac, the reading dialog
+    /// or the pane beside the list on Linux.
+    Own,
+    /// The digest's window, in place of the digest's page: a reference's
+    /// email on both platforms, and on the Mac a message from the digest's
+    /// list too (M4).
+    Digest,
+}
+
 /// What the open message does for a key, as its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -116,6 +129,19 @@ pub enum ReaderVerb {
     ShowMore,
     /// Step through the conversation, by this many messages.
     StepThread(i32),
+}
+
+/// Which list the open message came from: what `j`/`k` in it walk, and
+/// what a verb on it reads its conversation from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Origin {
+    /// The list, or the bar's hits.
+    #[default]
+    List,
+    /// Filtered.
+    Filtered,
+    /// A digest's plain list, read over it (Linux stacks).
+    Digest,
 }
 
 /// A removal under the open message, waiting for the list to let it go.
@@ -144,6 +170,8 @@ pub(crate) struct Surfaces {
     /// The message on screen, when one is.
     reading: Option<MessageId>,
     stepping: Option<Stepping>,
+    /// Which list the open message came from.
+    origin: Origin,
 }
 
 impl Surfaces {
@@ -245,8 +273,19 @@ impl Surfaces {
             self.finding = false;
             self.reading = None;
             self.stepping = None;
+            self.origin = Origin::List;
         }
         true
+    }
+
+    /// The open message came from `origin`'s list.
+    pub(crate) fn set_origin(&mut self, origin: Origin) {
+        self.origin = origin;
+    }
+
+    /// Which list the open message came from.
+    pub(crate) fn origin(&self) -> Origin {
+        self.origin
     }
 
     /// Whether the surface on top takes the keyboard whole: the key map,
@@ -291,10 +330,12 @@ impl Surfaces {
         }
         let mut steps = self.opened(SurfaceKind::Message, stacking);
         self.reading = Some(row.id);
+        self.origin = Origin::List;
         steps.push(Step::Show(Intent::OpenMessage {
             message: row.id,
             index,
             total,
+            host: Host::Own,
         }));
         steps
     }
@@ -308,10 +349,12 @@ impl Surfaces {
                 Step::Show(Intent::Reader(ReaderVerb::CloseFind))
             } else {
                 self.remove(SurfaceKind::Message);
-                return Some(vec![
-                    Step::Show(Intent::CloseSurface(SurfaceKind::Message)),
-                    Step::Show(Intent::KeyboardHome),
-                ]);
+                let mut steps = vec![Step::Show(Intent::CloseSurface(SurfaceKind::Message))];
+                // Over Filtered or a digest, the keyboard goes back to it.
+                if self.stack.is_empty() {
+                    steps.push(Step::Show(Intent::KeyboardHome));
+                }
+                return Some(steps);
             };
             return Some(vec![step]);
         }

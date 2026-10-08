@@ -191,6 +191,122 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
             Reply::Noted
         }
         Request::Accounts => Reply::Accounts(accounts(client).await),
+        Request::FilteredTabs => Reply::FilteredTabs(
+            client
+                .filtered_tabs()
+                .await
+                .map_err(|error| error.to_string()),
+        ),
+        Request::Filtered {
+            reason,
+            offset,
+            stamp,
+        } => Reply::Filtered {
+            stamp,
+            offset,
+            answer: client
+                .filtered(reason, offset, postio_ui::filtered::PAGE)
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::SweepPreview => Reply::SweepPreview(
+            client
+                .sweep_preview()
+                .await
+                .map_err(|error| error.to_string()),
+        ),
+        Request::DigestRead {
+            delivery,
+            summary,
+            stamp,
+        } => {
+            let rows = client
+                .delivery_messages(delivery)
+                .await
+                .map_err(|error| error.to_string());
+            // C6: a summary is read only when the person brought a model;
+            // one that cannot be read is no summary, and the list opens.
+            let summary = match summary {
+                true => client.digest_summary(delivery).await.ok().flatten(),
+                false => None,
+            };
+            Reply::DigestRead {
+                stamp,
+                rows,
+                summary,
+            }
+        }
+        Request::Unsubscribe(message) => Reply::Unsubscribed(
+            client
+                .unsubscribe(message)
+                .await
+                .map_err(|error| error.to_string()),
+        ),
+        Request::DigestPreview {
+            queries,
+            since,
+            stamp,
+        } => Reply::DigestPreview {
+            stamp,
+            answer: client
+                .digest_preview(queries, since)
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::DigestLikeThis { message, stamp } => Reply::LikeThis {
+            stamp,
+            answer: client
+                .digest_like_this(message)
+                .await
+                .map(|rule| rule.map(|rule| rule.queries))
+                .map_err(|error| error.to_string()),
+        },
+        Request::SaveDigestRule {
+            replacing,
+            draft,
+            stamp,
+        } => Reply::RuleSaved {
+            stamp,
+            answer: client
+                .save_digest_rule(replacing, draft)
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::Vault { subject, stamp } => Reply::Vault {
+            stamp,
+            answer: client
+                .vault(&subject)
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::CaptureTask {
+            project,
+            task,
+            stamp,
+        } => Reply::Captured {
+            stamp,
+            answer: client
+                .capture_task(project, task)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string()),
+        },
+        Request::CaptureNote { note, entry, stamp } => Reply::Captured {
+            stamp,
+            answer: client
+                .capture_note(note, entry)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string()),
+        },
+        Request::FindMessage(message) => Reply::FoundMessage {
+            message,
+            row: client
+                .message_rows(vec![message])
+                .await
+                .ok()
+                .and_then(|rows| rows.into_iter().find(|row| row.id == message)),
+        },
     }
 }
 
@@ -527,5 +643,62 @@ mod tests {
             Reply::FocusCounts(Ok(counts)),
         );
         assert_eq!(*transport.asked.lock().unwrap(), vec![Req::FocusCounts]);
+    }
+
+    #[test]
+    fn a_digest_read_asks_for_its_summary_only_when_told_to() {
+        let delivery = postio_model::DeliveryId::new(40);
+        let (listing, transport) = client(vec![Resp::Rows(Vec::new())]);
+        assert_eq!(
+            now(perform(
+                &listing,
+                Request::DigestRead {
+                    delivery,
+                    summary: false,
+                    stamp: 3,
+                }
+            )),
+            Reply::DigestRead {
+                stamp: 3,
+                rows: Ok(Vec::new()),
+                summary: None,
+            },
+        );
+        assert_eq!(
+            *transport.asked.lock().unwrap(),
+            vec![Req::DeliveryMessages(delivery)],
+            "C6: no model, no summary read"
+        );
+        let (summarised, transport) =
+            client(vec![Resp::Rows(Vec::new()), Resp::DigestSummary(None)]);
+        let _ = now(perform(
+            &summarised,
+            Request::DigestRead {
+                delivery,
+                summary: true,
+                stamp: 4,
+            },
+        ));
+        assert_eq!(
+            *transport.asked.lock().unwrap(),
+            vec![
+                Req::DeliveryMessages(delivery),
+                Req::DigestSummary(delivery)
+            ],
+        );
+    }
+
+    #[test]
+    fn a_link_is_looked_up_by_its_row() {
+        let (client, transport) = client(vec![Resp::Rows(Vec::new())]);
+        let message = postio_model::MessageId::new(42);
+        assert_eq!(
+            now(perform(&client, Request::FindMessage(message))),
+            Reply::FoundMessage { message, row: None },
+        );
+        assert_eq!(
+            *transport.asked.lock().unwrap(),
+            vec![Req::Rows(vec![message])]
+        );
     }
 }

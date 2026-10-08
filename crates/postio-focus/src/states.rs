@@ -78,7 +78,7 @@ pub(crate) struct States {
     last_synced: Option<DateTime<Utc>>,
     /// `[focus]`: the digests the empty inbox names, and whether Focus
     /// files mail away.
-    config: FocusConfig,
+    pub(crate) config: FocusConfig,
     /// What the header strip names: the folder an empty page is about.
     place: String,
     /// The banner last drawn, once one has been.

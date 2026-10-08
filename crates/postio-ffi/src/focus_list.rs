@@ -686,6 +686,7 @@ impl FocusDriver {
                 message,
                 index,
                 total,
+                host: postio_focus::Host::Own,
             } => self.say(UiEvent::FocusOpenMessage {
                 message: message.get(),
                 index,

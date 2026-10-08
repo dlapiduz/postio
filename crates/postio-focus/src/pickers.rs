@@ -519,7 +519,7 @@ impl FocusController {
         let position = rows.position_of(reading);
         let Some(row) = position
             .and_then(|at| rows.facts(at))
-            .or_else(|| self.hit_facts(reading))
+            .or_else(|| self.elsewhere_facts(reading))
         else {
             return Some(Vec::new());
         };

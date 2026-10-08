@@ -65,6 +65,13 @@ pub trait Rows {
     fn said(&self, _position: u32) -> Option<(String, String)> {
         None
     }
+    /// The row at `position` whole, once its page has landed: what a
+    /// capture is made from, whose senders `d` digests, and a digest row's
+    /// delivery. `None` -- the default -- for a frontend that keeps no
+    /// such row, and those read nothing from it.
+    fn row(&self, _position: u32) -> Option<FocusRow> {
+        None
+    }
 }
 
 /// No list: for inputs that need none.

@@ -16,6 +16,7 @@ postio-core = { workspace = true }
 postio-model = { workspace = true }
 postio-search = { workspace = true }
 postio-ui = { workspace = true }
+postio-vault = { workspace = true }
 tracing = { workspace = true }
 
 

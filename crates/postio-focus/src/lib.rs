@@ -22,8 +22,12 @@ use postio_model::{AccountId, ListScope, MailboxId, MailboxRole, MessageId};
 use postio_ui::focus_list::FocusRow;
 
 mod bar;
+mod capture;
+mod confirm;
 mod cursor;
+mod digest;
 mod feed;
+mod filtered;
 mod keys;
 mod perform;
 mod pickers;
@@ -32,14 +36,23 @@ mod surfaces;
 mod verbs;
 
 pub use bar::{BarLine, BarLineKind, BarMode, BarView, Found, FoundRow, PlacesRead};
+pub use capture::{CaptureProject, CaptureView};
+pub use confirm::Confirm;
 pub use cursor::{NoRows, RowFacts, Rows};
+pub use digest::{
+    DigestCard, DigestEmail, DigestLine, DigestStatement, DigestTopic, DigestView, RulePreviewLine,
+    RuleView,
+};
 pub use feed::{Opened, PageAnswer};
+pub use filtered::{FilteredLine, FilteredTab, FilteredView};
 pub use perform::{perform, perform_now};
 pub use pickers::{
     Anchor, FoldersRead, LabelsRead, PickerField, PickerKind, PickerRow, PickerView,
 };
+pub use postio_ui::capture::{Mode as CaptureMode, Pick as CapturePick};
+pub use postio_ui::digest::{Page as DigestPage, Schedule as RuleSchedule};
 pub use states::{AccountsRead, BannerButton, BannerView};
-pub use surfaces::{ReaderVerb, SurfaceKind};
+pub use surfaces::{Host, ReaderVerb, SurfaceKind};
 pub use verbs::{Everything, ToastKind};
 
 /// What differs between platforms, as policy rather than as a fork
@@ -172,6 +185,47 @@ pub enum Input {
     /// `[focus]` as it stands: the digests an empty inbox names, and
     /// whether Focus files mail away.
     Config(postio_config::FocusConfig),
+    /// A click on Filtered's row at this index: the keyboard goes to it.
+    FilteredPoint(u32),
+    /// Filtered was scrolled to its end: read its next page, when there
+    /// may be one.
+    FilteredMore,
+    /// A click on the digest's list row at this index.
+    DigestPoint(u32),
+    /// A click on the summary's reference at this index, in reading order.
+    DigestReference(u32),
+    /// The person said yes to the [`Intent::Confirm`] with this token. A
+    /// no is nothing: the question is forgotten when the next is asked.
+    Confirmed(u64),
+    /// The rule dialog's query entry holds `text` now.
+    RuleQuery {
+        /// The entry's text: queries, comma-separated.
+        text: String,
+    },
+    /// "Match a list or a search instead…": the query entry, empty.
+    RuleMatchInstead,
+    /// "Digest mail like this": ask the person's model for a rule.
+    RuleLikeThis,
+    /// The rule dialog's cadence, day and time, as its controls hold them.
+    RuleSchedule(postio_ui::digest::Schedule),
+    /// Create (or Save): write the rule.
+    RuleCreate,
+    /// The capture field holds `text` now.
+    CaptureTyped {
+        /// The field's text.
+        text: String,
+    },
+    /// A due day was picked for the capture, or none.
+    CaptureDue(Option<chrono::NaiveDate>),
+    /// The capture's project filter holds `text` now.
+    CaptureFilter {
+        /// The filter's text.
+        text: String,
+    },
+    /// The capture's project row with this token was chosen.
+    CaptureProject(u64),
+    /// Open the message a `postio://` link names, or say why not.
+    OpenLink(String),
 }
 
 /// What the frontend does next.
@@ -270,7 +324,7 @@ pub enum Intent {
     /// Rows landed: a first page, or a re-read.
     Filled,
     /// Show `message` in the message surface -- opening it, or in place of
-    /// the one it shows -- at `index` of `total` in the list.
+    /// the one it shows -- at `index` of `total` in the list it came from.
     OpenMessage {
         /// The message.
         message: MessageId,
@@ -278,6 +332,8 @@ pub enum Intent {
         index: u32,
         /// How many rows the list draws.
         total: u32,
+        /// Where it is shown: its own surface, or the digest's window.
+        host: Host,
     },
     /// A digest's row opens its window: the row is named by its delivery,
     /// negated, as [`RowFacts::id`] names it.
@@ -350,6 +406,24 @@ pub enum Intent {
     /// Show the key map (`?`). The controller has put it on the stack; it
     /// closes with [`Intent::CloseSurface`]`(KeyMap)`.
     OpenKeyMap,
+    /// Draw Filtered, whole: its tabs, its rows, the row with the keyboard.
+    Filtered(Box<FilteredView>),
+    /// The keyboard is on Filtered's row at this index now.
+    FilteredFocus(Option<u32>),
+    /// Draw the digest's window, whole.
+    Digest(Box<DigestView>),
+    /// Ask before doing something no undo takes back whole; say
+    /// [`Input::Confirmed`] with its token on yes.
+    Confirm(Confirm),
+    /// Show the digest rule dialog. The controller has put it on the stack
+    /// as a [`SurfaceKind::Dialog`].
+    OpenRule(Box<RuleView>),
+    /// Redraw the rule dialog, whole.
+    Rule(Box<RuleView>),
+    /// Show the capture window. The controller has put it on the stack.
+    OpenCapture(Box<CaptureView>),
+    /// Redraw the capture window, whole.
+    Capture(Box<CaptureView>),
 }
 
 /// What the controller needs from the engine. [`perform()`] is the one place
@@ -455,6 +529,83 @@ pub enum Request {
     /// Who every enabled account is -- where it signs in, as whom -- and
     /// when mail last synced before this run: what a banner names.
     Accounts,
+    /// Filtered's tabs: each reason, with how many it keeps.
+    FilteredTabs,
+    /// A page of Filtered: of `reason`, or of every reason.
+    Filtered {
+        /// The reason, as the store spells it; `None` for All.
+        reason: Option<String>,
+        /// The page's first row.
+        offset: u32,
+        /// The view's stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// How many messages a sweep of the inbox would file away now.
+    SweepPreview,
+    /// What a digest's delivery holds, and -- with `summary` -- its summary.
+    DigestRead {
+        /// The delivery.
+        delivery: postio_model::DeliveryId,
+        /// Whether to read the summary: only with a model (C6).
+        summary: bool,
+        /// The window's stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// Leave the list `message` came from.
+    Unsubscribe(MessageId),
+    /// What a digest rule matching `queries` would have caught since
+    /// `since`.
+    DigestPreview {
+        /// The rule's queries.
+        queries: Vec<String>,
+        /// How far back.
+        since: chrono::DateTime<chrono::Utc>,
+        /// The dialog's stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// The rule the person's model proposes for mail like `message`.
+    DigestLikeThis {
+        /// The message.
+        message: MessageId,
+        /// The dialog's stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// Write a digest rule to `config.toml`.
+    SaveDigestRule {
+        /// The rule it replaces, when editing.
+        replacing: Option<String>,
+        /// The rule.
+        draft: postio_client::protocol::DigestRuleDraft,
+        /// The dialog's stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// What capture needs of the vault for a message with `subject`.
+    Vault {
+        /// The message's subject.
+        subject: String,
+        /// The capture's stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// Append a task to the vault.
+    CaptureTask {
+        /// Its project; `None` for the tasks note.
+        project: Option<postio_vault::Project>,
+        /// The task.
+        task: postio_vault::Task,
+        /// The capture's stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// Append a note entry to the vault.
+    CaptureNote {
+        /// The note, relative to the vault.
+        note: std::path::PathBuf,
+        /// The entry.
+        entry: postio_vault::NoteEntry,
+        /// The capture's stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// Whether this store holds `message`, and its row: what a link opens.
+    FindMessage(MessageId),
 }
 
 /// The engine's answer to a [`Request`]. A failure is carried as its
@@ -528,6 +679,73 @@ pub enum Reply {
     },
     /// The answer to [`Request::Accounts`].
     Accounts(Result<AccountsRead, String>),
+    /// The answer to [`Request::FilteredTabs`].
+    FilteredTabs(Result<Vec<(String, u32)>, String>),
+    /// The answer to [`Request::Filtered`].
+    Filtered {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// The page's first row.
+        offset: u32,
+        /// The rows, newest first.
+        answer: Result<Vec<postio_client::protocol::FilteredRow>, String>,
+    },
+    /// The answer to [`Request::SweepPreview`].
+    SweepPreview(Result<u32, String>),
+    /// The answer to [`Request::DigestRead`].
+    DigestRead {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// What the delivery holds, newest first.
+        rows: Result<Vec<postio_model::listing::MessageSummary>, String>,
+        /// Its summary, when one was asked for and one is written.
+        summary: Option<postio_model::summary::DigestSummary>,
+    },
+    /// The answer to [`Request::Unsubscribe`]: the list's name.
+    Unsubscribed(Result<String, String>),
+    /// The answer to [`Request::DigestPreview`].
+    DigestPreview {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// What the rule would have caught.
+        answer: Result<postio_client::protocol::DigestPreview, String>,
+    },
+    /// The answer to [`Request::DigestLikeThis`]: the queries proposed, or
+    /// none.
+    LikeThis {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// The rule's queries, when the model found one.
+        answer: Result<Option<Vec<String>>, String>,
+    },
+    /// The answer to [`Request::SaveDigestRule`].
+    RuleSaved {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// Whether it was written, or the sentence saying why not.
+        answer: Result<(), String>,
+    },
+    /// The answer to [`Request::Vault`].
+    Vault {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// The vault's projects, the suggestion and the tasks.
+        answer: Result<postio_client::protocol::VaultPicture, String>,
+    },
+    /// The answer to [`Request::CaptureTask`] and [`Request::CaptureNote`].
+    Captured {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// Whether it was written, or the sentence saying why not.
+        answer: Result<(), String>,
+    },
+    /// The answer to [`Request::FindMessage`]: its row, when it is here.
+    FoundMessage {
+        /// The message asked about.
+        message: MessageId,
+        /// Its row, or `None` when the store does not hold it.
+        row: Option<postio_model::listing::MessageSummary>,
+    },
 }
 
 /// Focus's behaviour for one window. `Send`, and plain data: no toolkit
@@ -550,6 +768,14 @@ pub struct FocusController {
     counts: Option<FocusCounts>,
     states: states::States,
     keys: keys::Keys,
+    filtered: Option<filtered::Filtered>,
+    digest: Option<digest::DigestWindow>,
+    rule: Option<digest::RuleDialog>,
+    capture: Option<capture::Capture>,
+    confirm: Option<confirm::Asked>,
+    /// Stamps the surfaces' reads, so an answer for one since moved on is
+    /// dropped.
+    stamps: u64,
 }
 
 impl FocusController {
@@ -569,6 +795,12 @@ impl FocusController {
             counts: None,
             states: states::States::default(),
             keys: keys::Keys::default(),
+            filtered: None,
+            digest: None,
+            rule: None,
+            capture: None,
+            confirm: None,
+            stamps: 0,
         }
     }
 
@@ -621,6 +853,7 @@ impl FocusController {
             Input::Command(id) => self.list_command(id, rows),
             Input::SurfaceOpened(kind) => {
                 let steps = self.surfaces.opened(kind, self.policy.caps.stacking);
+                self.forget_closed();
                 self.effects(steps)
             }
             Input::SurfaceClosed(kind) => {
@@ -632,6 +865,7 @@ impl FocusController {
                     steps.extend(self.picker_gone(false));
                 }
                 steps.extend(self.surfaces.closed(kind));
+                self.forget_closed();
                 self.effects(steps)
             }
             Input::ReaderState { more_open, finding } => {
@@ -659,6 +893,25 @@ impl FocusController {
             // the list's generation is no stamp on it.
             Input::Reply(_, Reply::Accounts(read)) => {
                 let steps = self.accounts_read(read);
+                self.effects(steps)
+            }
+            // The surfaces' answers carry their own stamps: a list replaced
+            // under them does not make them stale.
+            Input::Reply(
+                _,
+                reply @ (Reply::FilteredTabs(_)
+                | Reply::Filtered { .. }
+                | Reply::SweepPreview(_)
+                | Reply::DigestRead { .. }
+                | Reply::Unsubscribed(_)
+                | Reply::DigestPreview { .. }
+                | Reply::LikeThis { .. }
+                | Reply::RuleSaved { .. }
+                | Reply::Vault { .. }
+                | Reply::Captured { .. }
+                | Reply::FoundMessage { .. }),
+            ) => {
+                let steps = self.surface_reply(reply, rows);
                 self.effects(steps)
             }
             Input::Reply(ticket, _) if ticket.generation != self.generation => Vec::new(),
@@ -715,6 +968,7 @@ impl FocusController {
                 let mut steps = self.verbs.event(&event);
                 steps.extend(self.feed.event(&event));
                 steps.extend(self.hear_sync(&event));
+                steps.extend(self.filtered_event(&event));
                 self.effects(steps)
             }
             Input::Config(config) => {
@@ -763,6 +1017,45 @@ impl FocusController {
             }
             Input::Keymap(keymap) => {
                 let steps = self.set_keymap(keymap);
+                self.effects(steps)
+            }
+            Input::FilteredPoint(index) => {
+                let steps = self.filtered_point(index);
+                self.effects(steps)
+            }
+            Input::FilteredMore => {
+                let steps = self.filtered_more();
+                self.effects(steps)
+            }
+            Input::DigestPoint(index) => {
+                let steps = self.digest_point(index);
+                self.effects(steps)
+            }
+            Input::DigestReference(index) => {
+                let steps = self.digest_reference(index);
+                self.effects(steps)
+            }
+            Input::Confirmed(token) => {
+                let steps = self.confirmed(token);
+                self.effects(steps)
+            }
+            input @ (Input::RuleQuery { .. }
+            | Input::RuleMatchInstead
+            | Input::RuleLikeThis
+            | Input::RuleSchedule(_)
+            | Input::RuleCreate) => {
+                let steps = self.rule_input(input);
+                self.effects(steps)
+            }
+            input @ (Input::CaptureTyped { .. }
+            | Input::CaptureDue(_)
+            | Input::CaptureFilter { .. }
+            | Input::CaptureProject(_)) => {
+                let steps = self.capture_input(input);
+                self.effects(steps)
+            }
+            Input::OpenLink(uri) => {
+                let steps = self.open_link(&uri);
                 self.effects(steps)
             }
             input @ (Input::Typed { .. }
@@ -845,6 +1138,16 @@ impl FocusController {
         if id == CommandId::CheatSheet {
             return self.open_key_map();
         }
+        match id {
+            CommandId::CaptureTask => {
+                return self.open_capture(postio_ui::capture::Mode::Task, rows);
+            }
+            CommandId::CaptureNote => {
+                return self.open_capture(postio_ui::capture::Mode::Note, rows);
+            }
+            CommandId::DigestRule => return self.new_rule(rows),
+            _ => {}
+        }
         if let Some(steps) = self.picker_on_list(id, rows) {
             return steps;
         }
@@ -873,7 +1176,7 @@ impl FocusController {
             return Vec::new();
         };
         if row.digest {
-            return vec![feed::Step::Show(Intent::OpenDigest { row: row.id })];
+            return self.open_digest(row.id, position, rows);
         }
         let (index, total) = self.feed.message_place(position, rows.len());
         self.surfaces
@@ -889,6 +1192,20 @@ impl FocusController {
         if self.surfaces.top() == Some(SurfaceKind::Bar) && id == CommandId::Back {
             return Some(self.dismiss_bar(false));
         }
+        // The controller's own surfaces; one a frontend opened itself, with
+        // nothing held for it here, closes by the general rule below.
+        match self.surfaces.top() {
+            Some(SurfaceKind::Filtered) if self.filtered.is_some() => {
+                return self.filtered_command(id, rows);
+            }
+            Some(SurfaceKind::Digest) if self.digest.is_some() => {
+                return self.digest_command(id, rows);
+            }
+            Some(SurfaceKind::Capture) if self.capture.is_some() => {
+                return self.capture_command(id);
+            }
+            _ => {}
+        }
         if self.surfaces.top() != Some(SurfaceKind::Message) {
             return self.surfaces.close_top(id).or_else(|| {
                 // The key map and a dialog take the keyboard: what does not
@@ -900,6 +1217,9 @@ impl FocusController {
             return Some(steps);
         }
         let reading = self.surfaces.reading()?;
+        if self.surfaces.origin() != surfaces::Origin::List {
+            return self.elsewhere_command(id, reading, rows);
+        }
         let position = rows.position_of(reading);
         match id {
             // A message the bar opened walks the bar's hits.
@@ -948,6 +1268,15 @@ impl FocusController {
         if pickers::picker_key(id) {
             return true;
         }
+        let own = match self.surfaces.top() {
+            Some(SurfaceKind::Filtered) => Self::filtered_answers(id),
+            Some(SurfaceKind::Digest) => Self::digest_answers(id),
+            Some(SurfaceKind::Capture) => Self::capture_answers(id),
+            _ => false,
+        };
+        if own {
+            return true;
+        }
         if let Some(answer) = self.surfaces.answers(id) {
             return answer;
         }
@@ -968,6 +1297,9 @@ impl FocusController {
                 | CommandId::DismissMarker
                 | CommandId::OpenMessage
                 | CommandId::CheatSheet
+                | CommandId::CaptureTask
+                | CommandId::CaptureNote
+                | CommandId::DigestRule
         ) || bar::goes(id)
             || pickers::opens_picker(id)
             || postio_ui::focus_target::dispatch(id).is_some()
@@ -1082,6 +1414,101 @@ impl FocusController {
     /// list replaced.
     pub fn invalidate(&mut self) {
         self.generation += 1;
+    }
+
+    /// What a surface no longer on the stack held is forgotten: the Mac's
+    /// one secondary window replaced, a window closed by its own button.
+    fn forget_closed(&mut self) {
+        if !self.surfaces.has(SurfaceKind::Filtered) {
+            self.filtered = None;
+        }
+        if !self.surfaces.has(SurfaceKind::Digest) {
+            self.digest = None;
+        }
+        if !self.surfaces.has(SurfaceKind::Dialog) {
+            self.rule = None;
+        }
+        if !self.surfaces.has(SurfaceKind::Capture) {
+            self.capture = None;
+        }
+    }
+
+    /// An answer for one of the surfaces over the list.
+    fn surface_reply(&mut self, reply: Reply, rows: &dyn Rows) -> Vec<feed::Step> {
+        match reply {
+            reply @ (Reply::FilteredTabs(_) | Reply::Filtered { .. } | Reply::SweepPreview(_)) => {
+                self.filtered_reply(reply)
+            }
+            reply @ (Reply::DigestRead { .. } | Reply::Unsubscribed(_)) => self.digest_reply(reply),
+            reply @ (Reply::DigestPreview { .. }
+            | Reply::LikeThis { .. }
+            | Reply::RuleSaved { .. }) => self.rule_reply(reply),
+            reply @ (Reply::Vault { .. } | Reply::Captured { .. }) => self.capture_reply(reply),
+            Reply::FoundMessage { message, row } => self.link_found(message, row, rows),
+            _ => Vec::new(),
+        }
+    }
+
+    /// A command on a message opened from Filtered or a digest's list: `j`/
+    /// `k` walk that list, and a verb reads its conversation from it.
+    fn elsewhere_command(
+        &mut self,
+        id: CommandId,
+        reading: MessageId,
+        rows: &dyn Rows,
+    ) -> Option<Vec<feed::Step>> {
+        let origin = self.surfaces.origin();
+        let (at, len) = match origin {
+            surfaces::Origin::Filtered => {
+                let filtered = self.filtered.as_ref()?;
+                (filtered.index_of(reading), filtered.len())
+            }
+            surfaces::Origin::Digest => {
+                let window = self.digest.as_ref()?;
+                (window.index_of(reading), window.len())
+            }
+            surfaces::Origin::List => return None,
+        };
+        match id {
+            CommandId::NextMessage | CommandId::PrevMessage => {
+                let by = if id == CommandId::NextMessage { 1 } else { -1 };
+                let next = at.map_or(0, |at| at as i64 + by);
+                if next < 0 || next >= len as i64 {
+                    return Some(Vec::new());
+                }
+                Some(match origin {
+                    surfaces::Origin::Filtered => self.open_filtered(next as usize),
+                    _ => self.open_digest_message(next as usize),
+                })
+            }
+            CommandId::OpenMessage => Some(Vec::new()),
+            _ if pickers::opens_picker(id) => self.picker_on_message(id, reading, rows),
+            _ => {
+                let row = self.elsewhere_facts(reading)?;
+                self.verbs.command_on(id, &row)
+            }
+        }
+    }
+
+    /// The facts of the open message where no list row holds them: a hit, a
+    /// filtered message, a digest's.
+    pub(crate) fn elsewhere_facts(&self, reading: MessageId) -> Option<RowFacts> {
+        if let Some(found) = self.hit_facts(reading) {
+            return Some(found);
+        }
+        if let Some(filtered) = &self.filtered
+            && let Some(at) = filtered.index_of(reading)
+        {
+            return filtered.facts(at);
+        }
+        let window = self.digest.as_ref()?;
+        window.facts(window.index_of(reading)?)
+    }
+
+    /// A stamp for a surface's read, never used before.
+    pub(crate) fn stamp(&mut self) -> u64 {
+        self.stamps += 1;
+        self.stamps
     }
 
     fn ticket(&mut self) -> Ticket {

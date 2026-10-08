@@ -10,7 +10,7 @@
 use postio_config::paths::Platform;
 use postio_core::{Command, CommandId, MessageTarget};
 use postio_focus::{
-    Effect, FocusController, Input, Intent, Policy, ReaderVerb, Request, RowFacts, Rows,
+    Effect, FocusController, Host, Input, Intent, Policy, ReaderVerb, Request, RowFacts, Rows,
     SurfaceKind,
 };
 use postio_model::{MessageId, ThreadId};
@@ -120,6 +120,7 @@ fn return_opens_the_cursors_message_where_the_list_has_it() {
             message: MessageId::new(101),
             index: 1,
             total: 3,
+            host: Host::Own,
         }]
     );
     assert_eq!(focus.key_context(), KeyContext::Reader);
@@ -275,21 +276,26 @@ fn the_message_owns_its_reader_verbs() {
 #[test]
 fn a_key_the_message_does_not_own_is_the_lists() {
     // #1754: `t`, `n` and `d` did nothing in the open message. What the
-    // message does not own is not the controller's either: it goes on to
-    // the host's table, exactly as it would from the list.
+    // message does not own goes on to the list's rules, exactly as it would
+    // from the list -- which since slice 12 are the controller's: capture
+    // (here with no vault, so it says how to name one) and the rule dialog.
     let rows = List::of(2, &[]);
     let mut focus = mac();
     let _ = reading(&mut focus, &rows);
-    for command in [
-        CommandId::CaptureTask,
-        CommandId::CaptureNote,
-        CommandId::DigestRule,
-    ] {
+    for command in [CommandId::CaptureTask, CommandId::CaptureNote] {
+        assert!(focus.answers(command), "{command:?} is the list's rule");
         assert!(
-            !focus.answers(command),
-            "{command:?} falls through to the host, as on the list"
+            shown(&run(&mut focus, command, &rows))
+                .iter()
+                .any(|intent| matches!(
+                    intent,
+                    Intent::Toast { text, .. } if text == postio_ui::capture::NO_VAULT
+                )),
+            "{command:?} in the message does what it does on the list"
         );
+        assert_eq!(focus.key_context(), KeyContext::Reader);
     }
+    assert!(focus.answers(CommandId::DigestRule));
 }
 
 #[test]
