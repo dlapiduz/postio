@@ -46,6 +46,7 @@ mod event;
 mod finder;
 mod focus;
 mod focus_bar;
+mod focus_compose;
 mod focus_keymap;
 mod focus_list;
 mod focus_message;
@@ -92,6 +93,7 @@ pub use focus::{FocusCountsFfi, FocusStripFfi};
 pub use focus_bar::{
     BarLineFfi, BarLineKindFfi, BarModeFfi, BarSelectFfi, BarViewFfi, PlaceEntryFfi, PlaceMarkFfi,
 };
+pub use focus_compose::ComposerKindFfi;
 pub use focus_keymap::{KeyMapGroupFfi, KeyMapRowFfi, KeyMapSheetFfi};
 pub use focus_list::{
     FocusRowActionFfi, FocusRowFfi, FocusRowKindFfi, FocusScopeFfi, LabelPillFfi, MarkerLineFfi,

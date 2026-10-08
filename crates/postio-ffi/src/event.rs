@@ -265,11 +265,6 @@ pub enum UiEvent {
         /// How many rows the list draws.
         total: u32,
     },
-    /// A draft not yet on its way opens in the composer.
-    FocusOpenDraft {
-        /// The draft's message.
-        message: i64,
-    },
     /// A digest's row opens its window. `delivery` is the digest delivery,
     /// as `FocusRowFfi.id` carries it.
     FocusOpenDigest {
@@ -433,6 +428,35 @@ pub enum UiEvent {
     FocusCapture {
         /// What it draws.
         view: crate::focus_surfaces::CaptureViewFfi,
+    },
+    /// Open the composer -- or, while it is open, put this in it in place
+    /// of what it held, which the controller has had saved first -- on a
+    /// draft of `kind` answering `message`: `newDraft()`, `replyDraft`,
+    /// `forwardDraft`, or `draftForMessage` for `Draft`. The controller has
+    /// put the composer on its stack; say `focus_surface_closed(Composer)`
+    /// only for a close the toolkit made (its close button), and
+    /// `focus_composer_edited()` on every edit.
+    FocusComposer {
+        /// What is being written.
+        kind: crate::focus_compose::ComposerKindFfi,
+        /// The message it answers, or the draft's own message.
+        message: Option<i64>,
+    },
+    /// Save what the composer holds -- open, or just closed -- now, and say
+    /// how it went with `focus_draft_saved(composition, …)`.
+    FocusSaveDraft {
+        /// Echoed back to `focus_draft_saved`.
+        composition: u64,
+    },
+    /// A toast with one way to put right what it says is missing: a button
+    /// labelled `label` that runs `command` ("Add account").
+    FocusOffer {
+        /// What is missing.
+        text: String,
+        /// The button's words.
+        label: String,
+        /// The registry command the button runs.
+        command: String,
     },
 }
 

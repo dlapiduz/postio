@@ -347,10 +347,9 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::ToggleFold,
         C::NextInConversation,
         C::PrevInConversation,
-        C::Compose,
-        C::Reply,
-        C::ReplyAll,
-        C::Forward,
+        // Not `c`, `e`, `E` or `f`: Focus's controller opens the composer
+        // and says what it answers (specs/009-focus-macos T073), and the
+        // Mac draws it (T079).
     ]
 };
 

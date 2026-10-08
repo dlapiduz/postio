@@ -642,6 +642,7 @@ impl FocusDriver {
             match effect {
                 Effect::Show(intent) => self.show(intent),
                 Effect::Ask(ticket, request) => self.ask(ticket, request),
+                Effect::Timer { token, after } => self.timer(token, after),
                 _ => {}
             }
         }
@@ -729,12 +730,7 @@ impl FocusDriver {
                 index,
                 total,
             }),
-            Intent::Composer {
-                kind: postio_focus::ComposerKind::Draft,
-                message: Some(message),
-            } => self.say(UiEvent::FocusOpenDraft {
-                message: message.get(),
-            }),
+
             Intent::OpenDigest { row } => self.say(UiEvent::FocusOpenDigest {
                 delivery: -row.get(),
             }),
@@ -750,6 +746,15 @@ impl FocusDriver {
             }
             Intent::KeyboardHome => self.say(UiEvent::FocusKeyboardHome),
             Intent::ListToTop => self.say(UiEvent::FocusListToTop),
+            // A toast with a way to put it right is drawn with its button.
+            Intent::Toast {
+                text,
+                kind: postio_focus::ToastKind::Offer { label, command },
+            } => self.say(UiEvent::FocusOffer {
+                text,
+                label,
+                command: command.to_string(),
+            }),
             Intent::Toast { text, kind } => {
                 // How long it stays is the controller's, always said.
                 let seconds = Some(kind.seconds());
@@ -758,9 +763,7 @@ impl FocusDriver {
                         (crate::event::ToastKindFfi::Completed, undoable)
                     }
                     postio_focus::ToastKind::Undone => (crate::event::ToastKindFfi::Undone, false),
-                    postio_focus::ToastKind::Notice | postio_focus::ToastKind::Offer { .. } => {
-                        (crate::event::ToastKindFfi::Notice, false)
-                    }
+                    _ => (crate::event::ToastKindFfi::Notice, false),
                 };
                 self.say(UiEvent::FocusToast {
                     text,
@@ -827,6 +830,17 @@ impl FocusDriver {
             Intent::Capture(view) => self.say(UiEvent::FocusCapture {
                 view: (*view).into(),
             }),
+            Intent::Composer { kind, message } => {
+                if let Some(kind) = crate::focus_compose::ComposerKindFfi::of(kind) {
+                    self.say(UiEvent::FocusComposer {
+                        kind,
+                        message: message.map(|message| message.get()),
+                    });
+                }
+            }
+            Intent::SaveDraft { composition } => {
+                self.say(UiEvent::FocusSaveDraft { composition });
+            }
             Intent::SaveSearch { query } => {
                 let saved = self.save_search(&query);
                 self.input(Input::SearchSaved(saved));
@@ -879,6 +893,18 @@ impl FocusDriver {
                 .expect("focus lock")
                 .handle(Input::Reply(ticket, reply));
             driver.apply(effects);
+        });
+    }
+
+    /// Hand the controller `Input::Timer(token)` once `after` has passed,
+    /// on the session's runtime: the composer's autosave. A timer whose
+    /// token the controller has moved on from changes nothing when it
+    /// fires, so none is ever cancelled here.
+    fn timer(self: &Arc<Self>, token: u64, after: std::time::Duration) {
+        let driver = Arc::clone(self);
+        self.runtime.spawn(async move {
+            tokio::time::sleep(after).await;
+            driver.input(Input::Timer(token));
         });
     }
 

@@ -59,7 +59,7 @@ postio-smtp.workspace = true
 postio-storage.workspace = true
 tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
 tracing = { workspace = true }
 uniffi = { version = "0.32", features = ["cli"] }
 
