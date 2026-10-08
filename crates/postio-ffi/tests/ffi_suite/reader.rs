@@ -555,3 +555,24 @@ async fn raw_source_says_why_when_there_is_none() {
     );
     session.shutdown();
 }
+
+/// The document names Postio's faces over `postio-font:` (ADR 0023), and a
+/// web view's content process cannot see the app's fonts: the Mac serves
+/// them from these bytes, and nothing else under that scheme (C25, Barlow
+/// for a body in app colours).
+#[test]
+fn the_reader_s_faces_are_served_by_name_and_nothing_else_is() {
+    let session = a_session();
+    let face = shared::FACES
+        .iter()
+        .find(|face| face.family == "Barlow")
+        .expect("Barlow is vendored");
+    assert_eq!(
+        session.reader_font(face.name.to_owned()).as_deref(),
+        Some(face.bytes),
+        "a face the document names is served whole"
+    );
+    assert_eq!(session.reader_font("../../etc/passwd".to_owned()), None);
+    assert_eq!(session.reader_font("Helvetica.ttf".to_owned()), None);
+    session.shutdown();
+}

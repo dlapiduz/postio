@@ -120,6 +120,14 @@ impl Session {
         })
     }
 
+    /// One of the faces the document names over `postio-font:`, by its
+    /// name, or `None` for any name that is not one of them. Compiled in,
+    /// so no path and no network is ever involved: what a web view's
+    /// `postio-font:` handler answers from (ADR 0023).
+    pub fn reader_font(&self, name: String) -> Option<Vec<u8>> {
+        postio_ui::reader::document::font_bytes(&name).map(<[u8]>::to_vec)
+    }
+
     /// Always draw `sender`'s mail in `treatment`, or forget the choice with
     /// `None`: "Always for this sender". Saved beside the remote-image
     /// grants, where GTK's reader keeps it.
