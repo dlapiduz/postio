@@ -112,3 +112,27 @@ fn the_free_function_and_the_session_method_agree() {
     assert_eq!(session.commands(), postio_ffi::commands());
     session.shutdown();
 }
+
+/// The Mac's menu bar is Focus's (specs/009-focus-macos T105): every command
+/// Focus offers on this platform is under its menu, and nothing else is.
+/// `MenuPlan` draws whatever carries a section, so a command only the
+/// three-pane apps answer would otherwise be a menu item that does nothing.
+#[test]
+fn the_menus_hold_what_focus_offers_here_and_nothing_else() {
+    let platform = postio_config::paths::Platform::host();
+    for spec in postio_ffi::commands() {
+        let id: postio_core::CommandId = spec.id.parse().expect("a registry id");
+        let offered = postio_core::registry::get(id)
+            .requires
+            .offered_by(postio_ffi::FRONTEND)
+            && postio_core::registry::offered_on(id.into(), platform);
+        let section = postio_core::menu::section_on(id, platform);
+        assert_eq!(
+            spec.menu.is_some(),
+            offered && section.is_some(),
+            "`{}`: offered by Focus here: {offered}, has a menu section: {}",
+            spec.id,
+            section.is_some()
+        );
+    }
+}

@@ -472,6 +472,26 @@ impl FocusDriver {
         used
     }
 
+    /// Resolve one key press in `context` through the controller's
+    /// resolver, the one the keymap in force built.
+    pub(crate) fn press(
+        &self,
+        chord: &postio_ui::keymap::Chord,
+        context: postio_ui::keymap::KeyContext,
+        in_text_entry: bool,
+        now: std::time::Instant,
+    ) -> postio_ui::keymap::Outcome {
+        self.focus
+            .lock()
+            .expect("focus lock")
+            .press(chord, context, in_text_entry, now)
+    }
+
+    /// The keys in force, as the controller holds them.
+    pub(crate) fn keymap(&self) -> postio_core::Keymap {
+        self.focus.lock().expect("focus lock").keymap().clone()
+    }
+
     /// The folders popover's places holding `filter`, with their tokens.
     pub(crate) fn places(&self, filter: &str) -> Vec<(u64, postio_ui::places::Entry)> {
         self.focus.lock().expect("focus lock").places(filter)
@@ -732,6 +752,10 @@ impl FocusDriver {
             Intent::Empty(page) => self.say(UiEvent::FocusEmpty {
                 page: page.map(Into::into),
             }),
+            Intent::OpenKeyMap => {
+                let sheet = crate::focus_keymap::sheet(&self.keymap());
+                self.say(UiEvent::FocusOpenKeyMap { sheet });
+            }
             Intent::SaveSearch { query } => {
                 let saved = self.save_search(&query);
                 self.input(Input::SearchSaved(saved));

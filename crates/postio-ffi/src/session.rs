@@ -417,32 +417,6 @@ fn engage_focus(
     ))
 }
 
-/// The resolver these bindings make, for the running platform.
-///
-/// One place, called from both construction paths, because an in-memory
-/// session that resolved keys differently from a real one would make every
-/// keyboard test a test of the test harness. `Platform::host()` rather than a
-/// parameter: this is the *running* application's keymap, and the both-platform
-/// assertion belongs where it can be made without opening a session at all
-/// (`postio-ui`'s `every_default_binding_resolves_on_both_platforms`).
-///
-/// Problems are logged, never fatal. An override that cannot be used costs
-/// that command its key and nothing else; refusing to open the session over a
-/// mistyped `[keys]` entry would be a mail client held hostage by its own
-/// preferences file, which is the same call `load_key_bindings` makes above.
-fn build_resolver(keys: &postio_config::keys::KeyBindings) -> postio_ui::keymap::Resolver {
-    let keymap = postio_core::Keymap::resolve(keys);
-    // Focus's commands only: the Mac app is Focus (specs/009-focus-macos
-    // FR-001), so a key the one keymap keeps for the terminal alone is bound
-    // to nothing here (specs/007-postio-focus R4).
-    let (resolver, problems) =
-        postio_ui::keymap::Resolver::from_commands_for(&keymap, crate::FRONTEND);
-    for problem in &problems {
-        tracing::warn!(%problem, "a key binding could not be used");
-    }
-    resolver
-}
-
 /// Start the store's owner over an open store, as ADR 0041 allows here:
 /// nothing else on macOS can share the store, so the host runs in this
 /// process and this frontend is its one client.
@@ -710,18 +684,6 @@ pub struct Session {
     /// what the message list draws. Read once here so the list and the
     /// settings pane cannot disagree about what the file says.
     ui: postio_config::ui::UiConfig,
-    /// The live keymap: the binding table, plus whatever sequence is
-    /// half-typed.
-    ///
-    /// **Held here, not in Swift** (ADR 0019 Q4). A sequence is state -- `g`
-    /// is pending until its second chord or the leader timeout -- and state
-    /// the frontend kept would be a second implementation of the trie the
-    /// moment either side was edited. So the frontend sends one reduced press
-    /// at a time and this remembers what it means.
-    ///
-    /// Built from the same `[keys]` above, resolved for the running platform,
-    /// so `mod+k` is ⌘K here and Ctrl+K on Linux from one table.
-    resolver: Mutex<postio_ui::keymap::Resolver>,
     /// The bindings in force, resolved once and kept: see [`Session::keymap`].
     /// Keyed by how many commands the registry holds, so an extension that
     /// registers later is not left out of it.
@@ -1852,7 +1814,6 @@ impl Session {
             );
             let session = Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
-                resolver: Mutex::new(build_resolver(&keys)),
                 keymap: Mutex::new(None),
                 ui: config.ui,
                 keys: Mutex::new(keys),
@@ -1953,7 +1914,6 @@ impl Session {
         );
         let session = Arc::new(Session {
             wiring: Mutex::new(Some(wiring)),
-            resolver: Mutex::new(build_resolver(&keys)),
             keymap: Mutex::new(None),
             ui: ui_config,
             keys: Mutex::new(keys),
@@ -3781,7 +3741,12 @@ impl Session {
         } else {
             in_text_entry
         };
-        let outcome = self.resolver.lock().expect("resolver lock").press(
+        // Focus's controller holds the live keymap: the binding table and
+        // whatever sequence is half-typed (ADR 0019 Q4 -- held here, not in
+        // Swift, since a sequence is state). It is built for Focus's
+        // commands from `[keys]`, resolved for the running platform, and
+        // rebuilt when the file changes (`follow_config`).
+        let outcome = self.focus_list.press(
             &chord,
             key_context,
             in_text_entry,
@@ -3840,8 +3805,9 @@ impl Session {
 
     /// What this session can currently do, as the registry evaluates it.
     ///
-    /// Watch `source`'s file, if it has one, and follow it: `[keys]` rebuilds
-    /// the resolver and says [`UiEvent::KeymapChanged`], so the menu bar and
+    /// Watch `source`'s file, if it has one, and follow it: `[keys]` reaches
+    /// Focus's controller, which rebuilds the resolver, and says
+    /// [`UiEvent::KeymapChanged`], so the menu bar and
     /// every keycap re-read their keys; `[focus]` reaches the engine
     /// (specs/009-focus-macos R6, R8). Mirrors the GTK app's `follow_config`
     /// and the terminal's `follow_focus_config`.
@@ -3856,7 +3822,6 @@ impl Session {
             };
             if update.changed.keys {
                 let keys = service.config().keys.clone();
-                *session.resolver.lock().expect("resolver lock") = build_resolver(&keys);
                 *session.keys.lock().expect("keys lock") = keys;
                 *session.keymap.lock().expect("keymap lock") = None;
                 session

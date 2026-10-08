@@ -373,6 +373,15 @@ pub enum UiEvent {
         /// Messages that have entered the queue.
         total: u32,
     },
+    /// Show the key map (`?`), as a sheet over the main window
+    /// (specs/009-focus-macos T103). The controller has put it on the stack;
+    /// it closes on `FocusCloseSurface { kind: KeyMap }`, and any other way
+    /// it closes is `focus_surface_closed(KeyMap)`. On `KeymapChanged` while
+    /// it is up, draw `focus_key_map()` again.
+    FocusOpenKeyMap {
+        /// What it draws.
+        sheet: crate::focus_keymap::KeyMapSheetFfi,
+    },
 }
 
 /// How a Focus toast is drawn.
