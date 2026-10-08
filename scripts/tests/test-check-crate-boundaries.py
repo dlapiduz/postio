@@ -67,6 +67,7 @@ def build_fixture(
     ai_deps: str = "",
     vault_deps: str = "",
     storyboard_deps: str = "",
+    controller_deps: str = "",
     include_focus: bool = True,
 ) -> Path:
     root.mkdir(parents=True, exist_ok=True)
@@ -95,6 +96,8 @@ def build_fixture(
     write_crate(root, "crates", "postio-vault", vault_deps)
     # The storyboard tool's pure half (specs/008-storyboards).
     write_crate(root, "crates", "postio-storyboard", storyboard_deps)
+    # Focus's sans-IO controller (specs/009-focus-macos, ADR 0045).
+    write_crate(root, "crates", "postio-focus", controller_deps)
     # Bystanders: every crate `RULES` names has to exist as a workspace
     # member, or `find_violations` raises before any rule gets checked
     # (#560) -- so a rule added for a real crate the fixture never grew a
@@ -590,6 +593,35 @@ def main() -> int:
             ),
             expected_status=1,
             must_mention=("postio-storyboard", "turso", "helper"),
+        )
+
+        check_case(
+            "postio-focus reaches gtk4 through another crate",
+            build_fixture(
+                tmp_path / "controller-gtk4",
+                controller_deps='helper = { path = "../helper" }\n',
+                helper_deps='gtk4 = { path = "../../vendor/gtk4" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-focus", "gtk4", "helper"),
+        )
+        check_case(
+            "postio-focus gains a direct tokio dependency",
+            build_fixture(
+                tmp_path / "controller-tokio",
+                controller_deps='tokio = { path = "../../vendor/tokio" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-focus", "tokio"),
+        )
+        check_case(
+            "postio-focus may reach tokio through postio-core",
+            build_fixture(
+                tmp_path / "controller-core-tokio",
+                controller_deps='postio-core = { path = "../postio-core" }\n',
+                core_deps='tokio = { path = "../../vendor/tokio" }\n',
+            ),
+            expected_status=0,
         )
 
         # 18. And the real workspace is clean today.

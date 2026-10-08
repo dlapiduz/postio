@@ -1,0 +1,26 @@
+[package]
+name = "postio-focus"
+description = "Focus's behaviour, decided once: a sans-IO controller every Postio frontend drives and draws (ADR 0045, specs/009-focus-macos)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+postio-client = { workspace = true }
+postio-config = { workspace = true }
+postio-core = { workspace = true }
+postio-model = { workspace = true }
+postio-search = { workspace = true }
+postio-ui = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+
+
+[dev-dependencies]
+async-channel = { workspace = true }
+
+[lints]
+workspace = true

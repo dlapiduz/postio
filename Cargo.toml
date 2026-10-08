@@ -31,6 +31,7 @@ members = [
     "crates/postio-ai",
     "crates/postio-vault",
     "crates/postio-storyboard",
+    "crates/postio-focus",
 ]
 # Upstream crates carried with Postio's patches applied: sources, not
 # members, so the workspace's lints and gates do not reach them.
@@ -82,6 +83,7 @@ default-members = [
     "crates/postio-ai",
     "crates/postio-vault",
     "crates/postio-storyboard",
+    "crates/postio-focus",
 ]
 
 [workspace.package]
@@ -169,6 +171,7 @@ postio-calendar = { path = "crates/postio-calendar" }
 postio-ai      = { path = "crates/postio-ai" }
 postio-vault   = { path = "crates/postio-vault" }
 postio-storyboard = { path = "crates/postio-storyboard" }
+postio-focus = { path = "crates/postio-focus" }
 
 # Third-party crates two or more members share, so a version, a feature
 # list and a default-features decision are made once (#1498). A member
