@@ -425,3 +425,229 @@ pub(crate) async fn cursor_on_the_first_row(session: &Session) {
         "the inbox opened with the cursor on its first row"
     );
 }
+
+/// A session whose inbox holds one conversation of two messages: an earlier
+/// one from Grace, and the latest, from Ada, asking a question, copied to
+/// Grace, labelled Harbor and carrying a PDF. Answers the session and the
+/// two messages, earlier first.
+async fn a_thread_with_a_question() -> (std::sync::Arc<Session>, i64, i64) {
+    use postio_model::EmailAddress;
+    use postio_storage::repository::LabelRepository;
+
+    let database = test_support::memory().await;
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let blobs = postio_storage::BlobStore::open(scratch.path(), &test_support::blob_keys())
+        .expect("a blob store");
+    let (earlier, latest) = {
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let repository = MessageRepository::new(&connection);
+        let threads = postio_storage::repository::ThreadRepository::new(&connection);
+        let mut thread = postio_model::Thread::new(account.id);
+        thread.subject = Some("Harbor API draft v3".to_owned());
+        threads.create(&mut thread).await.expect("a thread");
+
+        let at = Utc::now() - chrono::TimeDelta::hours(3);
+        let mut first = Message::new(account.id, inbox, at);
+        first.subject = Some("Harbor API draft v3".to_owned());
+        first.date = Some(at);
+        first.flags = [postio_model::Flag::Seen].into_iter().collect();
+        first.from = vec![EmailAddress::new(Some("Grace Okafor"), "grace@example.com")];
+        first.to = vec![account.address.clone()];
+        let earlier = repository.create(&mut first).await.expect("a message");
+        threads
+            .add_message(thread.id, earlier)
+            .await
+            .expect("threaded");
+
+        let at = Utc::now() - chrono::TimeDelta::hours(1);
+        let mut second = Message::new(account.id, inbox, at);
+        second.subject = Some("Re: Harbor API draft v3".to_owned());
+        second.date = Some(at);
+        second.from = vec![EmailAddress::new(Some("Ada Moreno"), "ada@example.com")];
+        second.to = vec![account.address.clone()];
+        second.cc = vec![EmailAddress::new(Some("Grace Okafor"), "grace@example.com")];
+        second.promoted = Some(postio_model::promoted::PromotedHeaders::default());
+        let mut part = postio_model::Attachment::new(
+            postio_model::MessageId::UNASSIGNED,
+            "application/pdf",
+            48_000,
+        );
+        part.filename = Some("draft-v3.pdf".to_owned());
+        part.part_id = Some("2".to_owned());
+        second.attachments = vec![part];
+        let latest = repository.create(&mut second).await.expect("a message");
+        threads
+            .add_message(thread.id, latest)
+            .await
+            .expect("threaded");
+        repository
+            .set_body(
+                latest,
+                &StoredBody {
+                    text: Some(
+                        "Hi,\n\nCan you approve these by Friday so finance can close the quarter?\n\nThanks,\nAda"
+                            .to_owned(),
+                    ),
+                    html: None,
+                    headers: None,
+                    headers_truncated: false,
+                    encoding_problems: false,
+                },
+                postio_model::message::BodyState::Full,
+            )
+            .await
+            .expect("the body is stored");
+
+        let labels = LabelRepository::new(&connection);
+        let mut label = postio_model::Label::new(account.id, "Harbor");
+        let label = labels.create(&mut label).await.expect("a label");
+        labels.attach(latest, label).await.expect("labelled");
+        (earlier.get(), latest.get())
+    };
+    let session =
+        Session::open(SessionOptions::in_memory_with(database).with_blobs_for_test(blobs, scratch))
+            .expect("a session");
+    (session, earlier, latest)
+}
+
+/// What surrounds the body in the Mac's message window comes across
+/// composed, by the functions GTK's open message draws with (spec 009
+/// T067, T068): the subject, the position line, the thread chip and the
+/// messages `[` and `]` reach, the labels, the sender block, the marker's
+/// card, the action row with what folds into More, and the attachments.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_message_window_s_chrome_is_composed_in_rust() {
+    use postio_core::CommandId;
+    use postio_ui::focus_dialog;
+
+    let (session, earlier, latest) = a_thread_with_a_question().await;
+    // The marker is the body stage's; wait for it before the list is read.
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(10));
+    while session.focus_counts().expect("counts").has_action == 0 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    cursor_on_the_first_row(&session).await;
+    if session.focus_row_at(0).is_none() {
+        assert!(
+            heard(&session, 10, |event| matches!(
+                event,
+                postio_ffi::UiEvent::FocusPageReady { page: 0 }
+            ))
+            .await,
+            "the first page lands"
+        );
+    }
+    assert_eq!(session.focus_row_at(0).map(|row| row.id), Some(latest));
+
+    let view = session.focus_message_view(latest, 0, 1);
+    assert_eq!(view.message, latest);
+    assert_eq!(view.subject, "Re: Harbor API draft v3");
+    assert_eq!(
+        view.position,
+        focus_dialog::position_line(0, 1, 2, 1, true, None),
+        "the row's place, and the conversation's size at its latest"
+    );
+    let chip = view.thread.expect("a conversation of two has a chip");
+    assert_eq!(
+        Some(chip.text.clone()),
+        focus_dialog::thread_chip_at(2, 1, true)
+    );
+    let earlier_key = chip.earlier.expect("the latest offers the earlier one");
+    assert_eq!(
+        earlier_key.command,
+        CommandId::PrevInConversation.to_string()
+    );
+    assert_eq!(earlier_key.label, focus_dialog::EARLIER_MESSAGE);
+    assert!(chip.later.is_none(), "nothing is later than the latest");
+    assert_eq!(view.earlier, Some(earlier), "what [ shows");
+    assert_eq!(view.later, None, "what ] shows");
+
+    assert_eq!(
+        view.labels
+            .iter()
+            .map(|pill| pill.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Harbor"]
+    );
+    assert_eq!(view.add_label.command, CommandId::AddLabel.to_string());
+    assert_eq!(view.add_label.label, focus_dialog::ADD_LABEL);
+
+    let fields: Vec<&str> = view
+        .fields
+        .iter()
+        .map(|field| field.field.as_str())
+        .collect();
+    assert_eq!(
+        fields,
+        [
+            focus_dialog::FIELD_FROM,
+            focus_dialog::FIELD_TO,
+            focus_dialog::FIELD_CC
+        ]
+    );
+    let from = &view.fields[0].people[0];
+    assert_eq!(from.name.as_deref(), Some("Ada Moreno"));
+    assert_eq!(from.address, "ada@example.com");
+    assert_eq!(
+        view.fields[2].people[0].name.as_deref(),
+        Some("Grace Okafor")
+    );
+    assert!(!view.date.is_empty(), "the sender block is dated");
+
+    let marker = view.marker.expect("the question's card");
+    assert_eq!(marker.chip, "Question");
+    assert_eq!(
+        marker.quote.as_deref(),
+        Some("Can you approve these by Friday so finance can close the quarter?")
+    );
+    assert_eq!(view.dismiss.command, CommandId::DismissMarker.to_string());
+    assert_eq!(view.dismiss.label, focus_dialog::DISMISS);
+
+    let commands: Vec<&str> = view
+        .actions
+        .iter()
+        .map(|verb| verb.command.as_str())
+        .collect();
+    let expected: Vec<String> = focus_dialog::OPEN_TOOLBAR
+        .iter()
+        .filter(|verb| verb.command != CommandId::MoreActions)
+        .map(|verb| verb.command.to_string())
+        .collect();
+    assert_eq!(commands, expected, "screen 04's row, in its order");
+    let folded: Vec<String> = view
+        .actions
+        .iter()
+        .filter(|verb| verb.folds)
+        .map(|verb| verb.command.clone())
+        .collect();
+    assert_eq!(
+        folded,
+        focus_dialog::FOLDED.map(|command| command.to_string()),
+        "Label, Move and Delete fold into More when narrow"
+    );
+    let more = view.more.expect("received mail has More");
+    assert_eq!(more.command, CommandId::MoreActions.to_string());
+
+    assert_eq!(view.attachments.len(), 1, "{:?}", view.attachments);
+    assert_eq!(view.attachments[0].name, "draft-v3.pdf");
+    assert_eq!(
+        view.attachments[0].size,
+        postio_ui::format::human_size(48_000)
+    );
+
+    // `[`: the earlier message, in the same window. Its place in the
+    // conversation is said, it has no card (the marker is the latest's),
+    // and `]` comes back.
+    let stepped = session.focus_message_view(earlier, 0, 1);
+    assert_eq!(
+        stepped.position,
+        focus_dialog::position_line(0, 1, 2, 0, false, None)
+    );
+    assert!(stepped.marker.is_none(), "the card is the marked message's");
+    assert_eq!(stepped.earlier, None);
+    assert_eq!(stepped.later, Some(latest));
+    let chip = stepped.thread.expect("still a conversation");
+    assert!(chip.later.is_some(), "] is offered from an earlier message");
+    session.shutdown();
+}

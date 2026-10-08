@@ -45,6 +45,7 @@ mod event;
 mod finder;
 mod focus;
 mod focus_list;
+mod focus_message;
 mod focus_reader;
 mod keys;
 mod list;
@@ -83,6 +84,10 @@ pub use focus::{FocusCountsFfi, FocusStripFfi};
 pub use focus_list::{
     FocusRowActionFfi, FocusRowFfi, FocusRowKindFfi, FocusScopeFfi, LabelPillFfi, MarkerLineFfi,
     ReaderVerbFfi, SurfaceKindFfi,
+};
+pub use focus_message::{
+    FocusAttachmentFfi, FocusFieldFfi, FocusMessageViewFfi, FocusPersonFfi, FocusThreadChipFfi,
+    FocusVerbFfi,
 };
 pub use focus_reader::{FocusReaderDocumentFfi, RenderModeWordsFfi, TreatmentFfi};
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
