@@ -27,8 +27,6 @@ check_budget                      # crates/postio-core/src/perf_budget.rs:65
 closing_after                     # crates/postio-account/src/imap/transport.rs:634
 compose_demo                      # crates/postio-demo/src/lib.rs -- called by postio-gtk's shot example; examples are not callers to this check
 conformance_cases                 # crates/postio-core/src/aim.rs:346
-demo_vault                        # crates/postio-demo/src/lib.rs -- called by postio-gtk's shot example; examples are not callers to this check
-digest_size                       # crates/postio-ui/src/focus_dialog.rs -- spec 009 slice 1; the Mac's digest window calls it (tasks.md T114)
 dispatch_ext                      # crates/postio-core/src/dispatch.rs:458
 extend_selection_to               # crates/postio-core/src/state.rs:562
 extensions_to_enable              # crates/postio-account/src/imap/dispatch.rs:197
