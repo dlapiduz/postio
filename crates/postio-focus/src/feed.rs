@@ -31,6 +31,8 @@ use crate::{Intent, Request};
 pub(crate) enum Step {
     Show(Intent),
     Ask(Request),
+    /// Open this place through the feed, as `FocusController::open` does.
+    Open(ListScope),
 }
 
 /// A page's rows as the store answered them, before the feed shapes them.

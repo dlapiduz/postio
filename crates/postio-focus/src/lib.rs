@@ -15,14 +15,17 @@ use std::time::Duration;
 
 use postio_client::protocol::FocusCounts;
 use postio_config::paths::Platform;
+use postio_core::state::Selection;
 use postio_core::{CommandId, Event};
 use postio_model::listing::{PageRequest, Surfaced};
-use postio_model::{ListScope, MailboxId, MessageId};
+use postio_model::{AccountId, ListScope, MailboxId, MessageId};
 use postio_ui::focus_list::FocusRow;
 
+mod cursor;
 mod feed;
 mod perform;
 
+pub use cursor::{NoRows, RowFacts, Rows};
 pub use feed::{Opened, PageAnswer};
 pub use perform::{perform, perform_now};
 
@@ -81,6 +84,9 @@ pub enum Input {
     Reply(Ticket, Reply),
     /// Something the engine said, from the client's one event stream.
     Event(Event),
+    /// The accounts Focus's inbox is made of: what "select everything"
+    /// reaches.
+    Accounts(Vec<AccountId>),
 }
 
 /// What the frontend does next.
@@ -109,6 +115,23 @@ pub enum Effect {
 pub enum Intent {
     /// The header strip's counts changed.
     Counts(FocusCounts),
+    /// The cursor is on `position`: draw it there and bring it into view.
+    Cursor {
+        /// The row.
+        position: u32,
+        /// Whether the list scrolls back to its very top: the first row.
+        to_top: bool,
+    },
+    /// The selection changed: redraw the rows' boxes, and the bar's words.
+    Selection {
+        /// What is selected now.
+        selection: Selection,
+        /// "3 selected", or nothing with nothing selected.
+        summary: Option<String>,
+    },
+    /// The list's one heading, while `!` narrows it ("Has action · 7"), or
+    /// back to the day headings with `None`.
+    SingleHeading(Option<String>),
     /// The place opened has been counted: the list changes over to it,
     /// keeping the rows on screen until its first page lands, and asks for
     /// that page ([`FocusController::page_wanted`]).
@@ -231,6 +254,9 @@ pub struct FocusController {
     generation: u64,
     next_ticket: u64,
     feed: feed::Feed,
+    cursor: cursor::Cursor,
+    /// The strip's counts, as the host last said.
+    counts: Option<FocusCounts>,
 }
 
 impl FocusController {
@@ -241,6 +267,8 @@ impl FocusController {
             generation: 0,
             next_ticket: 0,
             feed: feed::Feed::default(),
+            cursor: cursor::Cursor::default(),
+            counts: None,
         }
     }
 
@@ -249,13 +277,37 @@ impl FocusController {
         self.policy
     }
 
-    /// Tell the controller what happened; get back what to do.
+    /// Tell the controller what happened; get back what to do. For inputs
+    /// that need no rows; [`handle_on`](Self::handle_on) for the rest.
     pub fn handle(&mut self, input: Input) -> Vec<Effect> {
+        self.handle_on(input, &NoRows)
+    }
+
+    /// Tell the controller what happened, over the list as the frontend
+    /// holds it; get back what to do.
+    pub fn handle_on(&mut self, input: Input, rows: &dyn Rows) -> Vec<Effect> {
         match input {
             Input::Command(CommandId::Quit) => vec![Effect::Show(Intent::Quit)],
-            Input::Command(_) => Vec::new(),
+            // Back's last rung: the surfaces above the list are still the
+            // frontend's to close first.
+            Input::Command(CommandId::Back) => {
+                let steps = self.cursor.clear(self.feed.total());
+                self.effects(steps)
+            }
+            Input::Command(id) => {
+                let has_action = self.counts.map(|counts| counts.has_action);
+                let steps =
+                    self.cursor
+                        .command(id, rows, self.feed.scope(), self.feed.total(), has_action);
+                steps.map(|steps| self.effects(steps)).unwrap_or_default()
+            }
+            Input::Accounts(accounts) => {
+                self.cursor.set_accounts(accounts);
+                Vec::new()
+            }
             Input::Reply(ticket, _) if ticket.generation != self.generation => Vec::new(),
             Input::Reply(_, Reply::FocusCounts(Ok(counts))) => {
+                self.counts = Some(counts);
                 vec![Effect::Show(Intent::Counts(counts))]
             }
             Input::Reply(_, Reply::FocusCounts(Err(error))) => {
@@ -289,6 +341,44 @@ impl FocusController {
                 self.effects(steps)
             }
         }
+    }
+
+    /// The list has landed or moved (the frontend's "filled"), `opened` when
+    /// this is the first landing of a place just opened: the cursor goes to
+    /// the first row, or back to the message `!` kept, and the strip's
+    /// counts are asked for again.
+    pub fn landed(&mut self, rows: &dyn Rows, opened: bool) -> Vec<Effect> {
+        let steps = self.cursor.landed(rows, opened);
+        let mut effects = self.effects(steps);
+        effects.push(self.refresh_counts());
+        effects
+    }
+
+    /// The cursor's row, if it has one.
+    pub fn cursor(&self) -> Option<u32> {
+        self.cursor.position()
+    }
+
+    /// What is selected: what `a` would act on.
+    pub fn selection(&self) -> Selection {
+        self.cursor.selection()
+    }
+
+    /// The conversations each selected row stands for.
+    pub fn selection_reach(
+        &self,
+    ) -> &std::collections::HashMap<MessageId, Vec<postio_model::ThreadId>> {
+        self.cursor.reach()
+    }
+
+    /// Whether the list is narrowed to the rows with a marker (`!`).
+    pub fn has_action(&self) -> bool {
+        self.cursor.has_action()
+    }
+
+    /// The strip's counts, as the host last said.
+    pub fn counts(&self) -> Option<FocusCounts> {
+        self.counts
     }
 
     /// Show `scope` in the list: counted first, then the list changes over.
@@ -347,6 +437,10 @@ impl FocusController {
             .map(|step| match step {
                 feed::Step::Show(intent) => Effect::Show(intent),
                 feed::Step::Ask(request) => Effect::Ask(self.ticket(), request),
+                feed::Step::Open(scope) => {
+                    let request = self.feed.open(scope);
+                    Effect::Ask(self.ticket(), request)
+                }
             })
             .collect()
     }

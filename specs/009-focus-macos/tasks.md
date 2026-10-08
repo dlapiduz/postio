@@ -211,7 +211,7 @@ action, and undo through ⌘Z and Edit › Undo.
 
 - [x] T037 [US2] Write failing tests in `crates/postio-ui/src/selection.rs` for a plain `Selector {selection, anchor: MessageId, reach}`: toggle, extend up and down from the anchor, select all as a predicate (C19), clear, and `changed: bool` returned
 - [x] T038 [US2] Extract `Selector` from `SelectionState` in `crates/postio-ui/src/selection.rs`. `SelectionState` stays as the `Rc`/observer wrapper over it for the terminal. Make T037 green
-- [ ] T039 [US2] Write failing tests in `crates/postio-focus/tests/cursor.rs` for contract invariants 1-3 and 9:
+- [x] T039 [US2] Write failing tests in `crates/postio-focus/tests/cursor.rs` for contract invariants 1-3 and 9:
   - `x` never moves the cursor;
   - ⇧J/⇧K extend, skipping digest rows (`window.rs:1952`);
   - `!` clears the selection and keeps the cursor on the same message, else on row 0;
