@@ -10,7 +10,7 @@
 //!
 //! # Why it is here rather than in a frontend
 //!
-//! It was `postio-gtk`'s until #658. Nothing in the matching, the ranking or
+//! It was the classic app's until #658. Nothing in the matching, the ranking or
 //! the context filter is about a toolkit — they are product decisions, and
 //! ADR 0019 Q5 named this among what a second frontend must share rather than
 //! re-derive. **Swift must not write its own fuzzy match**: the ranking is
@@ -19,7 +19,7 @@
 //!
 //! What each frontend keeps is the *drawing*. [`Entry::positions`] are byte
 //! indices into the title, deliberately, rather than pre-escaped markup —
-//! `postio-gtk` turns them into Pango bold and Swift builds an
+//! The classic app turned them into Pango bold and Swift builds an
 //! `AttributedString` from the same numbers.
 //!
 //! # Two halves
@@ -54,7 +54,12 @@ use postio_core::{ActionId, Availability, Context, Keymap, registry};
 /// the two image commands, unsubscribe) took `Context::List` to 51, and
 /// `refresh` and the reader's scrolling fell off the end of an empty query.
 /// 64, for the same reason as before.
-pub const MAX_ROWS: usize = 64;
+///
+/// And at 64: the one keymap (specs/007-postio-focus) gave every app the
+/// archive, the snoozed mail and four saved searches, which took the
+/// classic app's `Context::List` to 66, and Focus's own commands take its
+/// list further. 96, still for headroom.
+pub const MAX_ROWS: usize = 96;
 
 // ---------------------------------------------------------------------------
 // Matching
@@ -337,7 +342,9 @@ mod tests {
     fn an_empty_query_lists_everything_reachable_in_registry_order() {
         let keymap = defaults();
         let listed = entries(&keymap, Context::List, an_account(), "");
-        let expected: Vec<ActionId> = registry::reachable(Context::List)
+        // Reachable for this app: Focus's own commands are rows of the
+        // registry another app does not offer.
+        let expected: Vec<ActionId> = registry::reachable_in(Context::List, an_account())
             .map(|spec| spec.id)
             .filter(|id| keymap.offers(*id))
             .collect();
@@ -351,15 +358,20 @@ mod tests {
     #[test]
     fn every_registry_command_is_reachable_from_some_context() {
         // In some context of some app: the terminal composer's own commands
-        // are in the terminal's palette only. Only what the platform offers:
-        // a command scoped away from it is in no palette there.
+        // are in the terminal's palette only, and Focus's in Focus's. Only
+        // what the platform offers: a command scoped away from it is in no
+        // palette there.
         let keymap = defaults();
         let terminal = Availability {
-            terminal: true,
+            frontend: postio_core::Frontend::Terminal,
+            ..an_account()
+        };
+        let macos = Availability {
+            frontend: postio_core::Frontend::Macos,
             ..an_account()
         };
         for spec in registry::all().filter(|spec| keymap.offers(spec.id)) {
-            let reachable = [an_account(), terminal].into_iter().any(|state| {
+            let reachable = [an_account(), terminal, macos].into_iter().any(|state| {
                 Context::ALL.iter().any(|context| {
                     entries(&keymap, *context, state, spec.title)
                         .iter()
@@ -478,9 +490,8 @@ mod tests {
         // that cannot be: pressing Return on a row that does nothing reads
         // as a broken application rather than as an unavailable command.
         let waiting = Availability {
-            scope: Scope::Account(AccountId::new(1)),
             store_open: false,
-            terminal: false,
+            ..Availability::open(Scope::Account(AccountId::new(1)))
         };
         assert!(
             entries(&defaults(), Context::List, waiting, "archive").is_empty(),

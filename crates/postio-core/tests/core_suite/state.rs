@@ -13,7 +13,7 @@ use postio_core::ActionId;
 use postio_core::bridge::Bridge;
 use postio_core::dispatch::{CommandError, Dispatcher};
 use postio_core::state::{AppState, Scope, SharedState, ViewMode};
-use postio_core::{Command, CommandId, ConnectionState, Context, Event};
+use postio_core::{Command, CommandId, Context, Event};
 use postio_model::{AccountId, DraftId, MailboxId, MessageId, ThreadId};
 
 fn message(id: i64) -> MessageId {
@@ -27,11 +27,22 @@ fn selection(state: &AppState) -> (Vec<MessageId>, Option<MessageId>) {
     )
 }
 
+/// A state scoped to `account`: the scope a frontend's snapshot carries when
+/// the host adopts it, which is how a state comes to have one.
+fn on_account(account: i64) -> AppState {
+    let mut snapshot =
+        serde_json::to_value(AppState::new().snapshot()).expect("a snapshot serialises");
+    snapshot["scope"] =
+        serde_json::to_value(Scope::Account(AccountId::new(account))).expect("a scope serialises");
+    let mut state = AppState::new();
+    state.adopt(serde_json::from_value(snapshot).expect("a snapshot deserialises"));
+    state
+}
+
 /// A state parked in the inbox with three messages selected and the middle one
 /// focused: the position a `t`/`Esc` round trip has to bring back intact.
 fn in_the_inbox() -> AppState {
-    let mut state = AppState::new();
-    state.open_account(AccountId::new(1));
+    let mut state = on_account(1);
     state.open_mailbox(MailboxId::new(7));
     state.select(vec![message(2), message(3), message(4)], Some(message(3)));
     state
@@ -47,13 +58,11 @@ fn a_fresh_state_is_an_empty_list() {
     assert_eq!(state.focus(), None);
     assert_eq!(state.scope().account(), None);
     assert_eq!(state.mailbox(), None);
-    assert_eq!(state.search_query(), None);
 }
 
 #[test]
 fn opening_a_mailbox_tells_the_list_to_reload() {
-    let mut state = AppState::new();
-    state.open_account(AccountId::new(1));
+    let mut state = on_account(1);
 
     let events = state.open_mailbox(MailboxId::new(7));
 
@@ -100,22 +109,6 @@ fn switching_mailboxes_drops_a_selection_that_is_no_longer_visible() {
     assert!(
         events.contains(&Event::SelectionChanged {
             selection: postio_core::state::Selection::default()
-        }),
-        "{events:?}"
-    );
-}
-
-#[test]
-fn switching_accounts_reloads_the_mailbox_tree() {
-    let mut state = in_the_inbox();
-
-    let events = state.open_account(AccountId::new(2));
-
-    assert_eq!(state.scope().account(), Some(AccountId::new(2)));
-    assert_eq!(state.mailbox(), None, "the old account's mailbox is gone");
-    assert!(
-        events.contains(&Event::MailboxesChanged {
-            account: AccountId::new(2)
         }),
         "{events:?}"
     );
@@ -214,40 +207,7 @@ fn the_back_stack_is_bounded() {
     assert_eq!(*state.view(), ViewMode::List);
 }
 
-// -- Search and the composer -------------------------------------------------
-
-#[test]
-fn search_is_a_view_the_user_can_leave() {
-    let mut state = in_the_inbox();
-    let before = selection(&state);
-
-    let events = state.open_search("from:ana has:attachment");
-
-    assert_eq!(state.search_query(), Some("from:ana has:attachment"));
-    assert_eq!(state.context(), Context::Search);
-    assert!(
-        events.contains(&Event::ContextChanged {
-            context: Context::Search
-        }),
-        "{events:?}"
-    );
-
-    state.back();
-    assert_eq!(state.search_query(), None);
-    assert_eq!(selection(&state), before);
-}
-
-#[test]
-fn refining_a_query_stays_in_search_and_still_announces_itself() {
-    let mut state = in_the_inbox();
-    state.open_search("from:a");
-
-    let events = state.open_search("from:an");
-
-    assert_eq!(state.search_query(), Some("from:an"));
-    assert!(!events.is_empty(), "a changed query is a changed view");
-    assert_eq!(state.back_depth(), 1, "typing does not deepen the stack");
-}
+// -- The composer -------------------------------------------------
 
 #[test]
 fn the_composer_takes_over_the_pane_and_gives_it_back() {
@@ -295,7 +255,6 @@ fn the_context_follows_the_view() {
             },
             Context::Reader,
         ),
-        (ViewMode::Search { query: "a".into() }, Context::Search),
         (
             ViewMode::Composer {
                 draft: DraftId::new(1),
@@ -313,7 +272,6 @@ fn a_change_always_emits_an_event_and_a_no_op_never_does() {
     // Widgets repaint from events only. A silent mutation is a stale pane.
     type Mutation = fn(&mut AppState) -> Vec<Event>;
     let mutations: Vec<(&str, Mutation)> = vec![
-        ("account", |state| state.open_account(AccountId::new(1))),
         ("mailbox", |state| state.open_mailbox(MailboxId::new(7))),
         ("select", |state| {
             state.select(vec![message(2)], Some(message(2)))
@@ -321,11 +279,7 @@ fn a_change_always_emits_an_event_and_a_no_op_never_does() {
         ("focus", |state| state.focus_on(Some(message(2)))),
         ("thread", |state| state.open_conversation(ThreadId::new(42))),
         ("message", |state| state.open_message(message(2))),
-        ("search", |state| state.open_search("from:ana")),
         ("composer", |state| state.open_composer(DraftId::new(5))),
-        ("connection", |state| {
-            state.set_connection(AccountId::new(1), ConnectionState::Online)
-        }),
         ("back", |state| state.back()),
         ("clear", |state| state.clear_selection()),
     ];
@@ -349,41 +303,6 @@ fn a_change_always_emits_an_event_and_a_no_op_never_does() {
             assert!(again.is_empty(), "`{name}` repeated itself: {again:?}");
         }
     }
-}
-
-#[test]
-fn connection_state_is_per_account() {
-    let mut state = AppState::new();
-    let first = AccountId::new(1);
-    let second = AccountId::new(2);
-
-    let events = state.set_connection(first, ConnectionState::Connecting);
-    assert_eq!(
-        events,
-        vec![Event::ConnectionChanged {
-            account: first,
-            state: ConnectionState::Connecting,
-        }]
-    );
-    state.set_connection(
-        second,
-        ConnectionState::Failing {
-            reason: postio_core::FailureReason::Auth,
-        },
-    );
-
-    assert_eq!(state.connection(first), ConnectionState::Connecting);
-    assert_eq!(
-        state.connection(second),
-        ConnectionState::Failing {
-            reason: postio_core::FailureReason::Auth,
-        }
-    );
-    assert_eq!(
-        state.connection(AccountId::new(3)),
-        ConnectionState::Offline,
-        "an account we have not heard from is working locally"
-    );
 }
 
 // -- Only the bus mutates it --------------------------------------------------
@@ -492,132 +411,13 @@ fn a_fresh_state_is_unified_over_nothing_rather_than_an_absent_account() {
     );
 }
 
-#[test]
-fn opening_an_account_narrows_the_scope_to_it() {
-    let mut state = AppState::new();
-
-    let events = state.open_account(AccountId::new(7));
-
-    assert_eq!(state.scope(), Scope::Account(AccountId::new(7)));
-    assert_eq!(state.scope().account(), Some(AccountId::new(7)));
-    assert!(
-        events
-            .iter()
-            .any(|event| matches!(event, Event::MailboxesChanged { .. })),
-        "narrowing to an account has to repaint its folders"
-    );
-}
-
 /// The acceptance criterion that protects everyone who has one account: the
 /// single-account path must behave exactly as it did.
 #[test]
 fn one_account_still_behaves_as_it_always_did() {
-    let mut state = AppState::new();
-    state.open_account(AccountId::new(1));
+    let mut state = on_account(1);
     state.open_mailbox(MailboxId::new(4));
 
     assert_eq!(state.scope(), Scope::Account(AccountId::new(1)));
     assert_eq!(state.mailbox(), Some(MailboxId::new(4)));
-
-    // Re-opening the same account is not a change, so it repaints nothing.
-    assert!(
-        state.open_account(AccountId::new(1)).is_empty(),
-        "re-opening the account already on screen must not churn the panes"
-    );
-}
-
-/// Widening drops the mailbox, for the same reason narrowing does: a folder
-/// belongs to one account, so it cannot survive a view that spans them all.
-#[test]
-fn widening_to_unified_drops_the_mailbox_that_belonged_to_one_account() {
-    let mut state = AppState::new();
-    state.open_account(AccountId::new(1));
-    state.open_mailbox(MailboxId::new(4));
-
-    state.open_unified();
-
-    assert_eq!(state.scope(), Scope::Unified);
-    assert_eq!(
-        state.mailbox(),
-        None,
-        "keeping it would let an action land in a folder the view no longer shows"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Cycling the account scope (#185)
-// ---------------------------------------------------------------------------
-
-/// A state that has heard from `count` accounts, ids 1..=count.
-fn with_accounts(count: i64) -> AppState {
-    let mut state = AppState::default();
-    for id in 1..=count {
-        state.set_connection(AccountId::new(id), ConnectionState::Online);
-    }
-    state
-}
-
-#[test]
-fn next_scope_walks_unified_then_every_account_and_round() {
-    let mut state = with_accounts(3);
-    assert_eq!(state.scope(), Scope::Unified, "unified is where it starts");
-
-    state.next_scope();
-    assert_eq!(state.scope(), Scope::Account(AccountId::new(1)));
-    state.next_scope();
-    assert_eq!(state.scope(), Scope::Account(AccountId::new(2)));
-    state.next_scope();
-    assert_eq!(state.scope(), Scope::Account(AccountId::new(3)));
-    state.next_scope();
-    assert_eq!(
-        state.scope(),
-        Scope::Unified,
-        "past the last account it comes back to unified rather than sticking"
-    );
-}
-
-#[test]
-fn the_account_order_is_stable_when_a_later_account_appears() {
-    // The hue the sidebar draws is keyed off this position, so an account
-    // that has been blue must not turn green because a fourth account was
-    // added after it.
-    let mut state = with_accounts(2);
-    let before = state.accounts();
-
-    state.set_connection(AccountId::new(9), ConnectionState::Online);
-    let after = state.accounts();
-
-    assert_eq!(
-        after[..2],
-        before[..],
-        "the existing accounts kept their places"
-    );
-    assert_eq!(after.len(), 3);
-}
-
-#[test]
-fn cycling_does_nothing_at_all_with_fewer_than_two_accounts() {
-    // Unified over one account and that one account show the same mail, so a
-    // switch would be a visible change that changes nothing — and it would
-    // put "Unified" in front of people who have never configured a second
-    // account, which #185 explicitly does not want.
-    for count in [0, 1] {
-        let mut state = with_accounts(count);
-        let events = state.next_scope();
-        assert_eq!(state.scope(), Scope::Unified, "with {count} account(s)");
-        assert!(events.is_empty(), "with {count} account(s)");
-    }
-}
-
-#[test]
-fn a_scope_on_an_account_that_has_gone_lands_back_on_unified() {
-    let mut state = with_accounts(2);
-    state.open_account(AccountId::new(404));
-    state.next_scope();
-    assert_eq!(
-        state.scope(),
-        Scope::Unified,
-        "unified is the one scope that is always valid, so it is where an \
-         unknown account falls back to"
-    );
 }

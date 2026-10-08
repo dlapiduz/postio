@@ -2,7 +2,7 @@
 //!
 //! # Why this is here and not in the frontend
 //!
-//! `postio-gtk` must not depend on the database engine — CI enforces it — so
+//! The view layer must not depend on the database engine — CI enforces it — so
 //! the view layer cannot read `postio-storage` itself. It also must never
 //! *wait* on a read: every widget is main-thread only, and a query that
 //! blocked the main loop would cost frames on the one interaction that happens
@@ -47,4 +47,4 @@ pub use local::LocalStore;
 /// How many threaded-folder counts this process has issued. For tests — see
 /// the counter's own documentation in `sqlite`.
 #[doc(hidden)]
-pub use local::{folders_counted, last_thread_skip, unified_counted};
+pub use local::{focus_counted, folders_counted, last_thread_skip, unified_counted};

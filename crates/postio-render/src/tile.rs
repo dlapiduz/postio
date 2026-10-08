@@ -67,6 +67,7 @@ mod tests {
             generation: 1,
             document: html.to_owned(),
             plain_text: String::new(),
+            fallback: None,
             over_cap: None,
             resources: Arc::new(crate::Resources::new()),
             viewport: crate::Viewport {

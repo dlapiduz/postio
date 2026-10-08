@@ -146,6 +146,9 @@ pub enum Blocker {
     /// The server refused the credentials. The user has to supply new ones —
     /// for an app-specific password, that means minting another.
     Authentication(String),
+    /// The keyring has no password for the account: nothing reached the
+    /// server. The user supplies one, as for [`Blocker::Authentication`].
+    NoPassword(String),
     /// Something else that retrying cannot fix: a certificate that does not
     /// verify, a server that advertises no capabilities, a command refused
     /// outright.
@@ -158,17 +161,28 @@ pub enum Blocker {
     Unrecoverable(String),
 }
 
+/// The blocker for an error that needs a password: a refusal, or none stored.
+fn blocker_for_password(error: &BackendError) -> Blocker {
+    if error.is_authentication_failure() {
+        Blocker::Authentication(error.to_string())
+    } else {
+        Blocker::NoPassword(error.to_string())
+    }
+}
+
 impl Blocker {
     /// The message to put in front of the user.
     pub fn reason(&self) -> &str {
         match self {
-            Self::Authentication(reason) | Self::Unrecoverable(reason) => reason,
+            Self::Authentication(reason)
+            | Self::NoPassword(reason)
+            | Self::Unrecoverable(reason) => reason,
         }
     }
 
     /// Whether the user needs to re-enter a password.
     pub fn needs_credentials(&self) -> bool {
-        matches!(self, Self::Authentication(_))
+        matches!(self, Self::Authentication(_) | Self::NoPassword(_))
     }
 }
 
@@ -344,8 +358,8 @@ impl Supervisor {
     /// and anything else is left alone — a refused `MOVE` is the operation's
     /// problem, not the connection's.
     pub fn observe(&mut self, error: &BackendError, now: DateTime<Utc>) -> Option<Link> {
-        if error.is_authentication_failure() {
-            return self.block(Blocker::Authentication(error.to_string()));
+        if error.needs_a_password() {
+            return self.block(blocker_for_password(error));
         }
         if !error.is_transient() || !self.link.is_online() {
             return None;
@@ -417,9 +431,7 @@ impl Supervisor {
                 // backoff step.
                 self.transition(Link::Online { since: now })
             }
-            Err(error) if error.is_authentication_failure() => {
-                self.block(Blocker::Authentication(error.to_string()))
-            }
+            Err(error) if error.needs_a_password() => self.block(blocker_for_password(&error)),
             Err(error) if !error.is_transient() => {
                 self.block(Blocker::Unrecoverable(error.to_string()))
             }
@@ -571,6 +583,24 @@ mod tests {
         assert!(Blocker::Authentication("nope".into()).needs_credentials());
         assert!(!Blocker::Unrecoverable("nope".into()).needs_credentials());
         assert_eq!(Blocker::Unrecoverable("why".into()).reason(), "why");
+    }
+
+    #[test]
+    fn a_missing_credential_blocks_the_link_for_a_password() {
+        let mut state = Supervisor::new(ReconnectPolicy::default());
+        let missing = postio_account::backend::BackendError::Secret(
+            postio_account::secret::SecretError::NotFound {
+                account: "ada@example.com".to_owned(),
+            },
+        );
+
+        let moved = state.observe(&missing, at(0));
+
+        let Some(Link::Blocked(blocker)) = moved else {
+            panic!("a missing password must block the link, not retry it: {moved:?}")
+        };
+        assert!(matches!(blocker, Blocker::NoPassword(_)), "{blocker:?}");
+        assert!(blocker.needs_credentials(), "so the user is asked for one");
     }
 
     #[test]

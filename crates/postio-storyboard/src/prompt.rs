@@ -145,7 +145,7 @@ mod tests {
     fn bundled(designs: usize) -> (tempfile::TempDir, Manifest) {
         let dir = tempfile::tempdir().expect("temp");
         let runs = dir.path().join("runs");
-        write(&runs, &run("archive-walks-down", App::Classic, &[], 3));
+        write(&runs, &run("archive-walks-down", App::Focus, &[], 3));
         write(&runs, &run("open-settings", App::Terminal, &[], 2));
         let catalogue = dir.path().join("storyboards");
         for (surface, name) in [("list", "archive-walks-down"), ("screens", "open-settings")] {
@@ -224,9 +224,9 @@ mod tests {
     fn the_prompt_lists_the_batch_and_nothing_of_the_other() {
         let text = prompt(1);
         assert!(text.contains("batch 1 of 2"));
-        assert!(text.contains("App: classic"));
+        assert!(text.contains("App: focus"));
         assert!(text.contains("Surface: list"));
-        assert!(text.contains("runs/classic/archive-walks-down/default/02.outlined.png"));
+        assert!(text.contains("runs/focus/archive-walks-down/default/02.outlined.png"));
         assert!(text.contains("`design/01-inbox-reading.png`"));
         assert!(!text.contains("open-settings"), "the other batch's work");
         assert!(!text.contains("{{"), "every placeholder was filled");

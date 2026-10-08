@@ -1,0 +1,32 @@
+# A key pressed after a row left the list still reaches the list (92a093b8).
+#
+# The defect: GTK delivers a key from the window's focus up through its
+# parents, and the focus stayed on a row that left with its message. The key
+# then started at a widget with no parents and never reached the window, so
+# `j`, `z` and Esc did nothing until a click. Fixed on the Focus branch
+# before storyboards existed, so this is pinned: after `a` removes the row
+# the cursor was on, the very next `j` must move the cursor, and the
+# keyboard must still be reachable (`keyboard.reachable` is false exactly
+# when a key pressed now would be dropped).
+#
+# Focus only: Classic keeps its list in a widget that is never rebuilt
+# under the cursor.
+source = { kind = "commit", ref = "92a093b8" }
+proof  = "pinned"
+apps   = ["focus"]
+design = "01-inbox-reading"
+
+[[step]]
+id      = "first"
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", cursor.index = 0, keyboard.reachable = true }
+
+[[step]]
+command = "archive"
+check   = { keyboard.region = "list", keyboard.reachable = true, notice.undo = true, cursor.index = { same_as = "first" } }
+expect  = "The row is gone and the toast offers Undo. The keyboard is still on the list, and the row that took its place wears the cursor ring."
+
+[[step]]
+command = "next_message"
+check   = { keyboard.region = "list", keyboard.reachable = true, cursor.index = { changed = true } }
+expect  = "The next `j` is received: the cursor lands on a row again. It is not dropped on a removed widget."

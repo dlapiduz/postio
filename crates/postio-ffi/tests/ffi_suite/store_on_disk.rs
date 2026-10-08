@@ -200,3 +200,33 @@ fn a_locked_keyring_opens_no_store_at_all() {
          opened a store it had no key for"
     );
 }
+
+#[test]
+fn a_store_from_another_build_says_start_over_not_try_again() {
+    // `StoreUnavailable` is "try again"; a store whose schema no migration
+    // reaches is refused by the same file every time, so trying again is a
+    // dead end the Mac must not offer (specs/007-postio-focus T215).
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let path = scratch.path().join("postio.db");
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let key = postio_session::store_key_blocking(secrets.as_ref()).expect("a store key");
+    postio_session::blocking::now(postio_storage::Store::create_at_schema(
+        &path,
+        &key.derive(postio_storage::key::Purpose::Database),
+        "CREATE TABLE written_by_a_stranger (id INTEGER PRIMARY KEY);",
+        "",
+    ))
+    .expect("a store at a schema no step leads from");
+
+    let error = match Session::open(SessionOptions::at(&path).with_secrets(secrets)) {
+        Ok(_) => panic!("a store from another build must not yield a session"),
+        Err(error) => error,
+    };
+
+    match error {
+        SessionError::StoreFromAnotherBuild { message } => {
+            assert!(!message.is_empty(), "the surface has nothing to show");
+        }
+        other => panic!("expected StoreFromAnotherBuild, got {other:?}"),
+    }
+}

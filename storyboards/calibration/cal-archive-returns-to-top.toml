@@ -1,10 +1,14 @@
-# must_fail: #1687 stated as the intent. The cursor really stays on row 2.
+# must_fail: #1687 stated as the intent. The list really stays where it is.
+apps        = ["focus"]
 source      = { kind = "issue", ref = "#1687" }
 calibration = "must_fail"
+
 [[step]]
 command = "next_message"
+
 [[step]]
 command = "next_message"
+
 [[step]]
 command = "archive"
-expect  = "After archiving, the cursor returns to the first row of the list and the list scrolls back to the top."
+expect  = "After archiving, the cursor ring returns to the first row of the list and the list scrolls back to the top."

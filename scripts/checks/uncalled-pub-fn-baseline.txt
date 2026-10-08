@@ -31,7 +31,6 @@ extend_selection_to               # crates/postio-core/src/state.rs:562
 extensions_to_enable              # crates/postio-account/src/imap/dispatch.rs:197
 failing_tls                       # crates/postio-account/src/imap/transport.rs:618
 fts_match                         # crates/postio-search/src/query.rs:417
-get_all                           # crates/postio-model/src/headers.rs:52
 has_name                          # crates/postio-account/src/backend/capability.rs:180
 has_pending                       # crates/postio-storage/src/repository/operations.rs:435
 idles                             # crates/postio-sync/src/watch.rs:290
@@ -59,6 +58,7 @@ latest_message_id                 # crates/postio-model/src/thread.rs:91
 lookup_binding                    # crates/postio-core/src/registry.rs:1067
 mark_in_flight                    # crates/postio-storage/src/repository/operations.rs:465
 message_page                      # crates/postio-runtime/src/store/local.rs -- the flat window under MailStore::list_page; for postio-bench store_reads and runtime_suite, which measure one window on purpose
+message_uri                       # crates/postio-ui/src/links.rs:18 -- the link postio-vault's Tasks line (T157, milestone 3) writes; parsed by links::message today
 needing_backfill                  # crates/postio-storage/src/repository/messages.rs:1384
 normalized_subject                # crates/postio-model/src/message.rs:313
 on_data_body                      # crates/postio-smtp/src/transport.rs:436
@@ -66,7 +66,6 @@ on_ext                            # crates/postio-core/src/dispatch.rs:322
 on_generated                      # crates/postio-account/src/imap/transport.rs:498
 open_composer                     # crates/postio-core/src/state.rs:620
 open_flagged                      # crates/postio-core/src/state.rs:522
-partials                          # crates/postio-search/src/query.rs:369
 preset_for                        # crates/postio-account/src/imap/settings.rs:74
 record_seen                       # crates/postio-model/src/contact.rs:95
 recount                           # crates/postio-storage/src/repository/mailboxes.rs:276
@@ -75,7 +74,6 @@ recovers_on_its_own               # crates/postio-sync/src/connect.rs:209
 refresh_capabilities              # crates/postio-account/src/imap/mod.rs:300
 rejected_recipient                # crates/postio-smtp/src/error.rs:255
 remove_member                     # crates/postio-storage/src/repository/contact_groups.rs:105
-reopen                            # crates/postio-account/src/secret.rs:670
 reports_destination_uid           # crates/postio-account/src/imap/dispatch.rs:181
 requeue_in_flight                 # crates/postio-storage/src/repository/operations.rs:510
 resync_strategy                   # crates/postio-account/src/imap/dispatch.rs:144
@@ -86,7 +84,6 @@ send_tracked                      # crates/postio-core/src/bridge.rs:212
 set_capabilities                  # crates/postio-sync/src/watch.rs:280
 set_disk_full                     # crates/postio-sync/src/backfill.rs:499
 set_metered                       # crates/postio-sync/src/backfill.rs:478
-set_name                          # crates/postio-storage/src/repository/contact_groups.rs:66
 set_thread                        # crates/postio-storage/src/repository/messages.rs:1136
 set_user_active                   # crates/postio-sync/src/backfill.rs:483
 suspend                           # crates/postio-sync/src/watch.rs:510

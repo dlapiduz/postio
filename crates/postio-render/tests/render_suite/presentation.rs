@@ -1,6 +1,6 @@
 //! How each message is presented in each theme (spec FR-013, research R10).
 
-use crate::support::{DARK, LIGHT, render, request, request_for};
+use crate::support::{self, DARK, LIGHT, render, request, request_for};
 use postio_render::Presentation;
 
 fn presentation(name: &str, theme: postio_render::Theme) -> Presentation {
@@ -164,4 +164,29 @@ fn a_transparent_logo_keeps_its_canvas() {
         Presentation::Adapted
     );
     assert!(found(adapted), "Adapted: the logo is not over its canvas");
+
+    // In the app's colours too (T211), where the canvas is the treatment's
+    // stylesheet's to give rather than a second layout's (T218).
+    let body = parsed.body.clone();
+    let treated = postio_ui::reader::document::body_html_treated(
+        &body,
+        postio_body::RemoteImages::Blocked,
+        Some(postio_body::treatment::Treatment::AppColours),
+        None,
+    );
+    let app = support::request_for(
+        postio_ui::reader::document::document_for_treated(
+            &treated.html,
+            &treated.styles,
+            postio_body::RemoteImages::Blocked,
+            postio_body::treatment::Treatment::AppColours,
+        ),
+        DARK,
+    );
+    for part in &parsed.parts {
+        if let Some(cid) = &part.attachment.content_id {
+            app.resources.insert_part(None, cid, part.content.clone());
+        }
+    }
+    assert!(found(app), "App colours: the logo is not over its canvas");
 }

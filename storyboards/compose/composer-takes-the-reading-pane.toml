@@ -1,24 +1,42 @@
 # The composer takes over the reading pane, and Escape gives it back (#1195).
 #
 # The defect: the composer was drawn in a quarter of the window, a corner
-# of the pane, instead of taking the whole reading pane's place. Pinned as far as
-# the observation goes (the occupant is not observed; the frame shows it): it
-# is the pane's occupant, filling it, and leaving brings the conversation
-# back in the same place.
+# of the pane, instead of taking the whole reading pane's place. The
+# occupant is not observed; the frame shows it: it is the pane's occupant,
+# filling it, and leaving brings the message back in the same place.
+#
+# Re-expressed for Focus (T265) in Focus's own reading pane (T232): `F8`
+# opens messages beside the list, `Return` opens the cursor's row there, and
+# the composer then takes that pane (screen 36).
+apps   = ["focus"]
 source = { kind = "issue", ref = "#1195" }
 proof  = "pinned"
 
 [[step]]
-wait    = { until = { reading.id = "12" } }
-check   = { composer.open = false, reading.id = "12" }
+command = "toggle_reading_pane"
+check   = { composer.open = false }
 
 [[step]]
-id      = "compose"
+command = "next_message"
+
+[[step]]
+command = "next_message"
+
+[[step]]
+command = "next_message"
+
+[[step]]
+id      = "open"
+command = "open_message"
+check   = { view = "reader", reading.id = { changed = true } }
+expect  = "The message opens in the pane beside the list."
+
+[[step]]
 command = "compose"
-check   = { composer.open = true }
-expect  = "The composer fills the whole reading pane, edge to edge, with the list still beside it. It is not a small box in a corner."
+check   = { composer.open = true, keyboard.region = "composer", app.focus.cursor.ring = "quiet" }
+expect  = "The composer fills the whole reading pane, edge to edge, with the list still beside it. It is not a small box in a corner. The list's cursor row is drawn quietly, not in the accent ring: the keyboard is in the composer."
 
 [[step]]
 command = "back"
-check   = { composer.open = false, reading.id = "12" }
-expect  = "The conversation is back in the pane, the same one that was there."
+check   = { composer.open = false, reading.id = { same_as = "open" }, app.focus.cursor.ring = "accent" }
+expect  = "The message is back in the pane, the same one that was there."

@@ -1,6 +1,10 @@
-# The screen `folder-picker`, carried over from the old screen sweep's table (FR-030).
-source = { kind = "design", ref = "none" }
+# The folders popover, `g o` (screen 10).
+#
+# Focus's design references are never committed
+# (specs/007-postio-focus/screens.md records each one).
+apps   = ["focus"]
+source = { kind = "design", ref = "focus 10" }
+
 [[step]]
-command = "search"
-[[step]]
-type = "#"
+command = "go_to_folders"
+check   = { overlay.kind = "picker", overlay.mode = "places" }

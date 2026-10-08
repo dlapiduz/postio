@@ -3,12 +3,12 @@
 //! The two writes onboarding makes — an account row in the encrypted store,
 //! and a credential in the OS keyring — with nothing else attached to them.
 //!
-//! # Why this is here rather than in `postio-app`
+//! # Why this is here rather than in the classic app
 //!
-//! `postio-app/examples/provision.rs` did this first, and did it well enough
-//! that this is largely a port of it. But `postio-app` links GTK, and GTK is
+//! The classic app's provision example did this first, and did it well enough
+//! that this is largely a port of it. But the classic app linked GTK, and GTK is
 //! precisely what does not build on macOS: ADR 0019 measured it, and the one
-//! boundary in the whole workspace falls on `postio-gtk` and `postio-app`. So
+//! boundary in the whole workspace falls on the GTK crates. So
 //! the only platform with no onboarding screen was also the only platform
 //! that could not run the helper that stands in for one.
 //!
@@ -39,7 +39,7 @@
 //!
 //! The failure the safe order leaves behind is a credential no account row
 //! names. Nothing reads one, it is rolled back here, and it would be harmless
-//! even if the rollback failed. `postio_app::onboarding::persist` records the
+//! even if the rollback failed. `onboarding::persist` records the
 //! same reasoning; this is the same rule in the crate that can be reached
 //! without a toolkit.
 
@@ -273,7 +273,7 @@ pub async fn provision(
 ///
 /// # Why it turns a disabled account back on
 ///
-/// Because GTK's repair does, for the reason `postio_app::onboarding`'s
+/// Because GTK's repair does, for the reason `onboarding`'s
 /// `configure` gives in a comment: a repair over an account somebody had
 /// disabled is still a repair, and the user just proved they want to sign in
 /// to it. Two panes that disagreed about this would describe different

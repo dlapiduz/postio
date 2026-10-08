@@ -41,13 +41,18 @@ What this spec adds:
 
 - **Storyboards.** A storyboard is an interaction written down once, as steps
   with expectations, in the vocabulary every Postio frontend shares.
-- **A runner** for each GTK app. It plays a storyboard and records a picture and
+- **A runner** for the app. It plays a storyboard and records a picture and
   a neutral observation at every step.
 - **A reviewer** that did not write the change.
 - **One page for the maintainer**, showing what changed.
 
-It covers the two GTK apps: Classic (`postio-app`) and Focus (`postio-focus`,
-spec 007). The terminal and macOS apps are later phases. Nothing in the format
+It was written for the two GTK apps, Classic (`postio-app`) and Focus
+(`postio-gtk`, spec 007). Focus is now Postio, the one desktop app (ADR
+0043), and the maintainer kept this feature by rebuilding its runner over it
+(2026-10-02, specs/007-postio-focus T265): storyboards play on Postio and
+nothing else, and the runner, the demo store and the catalogue are its. The
+stories below that name Classic say where the feature started. The terminal
+and macOS apps are later phases. Nothing in the format
 may assume a toolkit, so they can join without rewriting a single storyboard.
 
 ### What this spec inherits

@@ -269,8 +269,8 @@ types and the logic that belongs to them:
   structured, typed representation. It knows nothing about SQL or how a
   query actually gets executed — that's a different crate's job (see
   `postio-index`, below). This split matters: it's what lets the *same*
-  parsed query be reused for a live search, a saved search, a sidebar
-  "virtual folder," or eventually a filter rule — one matching language,
+  parsed query be reused for a live search, a saved search, a pinned
+  search, or eventually a filter rule — one matching language,
   used four different ways, rather than four different matching languages
   that could quietly disagree.
 - **`postio-body`** — a message's readable content, in both directions:
@@ -321,9 +321,10 @@ server or to disk:
 
 **The frontend layer**:
 
-- **`postio-gtk`** — the actual GTK4/libadwaita widgets, the keyboard
-  handling, the visual design tokens. Forbidden from touching SQL or a mail
-  protocol directly, by the boundary rule described above.
+- **`postio-widgets`** — the GTK4/libadwaita widgets the desktop app draws
+  outside its own window: the message view, the composer, the keycaps,
+  chips and pickers, the settings window. It reaches mail only through
+  `postio-client`, and is forbidden the store and any mail protocol.
 - **`postio-ui`** — presentation logic that doesn't need a toolkit at all
   (selection rules, how a reader document gets assembled, keymap
   resolution) split out specifically so a second frontend — the planned
@@ -332,8 +333,8 @@ server or to disk:
   case) actually calls into, using a cross-language binding generator called
   UniFFI.
 
-**The composition roots** — the only two crates allowed to know that
-*everything else* exists, because assembling the pieces is their entire job:
+**The composition roots** — the crates allowed to know that *everything
+else* exists, because assembling the pieces is their entire job:
 
 - **`postio-session`** — builds the local store, starts the background
   runtime, wires up the sync engines, and holds the "verb vocabulary" that
@@ -341,12 +342,13 @@ server or to disk:
   going out. Notably, this crate *also* has no GTK dependency, which is
   what makes it possible for a future non-GTK frontend to link against it
   directly.
-- **`postio-app`** — the actual GTK binary you run. What's left here,
-  deliberately, is as small as possible: a window, and the "presenters"
-  that connect the two halves together. Each of those presenters names a
-  specific widget, which is precisely the dividing line — anything that
-  names a widget belongs in `postio-app`; anything that doesn't belongs in
-  `postio-session`.
+- **`postio-gtk`** — the desktop app you run, the binary `postio`. It
+  opens the store in its own process through `postio-host`, which wraps
+  `postio-session`, and reaches mail only through `postio-client`, as every
+  frontend does. What is here is a window, its rows and its dialogs; what
+  it draws outside its window lives in `postio-widgets`. Anything that
+  names a widget belongs in one of those two; anything that doesn't belongs
+  in `postio-session` or below.
 
 **Two members that ship nothing** — which is how eighteen crates by role
 come to twenty in the manifest: **`postio-bench`** holds every benchmark, in
@@ -362,9 +364,9 @@ drawn and false a month later, as convenience wins one small case at a time.
 Two structural facts keep it honest. First, a script runs on every landed
 change and inspects the actual, resolved dependency graph — not source
 comments, not intentions — for two rules specifically: the contract layer
-(`postio-core`) may never depend on GTK, and the frontend layer
-(`postio-gtk`) may never depend on the SQL library or a mail-protocol
-library. Second, and more subtly: Cargo's dependency *features* resolve as a
+(`postio-core`) may never depend on GTK, and the desktop app's own code
+(`postio-gtk`) may never depend directly on the SQL library or a
+mail-protocol library. Second, and more subtly: Cargo's dependency *features* resolve as a
 union across everything being built in one program — meaning if the
 database code were merely an optional feature of the contract crate, turning
 that feature on anywhere in the program would pull the database engine into
@@ -372,7 +374,7 @@ the graph of
 *every* crate depending on the contract crate, including the view layer,
 whether or not the view layer wanted it. That's a real trap a less careful
 design would fall into silently. It's the specific reason `postio-runtime`
-(which owns a database) and `postio-app` (which owns GTK) are their own
+(which owns a database) and `postio-gtk` (which owns GTK) are their own
 separate crates rather than optional add-ons bolted onto `postio-core` — the
 contract crate has *no* optional dependencies at all, precisely so nothing
 can accidentally widen its graph.

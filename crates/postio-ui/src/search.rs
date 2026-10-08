@@ -5,21 +5,18 @@
 //! None of that is a toolkit's business — it is a reading of a
 //! [`postio_search::ParsedQuery`] and a sentence about a result set.
 //!
-//! It lived in `postio-gtk::search` until #1157, where the macOS bar could
-//! not reach any of it: the chips, the Backspace rule, the readout wording,
-//! its screen-reader form, and the debounce pacing. A second frontend
-//! re-deriving those would be a second query vocabulary on screen, a second
-//! answer to what "still syncing" means, and a second debounce — and the
-//! chips in particular are how a user *learns* Postio's query language, so
-//! two of them is two languages.
+//! Both frontends draw these, so neither re-derives them: a second reading
+//! of the query would be a second query vocabulary on screen, and the chips
+//! in particular are how a user *learns* Postio's query language, so two of
+//! them is two languages. The same goes for the readout wording and its
+//! screen-reader form, and for what "still syncing" means.
 //!
 //! # Where the chips live
 //!
 //! The entry holds the *whole* query, and the chips are a parse of it drawn
 //! alongside. They are a reading of what is typed, not a second store that
 //! could disagree with it — which is why [`postio_search::ParsedQuery`] hands
-//! out spans into the input, and why `remove_token` returns *the string to
-//! put back in the entry*.
+//! out spans into the input.
 //!
 //! The alternative — lifting completed operators out of the entry into
 //! standalone chips — is a nicer picture and a worse editor: the caret can no
@@ -34,7 +31,7 @@ use postio_search::query::{Field, TokenKind};
 /// One chip: an operator the parser recognized in the query.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Chip {
-    /// Position of the token in [`ParsedQuery::tokens`], for popping it.
+    /// Position of the token in [`ParsedQuery::tokens`].
     pub index: usize,
     /// The exact source text, so what the chip says is what is in the entry.
     pub label: String,
@@ -69,56 +66,6 @@ pub fn chips(parsed: &ParsedQuery) -> Vec<Chip> {
         .collect()
 }
 
-/// What Backspace should do.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Backspace {
-    /// Delete one character, as usual.
-    Ordinary,
-    /// Take the whole chip out.
-    PopChip {
-        /// The token that went.
-        index: usize,
-        /// What the entry should now hold.
-        query: String,
-        /// Where the caret should now sit, in bytes.
-        caret: usize,
-    },
-}
-
-/// Decides what Backspace does with the caret at `caret` bytes into the query.
-///
-/// A chip pops when the caret is inside it or against its right edge — which is
-/// where the caret is after typing one. Against its *left* edge the caret is
-/// before the chip, not in it, so Backspace deletes what precedes as usual;
-/// otherwise there would be no way to remove the space in front of a chip.
-///
-/// Free text is never popped whole. `subject:report` is one idea and deleting
-/// it in one keystroke is a convenience; a word the user typed is a word, and
-/// swallowing it would be a surprise.
-pub fn backspace(parsed: &ParsedQuery, caret: usize) -> Backspace {
-    let Some((index, token)) = parsed
-        .tokens()
-        .iter()
-        .enumerate()
-        .find(|(_, token)| token.span.contains(caret))
-    else {
-        return Backspace::Ordinary;
-    };
-
-    if !token.is_operator() || caret <= token.span.start {
-        return Backspace::Ordinary;
-    }
-
-    // Where the join lands after `remove_token` trims the whitespace around the
-    // hole it leaves.
-    let caret = parsed.input()[..token.span.start].trim_end().len();
-    Backspace::PopChip {
-        index,
-        query: parsed.remove_token(index),
-        caret,
-    }
-}
-
 /// How a chip reads to a screen reader.
 pub fn spoken(chip: &Chip) -> String {
     let field = chip.field.keyword();
@@ -138,21 +85,6 @@ pub fn spoken(chip: &Chip) -> String {
 // ---------------------------------------------------------------------------
 // The live readout — canvas 2b's `14 hits · 11 ms`
 // ---------------------------------------------------------------------------
-
-/// How long the box waits after a keystroke before it searches.
-///
-/// Sized to *typing*, not to the frame budget: people type at roughly
-/// 150–250 ms a key, and the 60 ms this used to be fired between almost
-/// every pair of keystrokes — typing `radon` searched `r`, `ra`, `rad`,
-/// `rado`, `radon`, five queries for one question (#500). At 200 ms a word
-/// typed at ordinary speed is one search, and the price is one beat between
-/// the last keystroke and the answer. `Enter` does not wait: it flushes the
-/// queued query immediately.
-///
-/// The keystroke itself never waits for a search — it only ever reschedules
-/// one — which is what keeps typing inside the 16 ms interaction budget
-/// regardless of this number.
-pub const DEBOUNCE: Duration = Duration::from_millis(200);
 
 /// What one search turned out to be.
 ///
@@ -211,23 +143,6 @@ impl Outcome {
             // Filled by the caller: see the field.
             unreachable: Vec::new(),
         }
-    }
-
-    /// The same outcome, carrying the accounts a search could not reach.
-    pub fn with_unreachable(mut self, unreachable: Vec<String>) -> Self {
-        self.unreachable = unreachable;
-        self
-    }
-
-    /// The same outcome, with the corpus caveat also raised when an account
-    /// in scope is mid-rebuild (#981).
-    ///
-    /// Only ever turns `corpus_complete` off, never back on: the executor's
-    /// own answer already accounts for backfill, and a rebuild finishing is
-    /// not proof a backfill did too.
-    pub fn with_reindexing(mut self, reindexing: bool) -> Self {
-        self.corpus_complete &= !reindexing;
-        self
     }
 }
 
@@ -341,47 +256,207 @@ pub const NOTHING_MATCHED: &str = "Nothing matched, so there is nothing to narro
 /// [`NOTHING_MATCHED`]'s other half: there were matches, all alike.
 pub const NOTHING_TO_NARROW: &str = "Every match is alike — nothing left to narrow by.";
 
-/// Which question is outstanding, so an answer to an older one can be thrown
-/// away instead of drawn.
+// ---------------------------------------------------------------------------
+// Painting the match — canvas 2b's "preview · match highlighted"
+// ---------------------------------------------------------------------------
+
+/// The class the reader stylesheet tints. See `reader.css`.
+const MARK_CLASS: &str = "postio-match";
+
+/// Tags whose contents are not prose and must not be marked.
 ///
-/// Every run gets a sequence number, and only the newest one's answer is
-/// accepted. This is the same generation rule [`crate::list`] applies to message
-/// pages and for the same reason: superseding a query is the *normal* case
-/// when results follow every keystroke, and without it the readout flickers
-/// backwards through the answers to queries nobody is asking any more.
+/// `script` and `style` never survive `postio_body::sanitize`, and
+/// `title` never appears in a body fragment — they are here because
+/// "the sanitizer removes it" is a fact about another module, and a
+/// highlighter that would corrupt a stylesheet if one ever reached it is one
+/// bad refactor away from doing so.
+const OPAQUE_TAGS: [&str; 3] = ["script", "style", "title"];
+
+/// Wraps every place `terms` match in `html` with a `<mark>` the reader
+/// stylesheet tints.
 ///
-/// Pure, and deliberately not a widget: the rule is worth testing on its own,
-/// and it is the whole of what "cancelled, not awaited" means.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Pacer {
-    issued: u64,
+/// Applied *after* sanitizing, not before: ammonia would strip the `<mark>`
+/// as an unknown tag, and marking first would mean running a matcher over
+/// markup that has not been cleaned yet. What goes in is already-safe HTML
+/// and what comes out adds one fixed literal tag to it — no attacker-shaped
+/// string is ever interpolated.
+///
+/// Matches never cross a tag boundary. `<b>mail</b>dir` is two text runs and
+/// FTS5 would not have matched `maildir` across them either, so the
+/// highlighting agrees with why the message was a hit.
+pub fn mark_html(html: &str, terms: &[String]) -> String {
+    if terms.is_empty() {
+        return html.to_owned();
+    }
+
+    let mut out = String::with_capacity(html.len());
+    let mut run = String::new();
+    let mut rest = html;
+    // `Some(tag)` while inside an element whose contents are not prose.
+    let mut opaque: Option<&str> = None;
+
+    while !rest.is_empty() {
+        let Some(next) = rest.find(['<', '&']) else {
+            run.push_str(rest);
+            break;
+        };
+        run.push_str(&rest[..next]);
+        rest = &rest[next..];
+
+        if rest.starts_with('&') {
+            // An entity is one indivisible character as far as the reader is
+            // concerned, and splitting one would corrupt it. It also ends the
+            // token run, which is right: `&amp;` is punctuation.
+            let end = rest
+                .find(';')
+                .filter(|end| *end <= 12)
+                .map(|end| end + 1)
+                .unwrap_or(1);
+            flush(&mut out, &mut run, terms, opaque.is_none());
+            out.push_str(&rest[..end]);
+            rest = &rest[end..];
+            continue;
+        }
+
+        // A tag. Copy it through untouched, and note whether it opens or
+        // closes something whose contents must be left alone.
+        let end = rest.find('>').map(|end| end + 1).unwrap_or(rest.len());
+        let tag = &rest[..end];
+        flush(&mut out, &mut run, terms, opaque.is_none());
+        out.push_str(tag);
+        rest = &rest[end..];
+
+        let name = tag_name(tag);
+        match opaque {
+            Some(open) if tag.starts_with("</") && name == Some(open) => opaque = None,
+            None if !tag.starts_with("</") => {
+                if let Some(name) = name.filter(|name| OPAQUE_TAGS.contains(name)) {
+                    opaque = Some(name);
+                }
+            }
+            _ => {}
+        }
+    }
+    flush(&mut out, &mut run, terms, opaque.is_none());
+    out
 }
 
-impl Pacer {
-    /// The sequence number of the outstanding run.
-    pub fn issued(&self) -> u64 {
-        self.issued
+/// Empties `run` into `out`, marking the matches if this run is prose.
+fn flush(out: &mut String, run: &mut String, terms: &[String], prose: bool) {
+    if run.is_empty() {
+        return;
     }
+    if !prose {
+        out.push_str(run);
+        run.clear();
+        return;
+    }
+    let highlighted = postio_search::highlight::highlight(run, terms);
+    for (piece, matched) in highlighted.runs() {
+        if matched {
+            out.push_str("<mark class=\"");
+            out.push_str(MARK_CLASS);
+            out.push_str("\">");
+            out.push_str(piece);
+            out.push_str("</mark>");
+        } else {
+            out.push_str(piece);
+        }
+    }
+    run.clear();
 }
 
-impl Pacer {
-    /// Hands out the sequence number for a new run, superseding whatever was
-    /// in flight.
-    pub fn issue(&mut self) -> u64 {
-        self.issued += 1;
-        self.issued
+/// The lower-cased element name of a tag, opening or closing.
+fn tag_name(tag: &str) -> Option<&str> {
+    let body = tag
+        .trim_start_matches('<')
+        .trim_start_matches('/')
+        .trim_end_matches('>')
+        .trim_end_matches('/');
+    let name = body.split([' ', '\t', '\n', '\r']).next()?;
+    (!name.is_empty() && name.chars().all(|ch| ch.is_ascii_alphanumeric())).then_some(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- painting the match -----------------------------------------------
+
+    fn terms(words: &[&str]) -> Vec<String> {
+        words.iter().map(|word| (*word).to_string()).collect()
     }
 
-    /// Whether `sequence`'s answer is still the answer to the current
-    /// question.
-    pub fn accepts(&self, sequence: u64) -> bool {
-        sequence != 0 && sequence == self.issued
+    #[test]
+    fn a_matched_word_is_wrapped_where_it_stands() {
+        assert_eq!(
+            mark_html("<p>the maildir index</p>", &terms(&["maildir"])),
+            "<p>the <mark class=\"postio-match\">maildir</mark> index</p>"
+        );
     }
 
-    /// Gives up on whatever is in flight without asking anything new — the box
-    /// closed, or emptied.
-    pub fn abandon(&mut self) {
-        self.issued += 1;
+    #[test]
+    fn a_query_with_no_terms_leaves_the_markup_alone() {
+        let html = "<p>the maildir index</p>";
+        assert_eq!(mark_html(html, &[]), html);
+    }
+
+    #[test]
+    fn a_term_inside_a_tag_is_not_a_word_on_the_page() {
+        // `title` is an attribute here, and `p` an element name. Marking
+        // either would produce markup, not a highlight.
+        let html = r#"<p title="maildir">nothing</p>"#;
+        assert_eq!(mark_html(html, &terms(&["maildir", "p"])), html);
+    }
+
+    #[test]
+    fn a_match_never_crosses_a_tag_boundary() {
+        let html = "<b>mail</b>dir";
+        assert_eq!(
+            mark_html(html, &terms(&["maildir"])),
+            html,
+            "FTS5 did not match across the tag either, so nothing here may"
+        );
+    }
+
+    #[test]
+    fn an_entity_survives_being_marked_around() {
+        assert_eq!(
+            mark_html("a &amp; maildir", &terms(&["maildir"])),
+            "a &amp; <mark class=\"postio-match\">maildir</mark>"
+        );
+        assert_eq!(
+            mark_html("a &amp; b", &terms(&["amp"])),
+            "a &amp; b",
+            "`&amp;` is one character, not the word `amp`"
+        );
+    }
+
+    #[test]
+    fn a_bare_ampersand_does_not_swallow_the_rest_of_the_body() {
+        assert_eq!(
+            mark_html("Tom & Jerry maildir", &terms(&["maildir"])),
+            "Tom & Jerry <mark class=\"postio-match\">maildir</mark>"
+        );
+    }
+
+    #[test]
+    fn a_stylesheet_is_not_prose() {
+        let html = "<style>.maildir { color: red }</style><p>maildir</p>";
+        assert_eq!(
+            mark_html(html, &terms(&["maildir"])),
+            "<style>.maildir { color: red }</style><p><mark class=\"postio-match\">maildir</mark></p>",
+            "marking inside a stylesheet would corrupt it"
+        );
+    }
+
+    #[test]
+    fn several_matches_across_several_elements_are_all_painted() {
+        assert_eq!(
+            mark_html("<p>maildir one</p><p>two maildir</p>", &terms(&["maildir"])),
+            "<p><mark class=\"postio-match\">maildir</mark> one</p>\
+             <p>two <mark class=\"postio-match\">maildir</mark></p>"
+        );
     }
 }
 

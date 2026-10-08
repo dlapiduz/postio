@@ -230,7 +230,7 @@ impl SelectionState {
 ///
 /// Rather than guess at a correction, the summary stops claiming a count and
 /// says what it left out instead. The *why* is already on screen a few pixels
-/// above, in `postio_gtk::list_state`'s `Partial` banner; this names the same
+/// above, in the classic app's list state `Partial` banner; this names the same
 /// accounts in the same words — [`crate::format::names`] — so the two read as
 /// one statement rather than two.
 ///
@@ -256,7 +256,7 @@ pub fn summary(selection: &Selection, total: Option<u32>, omitted: &[String]) ->
 
 /// A count with thousands separated, because a selection is a number the user
 /// is about to act on and "50000" is not a number anybody reads.
-fn count(value: u32) -> String {
+pub(crate) fn count(value: u32) -> String {
     let digits = value.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (index, digit) in digits.chars().enumerate() {
@@ -284,12 +284,81 @@ pub fn range(rows: &[Option<MessageId>], from: usize, to: usize) -> Vec<MessageI
         .collect()
 }
 
+/// Where the cursor is after the list changed under it: `removed` rows
+/// replaced by `added` at `position`, leaving `len` rows.
+///
+/// A cursor before the change stays; one after it moves with its row. A
+/// cursor whose own row went -- archived, deleted, snoozed -- stays at the
+/// same place, on the row that slid up into it, or the last row when it was
+/// the last (#1687, #1746). That is what makes `a a a` work down a list:
+/// each press acts on the row the person is looking at, never on nothing.
+/// No cursor stays none, and an emptied list has none.
+pub fn cursor_after_change(
+    cursor: Option<u32>,
+    position: u32,
+    removed: u32,
+    added: u32,
+    len: u32,
+) -> Option<u32> {
+    let cursor = cursor?;
+    if len == 0 {
+        return None;
+    }
+    let at = if cursor < position {
+        cursor
+    } else if cursor >= position + removed {
+        cursor - removed + added
+    } else {
+        cursor
+    };
+    Some(at.min(len - 1))
+}
+
+/// Where the cursor should stand before `gone` leave the list: on the first
+/// row after its own that survives, when its own row is going.
+///
+/// `rows` is the list from the cursor's row on, `None` where a page has not
+/// arrived (a row nobody has named is not going). The answer is an offset
+/// into `rows`, so the caller puts the cursor there and lets the list slide
+/// it up as the rows above it go -- by place, not by slot number: with
+/// rows above the cursor going too, "the same index" skips a row (#468).
+/// `None` when the cursor's row is staying, or nothing survives below it.
+pub fn survivor_below(
+    rows: impl IntoIterator<Item = Option<MessageId>>,
+    gone: &[MessageId],
+) -> Option<usize> {
+    let mut rows = rows.into_iter().enumerate();
+    let (_, own) = rows.next()?;
+    if !own.is_some_and(|own| gone.contains(&own)) {
+        return None;
+    }
+    rows.find(|(_, row)| row.is_none_or(|row| !gone.contains(&row)))
+        .map(|(offset, _)| offset)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn id(value: i64) -> MessageId {
         MessageId::new(value)
+    }
+
+    #[test]
+    fn the_cursor_goes_to_the_first_survivor_below_its_own_row() {
+        let rows = |ids: &[i64]| ids.iter().map(|n| Some(id(*n))).collect::<Vec<_>>();
+        let gone = [id(1), id(3), id(4)];
+        // Cursor on 4, which goes; 5 follows and stays.
+        assert_eq!(survivor_below(rows(&[4, 5, 6]), &gone), Some(1));
+        // The row right below goes as well: the one after it.
+        assert_eq!(survivor_below(rows(&[3, 4, 7]), &gone), Some(2));
+        // The cursor's own row is staying: nothing to move.
+        assert_eq!(survivor_below(rows(&[2, 3, 7]), &gone), None);
+        // Nothing survives below.
+        assert_eq!(survivor_below(rows(&[4]), &gone), None);
+        assert_eq!(survivor_below(rows(&[3, 4]), &gone), None);
+        // A page that has not arrived is not a row that is going.
+        assert_eq!(survivor_below([Some(id(3)), None], &gone), Some(1));
     }
 
     #[test]
@@ -493,5 +562,35 @@ mod tests {
         let rows = vec![Some(id(1)), Some(id(2))];
 
         assert_eq!(range(&rows, 1, 1), vec![id(2)]);
+    }
+
+    #[test]
+    fn the_cursor_on_a_removed_row_stays_on_the_row_that_slid_into_it() {
+        // Row 1 of 36 archived: the cursor is on the new row 1.
+        assert_eq!(cursor_after_change(Some(1), 1, 1, 0, 35), Some(1));
+    }
+
+    #[test]
+    fn the_cursor_on_the_removed_last_row_goes_to_the_new_last() {
+        assert_eq!(cursor_after_change(Some(4), 4, 1, 0, 4), Some(3));
+    }
+
+    #[test]
+    fn a_cursor_before_or_after_the_change_keeps_its_row() {
+        assert_eq!(cursor_after_change(Some(0), 2, 1, 0, 9), Some(0));
+        assert_eq!(cursor_after_change(Some(5), 2, 1, 0, 9), Some(4));
+        assert_eq!(cursor_after_change(Some(5), 0, 0, 2, 12), Some(7));
+    }
+
+    #[test]
+    fn a_rewritten_list_keeps_the_cursor_at_its_place() {
+        // A refresh that replaced every row, one fewer.
+        assert_eq!(cursor_after_change(Some(1), 0, 36, 35, 35), Some(1));
+    }
+
+    #[test]
+    fn no_cursor_stays_none_and_an_emptied_list_has_none() {
+        assert_eq!(cursor_after_change(None, 0, 1, 0, 5), None);
+        assert_eq!(cursor_after_change(Some(0), 0, 1, 0, 0), None);
     }
 }

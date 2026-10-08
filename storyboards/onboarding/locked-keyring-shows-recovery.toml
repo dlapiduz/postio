@@ -5,11 +5,19 @@
 # for that state. The view must say locked, and the keyboard must be
 # somewhere a person can act from; the card's words are judged from the
 # frame.
+#
+# The whole window gives way, and rightly: the store is encrypted under a key
+# the keyring holds (ADR 0014 Q3), so a locked keyring means the mail on this
+# computer cannot be opened -- unlike a missing or rejected account password,
+# which leaves the store open and shows a banner over the inbox. The rows the
+# observation counts behind the card are the demo's already-open store; the
+# real app has none.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#404" }
 proof  = "pinned"
 preset = "locked"
 
 [[step]]
 wait    = { ms = 300 }
-check   = { view = "locked", keyboard.reachable = true }
-expect  = "The window says the keyring is locked and offers a way to recover; it is not an empty inbox."
+check   = { view = "locked", keyboard.reachable = true, app.focus.close_button = true }
+expect  = "The window says the keyring is locked, offers a way to recover and has its close button; it is not an empty inbox."

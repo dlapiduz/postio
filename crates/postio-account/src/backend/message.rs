@@ -500,6 +500,14 @@ pub struct FetchedMessage {
     pub envelope: Option<Envelope>,
     /// The MIME tree, when `BODYSTRUCTURE` was asked for.
     pub structure: Option<BodyStructure>,
+    /// What `List-Unsubscribe`, `Precedence` and `Auto-Submitted` say, when
+    /// the fetch asked for them (spec 007, research R8): an incremental
+    /// pass's [`MailBackend::fetch_headers_for_filing`] does, a first sync's
+    /// [`MailBackend::fetch_headers`] does not. `None`: not asked, not known.
+    ///
+    /// [`MailBackend::fetch_headers_for_filing`]: super::MailBackend::fetch_headers_for_filing
+    /// [`MailBackend::fetch_headers`]: super::MailBackend::fetch_headers
+    pub promoted: Option<postio_model::promoted::PromotedHeaders>,
 }
 
 impl FetchedMessage {
@@ -513,6 +521,7 @@ impl FetchedMessage {
 
         message.flags = self.flags.persistable();
         message.size = self.size;
+        message.promoted = self.promoted;
         message.server.uid = Some(self.uid);
         message.server.uid_validity = Some(self.uid_validity);
         message.server.mod_seq = self.mod_seq;

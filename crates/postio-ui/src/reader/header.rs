@@ -2,7 +2,7 @@
 //! how a sender reads, how a recipient list joins, what a missing subject
 //! says, and how an opened message is dated.
 //!
-//! These were four private functions inside `postio-gtk`'s
+//! These were four private functions inside the classic app's
 //! `reader/message_header.rs`, which is precisely the shape ADR 0019 warns
 //! about: the header is the surface where two frontends disagreeing is most
 //! visible to a user, because it is where they read the sender's name before
@@ -198,7 +198,7 @@ impl ReaderAction {
 
     /// What the button is labelled.
     ///
-    /// `const`, because `postio-gtk`'s `ACTIONS` is a `const` array and a
+    /// `const`, because the classic app's `ACTIONS` was a `const` array and a
     /// label it could not read at compile time would have to be written
     /// again there — which is the duplication this list exists to prevent.
     pub const fn title(self) -> &'static str {
@@ -283,41 +283,6 @@ impl ReaderAction {
     /// Whether it gets the primary treatment. Exactly one does, per bar.
     pub const fn primary(self) -> bool {
         matches!(self, ReaderAction::Reply | ReaderAction::RetrySend)
-    }
-
-    /// Which verbs a message in `send_state` offers.
-    ///
-    /// The reading pane has always assumed a message *arrived*, because until
-    /// spec 003 there was no folder holding one that had not. Reply, Forward
-    /// and Archive are all answers to somebody else's mail; offered on your
-    /// own outgoing message they are at best noise, and Archive on something
-    /// mid-send is worse than noise.
-    ///
-    /// Shared here rather than decided in a widget so the macOS reader shows
-    /// the same verbs -- the whole point of spec 003's US4, and the mistake
-    /// #1155 made with the sidebar rows.
-    pub fn for_send_state(state: Option<DraftState>) -> &'static [ReaderAction] {
-        const RECEIVED: [ReaderAction; 4] = ReaderAction::ALL;
-        // Waiting, and not yet handed to the submission: stopping it is
-        // honest, and it is the only thing worth offering.
-        const QUEUED: [ReaderAction; 1] = [ReaderAction::CancelSend];
-        // It stopped, so the way out is to try again.
-        const STOPPED: [ReaderAction; 1] = [ReaderAction::RetrySend];
-        // Mid-submission. Cancelling is refused (ADR 0021) and retrying would
-        // risk a second copy, so the bar offers nothing rather than offering
-        // something that will be turned down.
-        const IN_FLIGHT: [ReaderAction; 0] = [];
-
-        match state {
-            None | Some(DraftState::Sent) => &RECEIVED,
-            Some(DraftState::Queued) => &QUEUED,
-            Some(DraftState::Failed | DraftState::Unconfirmed) => &STOPPED,
-            Some(DraftState::Sending) => &IN_FLIGHT,
-            // A draft still being written opens in the composer rather than
-            // the reader, so this is the reader being shown something it has
-            // no verbs for.
-            Some(DraftState::Editing) => &IN_FLIGHT,
-        }
     }
 
     /// Whether a message in `send_state` should be offered an unsubscribe.
@@ -675,10 +640,9 @@ mod outgoing_tests {
     use super::*;
 
     #[test]
-    fn a_message_on_its_way_is_never_offered_a_reply_or_an_unsubscribe() {
-        // #1525. Every verb on the ordinary bar is an answer to somebody
-        // else's mail, and the unsubscribe banner falls back to the sender's
-        // domain (#971) -- which for outgoing mail is the user's own.
+    fn a_message_on_its_way_is_never_offered_an_unsubscribe() {
+        // #1525. The unsubscribe banner falls back to the sender's domain
+        // (#971) -- which for outgoing mail is the user's own.
         for state in [
             DraftState::Queued,
             DraftState::Sending,
@@ -686,18 +650,6 @@ mod outgoing_tests {
             DraftState::Unconfirmed,
             DraftState::Editing,
         ] {
-            let actions = ReaderAction::for_send_state(Some(state));
-            for forbidden in [
-                ReaderAction::Reply,
-                ReaderAction::ReplyAll,
-                ReaderAction::Forward,
-                ReaderAction::Archive,
-            ] {
-                assert!(
-                    !actions.contains(&forbidden),
-                    "{state:?} offers {forbidden:?} on a message being sent"
-                );
-            }
             assert!(
                 !ReaderAction::unsubscribable(Some(state)),
                 "{state:?} offers to unsubscribe from the user's own domain"
@@ -706,36 +658,11 @@ mod outgoing_tests {
     }
 
     #[test]
-    fn a_stopped_send_can_be_retried_and_a_waiting_one_cancelled() {
-        // The two states a person can actually act on, and which verb each
-        // gets. `Sending` gets neither on purpose: cancelling is refused
-        // once the submission started (ADR 0021) and retrying would risk a
-        // second copy, so offering either would be offering a refusal.
-        assert_eq!(
-            ReaderAction::for_send_state(Some(DraftState::Failed)),
-            &[ReaderAction::RetrySend]
-        );
-        assert_eq!(
-            ReaderAction::for_send_state(Some(DraftState::Unconfirmed)),
-            &[ReaderAction::RetrySend]
-        );
-        assert_eq!(
-            ReaderAction::for_send_state(Some(DraftState::Queued)),
-            &[ReaderAction::CancelSend]
-        );
-        assert!(ReaderAction::for_send_state(Some(DraftState::Sending)).is_empty());
-    }
-
-    #[test]
     fn ordinary_mail_is_untouched() {
         // The regression that would matter most: this is every other message
-        // in the application.
-        assert_eq!(ReaderAction::for_send_state(None), &ReaderAction::ALL);
+        // in the application. And a draft the server has taken is ordinary
+        // mail in Sent.
         assert!(ReaderAction::unsubscribable(None));
-        // And a draft the server has taken is ordinary mail in Sent.
-        assert_eq!(
-            ReaderAction::for_send_state(Some(DraftState::Sent)),
-            &ReaderAction::ALL
-        );
+        assert!(ReaderAction::unsubscribable(Some(DraftState::Sent)));
     }
 }

@@ -1,7 +1,7 @@
-//! `[filters]` — named saved queries.
+//! `[saved_searches]` — named saved queries.
 //!
 //! ```toml
-//! [filters.needs-reply]
+//! [saved_searches.needs-reply]
 //! query = "is:unread from:team"
 //! pinned = true
 //! ```
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Config, ConfigError, Extras, Result};
 
-/// One entry of `[filters]`.
+/// One entry of `[saved_searches]`.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct FilterConfig {
     /// The search expression.
@@ -25,7 +25,7 @@ pub struct FilterConfig {
     /// Show this filter in the sidebar.
     #[serde(default)]
     pub pinned: bool,
-    /// A display name distinct from the `[filters.<key>]` key -- the key
+    /// A display name distinct from the `[saved_searches.<key>]` key -- the key
     /// stays a stable, TOML-safe identity (issue #292); this is what the
     /// user actually chose to call it, in whatever text they typed.
     ///
@@ -71,7 +71,7 @@ impl Config {
     }
 
     /// Give `key`'s saved search a display name distinct from its
-    /// `[filters.<key>]` key.
+    /// `[saved_searches.<key>]` key.
     ///
     /// Renaming to empty text, or to text that just repeats the key, is
     /// stored the same way as never having renamed it -- `None`, not a name
@@ -163,7 +163,7 @@ impl Config {
         true
     }
 
-    /// A `[filters]` key derived from `query`, distinct from every key
+    /// A `[saved_searches]` key derived from `query`, distinct from every key
     /// already in the table.
     ///
     /// Two searches saved with the same text is not a conflict a user should
@@ -181,7 +181,7 @@ impl Config {
     }
 }
 
-/// Rewrites `text`'s `[filters.*]` tables to match `filters`, leaving every
+/// Rewrites `text`'s `[saved_searches.*]` tables to match `filters`, leaving every
 /// other line — other sections, comments, layout — untouched.
 ///
 /// [`Config::to_toml_string`] reserializes the *whole* file and cannot make
@@ -193,7 +193,7 @@ impl Config {
 /// here exactly as the raw-text editor already promised it would.
 ///
 /// The one thing this cannot preserve is a comment attached to a *specific*
-/// filter entry that changed — the whole `[filters]` table is regenerated
+/// filter entry that changed — the whole `[saved_searches]` table is regenerated
 /// from `filters` on every call, not diffed key by key. Saved searches are
 /// not the kind of TOML a person hand-annotates the way `[ui]`/`[sync]` are,
 /// so that tradeoff is deliberate rather than an oversight.
@@ -201,9 +201,9 @@ pub fn patch_filters(text: &str, filters: &BTreeMap<String, FilterConfig>) -> Re
     let mut doc = text
         .parse::<toml_edit::DocumentMut>()
         .map_err(|err| ConfigError::parse(None, &err))?;
-    doc.as_table_mut().remove("filters");
+    doc.as_table_mut().remove("saved_searches");
 
-    // An empty map still serializes as a bare `[filters]` header (`toml`
+    // An empty map still serializes as a bare `[saved_searches]` header (`toml`
     // has no other spelling for "a table with no keys"), which would
     // reintroduce exactly the dangling header this is meant to avoid — so
     // the empty case skips serialization entirely rather than trusting the
@@ -214,18 +214,19 @@ pub fn patch_filters(text: &str, filters: &BTreeMap<String, FilterConfig>) -> Re
         let fragment_doc = fragment
             .parse::<toml_edit::DocumentMut>()
             .map_err(|err| ConfigError::parse(None, &err))?;
-        if let Some(item) = fragment_doc.as_table().get("filters") {
-            doc.as_table_mut().insert("filters", item.clone());
+        if let Some(item) = fragment_doc.as_table().get("saved_searches") {
+            doc.as_table_mut().insert("saved_searches", item.clone());
         }
     }
     Ok(doc.to_string())
 }
 
-/// Serializes as just `[filters.<key>]` tables, with no other section —
+/// Serializes as just `[saved_searches.<key>]` tables, with no other section —
 /// [`patch_filters`]'s bridge from `toml`'s serde-derived output (which
 /// `FilterConfig` already has) to a fragment `toml_edit` can splice in.
 #[derive(Serialize)]
 struct FiltersOnly<'a> {
+    #[serde(rename = "saved_searches")]
     filters: &'a BTreeMap<String, FilterConfig>,
 }
 
@@ -238,7 +239,7 @@ pub enum Reorder {
     Down,
 }
 
-/// Lowercase, hyphen-separated, and never empty -- a `[filters.<key>]` table
+/// Lowercase, hyphen-separated, and never empty -- a `[saved_searches.<key>]` table
 /// name has to be a bare TOML key, so anything that is not ASCII
 /// alphanumeric becomes one separator rather than surviving into it.
 fn slug(text: &str) -> String {
@@ -487,7 +488,7 @@ mod tests {
         assert!(!config.set_filter_pinned("does-not-exist", true));
     }
 
-    // -- Acceptance: the settings panel patches [filters] only (#869) ------
+    // -- Acceptance: the settings panel patches [saved_searches] only (#869) ------
 
     #[test]
     fn patch_filters_rewrites_only_the_filters_table_leaving_everything_else_verbatim() {
@@ -496,7 +497,7 @@ mod tests {
 [ui]
 theme = \"dark\" # inline comment, also not to be lost
 
-[filters.old]
+[saved_searches.old]
 query = \"is:unread\"
 pinned = true
 ";
@@ -507,7 +508,7 @@ pinned = true
 
         assert!(
             patched.contains("# a hand-written comment nobody wants to lose"),
-            "a comment outside [filters] must survive verbatim: {patched}"
+            "a comment outside [saved_searches] must survive verbatim: {patched}"
         );
         assert!(
             patched.contains("theme = \"dark\" # inline comment, also not to be lost"),
@@ -521,14 +522,14 @@ pinned = true
 
     #[test]
     fn patch_filters_removes_the_table_entirely_once_the_last_filter_is_deleted() {
-        let original = "[filters.old]\nquery = \"is:unread\"\npinned = true\n";
+        let original = "[saved_searches.old]\nquery = \"is:unread\"\npinned = true\n";
         let mut config = Config::from_toml_str(original).expect("parses");
         config.delete_filter("old");
 
         let patched = patch_filters(original, &config.filters).expect("patches");
         assert!(
-            !patched.contains("[filters"),
-            "no filters left means no dangling [filters] header: {patched}"
+            !patched.contains("[saved_searches"),
+            "no filters left means no dangling [saved_searches] header: {patched}"
         );
     }
 
@@ -539,7 +540,7 @@ pinned = true
         config.save_filter("is:flagged");
 
         let patched = patch_filters(original, &config.filters).expect("patches");
-        assert!(patched.contains("[filters."));
+        assert!(patched.contains("[saved_searches."));
         assert!(patched.contains("theme = \"dark\""));
 
         let reparsed = Config::from_toml_str(&patched).expect("still parses");

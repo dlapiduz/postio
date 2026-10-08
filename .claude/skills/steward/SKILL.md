@@ -129,7 +129,7 @@ that could not read mail while every test passed. When something closes
 that adds a surface, ask how a person reaches it, and check:
 
 ```bash
-cargo run -p postio-app --example shot -- /tmp/check.png demo selected
+cargo run -p postio-gtk --example shot -- /tmp/check.png 01
 ```
 
 **A green suite is not a working product.** Both release-blocking panics so

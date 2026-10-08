@@ -70,7 +70,7 @@ That requires the extraction the gaps table describes:
 ```
   postio-session   composition root, GTK-free: store, runtime, engines,
         │          registry wiring, and the verb vocabulary from actions.rs
-        ├── postio-app   the GTK binary. Adds a window and nothing else.
+        ├── postio-gtk   the desktop app. Adds a window and nothing else.
         └── postio-mcp   the MCP server binary. Adds stdio and nothing else.
 ```
 
@@ -79,10 +79,10 @@ no `libadwaita`**, checked by `scripts/checks/check-crate-boundaries.py`. That r
 the whole deliverable — without it, `actions.rs` re-acquires GTK the first time
 someone adds a verb in a hurry.
 
-**This extraction is worth doing whether or not MCP ships.** It is what makes
-`postio-app`'s integration tests (`wiring.rs`, `keystroke.rs`,
-`search_index.rs`) test the composition root rather than a GTK binary, and it
-is the same argument that produced `postio-runtime`.
+**This extraction is worth doing whether or not MCP ships.** It is what lets
+the desktop app's integration tests (`postio-gtk`'s `focus_suite`) test the
+composition root rather than a GTK binary, and it is the same argument that
+produced `postio-runtime`.
 
 ---
 

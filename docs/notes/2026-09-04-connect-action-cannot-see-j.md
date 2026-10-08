@@ -1,5 +1,9 @@
 # `connect_action` cannot see `j` (2026-09-04, #288)
 
+*About the classic app's window, removed in spec 007 T256; the seams named
+below went with it. The lesson — "every command" means several different
+sets, and a feature has to say which — still holds.*
+
 The first-run keyboard orientation retires on "the user's first command"
 (ADR 0012 Q6), and the obvious seam for that is `Window::connect_action` --
 its own doc comment says it is called with *every* invocation, and it is the

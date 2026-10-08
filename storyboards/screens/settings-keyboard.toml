@@ -1,4 +1,7 @@
-# The screen `settings-keyboard`, carried over from the old screen sweep's table (FR-030).
-source = { kind = "design", ref = "22-settings-panes" }
-design = "22-settings-panes"
+# Settings, Keyboard: Focus's commands and their keys.
+#
+# Focus's design references are never committed
+# (specs/007-postio-focus/screens.md records each one).
+apps   = ["focus"]
+source = { kind = "design", ref = "focus 42" }
 preset = "settings/keyboard"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Mutation-test the pure/logic crates: postio-model, postio-search,
 # postio-config, and postio-sync (the reconciliation logic lives there).
-# Not postio-gtk -- mutating widget code produces mostly timeouts and noise
+# Not the GTK crates -- mutating widget code produces mostly timeouts and noise
 # on tests that need a compositor.
 #
 # CLAUDE.md already asks every session to do this by hand: "verify your

@@ -12,7 +12,8 @@ cases stands up a full window over a live engine, and tearing WebKit down
 between every one of them left the exit path crashing on connections that were
 already closed.
 
-So the sweep is not one policy:
+So the sweep was not one policy in the classic app's harnesses (both removed
+in spec 007 T256):
 
 | where | when | why |
 |---|---|---|
@@ -23,10 +24,12 @@ So the sweep is not one policy:
 **The lesson is that "release resources promptly" is not free when the
 resource is a subprocess.** WebKit tolerates being torn down at a boundary it
 expects and not at one it does not, and the difference between the two
-harnesses is not something a reader would predict from their names. Anyone
-tempted to unify them should run `app_suite` first.
+harnesses is not something a reader would predict from their names. Today
+both GUI suites, `focus_suite` and `widgets_suite`, destroy every window after
+every case; a suite that starts crashing on the way out after a teardown
+change is this note again.
 
 Worth stating plainly: the segfault this issue is named for has never
 reproduced on this workstation, so none of the above is validated by a green
 local run. What is validated is the mechanism — the windows are released, and
-`gtk_window_teardown.rs` asserts it deterministically.
+`focus_suite`'s `window_teardown` cases assert it deterministically.

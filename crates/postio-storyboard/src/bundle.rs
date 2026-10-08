@@ -371,20 +371,20 @@ mod tests {
         }
     }
 
-    /// Runs for classic and terminal across two surfaces, a catalogue naming
+    /// Runs for Focus and the terminal across two surfaces, a catalogue naming
     /// canvas screens, and a committed design directory holding them.
     fn tree() -> Tree {
         let tree = Tree {
             dir: tempfile::tempdir().expect("temp"),
         };
         let runs = tree.path("runs");
-        write(&runs, &run("archive-walks-down", App::Classic, &[], 3));
+        write(&runs, &run("archive-walks-down", App::Focus, &[], 3));
         write(
             &runs,
-            &run("archive-walks-down", App::Classic, &[("scheme", "dark")], 3),
+            &run("archive-walks-down", App::Focus, &[("scheme", "dark")], 3),
         );
         write(&runs, &run("archive-walks-down", App::Terminal, &[], 3));
-        write(&runs, &run("open-settings", App::Classic, &[], 2));
+        write(&runs, &run("open-settings", App::Focus, &[], 2));
         let catalogue = tree.path("storyboards");
         for (dir, name, design) in [
             ("list", "archive-walks-down", Some("01-inbox-reading")),
@@ -465,8 +465,8 @@ mod tests {
         assert_eq!(
             keys,
             [
-                (App::Classic, "list"),
-                (App::Classic, "screens"),
+                (App::Focus, "list"),
+                (App::Focus, "screens"),
                 (App::Terminal, "list")
             ]
         );
@@ -493,10 +493,10 @@ mod tests {
             .find(|s| s.variant == "scheme=dark" && s.step == "2")
             .expect("the dark variant's step 2");
         assert_eq!(dark.storyboard, "archive-walks-down");
-        assert_eq!(dark.app, App::Classic);
+        assert_eq!(dark.app, App::Focus);
         assert_eq!(
             dark.frame,
-            "runs/classic/archive-walks-down/scheme=dark/02.outlined.png"
+            "runs/focus/archive-walks-down/scheme=dark/02.outlined.png"
         );
         assert!(
             tree.path("bundle").join(&dark.frame).exists(),
@@ -509,18 +509,13 @@ mod tests {
         let tree = tree();
         write(
             &tree.path("runs"),
-            &run(
-                "archive-walks-down",
-                App::Classic,
-                &[("width", "wide")],
-                130,
-            ),
+            &run("archive-walks-down", App::Focus, &[("width", "wide")], 130),
         );
         let manifest = make(&tree, None, &[tree.path("screens")], &all_new).expect("built");
         let list: Vec<&Batch> = manifest
             .batches
             .iter()
-            .filter(|b| b.app == App::Classic && b.surface == "list")
+            .filter(|b| b.app == App::Focus && b.surface == "list")
             .collect();
         assert!(list.len() >= 3, "{} batches", list.len());
         assert!(list.iter().all(|b| b.steps.len() <= MAX_FRAMES_PER_BATCH));
@@ -616,7 +611,7 @@ mod tests {
     fn the_acceptance_is_copied_and_runs_and_base_are_linked() {
         let tree = tree();
         let base = tree.path("base");
-        write(&base, &run("archive-walks-down", App::Classic, &[], 3));
+        write(&base, &run("archive-walks-down", App::Focus, &[], 3));
         let manifest = make(&tree, Some(&base), &[tree.path("screens")], &all_new).expect("built");
         assert_eq!(manifest.base.as_deref(), Some("abc123"));
         assert_eq!(
@@ -624,11 +619,11 @@ mod tests {
             "the issue's acceptance"
         );
         assert!(
-            tree.path("bundle/runs/classic/archive-walks-down/default/run.json")
+            tree.path("bundle/runs/focus/archive-walks-down/default/run.json")
                 .exists()
         );
         assert!(
-            tree.path("bundle/base/classic/archive-walks-down/default/run.json")
+            tree.path("bundle/base/focus/archive-walks-down/default/run.json")
                 .exists()
         );
     }

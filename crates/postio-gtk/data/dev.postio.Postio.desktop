@@ -2,12 +2,12 @@
 Type=Application
 Name=Postio
 GenericName=Email Client
-Comment=Local-first, keyboard-first email
+Comment=A dense, keyboard-first inbox for a lot of email
 Exec=postio %U
 Icon=dev.postio.Postio
 Terminal=false
 Categories=Network;Email;GTK;
-Keywords=Email;E-mail;Mail;IMAP;SMTP;Inbox;
-MimeType=x-scheme-handler/mailto;
+Keywords=Email;E-mail;Mail;IMAP;SMTP;Inbox;Digest;
+MimeType=x-scheme-handler/mailto;x-scheme-handler/postio;
 StartupNotify=true
 StartupWMClass=dev.postio.Postio

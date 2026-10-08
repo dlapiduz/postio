@@ -21,7 +21,7 @@
 //!
 //! [`Store::open`] is the one call an application needs: it creates the file
 //! and its parent directory, opens it encrypted under the key, and applies the
-//! schema if the file is new.
+//! schema if the file is new or migrates it if an earlier build wrote it.
 //!
 //! ```no_run
 //! # async fn example() -> Result<(), postio_storage::Error> {
@@ -34,13 +34,14 @@
 //! # }
 //! ```
 //!
-//! # There are no migrations
+//! # Migrations
 //!
-//! [`schema::HEAD`] is the whole schema and it is applied once, to a file that
-//! is new. A store written by the old engine cannot be read by this one at
-//! all, so there is nothing for a migration to carry forward: such a store is
-//! rebuilt by resyncing. [`schema`] says why that is a licence rather than a
-//! policy.
+//! [`schema::HEAD`] is the whole schema, applied in one batch to a file that
+//! is new. A file an earlier build wrote is carried forward in place by
+//! [`schema::MIGRATIONS`], chained by the schema stamp each build left; one
+//! whose stamp no step leads from is refused, untouched, and started over by
+//! `postio_session::start_over`. [`schema`] says how a schema change adds its
+//! step.
 //!
 //! See `test_support` (behind the `test-support` feature) for throwaway stores
 //! in tests.

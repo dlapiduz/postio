@@ -1,0 +1,65 @@
+# The automated-senders table (specs/007-postio-focus T105, research R8,
+# FR-114).
+#
+# Who sends mail that no person wrote, as data: patterns on an address's
+# local part and domain, each with the reason a filtered message is shown
+# with. Constitution VII: providers are data, never code. So this table
+# holds only generic forms that any sender might use, and never a
+# provider's domain. When in doubt, a pattern is left out: a sender this
+# misses stays in the inbox, which is where uncertain mail goes (FR-112).
+#
+# Each [[sender]] entry:
+#
+#   name     unique; what a load error names
+#   local    patterns on the local part (before the at sign). A pattern
+#            matches when its words appear, in order and together, among
+#            the local part's words, which `.`, `-`, `_` and `+` separate:
+#            "no-reply" matches no-reply, no.reply, no_reply and
+#            no-reply-billing, and "alert" does not match valerta
+#   domain   labels of the domain's subdomains: "notifications" matches
+#            notifications.example.com, never a domain of two labels
+#   reason   spam | promotion | notification | receipt | shipping | social
+#            (FR-113's vocabulary)
+#   source   optional: the name a filtered row shows after its reason
+#
+# An entry needs at least one pattern. The first entry that matches wins.
+# build.rs parses this file with the same code the classifier does, so a
+# table that does not load does not build.
+
+# Mail nobody reads replies to: the sender says so in its own address.
+[[sender]]
+name = "no-reply"
+local = ["noreply", "no-reply", "donotreply", "do-not-reply"]
+reason = "notification"
+
+# A notice a system sent: an alert, a notification, an update.
+[[sender]]
+name = "notifications"
+local = ["notifications", "notification", "notify", "alerts", "alert"]
+reason = "notification"
+
+# The same, told by the subdomain a service sends its notices from.
+[[sender]]
+name = "notification-subdomain"
+domain = ["notifications", "notify", "alerts"]
+reason = "notification"
+
+[[sender]]
+name = "receipts"
+local = ["receipts", "receipt"]
+reason = "receipt"
+
+[[sender]]
+name = "shipping"
+local = ["tracking", "shipment", "shipments"]
+reason = "shipping"
+
+[[sender]]
+name = "marketing"
+local = ["marketing", "promotions", "promo", "offers", "deals"]
+reason = "promotion"
+
+# Left out on purpose, because a person may answer them or they are news:
+# support, info, hello, billing, invoices, shipping (a shop's own desk),
+# newsletters (the list headers say so), and mailer-daemon and postmaster
+# (a bounce means a message did not arrive).

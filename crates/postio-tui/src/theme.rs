@@ -94,6 +94,7 @@ impl Role {
 #[derive(Debug, Clone)]
 pub struct Theme {
     styles: BTreeMap<Role, Style>,
+    colour: Colour,
 }
 
 impl Theme {
@@ -133,10 +134,43 @@ impl Theme {
                 )),
             }
         }
-        (Theme { styles }, problems)
+        (Theme { styles, colour }, problems)
     }
 
-    /// The style for `role`.
+    /// The style of a label's dot: its own colour on a true-colour terminal,
+    /// the nearest of the terminal's palette on fewer colours, and none under
+    /// `NO_COLOR` (the pill's name is the mark then).
+    pub fn label(&self, rgb: postio_ui::label_colour::Rgb) -> Style {
+        match self.colour {
+            Colour::None => Style::default(),
+            Colour::TrueColor => Style::default().fg(Color::Rgb(rgb.r, rgb.g, rgb.b)),
+            Colour::Ansi16 | Colour::Ansi256 => {
+                let hue = rgb.hue();
+                let nearest = [
+                    (0.0, Color::Red),
+                    (60.0, Color::Yellow),
+                    (120.0, Color::Green),
+                    (180.0, Color::Cyan),
+                    (240.0, Color::Blue),
+                    (300.0, Color::Magenta),
+                ]
+                .into_iter()
+                .min_by(|(a, _), (b, _)| {
+                    postio_ui::label_colour::hue_distance(*a, hue)
+                        .total_cmp(&postio_ui::label_colour::hue_distance(*b, hue))
+                })
+                .map_or(Color::Reset, |(_, colour)| colour);
+                Style::default().fg(nearest)
+            }
+        }
+    }
+
+    /// A theme with no colour: for measuring what a screen would take.
+    pub fn plain() -> Theme {
+        Theme::new(Colour::None, Background::Unknown, &BTreeMap::new()).0
+    }
+
+    /// The style a role is drawn in.
     pub fn style(&self, role: Role) -> Style {
         self.styles.get(&role).copied().unwrap_or_default()
     }

@@ -24,14 +24,44 @@ use postio_model::{Account, Draft, DraftId};
 /// log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ClientKind {
-    /// The GTK desktop app.
-    Gtk,
     /// `postio-tui`.
     Tui,
+    /// Postio, the desktop app: Focus (spec 007).
+    Focus,
     /// The macOS frontend, through `postio-ffi`.
     Ffi,
     /// A test.
     Test,
+}
+
+/// What Focus's header strip counts (spec 007 FR-018; data-model
+/// `FocusCounts`): the rows of its inbox, how many are unread, and how many
+/// draw a marker -- the has-action toggle's number. The filtered-today and
+/// digest-rule counts join them with their features.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FocusCounts {
+    /// The conversations in Focus's inbox.
+    pub conversations: u32,
+    /// Of those, the ones with unread mail.
+    pub unread: u32,
+    /// Of those, the ones that draw a marker.
+    pub has_action: u32,
+    /// Messages filed away since local midnight: "186 filtered today".
+    pub filtered_today: u32,
+}
+
+/// One row of Focus's Filtered view (screen 21): the message, why it was
+/// filtered and by whom, and when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilteredRow {
+    /// The message, as a list row.
+    pub message: postio_model::listing::MessageSummary,
+    /// Why, as the store spells it: "notification".
+    pub reason: String,
+    /// Who it came from, shown after the reason: "Forge".
+    pub source: Option<String>,
+    /// When it was filed away.
+    pub at: chrono::DateTime<chrono::Utc>,
 }
 
 /// The host's name for one connection.
@@ -174,6 +204,23 @@ pub enum Req {
     RecipientDirectory(AccountId),
     /// The account's labels, for the finder's `+` and the label picker.
     Labels(AccountId),
+    /// How many conversations carry each of the account's labels, for
+    /// Focus's label picker (spec 007 US5, screen 13).
+    LabelCounts(AccountId),
+    /// Make a label the account does not have yet, or answer the one it
+    /// has by that name in any case: the label picker's "Create label".
+    CreateLabel {
+        /// Whose label.
+        account: AccountId,
+        /// Its name, as typed.
+        name: String,
+    },
+    /// The labels on each of these conversations, for a page of Focus's
+    /// list: its label pills (spec 007 T043).
+    ThreadLabels(Vec<postio_model::ThreadId>),
+    /// Focus's header strip: its conversations, unread and has-action
+    /// counts (spec 007 FR-018, T048).
+    FocusCounts,
     /// The message a reply or forward is built from, and its account.
     ReplySource(MessageId),
     /// The local draft behind a Drafts row, if there is one.
@@ -239,11 +286,22 @@ pub enum Req {
     /// Change an account the way the settings' account commands do.
     Account(AccountOp),
     /// Look up the servers for a new account's address.
-    Discover(String),
+    Discover {
+        /// The address as typed.
+        address: String,
+        /// How the frontend stops the probe: the person typed another
+        /// address, pressed Connect, or walked away from the form (#57).
+        stop: Stop,
+    },
     /// Begin a browser sign-in for a new account; answered with the consent
     /// URL, which nothing opens: the frontend shows it, and opens it only
     /// when asked.
-    BeginOAuth(Box<postio_ui::onboarding::Submission>),
+    BeginOAuth {
+        /// What the form held.
+        submission: Box<postio_ui::onboarding::Submission>,
+        /// What the host does once the account is saved.
+        then: AfterSave,
+    },
     /// Wait for the sign-in for this address to finish, and the account to
     /// be saved.
     FinishOAuth(String),
@@ -251,7 +309,12 @@ pub enum Req {
     CancelOAuth(String),
     /// Prove a new account's credentials and save it (the password goes to
     /// the keyring and nowhere else).
-    AddAccount(Box<postio_ui::onboarding::Submission>),
+    AddAccount {
+        /// What the form held.
+        submission: Box<postio_ui::onboarding::Submission>,
+        /// What the host does once the account is saved.
+        then: AfterSave,
+    },
     /// Every account the settings show -- all but those being removed --
     /// each with its folders and role map, and, when `weights`, what its
     /// mail weighs. One read for the whole panel.
@@ -298,6 +361,35 @@ pub enum Req {
     OrientationSeen,
     /// Write down that this installation is done with the orientation.
     RetireOrientation,
+    /// Where mail was last moved, newest first: the move picker's Recent
+    /// (spec 007 T098).
+    MoveRecent,
+    /// Each filter reason with how many messages it keeps filtered: the
+    /// Filtered view's tabs (spec 007 T124).
+    FilteredTabs,
+    /// What a digest delivery holds, as list rows, newest first: the
+    /// digest window's plain list (spec 007 T137).
+    DeliveryMessages(postio_model::DeliveryId),
+    /// How many messages each named rule holds now, waiting for its next
+    /// delivery: the `g d` list's "holds N" (spec 007 T139).
+    DigestWaiting(Vec<String>),
+    /// Which of these messages a digest holds, and for which rule: what a
+    /// search result says instead of its folder (spec 007 T140).
+    Held(Vec<MessageId>),
+    /// The account a message is in: whose labels its picker offers (spec
+    /// 007 T170).
+    AccountOf(MessageId),
+    /// A page of the Filtered view, newest first.
+    Filtered {
+        /// One reason, as the store spells it, or every reason.
+        reason: Option<String>,
+        /// The first row.
+        offset: u32,
+        /// How many rows.
+        limit: u32,
+    },
+    /// Put this folder first in the move picker's Recent.
+    NoteMove(MailboxId),
     /// Fetch this message's body ahead of the backfill: a person opened it.
     /// Posted; the body arrives as `BodyLoaded`.
     FetchBody(MessageId),
@@ -323,6 +415,126 @@ pub enum Req {
         /// Its type, `image/…`.
         mime_type: String,
     },
+    /// How many messages a sweep of the inbox would file away now, by
+    /// Focus's filtering rules (spec 007 FR-118): what the sweep says before
+    /// it moves anything. Answered as a count.
+    SweepPreview,
+    /// A message's raw RFC 822 source, as `view_source` shows it: read from
+    /// the blob store, or fetched from the server on this request when it
+    /// was never downloaded (spec 007 FR-033). Answered as bytes.
+    RawSource(MessageId),
+    /// The rows Focus's inbox surfaces among its conversations: the digests
+    /// delivered and not archived, and the reminders that fired, each with
+    /// its time and position (spec 007, contracts/engine.md).
+    Surfaced,
+    /// What the capture sheet reads from the vault for a message with
+    /// `subject` (spec 007 US15): its projects, the one suggested, and the
+    /// tasks Postio captured. Fails with a sentence when no `[focus.vault]`
+    /// is configured.
+    Vault {
+        /// The message's subject, which the suggestion is read from.
+        subject: String,
+    },
+    /// Append `task` to `project`'s note, or the tasks note with none.
+    CaptureTask {
+        /// The project chosen.
+        project: Option<postio_vault::Project>,
+        /// The task.
+        task: postio_vault::Task,
+    },
+    /// Append `entry` to `note`, relative to the vault.
+    CaptureNote {
+        /// The note.
+        note: std::path::PathBuf,
+        /// The entry.
+        entry: postio_vault::NoteEntry,
+    },
+    /// A digest's summary, with every reference resolved again as it is
+    /// read: `None` when none is written, or none is left to show (spec 007
+    /// FR-172 to FR-175).
+    DigestSummary(postio_model::DeliveryId),
+    /// "Digest mail like this" for a message (spec 007 FR-171): the rule
+    /// the person's model picks from the queries Postio builds for it, with
+    /// its preview. Answered `None` when no model with `like_this` on is
+    /// configured -- the command is absent -- or the model picked none.
+    DigestLikeThis(MessageId),
+    /// What a digest rule matching `queries` would have caught since
+    /// `since`: the rule dialog's preview, through the executor (spec 007
+    /// FR-120, FR-127).
+    DigestPreview {
+        /// The rule's queries, in the one query language; any matching holds.
+        queries: Vec<String>,
+        /// How far back: the last 90 days, in the dialog.
+        since: DateTime<Utc>,
+    },
+    /// Write a digest rule to `config.toml`: a new one, or `replacing` the
+    /// rule of that name where it stands (spec 007 FR-120).
+    SaveDigestRule {
+        /// The rule being edited, by its name as it was.
+        replacing: Option<String>,
+        /// The rule as the dialog says it.
+        rule: DigestRuleDraft,
+    },
+    /// Take a digest rule out of `config.toml` and release what it held into
+    /// the inbox (spec 007 FR-126); answered with how many it released.
+    DeleteDigestRule(String),
+}
+
+/// A digest rule as the rule dialog writes it (spec 007 screen 24): what
+/// becomes one `[[focus.digests]]` entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DigestRuleDraft {
+    /// What the digest is called; unique among the rules.
+    pub name: String,
+    /// Queries in the one query language; the rule holds a message when
+    /// any of them matches. The dialog writes `from:<address>`.
+    pub queries: Vec<String>,
+    /// How often it comes.
+    pub cadence: postio_model::listing::Cadence,
+    /// On which day: a weekday for a weekly digest, a day of the month for a
+    /// monthly one, none for a daily one.
+    pub day: Option<RuleDay>,
+    /// At what time, on this machine's clock.
+    pub at: chrono::NaiveTime,
+}
+
+/// The day a digest comes on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleDay {
+    /// A weekday, for a weekly digest.
+    Weekday(chrono::Weekday),
+    /// A day of the month, 1 to 28, for a monthly digest.
+    OfMonth(u32),
+}
+
+/// The rule "Digest mail like this" proposes (spec 007 FR-171): queries in
+/// the one language, never text a model wrote, and what they would have
+/// caught.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LikeThisRule {
+    /// The rule's queries, for `[[focus.digests]] match`.
+    pub queries: Vec<String>,
+    /// What it would have caught in the last 90 days.
+    pub preview: DigestPreview,
+}
+
+/// What a digest rule would have caught (spec 007 screen 24): "Would have
+/// caught 9 messages in the last 90 days", then the first four.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DigestPreview {
+    /// How many messages its queries match in the window.
+    pub count: u32,
+    /// The newest of them, at most four.
+    pub first: Vec<MessageSummary>,
+}
+
+/// What queueing a draft to send did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Queued {
+    /// The Drafts folder whose list moved, if one did.
+    pub drafts: Option<MailboxId>,
+    /// The draft now waiting to send: what taking the send back names.
+    pub draft: DraftId,
 }
 
 /// The host's answer to one [`Req`].
@@ -364,8 +576,8 @@ pub enum Resp {
     SavedParts(u32),
     /// The id a saved draft has.
     DraftSaved(DraftId),
-    /// A draft was queued; the Drafts folder whose list moved, if one did.
-    Queued(Option<MailboxId>),
+    /// A draft was queued.
+    Queued(Queued),
     /// Recipient suggestions, best first.
     Recipients(Vec<RecipientCandidate>),
     /// Correspondents, most often seen first.
@@ -374,6 +586,27 @@ pub enum Resp {
     RecipientDirectory(RecipientDirectory),
     /// Labels, by name.
     Labels(Vec<postio_model::Label>),
+    /// Folders, newest first: the move picker's Recent.
+    MoveRecent(Vec<MailboxId>),
+    /// Each filter reason with its count, in the tabs' order.
+    FilteredTabs(Vec<(String, u32)>),
+    /// Counts, in the order asked for.
+    Counts(Vec<u32>),
+    /// Each held message, its rule, and whether its digest was delivered.
+    Held(Vec<(MessageId, String, bool)>),
+    /// An account, or none for a message not in the store.
+    AccountOf(Option<AccountId>),
+    /// A page of filtered mail.
+    Filtered(Vec<FilteredRow>),
+    /// Each label with how many conversations carry it; a label nothing
+    /// carries is left out.
+    LabelCounts(Vec<(postio_model::LabelId, u32)>),
+    /// One label, or none when it could not be made.
+    Label(Option<postio_model::Label>),
+    /// Each conversation's labels, in the order they were made.
+    ThreadLabels(Vec<(postio_model::ThreadId, postio_model::Label)>),
+    /// Focus's counts.
+    FocusCounts(FocusCounts),
     /// A reply's source message and its account.
     ReplySource(Option<Box<(postio_model::Message, Account)>>),
     /// A draft, or none.
@@ -409,6 +642,20 @@ pub enum Resp {
     Onboarding(Box<postio_ui::onboarding::Status>),
     /// Where the browser sign-in waits for the person.
     Consent(Box<postio_ui::onboarding::BrowserSignIn>),
+    /// The rows Focus's inbox surfaces, newest first.
+    Surfaced(Vec<postio_model::listing::Surfaced>),
+    /// A digest rule's preview.
+    DigestPreview(DigestPreview),
+    /// The rule "Digest mail like this" proposes, if any.
+    DigestLikeThis(Option<LikeThisRule>),
+    /// A digest's summary, if it has one to show.
+    DigestSummary(Option<postio_model::summary::DigestSummary>),
+    /// A message's raw source, every byte as the server sent it.
+    RawSource(Vec<u8>),
+    /// What the capture sheet reads from the vault.
+    Vault(VaultPicture),
+    /// What a capture appended.
+    Captured(postio_vault::Captured),
     /// The read could not be answered; the sentence is for the user.
     Failed(StoreError),
 }
@@ -516,6 +763,103 @@ pub struct PrivacyLog {
     pub read_receipts: u64,
 }
 
+/// What the host does with a new account once it is saved.
+///
+/// The terminal's first run syncs at once. A desktop app starts the sync
+/// itself: its first run asks how far back to sync after the account is
+/// saved and before any mail is fetched, its add-account dialog brings the
+/// new account into a window that is already running, and a credential
+/// update is over an account whose sync is running already. A second engine
+/// for one account, or one started under the wrong sync window, is what
+/// [`AfterSave::Wait`] keeps out.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AfterSave {
+    /// Start the account's sync.
+    #[default]
+    Sync,
+    /// Save it and nothing more: the frontend starts what it needs.
+    Wait,
+}
+
+/// A frontend's way to stop work it asked the host for, where it stands.
+///
+/// A discovery probe opens connections to servers the person has not named
+/// yet, so one the person has moved on from -- another address typed,
+/// Connect pressed, the form closed -- must stop at once rather than hold a
+/// socket open for an answer nobody reads (#57, ADR 0012 Q3). The host is in
+/// the frontend's process (ADR 0041), so this is shared, not sent: whatever
+/// the host hangs on [`Stop::on_stop`] runs inside [`Stop::stop`], on the
+/// frontend's own thread, before `stop` returns.
+#[derive(Clone, Default)]
+pub struct Stop(std::sync::Arc<std::sync::Mutex<Stopping>>);
+
+/// Whether a [`Stop`] has fired, and what runs when it does.
+#[derive(Default)]
+struct Stopping {
+    stopped: bool,
+    hooks: Vec<Box<dyn FnOnce() + Send>>,
+}
+
+impl Stop {
+    /// A stop nobody has pulled.
+    pub fn new() -> Stop {
+        Stop::default()
+    }
+
+    /// Stop the work, now: every hook runs before this returns. Pulling it
+    /// again does nothing.
+    pub fn stop(&self) {
+        let hooks = {
+            let mut stopping = self
+                .0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            stopping.stopped = true;
+            std::mem::take(&mut stopping.hooks)
+        };
+        for hook in hooks {
+            hook();
+        }
+    }
+
+    /// Whether it has been pulled.
+    pub fn is_stopped(&self) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .stopped
+    }
+
+    /// Run `hook` when the stop is pulled, or now, if it already has been.
+    pub fn on_stop(&self, hook: impl FnOnce() + Send + 'static) {
+        let mut stopping = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if stopping.stopped {
+            drop(stopping);
+            hook();
+        } else {
+            stopping.hooks.push(Box::new(hook));
+        }
+    }
+}
+
+impl std::fmt::Debug for Stop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Stop").field(&self.is_stopped()).finish()
+    }
+}
+
+/// Two stops are equal when they are the same stop.
+impl PartialEq for Stop {
+    fn eq(&self, other: &Stop) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for Stop {}
+
 /// A browser sign-in a frontend completed and proved, to be saved.
 ///
 /// The tokens cross to the store's owner, which writes them to the keyring
@@ -600,6 +944,20 @@ impl Eq for Hits {}
 pub struct RecipientDirectory {
     /// Named groups with their members' addresses, in the store's order.
     pub groups: Vec<(String, Vec<postio_model::EmailAddress>)>,
-    /// Contacts, best first.
-    pub contacts: Vec<postio_model::Contact>,
+    /// Contacts, best first, each with how often the user wrote to it:
+    /// what `postio_ui::recipients::suggest` ranks by (spec 007 T076).
+    pub contacts: Vec<postio_ui::recipients::Correspondent>,
+}
+
+/// What the capture sheet reads from the vault (spec 007 US15, FR-181).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct VaultPicture {
+    /// The vault's projects, by name.
+    pub projects: Vec<postio_vault::Project>,
+    /// The project suggested for the message, and why.
+    pub suggestion: Option<postio_vault::Suggestion>,
+    /// The note a task goes to with no project, relative to the vault.
+    pub tasks_note: std::path::PathBuf,
+    /// Every task Postio captured, in the tasks note and the projects'.
+    pub tasks: Vec<postio_vault::CapturedTask>,
 }

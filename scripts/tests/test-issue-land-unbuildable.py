@@ -5,7 +5,7 @@
 that cannot build one of them, that chain is not a weaker gate -- it is no gate
 at all, and the work lands anyway.
 
-This is live: a macOS session cannot build `postio-gtk` or `postio-app` (no
+This is live: a macOS session cannot build `postio-gtk` or `postio-widgets` (no
 gtk4/libadwaita pkg-config, and webkitgtk has no arm64 bottle and no supported
 upstream macOS backend). Without this guard such a session passes its gates and
 pushes something that does not compile on Linux. CI would catch it on the pull
@@ -20,8 +20,8 @@ Two behaviours, because the two failure modes are different:
   * a changed crate the unbuildable ones *depend on* still lands -- refusing
     would stop a macOS session doing any work at all -- but the PR is labelled
     `needs-linux-verify` so the gap is on the record rather than in someone's
-    memory. `postio-app` depends on every other workspace crate, directly or
-    transitively, so on a GTK-less host that is every crate.
+    memory. The desktop app depends on most other workspace crates, directly
+    or transitively, so on a GTK-less host that is nearly every crate.
 
 The third case is the one that actually matters: on a host that *can* build
 GTK, none of this fires and the script behaves exactly as it did. The whole
@@ -148,7 +148,7 @@ def world(base: Path, *, have_gtk: bool, touch: str) -> tuple[Path, Path]:
         (REPO_ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"), encoding="utf-8"
     )
     (root / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
-    for crate in ("postio-gtk", "postio-core", "postio-app"):
+    for crate in ("postio-gtk", "postio-core", "postio-widgets"):
         (root / "crates" / crate / "src").mkdir(parents=True)
         (root / "crates" / crate / "src" / "lib.rs").write_text("// x\n", encoding="utf-8")
 

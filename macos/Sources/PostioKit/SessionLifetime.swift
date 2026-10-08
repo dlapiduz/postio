@@ -27,7 +27,7 @@ public enum SessionPhase: CaseIterable, Sendable {
 /// found the engine `.open` with nothing behind it — a full mailbox drawing
 /// "No messages", no keyboard, and no recovery short of quitting.
 ///
-/// GTK never did this. `postio-app` stops the runtime after `run()` returns,
+/// GTK never did this. The classic app stopped the runtime after `run()` returned,
 /// which is process exit, and nothing there stops syncing because a window
 /// stopped being visible.
 ///

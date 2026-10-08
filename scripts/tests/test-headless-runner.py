@@ -2,7 +2,7 @@
 """Self-test for scripts/headless-runner.sh.
 
 The runner is cargo's `runner`, so it fronts EVERY binary cargo executes --
-`cargo run -p postio-app` included. It exists to put *test* binaries on a
+`cargo run -p postio-gtk` included. It exists to put *test* binaries on a
 hidden compositor; the application itself must reach the real display, or the
 README's own run instruction launches Postio invisibly (#315).
 
@@ -121,7 +121,7 @@ def main() -> int:
         (stub_dir / "mutter").write_text(MUTTER_STUB)
         (stub_dir / "mutter").chmod(0o755)
 
-        app = stub_dir / "postio-app"
+        app = stub_dir / "postio"
         app.write_text(TARGET_STUB)
         app.chmod(0o755)
         test_bin = stub_dir / "gtk_list-0123456789abcdef"

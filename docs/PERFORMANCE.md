@@ -33,7 +33,10 @@ figure below it.
 page cipher is AES-256-GCM. **Every wall-clock figure in this document was
 measured against the old engine and none has been re-measured on a real
 store** — that needs a live mailbox and a live run, which is the one
-measurement a test cannot give.
+measurement a test cannot give. The desktop figures were also taken on the
+classic three-pane app, which spec 007 removed (T256); the one desktop app,
+`postio-gtk`, has not been measured against them yet, and the commands
+below run it.
 
 What *has* been measured, on this branch and on fixtures rather than on a
 mailbox:
@@ -74,7 +77,7 @@ Reproduce them:
 ```sh
 cargo run --release -p postio-runtime --example seed_store -- /tmp/postio.db 20000
 POSTIO_STORE=/tmp/postio.db POSTIO_STARTUP_TRACE=1 POSTIO_STARTUP_EXIT=1 \
-  cargo run --release -p postio-app
+  cargo run --release -p postio-gtk
 
 cargo bench -p postio-bench --bench store_reads    # the database read
 cargo bench -p postio-bench --bench search_budget  # the query
@@ -133,7 +136,8 @@ usable, and a timeline that closed at the first frame would call it a pass.
 And the cause was found by counting rather than by timing, because a count is
 the same number on this workstation and on a loaded runner. Pointing a window
 at a seeded store, counting only the thread that has to draw
-(`app_suite`'s `startup_reads` case):
+(`app_suite`'s `startup_reads` case then; `focus_suite`'s carries the
+assertion now):
 
 | | 1,000 messages | 10,000 messages |
 |---|---:|---:|
@@ -402,7 +406,7 @@ Reproduce it:
 
 ```sh
 cargo run --release -p postio-runtime --example seed_store -- /tmp/big.db 100000
-POSTIO_STORE=/tmp/big.db cargo run --release -p postio-app &
+POSTIO_STORE=/tmp/big.db cargo run --release -p postio-gtk &
 sleep 45   # let the catch-up passes settle, or you measure the transient
 grep -E '^(VmRSS|RssAnon|RssFile):' /proc/$(pgrep -n postio)/status
 ```
@@ -438,7 +442,7 @@ store at rest. Both apps were measured the same way.
 Reproduce it, one app at a time:
 
 ```sh
-cargo build --release -p postio-app -p postio-tui
+cargo build --release -p postio-gtk -p postio-tui
 target/release/postio &                  # or target/release/postio-tui in a terminal
 sleep 30
 grep VmRSS /proc/$(pgrep -f 'release/postio$')/status      # or pgrep -x postio-tui

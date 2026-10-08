@@ -1,6 +1,9 @@
-# must_fail: #1473 stated as the intent. `j` really moves the list cursor.
+# must_fail: #1473 stated as the intent. `j` really moves the cursor from the
+# first row to the second.
+apps        = ["focus"]
 source      = { kind = "issue", ref = "#1473" }
 calibration = "must_fail"
+
 [[step]]
 key    = "j"
-expect = "The letter j appears in the search field at the top, and the list cursor does not move."
+expect = "The letter j appears in a search field at the top, and the cursor ring stays on the first row."

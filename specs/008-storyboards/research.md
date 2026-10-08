@@ -56,7 +56,13 @@ already are.
 | `Observation` and its enums, the neutral record of a step | **`postio-ui`**, a new `observe` module | Toolkit-free, already has `serde`, and every frontend depends on it: GTK, Focus, the TUI, and the macOS app through `postio-ffi`. It is the shared vocabulary of what a person sees, which is what `postio-ui` is for. |
 | The format, loader, applicability, checks, diff, parity, review schema and page | **new `postio-storyboard`** (lib + bin) | Pure: no GTK, no database engine, no tokio. It is unit-testable in milliseconds, which "iterate at the cheapest layer" asks for. It is a development tool, so it stays out of every shipped crate's graph. |
 | GTK half, shared by both GTK apps: chain delivery, typing, frame sampling, focus outline, settle detection, keyboard reachability | **`postio-gtk::storyboard`** on `main`. On `feature/postio-focus` it moves to `postio-widgets` by a pure `git mv`. | `capture.rs` is already in `postio-gtk` on `main` and in `postio-widgets` on Focus (focus: `crates/postio-widgets/src/capture.rs`). ADR 0043 puts GTK code that both apps share in `postio-widgets`, and Focus may not depend on `postio-gtk`. |
-| Each app's `observe()` and runner | **Classic**: `Window::observe()` in `postio-gtk`, and the runner in `postio-app` as `examples/storyboard.rs` plus an `app_suite` case. **Focus**: `FocusWindow::observe()` in `postio-focus`, and `examples/storyboard.rs` plus a `focus_suite` case. | `observe()` must read the private `key_context()` and `is_typing()` (`window.rs:2960, 2990`; focus: `window.rs:729`), so it is a method on the window itself. The runner needs a seeded store, which only the app crates may hold (`check-crate-boundaries.py`; `shot.rs` doc § "Why this lives in postio-app"). |
+| Each app's `observe()` and runner | **Classic**: `Window::observe()` in `postio-gtk`, and the runner in `postio-app` as `examples/storyboard.rs` plus an `app_suite` case. **Focus**: `FocusWindow::observe()` in `postio-gtk`, and `examples/storyboard.rs` plus a `focus_suite` case. | `observe()` must read the private `key_context()` and `is_typing()` (`window.rs:2960, 2990`; focus: `window.rs:729`), so it is a method on the window itself. The runner needs a seeded store, which only the app crates may hold (`check-crate-boundaries.py`; `shot.rs` doc § "Why this lives in postio-app"). |
+
+**Since specs/007-postio-focus T265** the GTK half is `postio_widgets::storyboard`
+(the `git mv` above, onto this line), and Focus's runner is the one review
+plays on; the classic app's `observe()` and runner go with it in T256. Focus's
+runner lives in `postio-gtk` behind its `demo` feature, the crate over
+Focus's window, beside the one demo store its `shot` uses (R11).
 
 **`postio-storyboard`'s dependencies.** `postio-core` (commands, registry,
 `Keymap`), `postio-config` (`expand_mod`), `postio-ui` (`Observation`,
@@ -70,7 +76,7 @@ listed crates, so the row is added deliberately.
 - *`Observation` inside `postio-storyboard`.* Every frontend's production code
   would then depend on a development tool to say where its keyboard is.
 - *One runner crate depending on both apps.* ADR 0043 forbids
-  `postio-focus ↔ postio-gtk`. It would also make Classic's runner wait on
+  `postio-gtk ↔ postio-gtk`. It would also make Classic's runner wait on
   Focus's branch.
 - *The runner inside `shot`.* `shot` is 1,492 lines of mode words already. The
   runner shares `shot`'s setup (R11), not its argument parser.
@@ -494,7 +500,7 @@ Everything a command can reach is a step, not a preset. `shot`'s `selected`,
 **The review key.**
 - The key is blake3 over:
   - `git rev-parse HEAD:<crate>` for each crate of the affected app (Classic:
-    `postio-gtk`, `postio-app`, `postio-ui`; Focus: `postio-focus`,
+    `postio-gtk`, `postio-app`, `postio-ui`; Focus: `postio-gtk`,
     `postio-widgets`, `postio-ui`);
   - `HEAD:storyboards`.
 - The key survives a rebase that does not touch those trees. A commit sha does

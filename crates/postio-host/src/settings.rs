@@ -1,6 +1,6 @@
 //! The desktop's settings panels, answered for any frontend.
 //!
-//! Moved from `postio-app`'s `settings_accounts`, `settings_privacy`,
+//! Moved from the classic app's `settings_accounts`, `settings_privacy`,
 //! `settings_egress`, `sidebar_backfill` and `orientation`
 //! (`specs/005-tui-frontend` T018). Each read the store itself, a repository
 //! at a time; each read is one request here, and a panel that read several
@@ -260,6 +260,23 @@ pub async fn orientation_seen(database: &Store) -> Result<bool, StoreError> {
         .get(SEEN_KEY)
         .await?;
     Ok(seen.is_some())
+}
+
+/// Where mail was last moved, newest first: the move picker's Recent.
+pub async fn move_recent(database: &Store) -> Result<Vec<MailboxId>, StoreError> {
+    let reader = database.read().await?;
+    Ok(SettingsRepository::new(&reader.checkout())
+        .move_recent()
+        .await?)
+}
+
+/// Put `mailbox` first in the move picker's Recent.
+pub async fn note_move(database: &Store, mailbox: MailboxId) -> Result<(), StoreError> {
+    let connection = database.connect().await?;
+    SettingsRepository::new(&connection)
+        .note_move(mailbox)
+        .await?;
+    Ok(())
 }
 
 /// Write down that this installation is done with the orientation.

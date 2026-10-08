@@ -31,7 +31,7 @@ So the questions the 2026-09-09 note said could not be asked can be:
 
 The widget: `BodyView` tiles the snapshot into a GTK scroller, and its
 scrolling, selection, zoom gestures and accessibility are GTK behaviour,
-asserted in `gtk_suite`'s `body_view*` cases on the headless compositor.
+asserted in `widgets_suite`'s `body_view*` cases on the headless compositor.
 They read the adjustment and the snapshot, not the screen -- GTK's
 `WidgetPaintable` answers `None` until a real repaint, which is why those
 cases pump the main loop and read through the scroller.
@@ -39,6 +39,6 @@ cases pump the main loop and read through the scroller.
 ## Where to put a new reader assertion
 
 Layout, colour, containment, fidelity: `postio-render/tests/`, at the
-cheapest layer that can fail. What a person does to the pane: `gtk_suite`.
-That the application joins them: `app_suite`, asserting the words the view
-drew (`drawn`), never the document it was handed.
+cheapest layer that can fail. What a person does to the view:
+`widgets_suite`. That the application joins them: `focus_suite`, asserting the
+words the open message drew (`body_text`), never the document it was handed.

@@ -1,0 +1,174 @@
+# Commands the generated pass (storyboards.sh coverage --app focus) presses that
+# show nothing from the starting state of their context, and why. A gap here is
+# expected to have no visible effect; one that starts having an effect is
+# reported stale, so this list cannot rot.
+#
+# Most are "nothing to do yet" in the small seed's starting state. The ones
+# marked CANDIDATE may be real defects -- a key Focus binds and answers with
+# nothing -- and are the maintainer's to judge; this list fixes nothing in
+# Focus. `FocusWindow::act` ends in `no Focus surface answers this command yet`
+# for every command it has no arm for, and most of what follows is that.
+#
+# A key the open message or the digest window drops altogether (nothing on the
+# focus chain takes it) is not listed: it is counted as `dropped` in
+# coverage.json, not as a press with no effect.
+
+# -- list: the Inbox, the cursor on its first row (Focus opens there)
+[[gap]]
+command = "back"
+context = "list"
+reason  = "nothing to go back from: no selection, no search, no filter"
+[[gap]]
+command = "darken_message"
+context = "list"
+reason  = "bound, and act() has no arm for it; darkening a message is Classic's reader"
+[[gap]]
+command = "digest_like_this"
+context = "list"
+reason  = "bound, and act() has no arm for it; Focus offers it as a button inside the rule dialog"
+[[gap]]
+command = "find_in_message"
+context = "list"
+reason  = "acts in the open message only"
+[[gap]]
+command = "find_next"
+context = "list"
+reason  = "acts in the open message only"
+[[gap]]
+command = "find_previous"
+context = "list"
+reason  = "acts in the open message only"
+[[gap]]
+command = "go_to_inbox"
+context = "list"
+reason  = "the list is already the inbox"
+[[gap]]
+command = "first_message"
+context = "list"
+reason  = "the cursor is already on the first row"
+[[gap]]
+command = "next_scope"
+context = "list"
+reason  = "bound, and act() has no arm for it; scope cycling is Classic's search"
+[[gap]]
+command = "open_attachment_or_link"
+context = "list"
+reason  = "acts in the open message only"
+[[gap]]
+command = "prev_message"
+context = "list"
+reason  = "the cursor is on the first row, so there is nothing above it"
+[[gap]]
+command = "prev_view"
+context = "list"
+reason  = "bound, and act() has no arm for it; view cycling is Classic's"
+[[gap]]
+command = "scroll_reader_down"
+context = "list"
+reason  = "acts in the open message only"
+[[gap]]
+command = "scroll_reader_up"
+context = "list"
+reason  = "acts in the open message only"
+[[gap]]
+command = "toggle_reader_view"
+context = "list"
+reason  = "bound, and act() has no arm for it; Focus switches treatment with `switch_treatment` in the open message"
+[[gap]]
+command = "view_original"
+context = "list"
+reason  = "bound, and act() has no arm for it; Focus shows the original with `switch_treatment` in the open message"
+[[gap]]
+command = "zoom_in"
+context = "list"
+reason  = "bound, and act() has no arm for it; Focus has no zoom"
+[[gap]]
+command = "zoom_out"
+context = "list"
+reason  = "bound, and act() has no arm for it; Focus has no zoom"
+[[gap]]
+command = "zoom_reset"
+context = "list"
+reason  = "bound, and act() has no arm for it; Focus has no zoom"
+
+# -- search: `/` pressed: the bar open and empty, the keyboard in its field
+[[gap]]
+command = "back_to_words"
+context = "search"
+reason  = "the bar is already on words; there is no saved search to go back from"
+[[gap]]
+command = "open_message"
+context = "search"
+reason  = "an empty query has no result to open"
+[[gap]]
+command = "toggle_result_order"
+context = "search"
+reason  = "an empty query has no results to put in another order"
+[[gap]]
+command = "save_search"
+context = "search"
+reason  = "an empty query has nothing to save"
+
+# -- filtered: `g f`: the Filtered view on its first tab
+[[gap]]
+command = "filtered_tab_1"
+context = "filtered"
+reason  = "the view is already on its first tab"
+[[gap]]
+command = "prev_message"
+context = "filtered"
+reason  = "the cursor is on the first row, so there is nothing above it"
+
+# -- digest: the Weekly digest window, on its summary
+[[gap]]
+command = "prev_message"
+context = "digest"
+reason  = "CANDIDATE: the same unreachable keyboard (storyboards/list/digest-window-keeps-the-keyboard)"
+[[gap]]
+command = "prev_reference"
+context = "digest"
+reason  = "CANDIDATE: the same unreachable keyboard (storyboards/list/digest-window-keeps-the-keyboard)"
+
+# -- reader: the first message open in its dialog (an invitation, wide window)
+[[gap]]
+command = "prev_message"
+context = "reader"
+reason  = "the first row is open, so there is nothing before it"
+
+# -- composer: the composer's dialog over the inbox, empty
+[[gap]]
+command = "bold"
+context = "composer"
+reason  = "formatting an empty body changes nothing visible until text is typed"
+[[gap]]
+command = "cancel_send"
+context = "composer"
+reason  = "an Outbox verb; nothing is in the Outbox"
+[[gap]]
+command = "command_palette"
+context = "composer"
+reason  = "the composer's dialog has no arm for it; the palette is the inbox's bar"
+[[gap]]
+command = "italic"
+context = "composer"
+reason  = "formatting an empty body changes nothing visible until text is typed"
+[[gap]]
+command = "mark_sent"
+context = "composer"
+reason  = "an Outbox verb; nothing is in the Outbox (flickers: one run of two in T265 saw an effect, the composer still settling, so a stale report here is noise)"
+[[gap]]
+command = "quit"
+context = "composer"
+reason  = "the composer's dialog has no arm for it; Escape closes the dialog"
+[[gap]]
+command = "save_draft"
+context = "composer"
+reason  = "an empty draft has nothing to save -- and says nothing about it (flickers: one run of two in T265 saw an effect, the composer still settling, so a stale report here is noise)"
+[[gap]]
+command = "send"
+context = "composer"
+reason  = "an empty draft has no recipient: nothing is sent, and nothing is said about it"
+[[gap]]
+command = "settings"
+context = "composer"
+reason  = "bound, and the composer's dialog has no arm for it; Focus has no settings surface yet"

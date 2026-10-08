@@ -1,8 +1,10 @@
 # Postio in a terminal
 
-`postio-tui` is Postio in a terminal: the same mail, commands and keys as
-the desktop app, local or over SSH, with the mouse as well as the keyboard.
-Mail is read and written as Markdown.
+`postio-tui` is Postio's terminal interface: Postio Focus drawn in character
+cells, with the same inbox, commands and keys as the desktop app, local or
+over SSH, with the mouse as well as the keyboard. Mail is read and written
+as Markdown. While it has your mail open, Focus's filtering, digests and
+reminders act exactly as they do while the desktop app has it.
 
 It is not a second mail client. The desktop app and the terminal use the
 same mailbox: what you archive in one is archived when you open the other.
@@ -10,7 +12,7 @@ They take turns, though. Only one of them can have your mail open at a time,
 so close one before opening the other
 ([ADR 0041](https://github.com/dlapiduz/postio/blob/main/docs/decisions/0041-one-app-opens-the-store-at-a-time.md)).
 
-Where the two apps still differ is set out in
+Where the two interfaces still differ is set out in
 [The desktop app and the terminal, side by side](desktop-and-terminal.md).
 
 ## Running it
@@ -51,26 +53,31 @@ Over SSH, copy the address and open it on your own machine.
 ## Keys and the mouse
 
 The keys are the desktop app's and come from the same `[keys]` table in
-`config.toml`. There is no separate terminal keymap. **`?`** shows every key
-that works where you are, as the terminal can send it. **`Ctrl+K`** opens the
-command palette. The search bar is **`/`**, and a first character changes
-what it asks:
-- `>` runs a command;
-- `#` goes to a folder;
-- `+` labels the selection;
-- `@` finds a person and searches their mail.
+`config.toml`. There is no separate terminal keymap. **`?`** shows the key
+map, as the terminal can send each key. The command bar is **`/`**, for
+search, and **`Ctrl+K`** opens it on the commands:
+- plain words become operator chips;
+- `>` limits it to commands, each shown with its key;
+- `in:` goes to a folder; **`g o`** lists folders and labels;
+- **`Alt+1`**–**`Alt+4`** run the pinned saved searches, and **`Ctrl+S`**
+  saves the one you typed.
+
+A message opens over the list with **`Enter`**, and **`Esc`** brings you
+back to the same row. **`F8`** reads beside the list instead, on a terminal
+at least 128 columns wide. **`s`**, **`h`**, **`l`** and **`m`** open the
+snooze, remind, label and move pickers at the row.
 
 Some terminals cannot send every chord the desktop uses, such as
 `Ctrl+Shift+E`. Where the terminal speaks the kitty keyboard protocol,
 Postio asks for it. Where it does not, those commands have an `Alt`
-alternative, and the palette and `?` show whichever one your terminal can
-actually send.
+alternative, and the command bar and `?` show whichever one your terminal
+can actually send.
 
 Everything the keys do, the mouse does too:
 - a click moves the cursor;
 - `Ctrl`-click and `Shift`-click select;
-- the wheel scrolls;
-- the panes' borders drag.
+- a row's answers, the strip, the bulk bar and every button take a click;
+- the wheel scrolls what is under the pointer.
 
 To keep your terminal's own text selection instead, turn the mouse off:
 
@@ -86,12 +93,14 @@ lists, quotes and code. Quoted history is folded. A click on a link shows
 where it goes, and a second click opens it. Remote images stay blocked per
 sender, exactly as in the desktop app.
 
-Images are shown as labelled placeholders, `[image: …]`. The message's parts
-(**`p`**) open any of them in your system's image viewer. Drawing images
+Images are shown as labelled placeholders, `[image: …]`. **`o`** lists a
+message's links and attachments and opens any of them in your system's
+viewer. Drawing images
 inside the terminal is planned for a later release.
 
-The composer takes Markdown and sends it as a formatted message, with a
-plain-text part beside it.
+The composer opens over the list and takes Markdown, and sends it as a
+formatted message, with a plain-text part beside it. **`Alt+O`** gives it the
+whole screen.
 - **`Alt+P`** shows how the message will look.
 - **`Alt+E`** edits it in your `$EDITOR` and brings it back.
 - To show the preview beside the editor instead of in its place:
@@ -127,8 +136,9 @@ clipboard instead of opening.
 
 Postio uses your terminal's colours. It follows `NO_COLOR`, in which case
 marks and weight carry every meaning, and `COLORTERM` for full colour, where
-the accent and the raised background of the row under the cursor come from
-Postio's own design. The roles are `text`, `dim`, `accent`, `selection`,
+the accent comes from Postio's own design. The accent marks only what the
+desktop app marks with it: action markers, links, the cursor's bar and the
+has-action filter while it is on. The roles are `text`, `dim`, `accent`, `selection`,
 `focus`, `unread`, `flagged`, `link`, `quote`, `code`, `error`, `warning`,
 `success` and `surface`; `selection` and `surface` are backgrounds. Any role's
 colour can be changed:

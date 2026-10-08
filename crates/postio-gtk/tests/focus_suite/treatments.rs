@@ -1,0 +1,386 @@
+//! The open message's two treatments (specs/007-postio-focus T210-T213): a
+//! newsletter that paints its page opens on paper, office mail in app
+//! colours, the line above the body names which, `O` switches the message
+//! on screen through the keys a person presses, and "Always for this
+//! sender" is remembered for the next time it opens.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use postio_body::treatment::Treatment;
+use postio_model::test_corpus;
+
+use crate::support::{self, Fixture};
+
+fn html_of(name: &str) -> String {
+    postio_model::mime::parse(test_corpus::load(name).bytes())
+        .body
+        .html
+        .unwrap_or_else(|| panic!("{name} has an HTML part"))
+}
+
+/// An address no other case files mail from: what this case remembers for
+/// it lives in the suite's shared state for the rest of the run.
+const NEWS: &str = "news@treatments.example.com";
+
+pub fn a_newsletter_opens_on_paper_and_o_switches_it_to_app_colours() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (news, _) = fixture
+            .file(("Field Notes Weekly", NEWS), "Issue 48", "The light.", 5)
+            .await;
+        fixture
+            .write_html_body(news, &html_of("html-newsletter-own-page"))
+            .await;
+        let (work, _) = fixture
+            .file(
+                ("Dana Whitfield", "facilities@treatments.example.com"),
+                "Building access",
+                "Hi everyone.",
+                10,
+            )
+            .await;
+        fixture
+            .write_html_body(work, &html_of("html-work-black-text"))
+            .await;
+        let (plain, _) = fixture
+            .file(("Ada", "ada@treatments.example.com"), "Lunch", "Noon?", 15)
+            .await;
+        fixture
+            .write_body(plain, "Noon at the usual place?\n")
+            .await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 3).await,
+            "the inbox never reached the screen"
+        );
+
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+        let reading = window.reading().expect("open");
+        let reader = reading.reader();
+        let seen: Rc<RefCell<Vec<Treatment>>> = Rc::default();
+        reader.connect_treatment_changed({
+            let seen = Rc::clone(&seen);
+            move |treatment| seen.borrow_mut().push(treatment)
+        });
+        let line = reader.render_mode_line().expect("Focus draws the line");
+        assert!(
+            crate::settle_until(async || reader.treated().is_some()).await,
+            "the newsletter was never drawn under a treatment"
+        );
+        assert_eq!(reader.treatment(), Treatment::Paper);
+        assert!(line.is_shown(), "no line named the treatment");
+        assert!(
+            line.text()
+                .starts_with("Original layout, on paper · this message sets its own background · Use app colours O"),
+            "{}",
+            line.text()
+        );
+        assert!(
+            reader
+                .test_document()
+                .contains("data-postio-treatment=\"paper\""),
+            "the body was not drawn on paper"
+        );
+
+        // `O`, pressed as a person presses it.
+        support::keys(&window, &["O"]);
+        assert!(
+            crate::settle_until(async || reader.treatment() == Treatment::AppColours).await,
+            "O did not switch the newsletter to app colours"
+        );
+        assert!(
+            line.text()
+                .starts_with("App colours · sender colours and fonts removed · Show original O"),
+            "{}",
+            line.text()
+        );
+        assert!(
+            reader
+                .test_document()
+                .contains("data-postio-treatment=\"app\""),
+            "the line changed and the body did not"
+        );
+        assert!(
+            !reader.test_document().contains("f6f1e7"),
+            "the sender's page colour reached app colours"
+        );
+        assert_eq!(seen.borrow().last(), Some(&Treatment::AppColours));
+        assert!(
+            line.offers_always(),
+            "a choice against the rule can be remembered"
+        );
+
+        line.press_always();
+        assert_eq!(
+            reader.allowlist_snapshot().treatment_for(NEWS),
+            Some(Treatment::AppColours),
+            "Always for this sender was not stored with the sender's settings"
+        );
+        assert!(!line.offers_always());
+        assert!(
+            line.text().contains("always for this sender"),
+            "{}",
+            line.text()
+        );
+
+        // Office mail opens in app colours by the rule.
+        support::keys(&window, &["j"]);
+        assert!(
+            crate::settle_until(async || reading.title() == "Building access").await,
+            "j did not step to the office mail"
+        );
+        assert!(
+            crate::settle_until(async || reader.test_document().contains("Facilities Coordinator"))
+                .await,
+            "the office mail never drew"
+        );
+        assert_eq!(reader.treatment(), Treatment::AppColours);
+        assert!(line.text().starts_with("App colours"), "{}", line.text());
+        assert!(!line.offers_always());
+
+        // Plain text has no other treatment, and no line.
+        support::keys(&window, &["j"]);
+        assert!(
+            crate::settle_until(async || reading.title() == "Lunch").await,
+            "j did not step to the plain message"
+        );
+        assert!(
+            crate::settle_until(async || !line.is_shown()).await,
+            "plain text was given a render-mode line"
+        );
+        assert_eq!(reader.treatment(), Treatment::AppColours);
+
+        // Back to the newsletter: its sender's choice is remembered.
+        support::keys(&window, &["k", "k"]);
+        assert!(
+            crate::settle_until(async || reading.title() == "Issue 48").await,
+            "k did not step back to the newsletter"
+        );
+        assert!(
+            crate::settle_until(
+                async || line.is_shown() && line.text().contains("always for this sender")
+            )
+            .await,
+            "the remembered choice was not applied: {}",
+            line.text()
+        );
+        assert_eq!(reader.treatment(), Treatment::AppColours);
+    });
+}
+
+/// T223: preparing a body -- sanitising, classifying, the app-colours and
+/// paper rewrites -- is paid off the interface thread, so opening a message
+/// and stepping to the next with `j` cost the keystroke none of it, and `O`
+/// is a choice between two documents already made. Counted on this thread,
+/// which is the interface's: the worker's counts land on its own.
+pub fn opening_and_stepping_prepare_no_body_on_the_interface_thread() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (news, _) = fixture
+            .file(
+                ("Field Notes Weekly", "news@prepared.example.com"),
+                "Issue 49",
+                "The light.",
+                5,
+            )
+            .await;
+        fixture
+            .write_html_body(news, &html_of("html-newsletter-own-page"))
+            .await;
+        let (work, _) = fixture
+            .file(
+                ("Dana Whitfield", "facilities@prepared.example.com"),
+                "Building pass",
+                "Hi everyone.",
+                10,
+            )
+            .await;
+        fixture
+            .write_html_body(work, &html_of("html-work-black-text"))
+            .await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "the inbox never reached the screen"
+        );
+        let counts = || {
+            (
+                postio_ui::test_support::bodies_sanitised(),
+                postio_ui::test_support::bodies_treated(),
+                postio_ui::test_support::bulk_judged(),
+            )
+        };
+        let before = counts();
+
+        support::keys(&window, &["j"]);
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+        let reading = window.reading().expect("open");
+        let reader = reading.reader();
+        assert!(
+            crate::settle_until(async || reader.treated().is_some()).await,
+            "the first message was never drawn under a treatment"
+        );
+        support::keys(&window, &["j"]);
+        assert!(
+            crate::settle_until(async || {
+                reading.title() == "Building pass"
+                    && reader.test_document().contains("Facilities Coordinator")
+            })
+            .await,
+            "j did not draw the next message"
+        );
+        support::keys(&window, &["O"]);
+        assert!(
+            crate::settle_until(async || reader.treatment() == Treatment::Paper).await,
+            "O did not switch the office mail to paper"
+        );
+        assert_eq!(
+            counts(),
+            before,
+            "a body was sanitised, classified, treated or judged on the interface thread"
+        );
+    });
+}
+
+/// Switching keeps the column where it was: with the body's top in view
+/// there is no place inside it to keep, and the redraw must not scroll the
+/// column to put the body's first line at the top (T213, found in screen
+/// 29's render).
+pub fn switching_the_treatment_leaves_the_column_where_it_was() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (work, _) = fixture
+            .file(
+                ("Dana Whitfield", "dana@treatments.example.com"),
+                "Building access",
+                "Hi everyone.",
+                10,
+            )
+            .await;
+        fixture
+            .write_html_body(
+                work,
+                // Long enough that the column scrolls: a short body fits the
+                // dialog, and there is nothing to jump.
+                &html_of("html-work-black-text").replace(
+                    "<p class=\"MsoNormal\"><span style=\"color:black\">Thanks,",
+                    &"<p class=\"MsoNormal\">More about the entrance works.</p>".repeat(40),
+                ),
+            )
+            .await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        support::keys(&window, &["j"]);
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+        let reading = window.reading().expect("open");
+        let reader = reading.reader();
+        assert!(
+            crate::settle_until(
+                async || reader.treated().is_some() && reader.view().tiles_settled()
+            )
+            .await,
+            "the office mail never drew"
+        );
+        let before = reader.scrolled_for_test();
+        support::keys(&window, &["O"]);
+        assert!(
+            crate::settle_until(
+                async || reader.treatment() == Treatment::Paper && reader.view().tiles_settled()
+            )
+            .await,
+            "O did not put the office mail on paper"
+        );
+        assert_eq!(
+            reader.scrolled_for_test(),
+            before,
+            "switching scrolled the column"
+        );
+    });
+}
+
+/// `O` keeps the reading position of a marked message too. The column goes
+/// to the marked sentence once, when the message opens; after that the
+/// place is the person's, and a switch redrawing the body must not take
+/// them back to the sentence (found in screen 29's render).
+pub fn switching_a_marked_message_keeps_the_reading_position() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        const SENTENCE: &str = "Can everyone confirm the new entrance by Friday";
+        let fixture = Fixture::empty().await;
+        let (work, _) = fixture
+            .file(
+                ("Dana Whitfield", "dana@treatments.example.com"),
+                "Building access",
+                "Hi everyone.",
+                10,
+            )
+            .await;
+        fixture
+            .write_html_body(
+                work,
+                // The marked sentence far down, so opening scrolls to it.
+                &html_of("html-work-black-text").replace(
+                    "<p class=\"MsoNormal\"><span style=\"color:black\">Thanks,",
+                    &format!(
+                        "{}<p class=\"MsoNormal\">{SENTENCE}?</p>\
+                         <p class=\"MsoNormal\"><span style=\"color:black\">Thanks,",
+                        "<p class=\"MsoNormal\">More about the entrance works.</p>".repeat(40)
+                    ),
+                ),
+            )
+            .await;
+        fixture.ask(work, SENTENCE).await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        support::keys(&window, &["j"]);
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+        let reading = window.reading().expect("open");
+        let reader = reading.reader();
+        assert!(
+            crate::settle_until(async || !reader.view().highlight_rects().is_empty()
+                && reader.view().tiles_settled())
+            .await,
+            "the marked sentence was never highlighted"
+        );
+        assert!(
+            reader.scrolled_for_test() > 0.0,
+            "opening did not go to the marked sentence"
+        );
+        // The person reads back up to the top.
+        reader.view().scroll_to_edge(false);
+        crate::settle();
+        let before = reader.scrolled_for_test();
+        support::keys(&window, &["O"]);
+        assert!(
+            crate::settle_until(async || reader.treatment() == Treatment::Paper
+                && !reader.view().highlight_rects().is_empty()
+                && reader.view().tiles_settled())
+            .await,
+            "O did not put the office mail on paper"
+        );
+        crate::settle();
+        assert_eq!(
+            reader.scrolled_for_test(),
+            before,
+            "switching took the column back to the marked sentence"
+        );
+    });
+}

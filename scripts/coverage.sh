@@ -2,7 +2,7 @@
 # Measure line coverage for the pure/logic crates and gate it against
 # scripts/coverage-floors.json.
 #
-# One crate at a time, never one workspace percentage: postio-gtk's tests
+# One crate at a time, never one workspace percentage: the GTK crates' tests
 # need a compositor and will always read lower than postio-model's for
 # reasons that say nothing about quality, and a single global number would
 # hide a real regression in one crate behind an unrelated improvement in

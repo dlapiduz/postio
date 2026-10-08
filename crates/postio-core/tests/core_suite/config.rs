@@ -60,7 +60,7 @@ fn service_with(toml: &str) -> ConfigService {
 fn an_override_that_takes_a_default_key_is_reported() {
     for (taker, victim, key) in [
         (CommandId::Reply, "archive", "a"),
-        (CommandId::Reply, "flag", "s"),
+        (CommandId::Reply, "flag", "*"),
     ] {
         let mut overrides = KeyBindings::default();
         overrides
@@ -144,7 +144,10 @@ fn without_a_file_the_registry_defaults_are_the_keymap() {
         let keymap = Keymap::resolve_on(&KeyBindings::default(), platform);
 
         assert_eq!(keymap.binding(CommandId::Archive), Some("a"));
-        assert_eq!(keymap.binding(CommandId::Undo), Some("u"));
+        assert_eq!(
+            keymap.binding(CommandId::Undo),
+            Some(postio_config::keys::expand_mod("mod+z", platform).as_str())
+        );
         assert!(
             keymap.problems().is_empty(),
             "{platform:?}: {:?}",
@@ -171,7 +174,7 @@ fn an_override_rebinds_the_command_and_keeps_its_alternates() {
     assert!(
         keymap
             .bindings(CommandId::OpenMessage)
-            .contains(&"l".into()),
+            .contains(&"Right".into()),
         "the registry's alternates are not the file's to replace"
     );
     assert_eq!(
@@ -286,9 +289,9 @@ fn an_override_takes_a_key_from_the_default_that_had_it() {
     );
 
     // A command whose *only* binding is taken is palette-only rather than
-    // dead, which is the case this test was written for. `d` is Delete's, and
-    // Delete has no second layer.
-    let keymap = Keymap::resolve(&bindings(&[("flag", "d")]));
+    // dead, which is the case this test was written for. `Delete` is
+    // Delete's under the one keymap, and Delete has no second layer.
+    let keymap = Keymap::resolve(&bindings(&[("flag", "Delete")]));
     assert_eq!(
         keymap.binding(CommandId::Delete),
         None,
@@ -316,7 +319,7 @@ fn two_overrides_wanting_one_key_are_settled_by_registry_order() {
     );
     assert_eq!(
         keymap.binding(CommandId::Delete),
-        Some("d"),
+        Some("Delete"),
         "the loser falls back to its own default, which nobody took"
     );
     assert!(
@@ -365,7 +368,7 @@ fn a_broken_file_keeps_the_last_good_bindings() {
         "the last good binding stayed in force"
     );
     match update.events.as_slice() {
-        [Event::Error { message }] => assert!(!message.is_empty(), "the user is told why"),
+        [Event::Error { message, .. }] => assert!(!message.is_empty(), "the user is told why"),
         other => panic!("expected one error, got {other:?}"),
     }
 }

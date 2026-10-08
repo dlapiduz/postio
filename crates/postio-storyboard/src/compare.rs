@@ -244,18 +244,18 @@ mod tests {
 
     #[test]
     fn identical_runs_are_unchanged() {
-        let a = framed(run("walk", App::Classic, &[], 3));
-        let c = compare("classic/walk/default", Some(&a), Some(&a.clone()));
+        let a = framed(run("walk", App::Terminal, &[], 3));
+        let c = compare("terminal/walk/default", Some(&a), Some(&a.clone()));
         assert_eq!(c.kind, Kind::Unchanged);
         assert!(c.steps.is_empty());
     }
 
     #[test]
     fn a_different_frame_hash_is_a_change_on_that_step() {
-        let base = framed(run("walk", App::Classic, &[], 3));
+        let base = framed(run("walk", App::Terminal, &[], 3));
         let mut branch = base.clone();
         branch.steps[2].frame.as_mut().unwrap().hash = "other".into();
-        let c = compare("classic/walk/default", Some(&base), Some(&branch));
+        let c = compare("terminal/walk/default", Some(&base), Some(&branch));
         assert_eq!(c.kind, Kind::Changed);
         assert_eq!(c.steps.len(), 1);
         assert_eq!(c.steps[0].step, 2);
@@ -264,40 +264,40 @@ mod tests {
 
     #[test]
     fn the_outline_alone_is_not_a_change() {
-        let base = framed(run("walk", App::Classic, &[], 2));
+        let base = framed(run("walk", App::Terminal, &[], 2));
         let mut branch = base.clone();
         branch.steps[1].outlined = Some("elsewhere.png".into());
-        let c = compare("classic/walk/default", Some(&base), Some(&branch));
+        let c = compare("terminal/walk/default", Some(&base), Some(&branch));
         assert_eq!(c.kind, Kind::Unchanged);
     }
 
     #[test]
     fn observation_changes_are_named_and_internals_are_not() {
-        let base = framed(run("walk", App::Classic, &[], 2));
+        let base = framed(run("walk", App::Terminal, &[], 2));
         let mut branch = base.clone();
         branch.steps[1].observation.cursor.index = Some(4);
         branch.steps[1].observation.keyboard.widget = "Other/Path".into();
         branch.steps[1]
             .observation
             .app
-            .insert("classic.pane".into(), serde_json::json!("reader"));
-        let c = compare("classic/walk/default", Some(&base), Some(&branch));
+            .insert("terminal.pane".into(), serde_json::json!("reader"));
+        let c = compare("terminal/walk/default", Some(&base), Some(&branch));
         assert_eq!(c.kind, Kind::Changed);
         assert_eq!(c.steps[0].observation_changed, ["cursor.index"]);
     }
 
     #[test]
     fn a_different_outcome_is_a_change() {
-        let base = framed(run("walk", App::Classic, &[], 2));
+        let base = framed(run("walk", App::Terminal, &[], 2));
         let mut branch = base.clone();
         branch.steps[1].outcome = crate::run::StepOutcome::Dropped;
-        let c = compare("classic/walk/default", Some(&base), Some(&branch));
+        let c = compare("terminal/walk/default", Some(&base), Some(&branch));
         assert!(c.steps[0].status_changed);
     }
 
     #[test]
     fn new_removed_and_unavailable_runs_are_classed() {
-        let a = framed(run("walk", App::Classic, &[], 2));
+        let a = framed(run("walk", App::Terminal, &[], 2));
         assert_eq!(compare("x", None, Some(&a)).kind, Kind::New);
         assert_eq!(compare("x", Some(&a), None).kind, Kind::Removed);
         let mut gone = a.clone();
@@ -313,8 +313,8 @@ mod tests {
 
     #[test]
     fn extra_steps_on_the_branch_are_changes() {
-        let base = framed(run("walk", App::Classic, &[], 2));
-        let branch = framed(run("walk", App::Classic, &[], 3));
+        let base = framed(run("walk", App::Terminal, &[], 2));
+        let branch = framed(run("walk", App::Terminal, &[], 3));
         let c = compare("x", Some(&base), Some(&branch));
         assert_eq!(c.kind, Kind::Changed);
         assert_eq!(c.steps.iter().map(|s| s.step).collect::<Vec<_>>(), [2]);
@@ -322,7 +322,7 @@ mod tests {
 
     #[test]
     fn a_seed_change_is_said_once() {
-        let base = framed(run("walk", App::Classic, &[], 2));
+        let base = framed(run("walk", App::Terminal, &[], 2));
         let mut branch = base.clone();
         branch.seed = "thirty-threads".into();
         assert!(compare("x", Some(&base), Some(&branch)).seed_changed);
@@ -332,15 +332,15 @@ mod tests {
     fn trees_are_matched_by_run_directory() {
         let base = tempfile::tempdir().expect("temp");
         let branch = tempfile::tempdir().expect("temp");
-        let same = framed(run("same", App::Classic, &[], 2));
+        let same = framed(run("same", App::Terminal, &[], 2));
         write(base.path(), &same);
         write(branch.path(), &same);
-        write(branch.path(), &framed(run("fresh", App::Classic, &[], 2)));
-        write(base.path(), &framed(run("gone", App::Classic, &[], 2)));
+        write(branch.path(), &framed(run("fresh", App::Terminal, &[], 2)));
+        write(base.path(), &framed(run("gone", App::Terminal, &[], 2)));
         let all = compare_trees(base.path(), branch.path()).expect("compared");
         let kinds: BTreeMap<_, _> = all.iter().map(|c| (c.run.as_str(), c.kind)).collect();
-        assert_eq!(kinds["classic/same/default"], Kind::Unchanged);
-        assert_eq!(kinds["classic/fresh/default"], Kind::New);
-        assert_eq!(kinds["classic/gone/default"], Kind::Removed);
+        assert_eq!(kinds["terminal/same/default"], Kind::Unchanged);
+        assert_eq!(kinds["terminal/fresh/default"], Kind::New);
+        assert_eq!(kinds["terminal/gone/default"], Kind::Removed);
     }
 }

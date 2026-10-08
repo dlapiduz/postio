@@ -170,23 +170,28 @@ pub enum Error {
     /// of the two has it.
     #[error("Postio is already open in another window. Close it to open Postio here.")]
     InUse,
-    /// The store opened, but its schema is not the one this build expects.
+    /// The store opened, but its schema is one this build cannot carry
+    /// forward.
     ///
     /// Its own variant because it is the case [`Error::WrongStoreKey`] cannot
     /// reach. A store written by an earlier build of *this* engine decrypts
     /// perfectly — same cipher, same key, same file format — so nothing at the
-    /// door objects, and the mismatch surfaces later as `no such column` on
-    /// whichever statement names something added since, one statement at a
-    /// time, indefinitely.
+    /// door objects, and the mismatch would surface later as `no such column`
+    /// on whichever statement names something added since, one statement at
+    /// a time, indefinitely.
     ///
-    /// There are no migrations (`crate::schema::HEAD` says why), so the remedy
-    /// is to sync again, and this is the only thing in a position to say so.
+    /// A stamp `crate::schema::MIGRATIONS` leads from never gets here: it is
+    /// migrated in place. This is the one no step starts from -- older than
+    /// the first, or from a build that is not this one's ancestor -- and the
+    /// same file is refused however often it is opened, so the remedy is
+    /// starting over (`postio_session::start_over`), never trying again.
     #[error(
-        "the local store was written by a different build of Postio: its \
-         schema is stamped {found} and this build expects {expected}. There \
-         are no migrations -- a store is rebuilt by syncing again, which costs \
-         the mail's download and loses nothing the server still has. The file \
-         is intact and untouched: nothing here rewrites a store it will not use"
+        "the local store was written by a build of Postio this one cannot carry \
+         forward: its schema is stamped {} and no migration leads from there \
+         to this build's {}. Starting a fresh store syncs the mail again from \
+         the server; the file is intact and untouched until then",
+        stamp(*.found),
+        stamp(*.expected)
     )]
     SchemaFromAnotherBuild {
         /// The fingerprint the file carries.
@@ -259,6 +264,11 @@ impl From<Error> for postio_model::listing::StoreError {
     fn from(error: Error) -> Self {
         postio_model::listing::StoreError::new(error.to_string())
     }
+}
+
+/// A schema stamp as the eight hex digits `tests/schemas/` names it by.
+fn stamp(stamp: i64) -> String {
+    format!("{:08x}", stamp as i32 as u32)
 }
 
 #[cfg(test)]

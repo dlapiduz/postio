@@ -13,7 +13,7 @@
 //! [`sections`] decides what the sheet *contains*, and that is a product
 //! decision every frontend must answer identically — the same argument that
 //! moved the palette matcher (#658), the search chips (#1157) and the one
-//! box's modes here. `postio-gtk`'s `CheatSheet` widget draws these
+//! box's modes here. The classic app's `CheatSheet` widget drew these
 //! sections; a second frontend draws the same ones instead of flattening the
 //! reference into an ungrouped list.
 //!
@@ -92,6 +92,11 @@ fn heading(context: Context) -> &'static str {
         // Same reasoning as `Accounts`, one section down: these keys reach
         // only the keybinding list, not the whole settings panel.
         Context::Keys => "Keybindings",
+        // Focus's three (spec 007), named as Focus's key map names them.
+        Context::Picker => "Pickers",
+        Context::Digest => "Digests",
+        Context::Filtered => "Filtered",
+        Context::Capture => "Capture",
     }
 }
 
@@ -392,9 +397,8 @@ mod tests {
         };
         let account = Scope::Account(AccountId::new(1));
         let waiting = ids(Availability {
-            scope: account,
             store_open: false,
-            terminal: false,
+            ..Availability::open(account)
         });
         let open = ids(Availability::open(account));
 
@@ -644,9 +648,21 @@ mod tests {
     #[test]
     fn the_sheet_prints_only_everywhere_and_the_readers_own_surface() {
         for context in [Context::List, Context::Composer, Context::Sidebar] {
-            let titles: Vec<&str> = sections(&defaults(), context, in_the_list().1)
+            let printed = sections(&defaults(), context, in_the_list().1);
+            // A command another test in this binary registers at run time
+            // gets a section of its own, last; that is the extension sheet's
+            // case, not this one. Read after the sheet, so nothing it printed
+            // can have been registered since.
+            let namespaces: Vec<&str> = registry::every_action()
+                .filter_map(|spec| match spec.id {
+                    ActionId::Ext(id) => Some(id.namespace()),
+                    ActionId::Builtin(_) => None,
+                })
+                .collect();
+            let titles: Vec<&str> = printed
                 .iter()
                 .map(|section| section.title)
+                .filter(|title| !namespaces.contains(title))
                 .collect();
 
             let expected: Vec<&str> = [EVERYWHERE, IN_THE_BOX, heading(context)]

@@ -15,7 +15,7 @@
 //! overrides together and knows every command.
 //!
 //! Binding syntax is deliberately untyped at this layer — the keymap resolver
-//! in `postio-gtk` parses `"a"`, `"A"`, `"ctrl+k"`, `"g s"` — so a binding for a
+//! in a frontend parses `"a"`, `"A"`, `"ctrl+k"`, `"g s"` — so a binding for a
 //! command this version does not know is preserved rather than dropped.
 
 use std::collections::BTreeMap;
@@ -35,7 +35,7 @@ pub const MODIFIERS: &[&str] = &[
 
 /// Multi-character key names Postio understands, beyond single characters.
 ///
-/// These are GDK key names, which is what the keymap resolver in `postio-gtk`
+/// These are GDK key names, which is what the keymap resolver in a frontend
 /// looks up, spelled case-insensitively here because people type `escape`.
 pub const KEY_NAMES: &[&str] = &[
     "return",
@@ -62,6 +62,7 @@ pub const KEY_NAMES: &[&str] = &[
     "kp_add",
     "kp_subtract",
     "kp_0",
+    "exclam",
     "plus",
     "minus",
     "equal",
@@ -254,7 +255,7 @@ impl KeyBindings {
 ///
 /// `KeyBindings` is `#[serde(transparent)]`, so `[keys]`'s own shape is
 /// already just `command = "binding"` pairs with no wrapper table the way
-/// `[filters.<key>]` needs one — but `toml_edit`'s fragment splice still
+/// `[saved_searches.<key>]` needs one — but `toml_edit`'s fragment splice still
 /// needs *some* struct to serialize from, hence [`KeysOnly`].
 pub fn patch_keys(text: &str, overrides: &BTreeMap<String, String>) -> Result<String> {
     let mut doc = text
@@ -281,7 +282,7 @@ pub fn patch_keys(text: &str, overrides: &BTreeMap<String, String>) -> Result<St
 /// Serializes as just `[keys]`, with no other section — [`patch_keys`]'s
 /// bridge from `toml`'s serde-derived output to a fragment `toml_edit` can
 /// splice in, the same role `filters.rs`'s own `FiltersOnly` plays for
-/// `[filters]`.
+/// `[saved_searches]`.
 #[derive(Serialize)]
 struct KeysOnly<'a> {
     keys: &'a BTreeMap<String, String>,

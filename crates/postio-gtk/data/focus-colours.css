@@ -1,0 +1,135 @@
+/* Focus's colour roles (specs/007-postio-focus research R11, FR-090).
+ *
+ * The shared widgets and Focus's own surfaces read `--postio-*` roles, and
+ * the app defines them. Focus defines them from libadwaita's
+ * own named colours, so the system's accent and its light and dark arrive
+ * through AdwStyleManager, with nothing of Focus's in between: switching the
+ * system to dark repaints Focus at once (US1 scenario 6).
+ *
+ * No hex, no rgba literal: every role is one of libadwaita's colours, or a
+ * mix of one with transparency (ARCHITECTURE §10). The one exception is the
+ * message dialog's surface, ink and rules, at the end of this file.
+ *
+ * THE ACCENT IS RESERVED (FR-091): action markers, the keyboard focus ring
+ * and the has-action toggle. `--postio-accent` is defined because the shared
+ * widgets' focus rings read it; every other rule that would paint with it
+ * is re-dressed in focus.css, and `style.rs`'s test holds that line. The
+ * selection is neutral: a selected row has a neutral background and a
+ * checked box, never the accent.
+ */
+
+:root {
+  /* Grounds and surfaces. */
+  --postio-ground: var(--window-bg-color);
+  --postio-surface: var(--view-bg-color);
+  --postio-header: var(--headerbar-bg-color);
+  --postio-card: var(--card-bg-color);
+
+  /* Text: the ink, and quieter steps of it. Dim is libadwaita's own
+     dim-label step (55%). */
+  --postio-ink: var(--view-fg-color);
+  --postio-ink-secondary: color-mix(in srgb, var(--view-fg-color) 80%, transparent);
+  --postio-dim: color-mix(in srgb, var(--view-fg-color) 55%, transparent);
+  --postio-faint: color-mix(in srgb, var(--view-fg-color) 40%, transparent);
+
+  /* Rules. */
+  --postio-hairline: var(--border-color);
+  --postio-hairline-strong: color-mix(in srgb, var(--view-fg-color) 22%, transparent);
+
+  /* Pointer states, and a raised button's face: tints of the ink, so they
+     follow the scheme. */
+  --postio-hover-bg: color-mix(in srgb, var(--view-fg-color) 6%, transparent);
+  --postio-active-bg: color-mix(in srgb, var(--view-fg-color) 12%, transparent);
+  --postio-raised-bg: color-mix(in srgb, var(--view-fg-color) 8%, transparent);
+
+  /* The selection, neutral (contracts/focus-surface.md, Rows). */
+  --postio-selected-bg: color-mix(in srgb, var(--view-fg-color) 7%, transparent);
+  --postio-selected-strong-bg: color-mix(in srgb, var(--view-fg-color) 12%, transparent);
+  --postio-selected-fg: var(--view-fg-color);
+  --postio-selected-border: var(--border-color);
+  --postio-selected-accent-text: var(--view-fg-color);
+
+  /* The accent, for the three things FR-091 gives it. */
+  --postio-accent: var(--accent-color);
+  --postio-accent-hover: var(--accent-color);
+  --postio-accent-bg: var(--accent-bg-color);
+  --postio-accent-fg: var(--accent-fg-color);
+  --postio-accent-text: var(--accent-color);
+
+  /* Shadows: libadwaita's own shade, so a lifted surface follows the
+     scheme. The command bar floats over the list on the large one. */
+  --postio-shadow-md: 0 2px 8px var(--shade-color);
+  --postio-shadow-lg: 0 12px 32px var(--shade-color);
+
+  /* Errors: the sign-in banner, at low opacity (screen 19). */
+  --postio-error: var(--error-color);
+  --postio-error-bg: color-mix(in srgb, var(--error-bg-color) 14%, transparent);
+
+  /* Type (FR-093): Adwaita Sans for text, Adwaita Mono for keys, addresses
+     and operators. */
+  --postio-font-heading: "Adwaita Sans", sans-serif;
+  --postio-font-heading-weight: 700;
+  --postio-font-body: "Adwaita Sans", sans-serif;
+  --postio-font-mono: "Adwaita Mono", monospace;
+}
+
+/* ── The open-message dialog's palette ─────────────────────────────────
+ *
+ * The maintainer's message-dialog handoff (2026-10-01, SPEC.md section 6;
+ * T209) gives the dialog's surface, ink, hairlines and scrim values of its
+ * own, light and dark, so the reading surface is the same paper in every
+ * theme. They are here, as the dialog's values of the same roles every
+ * Focus rule already reads, so no widget names a colour; `.focus-open` is
+ * the dialog's content, and every rule inside it picks these up. The
+ * composer is the same dialog's family (T221), and wears them too. The
+ * window behind keeps libadwaita's.
+ *
+ * The accent is not among them (spec C26): the handoff's teal gave way to
+ * the system's, as everywhere else in Focus. The dialog keeps the roles
+ * above, read from libadwaita's `--accent-color`; the action card's fill is
+ * that accent at 8% (light) and 12% (dark), and the body's links are the
+ * accent itself (the `.postio-flow-accent` probe reads `--postio-accent`).
+ *
+ * Light and dark are told apart by the media query, which GTK evaluates
+ * for an application's provider since 4.20 and libadwaita drives from
+ * AdwStyleManager (`open_layout::the_dialog_wears_its_palette_in_light_and_dark`
+ * proves it on screen).
+ */
+
+:root {
+  /* The list behind an open dialog: black at 20%. */
+  --postio-scrim: rgb(0 0 0 / 20%);
+}
+
+.focus-open,
+.focus-compose,
+.focus-compose-surface {
+  --postio-surface: #fdfdfb;
+  --postio-ink: #1c2321;
+  --postio-ink-secondary: #4a5350;
+  --postio-dim: #68716d;
+  --postio-hairline: rgb(24 34 31 / 9%);
+  --postio-hairline-strong: rgb(24 34 31 / 16%);
+  /* The action card's fill: the system's accent at 8%. */
+  --postio-accent-soft: color-mix(in srgb, var(--accent-color) 8%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Black at 45%. */
+    --postio-scrim: rgb(0 0 0 / 45%);
+  }
+
+  .focus-open,
+  .focus-compose,
+  .focus-compose-surface {
+    --postio-surface: #1c2120;
+    --postio-ink: #e7ecea;
+    --postio-ink-secondary: #b7c0bc;
+    --postio-dim: #909a96;
+    --postio-hairline: rgb(255 255 255 / 8%);
+    --postio-hairline-strong: rgb(255 255 255 / 14%);
+    /* The system's accent at 12%. */
+    --postio-accent-soft: color-mix(in srgb, var(--accent-color) 12%, transparent);
+  }
+}

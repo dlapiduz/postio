@@ -11,7 +11,7 @@ import SwiftUI
 /// The panel decides almost nothing. The tree, the box-drawing prefixes down
 /// the left, what each row is called, what it says to a screen reader, what
 /// its detail line reads, and the filename it is safe to write under all come
-/// from the boundary — `postio-gtk` draws the same panel from the same
+/// from the boundary — the classic app drew the same panel from the same
 /// answers. What is local is the cursor and the dialogs, because only a view
 /// can put up a save panel.
 public struct PartsPanel: View {

@@ -6,15 +6,9 @@
 //! answer to "where is my inbox", and the duplicate rule in particular took a
 //! bug report to find (#501).
 //!
-//! It lived in `postio-gtk::sidebar` until #1155, which is where the macOS
-//! sidebar could not reach it — so that one sorted alphabetically and drew
-//! `Archive, Archive … Sent, Sent … Trash, Trash`, exactly the failure #501
-//! had already fixed on the other platform. Nothing here touches a toolkit:
-//! `Vec<Mailbox>` in, `Vec<Mailbox>` out.
+//! Nothing here touches a toolkit: `Vec<Mailbox>` in, `Vec<Mailbox>` out.
 
-use std::collections::{HashMap, HashSet};
-
-use postio_model::{AccountId, Mailbox, MailboxCounts, MailboxId, MailboxRole};
+use postio_model::{AccountId, Mailbox, MailboxCounts, MailboxRole};
 
 /// Where a role sits in the sidebar, or `None` for an ordinary folder.
 ///
@@ -88,37 +82,6 @@ pub struct ViewCounts {
     pub attention: u32,
 }
 
-/// How many of `mailbox`'s messages have stopped and need a person.
-///
-/// `None` for every folder but Drafts, and `None` for a Drafts folder where
-/// nothing needs anybody — a marker that is always drawn is a marker nobody
-/// reads (FR-023).
-///
-/// Separate from [`count_for`] rather than replacing it: the two answer
-/// different questions, and the row draws both. "Drafts 5" says how much is
-/// there; it does not say that one of them failed to send an hour ago.
-pub fn attention_for(mailbox: &Mailbox) -> Option<u32> {
-    if mailbox.role != MailboxRole::Drafts {
-        return None;
-    }
-    (mailbox.counts.attention > 0).then_some(mailbox.counts.attention)
-}
-
-/// Whether `mailbox` is a view over messages filed elsewhere rather than a
-/// folder on the server.
-///
-/// A view is unpersisted by construction — it has no row, because there is
-/// nothing to store — so an unassigned id is what says so. Every mailbox the
-/// sidebar is handed otherwise comes from the store and has one.
-///
-/// This replaces the negative-id sentinels the GTK feed used to invent
-/// (`MailboxId::new(-1)` and `-2`). A sentinel is a value that means something
-/// only to whoever remembers it, and the frontend that did not remember —
-/// macOS — simply never had these rows.
-pub fn is_view(mailbox: &Mailbox) -> bool {
-    !mailbox.id.is_assigned()
-}
-
 /// The view rows this account's sidebar draws, in no particular order —
 /// [`sections`] places them.
 ///
@@ -126,7 +89,7 @@ pub fn is_view(mailbox: &Mailbox) -> bool {
 ///
 /// Every frontend needs the same answer, and the one that had to invent it
 /// locally did not: `Flagged` and `Snoozed` were built inside
-/// `postio-gtk::feed`, so the macOS sidebar has never had either row. Building
+/// the classic app's feed, so the macOS sidebar has never had either row. Building
 /// them in the toolkit-free layer both frontends already consume is what makes
 /// "the same account draws the same rows" true rather than aspirational.
 ///
@@ -234,155 +197,11 @@ pub fn sections(mailboxes: &[Mailbox]) -> (Vec<Mailbox>, Vec<Mailbox>) {
     (special, ordinary)
 }
 
-// ── The ordinary folders as a tree ─────────────────────────────────────────
+// ── What a row is called ────────────────────────────────────────────────────
 //
-// Moved out of `postio-gtk::sidebar` by spec 005: the terminal sidebar draws
-// the same hierarchy and folds it with the same command.
-
-/// One row of the ordinary folder tree (#324), positioned in the hierarchy
-/// the server reported: the mailbox itself, how deep it nests, and whether
-/// it has children to disclose.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FolderRow {
-    /// The folder.
-    pub mailbox: Mailbox,
-    /// Ancestors between this row and a root, capped at [`MAX_DEPTH`].
-    pub depth: u8,
-    /// Whether this row has at least one child in the tree, whatever its
-    /// current expansion state.
-    pub has_children: bool,
-}
-
-/// Nesting deeper than this renders at the same indent as this depth: the
-/// sidebar column has finite width, and pushing a name out of it to indent
-/// correctly is worse than an indent that stops being literal.
-pub const MAX_DEPTH: u8 = 4;
-
-/// Flatten the ordinary folders into the order the sidebar draws them:
-/// depth-first, each level sorted the way the flat list has always been
-/// sorted, a folder's children immediately beneath it and hidden while it is
-/// collapsed.
-///
-/// `collapsed` names the folders currently closed; everything else with
-/// children is open, which is why a fresh account — nothing collapsed yet —
-/// renders exactly as flat-but-correctly-indented as it would before this
-/// existed, rather than defaulting to a wall of closed rows.
-///
-/// A `\Noselect` container (`Mailbox::selectable == false`) still gets a row
-/// when it has children, so the hierarchy it organizes can be opened even
-/// though it cannot be opened as a mailbox — see #324's acceptance. A
-/// `\Noselect` folder with nothing under it gets no row at all: nothing to
-/// open and nothing to toggle is a row that wastes a keystroke, same as
-/// today's flat list already decided in [`sections`].
-///
-/// A child whose parent was never listed by the server (`parent_id` points
-/// at nothing in `mailboxes`, or is `None`) renders as its own root — exactly
-/// what `postio-sync::discover::link_parents` already promises: "the folder
-/// is still perfectly usable; it just sits at the top."
-pub fn folder_rows(mailboxes: &[Mailbox], collapsed: &HashSet<MailboxId>) -> Vec<FolderRow> {
-    let ordinary: Vec<&Mailbox> = mailboxes
-        .iter()
-        .filter(|m| role_order(m.role).is_none() || !primary_within(m, mailboxes))
-        .collect();
-    let present: HashSet<MailboxId> = ordinary.iter().map(|m| m.id).collect();
-
-    let mut children: HashMap<MailboxId, Vec<&Mailbox>> = HashMap::new();
-    for m in &ordinary {
-        if let Some(parent) = m.parent_id
-            && present.contains(&parent)
-        {
-            children.entry(parent).or_default().push(m);
-        }
-    }
-    for list in children.values_mut() {
-        list.sort_by_key(|m| m.path.to_lowercase());
-    }
-
-    let mut roots: Vec<&Mailbox> = ordinary
-        .iter()
-        .copied()
-        .filter(|m| !m.parent_id.is_some_and(|p| present.contains(&p)))
-        .collect();
-    roots.sort_by_key(|m| m.path.to_lowercase());
-
-    let mut out = Vec::new();
-    for root in roots {
-        walk_folder_tree(root, 0, &children, collapsed, &mut out);
-    }
-    out
-}
-
-fn walk_folder_tree<'a>(
-    mailbox: &'a Mailbox,
-    depth: u8,
-    children: &HashMap<MailboxId, Vec<&'a Mailbox>>,
-    collapsed: &HashSet<MailboxId>,
-    out: &mut Vec<FolderRow>,
-) {
-    let kids = children.get(&mailbox.id);
-    let has_children = kids.is_some_and(|k| !k.is_empty());
-    if !mailbox.selectable && !has_children {
-        return;
-    }
-    out.push(FolderRow {
-        mailbox: mailbox.clone(),
-        depth: depth.min(MAX_DEPTH),
-        has_children,
-    });
-    if has_children && !collapsed.contains(&mailbox.id) {
-        for child in kids.into_iter().flatten() {
-            walk_folder_tree(child, depth + 1, children, collapsed, out);
-        }
-    }
-}
-
-/// Every ancestor of `id`, nearest first, so the caller can open all of them.
-///
-/// A folder selected while an ancestor is collapsed must still be reachable —
-/// see `postio_gtk::sidebar::Sidebar::select` — and this is what tells it which parents to open.
-pub fn ancestors_of(mailboxes: &[Mailbox], id: MailboxId) -> Vec<MailboxId> {
-    let by_id: HashMap<MailboxId, &Mailbox> = mailboxes.iter().map(|m| (m.id, m)).collect();
-    let mut out = Vec::new();
-    let mut current = by_id.get(&id).and_then(|m| m.parent_id);
-    while let Some(parent) = current {
-        if !by_id.contains_key(&parent) {
-            break;
-        }
-        out.push(parent);
-        current = by_id.get(&parent).and_then(|m| m.parent_id);
-    }
-    out
-}
-
-// ── What a row is called, and the number beside it ──────────────────────────
-//
-// Both moved out of `postio-gtk::sidebar` by spec 003, for the reason
-// `role_order` and `sections` moved in #1155: they are product decisions, not
-// widget details, and the frontend that had to re-derive them did not. The
-// FFI sent `mailbox.name` raw, which is empty for a view row — so even once
-// Flagged and Snoozed crossed the boundary, macOS had two rows with no label.
-
-///
-/// Straight off the canvas: Inbox 12 unread, Flagged 3 flagged, Drafts 2 in
-/// total, and nothing at all beside Sent or Archive. A count of zero is not
-/// drawn — an empty column is quieter than a row of noughts.
-pub fn count_for(mailbox: &Mailbox) -> Option<u32> {
-    let counts = &mailbox.counts;
-    let count = match mailbox.role {
-        // A draft you have not finished is not "unread".
-        MailboxRole::Drafts => counts.total,
-        MailboxRole::Flagged => counts.flagged,
-        MailboxRole::Snoozed => counts.snoozed,
-        // How many are on their way. The row is hidden entirely when this is
-        // zero, which is its ordinary state -- see spec 003 FR-012.
-        MailboxRole::Outbox => counts.total,
-        // Nothing arrives in these unread, so a count would only ever be
-        // "how much have you kept", which is not a thing to nag about.
-        MailboxRole::Sent | MailboxRole::Archive | MailboxRole::Trash | MailboxRole::Junk => 0,
-        MailboxRole::Inbox | MailboxRole::Regular => counts.unread,
-    };
-    (count > 0).then_some(count)
-}
+// A product decision rather than a widget detail, so both frontends take it
+// from here instead of re-deriving it: a view row has no server name, and a
+// raw `mailbox.name` would draw it with no label.
 
 /// What a folder is called in the sidebar.
 ///
@@ -405,6 +224,19 @@ pub fn display_name(mailbox: &Mailbox, among: &[Mailbox]) -> String {
     match role_name(mailbox.role) {
         Some(name) => name.to_string(),
         None => mailbox.name.clone(),
+    }
+}
+
+/// What a folder is called where its place in the hierarchy matters, as in
+/// Settings' list of folders to back up: a folder with a role goes by the
+/// role's name ("Inbox", not the server's `INBOX`), any other by its full
+/// path, so `Archive/2024` is not mistaken for a folder of its own at the top.
+pub fn path_label(mailbox: &Mailbox, among: &[Mailbox]) -> String {
+    let shown = display_name(mailbox, among);
+    if shown == mailbox.name {
+        mailbox.path.clone()
+    } else {
+        shown
     }
 }
 
@@ -438,71 +270,20 @@ pub fn role_name(role: MailboxRole) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn the_drafts_row_says_how_many_need_a_person() {
-        // FR-022. A Drafts badge of 5 says nothing about whether one of them
-        // failed to send an hour ago. Two numbers: what is there, and what has
-        // stopped and is waiting for you.
-        let account = AccountId::new(1);
-        let mut drafts = folder(3, "Drafts", MailboxRole::Drafts);
-        drafts.counts = MailboxCounts {
-            total: 4,
-            attention: 2,
-            ..MailboxCounts::default()
-        };
-
-        assert_eq!(
-            count_for(&drafts),
-            Some(4),
-            "the total is what Drafts holds"
-        );
-        assert_eq!(
-            attention_for(&drafts),
-            Some(2),
-            "and separately, how many of them need you"
-        );
-        let _ = account;
-    }
-
-    #[test]
-    fn nothing_needing_a_person_draws_no_attention_mark() {
-        // FR-023. A marker that is always there is a marker nobody reads.
-        let mut drafts = folder(3, "Drafts", MailboxRole::Drafts);
-        drafts.counts = MailboxCounts {
-            total: 2,
-            attention: 0,
-            ..MailboxCounts::default()
-        };
-        assert_eq!(attention_for(&drafts), None);
-    }
-
-    #[test]
-    fn only_drafts_has_an_attention_count() {
-        // Every other folder's mail arrived; none of it is waiting on the
-        // user to finish or retry something.
-        for role in [
-            MailboxRole::Inbox,
-            MailboxRole::Sent,
-            MailboxRole::Archive,
-            MailboxRole::Junk,
-            MailboxRole::Trash,
-            MailboxRole::Regular,
-        ] {
-            let mut mailbox = folder(9, "Somewhere", role);
-            mailbox.counts = MailboxCounts {
-                total: 3,
-                attention: 3,
-                ..MailboxCounts::default()
-            };
-            assert_eq!(
-                attention_for(&mailbox),
-                None,
-                "{role:?} should not draw an attention count"
-            );
-        }
-    }
 
     // ── The view rows (spec 003, US4) ────────────────────────────────────
+
+    #[test]
+    fn a_folder_list_names_roles_and_paths() {
+        let among = vec![
+            folder(1, "INBOX", MailboxRole::Inbox),
+            folder(2, "Archive", MailboxRole::Archive),
+            folder(3, "Archives", MailboxRole::Archive),
+            folder(4, "Work/Receipts", MailboxRole::Regular),
+        ];
+        let labels: Vec<String> = among.iter().map(|m| path_label(m, &among)).collect();
+        assert_eq!(labels, ["Inbox", "Archive", "Archives", "Work/Receipts"]);
+    }
 
     #[test]
     fn a_view_row_is_built_here_rather_than_by_a_frontend() {
@@ -529,7 +310,7 @@ mod tests {
         );
         for row in &views {
             assert!(
-                is_view(row),
+                !row.id.is_assigned(),
                 "{:?} has an id, so something will try to SELECT it",
                 row.role
             );
@@ -887,7 +668,7 @@ pub fn failing_because(reason: postio_core::FailureReason) -> &'static str {
         // Never phrased as "wrong password": an app-specific password, an
         // expired OAuth grant and a revoked one all land here, and only one
         // of those is a password anybody typed.
-        Why::Auth => "sign-in needed",
+        Why::Auth | Why::NoPassword => "sign-in needed",
         // Recovers on its own, so it says what is true rather than asking for
         // anything. A footer demanding action for something the supervisor is
         // already retrying is a footer people learn to ignore.

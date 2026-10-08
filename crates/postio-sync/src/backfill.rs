@@ -1422,7 +1422,7 @@ pub async fn fetch_body(
 
     // The commit point. `Full` unconditionally, and honestly: whatever the
     // parse could not match to a row is still in the raw blob, which is what
-    // `postio_app::reading::part_bytes` falls back to.
+    // the host's part reader falls back to.
     messages
         .set_body(request.message, &stored, BodyState::Full)
         .await?;
@@ -1596,14 +1596,18 @@ async fn fetch_text_parts(
     // attachment the reader offers to download, it is part of the sentence the
     // message is making: without it the pane draws a broken box, and since the
     // reader blocks remote images by default these are the images that are
-    // *supposed* to appear (#751).
+    // *supposed* to appear (#751). A small calendar part rides for the same
+    // reason: it is what an invitation's row reads its times from (T108).
     //
     // Before the commit point on purpose. `needing_backfill` stops at
     // `partial`, so a message whose text landed is never offered again — and a
     // half-finished inline pass committed as `partial` would leave those boxes
     // broken for good. Failing here instead leaves the message `headers_only`,
     // and the next seed fetches the whole text axis again, images included.
-    for part_id in inline_with_the_text(&message, inline_cap) {
+    for part_id in inline_with_the_text(&message, inline_cap)
+        .into_iter()
+        .chain(calendar_with_the_text(&message))
+    {
         let Some(attachment) = message
             .attachments
             .iter()
@@ -1804,7 +1808,7 @@ pub(crate) async fn fetch_section(
 /// write `attachments.blob_id` on the receive path. Before it that column was
 /// filled only on the way *out*, by a composer attaching a file, so
 /// `Attachment::is_downloaded` was false for every message that had ever
-/// arrived from a server and `postio_app::reading::part_bytes` re-parsed the
+/// arrived from a server and the part reader re-parsed the
 /// whole raw message to cut one part out of it.
 ///
 /// # Rebuilding an entity from a section
@@ -1909,6 +1913,33 @@ fn inline_with_the_text(message: &postio_model::Message, cap: Option<u64>) -> Ve
         .attachments
         .iter()
         .filter(|part| part.is_inline() && !part.is_downloaded() && part.size <= cap)
+        .filter_map(|part| part.part_id.clone())
+        .collect()
+}
+
+/// The largest `text/calendar` part the text axis carries (spec 007, T108).
+///
+/// An invitation's part is a few kilobytes; one of a quarter of a mebibyte is
+/// an event with hundreds of attendees or a year of exceptions, and past that
+/// it is a payload like any other, fetched when somebody opens it.
+pub(crate) const CALENDAR_PART_CAP: u64 = 256 * 1024;
+
+/// The `text/calendar` parts that ride with the text (spec 007, T108): every
+/// one not already local, up to [`CALENDAR_PART_CAP`].
+///
+/// With the text for the reason an inline image is: Focus answers an
+/// invitation from the row, and the times the row shows come from this part,
+/// so it has to be local the moment the body is -- without a fetch of its
+/// own, and without the network at all when the body stage reads it.
+fn calendar_with_the_text(message: &postio_model::Message) -> Vec<String> {
+    message
+        .attachments
+        .iter()
+        .filter(|part| {
+            part.mime_type.eq_ignore_ascii_case("text/calendar")
+                && !part.is_downloaded()
+                && part.size <= CALENDAR_PART_CAP
+        })
         .filter_map(|part| part.part_id.clone())
         .collect()
 }

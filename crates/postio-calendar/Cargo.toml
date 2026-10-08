@@ -1,0 +1,29 @@
+[package]
+name = "postio-calendar"
+description = "Calendar invitations carried in mail: parsing them, and writing the replies that answer them."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+# RFC 5545 parsing, zone resolution by IANA and by Windows name, and a writer,
+# kept behind this crate's adapter (specs/007-postio-focus research R9, spike
+# S1). Pinned exactly: 0.4 is expected to move from chrono to jiff, and that
+# should be a decision somebody makes, not a lockfile diff. `jmap` is off, so
+# JSCalendar, JSContact and their serde stack stay out of the graph.
+calcard = { version = "=0.3.14", default-features = false }
+chrono = { workspace = true, features = ["std"] }
+# `EmailAddress`, for organisers, attendees and the address a reply answers
+# as. postio-model is the leaf every crate already waits on, and it takes
+# nothing this crate's boundary rule bans.
+postio-model = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+postio-model = { workspace = true, features = ["test-corpus"] }
+
+[lints]
+workspace = true

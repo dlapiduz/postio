@@ -1,7 +1,7 @@
 //! The store half of writing mail: saving, discarding and queueing drafts,
 //! and what the composer reads to fill itself in.
 //!
-//! Moved out of `postio-app` (specs/005-tui-frontend T015) so the desktop and
+//! Moved out of the classic app (specs/005-tui-frontend T015) so the desktop and
 //! the terminal save a draft the same way. Both reach them through the
 //! Compose [`Req`](postio_client::protocol::Req)s, and each client's draft
 //! writes go through a [`DraftWriter`] of its own, in the order it made them
@@ -13,6 +13,7 @@
 //! the address.
 
 use chrono::{DateTime, Utc};
+use postio_client::protocol::Queued;
 use postio_model::contact_group::RecipientCandidate;
 use postio_model::ids::{AccountId, MailboxId, MessageId};
 use postio_model::listing::StoreError;
@@ -22,7 +23,8 @@ use postio_model::{
 };
 use postio_storage::repository::{
     AccountRepository, CancelSendOutcome, ContactGroupRepository, ContactRepository,
-    DraftRepository, MailboxRepository, MessageRepository, OperationQueueRepository,
+    CorrespondentRepository, DraftRepository, MailboxRepository, MessageRepository,
+    OperationQueueRepository,
 };
 use postio_storage::{BlobStore, Store};
 
@@ -92,7 +94,7 @@ enum DraftOp {
         generation: u64,
         draft: Draft,
         at: Option<DateTime<Utc>>,
-        reply: tokio::sync::oneshot::Sender<Result<Option<MailboxId>, StoreError>>,
+        reply: tokio::sync::oneshot::Sender<Result<Queued, StoreError>>,
     },
     /// This composition was closed empty: its autosaved row goes.
     Discard {
@@ -190,10 +192,14 @@ impl DraftWriter {
                             current = None;
                         }
                         let moved = match queue_send(&database, &mut draft, at).await {
-                            Ok(()) if at.is_none() => {
-                                Ok(drafts_mailbox(&database, draft.account_id).await)
-                            }
-                            Ok(()) => Ok(None),
+                            Ok(()) if at.is_none() => Ok(Queued {
+                                drafts: drafts_mailbox(&database, draft.account_id).await,
+                                draft: draft.id,
+                            }),
+                            Ok(()) => Ok(Queued {
+                                drafts: None,
+                                draft: draft.id,
+                            }),
                             Err(error) => {
                                 tracing::error!(%error, "could not queue the draft for sending: {error}");
                                 Err(StoreError::from(error))
@@ -248,7 +254,7 @@ impl DraftWriter {
         generation: u64,
         draft: Draft,
         at: Option<DateTime<Utc>>,
-    ) -> impl Future<Output = Result<Option<MailboxId>, StoreError>> + Send + 'static {
+    ) -> impl Future<Output = Result<Queued, StoreError>> + Send + 'static {
         let (reply, answer) = tokio::sync::oneshot::channel();
         self.hand_over(DraftOp::Send {
             generation,
@@ -501,9 +507,12 @@ pub async fn recipient_directory(
         let contacts = ContactRepository::new(&connection)
             .search(Some(account), "", CORRESPONDENT_LIMIT)
             .await?;
+        let written = CorrespondentRepository::new(&connection)
+            .sent_counts()
+            .await?;
         Ok::<_, postio_storage::Error>(postio_client::protocol::RecipientDirectory {
             groups: named,
-            contacts,
+            contacts: with_letters(contacts, &written),
         })
     };
     found.await.unwrap_or_else(|error| {
@@ -527,64 +536,175 @@ pub async fn labels(database: &Store, account: AccountId) -> Vec<postio_model::L
     })
 }
 
-/// Recipient completion: contact groups whose name matches `prefix`, then
-/// contacts ranked by [`ContactRepository::search`] — groups first, since a
-/// group is a deliberate choice the user is more likely typing towards.
+/// How many conversations carry each of `account`'s labels: the label
+/// picker's counts. Nothing, said in the log, when the store cannot answer:
+/// a label without its count is still the label.
+pub async fn label_counts(
+    database: &Store,
+    account: AccountId,
+) -> Vec<(postio_model::LabelId, u32)> {
+    let found = async {
+        let connection = database.read().await?;
+        postio_storage::repository::LabelRepository::new(&connection)
+            .counts(account)
+            .await
+    };
+    found.await.unwrap_or_else(|error| {
+        tracing::warn!(%error, "could not count the labels");
+        Vec::new()
+    })
+}
+
+/// The label `name` in `account`: the one it has by that name in any case,
+/// or a new one. A store write, local like every label change; the label
+/// reaches the server as the keyword on the first message it goes on.
+pub async fn create_label(
+    database: &Store,
+    account: AccountId,
+    name: &str,
+) -> Option<postio_model::Label> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let made = async {
+        let (connection, _permit) = database.interactive_write().await?;
+        let labels = postio_storage::repository::LabelRepository::new(&connection);
+        let existing = labels
+            .list(account)
+            .await?
+            .into_iter()
+            .find(|label| label.name.to_lowercase() == name.to_lowercase());
+        if let Some(existing) = existing {
+            return Ok::<_, postio_storage::Error>(existing);
+        }
+        let mut label = postio_model::Label::new(account, name);
+        labels.create(&mut label).await?;
+        Ok(label)
+    };
+    made.await
+        .map_err(|error| tracing::warn!(%error, "could not make a label"))
+        .ok()
+}
+
+/// The labels on each of `threads`: a Focus page's pills, read for the page
+/// in one statement (spec 007 T043). Nothing, said in the log, when the
+/// store cannot answer: a row without its pills is still the row.
+pub async fn thread_labels(
+    database: &Store,
+    threads: &[postio_model::ThreadId],
+) -> Vec<(postio_model::ThreadId, postio_model::Label)> {
+    let found = async {
+        let connection = database.read().await?;
+        postio_storage::repository::LabelRepository::new(&connection)
+            .for_threads(threads)
+            .await
+    };
+    found.await.unwrap_or_else(|error| {
+        tracing::warn!(%error, "could not read a page's labels");
+        Vec::new()
+    })
+}
+
+/// Focus's header strip counts (spec 007 FR-018, T048), each a counted read
+/// over Focus's own membership rather than the per-folder trigger counts,
+/// which cannot see held mail: the inboxes (one statement), the rows (one,
+/// and the fold's two more with several accounts), the unread (one) and
+/// the rows that draw a marker (one, sought from the markers).
+pub async fn focus_counts(
+    database: &Store,
+) -> Result<postio_client::protocol::FocusCounts, postio_model::listing::StoreError> {
+    let counted = async {
+        let connection = database.read().await?;
+        let threads = postio_storage::repository::ThreadRepository::new(&connection);
+        let inboxes = threads.unified_inboxes().await?;
+        // "Today" is the person's: local midnight, as the filing records
+        // are bounded (filter_decisions.decided_at).
+        let midnight = chrono::Local::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .and_then(|midnight| {
+                chrono::TimeZone::from_local_datetime(&chrono::Local, &midnight).earliest()
+            })
+            .map_or_else(chrono::Utc::now, |midnight| {
+                midnight.with_timezone(&chrono::Utc)
+            });
+        Ok::<_, postio_storage::Error>(postio_client::protocol::FocusCounts {
+            conversations: threads.focus_count(&inboxes).await?,
+            unread: threads.focus_unread(&inboxes).await?,
+            has_action: threads.focus_marked(&inboxes).await?.len(),
+            filtered_today: postio_storage::repository::FilterDecisionRepository::new(&connection)
+                .count_since(midnight)
+                .await?,
+        })
+    };
+    counted.await.map_err(|error| {
+        tracing::warn!(%error, "could not count Focus's inbox");
+        postio_model::listing::StoreError::new(error.to_string())
+    })
+}
+
+/// Recipient completion for `prefix`, as the terminal asks it: the account's
+/// groups and the contacts the prefix matches, each with the letters the
+/// user wrote to it, ranked by the one rule every app shares,
+/// `postio_ui::recipients::suggest` (spec 007 T076, research R15) -- the
+/// rule the desktop composer applies to its directory in memory.
 pub async fn recipients(
     database: &Store,
     account: AccountId,
     prefix: &str,
 ) -> Vec<RecipientCandidate> {
-    let connection = match database.read().await {
-        Ok(connection) => connection,
-        Err(error) => {
-            tracing::warn!(%error, "could not search contacts");
-            return Vec::new();
-        }
-    };
-
-    let mut candidates: Vec<RecipientCandidate> = Vec::new();
-    let groups = ContactGroupRepository::new(&connection);
-    match groups.list(Some(account)).await {
-        Ok(list) => {
-            let prefix_lower = prefix.to_lowercase();
-            for group in list {
-                if !group.name.to_lowercase().starts_with(&prefix_lower) {
-                    continue;
-                }
-                match groups.members(group.id).await {
-                    // A group with no members yet expands to nothing, so
-                    // offering it would be a suggestion that does nothing
-                    // when accepted.
-                    Ok(members) if !members.is_empty() => {
-                        candidates.push(RecipientCandidate::Group {
-                            name: group.name,
-                            members: members.iter().map(resolved_address).collect(),
-                        });
-                    }
-                    Ok(_) => {}
-                    Err(error) => tracing::warn!(%error, "could not read group members"),
-                }
+    let found = async {
+        let connection = database.read().await?;
+        let groups = ContactGroupRepository::new(&connection);
+        let mut named = Vec::new();
+        for group in groups.list(Some(account)).await? {
+            let members = groups.members(group.id).await?;
+            if !members.is_empty() {
+                named.push((group.name, members.iter().map(resolved_address).collect()));
             }
         }
-        Err(error) => tracing::warn!(%error, "could not search contact groups"),
-    }
+        // The store's prefix match, wide enough that its own order -- by
+        // how lately and how often each was seen -- cannot push an address
+        // the user writes to out before the rule has ranked it.
+        let contacts = ContactRepository::new(&connection)
+            .search(Some(account), prefix, PREFIX_POOL)
+            .await?;
+        let written = CorrespondentRepository::new(&connection)
+            .sent_counts()
+            .await?;
+        Ok::<_, postio_storage::Error>(postio_ui::recipients::suggest(
+            &named,
+            &with_letters(contacts, &written),
+            prefix,
+            SUGGESTION_LIMIT as usize,
+        ))
+    };
+    found.await.unwrap_or_else(|error| {
+        tracing::warn!(%error, "could not search contacts");
+        Vec::new()
+    })
+}
 
-    match ContactRepository::new(&connection)
-        .search(Some(account), prefix, SUGGESTION_LIMIT)
-        .await
-    {
-        Ok(contacts) => candidates.extend(
-            contacts
-                .iter()
-                .map(resolved_address)
-                .map(RecipientCandidate::Contact),
-        ),
-        Err(error) => tracing::warn!(%error, "could not search contacts"),
-    }
+/// How many contacts a prefix's completion ranks: the store's match, before
+/// the rule orders it.
+const PREFIX_POOL: u32 = 500;
 
-    candidates.truncate(SUGGESTION_LIMIT as usize);
-    candidates
+/// `contacts`, each with the letters the user wrote to its address.
+fn with_letters(
+    contacts: Vec<postio_model::Contact>,
+    written: &std::collections::HashMap<String, u32>,
+) -> Vec<postio_ui::recipients::Correspondent> {
+    contacts
+        .into_iter()
+        .map(|contact| postio_ui::recipients::Correspondent {
+            sent_count: written
+                .get(&contact.address.normalized())
+                .copied()
+                .unwrap_or_default(),
+            contact,
+        })
+        .collect()
 }
 
 /// The address a contact offers: the name the user set, or the last one seen

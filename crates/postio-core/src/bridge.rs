@@ -124,6 +124,9 @@ where
 
 /// Turn an async closure into a [`CommandHandler`].
 ///
+/// What a test builds a bridge from; the host's handler is a
+/// [`Dispatcher`](crate::dispatch::Dispatcher).
+///
 /// ```
 /// use postio_core::bridge::{Bridge, handler_fn};
 /// use postio_core::{Command, Event};
@@ -141,6 +144,7 @@ where
 ///
 /// assert!(matches!(events.try_next(), Some(Event::ActionCompleted { .. })));
 /// ```
+#[doc(hidden)]
 pub fn handler_fn<F, Fut>(handler: F) -> FnHandler<F>
 where
     F: Fn(Command, EventSink) -> Fut + Send + Sync + 'static,
@@ -227,7 +231,7 @@ impl CommandSender {
 }
 
 /// Commands a [`CommandSender`] queued, for a frontend that runs them
-/// somewhere other than a [`Bridge`] of its own: `postio-app` hands its window
+/// somewhere other than a [`Bridge`] of its own: the classic app handed its window
 /// a sender and passes each command to `postio-client` (ADR 0041).
 #[derive(Debug)]
 pub struct CommandReceiver(async_channel::Receiver<Queued>);

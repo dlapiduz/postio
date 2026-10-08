@@ -489,14 +489,14 @@ mod tests {
         let out = tempfile::tempdir().expect("a temp dir");
         let writer = RunWriter::new(
             out.path(),
-            App::Classic,
+            App::Terminal,
             "archive-walks-down",
             &BTreeMap::new(),
         )
         .expect("a writer");
         assert_eq!(
             writer.dir(),
-            out.path().join("classic/archive-walks-down/default")
+            out.path().join("terminal/archive-walks-down/default")
         );
         assert_eq!(RunWriter::frame(1), "01.png");
         assert_eq!(RunWriter::outlined(0), "00.outlined.png");
@@ -506,7 +506,7 @@ mod tests {
                 name: "archive-walks-down".into(),
                 hash: "abc".into(),
             },
-            app: App::Classic,
+            app: App::Terminal,
             variant: BTreeMap::new(),
             ignored_axes: vec![],
             tree_key: "k".into(),

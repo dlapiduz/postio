@@ -3,7 +3,7 @@
 //
 // Generated rather than redrawn, the same rule the design tokens follow: a set
 // of PNGs checked in beside the SVG is a copy that is correct on the day it is
-// made. The mark lives once, in `crates/postio-gtk/data/icons/`.
+// made. The mark lives once, in `crates/postio-widgets/data/icons/`.
 //
 // AppKit rather than a rasterizer from Homebrew, deliberately. `NSImage` reads
 // this SVG as a vector representation, so every size is a real render rather

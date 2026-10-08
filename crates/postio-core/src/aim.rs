@@ -9,7 +9,7 @@
 //! rule is **semantics**, not presentation, and every frontend has to reach
 //! the same answer or `a` means different things on different platforms.
 //!
-//! It used to live in `postio-app`, coupled to GTK — reaching for widget
+//! It used to live in the classic app, coupled to GTK — reaching for widget
 //! focus and walking a `GtkListModel` — which meant the macOS boundary had no
 //! way to turn `"archive"` into a [`Command`] without writing a **second**
 //! mapping. Two mappings would give the two frontends different ideas of what
@@ -131,7 +131,7 @@ pub struct Aim<'a> {
 /// silently claims to have done something.
 ///
 /// The one rule every frontend has to reach the same answer to (#670): moved
-/// here from `postio-app` once `postio-model::ListScope` gave `postio-core`
+/// here from the classic app once `postio-model::ListScope` gave `postio-core`
 /// something to apply the rule to. `ViewScope`'s smaller variant set stays —
 /// see `docs/engineering-notes.md`'s "Six types are called *Scope*" — this
 /// is the function that produces it.
@@ -155,10 +155,24 @@ pub fn view_scope(scope: ListScope, reachable: &[AccountId]) -> Option<ViewScope
         // verbs it would reach are cancel and discard, and doing either to
         // every message in flight at once is not a thing to make easy by
         // accident. A rejection, not a no-op that claims to have acted.
+        //
+        // Focus's inbox is a predicate over what Focus lists, over the
+        // accounts it could show, for the aggregate's reason (T167).
+        ListScope::Focus(postio_model::FocusScope::Inbox) if reachable.is_empty() => None,
+        ListScope::Focus(postio_model::FocusScope::Inbox) => Some(ViewScope::Focus {
+            accounts: reachable.to_vec(),
+        }),
+        // The has-action filter is the markers' few rows, and nothing needs
+        // `X` over them yet: a rejection rather than a guess.
         ListScope::Account(_)
         | ListScope::Snoozed(_)
         | ListScope::Outbox(_)
-        | ListScope::Thread(_) => None,
+        | ListScope::Thread(_)
+        | ListScope::Focus(
+            postio_model::FocusScope::HasAction
+            | postio_model::FocusScope::Snoozed
+            | postio_model::FocusScope::Flagged,
+        ) => None,
     }
 }
 
@@ -250,62 +264,6 @@ fn threads_of(rows: &dyn RowFacts, marked: &[MessageId]) -> Option<Vec<ThreadId>
     threads.sort_unstable();
     threads.dedup();
     Some(threads)
-}
-
-/// Whether `command`, as invoked, takes the cursor's own row out of the view.
-///
-/// What triage needs a frontend to know the moment a key is pressed rather
-/// than when the store answers (#1687). `a a a` is "this, then the next,
-/// then the next": the second press has to land on the row below, and it is
-/// usually pressed before the first one's write, events and re-read have
-/// come back -- so a cursor that waited for the row to leave was still on
-/// it, and the second archive went to the conversation already archived
-/// ("Already there"). A frontend that hears `true` steps the cursor off the
-/// row as it sends the command, which is where the row's leaving would have
-/// put it anyway.
-///
-/// Narrow on purpose, because a cursor that steps off a row that stays is a
-/// cursor moved for nothing:
-///
-/// * aimed at the **cursor** -- nothing marked, and a target still left to
-///   the selection. Marked rows are the selection's business, and a verb
-///   that names its own rows (a hover action, a drop) is about those;
-/// * a verb that **files the row somewhere else**: archive, delete, snooze,
-///   and a move that has its destination. A move with none only asks where;
-/// * in a **folder**, or in **Unified**, which is the inboxes (#1692) and
-///   loses the row the way a folder does. Every other view outlives those
-///   verbs -- an account's view holds archived mail too, and Flagged holds a
-///   flagged message wherever it is filed.
-///
-/// `shown` is the list's own scope rather than `aim.scope`: the
-/// [`ViewScope`] is what a whole-view selection is relative to, and it is
-/// `None` for a Unified view with no account reachable (#811). Whether the
-/// row leaves does not depend on that -- offline, the archive is still made
-/// locally and the row still goes -- so asking the narrower value would
-/// leave `a a` in an offline Unified view on the row already in flight.
-///
-/// Called with the command as invoked, before [`refine`] names the
-/// conversation.
-pub fn takes_the_cursor_row_out(
-    command: &Command,
-    aim: &Aim<'_>,
-    shown: Option<ListScope>,
-) -> bool {
-    let files_it_away = match command {
-        Command::Archive { .. } | Command::Delete { .. } | Command::Snooze { .. } => true,
-        Command::Move { to, .. } => to.is_some(),
-        Command::ArchiveThread { thread } => thread.is_none(),
-        _ => false,
-    };
-    let at_the_cursor = match command {
-        Command::ArchiveThread { .. } => true,
-        _ => matches!(command.target(), Some(MessageTarget::Selection)),
-    };
-    files_it_away
-        && at_the_cursor
-        && aim.cursor.is_some()
-        && matches!(aim.selection, Selection::These(marked) if marked.is_empty())
-        && matches!(shown, Some(ListScope::Mailbox(_) | ListScope::Unified))
 }
 
 /// Point app state at what the user is looking at.
@@ -592,6 +550,29 @@ mod tests {
         );
     }
 
+    /// T167: Focus's inbox is its own scope, not the unified inbox's, so
+    /// a whole-view selection there is about what Focus lists; the
+    /// has-action filter's few rows are not something `X` is aimed at yet.
+    #[test]
+    fn focus_s_inbox_is_a_scope_of_its_own_over_the_accounts_it_could_show() {
+        use postio_model::{AccountId, FocusScope};
+
+        assert_eq!(
+            view_scope(ListScope::Focus(FocusScope::Inbox), &[AccountId::new(2)]),
+            Some(ViewScope::Focus {
+                accounts: vec![AccountId::new(2)],
+            }),
+        );
+        assert_eq!(view_scope(ListScope::Focus(FocusScope::Inbox), &[]), None);
+        assert_eq!(
+            view_scope(
+                ListScope::Focus(FocusScope::HasAction),
+                &[AccountId::new(2)]
+            ),
+            None,
+        );
+    }
+
     fn aim<'a>(selection: &'a Selection, cursor: Option<i64>, rows: &'a dyn RowFacts) -> Aim<'a> {
         Aim {
             scope: None,
@@ -599,132 +580,6 @@ mod tests {
             cursor: cursor.map(message),
             rows,
         }
-    }
-
-    /// #1687: which gestures take the cursor's own row out of the view, so
-    /// the cursor steps off it before the store has answered and a second
-    /// press lands on the next message rather than on the one in flight.
-    #[test]
-    fn a_verb_that_files_the_cursors_row_away_from_its_folder_takes_it_out() {
-        use postio_model::{AccountId, MailboxId};
-
-        let rows = FakeRows::threads(&[(7, 3), (8, 4)]);
-        let nothing = Selection::These(Vec::new());
-        let folder = ListScope::Mailbox(MailboxId::new(1));
-        let reachable = [AccountId::new(1)];
-        let at = |shown: ListScope, selection: &Selection, command: Command| {
-            let aim = Aim {
-                scope: view_scope(shown, &reachable),
-                selection,
-                cursor: Some(message(7)),
-                rows: &rows,
-            };
-            takes_the_cursor_row_out(&command, &aim, Some(shown))
-        };
-
-        for command in [
-            Command::default_for(CommandId::Archive),
-            Command::default_for(CommandId::Delete),
-            Command::default_for(CommandId::Snooze),
-            Command::ArchiveThread { thread: None },
-            Command::Move {
-                target: MessageTarget::Selection,
-                to: Some(MailboxId::new(2)),
-            },
-        ] {
-            assert!(
-                at(folder, &nothing, command.clone()),
-                "{command:?} on the cursor's row in a folder takes it out",
-            );
-        }
-
-        assert!(
-            !at(folder, &nothing, Command::default_for(CommandId::Flag)),
-            "a flag changes the row and leaves it where it is",
-        );
-        assert!(
-            !at(
-                folder,
-                &nothing,
-                Command::Move {
-                    target: MessageTarget::Selection,
-                    to: None,
-                },
-            ),
-            "a move with no destination only asks where to",
-        );
-        assert!(
-            !at(
-                folder,
-                &Selection::These(vec![message(8)]),
-                Command::default_for(CommandId::Archive),
-            ),
-            "with rows marked the verb is about them, not the cursor's row",
-        );
-        assert!(
-            !at(
-                folder,
-                &nothing,
-                Command::Archive {
-                    target: MessageTarget::Messages(vec![message(8)]),
-                },
-            ),
-            "a verb that names its own rows is not aimed at the cursor",
-        );
-        assert!(
-            at(
-                ListScope::Unified,
-                &nothing,
-                Command::default_for(CommandId::Archive),
-            ),
-            "Unified is the inboxes (#1692), so an archive takes the row out",
-        );
-        let unreachable = Aim {
-            scope: view_scope(ListScope::Unified, &[]),
-            selection: &nothing,
-            cursor: Some(message(7)),
-            rows: &rows,
-        };
-        assert!(
-            takes_the_cursor_row_out(
-                &Command::default_for(CommandId::Archive),
-                &unreachable,
-                Some(ListScope::Unified),
-            ),
-            "whether an account is reachable decides what Ctrl+A may select, \
-             not whether an archived row leaves the inboxes -- offline, the \
-             archive still happens locally and the row still goes",
-        );
-        assert!(
-            !at(
-                ListScope::Account(AccountId::new(1)),
-                &nothing,
-                Command::default_for(CommandId::Archive),
-            ),
-            "an account's view holds archived mail too",
-        );
-        assert!(
-            !at(
-                ListScope::Flagged(AccountId::new(1)),
-                &nothing,
-                Command::default_for(CommandId::Archive),
-            ),
-            "an archived message is still flagged",
-        );
-        let nowhere = Aim {
-            scope: view_scope(folder, &reachable),
-            selection: &nothing,
-            cursor: None,
-            rows: &rows,
-        };
-        assert!(
-            !takes_the_cursor_row_out(
-                &Command::default_for(CommandId::Archive),
-                &nowhere,
-                Some(folder)
-            ),
-            "no cursor, no row to step off",
-        );
     }
 
     #[test]
@@ -864,7 +719,7 @@ mod tests {
 
     // -- what the mirror puts into app state ----------------------------
     //
-    // Moved here from `postio-app` with the rule itself: these assert
+    // Moved here from the classic app with the rule itself: these assert
     // against `SharedState::resolve`, which is core, and they were only
     // ever in a GTK crate because GTK was what called them. They now run
     // with no display, on any host.

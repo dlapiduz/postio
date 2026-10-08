@@ -11,7 +11,7 @@
 //! # Why they live in the composition root
 //!
 //! A handler needs the store, and `postio-core` is not allowed to know what
-//! SQLite is. `postio-gtk` is not allowed to either. This crate is the one
+//! SQLite is. The view layer is not allowed to either. This crate is the one
 //! that knows both halves exist, so this is where the verb meets the
 //! database.
 //!
@@ -53,6 +53,8 @@ use postio_storage::repository::{
 };
 use postio_storage::{Checkout, Store, WritePermit, WritePriority};
 
+mod focus;
+
 /// The instant a verb stamps -- a send's queue time, a snooze's wake --
 /// read through the clock seam, so a storyboard that freezes the clock
 /// gets the date the rest of its frames show (specs/008-storyboards).
@@ -75,29 +77,43 @@ pub const WIRED: &[CommandId] = &[
     CommandId::Delete,
     CommandId::Move,
     CommandId::Flag,
-    CommandId::MarkUnread,
+    CommandId::ToggleRead,
     CommandId::Snooze,
     CommandId::Unsnooze,
+    // Postio Focus's (specs/007-postio-focus), answered in `focus`.
+    CommandId::RemindIfNoReply,
     // After Unsnooze, matching the registry's own order: `bus.wired()`
     // reports in registry order and `every_wired_command_has_a_handler_and_an_arm`
     // compares the two lists directly.
     CommandId::AddLabel,
+    CommandId::AcceptInvite,
+    CommandId::DeclineInvite,
+    CommandId::StopDigestingSender,
+    CommandId::DismissMarker,
     CommandId::MarkSent,
     CommandId::RetrySend,
     CommandId::CancelSend,
     CommandId::Undo,
     CommandId::MapMailboxRole,
+    CommandId::RestoreFiltered,
+    CommandId::SweepInbox,
 ];
 
-/// How long [`Command::Snooze`] hides a message for, with no duration picker
-/// yet to ask for anything else.
+/// How long [`Command::Snooze`] hides a message for when it names no time:
+/// a keystroke with no picker behind it, which is the classic app's `s`.
 ///
 /// #493's own scope note: a picker mirroring `ScheduleMenu`
-/// (`crates/postio-gtk/src/composer.rs`) is natural follow-up work once a
+/// (the classic composer's schedule menu) is natural follow-up work once a
 /// single sensible default has proven the rest of the feature out — the same
 /// sequencing #6 already used to split scheduled send from snooze in the
-/// first place.
+/// first place. Focus's picker is that work (specs/007-postio-focus research
+/// R6), and it names its time, so this is only ever the default.
 const DEFAULT_SNOOZE: Duration = Duration::hours(3);
+
+/// How long an answer to an invitation waits in the outbox before it may
+/// leave, and so how long it can be taken back (specs/007-postio-focus
+/// FR-102, research R9): about ten seconds, the toast's own life.
+pub const RSVP_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Whether a verb is being performed or replayed backwards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,6 +198,9 @@ struct Applied {
     messages: Vec<MessageId>,
     /// How many messages it touched. `messages.len()` unless it was bulk.
     count: usize,
+    /// How many rows -- conversations -- the person acted on, when that is
+    /// not `count`: what the toast says (`UndoEntry::acting_on`).
+    rows: Option<usize>,
     /// Rows that left a mailbox, grouped by the mailbox they left.
     removed: Vec<(MailboxId, Vec<MessageId>)>,
     /// The mailbox that gained rows, when one did. The list showing it has to
@@ -200,6 +219,25 @@ struct Applied {
     mailboxes_changed: bool,
     /// What takes it back.
     inverse: Vec<Command>,
+    /// How long it can be taken back, when that is shorter than the undo
+    /// stack's own expiry: an answer's reply, which leaves once its window
+    /// closes (`Recovery::Window`, research R9).
+    lasts: Option<std::time::Duration>,
+    /// Whether the rows Focus's inbox surfaces changed: a surfaced reminder
+    /// cleared, a digest archived (`Event::SurfacedChanged`).
+    surfaced: bool,
+}
+
+/// How many conversations `messages` come from: the rows a person would
+/// count, for the toast. A message with no thread is a conversation of one.
+fn conversations<'a>(messages: impl Iterator<Item = &'a Message>) -> usize {
+    messages
+        .map(|message| match message.thread_id {
+            Some(thread) => (Some(thread), None),
+            None => (None, Some(message.id)),
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
 }
 
 /// Everything a verb needs: the store to write, the state to resolve targets
@@ -213,6 +251,13 @@ pub struct Actions {
     database: Store,
     state: SharedState,
     undo: Arc<Mutex<UndoStack>>,
+    /// The parts a verb reads beside the rows: an invitation's calendar
+    /// part, which answering it has to read. `None` for a bus composed
+    /// without them, whose Focus verbs then say they cannot run.
+    blobs: Option<postio_storage::BlobStore>,
+    /// `[focus]`, and where its corrections are written, once Focus mode is
+    /// on (specs/007-postio-focus): empty in every other app.
+    focus: crate::focus::FocusSettings,
 }
 
 impl Actions {
@@ -222,7 +267,25 @@ impl Actions {
             database,
             state,
             undo: Arc::new(Mutex::new(UndoStack::new())),
+            blobs: None,
+            focus: crate::focus::FocusSettings::default(),
         }
+    }
+
+    /// The same verbs, reading `[focus]` and writing the person's
+    /// corrections through `focus`: the wiring's, which Focus mode fills.
+    #[must_use]
+    pub fn with_focus(mut self, focus: crate::focus::FocusSettings) -> Self {
+        self.focus = focus;
+        self
+    }
+
+    /// The same verbs, reading parts from `blobs`: what answering an
+    /// invitation needs of its calendar part (specs/007-postio-focus).
+    #[must_use]
+    pub fn with_blob_store(mut self, blobs: postio_storage::BlobStore) -> Self {
+        self.blobs = Some(blobs);
+        self
     }
 
     /// Run one invocation, reporting through `events`.
@@ -337,7 +400,7 @@ impl Actions {
             }
             // `\Seen` is stored the other way up from how the verb reads:
             // marking unread is clearing a flag, not setting one.
-            Command::MarkUnread { target, unread } => {
+            Command::ToggleRead { target, unread } => {
                 self.set_flag(target, Flag::Seen, unread.map(|unread| !unread))
                     .await?
             }
@@ -348,10 +411,40 @@ impl Actions {
                 let label = label.ok_or_else(|| CommandError::rejected("Pick a label to add"))?;
                 vec![self.set_label(target, label, *on).await?]
             }
-            Command::Snooze { target } => {
-                vec![self.snooze(target, now() + DEFAULT_SNOOZE).await?]
+            Command::Snooze { target, until } => {
+                let until = until.unwrap_or_else(|| now() + DEFAULT_SNOOZE);
+                vec![self.snooze(target, until).await?]
             }
             Command::Unsnooze { target } => vec![self.unsnooze(target).await?],
+            Command::RemindIfNoReply { target, at } => vec![self.remind(target, *at).await?],
+            Command::AcceptInvite { message } => {
+                vec![
+                    self.answer(*message, postio_calendar::Answer::Accept)
+                        .await?,
+                ]
+            }
+            Command::DeclineInvite { message } => {
+                vec![
+                    self.answer(*message, postio_calendar::Answer::Decline)
+                        .await?,
+                ]
+            }
+            Command::DismissMarker { target, dismissed } => {
+                vec![self.dismiss(target, *dismissed).await?]
+            }
+            Command::RestoreFiltered { target, restored } => {
+                self.restore(target, *restored).await?
+            }
+            Command::ArchiveDigest { delivery, archived } => {
+                self.archive_digest(*delivery, *archived).await?
+            }
+            Command::StopDigestingSender {
+                target,
+                stopped,
+                kept,
+            } => vec![self.stop_digesting(target, *stopped, kept.as_ref()).await?],
+            Command::SweepInbox => self.sweep().await?,
+            Command::UnsweepInbox { target } => self.unsweep(target).await?,
             // Deliberately `Some(true)` rather than a toggle: a dwell says
             // "this was read", never "flip whatever it was".
             Command::MarkSent { draft } => vec![self.mark_sent(*draft).await?],
@@ -414,7 +507,7 @@ impl Actions {
             self.act(command, events, Recording::Replay).await?;
         }
         events.emit(Event::UndoPerformed {
-            description: entry.description(),
+            description: entry.undone_description(),
         });
         Ok(())
     }
@@ -767,6 +860,9 @@ impl Actions {
         transaction.commit().await.map_err(store_failure)?;
 
         Ok(Applied {
+            rows: None,
+            lasts: None,
+            surfaced: false,
             account,
             kind,
             messages: Vec::new(),
@@ -819,6 +915,10 @@ impl Actions {
         let destination = mailbox_for(connection, account, to).await?;
 
         let mut by_source: BTreeMap<MailboxId, Vec<MessageId>> = BTreeMap::new();
+        let moved_rows = conversations(
+            rows.iter()
+                .filter(|message| message.mailbox_id != destination),
+        );
         for message in &rows {
             // Already filed: not a failure, just nothing to do for this row.
             if message.mailbox_id == destination {
@@ -861,6 +961,9 @@ impl Actions {
             .flat_map(|(_, ids)| ids.iter().copied())
             .collect();
         Ok(Applied {
+            rows: Some(moved_rows),
+            lasts: None,
+            surfaced: false,
             account,
             kind,
             count: messages.len(),
@@ -987,6 +1090,9 @@ impl Actions {
         transaction.commit().await.map_err(store_failure)?;
 
         Ok(Applied {
+            rows: None,
+            lasts: None,
+            surfaced: false,
             account,
             kind,
             count: moved.len(),
@@ -1007,7 +1113,7 @@ impl Actions {
     /// Row-selection only, the same way `MessageTarget::Selection` bottoms
     /// out for most verbs: a whole-mailbox snooze would need a
     /// `MessageSet::Snoozed`-shaped bulk predicate of its own, which nothing
-    /// asks for yet (`view_scope` in `postio-app` deliberately does not offer
+    /// asks for yet (the classic app's `view_scope` deliberately did not offer
     /// `Ctrl+A` inside the Snoozed view either, for the same reason).
     ///
     /// Local only — no queue row, no server ever hears about a snooze — so
@@ -1042,6 +1148,9 @@ impl Actions {
                 .push(message.id);
         }
         Ok(Applied {
+            rows: None,
+            lasts: None,
+            surfaced: false,
             account,
             kind: UndoKind::Snooze,
             count: ids.len(),
@@ -1065,7 +1174,31 @@ impl Actions {
     /// at once for a selection spanning several.
     async fn unsnooze(&self, target: &MessageTarget) -> Result<Applied, CommandError> {
         let (connection, _permit) = self.connect().await?;
-        let rows = match self.aim(&connection, target).await? {
+        // A conversation row in the Snoozed list stands for the messages
+        // that are asleep, which a thread's visible members leave out.
+        let threads = match self.state.read(|app| app.resolve(target)) {
+            Some(Resolved::Thread(thread)) => Some(vec![thread]),
+            Some(Resolved::Threads(threads)) => Some(threads),
+            _ => None,
+        };
+        let aimed = match threads {
+            Some(threads) => {
+                let mut ids = Vec::new();
+                for thread in threads {
+                    let asleep = ThreadRepository::new(&connection)
+                        .snoozed_messages(thread)
+                        .await
+                        .map_err(store_failure)?;
+                    ids.extend(asleep.into_iter().map(|row| row.id));
+                }
+                if ids.is_empty() {
+                    return Err(CommandError::rejected("Nothing there is snoozed"));
+                }
+                Aim::Rows(self.rows(&connection, ids).await?)
+            }
+            None => self.aim(&connection, target).await?,
+        };
+        let rows = match aimed {
             Aim::Rows(rows) => rows,
             Aim::Bulk(_) => {
                 return Err(CommandError::rejected("Select the messages to unsnooze"));
@@ -1084,19 +1217,37 @@ impl Actions {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
+        // The way back puts each message to sleep until the time it had, not
+        // a default: a snooze chosen from a picker is somebody's plan, and
+        // undoing its cancellation has to give the plan back. Grouped by
+        // that time, one snooze each; a message that was not asleep is not
+        // put to sleep by taking this back.
+        let mut asleep: BTreeMap<chrono::DateTime<Utc>, Vec<MessageId>> = BTreeMap::new();
+        for message in &rows {
+            if let Some(until) = message.snoozed_until {
+                asleep.entry(until).or_default().push(message.id);
+            }
+        }
         Ok(Applied {
+            rows: None,
+            lasts: None,
+            surfaced: false,
             account,
             kind: UndoKind::Unsnooze,
             count: ids.len(),
-            messages: ids.clone(),
+            messages: ids,
             removed: Vec::new(),
             arrived: None,
             reloaded,
             changed: Vec::new(),
             mailboxes_changed: false,
-            inverse: vec![Command::Snooze {
-                target: MessageTarget::Messages(ids),
-            }],
+            inverse: asleep
+                .into_iter()
+                .map(|(until, ids)| Command::Snooze {
+                    target: MessageTarget::Messages(ids),
+                    until: Some(until),
+                })
+                .collect(),
         })
     }
 
@@ -1223,6 +1374,9 @@ impl Actions {
             on: Some(!wanted),
         };
         Ok(Applied {
+            rows: None,
+            lasts: None,
+            surfaced: false,
             account,
             kind: UndoKind::Label,
             count: changed.len(),
@@ -1362,7 +1516,7 @@ impl Actions {
     ) -> Result<Applied, CommandError> {
         // Only the two flags with a column of their own can be written this
         // way; nothing reaches here with another, because `Flag` and
-        // `MarkUnread` are the only verbs that flag anything.
+        // `ToggleRead` are the only verbs that flag anything.
         let column = ColumnFlag::of(&flag)
             .ok_or_else(|| CommandError::rejected("That flag does not work on a whole mailbox"))?;
         let repository = MessageRepository::new(connection);
@@ -1434,7 +1588,7 @@ impl Actions {
             from,
         };
         let inverse = match flag {
-            Flag::Seen => Command::MarkUnread {
+            Flag::Seen => Command::ToggleRead {
                 target,
                 unread: Some(wanted),
             },
@@ -1444,6 +1598,9 @@ impl Actions {
             },
         };
         Ok(Applied {
+            rows: None,
+            lasts: None,
+            surfaced: false,
             account,
             kind: kind_for(&flag, wanted).await,
             messages: Vec::new(),
@@ -1508,7 +1665,7 @@ impl Actions {
         // Every touched row held the opposite value — that is what "touched"
         // means here — so one command takes all of them back.
         let inverse = match flag {
-            Flag::Seen => Command::MarkUnread {
+            Flag::Seen => Command::ToggleRead {
                 target: MessageTarget::Messages(changed.clone()),
                 unread: Some(wanted),
             },
@@ -1518,6 +1675,9 @@ impl Actions {
             },
         };
         Ok(Applied {
+            rows: Some(conversations(touched.iter().copied())),
+            lasts: None,
+            surfaced: false,
             account,
             kind: kind_for(&flag, wanted).await,
             count: changed.len(),
@@ -1564,6 +1724,9 @@ impl Actions {
         if applied.mailboxes_changed {
             events.emit(Event::MailboxesChanged { account });
         }
+        if applied.surfaced {
+            events.emit(Event::SurfacedChanged);
+        }
         if !recording.records().await {
             return;
         }
@@ -1574,6 +1737,14 @@ impl Actions {
             UndoEntry::new(applied.kind, applied.messages, applied.inverse)
         } else {
             UndoEntry::bulk(applied.kind, applied.count, applied.inverse)
+        };
+        let entry = match applied.rows {
+            Some(rows) if !entry.is_bulk() => entry.acting_on(rows),
+            _ => entry,
+        };
+        let entry = match applied.lasts {
+            Some(window) => entry.lasting(window),
+            None => entry,
         };
         // The description comes back from the stack rather than from the
         // entry handed to it: a burst coalesces into the unit already there,
@@ -1670,6 +1841,36 @@ impl Actions {
                 // Unified shows (#1692): a set over the account's whole mail
                 // would reach the Archive the view never drew. An account
                 // with no inbox yet has nothing in the view to select.
+                // Focus's inbox, one predicate per account's inbox as the
+                // aggregate is, asking Focus's membership rather than the
+                // folder's: held digest mail is not listed, so it is not
+                // selected. A deselected row is a conversation folded across
+                // accounts, so every copy of it stays out, in every unit
+                // (T167).
+                ViewScope::Focus { accounts } => {
+                    let (lone, except_threads) = focus_exceptions(connection, &except).await?;
+                    let folders = MailboxRepository::new(connection);
+                    let mut units = Vec::with_capacity(accounts.len());
+                    for account in accounts {
+                        let Some(inbox) = folders
+                            .by_role(account, MailboxRole::Inbox)
+                            .await
+                            .map_err(store_failure)?
+                        else {
+                            continue;
+                        };
+                        units.push(BulkUnit {
+                            set: MessageSet::InFocusInbox {
+                                mailbox: inbox.id,
+                                except: lone.clone(),
+                                except_threads: except_threads.clone(),
+                            },
+                            account,
+                            from: Some(inbox.id),
+                        });
+                    }
+                    units
+                }
                 ViewScope::Unified { accounts } => {
                     let folders = MailboxRepository::new(connection);
                     let mut units = Vec::with_capacity(accounts.len());
@@ -1824,6 +2025,9 @@ impl Actions {
         transaction.commit().await.map_err(store_failure)?;
 
         Ok(Applied {
+            rows: None,
+            lasts: None,
+            surfaced: false,
             account,
             kind: UndoKind::MapMailboxRole,
             count: 1,
@@ -1873,6 +2077,9 @@ impl Actions {
             .await
             .map_err(store_failure)?;
         Ok(Applied {
+            rows: None,
+            lasts: None,
+            surfaced: false,
             account,
             kind: UndoKind::RetriedSend,
             // The Outbox row appears when this succeeds, and the Drafts
@@ -1882,7 +2089,9 @@ impl Actions {
             messages: Vec::new(),
             removed: Vec::new(),
             arrived: None,
-            reloaded: Vec::new(),
+            // And the row moves from Drafts to the Outbox, both lists over
+            // the Drafts folder.
+            reloaded: drafts_folder(&connection, account).await?,
             changed: Vec::new(),
             // The way back is `CancelSend`, which is a command a person can
             // reach rather than an inverse invented to satisfy undo's shape.
@@ -1899,29 +2108,46 @@ impl Actions {
     async fn cancel_send(&self, draft: Option<DraftId>) -> Result<Applied, CommandError> {
         use postio_storage::repository::CancelSendOutcome;
 
-        let (connection, _permit) = self.connect().await?;
-        let drafts = DraftRepository::new(&connection);
-        let draft = self.stopped_send(&connection, &drafts, draft).await?;
+        let (mut connection, _permit) = self.connect().await?;
+        let draft = {
+            let drafts = DraftRepository::new(&connection);
+            self.stopped_send(&connection, &drafts, draft).await?
+        };
         let account = draft.account_id;
 
-        match drafts
+        // One transaction for the cancel and what follows from it: an answer
+        // to an invitation is withdrawn with its send or not at all, or the
+        // due timer would later make final an answer nothing sent.
+        let transaction = connection.transaction().await.map_err(store_failure)?;
+        match DraftRepository::new(&transaction)
             .cancel_send(draft.id, now())
             .await
             .map_err(store_failure)?
         {
-            CancelSendOutcome::Cancelled => Ok(Applied {
-                account,
-                kind: UndoKind::CancelledSend,
-                // And here the Outbox row may be the one that disappears.
-                mailboxes_changed: true,
-                count: 1,
-                messages: Vec::new(),
-                removed: Vec::new(),
-                arrived: None,
-                reloaded: Vec::new(),
-                changed: Vec::new(),
-                inverse: Vec::new(),
-            }),
+            CancelSendOutcome::Cancelled => {
+                // An answer to an invitation taken back inside its window is
+                // withdrawn whole: the row it answers repaints unanswered.
+                let changed = self.withdraw_answer(&transaction, &draft).await?;
+                // The row leaves the Outbox for Drafts.
+                let reloaded = drafts_folder(&transaction, account).await?;
+                transaction.commit().await.map_err(store_failure)?;
+                Ok(Applied {
+                    rows: None,
+                    lasts: None,
+                    surfaced: false,
+                    account,
+                    kind: UndoKind::CancelledSend,
+                    // And here the Outbox row may be the one that disappears.
+                    mailboxes_changed: true,
+                    count: 1,
+                    messages: Vec::new(),
+                    removed: Vec::new(),
+                    arrived: None,
+                    reloaded,
+                    changed,
+                    inverse: Vec::new(),
+                })
+            }
             CancelSendOutcome::NotQueued => Err(CommandError::rejected(
                 "That message is not waiting to be sent",
             )),
@@ -2010,13 +2236,17 @@ impl Actions {
             .await
             .map_err(store_failure)?;
         Ok(Applied {
+            rows: None,
+            lasts: None,
+            surfaced: false,
             account: draft.account_id,
             kind: UndoKind::MarkedSent,
             count: 1,
             messages: Vec::new(),
             removed: Vec::new(),
             arrived: None,
-            reloaded: Vec::new(),
+            // A sent draft is no longer listed in Drafts.
+            reloaded: drafts_folder(&connection, draft.account_id).await?,
             changed: Vec::new(),
             // No inverse, and #674 asked for one -- worth saying why.
             //
@@ -2085,6 +2315,23 @@ impl Actions {
     }
 }
 
+/// `account`'s Drafts folder, as the one list a draft's send verb moves its
+/// row within: Drafts and the Outbox are both over it (spec 003), so a list
+/// event for it is what tells either to read its rows again. Empty when the
+/// account has none yet; there is then no row to have moved.
+async fn drafts_folder(
+    connection: &postio_storage::Connection,
+    account: AccountId,
+) -> Result<Vec<MailboxId>, CommandError> {
+    Ok(MailboxRepository::new(connection)
+        .by_role(account, postio_model::mailbox::MailboxRole::Drafts)
+        .await
+        .map_err(store_failure)?
+        .map(|mailbox| mailbox.id)
+        .into_iter()
+        .collect())
+}
+
 /// Which folder a relocation lands in.
 async fn mailbox_for(
     connection: &Checkout,
@@ -2107,6 +2354,35 @@ async fn mailbox_for(
                 ))
             }),
     }
+}
+
+/// What a deselection in Focus's inbox takes back out: the messages that
+/// belong to no conversation, and every conversation a deselected row
+/// stands for, each folded copy included (T167).
+async fn focus_exceptions(
+    connection: &Checkout,
+    except: &[MessageId],
+) -> Result<(Vec<MessageId>, Vec<ThreadId>), CommandError> {
+    let messages = MessageRepository::new(connection);
+    let mut lone = Vec::new();
+    let mut threads = Vec::new();
+    for id in except {
+        match messages.get(*id).await.map_err(store_failure)? {
+            Some(Message {
+                thread_id: Some(thread),
+                ..
+            }) => threads.push(thread),
+            _ => lone.push(*id),
+        }
+    }
+    if threads.is_empty() {
+        return Ok((lone, threads));
+    }
+    let threads = ThreadRepository::new(connection)
+        .with_folded_copies(&threads)
+        .await
+        .map_err(store_failure)?;
+    Ok((lone, threads))
 }
 
 async fn thread_messages(
@@ -2681,6 +2957,13 @@ mod tests {
         })
     }
 
+    fn undone(events: &[Event]) -> Option<String> {
+        events.iter().find_map(|event| match event {
+            Event::UndoPerformed { description } => Some(description.clone()),
+            _ => None,
+        })
+    }
+
     // ── Archive ──────────────────────────────────────────────────────────
 
     /// ADR 0005 Q4 (#182). A unified view spans every enabled account, so a
@@ -2881,7 +3164,7 @@ mod tests {
             "the server has to be told the way back too"
         );
         assert!(world.drained().await.contains(&Event::UndoPerformed {
-            description: "Archived 1 message".into(),
+            description: "Archived 1 message, undone".into(),
         }));
     }
 
@@ -2919,6 +3202,25 @@ mod tests {
         );
         assert_eq!(world.queued().await.len(), 2);
         let _ = thread;
+        assert_eq!(
+            completion(&world.drained().await).await,
+            Some(("Archived 1 message", true)),
+            "one conversation was archived, and the toast counts what was chosen"
+        );
+
+        world.run(Command::Undo).await.expect("undo");
+        for message in [first, second] {
+            assert_eq!(
+                world.mailbox_of(message).await,
+                world.inbox,
+                "the one `u` brings the whole conversation back"
+            );
+        }
+        assert_eq!(
+            undone(&world.drained().await),
+            Some("Archived 1 message, undone".to_owned()),
+            "and says it was undone, not that it was archived"
+        );
     }
 
     // ── Delete ───────────────────────────────────────────────────────────
@@ -3027,7 +3329,7 @@ mod tests {
         world.looking_at(world.inbox, &[], Some(message)).await;
 
         world
-            .run(Command::MarkUnread {
+            .run(Command::ToggleRead {
                 target: MessageTarget::Selection,
                 unread: None,
             })
@@ -3056,6 +3358,7 @@ mod tests {
         world
             .run(Command::Snooze {
                 target: MessageTarget::Selection,
+                until: None,
             })
             .await
             .expect("snooze");
@@ -3088,6 +3391,7 @@ mod tests {
         world
             .run(Command::Snooze {
                 target: MessageTarget::Selection,
+                until: None,
             })
             .await
             .expect("snooze");
@@ -3110,6 +3414,7 @@ mod tests {
         world
             .run(Command::Snooze {
                 target: MessageTarget::Selection,
+                until: None,
             })
             .await
             .expect("snooze");
@@ -3148,6 +3453,7 @@ mod tests {
         let error = world
             .run(Command::Snooze {
                 target: MessageTarget::Selection,
+                until: None,
             })
             .await
             .expect_err("a whole-mailbox snooze is not offered");
@@ -3407,6 +3713,67 @@ mod tests {
             DraftState::Editing,
             "and it is left exactly as it was"
         );
+    }
+
+    #[tokio::test]
+    async fn settling_a_send_says_the_drafts_list_changed() {
+        // Each of the three verbs moves a draft between the lists that show
+        // it -- Retry from Drafts into the Outbox, Cancel back out of it,
+        // Mark as sent out of Drafts -- and both lists are over the Drafts
+        // folder (spec 003). A list hears that its rows moved only from a
+        // list event, and with none it kept drawing the row the verb had
+        // just moved (Focus's T239).
+        let world = world().await;
+        let drafts_folder = {
+            let connection = world.database.connect().await.expect("a connection");
+            test_support::mailbox(&connection, &world.account, "Drafts")
+                .await
+                .id
+        };
+        let draft = |state: DraftState| {
+            let world = &world;
+            async move {
+                let connection = world.database.connect().await.expect("a connection");
+                let drafts = postio_storage::repository::DraftRepository::new(&connection);
+                let mut draft = postio_model::Draft::new(world.account.id);
+                draft.to = vec![postio_model::EmailAddress::new(
+                    None::<String>,
+                    "quinn@example.net",
+                )];
+                let id = drafts.save(&mut draft).await.expect("save");
+                if state == DraftState::Queued {
+                    drafts
+                        .queue_send(&mut draft, chrono::Utc::now())
+                        .await
+                        .expect("queue it");
+                } else {
+                    drafts.set_state(id, state).await.expect("the state");
+                }
+                id
+            }
+        };
+        let listed = Event::MessageListChanged {
+            account: world.account.id,
+            mailbox: drafts_folder,
+        };
+        for (state, command) in [
+            (DraftState::Failed, CommandId::RetrySend),
+            (DraftState::Queued, CommandId::CancelSend),
+            (DraftState::Unconfirmed, CommandId::MarkSent),
+        ] {
+            let id = draft(state).await;
+            world.drained().await;
+            let command = match command {
+                CommandId::RetrySend => Command::RetrySend { draft: Some(id) },
+                CommandId::CancelSend => Command::CancelSend { draft: Some(id) },
+                _ => Command::MarkSent { draft: Some(id) },
+            };
+            world.run(command.clone()).await.expect("it applies");
+            assert!(
+                world.drained().await.contains(&listed),
+                "{command:?} moved a draft and said nothing to the lists over Drafts"
+            );
+        }
     }
 
     // ── Marking read because you looked at it (#71) ──────────────────────
@@ -4171,7 +4538,7 @@ mod tests {
         world.everything_in(world.inbox).await;
 
         world
-            .run(Command::MarkUnread {
+            .run(Command::ToggleRead {
                 target: MessageTarget::Selection,
                 unread: Some(false),
             })
@@ -4352,7 +4719,7 @@ mod tests {
         world.everything_in(world.inbox).await;
 
         world
-            .run(Command::MarkUnread {
+            .run(Command::ToggleRead {
                 target: MessageTarget::Selection,
                 unread: Some(false),
             })

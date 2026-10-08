@@ -51,7 +51,7 @@ impl From<postio_core::ConnectionState> for ConnectionStateFfi {
             ConnectionState::Online => ConnectionStateFfi::Online,
             ConnectionState::Failing { reason } => ConnectionStateFfi::Failing {
                 reason: match reason {
-                    FailureReason::Auth => FailureReasonFfi::Auth,
+                    FailureReason::Auth | FailureReason::NoPassword => FailureReasonFfi::Auth,
                     FailureReason::Network => FailureReasonFfi::Network,
                     FailureReason::Server => FailureReasonFfi::Server,
                     _ => FailureReasonFfi::Other,
@@ -250,7 +250,7 @@ pub enum UiEvent {
 ///
 /// The four are drawn differently and mean different things: a completion may
 /// offer to be taken back, a refusal is a quiet hint rather than an alarm,
-/// and a failure is the one that has to be hard to miss. `postio-gtk` draws
+/// and a failure is the one that has to be hard to miss. The classic app drew
 /// each with its own toast, which is the shape this is named after.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum NoticeKindFfi {
@@ -354,7 +354,7 @@ impl From<postio_core::Event> for UiEvent {
                 message: reason,
                 undoable: false,
             },
-            Event::Error { message } => UiEvent::Notice {
+            Event::Error { message, .. } => UiEvent::Notice {
                 kind: NoticeKindFfi::Failed,
                 message,
                 undoable: false,
@@ -447,6 +447,7 @@ mod tests {
         assert_eq!(
             UiEvent::from(postio_core::Event::Error {
                 message: "The server refused the password".to_owned(),
+                account: None,
             }),
             UiEvent::Notice {
                 kind: NoticeKindFfi::Failed,

@@ -6,7 +6,7 @@
 //! Three decisions make that true and none of them is a widget — which list
 //! a message belongs to, whether the reader may offer to leave it at all, and
 //! what the banner says about it — so they live here rather than in either
-//! frontend. The GTK banner (`postio_gtk::reader::banner::UnsubscribeBanner`)
+//! frontend. The GTK banner
 //! and the macOS one call the same three functions, which is ADR 0019 Q6's
 //! answer to a privacy rule forking silently across two readers.
 //!
@@ -46,7 +46,7 @@ pub struct Offer {
 /// `List-Id` (RFC 2919) when the sender set one, and the sender's domain
 /// otherwise — because the fallback is what makes the banner useful on the
 /// bulk mail that does *not* announce itself as a list, which is most of it.
-/// Moved here from `postio-app`'s reading wiring, where it was the only copy
+/// Moved here from the classic app's reading wiring, where it was the only copy
 /// and the macOS reader could not reach it.
 ///
 /// `None` only when a message has neither, which means it has no sender
@@ -82,6 +82,25 @@ pub fn offer(
         summary: summary(&list_identifier),
         list_identifier,
     })
+}
+
+/// What the reader's notice band shows for this message, or nothing.
+///
+/// The band appears only when the message really offers to leave a list: it
+/// has a `List-Id`, or it carries a `List-Unsubscribe`
+/// (`messages.unsubscribe_offered`, `None` while unknown). Personal mail has
+/// neither and stays clean. This gates the *band* only; [`offer`] stays the
+/// rule for `U`, which works on any message that rule allows.
+pub fn banner(
+    send_state: Option<DraftState>,
+    list_id: Option<&str>,
+    unsubscribe_offered: Option<bool>,
+    from: &[EmailAddress],
+) -> Option<Offer> {
+    if list_id.is_none() && unsubscribe_offered != Some(true) {
+        return None;
+    }
+    offer(send_state, list_id, from)
 }
 
 /// The date an activation is listed under: `2026-09-21`.
@@ -155,6 +174,29 @@ mod tests {
             .iter()
             .map(|activation| activation.list_identifier.as_str())
             .collect()
+    }
+
+    #[test]
+    fn the_band_shows_for_a_list_id_or_a_list_unsubscribe_and_not_for_personal_mail() {
+        let sender = from("ada@example.org");
+        let band = |send_state, list_id, offered| banner(send_state, list_id, offered, &sender);
+        assert_eq!(
+            band(None, Some("news.example.org"), Some(false)).map(|o| o.list_identifier),
+            Some("news.example.org".to_owned()),
+            "a List-Id is a list"
+        );
+        assert_eq!(
+            band(None, None, Some(true)).map(|o| o.list_identifier),
+            Some("example.org".to_owned()),
+            "a List-Unsubscribe alone offers the sender's domain"
+        );
+        assert_eq!(band(None, None, Some(false)), None, "personal mail");
+        assert_eq!(band(None, None, None), None, "not known is not offered");
+        assert_eq!(
+            band(Some(DraftState::Queued), Some("x.example.org"), Some(true)),
+            None,
+            "outgoing mail has none"
+        );
     }
 
     #[test]

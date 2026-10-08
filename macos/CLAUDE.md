@@ -54,11 +54,9 @@ it syncs on launch.
 reads exactly one variable and hands it to the Keychain; it is never printed,
 never logged, and there is no field on the account row that could hold it.
 
-**Not `postio-app`.** The helper lives in `postio-session` because
-`postio-app` links GTK, which is precisely the crate a Mac cannot compile
-(ADR 0019). Its ancestor was a `postio-app` example, so the only platform
-without an onboarding screen was the only platform that could not run the
-stand-in for one.
+**Not in a GTK crate.** The helper lives in `postio-session` because
+`postio-gtk` and `postio-widgets` link GTK, which a Mac cannot compile
+(ADR 0019).
 
 ### What to expect from the Keychain
 

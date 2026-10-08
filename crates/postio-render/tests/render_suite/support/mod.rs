@@ -45,6 +45,7 @@ pub fn request_for(html: String, theme: Theme) -> RenderRequest {
         generation: 1,
         document: html,
         plain_text: String::new(),
+        fallback: None,
         over_cap: None,
         resources: Arc::new(resources),
         viewport: Viewport {

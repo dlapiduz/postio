@@ -7,7 +7,7 @@ macOS as well ends that: a tool present on `ubuntu-latest` and absent on
 `macos-latest` turns a silent skip into a green job that tested nothing, on
 exactly the platform the suite was added to cover.
 
-So the rule is the one `gtk_display_required.rs` and
+So the rule is the one `widgets_suite`'s `display_required` and
 `WindowServerRequiredTests` already state, in the third language this
 repository writes gates in:
 

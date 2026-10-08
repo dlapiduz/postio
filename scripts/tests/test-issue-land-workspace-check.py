@@ -4,14 +4,14 @@
 `main` went red twice in one day, both times invisibly to the process that
 admitted it, and both times the same shape: a shared type gained a field and
 another crate's **test targets** stopped compiling. `Event::BackfillProgress`
-gained `footprint`; six call sites in `postio-gtk`'s tests still built it by
+gained `footprint`; six call sites in the GTK crate's tests still built it by
 literal. The libraries compiled, so `cargo build` was green and
 `cargo check -p postio-core` was green.
 
 The gate could not have caught it. It runs clippy and tests over *the crates
-you changed*, and whoever added the field changed `postio-core`, not
-`postio-gtk` — so nothing in their chain had any reason to compile
-`postio-gtk`'s tests. Green meant "the things I named still work"; the things
+you changed*, and whoever added the field changed `postio-core`, not the
+GTK crate — so nothing in their chain had any reason to compile its
+tests. Green meant "the things I named still work"; the things
 nobody named were checked by luck, and the next session to touch that crate
 paid for it.
 
@@ -142,7 +142,7 @@ def world(base: Path, *, fail_workspace_check: bool) -> tuple[Path, Path]:
         (REPO_ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"), encoding="utf-8"
     )
     (root / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
-    for crate in ("postio-gtk", "postio-core", "postio-app"):
+    for crate in ("postio-gtk", "postio-core", "postio-widgets"):
         (root / "crates" / crate / "src").mkdir(parents=True)
         (root / "crates" / crate / "src" / "lib.rs").write_text(
             "// x\n", encoding="utf-8"

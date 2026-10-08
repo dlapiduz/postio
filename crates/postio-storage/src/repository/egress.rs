@@ -123,4 +123,30 @@ mod tests {
         assert_eq!(recent[1].subsystem, EgressSubsystem::Discovery);
         assert_eq!(recent[1].account, None);
     }
+
+    #[tokio::test]
+    async fn a_call_to_the_person_s_own_model_is_logged_under_model() {
+        // Spec 007 FR-168: every call to the local model is in the log, in
+        // the same table as the mail protocols' connections (ADR 0009 Q6).
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let log = EgressLogRepository::new(&connection);
+        log.record(&EgressEvent {
+            at: Utc::now(),
+            subsystem: EgressSubsystem::Model,
+            account: None,
+            host: "127.0.0.1".to_string(),
+            port: 11434,
+            outcome: EgressOutcome::Connected,
+        })
+        .await
+        .expect("the store takes a model call");
+
+        let recent = log.recent(1).await.expect("recent");
+        assert_eq!(recent[0].subsystem, EgressSubsystem::Model);
+        assert_eq!(
+            (recent[0].host.as_str(), recent[0].port),
+            ("127.0.0.1", 11434)
+        );
+    }
 }

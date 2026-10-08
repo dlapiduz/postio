@@ -1,6 +1,6 @@
 //! Messages written out as `.eml` files, for dragging out of a frontend.
 //!
-//! Moved from `postio-app`'s export (`specs/005-tui-frontend` T018): an
+//! Moved from the classic app's export (`specs/005-tui-frontend` T018): an
 //! `.eml` file *is* the raw RFC 5322 source, which the sync engine has
 //! already put in the blob store as `messages.raw_blob_id`, so an export is
 //! a copy, not a serialisation. What each file is called is the frontend's
@@ -32,29 +32,7 @@ pub async fn write_messages(
 ) -> Result<Vec<PathBuf>, String> {
     let mut written = Vec::new();
     for (message, path) in messages {
-        let raw = match crate::parts::raw_blob(database, *message).await? {
-            Some(raw) => raw,
-            None => {
-                let engine = engine.clone().ok_or(
-                    "This account is not syncing, so that message cannot be fetched to export",
-                )?;
-                // Every byte, not the text axis: what is being written here
-                // is the original RFC 5322 message, and under ADR 0017 the
-                // background lane stores no raw source at all. `request_body`
-                // would fetch the words, leave `raw_blob_id` empty, and this
-                // would wait out its deadline for bytes nothing was fetching.
-                if !engine
-                    .request_whole_message(*message)
-                    .await
-                    .map_err(|error| error.message().to_string())?
-                {
-                    return Err("There is nothing to fetch for that message".into());
-                }
-                crate::parts::wait_for_body(database, *message).await?
-            }
-        };
-
-        let bytes = blobs.get(&raw).map_err(|error| error.to_string())?;
+        let bytes = crate::parts::raw_source(database, blobs, engine.clone(), *message).await?;
         std::fs::write(path, &bytes).map_err(|error| error.to_string())?;
         written.push(path.clone());
     }

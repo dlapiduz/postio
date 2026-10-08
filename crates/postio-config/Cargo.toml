@@ -9,12 +9,17 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
+# A digest rule's day and time (spec 007 T132): types only, no clock.
+chrono = { workspace = true }
 notify = "8.2.0"
 postio-model.workspace = true
 serde = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
 toml_edit = "0.25"
+# `[focus.model]`'s endpoint, read as a URL to tell this computer from
+# another (spec 007 FR-168). Parsing only: nothing here connects.
+url = { workspace = true }
 
 [lints.rust]
 # Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.

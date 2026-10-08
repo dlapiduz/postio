@@ -36,7 +36,7 @@ as of 2026-08-24.
 | OAuth | native | yes | yes, CASA Tier 2 (2025-04-25) | n/a (IS Gmail/Outlook) | yes — system browser + PKCE (ADR 0006); #2 tracks the verified client |
 | Rich-text compose | yes | yes | yes | yes | yes — WebView editor over Postio's own document (ADR 0003, 0004) |
 | Address book | yes | yes | CardDAV + Google/MS contacts | — | contacts and groups, filled from mail (ADR 0007); no vCard import/export, no management surface yet — #4 |
-| Filters / rules | yes | yes | — | Split Inbox (fixed streams) | saved searches pinned in the sidebar; rules designed (ADR 0008), not built — roadmap #5 |
+| Filters / rules | yes | yes | — | Split Inbox (fixed streams) | pinned saved searches; rules designed (ADR 0008), not built — roadmap #5 |
 | AI: summarize / draft | yes (Gemini) | no | planned (Ollama) | **yes — flagship**, acquired by Grammarly Oct 2025 | deferred by design — epic #20 |
 | Read receipts / open tracking | opt-in, sender-visible only | no | — | **yes — "Read Statuses": device, count, timing** | **never — `docs/PRODUCT.md` §21** |
 | Follow-up nudges on sent mail | "Nudges" | no | — | yes — "Auto Reminders" | not tracked (see below) |

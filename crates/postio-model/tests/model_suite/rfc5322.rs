@@ -57,7 +57,7 @@ fn no_generated_line_exceeds_the_998_octet_limit_or_the_78_recommendation() {
             )
         })
         .collect();
-    let built = outgoing::build(&draft("many", recipients), &identity(), &[], None);
+    let built = outgoing::build(&draft("many", recipients), &identity(), &[], None, None);
 
     let longest = wire_lines(&built.raw)
         .into_iter()
@@ -95,7 +95,7 @@ fn a_long_reference_chain_folds_and_survives_the_round_trip() {
         "Re: chain",
         vec![EmailAddress::new(None::<String>, "a@example.com")],
     );
-    let built = outgoing::build(&reply, &identity(), &[], Some(&parent));
+    let built = outgoing::build(&reply, &identity(), &[], Some(&parent), None);
 
     assert!(
         wire_lines(&built.raw).iter().all(|line| line.len() <= 78),
@@ -217,6 +217,7 @@ fn a_display_name_needing_quotes_survives_the_round_trip() {
         &identity(),
         &[],
         None,
+        None,
     );
     assert_eq!(
         mime::parse(&built.raw).to,
@@ -234,7 +235,7 @@ fn a_non_ascii_display_name_and_subject_are_encoded_and_decode_back() {
         vec![EmailAddress::new(Some("Ünïcodé Nâme"), "u@example.com")],
     );
     d.cc = vec![EmailAddress::new(None::<String>, "plain@example.com")];
-    let built = outgoing::build(&d, &identity(), &[], None);
+    let built = outgoing::build(&d, &identity(), &[], None, None);
 
     assert!(
         built.raw.is_ascii(),
@@ -362,7 +363,7 @@ fn a_line_break_in_a_header_value_cannot_become_a_header() {
             vec![EmailAddress::new(Some("Grace"), "grace@example.net")],
         );
         draft.subject = subject.to_owned();
-        let built = outgoing::build(&draft, &identity(), &[], None);
+        let built = outgoing::build(&draft, &identity(), &[], None, None);
 
         let names = header_names(&built.raw);
         for injected in ["x-injected", "x-one", "x-two"] {
@@ -404,7 +405,7 @@ fn replying_to_a_message_whose_subject_carries_line_breaks_writes_the_headers_th
          nothing about the generator"
     );
 
-    let built = outgoing::build(&draft, &identity(), &[], None);
+    let built = outgoing::build(&draft, &identity(), &[], None, None);
     let names = header_names(&built.raw);
     let expected = [
         "message-id",
@@ -435,6 +436,7 @@ fn generated_bytes_use_crlf_throughout() {
         ),
         &identity(),
         &[],
+        None,
         None,
     );
     let text = String::from_utf8_lossy(&built.raw);

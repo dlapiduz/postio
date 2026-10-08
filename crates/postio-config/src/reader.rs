@@ -50,6 +50,20 @@ impl Default for ReaderConfig {
     }
 }
 
+/// Write `[reader] zoom = percent` to the file at `path`, touching only
+/// `[reader]`; a file that already says so is left alone. Both desktop apps
+/// keep a zoom a person chose this way (spec 006 FR-021, spec 007 T242).
+pub fn save_zoom(path: &std::path::Path, percent: u16) -> Result<()> {
+    let original = std::fs::read_to_string(path).unwrap_or_default();
+    let mut config = crate::Config::from_toml_str(&original).unwrap_or_default();
+    if config.reader.zoom == percent {
+        return Ok(());
+    }
+    config.reader.zoom = percent;
+    let patched = patch_reader(&original, &config.reader)?;
+    crate::Config::write_text_to_path(&patched, path)
+}
+
 /// Rewrites `text`'s `[reader]` table to match `reader`, leaving every
 /// other section and its comments untouched -- `patch_ui`'s tradeoff.
 pub fn patch_reader(text: &str, reader: &ReaderConfig) -> Result<String> {
@@ -81,6 +95,23 @@ mod tests {
 
     fn parse(text: &str) -> Config {
         toml::from_str(text).expect("a config")
+    }
+
+    #[test]
+    fn a_saved_zoom_touches_only_the_reader_table() {
+        let directory =
+            std::env::temp_dir().join(format!("postio-save-zoom-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("a directory");
+        let path = directory.join("config.toml");
+        std::fs::write(&path, "# mine\n[ui]\ndensity = \"compact\"\n").expect("a config");
+        save_zoom(&path, 125).expect("saved");
+        let text = std::fs::read_to_string(&path).expect("read back");
+        assert!(
+            text.contains("# mine") && text.contains("density"),
+            "{text}"
+        );
+        assert_eq!(parse(&text).reader.zoom, 125);
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[test]

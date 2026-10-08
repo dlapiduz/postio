@@ -1,7 +1,7 @@
 //! Whether new mail is worth interrupting somebody for, and what the
 //! notification may say — decided once, for every frontend.
 //!
-//! `postio-app` and the macOS app each had a copy of this decision, and
+//! The classic app and the macOS app each had a copy of this decision, and
 //! they had already drifted: the macOS copy suppressed mail landing in the
 //! folder on screen and the GTK copy did not; one pointed a burst's click
 //! at the folder and the other at the newest message. This module is the

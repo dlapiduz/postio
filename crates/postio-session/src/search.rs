@@ -3,7 +3,7 @@
 //! `postio_index::search` is the executor and was always reachable from
 //! anywhere; this is the thin layer above it that decides how many hits one
 //! run brings back and reconstructs the excerpt each hit shows. That layer
-//! lived in `postio-app` until #660, where only the GTK build could reach it.
+//! lived in the classic app until #660, where only the GTK build could reach it.
 //!
 //! It is here rather than there because it is a *product* decision — how many
 //! results, and which text gets highlighted — and two copies of a product

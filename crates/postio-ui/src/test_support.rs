@@ -35,6 +35,13 @@ pub fn bodies_sanitised() -> u64 {
     cost::read(&cost::BODIES_SANITISED)
 }
 
+/// How many message bodies this thread has classified and treated (app
+/// colours or paper) for a reader -- specs/007-postio-focus T223 holds this
+/// at zero on the interface thread.
+pub fn bodies_treated() -> u64 {
+    cost::read(&cost::BODIES_TREATED)
+}
+
 /// How many message bodies this thread has parsed to decide whether they
 /// open in reader view -- a whole html5ever parse each.
 pub fn bulk_judged() -> u64 {
@@ -57,12 +64,6 @@ pub fn surfaces_created() -> u64 {
 /// bug worth seeing rather than saturating quietly at zero.
 pub fn surfaces_held() -> i64 {
     cost::read(&cost::SURFACES_CREATED) as i64 - cost::read(&cost::SURFACES_RELEASED) as i64
-}
-
-/// How many times a conversation drew at its deadline rather than whole.
-/// See [`crate::reader::cost::note_waited_out`].
-pub fn redraws_waited_out() -> u64 {
-    cost::read(&cost::WAITED_OUT)
 }
 
 /// How many list pages this process has asked the store for.

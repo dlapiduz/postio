@@ -68,8 +68,8 @@ during composition and the panel is not on screen then; every one of these
 surfaces already refreshes on its own `map`, so the read costs nothing to
 defer and everything to leave where it is.
 
-The gate is `app_suite`'s `startup_reads` case: pointing a window at a
+The gate is `focus_suite`'s `startup_reads` case: pointing a window at a
 seeded store, counted, at two sizes, asserting the same numbers from both.
 It counts the main thread and nothing else — which is the claim rather than
-a limitation, since everything `feed_the_window` hands to the runtime is off
+a limitation, since everything `startup::adopt` hands to the host is off
 that thread by construction and delays nothing on screen.

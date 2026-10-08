@@ -15,6 +15,7 @@ fn render(toggled: &[&str]) -> (postio_render::RenderedDocument, postio_render::
         generation: 1,
         document: DOCUMENT.to_owned(),
         plain_text: String::new(),
+        fallback: None,
         over_cap: None,
         resources: Arc::new(Resources::new()),
         viewport: Viewport {
@@ -104,4 +105,84 @@ fn fonts() -> &'static postio_render::fonts::FontSet {
             mono: "IBM Plex Mono",
         })
     })
+}
+
+/// Spec 007 T067 (FR-034): a single message's quoted history reaches the
+/// snapshot as a fold with an id, drawn closed under its count, and opens
+/// by that id -- what activating it asks of the renderer. Before the ids,
+/// a single message's quote had no id to be opened by, and the snapshot
+/// did not list it.
+#[test]
+fn a_single_messages_quote_opens_by_its_id() {
+    use postio_body::RemoteImages;
+    use postio_ui::reader::document::{self, Rendering, Sheet};
+
+    let body = postio_model::MessageBody {
+        text: None,
+        html: Some(
+            "<p>Agreed, see you then.</p>\
+             <blockquote><p>Shall we meet at the quay office?</p>\
+             <p>Thursday suits me.</p></blockquote>"
+                .to_owned(),
+        ),
+    };
+    let rendered = document::body_html(&body, RemoteImages::Blocked, Rendering::Original);
+    let html = document::document_for(
+        &rendered.html,
+        &rendered.styles,
+        RemoteImages::Blocked,
+        Sheet::Theme,
+    );
+    let drawn = |toggled: &[&str]| {
+        postio_render::render(
+            &RenderRequest {
+                generation: 1,
+                document: html.clone(),
+                plain_text: String::new(),
+                fallback: None,
+                over_cap: None,
+                resources: Arc::new(Resources::new()),
+                viewport: Viewport {
+                    width: 600.0,
+                    hidpi_scale: 1.0,
+                    zoom: 1.0,
+                },
+                theme: Theme::default(),
+                darkened: Vec::new(),
+                toggled_folds: toggled.iter().map(|id| (*id).to_owned()).collect(),
+                reader_view: Vec::new(),
+            },
+            fonts(),
+        )
+    };
+
+    let closed = drawn(&[]);
+    let ids: Vec<(&str, bool)> = closed
+        .folds
+        .iter()
+        .map(|fold| (fold.id.as_str(), fold.open))
+        .collect();
+    assert_eq!(ids, [("q0", false)], "the quote's fold, by id, closed");
+    assert!(
+        closed.text.text.contains("2 quoted lines"),
+        "{:?}",
+        closed.text.text
+    );
+    assert!(
+        !closed.text.text.contains("Thursday suits me."),
+        "{:?}",
+        closed.text.text
+    );
+
+    let opened = drawn(&["q0"]);
+    assert!(
+        opened.folds.iter().all(|fold| fold.open),
+        "{:?}",
+        opened.folds
+    );
+    assert!(
+        opened.text.text.contains("Thursday suits me."),
+        "the opened quote is not drawn: {:?}",
+        opened.text.text
+    );
 }

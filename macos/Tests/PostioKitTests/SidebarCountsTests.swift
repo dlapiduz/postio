@@ -12,7 +12,7 @@ import Testing
 /// was unchanged. Until you switched folders, which incidentally re-emitted
 /// the event, and everything jumped at once.
 ///
-/// GTK states the same rule in `crates/postio-gtk/src/feed.rs`, with the same
+/// GTK stated the same rule in the classic app's feed, with the same
 /// reasoning: *"Counts move with read state and with mail arriving or
 /// leaving. Which mailbox is irrelevant — the sidebar shows all of them."*
 @Suite struct SidebarCountsTests {

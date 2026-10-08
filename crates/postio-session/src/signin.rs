@@ -4,13 +4,13 @@
 //! own browser, wait on a loopback port, exchange the code, **prove the token
 //! actually opens the account's IMAP session**, then write the secret and the
 //! row in the order that cannot strand either — was written in
-//! `postio-app::onboarding`, which is the GTK composition root. A second
+//! the classic app's onboarding, which was the GTK composition root. A second
 //! frontend cannot link it, and a *consent* path is the last thing that
 //! should exist twice: two implementations means two answers to what Postio
 //! asked permission for, and the wrong answer is invisible.
 //!
 //! So it lives here, beside [`crate::provision`], which is the same shape for
-//! a password. `postio-app` adopting it is #1283.
+//! a password. The desktop app adopting it is #1283.
 //!
 //! # The order everything happens in
 //!

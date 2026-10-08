@@ -6,11 +6,11 @@
 //! feature, on the theory that whoever wires the executor into the running
 //! application would enable it explicitly. Nobody could: Cargo resolves
 //! features as a **union across the whole workspace resolve**, and
-//! `postio-gtk` depends on `postio-search` for the pure query-operator parser.
+//! The classic app depended on `postio-search` for the pure query-operator parser.
 //! The moment *any* workspace member turned `index` on, `rusqlite` landed in
 //! the view layer's dependency graph and
 //! `scripts/checks/check-crate-boundaries.py` failed — correctly, since a workspace
-//! build really would link SQLite into `postio-gtk`. No manifest ever enabled
+//! build really would link SQLite into the classic app. No manifest ever enabled
 //! it, so [`search`] and [`index::ensure_schema`] had never run inside Postio
 //! (`postio-svx`).
 //!
@@ -20,7 +20,7 @@
 //! of one package. So the executor, the FTS5 schema and this crate's error
 //! type live here, in a crate only the runtime side depends on, while the
 //! parser, the query model, facets and highlighting stay in `postio-search`
-//! where `postio-gtk` can keep reaching them without ever seeing `rusqlite`.
+//! where the frontends can keep reaching them without ever seeing `rusqlite`.
 //!
 //! # What is here
 //!

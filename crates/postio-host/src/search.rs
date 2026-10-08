@@ -1,6 +1,6 @@
 //! The desktop search, answered for any frontend.
 //!
-//! Moved from `postio-app`'s search surface (`specs/005-tui-frontend` T018).
+//! Moved from the classic app's search surface (`specs/005-tui-frontend` T018).
 //! The desktop ran its two reads -- the hits, then the columns -- on a warm
 //! reader of its own; the store's owner runs the same two, with the same
 //! executor (`postio_session::search`, `postio_index::executor::facets`),

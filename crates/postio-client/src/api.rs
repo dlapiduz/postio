@@ -24,7 +24,7 @@ use postio_model::mailbox::Mailbox;
 use postio_model::{Draft, DraftId};
 
 use crate::counting::Counts;
-use crate::protocol::{Req, Resp};
+use crate::protocol::{Queued, Req, Resp};
 
 /// The host is not answering: it exited, or the connection broke.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -94,6 +94,10 @@ impl Req {
             Req::Correspondents(_) => "Correspondents",
             Req::RecipientDirectory(_) => "RecipientDirectory",
             Req::Labels(_) => "Labels",
+            Req::LabelCounts(_) => "LabelCounts",
+            Req::CreateLabel { .. } => "CreateLabel",
+            Req::ThreadLabels(_) => "ThreadLabels",
+            Req::FocusCounts => "FocusCounts",
             Req::ReplySource(_) => "ReplySource",
             Req::DraftBehind(_) => "DraftBehind",
             Req::CancelSend(_) => "CancelSend",
@@ -109,11 +113,11 @@ impl Req {
             Req::StoredBody(_) => "StoredBody",
             Req::ExportMessages(_) => "ExportMessages",
             Req::Account(_) => "Account",
-            Req::Discover(_) => "Discover",
-            Req::BeginOAuth(_) => "BeginOAuth",
+            Req::Discover { .. } => "Discover",
+            Req::BeginOAuth { .. } => "BeginOAuth",
             Req::FinishOAuth(_) => "FinishOAuth",
             Req::CancelOAuth(_) => "CancelOAuth",
-            Req::AddAccount(_) => "AddAccount",
+            Req::AddAccount { .. } => "AddAccount",
             Req::AccountSettings { .. } => "AccountSettings",
             Req::EditAccount(..) => "EditAccount",
             Req::SaveSignature { .. } => "SaveSignature",
@@ -124,10 +128,29 @@ impl Req {
             Req::SetBackfillExcluded { .. } => "SetBackfillExcluded",
             Req::OrientationSeen => "OrientationSeen",
             Req::RetireOrientation => "RetireOrientation",
+            Req::MoveRecent => "MoveRecent",
+            Req::FilteredTabs => "FilteredTabs",
+            Req::DeliveryMessages(_) => "DeliveryMessages",
+            Req::DigestWaiting(_) => "DigestWaiting",
+            Req::Held(_) => "Held",
+            Req::AccountOf(_) => "AccountOf",
+            Req::Filtered { .. } => "Filtered",
+            Req::NoteMove(_) => "NoteMove",
             Req::FetchBody(_) => "FetchBody",
             Req::StorageCeiling(_) => "StorageCeiling",
             Req::SaveAccount { .. } => "SaveAccount",
             Req::SaveOAuthAccount(_) => "SaveOAuthAccount",
+            Req::SweepPreview => "SweepPreview",
+            Req::RawSource(_) => "RawSource",
+            Req::Surfaced => "Surfaced",
+            Req::DigestPreview { .. } => "DigestPreview",
+            Req::DigestSummary(_) => "DigestSummary",
+            Req::DigestLikeThis(_) => "DigestLikeThis",
+            Req::SaveDigestRule { .. } => "SaveDigestRule",
+            Req::DeleteDigestRule(_) => "DeleteDigestRule",
+            Req::Vault { .. } => "Vault",
+            Req::CaptureTask { .. } => "CaptureTask",
+            Req::CaptureNote { .. } => "CaptureNote",
         }
     }
 }
@@ -412,7 +435,7 @@ impl Client {
         generation: u64,
         draft: Draft,
         at: Option<DateTime<Utc>>,
-    ) -> impl Future<Output = Result<Option<MailboxId>, StoreError>> + Send + 'static {
+    ) -> impl Future<Output = Result<Queued, StoreError>> + Send + 'static {
         let request = Req::QueueSend {
             generation,
             draft: Box::new(draft),
@@ -488,6 +511,68 @@ impl Client {
     pub async fn labels(&self, account: AccountId) -> Result<Vec<postio_model::Label>, StoreError> {
         self.read(Req::Labels(account), "labels", |answer| match answer {
             Resp::Labels(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// How many conversations carry each of the account's labels: the
+    /// label picker's counts. A label nothing carries is left out.
+    pub async fn label_counts(
+        &self,
+        account: AccountId,
+    ) -> Result<Vec<(postio_model::LabelId, u32)>, StoreError> {
+        self.read(
+            Req::LabelCounts(account),
+            "label counts",
+            |answer| match answer {
+                Resp::LabelCounts(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Make the label `name` in `account`, or answer the one it already
+    /// has by that name in any case; `None` when the store refused.
+    pub async fn create_label(
+        &self,
+        account: AccountId,
+        name: String,
+    ) -> Result<Option<postio_model::Label>, StoreError> {
+        self.read(
+            Req::CreateLabel { account, name },
+            "a new label",
+            |answer| match answer {
+                Resp::Label(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// The labels on each of `threads`: a page of Focus's list's pills,
+    /// read for the page at once.
+    pub async fn thread_labels(
+        &self,
+        threads: Vec<postio_model::ThreadId>,
+    ) -> Result<Vec<(postio_model::ThreadId, postio_model::Label)>, StoreError> {
+        self.read(
+            Req::ThreadLabels(threads),
+            "labels",
+            |answer| match answer {
+                Resp::ThreadLabels(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Focus's header strip counts: its conversations, unread and
+    /// has-action rows, read as one request.
+    pub async fn focus_counts(&self) -> Result<crate::protocol::FocusCounts, StoreError> {
+        self.read(Req::FocusCounts, "Focus's counts", |answer| match answer {
+            Resp::FocusCounts(counts) => Some(counts),
             _ => None,
         })
         .await
@@ -648,7 +733,19 @@ impl Client {
         &self,
         address: String,
     ) -> Result<postio_ui::onboarding::Status, StoreError> {
-        self.read(Req::Discover(address), "discovery", |answer| match answer {
+        self.discover_until(address, crate::protocol::Stop::new())
+            .await
+    }
+
+    /// [`discover`](Self::discover), stopped where it stands when `stop` is
+    /// pulled; a stopped probe answers as one that found nothing.
+    pub async fn discover_until(
+        &self,
+        address: String,
+        stop: crate::protocol::Stop,
+    ) -> Result<postio_ui::onboarding::Status, StoreError> {
+        let request = Req::Discover { address, stop };
+        self.read(request, "discovery", |answer| match answer {
             Resp::Onboarding(status) => Some(*status),
             _ => None,
         })
@@ -656,11 +753,26 @@ impl Client {
     }
 
     /// Begin a browser sign-in; the answer is the consent URL, unopened.
+    /// Once the sign-in is proved and saved, the account's sync starts.
     pub async fn begin_oauth(
         &self,
         submission: postio_ui::onboarding::Submission,
     ) -> Result<postio_ui::onboarding::BrowserSignIn, StoreError> {
-        let request = Req::BeginOAuth(Box::new(submission));
+        self.begin_oauth_then(submission, crate::protocol::AfterSave::Sync)
+            .await
+    }
+
+    /// [`begin_oauth`](Self::begin_oauth), doing `then` once the account is
+    /// saved.
+    pub async fn begin_oauth_then(
+        &self,
+        submission: postio_ui::onboarding::Submission,
+        then: crate::protocol::AfterSave,
+    ) -> Result<postio_ui::onboarding::BrowserSignIn, StoreError> {
+        let request = Req::BeginOAuth {
+            submission: Box::new(submission),
+            then,
+        };
         self.read(request, "a sign-in", |answer| match answer {
             Resp::Consent(consent) => Some(*consent),
             _ => None,
@@ -695,14 +807,28 @@ impl Client {
         .await
     }
 
-    /// Prove and save a new account. The error is the sentence the first-run
-    /// screen shows.
+    /// Prove and save a new account, and start its sync. The error is the
+    /// sentence the first-run screen shows.
     pub async fn add_account(
         &self,
         submission: postio_ui::onboarding::Submission,
     ) -> Result<(), StoreError> {
+        self.add_account_then(submission, crate::protocol::AfterSave::Sync)
+            .await
+    }
+
+    /// Prove and save an account, then do `then`. The error is the sentence
+    /// the form shows; a refused proof writes nothing.
+    pub async fn add_account_then(
+        &self,
+        submission: postio_ui::onboarding::Submission,
+        then: crate::protocol::AfterSave,
+    ) -> Result<(), StoreError> {
         self.read(
-            Req::AddAccount(Box::new(submission)),
+            Req::AddAccount {
+                submission: Box::new(submission),
+                then,
+            },
             "a new account",
             |answer| match answer {
                 Resp::Done => Some(()),
@@ -912,6 +1038,114 @@ impl Client {
         self.done(Req::RetireOrientation, "the orientation").await
     }
 
+    /// Where mail was last moved, newest first: the move picker's Recent.
+    pub async fn move_recent(&self) -> Result<Vec<MailboxId>, StoreError> {
+        self.read(Req::MoveRecent, "recent moves", |answer| match answer {
+            Resp::MoveRecent(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// The account `message` is in; `None` for a message not in the store.
+    pub async fn account_of(&self, message: MessageId) -> Result<Option<AccountId>, StoreError> {
+        self.read(
+            Req::AccountOf(message),
+            "a message's account",
+            |answer| match answer {
+                Resp::AccountOf(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Which of `messages` a digest holds, and for which rule; with whether
+    /// its digest has been delivered.
+    pub async fn held(
+        &self,
+        messages: Vec<MessageId>,
+    ) -> Result<Vec<(MessageId, String, bool)>, StoreError> {
+        self.read(Req::Held(messages), "held mail", |answer| match answer {
+            Resp::Held(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// How many messages each of `rules` holds now, waiting for its next
+    /// delivery, in their order.
+    pub async fn digest_waiting(&self, rules: Vec<String>) -> Result<Vec<u32>, StoreError> {
+        self.read(
+            Req::DigestWaiting(rules),
+            "what the rules hold",
+            |answer| match answer {
+                Resp::Counts(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// What `delivery` holds, as list rows, newest first: the digest
+    /// window's plain list.
+    pub async fn delivery_messages(
+        &self,
+        delivery: postio_model::DeliveryId,
+    ) -> Result<Vec<postio_model::listing::MessageSummary>, StoreError> {
+        self.read(
+            Req::DeliveryMessages(delivery),
+            "a digest's messages",
+            |answer| match answer {
+                Resp::Rows(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Each filter reason, as the store spells it, with how many messages
+    /// it keeps filtered: the Filtered view's tabs.
+    pub async fn filtered_tabs(&self) -> Result<Vec<(String, u32)>, StoreError> {
+        self.read(
+            Req::FilteredTabs,
+            "the filtered tabs",
+            |answer| match answer {
+                Resp::FilteredTabs(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// `limit` filtered messages from `offset`, newest first, of the reason
+    /// `reason` names or of every reason.
+    pub async fn filtered(
+        &self,
+        reason: Option<String>,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<crate::protocol::FilteredRow>, StoreError> {
+        self.read(
+            Req::Filtered {
+                reason,
+                offset,
+                limit,
+            },
+            "filtered mail",
+            |answer| match answer {
+                Resp::Filtered(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Put `mailbox` first in the move picker's Recent.
+    pub async fn note_move(&self, mailbox: MailboxId) -> Result<(), StoreError> {
+        self.done(Req::NoteMove(mailbox), "a recent move").await
+    }
+
     /// Save an account whose credentials were proved: the password to the
     /// keyring, then the row. The error is the first-run screen's sentence.
     pub async fn save_account(
@@ -934,6 +1168,190 @@ impl Client {
     ) -> Result<(), StoreError> {
         self.done(Req::SaveOAuthAccount(Box::new(grant)), "a saved account")
             .await
+    }
+
+    /// How many messages a sweep of the inbox would file away now (spec 007
+    /// FR-118): what `Command::SweepInbox` then moves, asked first so the
+    /// person sees it before anything moves.
+    pub async fn sweep_preview(&self) -> Result<u32, StoreError> {
+        self.read(
+            Req::SweepPreview,
+            "a sweep's count",
+            |answer| match answer {
+                Resp::Count(count) => Some(count),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// `message`'s raw RFC 822 source, every byte as the server sent it:
+    /// what `view_source` shows (spec 007 FR-033). Read from this machine
+    /// when it is here; otherwise fetched from the server on this call, and
+    /// on no other -- the person asked for these bytes by name.
+    pub async fn raw_source(&self, message: MessageId) -> Result<Vec<u8>, StoreError> {
+        self.read(
+            Req::RawSource(message),
+            "the message's source",
+            |answer| match answer {
+                Resp::RawSource(bytes) => Some(bytes),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// The rows Focus's inbox surfaces among its conversations: each
+    /// digest delivered and not archived, and each reminder that fired and
+    /// stands, with when it came due and where it goes (spec 007). Read
+    /// again on `Event::SurfacedChanged`.
+    pub async fn surfaced(&self) -> Result<Vec<postio_model::listing::Surfaced>, StoreError> {
+        self.read(Req::Surfaced, "the surfaced rows", |answer| match answer {
+            Resp::Surfaced(rows) => Some(rows),
+            _ => None,
+        })
+        .await
+    }
+
+    /// What the capture sheet needs from the vault for a message with
+    /// `subject`: its projects, the one suggested with why, and the tasks
+    /// Postio captured (spec 007 US15). Fails with a sentence when no
+    /// `[focus.vault]` is configured.
+    pub async fn vault(&self, subject: &str) -> Result<crate::protocol::VaultPicture, StoreError> {
+        self.read(
+            Req::Vault {
+                subject: subject.to_owned(),
+            },
+            "the vault",
+            |answer| match answer {
+                Resp::Vault(picture) => Some(picture),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Append `task` to `project`'s note in the vault, or to the tasks note
+    /// with none: exactly one line, the note's own bytes untouched.
+    pub async fn capture_task(
+        &self,
+        project: Option<postio_vault::Project>,
+        task: postio_vault::Task,
+    ) -> Result<postio_vault::Captured, StoreError> {
+        self.read(
+            Req::CaptureTask { project, task },
+            "the task written to the vault",
+            |answer| match answer {
+                Resp::Captured(captured) => Some(captured),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Append `entry` to `note` in the vault, creating the note if it is
+    /// not there.
+    pub async fn capture_note(
+        &self,
+        note: std::path::PathBuf,
+        entry: postio_vault::NoteEntry,
+    ) -> Result<postio_vault::Captured, StoreError> {
+        self.read(
+            Req::CaptureNote { note, entry },
+            "the note written to the vault",
+            |answer| match answer {
+                Resp::Captured(captured) => Some(captured),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// "Digest mail like this" for `message`: the rule the person's model
+    /// picks among queries Postio builds from it, and its preview, for the
+    /// rule dialog to show before it is saved. `None` when there is no model
+    /// with `like_this` on -- the command is absent then -- or the model
+    /// picked none (spec 007 FR-171).
+    pub async fn digest_like_this(
+        &self,
+        message: MessageId,
+    ) -> Result<Option<crate::protocol::LikeThisRule>, StoreError> {
+        self.read(
+            Req::DigestLikeThis(message),
+            "a rule for mail like this",
+            |answer| match answer {
+                Resp::DigestLikeThis(rule) => Some(rule),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// `delivery`'s summary, as the digest window's Summary tab draws it:
+    /// statements grouped by topic, each ending in a numbered reference to a
+    /// message and a passage of it, every one resolved again as it is read.
+    /// `None` when no summary is written or none is left to show: the
+    /// digest opens on its plain list (spec 007 FR-172 to FR-175).
+    pub async fn digest_summary(
+        &self,
+        delivery: postio_model::DeliveryId,
+    ) -> Result<Option<postio_model::summary::DigestSummary>, StoreError> {
+        self.read(
+            Req::DigestSummary(delivery),
+            "a digest's summary",
+            |answer| match answer {
+                Resp::DigestSummary(summary) => Some(summary),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// What a digest rule matching `queries` would have caught since
+    /// `since` -- its count and newest four rows -- through the executor, so
+    /// it means what the same queries mean in search (spec 007 FR-120,
+    /// FR-127).
+    pub async fn digest_preview(
+        &self,
+        queries: Vec<String>,
+        since: DateTime<Utc>,
+    ) -> Result<crate::protocol::DigestPreview, StoreError> {
+        let request = Req::DigestPreview { queries, since };
+        self.read(request, "a digest's preview", |answer| match answer {
+            Resp::DigestPreview(preview) => Some(preview),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Write `rule` to `config.toml`'s `[[focus.digests]]`: a new rule, or,
+    /// `replacing` a name, that rule edited where it stands. The error is a
+    /// sentence for the dialog.
+    pub async fn save_digest_rule(
+        &self,
+        replacing: Option<String>,
+        rule: crate::protocol::DigestRuleDraft,
+    ) -> Result<(), StoreError> {
+        self.done(
+            Req::SaveDigestRule { replacing, rule },
+            "a saved digest rule",
+        )
+        .await
+    }
+
+    /// Take the digest rule called `name` out of `config.toml`, and release
+    /// what it held into the inbox (spec 007 FR-126): answered with how many
+    /// messages it released.
+    pub async fn delete_digest_rule(&self, name: String) -> Result<u32, StoreError> {
+        self.read(
+            Req::DeleteDigestRule(name),
+            "a removed digest rule",
+            |answer| match answer {
+                Resp::Count(released) => Some(released),
+                _ => None,
+            },
+        )
+        .await
     }
 
     /// A write answered with [`Resp::Done`].
@@ -1174,6 +1592,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_page_s_labels_are_asked_for_by_conversation() {
+        let label = postio_model::Label::new(AccountId::new(1), "Atlas");
+        let thread = postio_model::ThreadId::new(4);
+        let (client, fake) = client(vec![Ok(Resp::ThreadLabels(vec![(thread, label.clone())]))]);
+        assert_eq!(
+            client.thread_labels(vec![thread]).await,
+            Ok(vec![(thread, label)])
+        );
+        assert_eq!(
+            *fake.asked.lock().unwrap(),
+            vec![Req::ThreadLabels(vec![thread])]
+        );
+        assert_eq!(client.counts().of("ThreadLabels"), 1);
+    }
+
+    #[tokio::test]
+    async fn focus_s_counts_are_one_request() {
+        let counts = crate::protocol::FocusCounts {
+            conversations: 312,
+            unread: 41,
+            has_action: 7,
+            filtered_today: 186,
+        };
+        let (client, fake) = client(vec![Ok(Resp::FocusCounts(counts))]);
+        assert_eq!(client.focus_counts().await, Ok(counts));
+        assert_eq!(*fake.asked.lock().unwrap(), vec![Req::FocusCounts]);
+        assert_eq!(client.counts().of("FocusCounts"), 1);
+    }
+
+    #[tokio::test]
     async fn an_unsubscribe_answers_the_lists_name() {
         let (client, fake) = client(vec![Ok(Resp::Unsubscribed("news.example.com".into()))]);
         assert_eq!(
@@ -1218,7 +1666,10 @@ mod tests {
         // each is handed over at the call, before anything polls it.
         let (client, fake) = client(vec![
             Ok(Resp::DraftSaved(DraftId::new(9))),
-            Ok(Resp::Queued(None)),
+            Ok(Resp::Queued(Queued {
+                drafts: None,
+                draft: DraftId::new(9),
+            })),
             Ok(Resp::Done),
         ]);
         let draft = Draft::new(AccountId::new(1));
@@ -1230,7 +1681,7 @@ mod tests {
         // And nothing about the answers borrows the client.
         drop(client);
         assert_eq!(saved.await, Ok(DraftId::new(9)));
-        assert_eq!(queued.await, Ok(None));
+        assert_eq!(queued.await.map(|queued| queued.draft), Ok(DraftId::new(9)));
         assert_eq!(discarded.await, Ok(()));
     }
 }

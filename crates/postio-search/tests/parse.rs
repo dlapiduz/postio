@@ -5,7 +5,7 @@
 
 use chrono::NaiveDate;
 use postio_search::parse;
-use postio_search::query::{Field, Filter, ParsedQuery, State, TokenKind};
+use postio_search::query::{Field, Filter, ParsedQuery, State};
 
 /// Fixed reference date so every relative-date expectation is deterministic.
 /// 2026-08-22 is a Saturday.
@@ -77,6 +77,16 @@ fn is_unread_and_is_flagged() {
 }
 
 #[test]
+fn is_bulk_and_is_automated_are_states_of_their_own() {
+    // Spec 007, research R8: the promoted headers' operators. Anything else
+    // after `is:` stays a half-typed query, never an error.
+    assert_eq!(filters("is:bulk"), vec![Filter::Is(State::Bulk)]);
+    assert_eq!(filters("is:BULK"), vec![Filter::Is(State::Bulk)]);
+    assert_eq!(filters("is:automated"), vec![Filter::Is(State::Automated)]);
+    assert_eq!(filters("is:bul"), Vec::<Filter>::new());
+}
+
+#[test]
 fn is_starred_is_accepted_as_a_synonym_for_flagged() {
     // An earlier brief said `is:starred`; the canvas renamed it to Flagged, and
     // docs/PRODUCT.md §7 keeps the old spelling so muscle memory from other
@@ -118,7 +128,7 @@ fn list_operator() {
 fn account_operator() {
     // The value stays text here. This crate never resolves it to an id — that
     // needs the store, and keeping the parse pure is what lets a saved search
-    // survive in `[filters]` as the string the user typed (ADR 0005 Q5, #186).
+    // survive in `[saved_searches]` as the string the user typed (ADR 0005 Q5, #186).
     assert_eq!(
         filters("account:work"),
         vec![Filter::Account("work".into())]
@@ -876,31 +886,6 @@ fn a_quoted_token_span_includes_the_quotes() {
 }
 
 #[test]
-fn token_at_finds_the_token_under_the_caret() {
-    let input = "from:lena after:aug1";
-    let parsed = q(input);
-    assert!(matches!(
-        parsed.token_at(3).map(|t| &t.kind),
-        Some(TokenKind::Filter(_))
-    ));
-    assert_eq!(parsed.token_at(0).unwrap().raw, "from:lena");
-    assert_eq!(parsed.token_at(9).unwrap().raw, "from:lena");
-    assert_eq!(parsed.token_at(12).unwrap().raw, "after:aug1");
-    // The space between tokens belongs to no token.
-    assert!(parsed.token_at(usize::MAX).is_none());
-}
-
-#[test]
-fn removing_a_token_gives_back_the_remaining_query_text() {
-    // This is Backspace popping a chip.
-    let parsed = q("from:lena after:aug1 has:attach");
-    assert_eq!(parsed.remove_token(1), "from:lena has:attach");
-    assert_eq!(parsed.remove_token(0), "after:aug1 has:attach");
-    assert_eq!(parsed.remove_token(2), "from:lena after:aug1");
-    assert_eq!(parsed.remove_token(9), "from:lena after:aug1 has:attach");
-}
-
-#[test]
 fn every_token_reports_the_field_it_belongs_to() {
     let parsed = q("from:lena is: kubernetes");
     let fields: Vec<Option<Field>> = parsed.tokens().iter().map(|t| t.field()).collect();
@@ -1025,27 +1010,5 @@ fn fuzzing_the_parser_with_query_shaped_noise_never_errors() {
             "{input:?}"
         );
         let _ = parsed.fts_match();
-        // Popping any chip must yield text that still parses.
-        for index in 0..parsed.tokens().len() {
-            let _ = parse(&parsed.remove_token(index), today());
-        }
-    }
-}
-
-#[test]
-fn popping_a_chip_removes_exactly_that_token() {
-    let parsed = q(r#"from:lena "quarterly report" is:unread larger:1M"#);
-    assert_eq!(parsed.tokens().len(), 4);
-    for index in 0..parsed.tokens().len() {
-        let popped = parsed.remove_token(index);
-        let reparsed = parse(&popped, today());
-        assert_eq!(reparsed.tokens().len(), 3, "{popped:?}");
-        assert!(
-            !reparsed
-                .tokens()
-                .iter()
-                .any(|t| t.raw == parsed.tokens()[index].raw),
-            "{popped:?} still contains the popped chip"
-        );
     }
 }

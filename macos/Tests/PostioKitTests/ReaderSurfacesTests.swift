@@ -22,7 +22,7 @@ import WebKit
 /// The conversation is one document now, and `ThreadDocumentTests` counts
 /// it. What is here is the other reader: a message the store has not
 /// threaded, drawn by `ReaderView` on its own. Every number is read through
-/// the boundary from the **shared** counters -- the ones `postio-gtk`'s reader
+/// the boundary from the **shared** counters -- the ones the classic app's reader
 /// notes into -- and they are per thread, which is why the suite is
 /// `@MainActor`: the reader notes from the main thread.
 ///

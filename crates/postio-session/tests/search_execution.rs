@@ -2,7 +2,7 @@
 //!
 //! The executor in `postio-index` was always toolkit-free; what was not was
 //! the thin layer above it that decides the hit limit and cuts each excerpt.
-//! That lived in `postio-app`, where only the GTK build could reach it, so a
+//! That lived in the classic app, where only the GTK build could reach it, so a
 //! macOS search would have needed a second copy — and a second copy of "how
 //! many hits, and which text gets highlighted" is two products that answer the
 //! same query differently the first time either is edited.

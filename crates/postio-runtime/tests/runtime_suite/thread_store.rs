@@ -702,3 +702,274 @@ async fn archiving_from_an_inbox_takes_the_row_out_of_unified_and_its_count() {
         "the archived row is still listed"
     );
 }
+
+// ── Focus's inbox (spec 007, T033) ──────────────────────────────────────────
+
+const FOCUS: ListScope = ListScope::Focus(postio_model::FocusScope::Inbox);
+
+#[tokio::test]
+async fn focus_s_inbox_is_the_unified_inbox_for_now() {
+    // One account, so Unified has nothing to fold: row for row, Focus's
+    // inbox is the unified inbox until Focus starts holding mail back.
+    let (store, _account, _inbox, _database) = store(200, 4).await;
+    let total = store.list_count(ListScope::Unified).await.expect("a count");
+    assert!(
+        total > 4,
+        "the inbox has to span pages; it holds {total} rows"
+    );
+    assert_eq!(store.list_count(FOCUS).await.expect("a count"), total);
+    for offset in (0..total).step_by(4) {
+        let focus = store
+            .thread_page(request(FOCUS, offset, 4))
+            .await
+            .expect("a Focus page");
+        let unified = store
+            .thread_page(request(ListScope::Unified, offset, 4))
+            .await
+            .expect("a unified page");
+        assert!(
+            !focus.rows.is_empty(),
+            "row {offset} of {total} is servable"
+        );
+        assert_eq!(focus, unified, "the page at {offset}");
+    }
+}
+
+#[tokio::test]
+async fn focus_s_inbox_pages_every_account_without_repeating_a_row() {
+    let database = test_support::temp().await;
+    postio_storage::seed::seed_small(&database, 3).await;
+    postio_storage::seed::seed_extra_account(&database, "Second", "grace@example.org", 4).await;
+    let store = LocalStore::new(&database);
+
+    let total = store
+        .thread_page(request(FOCUS, 0, 10))
+        .await
+        .expect("a Focus page")
+        .total;
+    assert!(total > 10, "the fixture has to span pages; got {total}");
+    let mut seen: Vec<postio_model::MessageId> = Vec::new();
+    let mut offset = 0;
+    while offset < total {
+        let page = store
+            .thread_page(request(FOCUS, offset, 10))
+            .await
+            .expect("a Focus page");
+        assert!(!page.rows.is_empty(), "row {offset} of {total} is servable");
+        assert_eq!(page.total, total, "nothing is being written");
+        offset += page.rows.len() as u32;
+        seen.extend(page.rows.iter().map(|row| row.representative.id));
+    }
+    let mut distinct = seen.clone();
+    distinct.sort_unstable();
+    distinct.dedup();
+    assert_eq!(distinct.len(), seen.len(), "no row is served twice");
+    assert_eq!(seen.len(), total as usize, "and the walk serves the total");
+}
+
+#[tokio::test]
+async fn focus_s_inbox_is_counted_once_while_nothing_moves() {
+    let (store, account, inbox, database) = store(300, 3).await;
+    let before = postio_runtime::store::focus_counted();
+    let mut total = 0;
+    for page in 0..3 {
+        total = store
+            .thread_page(request(FOCUS, page * 20, 20))
+            .await
+            .expect("a Focus page")
+            .total;
+    }
+    assert_eq!(
+        postio_runtime::store::focus_counted() - before,
+        1,
+        "three pages of an unchanged inbox counted it more than once"
+    );
+
+    // Mail arriving is counted, not served from what was true before.
+    {
+        let connection = database.connect().await.expect("a connection");
+        let mut message = postio_model::Message::new(account, inbox, chrono::Utc::now());
+        message.subject = Some("a new conversation".to_owned());
+        let id = postio_storage::repository::MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+        let mut thread = postio_model::Thread::new(account);
+        let threads = postio_storage::repository::ThreadRepository::new(&connection);
+        threads.create(&mut thread).await.expect("a thread");
+        threads.add_message(thread.id, id).await.expect("joined");
+    }
+    let after = store
+        .thread_page(request(FOCUS, 0, 20))
+        .await
+        .expect("a Focus page");
+    assert_eq!(after.total, total + 1, "a new conversation went uncounted");
+    assert_eq!(
+        after.rows[0].subject.as_deref(),
+        Some("a new conversation"),
+        "and it is the newest row"
+    );
+}
+
+#[tokio::test]
+async fn no_list_but_focus_s_carries_a_marker() {
+    // Markers are Focus's, read with Focus's pages (FR-020): a classic
+    // scope's rows have none to draw, whatever the store holds.
+    let (store, account, inbox, database) = store(200, 4).await;
+    let top = store
+        .thread_page(request(FOCUS, 0, 1))
+        .await
+        .expect("a Focus page")
+        .rows
+        .remove(0)
+        .representative
+        .id;
+    {
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::repository::MarkerRepository::new(&connection)
+            .insert(&postio_storage::repository::Marker {
+                message: top,
+                kind: postio_model::listing::MarkerKind::Question,
+                source: postio_storage::repository::MarkerSource::Detector,
+                span: Some((0, 21)),
+                excerpt: Some("Could you look at it?".to_owned()),
+                starts_at: None,
+                ends_at: None,
+                due_at: None,
+                invite: None,
+                invite_state: None,
+                answer: None,
+                dismissed_at: None,
+            })
+            .await
+            .expect("a marker");
+    }
+    let focus = store
+        .thread_page(request(FOCUS, 0, 50))
+        .await
+        .expect("a Focus page");
+    assert_eq!(
+        focus.rows[0]
+            .marker
+            .as_ref()
+            .and_then(|marker| marker.excerpt.as_deref()),
+        Some("Could you look at it?"),
+        "Focus's row draws its conversation's marker"
+    );
+    assert_eq!(
+        focus.rows.iter().filter(|row| row.marker.is_some()).count(),
+        1
+    );
+    for scope in [
+        ListScope::Mailbox(inbox),
+        ListScope::Account(account),
+        ListScope::Unified,
+    ] {
+        let page = store
+            .thread_page(request(scope, 0, 50))
+            .await
+            .expect("a page of conversations");
+        assert!(!page.rows.is_empty(), "{scope:?}");
+        assert!(
+            page.rows.iter().all(|row| row.marker.is_none()),
+            "{scope:?} drew a marker"
+        );
+    }
+}
+
+#[tokio::test]
+async fn focus_s_inbox_folds_what_the_unified_inbox_folds() {
+    // Two accounts seeded from one corpus hold the same conversations. One
+    // received at both addresses is one row, in Focus as in Unified, and
+    // the row names the other account's copy -- what archiving it has to
+    // reach as well (spec 007, Edge Cases: one inbox across all accounts).
+    let database = test_support::temp().await;
+    postio_storage::seed::seed_small(&database, 3).await;
+    postio_storage::seed::seed_extra_account(&database, "Second", "grace@example.org", 4).await;
+    let store = LocalStore::new(&database);
+
+    let total = store.list_count(FOCUS).await.expect("a count");
+    assert_eq!(
+        total,
+        store.list_count(ListScope::Unified).await.expect("a count"),
+        "Focus's inbox has the unified inbox's rows"
+    );
+    let mut folded = 0;
+    let mut offset = 0;
+    while offset < total {
+        let focus = store
+            .thread_page(request(FOCUS, offset, 10))
+            .await
+            .expect("a Focus page");
+        let unified = store
+            .thread_page(request(ListScope::Unified, offset, 10))
+            .await
+            .expect("a unified page");
+        assert!(
+            !focus.rows.is_empty(),
+            "row {offset} of {total} is servable"
+        );
+        assert_eq!(focus, unified, "the page at {offset}");
+        folded += focus
+            .rows
+            .iter()
+            .filter(|row| !row.copies.is_empty())
+            .count();
+        offset += focus.rows.len() as u32;
+    }
+    assert!(
+        folded > 0,
+        "the fixture has to fold a conversation, or this proves nothing"
+    );
+}
+
+#[tokio::test]
+async fn holding_mail_moves_focus_s_total_marks_and_rows_together() {
+    // A digest rule holding mail takes it out of Focus's inbox without any
+    // folder moving: the inbox's own counts and sync state -- the witness
+    // the count is kept against -- are what they were, and the count, the
+    // seek marks and the rows must still agree (spec 007, T134).
+    let (store, _account, _inbox, database) = store(200, 4).await;
+    let before = store
+        .thread_page(request(FOCUS, 0, 20))
+        .await
+        .expect("a Focus page");
+    let held = before.rows[0].id.expect("a conversation");
+    {
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::sql::execute(
+            &connection,
+            "INSERT INTO digest_holds (message_id, rule, held_at)
+             SELECT id, 'Newsletters', 0 FROM messages WHERE thread_id = ?1",
+            [held.get()],
+        )
+        .await
+        .expect("held");
+    }
+
+    let after = store
+        .thread_page(request(FOCUS, 0, 20))
+        .await
+        .expect("a Focus page");
+    assert_eq!(
+        after.total,
+        before.total - 1,
+        "the held conversation left the count"
+    );
+    let mut seen = Vec::new();
+    let mut offset = 0;
+    while offset < after.total {
+        let page = store
+            .thread_page(request(FOCUS, offset, 20))
+            .await
+            .expect("a Focus page");
+        assert!(!page.rows.is_empty(), "row {offset} is servable");
+        offset += page.rows.len() as u32;
+        seen.extend(page.rows.into_iter().map(|row| row.id));
+    }
+    assert_eq!(seen.len() as u32, after.total, "the walk serves the total");
+    assert!(
+        !seen.contains(&Some(held)),
+        "and never the held conversation"
+    );
+}

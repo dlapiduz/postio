@@ -17,11 +17,14 @@ postio-core.workspace = true
 # `maildir` on: the composition root is where a stored account's backend is
 # chosen, so it has to be able to build every kind an account row can name.
 postio-account = { workspace = true, features = ["maildir"] }
+# An invitation's reply, written from its calendar part (spec 007 FR-102).
+# A pure leaf: no store, no toolkit, no network.
+postio-calendar.workspace = true
 postio-jmap.workspace = true
 postio-gmail.workspace = true
 postio-index.workspace = true
 postio-model.workspace = true
-# The database half. This crate is where SQLite is allowed; postio-gtk is
+# The database half. This crate is where SQLite is allowed; the view layer is
 # guarded against it and so is postio-core.
 postio-runtime.workspace = true
 postio-search.workspace = true
@@ -39,6 +42,9 @@ postio-ui.workspace = true
 # the graph would defeat the zeroing this exists for.
 secrecy = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time"] }
+# A digest rule kept by the undo entry that took a sender out of it, as the
+# TOML `[[focus.digests]]` holds (spec 007 FR-125).
+toml = { workspace = true }
 tracing = { workspace = true }
 tracing-journald = "0.3"
 tracing-log = "0.2"

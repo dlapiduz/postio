@@ -212,7 +212,7 @@ mod tests {
     #[test]
     fn gap_lists_parse_and_a_missing_one_is_empty() {
         let dir = tempfile::tempdir().expect("temp");
-        let path = dir.path().join("classic.toml");
+        let path = dir.path().join("terminal.toml");
         std::fs::write(
             &path,
             "[[gap]]\ncommand = \"show_images\"\ncontext = \"reader\"\nreason = \"no blocked images\"\ntracked = 1745\n",

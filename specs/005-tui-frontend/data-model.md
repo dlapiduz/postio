@@ -70,12 +70,12 @@ The running `postio-tui`, which holds no mail of its own.
 | Field | Meaning |
 |---|---|
 | `caps: TerminalCaps` | `colour: None \| Ansi16 \| Ansi256 \| TrueColor`, `keyboard_enhancement: bool`, `mouse: bool`, `background: Light \| Dark \| Unknown`, reserved `graphics: Option<Protocol>` (next iteration) |
-| `size` | Columns and rows; drives which panes are shown |
-| `layout` | Which panes are *requested* vs *shown* (ADR 0024's split: the window decides what is shown, never what was asked for) |
-| `focus` | Sidebar, List, Reader, Composer, Palette, Search, Dialog |
+| `size` | Columns and rows; every width on screen comes from it (spec 007 terminal.md) |
+| `reading` | `[focus] reading`: the open message in the frame over the list, or in the pane beside it from 128 columns. The setting is the person's; the width decides whether the pane fits |
+| `focus` | List, Reader, Composer, Bar, Folders, Picker, Keys, Filtered, Digest, Rules, RuleDialog, Capture, Settings, FirstRun, Palette (the settings' own pickers) |
 | `list: ListWindow<Row>` + `selection: SelectionState` + cursor | From `postio-ui`, unchanged |
 | `reader: Option<RenderedConversation>` | |
-| `composers: Vec<Composer>` | One is in the reading pane; others are tabs (the terminal's pop-out, FR-003) |
+| `composer: Option<Composer>` | In the frame over the list, or with the whole screen once detached (FR-003) |
 
 ### RenderedConversation / RenderedMessage
 

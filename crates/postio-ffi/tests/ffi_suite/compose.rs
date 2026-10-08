@@ -1060,7 +1060,7 @@ async fn a_draft_saved_on_this_machine_is_queued_for_the_server_too() {
     // `DraftRepository::save`, which writes the row and stops. So a reply
     // begun on the Mac was in Drafts on the Mac and nowhere else: not on the
     // phone, not on the Linux client, not on the server it was written
-    // against. `postio-app` has used `save_and_sync` since drafts existed,
+    // against. The classic app had used `save_and_sync` since drafts existed,
     // for exactly the reason that repository method records.
     let (session, database, message) = a_message_to_answer().await;
 

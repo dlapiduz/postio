@@ -574,6 +574,16 @@ pub async fn index_headers(
     if !message_exists(connection, message_id).await? {
         return Ok(());
     }
+    // What the three promoted headers say, for mail whose sync did not ask
+    // for them -- a first sync, a JMAP account -- and the same answer for
+    // mail whose did (spec 007, research R8). Here because this is where
+    // every header block arrives, from the backfill and from the catch-up.
+    postio_storage::repository::MessageRepository::new(connection)
+        .set_promoted(
+            postio_model::MessageId::new(message_id),
+            postio_model::promoted::PromotedHeaders::from_headers(headers),
+        )
+        .await?;
     // Delete first: the pass is resumable and a version bump refills the whole
     // table, so re-indexing a message is the ordinary case. An upsert would
     // leave the rows of a message that has *lost* a header behind.

@@ -5,8 +5,8 @@ is still wiring up its own overlay siblings and shortcut controllers, and
 #873 found a real, deterministic case of that mattering: building a
 `gtk::DropDown` (`[sync]`'s structured pane) during that window corrupted
 keyboard routing for the rest of it — `gtk_finder`, `gtk_finder_focus`,
-`gtk_move_picker`, `gtk_toggle_sidebar` (all four are cases under
-`crates/postio-gtk/tests/gtk_suite/` now) failed, reliably, and reliably
+`gtk_move_picker`, `gtk_toggle_sidebar` (all four became cases in the
+classic app's `gtk_suite`, removed with it in spec 007 T256) failed, reliably, and reliably
 stopped failing once `redraw_sync`/`redraw_ui`'s calls were removed from
 `build()`'s own trailing sequence. That bisection ran the filter multiple
 times each side and the signal held. #880's account-detail view hit the same
@@ -38,7 +38,7 @@ reproducible failure mode, and the fix is deferring construction to the
 first real interaction after `Window::new` has finished** — the same shape
 `redraw_sync`/`redraw_ui`'s removal, and `open_account_detail`'s
 `OnceCell`s, both use. What #881 adds is a warning about the *evidence bar*
-for a new case: **one clean `gtk_suite` run, or one run that stops
+for a new case: **one clean run of a GUI suite, or one run that stops
 segfaulting after a change, is not confirmation on a machine this loaded.**
 Bisect by running each side two or three times, not once each, before
 writing up a "confirmed" fix — and when a single-run result doesn't hold up,

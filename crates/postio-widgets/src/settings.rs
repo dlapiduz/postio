@@ -1,0 +1,4997 @@
+//! The settings panel: canvas 3f — `config.toml` *is* the settings UI.
+//!
+//! There is no second store and no OK/Cancel. The panel shows the real file
+//! — a [`gtk::TextView`] over its raw text, the only pane left that still
+//! works that way (see below) — section navigation on the left jumps to a
+//! header, and a validity line along the foot replaces a dialog's buttons.
+//! Typing here and typing in `$EDITOR` produce the same bytes on disk,
+//! because both write the same thing: the literal text in the buffer,
+//! verbatim.
+//!
+//! # Structured panes patch, they never reserialize
+//!
+//! [`Section::Filters`], Composing and Sync & storage are *forms* over the
+//! same file — not the raw-text exception the rest of this doc describes. Building one
+//! by serializing a whole `postio_config::Config` back through
+//! [`postio_config::Config::to_toml_string`] would reorder every key and drop
+//! every comment in the file, not only in the one table the pane owns (see
+//! that method's own doc comment: unknown keys survive, but there is no
+//! promise about layout) — which is exactly the trap a raw-text view avoids
+//! by construction and a naive form would fall straight into. So a structured
+//! pane never reserializes: [`patch_filters`] and its siblings rewrite only
+//! their own table with `toml_edit`'s format-preserving document model
+//! ([`SettingsPanel::apply_filters_mutation`]), and the result is written into
+//! *this* buffer, so it reaches disk through the exact same debounced write
+//! every raw edit already does. `[keys]` and `[saved_searches]`'s advanced escape
+//! hatch stay on the raw view below until their own issues convert them the
+//! same way.
+//!
+//! [`Section::Privacy`] is a third, stranger kind: not a form over a table,
+//! because there is no table — the remote-image allow-list it manages lives
+//! entirely outside `config.toml` (see [`Section::key`]'s own doc). It reads
+//! and writes [`postio_ui::allowlist::RemoteImageAllowList`] directly, with nothing
+//! for the debounced buffer write to do.
+//!
+//! # Two halves
+//!
+//! [`Section`], [`find_section`] and [`section_at_line`] are pure functions
+//! over the file's text, tested with no display. [`SettingsPanel`] is the
+//! widget: it shows the live validity line (`postio_config::validate` does
+//! the parsing and timing already; this module only formats the result), and
+//! it writes the buffer back to disk on a short debounce after typing settles
+//! — see `write_atomically` for why that write is a rename, not an
+//! in-place write.
+//!
+//! # Revert
+//!
+//! [`SettingsPanel::revert`] writes the last configuration that loaded
+//! without error back over the file, and says so on the footer line —
+//! canvas 3f's "Revert file" button. [`SettingsPanel::note_known_good`] is
+//! what keeps that memory honest when the edit that validated did not come
+//! from this panel at all: `$EDITOR` writes the same file, through the same
+//! watcher, and the app's config follower reports every reload here, not
+//! only the ones this widget's own buffer caused.
+//!
+//! # In Focus
+//!
+//! Focus opens the panel in its dialog (ADR 0043; specs/007-postio-focus
+//! T233, T234). It shows the sections Focus shows ([`Section::shown_in`]) --
+//! every one but Appearance, whose `[ui]` keys Focus does not honour -- and
+//! the Keyboard section lists the commands Focus offers. Its presenters,
+//! which join it to the store's host, are [`crate::present::settings`].
+//!
+//! # What this module does not do
+//!
+//! Launch `$EDITOR` itself: `CommandId::EditConfig` is the app's to answer
+//! ([`crate::editor`]), independently of this panel being open, and the
+//! panel's footer button raises that same command rather than spawning
+//! anything. `CommandId::Settings` is what makes the panel itself reachable
+//! from a binding, the palette and the main menu.
+
+use std::cell::{Cell, OnceCell, RefCell};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use adw::prelude::*;
+use adw::subclass::prelude::*;
+use gtk::{glib, pango};
+use postio_config::compose::SignaturePlacement;
+use postio_config::filters::{FilterConfig, Reorder};
+use postio_config::sync::{AttachmentFetch, CheckForMail};
+use postio_config::{Config, SyncConfig, patch_compose, patch_filters, patch_keys, patch_sync};
+use postio_core::CommandId;
+use postio_model::ids::SignatureId;
+use postio_model::{Account, AccountId, MailboxRole, UnsubscribeActivation};
+
+use crate::widgets::{
+    CheckRow, ListOrEmpty, SegmentedControl, SettingsGroup, kicker, space, stat_line,
+};
+
+/// How long to let typing settle before writing the buffer back to disk.
+///
+/// Long enough that a fast typist is not racing the disk on every keystroke;
+/// short enough that "applied live" still reads as true. The file watcher's
+/// own debounce (`postio_config::watch::DEFAULT_DEBOUNCE`, 120ms) runs after
+/// this one settles, so the whole round trip — keystroke to reload — is well
+/// under half a second.
+const WRITE_DEBOUNCE: Duration = Duration::from_millis(250);
+
+/// What the `Every 5 min` segment means in seconds.
+///
+/// Only ever written when the mode *changes* to polling — see
+/// [`SettingsPanel::ensure_sync_controls`] for why a person's own interval
+/// survives pressing the segment it is already on.
+const POLL_EVERY_FIVE_MINUTES: u64 = 300;
+
+/// How wide the sidebar is — fixed, never negotiable, so the pane beside it
+/// starts in the same place on every section. That fixity is most of
+/// what makes the navigation model legible (#1179).
+pub const NAV_WIDTH: i32 = 214;
+
+/// How far a pane's content sits in from the frame. One number, applied by
+/// `.postio-settings-pane-body` in CSS and by the two panes that build a
+/// column by hand.
+const PANE_INSET: i32 = 22;
+
+/// What the settings panel calls the file it is showing, for a screen
+/// reader. One constant because two widgets announce it — the text view and
+/// the scroll region around it, which is a tab stop of its own — and a
+/// region that disagrees with its content about what it holds is worse than
+/// one that repeats it.
+const FILE_NAME: &str = "config.toml";
+
+/// How tall the accounts list grows before it scrolls (#464).
+const ACCOUNTS_MAX_HEIGHT: i32 = 160;
+
+/// What an account row's context menu asked for (#464, ADR 0005 Q6a).
+///
+/// Not itself a `CommandId`: both need a specific account as their payload,
+/// which a keystroke carries no default for. `CommandId::RemoveAccount`,
+/// `CommandId::UpdateCredential` (#471), `CommandId::RebuildAccountIndex`
+/// (#981) and `CommandId::SetDefaultAccount` (#960) reach the keyboard path
+/// by resolving
+/// [`SettingsPanel::focused_account`] and calling
+/// [`SettingsPanel::request_account_action`] with the same variant the
+/// context menu would have -- one payload type either entry point ends in,
+/// rather than a second one the registry would have to know about.
+/// `SavedSearchAction` (#292) is the same shape for the same reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountAction {
+    /// Open the reauthenticate screen for this account.
+    UpdateCredential,
+    /// Mark the account for removal.
+    Remove,
+    /// Rebuild this account's local search index (#981).
+    RebuildIndex,
+    /// Make this the account new messages come from (#960).
+    SetDefault,
+}
+
+/// What to call when an account row's context menu picks an action.
+/// Who to ask to run a `CommandId` a settings button stands for.
+type CommandHandler = Box<dyn Fn(CommandId)>;
+
+type AccountActionHandler = Box<dyn Fn(AccountId, AccountAction)>;
+
+/// What to call when an account row's enabled switch is flipped by hand —
+/// never fired for the initial state [`SettingsPanel::set_accounts`] sets.
+type AccountEnabledHandler = Box<dyn Fn(AccountId, bool)>;
+
+/// One field of the account detail view (#880) committed to a new value.
+///
+/// An account is database state, not `config.toml` preference (ADR 0005
+/// Q6b), so this panel cannot patch a buffer the way [`Section::Filters`]
+/// does — it only reports what changed, the same split [`AccountAction`]
+/// already uses, and the settings presenter
+/// ([`crate::present::settings`]) is what has the host write it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccountEdit {
+    /// The name shown in the sidebar and this row.
+    DisplayName(String),
+    /// The IMAP server's hostname.
+    ImapHost(String),
+    /// The IMAP server's port.
+    ImapPort(u16),
+    /// The SMTP server's hostname.
+    SmtpHost(String),
+    /// The SMTP server's port.
+    SmtpPort(u16),
+    /// Which of the account's signatures the composer starts on (#979).
+    ///
+    /// `Option` because "none of them" is a real answer the model already
+    /// holds — `Account::default_signature_id` is an `Option<SignatureId>`,
+    /// and an account can have signatures without preferring one.
+    DefaultSignature(Option<SignatureId>),
+    /// A role pointed at one of the account's own folders, or back to
+    /// resolving automatically (ADR 0035).
+    ///
+    /// The path rather than a `MailboxId`: what is stored is what the user
+    /// said about the server, and it has to survive the folder's row being
+    /// retired and re-created when a listing loses it and finds it again.
+    MailboxRole(MailboxRole, Option<String>),
+}
+
+/// The roles a folder can be mapped to, in the order the group lists them:
+/// the shared table, which the terminal's picker reads too.
+use postio_ui::settings::MAPPABLE_ROLES;
+
+/// One account's folders and role map, as the Mailboxes group needs them.
+///
+/// Three lists rather than one, because they answer three different
+/// questions: what folders there are to choose from, which roles the user has
+/// already pointed somewhere, and what each role resolves to as things stand.
+/// The third is what makes "Automatic" nameable -- a person can only disagree
+/// with an answer they can see.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccountMailboxes {
+    /// Every folder the account can open, by server path, in listing order.
+    pub folders: Vec<String>,
+    /// The roles this account has pointed somewhere, and where.
+    pub chosen: Vec<(MailboxRole, String)>,
+    /// What each role resolves to right now, mapped or not.
+    pub resolved: Vec<(MailboxRole, String)>,
+    /// The roles this account's server refused to create a folder for, and
+    /// what it said (spec 003, FR-031).
+    ///
+    /// Distinct from "not resolved": a role can have no folder because nobody
+    /// has synced yet, which fixes itself, or because the server said no,
+    /// which does not. Only the second has words worth showing, and they are
+    /// the server's own -- "Permission denied" tells a user where to look and
+    /// "could not create Junk" tells them nothing.
+    pub refused: Vec<(MailboxRole, String)>,
+}
+
+/// What to call when a field in the account detail view is committed.
+type AccountEditHandler = Box<dyn Fn(AccountId, AccountEdit)>;
+
+/// Who to tell when somebody asks whether an account's settings work (#980).
+type TestConnectionHandler = Box<dyn Fn(AccountId)>;
+
+/// Who to tell when a signature is written or removed (#1086).
+type SignatureSavedHandler = Box<dyn Fn(AccountId, &SignatureDraft)>;
+type SignatureDeletedHandler = Box<dyn Fn(AccountId, SignatureId)>;
+
+/// A signature as the editor has it: what was typed, and which one it is.
+///
+/// `id` is `None` for one that does not exist yet — the store assigns it, the
+/// same way `AccountRepository::create` assigns an account's. Reporting a new
+/// signature with an id would make saving an edit create a second one, which
+/// is the bug this distinction exists to prevent.
+///
+/// No `html`. `Signature` carries an optional rich variant and the composer
+/// uses it when there is one, but a rich editor is the composer's formatting
+/// toolbar's problem (#339) rather than this form's — so this creates
+/// text-only signatures and leaves `html` exactly as it is today, `None`
+/// everywhere and correctly handled, rather than shipping a second half of an
+/// editor (#1086).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignatureDraft {
+    /// Which signature this is, or `None` for one being created.
+    pub id: Option<SignatureId>,
+    /// What the picker will show.
+    pub name: String,
+    /// The signature itself.
+    pub text: String,
+}
+
+/// What the detail view has to say about the last connection test.
+///
+/// Three states and no fourth: #980's acceptance is "a visible result:
+/// success, or a real error message, not a spinner that silently stops", and
+/// a type that can only be these cannot express the spinner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectionStatus {
+    /// Nothing has been asked yet, so there is nothing to say.
+    Idle,
+    /// A test is running.
+    Testing,
+    /// It finished. Each server answered for itself — `Err` carries what that
+    /// server or its transport said, because "it does not work" sends
+    /// somebody to two screens of settings with nothing to go on.
+    Answered {
+        /// The incoming (IMAP) server.
+        incoming: Result<(), String>,
+        /// The outgoing (SMTP) server.
+        outgoing: Result<(), String>,
+    },
+}
+
+impl ConnectionStatus {
+    /// The sentence the detail view shows, and the one a screen reader is
+    /// given. Empty only for [`Idle`](ConnectionStatus::Idle), which draws
+    /// nothing at all rather than an empty row.
+    pub fn message(&self) -> String {
+        match self {
+            ConnectionStatus::Idle => String::new(),
+            ConnectionStatus::Testing => "Testing…".to_owned(),
+            ConnectionStatus::Answered { incoming, outgoing } => match (incoming, outgoing) {
+                (Ok(()), Ok(())) => "Both servers answered.".to_owned(),
+                (Err(reason), Ok(())) => format!("Incoming: {reason}"),
+                (Ok(()), Err(reason)) => format!("Outgoing: {reason}"),
+                (Err(incoming), Err(outgoing)) => {
+                    format!("Incoming: {incoming}\nOutgoing: {outgoing}")
+                }
+            },
+        }
+    }
+
+    /// Whether this is a state the user should read as a problem, so the row
+    /// can carry the failure styling rather than the widget guessing from the
+    /// text.
+    fn failed(&self) -> bool {
+        matches!(
+            self,
+            ConnectionStatus::Answered { incoming, outgoing }
+                if incoming.is_err() || outgoing.is_err()
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Sections — shared with the macOS frontend
+// ---------------------------------------------------------------------------
+
+// The section model moved to `postio_ui::settings`: both frontends navigate
+// the same sections of the same file, and a second copy of "which line
+// does [sync] start on" is a second answer waiting to disagree. Re-exported
+// so every reference in this crate still reads as it did.
+pub use postio_ui::settings::{Group, Section, find_section, humanize_interval, section_at_line};
+
+/// The muted leading icon an unselected row wears.
+///
+/// A free function rather than a method: `Section` is `postio_ui`'s now, and a
+/// GTK symbolic icon name is not something the shared crate should carry --
+/// the macOS sidebar draws SF Symbols from the same enum.
+pub fn icon(section: Section) -> &'static str {
+    match section {
+        Section::Accounts => "avatar-default-symbolic",
+        Section::Filtering => "mail-mark-junk-symbolic",
+        Section::Filters => "view-list-symbolic",
+        Section::Composing => "document-edit-symbolic",
+        Section::Appearance => "preferences-desktop-appearance-symbolic",
+        Section::Keyboard => "preferences-desktop-keyboard-symbolic",
+        Section::Sync => "emblem-synchronizing-symbolic",
+        Section::Privacy => "security-high-symbolic",
+        Section::ConfigFile => "text-x-generic-symbolic",
+    }
+}
+
+/// Every saved search's key, in the order the structured filters pane shows
+/// them: pinned ones first, in their sidebar order
+/// ([`Config::ordered_filter_keys`]), then anything unpinned — the sidebar
+/// never shows those, so this settings pane is the only place they are
+/// visible at all, and alphabetical by key is the same fallback
+/// `ordered_filter_keys` already gives pinned filters with no explicit
+/// order.
+fn filter_display_order(config: &Config) -> Vec<String> {
+    let mut keys = config.ordered_filter_keys();
+    let mut unpinned: Vec<&String> = config
+        .filters
+        .keys()
+        .filter(|key| !keys.iter().any(|pinned| pinned == *key))
+        .collect();
+    unpinned.sort();
+    keys.extend(unpinned.into_iter().cloned());
+    keys
+}
+
+/// Two columns with a rule between them, and real space either side of it.
+///
+/// The space is the point. A divider with columns flush against it reads as
+/// a border on two boxes rather than as one pane divided in two, which is
+/// what the drawing asks for and what the old flat column could not express
+/// at all.
+fn two_columns(left: &impl IsA<gtk::Widget>, right: &impl IsA<gtk::Widget>) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    row.set_widget_name(TWO_COLUMNS);
+    row.add_css_class("postio-settings-columns");
+
+    let left_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    left_box.add_css_class("postio-settings-column");
+    left_box.set_hexpand(true);
+    left_box.append(left);
+
+    let right_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    right_box.add_css_class("postio-settings-column");
+    right_box.set_hexpand(true);
+    right_box.append(right);
+
+    // Equal halves, through a size group rather than `set_homogeneous`:
+    // homogeneous shares the width between *every* child, and the third
+    // child here is the 1px rule — which duly took a third of the pane and
+    // drew itself as a grey block down the middle of it. `hexpand` alone is
+    // not enough either, since it only shares out the *extra* space and
+    // leaves the wordier column its larger natural width.
+    let columns = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
+    columns.add_widget(&left_box);
+    columns.add_widget(&right_box);
+
+    row.append(&left_box);
+    row.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+    row.append(&right_box);
+    row
+}
+
+/// Remove every row from `list`, and nothing else: a list can hold a
+/// popover too (the account rows' menu), which `remove_all` would try to
+/// remove as a row forever. Stops at a row the list no longer parents, as
+/// one being torn down may not.
+fn clear_rows(list: &gtk::ListBox) {
+    while let Some(row) = list.row_at_index(0) {
+        if row.parent().as_ref() != Some(list.upcast_ref::<gtk::Widget>()) {
+            break;
+        }
+        list.remove(&row);
+    }
+}
+
+/// The name every [`two_columns`] row carries, so a narrow panel can find
+/// them and stack them.
+const TWO_COLUMNS: &str = "postio-settings-two-columns";
+
+/// `row`, a [`two_columns`] row, side by side or stacked: stacked, the rule
+/// between the halves runs across rather than down.
+fn stack_columns(row: &gtk::Box, stacked: bool) {
+    let (along, across) = if stacked {
+        (gtk::Orientation::Vertical, gtk::Orientation::Horizontal)
+    } else {
+        (gtk::Orientation::Horizontal, gtk::Orientation::Vertical)
+    };
+    row.set_orientation(along);
+    let mut child = row.first_child();
+    while let Some(widget) = child {
+        if let Some(rule) = widget.downcast_ref::<gtk::Separator>() {
+            rule.set_orientation(across);
+            rule.set_margin_top(if stacked { space::S6 } else { 0 });
+            rule.set_margin_bottom(if stacked { space::S6 } else { 0 });
+        }
+        child = widget.next_sibling();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Path display — pure, no GTK
+// ---------------------------------------------------------------------------
+
+/// `path`, with the user's home directory collapsed to `~` — what the header
+/// shows, matching canvas 3f's `~/.config/postmark/config.toml`.
+fn display_path(path: &Path) -> String {
+    display_path_under(path, std::env::var_os("HOME").as_deref().map(Path::new))
+}
+
+/// [`display_path`] with `home` given rather than read from the
+/// environment, which a test cannot set safely.
+fn display_path_under(path: &Path, home: Option<&Path>) -> String {
+    home.and_then(|home| {
+        path.strip_prefix(home)
+            .ok()
+            .map(|rest| format!("~/{}", rest.display()))
+    })
+    .unwrap_or_else(|| path.display().to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Writing back
+// ---------------------------------------------------------------------------
+
+// `write_atomically` lives in `postio_config::save`: saving the way an editor
+// saves is a contract with `postio_config::watch`, which is built to see a
+// scratch file and a rename rather than an in-place write. Both frontends
+// save through it, so a settings change reaches the running app by one route.
+use postio_config::save::write_atomically;
+
+// ---------------------------------------------------------------------------
+// Account row data (#464)
+// ---------------------------------------------------------------------------
+
+/// The account id `SettingsPanel::account_row` stamped onto `row`, or
+/// [`AccountId::UNASSIGNED`] if this is not an account row at all.
+fn row_account_id(row: &gtk::ListBoxRow) -> AccountId {
+    row.widget_name()
+        .strip_prefix(ACCOUNT_ROW)
+        .and_then(|id| id.parse::<i64>().ok())
+        .map_or(AccountId::UNASSIGNED, AccountId::new)
+}
+
+/// What an account row's widget name starts with; its id follows. A name
+/// rather than `set_data`, which is unsafe, and this crate has none.
+const ACCOUNT_ROW: &str = "postio-account-";
+// `account_badge` moved to `postio_ui::account`: what an account *is* -- IMAP
+// or Gmail, a password or OAuth 2 -- reads the same in both settings panes,
+// and it needs nothing from either toolkit.
+pub use postio_ui::account::badge as account_badge;
+
+/// One labeled field in the account detail view (#880) — a plain label over
+/// the control. Unlike the settings rows that carry a second description
+/// line, there is none here: a host or a port names itself.
+fn detail_row(label: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
+    crate::widgets::field(label, control, "postio-settings-account-detail-row")
+}
+
+/// A sentence under a control: wrapped rather than cut, because half of a
+/// sentence says less than two lines of it.
+fn note(class: &str) -> gtk::Label {
+    let label = gtk::Label::new(None);
+    label.add_css_class("postio-settings-note");
+    label.add_css_class(class);
+    label.set_xalign(0.0);
+    label.set_wrap(true);
+    label.set_wrap_mode(pango::WrapMode::WordChar);
+    label
+}
+
+/// [`note`], saying `text`.
+fn note_with(class: &str, text: &str) -> gtk::Label {
+    let label = note(class);
+    label.set_label(text);
+    label
+}
+
+/// A column of read-only lines -- a `[focus.filter]` list -- named for a
+/// screen reader by its heading.
+fn listed_box(class: &str, name: &str) -> gtk::Box {
+    let column = gtk::Box::new(gtk::Orientation::Vertical, space::S1);
+    column.add_css_class("postio-settings-filtering-list");
+    column.add_css_class(class);
+    column.set_accessible_role(gtk::AccessibleRole::List);
+    column.update_property(&[gtk::accessible::Property::Label(name)]);
+    column
+}
+
+/// `column` holding one line per entry of `listed`, each with the control
+/// that takes it back, and `empty` showing in its place when there are none.
+fn fill_listed(
+    column: &gtk::Box,
+    empty: &gtk::Label,
+    listed: &[postio_ui::filtering::Listed],
+    undo_class: &str,
+    on_undo: &std::rc::Rc<dyn Fn(postio_ui::filtering::Undo)>,
+) {
+    while let Some(child) = column.first_child() {
+        column.remove(&child);
+    }
+    for entry in listed {
+        let line = gtk::Label::new(Some(&entry.says));
+        line.add_css_class("postio-settings-filtering-entry");
+        if !entry.acts {
+            line.add_css_class("postio-settings-filtering-entry-inert");
+        }
+        line.set_xalign(0.0);
+        line.set_hexpand(true);
+        line.set_wrap(true);
+        line.set_wrap_mode(pango::WrapMode::WordChar);
+        line.set_selectable(false);
+        let undo = crate::widgets::button::button(
+            entry.undo.label(),
+            crate::widgets::Kind::Ghost,
+            crate::widgets::Size::Small,
+        );
+        undo.add_css_class("postio-settings-filtering-undo");
+        undo.add_css_class(undo_class);
+        undo.set_valign(gtk::Align::Center);
+        let what = entry.undo.clone();
+        let on_undo = std::rc::Rc::clone(on_undo);
+        undo.connect_clicked(move |_| on_undo(what.clone()));
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
+        row.set_accessible_role(gtk::AccessibleRole::ListItem);
+        row.append(&line);
+        row.append(&undo);
+        column.append(&row);
+    }
+    column.set_visible(!listed.is_empty());
+    empty.set_visible(listed.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// The widget
+// ---------------------------------------------------------------------------
+
+/// Sync & storage's controls, held so the pane can be *updated* from a fresh
+/// read of the file rather than rebuilt from one.
+///
+/// The old panel rebuilt every row on every change, because a `DropDown`
+/// being repopulated fires `selected-notify` and there was no way to tell
+/// that apart from a person choosing something. `SegmentedControl` and
+/// `CheckRow` both know the difference, so the widgets can outlive the
+/// value they show.
+pub struct SyncControls {
+    /// IMAP IDLE, polling, or only on request.
+    pub check_for_mail: SegmentedControl,
+    /// What the chosen mode actually means in minutes — the number the
+    /// segmented control deliberately does not carry. See
+    /// [`SettingsPanel::ensure_sync_controls`] for why the interval is a
+    /// fact here rather than a spin button.
+    pub interval: gtk::Label,
+    /// Three values, so a segmented control rather than the drawing's
+    /// checkbox — see [`SettingsPanel::ensure_sync_controls`].
+    pub attachments: SegmentedControl,
+    /// Whether mail is checked as Postio starts.
+    pub sync_on_startup: CheckRow,
+    /// Whether new mail raises a notification.
+    pub notify: CheckRow,
+    /// `index 38 MB · stores 7.9 GB` and `3 accounts · last pass 41 min`,
+    /// the bordered block's two lines.
+    pub stats_size: gtk::Label,
+    /// How many accounts the store holds.
+    pub stats_accounts: gtk::Label,
+    /// Which mailbox roles a notification is worth raising for, as a comma
+    /// list (#874). An `Entry`, because it is a list a person types and not
+    /// a choice between three things — ADR 0029 Q3.
+    pub notify_roles: gtk::Entry,
+    /// "Back up locally" (ADR 0016): its heading, hidden while no folders
+    /// are known.
+    pub backfill_heading: gtk::Label,
+    /// The folders' checks.
+    pub backfill: gtk::Box,
+}
+
+/// Filtering's controls (spec 007 US9): the switch, and the lines that say
+/// what it does and what `[focus.filter]` holds, in
+/// `postio_ui::filtering`'s words.
+pub struct FilteringControls {
+    /// `[focus] filtering`.
+    pub switch: CheckRow,
+    /// What filtering does now.
+    pub state: gtk::Label,
+    /// "186 filtered today", while filtering is on and the count is known.
+    pub today: gtk::Label,
+    /// Open Filtered, with `g f` in it.
+    pub open: std::rc::Rc<crate::widgets::KeycapButton>,
+    /// The keys Filtered answers: restore, and the sweep.
+    pub keys: crate::widgets::keyhint::KeyLine,
+    /// `[focus.filter] never`, one line each.
+    pub never: gtk::Box,
+    /// What the never list says with nobody in it.
+    pub never_empty: gtk::Label,
+    /// `[focus.filter] stop_markers`, one line each.
+    pub stopped: gtk::Box,
+    /// What the stopped list says with nothing in it.
+    pub stopped_empty: gtk::Label,
+}
+
+/// Composing's controls.
+pub struct ComposingControls {
+    /// Where a reply's signature goes.
+    pub on_reply: SegmentedControl,
+    /// Where a forward's signature goes.
+    pub on_forward: SegmentedControl,
+}
+
+mod imp {
+    use super::*;
+
+    pub struct SettingsPanel {
+        /// The window's own header bar: the title, and the find-a-setting
+        /// field. Built here rather than by `window.rs` so the search that
+        /// filters this sidebar lives beside the sidebar it filters; the
+        /// host window mounts it (see [`super::SettingsPanel::header_bar`]).
+        pub header_bar: adw::HeaderBar,
+        pub search: gtk::SearchEntry,
+        /// Which of the panes is on screen. Exactly one ever is —
+        /// that is the whole navigation model, and the reason this is a
+        /// `Stack` and not a column of cards (#1179).
+        pub stack: gtk::Stack,
+        pub current: Cell<Section>,
+        /// The pane's own title and the line under it: the same two strings
+        /// the sidebar row carries, repeated where the eye already is.
+        pub pane_title: gtk::Label,
+        pub pane_description: gtk::Label,
+        /// Where a pane's one primary action goes — `Add account` and
+        /// nothing else, so far. Empty and invisible on the other seven.
+        pub pane_action: gtk::Box,
+        /// One row per section, in `Section::ALL` order, so the search
+        /// filter and `show_section` can find a row without walking the
+        /// list box asking each child what it is.
+        pub nav_rows: RefCell<Vec<gtk::ListBoxRow>>,
+        /// The footer's state mark: the one thing on the strip that is a
+        /// colour rather than a word.
+        pub footer_dot: gtk::Box,
+        /// Which file is being written, in mono — `[ui] in config.toml` on a
+        /// pane that owns a table, the whole path on one that does not.
+        pub footer_target: gtk::Label,
+        /// What the find-a-setting field currently holds, folded to lower
+        /// case — read by the sidebar's filter function, which GTK calls
+        /// once per row, so the folding is done once, here.
+        /// Set while `redraw_accounts` is rebuilding the list, so the
+        /// selection changes that rebuilding causes are not mistaken for a
+        /// person choosing an account. See that method.
+        pub redrawing: Cell<bool>,
+        pub nav_query: RefCell<String>,
+        /// Who to ask to run a `CommandId` this panel has a button for.
+        pub command: RefCell<Vec<CommandHandler>>,
+        /// The footer's `Open in $EDITOR` cap, held so a keymap change can
+        /// put the live key on it.
+        pub editor_button: OnceCell<std::rc::Rc<crate::widgets::KeycapButton>>,
+        /// The pane header's `Add account`, held so a keymap change can
+        /// redraw its cap.
+        pub add_account_button: OnceCell<std::rc::Rc<crate::widgets::KeycapButton>>,
+        /// Whether the panes are narrow enough that two columns stack
+        /// (`set_narrow`).
+        pub narrow: Cell<bool>,
+        /// Every account's folders, for Sync & storage's per-folder backfill
+        /// control (ADR 0016). Empty until an app installs the backfill
+        /// presenter, and the control is not drawn while it is.
+        pub folders:
+            RefCell<std::collections::BTreeMap<AccountId, Vec<postio_model::mailbox::Mailbox>>>,
+        /// Who to tell when a folder's backfill check is changed by hand.
+        #[allow(clippy::type_complexity)]
+        pub backfill_handlers: RefCell<Vec<Box<dyn Fn(postio_model::ids::MailboxId, bool)>>>,
+        /// The nine panes themselves.
+        pub accounts_pane: gtk::Box,
+        pub filtering_pane: gtk::Box,
+        pub filters_pane: gtk::Box,
+        pub composing_pane: gtk::Box,
+        pub keyboard_pane: gtk::Box,
+        pub sync_pane: gtk::Box,
+        pub privacy_pane: gtk::Box,
+        pub config_pane: gtk::Box,
+        /// Sync & storage's controls, built on first draw and updated after
+        /// — never rebuilt. Rebuilding was the old panel's way around a
+        /// control that reported its own repopulation as a change, and
+        /// `SegmentedControl`/`CheckRow` do not have that problem.
+        ///
+        /// Lazily, though, and for #873's reason: building certain controls
+        /// while the host window is still wiring its own shortcut
+        /// controllers was found to corrupt keyboard routing for the rest of
+        /// that window's life.
+        pub sync_controls: OnceCell<SyncControls>,
+        pub composing_controls: OnceCell<ComposingControls>,
+        pub filtering_controls: OnceCell<FilteringControls>,
+        /// How many messages were filtered today, as the host counts them:
+        /// what Filtering's count line says. `None` until it is told.
+        pub filtered_today: Cell<Option<u32>>,
+        /// The keys in force, for the lines that teach one.
+        pub keymap: RefCell<postio_core::Keymap>,
+        pub tag: gtk::Label,
+        pub nav: gtk::ListBox,
+        pub buffer: gtk::TextBuffer,
+        pub view: gtk::TextView,
+        pub status: gtk::Label,
+        pub revert: gtk::Button,
+        pub path: RefCell<Option<PathBuf>>,
+        /// Set while [`super::SettingsPanel::load`] is replacing the buffer's
+        /// text, so that reload does not read back as an edit and schedule a
+        /// pointless write of the very bytes just read.
+        pub loading: Cell<bool>,
+        pub write_source: RefCell<Option<glib::SourceId>>,
+        pub dismissed: RefCell<Vec<Box<dyn Fn()>>>,
+        /// The last text that loaded without error — from this panel's own
+        /// typing, or from anywhere else that writes the same file. `None`
+        /// only before anything has ever validated, which in practice means
+        /// never: even a missing file validates to defaults.
+        pub last_good: RefCell<Option<String>>,
+        /// What the key resolver could not make sense of, as of the last time
+        /// [`super::SettingsPanel::set_keymap_problems`] was told. `window.rs`
+        /// computes these -- they need the full command registry, which this
+        /// module has no reason to depend on -- and hands them over so they
+        /// render where `[keys]` is actually edited rather than only in a log
+        /// line nobody watches interactively.
+        pub keymap_problems: RefCell<Vec<String>>,
+        /// One row per account, enable switch and context menu (#464).
+        pub accounts_list: gtk::ListBox,
+        /// The egress log's audit list (#151): what left this machine.
+        pub egress_list: gtk::ListBox,
+        pub egress_scroller: gtk::ScrolledWindow,
+        /// Hidden entirely when there are no accounts to show a row for.
+        pub accounts_scroller: gtk::ScrolledWindow,
+        /// The accounts the rows above were built from — kept so a right
+        /// click can find which id and which context-menu items (first/last
+        /// have nothing to say) belong to the row it landed on.
+        pub accounts: RefCell<Vec<Account>>,
+        /// What each account's mail weighs, and whether the current
+        /// `[sync] attachment_fetch` is already pulling payloads.
+        ///
+        /// Kept apart from `accounts` because the two arrive from different
+        /// places -- the account list from the accounts table, the footprints
+        /// from a per-account measurement -- and neither call may assume it
+        /// runs after the other (#411).
+        pub weights: RefCell<Vec<(AccountId, postio_core::event::MailFootprint)>>,
+        pub attachments_included: std::cell::Cell<bool>,
+        /// Every OAuth account's persisted token expiry, as of the last read
+        /// (#878, on top of #870's persistence). An id present with `None`
+        /// is a real answer — a provider that has a token on file but never
+        /// said `expires_in`, so there is nothing to count down. An id
+        /// simply absent is a different fact: a password account, or an
+        /// OAuth account fed by an external broker (which never persists
+        /// an expiry at all), so the row shows no validity line rather
+        /// than a wrong one.
+        pub token_expiries: RefCell<Vec<(AccountId, Option<std::time::SystemTime>)>>,
+        /// A reindex in progress, per account (#981) — `(done, total)`. An
+        /// id absent means nothing is rebuilding that account's index right
+        /// now, the same "absent means nothing to say" shape
+        /// `token_expiries` uses.
+        pub reindex_progress: RefCell<Vec<(AccountId, (u32, u32))>>,
+        /// The account row context menu currently open, if one is — tracked
+        /// so a second right click closes the first, the same reason
+        /// `Sidebar` tracks `saved_search_menu`.
+        pub account_menu: RefCell<Option<gtk::PopoverMenu>>,
+        pub account_action: RefCell<Vec<AccountActionHandler>>,
+        pub account_enabled_changed: RefCell<Vec<AccountEnabledHandler>>,
+        /// The account detail view (#880): editable display name, IMAP and
+        /// SMTP host/port, over an account's real settings. Hidden until
+        /// [`super::SettingsPanel::open_account_detail`] is called.
+        pub account_detail: gtk::Box,
+        /// Which account the detail view is currently open on, if any —
+        /// what an edit's committed value is reported against.
+        pub account_detail_id: RefCell<Option<AccountId>>,
+        /// Built on first use by
+        /// [`super::SettingsPanel::ensure_account_detail_fields`], never in
+        /// `build()` or this struct's own `Default` — see that method's
+        /// doc for why.
+        pub account_detail_display_name: OnceCell<gtk::Entry>,
+        pub account_detail_imap_host: OnceCell<gtk::Entry>,
+        pub account_detail_imap_port: OnceCell<gtk::Entry>,
+        pub account_detail_smtp_host: OnceCell<gtk::Entry>,
+        pub account_detail_smtp_port: OnceCell<gtk::Entry>,
+        /// #979's picker, and the ids behind its rows — the widget carries
+        /// names because that is what a person picks by, and the handler
+        /// needs the id the row stands for.
+        pub account_detail_signature: OnceCell<gtk::DropDown>,
+        /// The whole row, label included: hiding only the control would
+        /// leave a "Default signature" label with nothing beside it.
+        pub account_detail_signature_row: OnceCell<gtk::Box>,
+        pub account_detail_signature_ids: RefCell<Vec<SignatureId>>,
+        /// Set while [`super::SettingsPanel::open_account_detail`] is
+        /// populating the fields above, so setting an `Entry`'s text does
+        /// not itself fire an edit — the same guard [`super::SettingsPanel::load`]
+        /// uses on the raw buffer, for the same reason.
+        pub account_detail_loading: Cell<bool>,
+        /// The Mailboxes group inside the detail view (#966). The box itself
+        /// is safe to build early -- it carries no event controllers -- but
+        /// the dropdowns inside it are not, so they are built per open by
+        /// [`super::SettingsPanel::redraw_account_mailboxes`].
+        pub account_detail_mailboxes: gtk::Box,
+        /// Every account's folders and role map, as
+        /// [`super::SettingsPanel::set_account_mailboxes`] last gave them.
+        /// Order-independent with `set_accounts`, the way `mail_weights` is.
+        pub account_mailboxes: RefCell<Vec<(AccountId, AccountMailboxes)>>,
+        pub account_edited: RefCell<Vec<AccountEditHandler>>,
+        /// Who to tell when "Test connection" is pressed (#980). The panel
+        /// never dials anything itself, exactly as it never writes an edit
+        /// itself: the app owns the store and the network.
+        pub test_connection: RefCell<Vec<TestConnectionHandler>>,
+        /// The control and the line under it, built with the rest of the
+        /// detail fields and then only ever relabelled.
+        pub account_detail_test_button: OnceCell<gtk::Button>,
+        /// The signature list on the detail view, and the editor it drills
+        /// into (#1086). A second level of the same show/hide the account
+        /// list and its detail already use.
+        pub signature_saved: RefCell<Vec<SignatureSavedHandler>>,
+        pub signature_deleted: RefCell<Vec<SignatureDeletedHandler>>,
+        pub account_detail_signature_list: OnceCell<gtk::ListBox>,
+        pub account_detail_signature_ids_listed: RefCell<Vec<SignatureId>>,
+        pub signature_editor: gtk::Box,
+        pub signature_editor_heading: OnceCell<gtk::Label>,
+        pub signature_editor_name: OnceCell<gtk::Entry>,
+        pub signature_editor_text: OnceCell<gtk::TextView>,
+        pub signature_editor_error: OnceCell<gtk::Label>,
+        pub signature_editor_delete: OnceCell<gtk::Button>,
+        /// Which signature the editor is open on, and for which account.
+        pub signature_editor_on: RefCell<Option<(AccountId, Option<SignatureId>)>>,
+        pub account_detail_test_status: OnceCell<gtk::Label>,
+        /// One row per saved search, pinned or not (#869) — the structured
+        /// pane [`Section::Filters`] now shows instead of only jumping the
+        /// raw text view to `[saved_searches]`.
+        pub filters_list: gtk::ListBox,
+        pub filters_scroller: gtk::ScrolledWindow,
+        /// Shown instead of `filters_scroller` when there is nothing saved
+        /// yet — canvas's "empty is never blank" rule; see
+        /// `SettingsPanel::redraw_filters`.
+        pub filters_empty: gtk::Label,
+        /// The line under the saved searches that says how one is made --
+        /// there is no add form; the search box saves one -- and the key
+        /// that does it, drawn from the keymap.
+        pub filters_hint_cap: gtk::Label,
+        /// `[sync]`'s structured rows (#874) — always exactly five rows, so
+        /// no empty state to draw, the same shape `[ui]`'s own pane (#873)
+        /// established.
+        pub sync_box: gtk::Box,
+        /// `[ui]`'s structured rows (#873) — unlike filters and accounts,
+        /// always exactly six rows, so no empty state to draw.
+        pub ui_box: gtk::Box,
+        /// One row per sender with a standing remote-image exception (#871).
+        pub privacy_list: gtk::ListBox,
+        /// Hidden entirely when nobody is allow-listed.
+        pub privacy_scroller: gtk::ScrolledWindow,
+        /// Shown instead of `privacy_scroller` when the list is empty —
+        /// same "empty is never blank" rule `filters_empty` follows.
+        pub privacy_empty: gtk::Label,
+        /// The allow-list this panel is showing, and the path a revoke
+        /// writes back to — handed in by `window.rs`'s
+        /// [`super::SettingsPanel::set_remote_image_allowlist`] rather than
+        /// loaded here, the same reason `Window::new_reader` takes its own
+        /// path rather than hardcoding [`postio_ui::allowlist::RemoteImageAllowList::path`]:
+        /// a test needs a scratch path, not the real state directory.
+        pub remote_image_allowlist:
+            RefCell<Option<(postio_ui::allowlist::RemoteImageAllowList, PathBuf)>>,
+        /// One row per past one-click-unsubscribe activation (#971), newest
+        /// first — the log itself, not something this pane can act on: it is
+        /// read-only history, unlike `privacy_list`'s revocable exceptions.
+        pub unsubscribe_list: gtk::ListBox,
+        /// Hidden entirely when nothing has ever been activated.
+        pub unsubscribe_scroller: gtk::ScrolledWindow,
+        /// Shown instead of `egress_scroller` when nothing has connected —
+        /// the egress log never had an empty state, so its heading stood
+        /// over nothing at all until the first connection (#1179's kickers
+        /// made that visible, and the screen sweep, now `scripts/storyboards.sh screens`, made it obvious).
+        pub egress_empty: gtk::Label,
+        /// Shown instead of `unsubscribe_scroller` when the log is empty —
+        /// same "empty is never blank" rule `privacy_empty` follows.
+        pub unsubscribe_empty: gtk::Label,
+        /// What `redraw_unsubscribe_activations` last drew — handed in by
+        /// `window.rs`, the same reason `remote_image_allowlist` is handed
+        /// in rather than read here: this crate has no SQL of its own.
+        pub unsubscribe_activations: RefCell<Vec<UnsubscribeActivation>>,
+        /// How many messages have asked for a read receipt (#970) — a count,
+        /// not a toggle: Postio never sends one automatically (CLAUDE.md's
+        /// privacy section), so there is nothing here to switch, only a fact
+        /// to state. Always visible, never hidden the way an empty list is:
+        /// zero is itself the answer, not the absence of one.
+        pub read_receipt_count: gtk::Label,
+        /// One row per registered command (#881), always present — the same
+        /// no-empty-state shape `sync_box`/`ui_box` use, since the registry
+        /// is never empty. Scrolled rather than a bare list, unlike those
+        /// two: the registry runs to dozens of rows, not five or six.
+        pub keys_list: gtk::ListBox,
+        pub keys_scroller: gtk::ScrolledWindow,
+        /// Which command's row is waiting for the next keypress, if any.
+        pub capturing: RefCell<Option<CommandId>>,
+        /// The last capture attempt's rejection, if the most recent one was
+        /// rejected — read by `key_row` so the row that was being captured
+        /// keeps saying why after the redraw a rejection triggers. Cleared
+        /// the next time that row's rebind button is pressed.
+        pub capture_conflict: RefCell<Option<(CommandId, String)>>,
+        /// Set once [`super::SettingsPanel::ensure_capture_controller`] has
+        /// added `keys_list`'s `EventControllerKey` — never in `build()`,
+        /// see that method's own doc for why.
+        pub capture_controller_installed: Cell<bool>,
+    }
+
+    impl Default for SettingsPanel {
+        fn default() -> Self {
+            Self {
+                header_bar: adw::HeaderBar::new(),
+                search: gtk::SearchEntry::new(),
+                stack: gtk::Stack::new(),
+                current: Cell::new(Section::Accounts),
+                pane_title: gtk::Label::new(None),
+                pane_description: gtk::Label::new(None),
+                pane_action: gtk::Box::new(gtk::Orientation::Horizontal, 8),
+                nav_rows: RefCell::new(Vec::new()),
+                footer_dot: gtk::Box::new(gtk::Orientation::Horizontal, 0),
+                footer_target: gtk::Label::new(None),
+                redrawing: Cell::new(false),
+                nav_query: RefCell::new(String::new()),
+                command: RefCell::new(Vec::new()),
+                editor_button: OnceCell::new(),
+                add_account_button: OnceCell::new(),
+                narrow: Cell::new(false),
+                folders: RefCell::default(),
+                backfill_handlers: RefCell::default(),
+                accounts_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                filtering_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                filters_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                composing_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                keyboard_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                sync_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                privacy_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                config_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                sync_controls: OnceCell::new(),
+                composing_controls: OnceCell::new(),
+                filtering_controls: OnceCell::new(),
+                filtered_today: Cell::new(None),
+                keymap: RefCell::new(postio_core::Keymap::defaults().clone()),
+                tag: gtk::Label::new(None),
+                nav: gtk::ListBox::new(),
+                buffer: gtk::TextBuffer::new(None),
+                view: gtk::TextView::new(),
+                status: gtk::Label::new(None),
+                revert: gtk::Button::with_label("Revert file"),
+                path: RefCell::new(None),
+                loading: Cell::new(false),
+                write_source: RefCell::new(None),
+                dismissed: RefCell::new(Vec::new()),
+                last_good: RefCell::new(None),
+                keymap_problems: RefCell::new(Vec::new()),
+                accounts_list: gtk::ListBox::new(),
+                egress_list: gtk::ListBox::new(),
+                egress_scroller: gtk::ScrolledWindow::new(),
+                accounts_scroller: gtk::ScrolledWindow::new(),
+                accounts: RefCell::new(Vec::new()),
+                token_expiries: RefCell::new(Vec::new()),
+                reindex_progress: RefCell::new(Vec::new()),
+                weights: RefCell::new(Vec::new()),
+                attachments_included: Cell::new(false),
+                account_menu: RefCell::new(None),
+                account_action: RefCell::new(Vec::new()),
+                account_enabled_changed: RefCell::new(Vec::new()),
+                account_detail: gtk::Box::new(gtk::Orientation::Vertical, 8),
+                account_detail_id: RefCell::new(None),
+                account_detail_display_name: OnceCell::new(),
+                account_detail_imap_host: OnceCell::new(),
+                account_detail_imap_port: OnceCell::new(),
+                account_detail_smtp_host: OnceCell::new(),
+                account_detail_smtp_port: OnceCell::new(),
+                account_detail_signature: OnceCell::new(),
+                account_detail_signature_row: OnceCell::new(),
+                account_detail_signature_ids: RefCell::new(Vec::new()),
+                account_detail_loading: Cell::new(false),
+                account_detail_mailboxes: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                account_mailboxes: RefCell::new(Vec::new()),
+                account_edited: RefCell::new(Vec::new()),
+                test_connection: RefCell::new(Vec::new()),
+                account_detail_test_button: OnceCell::new(),
+                signature_saved: RefCell::new(Vec::new()),
+                signature_deleted: RefCell::new(Vec::new()),
+                account_detail_signature_list: OnceCell::new(),
+                account_detail_signature_ids_listed: RefCell::new(Vec::new()),
+                signature_editor: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                signature_editor_heading: OnceCell::new(),
+                signature_editor_name: OnceCell::new(),
+                signature_editor_text: OnceCell::new(),
+                signature_editor_error: OnceCell::new(),
+                signature_editor_delete: OnceCell::new(),
+                signature_editor_on: RefCell::new(None),
+                account_detail_test_status: OnceCell::new(),
+                filters_list: gtk::ListBox::new(),
+                filters_scroller: gtk::ScrolledWindow::new(),
+                filters_empty: gtk::Label::new(Some("No saved searches yet.")),
+                filters_hint_cap: crate::widgets::keyhint::cap(""),
+                sync_box: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                ui_box: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                privacy_list: gtk::ListBox::new(),
+                privacy_scroller: gtk::ScrolledWindow::new(),
+                privacy_empty: gtk::Label::new(Some(postio_ui::privacy::NO_ALLOWED)),
+                remote_image_allowlist: RefCell::new(None),
+                unsubscribe_list: gtk::ListBox::new(),
+                unsubscribe_scroller: gtk::ScrolledWindow::new(),
+                egress_empty: gtk::Label::new(Some(postio_ui::privacy::NO_CONNECTIONS)),
+                unsubscribe_empty: gtk::Label::new(Some(postio_ui::privacy::NO_LISTS_LEFT)),
+                unsubscribe_activations: RefCell::new(Vec::new()),
+                read_receipt_count: gtk::Label::new(None),
+                keys_list: gtk::ListBox::new(),
+                keys_scroller: gtk::ScrolledWindow::new(),
+                capturing: RefCell::new(None),
+                capture_conflict: RefCell::new(None),
+                capture_controller_installed: Cell::new(false),
+            }
+        }
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for SettingsPanel {
+        const NAME: &'static str = "PostioSettingsPanel";
+        type Type = super::SettingsPanel;
+        type ParentType = adw::Bin;
+    }
+
+    impl ObjectImpl for SettingsPanel {
+        fn constructed(&self) {
+            self.parent_constructed();
+            self.obj().build();
+        }
+
+        fn dispose(&self) {
+            if let Some(source) = self.write_source.borrow_mut().take() {
+                source.remove();
+            }
+        }
+    }
+
+    impl WidgetImpl for SettingsPanel {}
+    impl BinImpl for SettingsPanel {}
+}
+
+glib::wrapper! {
+    /// Canvas 3f: the settings panel over `config.toml` itself.
+    pub struct SettingsPanel(ObjectSubclass<imp::SettingsPanel>)
+        @extends adw::Bin, gtk::Widget,
+        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
+}
+
+impl Default for SettingsPanel {
+    fn default() -> Self {
+        glib::Object::new()
+    }
+}
+
+impl SettingsPanel {
+    /// An empty panel, not yet pointed at a file.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Reads `path` and shows it.
+    ///
+    /// A missing file opens empty rather than erroring: first run has nothing
+    /// on disk yet, and typing here is what creates it, exactly as a first
+    /// `$EDITOR` save would. A file that is already usable seeds
+    /// [`SettingsPanel::revert`]'s target, the same as any later save —
+    /// otherwise a config nobody has edited since startup would have nothing
+    /// to revert to.
+    pub fn load(&self, path: &Path) {
+        let imp = self.imp();
+        *imp.path.borrow_mut() = Some(path.to_path_buf());
+        self.refresh_footer();
+
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        imp.loading.set(true);
+        imp.buffer.set_text(&text);
+        imp.loading.set(false);
+
+        self.refresh_validity();
+        self.redraw_filters();
+        self.redraw_sync();
+        self.redraw_keys();
+        if postio_config::validate::check_str(&text)
+            .validation
+            .is_valid()
+        {
+            self.note_known_good(&text);
+        }
+    }
+
+    /// The file this panel is showing, if [`SettingsPanel::load`] has been
+    /// called.
+    pub fn path(&self) -> Option<PathBuf> {
+        self.imp().path.borrow().clone()
+    }
+
+    /// The buffer's full text, exactly as typed.
+    pub fn text(&self) -> String {
+        let buffer = &self.imp().buffer;
+        let (start, end) = buffer.bounds();
+        buffer.text(&start, &end, true).to_string()
+    }
+
+    /// Replaces the buffer's text, as though the user had typed it: the
+    /// validity line recomputes and a write is scheduled, same as any other
+    /// edit. A test seam, in the same spirit as `the palette`'s
+    /// `set_query`.
+    ///
+    /// Redraws explicitly rather than leaning on `connect_changed` alone: a
+    /// fresh buffer is already empty, so `set_text("")` is a no-op edit that
+    /// never fires `changed`, and a structured pane would stay unpopulated.
+    pub fn set_text(&self, text: &str) {
+        self.imp().buffer.set_text(text);
+        self.refresh_validity();
+        self.redraw_filters();
+        self.redraw_sync();
+        self.redraw_keys();
+        self.schedule_write();
+    }
+
+    /// Whether the buffer's current text is usable as written — what the
+    /// validity tag shows.
+    pub fn is_valid(&self) -> bool {
+        postio_config::validate::check_str(&self.text())
+            .validation
+            .is_valid()
+    }
+
+    /// Called when the user presses `Escape`.
+    pub fn connect_dismissed(&self, handler: impl Fn() + 'static) {
+        self.imp().dismissed.borrow_mut().push(Box::new(handler));
+    }
+
+    fn dismiss(&self) {
+        for handler in self.imp().dismissed.borrow().iter() {
+            handler();
+        }
+    }
+
+    /// Recomputes the validity line from the buffer's current text.
+    ///
+    /// `postio_config::validate` does the actual parsing and timing; this
+    /// only formats what it reports into the tag and the foot line canvas 3f
+    /// draws. Deliberately does not feed [`SettingsPanel::revert`]'s target:
+    /// `gtk::TextBuffer::set_text` fires `changed` once for the delete and
+    /// once for the insert, so mid-edit this sees a transiently empty buffer
+    /// — and an empty file is valid TOML. Recording that as "last good" would
+    /// make every edit briefly overwrite the real one. [`note_known_good`]
+    /// only ever sees text that actually reached disk, which a buffer signal
+    /// firing mid-mutation cannot promise.
+    ///
+    /// [`note_known_good`]: SettingsPanel::note_known_good
+    fn refresh_validity(&self) {
+        let imp = self.imp();
+        let text = self.text();
+        let checked = postio_config::validate::check_str(&text);
+        let valid = checked.validation.is_valid();
+
+        imp.tag.set_label(if valid { "valid" } else { "invalid" });
+        if valid {
+            imp.tag.remove_css_class("invalid");
+        } else {
+            imp.tag.add_css_class("invalid");
+        }
+
+        let mut status = format!(
+            "{} · applied live · nothing to save",
+            checked.validation.status_line()
+        );
+        let problems = imp.keymap_problems.borrow();
+        if !problems.is_empty() {
+            status.push_str(&format!(
+                " · {} keymap {}: {}",
+                problems.len(),
+                if problems.len() == 1 {
+                    "problem"
+                } else {
+                    "problems"
+                },
+                problems.join("; ")
+            ));
+        }
+        imp.status.set_label(&status);
+    }
+
+    /// Tells the panel which `[keys]` bindings the resolver dropped, so they
+    /// show up on the footer line -- the same place TOML validity does --
+    /// rather than only in a debug log.
+    ///
+    /// The app calls this with what its resolver could not bind on every
+    /// keymap build and every live reload, whether or not this panel
+    /// happens to be open.
+    pub fn set_keymap_problems(&self, problems: &[String]) {
+        *self.imp().keymap_problems.borrow_mut() = problems.to_vec();
+        self.refresh_validity();
+    }
+
+    /// Shows one row per account, each with its enabled switch (#464).
+    ///
+    /// Hidden entirely when `accounts` is empty: a section with nothing in
+    /// it is clutter the composer's signature picker already taught this
+    /// codebase not to add.
+    pub fn set_accounts(&self, accounts: Vec<Account>) {
+        *self.imp().accounts.borrow_mut() = accounts;
+        self.redraw_accounts();
+        self.refresh_storage_stats();
+    }
+
+    /// What each account's mail weighs, and whether payloads are already
+    /// being fetched.
+    ///
+    /// `attachments_included` is `[sync] attachment_fetch == "eager"`. The
+    /// setting is global and these figures are per account, which is why the
+    /// numbers land on the rows rather than beside the setting: there is no
+    /// row to read a summed-across-accounts figure off, and this panel is a
+    /// `TextView` over literal TOML on purpose -- a form control here would
+    /// fight what it exists for (#411).
+    ///
+    /// Order-independent with [`set_accounts`](Self::set_accounts): whichever
+    /// arrives second redraws the rows from both.
+    pub fn set_mail_weights(
+        &self,
+        weights: &[(AccountId, postio_core::event::MailFootprint)],
+        attachments_included: bool,
+    ) {
+        let imp = self.imp();
+        *imp.weights.borrow_mut() = weights.to_vec();
+        imp.attachments_included.set(attachments_included);
+        self.redraw_accounts();
+        self.refresh_storage_stats();
+    }
+
+    /// Every OAuth account's persisted token expiry (#878) — an id present
+    /// with `None` means a token is on file but no provider-stated expiry
+    /// is, which is a real answer distinct from having nothing to say at
+    /// all: this panel may not link `postio-account` to fetch the keyring
+    /// itself (the crate-boundary rule this widget's own module doc
+    /// explains), so the composition root reads it and hands the result
+    /// back the same way it hands back [`set_mail_weights`](Self::set_mail_weights)'s
+    /// figures.
+    ///
+    /// Order-independent with [`set_accounts`](Self::set_accounts), for the
+    /// same reason `set_mail_weights` is.
+    pub fn set_token_expiries(&self, expiries: &[(AccountId, Option<std::time::SystemTime>)]) {
+        *self.imp().token_expiries.borrow_mut() = expiries.to_vec();
+        self.redraw_accounts();
+    }
+
+    /// `account`'s reindex progress right now (#981) — `Some((done, total))`
+    /// while `postio_session::reindex_account` is running for it, `None`
+    /// once it has finished or nothing is running.
+    ///
+    /// Replaces any earlier reading for the same account rather than
+    /// accumulating one: what a caller reports here is "where the rebuild
+    /// is right now", not a log of every step it passed through.
+    pub fn set_reindex_progress(&self, account: AccountId, progress: Option<(u32, u32)>) {
+        let mut readings = self.imp().reindex_progress.borrow_mut();
+        readings.retain(|(id, _)| *id != account);
+        if let Some(progress) = progress {
+            readings.push((account, progress));
+        }
+        drop(readings);
+        self.redraw_accounts();
+    }
+
+    /// How this account's token stands, for the validity line under its
+    /// badge and for the warning mark and Reconnect button beside it.
+    ///
+    /// `TokenStanding::Unknown` for a password account, an OAuth account
+    /// fed by an external broker, or one
+    /// [`set_token_expiries`](Self::set_token_expiries) has not been told
+    /// about yet.
+    ///
+    /// The arithmetic and the wording both moved to `postio_ui::account`
+    /// with #1584: the macOS row needed the same two answers and had
+    /// neither, and a second copy of "when is a token expired" is exactly
+    /// the drift ADR 0019 exists to prevent.
+    fn token_standing(&self, account: AccountId) -> postio_ui::account::TokenStanding {
+        let expiry = self
+            .imp()
+            .token_expiries
+            .borrow()
+            .iter()
+            .find(|(id, _)| *id == account)
+            .and_then(|(_, expiry)| *expiry);
+        postio_ui::account::TokenStanding::of(expiry, std::time::SystemTime::now())
+    }
+
+    /// The reindex line this account's row shows while a rebuild is running
+    /// (#981), or `None` when nothing is.
+    ///
+    /// Said out loud on purpose, not a silent background action: a rebuild
+    /// makes search *worse* while it runs — messages drop out of results
+    /// until they are reindexed — and a user who pressed the button and saw
+    /// nothing on the row would read the silence as the button having done
+    /// nothing.
+    fn reindex_status(&self, account: AccountId) -> Option<String> {
+        let (done, total) = self
+            .imp()
+            .reindex_progress
+            .borrow()
+            .iter()
+            .find(|(id, _)| *id == account)
+            .map(|(_, progress)| *progress)?;
+        Some(if total == 0 {
+            "Rebuilding search index…".to_owned()
+        } else {
+            format!("Rebuilding search index — {done} of {total}")
+        })
+    }
+
+    /// Shows one row per sender with a standing remote-image exception,
+    /// each with a way to revoke it (#871).
+    ///
+    /// `path` is where a revoke writes back to — `window.rs` hands in the
+    /// path its readers share one allow list by
+    /// and a
+    /// revoke here updates that shared list as well as the file, so it
+    /// reaches every reader of the app, open ones included (T020).
+    pub fn set_remote_image_allowlist(
+        &self,
+        list: postio_ui::allowlist::RemoteImageAllowList,
+        path: PathBuf,
+    ) {
+        *self.imp().remote_image_allowlist.borrow_mut() = Some((list, path));
+        self.redraw_privacy();
+    }
+
+    /// Rebuilds the privacy rows from whatever allow-list is held.
+    fn redraw_privacy(&self) {
+        let imp = self.imp();
+        clear_rows(&imp.privacy_list);
+        let senders: Vec<String> = imp
+            .remote_image_allowlist
+            .borrow()
+            .as_ref()
+            .map(|(list, _)| list.senders().map(str::to_owned).collect())
+            .unwrap_or_default();
+        for sender in &senders {
+            imp.privacy_list.append(&self.privacy_row(sender));
+        }
+        ListOrEmpty::show(
+            &imp.privacy_scroller,
+            &imp.privacy_empty,
+            !senders.is_empty(),
+        );
+    }
+
+    /// Revokes `sender`'s remote-image exception and writes the allow-list
+    /// straight back — no debounce, unlike the config buffer: this is its
+    /// own small file, not a keystroke-by-keystroke edit.
+    fn revoke_remote_image_sender(&self, sender: &str) {
+        let imp = self.imp();
+        let mut guard = imp.remote_image_allowlist.borrow_mut();
+        let Some((list, path)) = guard.as_mut() else {
+            return;
+        };
+        list.revoke(sender);
+        if let Err(error) = list.save_to(path) {
+            tracing::error!(%error, "could not save the remote-image allow-list: {error}");
+        }
+        // And the list the app's readers share, so the revoke reaches every
+        // reader -- open ones included -- rather than only the next one to
+        // read the file (T020).
+        crate::reader::shared_allowlist(path)
+            .borrow_mut()
+            .revoke(sender);
+        drop(guard);
+        self.redraw_privacy();
+    }
+
+    /// One allow-listed sender, with a button to revoke it.
+    fn privacy_row(&self, sender: &str) -> gtk::ListBoxRow {
+        let sender = sender.to_string();
+        let row = gtk::ListBoxRow::new();
+        row.add_css_class("postio-settings-privacy-row");
+        row.set_selectable(false);
+
+        let label = gtk::Label::new(Some(&sender));
+        label.add_css_class("postio-settings-privacy-sender");
+        label.set_xalign(0.0);
+        label.set_hexpand(true);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+
+        let revoke = crate::widgets::icon_button(
+            "user-trash-symbolic",
+            &format!("Stop always allowing remote images from {sender}"),
+        );
+        revoke.add_css_class("postio-settings-privacy-revoke");
+        // Shorter than the name: the row beside it already says whose.
+        revoke.set_tooltip_text(Some("Always ask again"));
+        revoke.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[strong]
+            sender,
+            move |_| panel.revoke_remote_image_sender(&sender)
+        ));
+
+        let box_ = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        box_.set_margin_top(6);
+        box_.set_margin_bottom(6);
+        box_.set_margin_start(12);
+        box_.set_margin_end(12);
+        box_.append(&label);
+        box_.append(&revoke);
+        row.set_child(Some(&box_));
+        row.update_property(&[gtk::accessible::Property::Label(&format!(
+            "{sender}, always allowed to load remote images"
+        ))]);
+        row
+    }
+
+    /// Hands the panel the current account's unsubscribe-activation log
+    /// (#971), newest first — `window.rs` reads it fresh from
+    /// `postio_storage`'s `UnsubscribeRepository` every time the
+    /// pane opens, the same reason [`SettingsPanel::set_remote_image_allowlist`]
+    /// is handed its list rather than reading one itself: this crate has
+    /// no SQL of its own.
+    pub fn set_unsubscribe_activations(&self, activations: Vec<UnsubscribeActivation>) {
+        *self.imp().unsubscribe_activations.borrow_mut() = activations;
+        self.redraw_unsubscribe_activations();
+    }
+
+    /// Hands the panel how many messages have asked for a read receipt
+    /// (#970) — `window.rs` reads the count fresh from
+    /// `postio_storage`'s `MessageRepository::read_receipt_requested_count`
+    /// every time the pane opens, the same reason the two lists above are
+    /// handed their state rather than reading it themselves.
+    ///
+    /// A count, not a switch: Postio never sends a receipt automatically
+    /// (CLAUDE.md's privacy section calls that fixed policy), so a
+    /// "configurable" default here would already have lost the argument a
+    /// toggle exists to make.
+    pub fn set_read_receipt_count(&self, count: u64) {
+        self.imp()
+            .read_receipt_count
+            .set_label(&postio_ui::privacy::read_receipts(count));
+    }
+
+    /// The read-receipt count line's current text. For tests.
+    #[doc(hidden)]
+    pub fn read_receipt_count_label(&self) -> String {
+        self.imp().read_receipt_count.label().to_string()
+    }
+
+    /// Rebuilds the unsubscribe-log rows from whatever was last handed in.
+    fn redraw_unsubscribe_activations(&self) {
+        let imp = self.imp();
+        clear_rows(&imp.unsubscribe_list);
+        let activations = imp.unsubscribe_activations.borrow();
+        for activation in activations.iter() {
+            imp.unsubscribe_list
+                .append(&self.unsubscribe_activation_row(activation));
+        }
+        ListOrEmpty::show(
+            &imp.unsubscribe_scroller,
+            &imp.unsubscribe_empty,
+            !activations.is_empty(),
+        );
+    }
+
+    /// One past activation: the list it left, and when.
+    fn unsubscribe_activation_row(&self, activation: &UnsubscribeActivation) -> gtk::ListBoxRow {
+        let row = gtk::ListBoxRow::new();
+        row.add_css_class("postio-settings-unsubscribe-row");
+        row.set_selectable(false);
+
+        let list = gtk::Label::new(Some(&activation.list_identifier));
+        list.add_css_class("postio-settings-unsubscribe-list-identifier");
+        list.set_xalign(0.0);
+        list.set_hexpand(true);
+        list.set_ellipsize(gtk::pango::EllipsizeMode::End);
+
+        // Both frontends date an activation the same way, and read the same
+        // sentence out to a screen reader: `postio_ui::unsubscribe` (#1585),
+        // rather than a format string per pane.
+        let when = postio_ui::unsubscribe::activated_on(activation.activated_at);
+        let when_label = gtk::Label::new(Some(&when));
+        when_label.add_css_class("postio-settings-unsubscribe-when");
+        when_label.set_xalign(1.0);
+
+        let box_ = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        box_.set_margin_top(6);
+        box_.set_margin_bottom(6);
+        box_.set_margin_start(12);
+        box_.set_margin_end(12);
+        box_.append(&list);
+        box_.append(&when_label);
+        row.set_child(Some(&box_));
+        row.update_property(&[gtk::accessible::Property::Label(
+            &postio_ui::unsubscribe::activation_label(
+                &activation.list_identifier,
+                activation.activated_at,
+            ),
+        )]);
+        row
+    }
+
+    /// Rebuilds the account rows from whatever accounts and weights are held.
+    fn redraw_accounts(&self) {
+        let imp = self.imp();
+        // Selecting a row is what opens the form under the list (#1179), so
+        // rebuilding the list has to be told apart from a person changing
+        // the selection. Removing rows fires `row-selected(None)` and
+        // putting one back fires it again; treated as gestures, the first
+        // closes the form mid-edit and clears the account id an edit needs
+        // to name, and the second reloads the fields from the store over
+        // whatever was being typed.
+        //
+        // So the handler stands down for the whole rebuild, selection
+        // included. The form does not move, because nothing about it
+        // changed: the same account is still the open one.
+        imp.redrawing.set(true);
+        let open_on = *imp.account_detail_id.borrow();
+        clear_rows(&imp.accounts_list);
+        for account in imp.accounts.borrow().iter() {
+            imp.accounts_list.append(&self.account_row(account));
+        }
+        // Selecting a row is what opens the form under the list (#1179), so
+        // a redraw that dropped the selection would close a form somebody is
+        // typing in. Put it back on the account the form is open on, before
+        // anything reads the list's selection back.
+        //
+        // The mark goes back on the row the form belongs to, so the list
+        // and the form still agree about which account is open.
+        if let Some(open_on) = open_on {
+            let mut index = 0;
+            while let Some(row) = imp.accounts_list.row_at_index(index) {
+                if row_account_id(&row) == open_on {
+                    imp.accounts_list.select_row(Some(&row));
+                    break;
+                }
+                index += 1;
+            }
+        }
+        imp.redrawing.set(false);
+        // A refresh can land while the detail view is open on an account
+        // this same redraw just found gone -- removed from another window,
+        // most likely -- and showing an editable form over settings that no
+        // longer exist would let an edit resurrect a deleted account.
+        let open_on = *imp.account_detail_id.borrow();
+        if let Some(id) = open_on
+            && !imp.accounts.borrow().iter().any(|account| account.id == id)
+        {
+            self.close_account_detail();
+            return;
+        }
+        // The detail view, not the list, owns this section's visibility
+        // while it is open (#880) -- an ordinary refresh must not pop the
+        // list back in front of it.
+        if imp.account_detail_id.borrow().is_none() {
+            imp.accounts_scroller
+                .set_visible(!imp.accounts.borrow().is_empty());
+        }
+    }
+
+    /// The sentence this account's row carries under its name, if it has one
+    /// to carry.
+    fn mail_weight(&self, account: AccountId) -> Option<String> {
+        let imp = self.imp();
+        let footprint = imp
+            .weights
+            .borrow()
+            .iter()
+            .find(|(id, _)| *id == account)
+            .map(|(_, footprint)| *footprint)?;
+        postio_ui::format::mail_weight(&footprint, imp.attachments_included.get())
+    }
+
+    /// The connections Postio has opened, newest first (#151).
+    ///
+    /// This list is the privacy claim made auditable: every outbound
+    /// connection the transports report lands in the egress log, and this
+    /// is where a person reads it back. Hidden while the log is empty —
+    /// which on a machine that has never synced is exactly the claim.
+    pub fn set_egress(&self, entries: Vec<postio_model::egress::EgressEvent>) {
+        let imp = self.imp();
+        clear_rows(&imp.egress_list);
+        for entry in &entries {
+            let row = gtk::ListBoxRow::new();
+            row.add_css_class("postio-settings-egress-row");
+            row.set_selectable(false);
+            row.set_activatable(false);
+            let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            let when = gtk::Label::new(Some(
+                &entry
+                    .at
+                    .with_timezone(&chrono::Local)
+                    .format(postio_ui::privacy::CONNECTION_WHEN)
+                    .to_string(),
+            ));
+            when.add_css_class("postio-settings-egress-when");
+            let what = gtk::Label::new(Some(&postio_ui::privacy::connection(entry)));
+            what.set_hexpand(true);
+            what.set_xalign(0.0);
+            what.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            let outcome = gtk::Label::new(Some(entry.outcome.as_str()));
+            outcome.add_css_class("postio-settings-egress-outcome");
+            line.append(&when);
+            line.append(&what);
+            line.append(&outcome);
+            row.set_child(Some(&line));
+            row.update_property(&[gtk::accessible::Property::Label(&format!(
+                "{} connected to {} port {}, {}",
+                entry.subsystem.as_str(),
+                entry.host,
+                entry.port,
+                entry.outcome.as_str()
+            ))]);
+            imp.egress_list.append(&row);
+        }
+        ListOrEmpty::show(&imp.egress_scroller, &imp.egress_empty, !entries.is_empty());
+    }
+
+    /// One account's row: name and address, what its mail weighs, and an
+    /// enabled switch at the end.
+    /// One account: initials, address, the `default` tag, and one mono line
+    /// of facts — plus, when the token has expired, the way to fix it.
+    ///
+    /// The facts used to be four separate labels stacked under the name, one
+    /// per thing that had something to say. That reads as four rows of one
+    /// account rather than one row of four facts, and the drawing
+    /// (`Design/screens/21`) is unambiguous: a name line and a metadata line,
+    /// mono, `·`-joined. Nothing is dropped — the pieces are the same
+    /// strings, joined.
+    fn account_row(&self, account: &Account) -> gtk::ListBoxRow {
+        let row = gtk::ListBoxRow::new();
+        row.add_css_class("postio-settings-account-row");
+        // Selecting a row is what reveals the form under the list (#1179),
+        // so unlike every other list in this panel these rows are
+        // selectable.
+        row.set_selectable(true);
+        row.set_widget_name(&format!("{ACCOUNT_ROW}{}", account.id.get()));
+
+        let avatar = gtk::Label::new(Some(&postio_ui::row::initials(Some(&account.address))));
+        avatar.add_css_class("postio-settings-account-avatar");
+        avatar.set_valign(gtk::Align::Center);
+
+        let address = gtk::Label::new(Some(&account.address.address));
+        address.add_css_class("postio-settings-account-address");
+        address.set_xalign(0.0);
+        address.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+
+        let name_line = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        name_line.append(&address);
+        // Words, never colour alone -- ADR 0005's own rule for per-account
+        // identification. It says what the marker *does*: "primary" would
+        // assert a status, and #960's fence is that this account is not more
+        // the user's than any other.
+        if account.is_default {
+            let tag = gtk::Label::new(Some("default"));
+            tag.add_css_class("postio-settings-account-default");
+            tag.set_valign(gtk::Align::Center);
+            tag.set_tooltip_text(Some("New messages come from this account"));
+            name_line.append(&tag);
+        }
+
+        // One line, `·`-joined, in the order a person reads it: what kind of
+        // account, how it signs in, how much mail, and how that stands right
+        // now.
+        let standing = self.token_standing(account.id);
+        let expired = standing.is_expired();
+        let mut facts = vec![account_badge(account)];
+        facts.extend(self.mail_weight(account.id));
+        facts.extend(standing.line());
+        facts.extend(self.reindex_status(account.id));
+        if !account.enabled {
+            facts.push("disabled".to_owned());
+        }
+        let facts = facts.join(" · ");
+        let metadata = stat_line(&facts);
+        metadata.add_css_class("postio-settings-account-metadata");
+        // What the row is for -- the weight, the sign-in, the rebuild -- is
+        // at the line's far end, so it wraps rather than being cut off.
+        metadata.set_ellipsize(gtk::pango::EllipsizeMode::None);
+        metadata.set_wrap(true);
+        metadata.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+
+        let text = gtk::Box::new(gtk::Orientation::Vertical, 3);
+        text.set_hexpand(true);
+        text.append(&name_line);
+        // An expired token is the one state on this row that is a problem
+        // rather than a fact, so it gets the mark that says so — beside the
+        // line it is about, not as a fifth line of its own.
+        if expired {
+            let flagged = gtk::Box::new(gtk::Orientation::Horizontal, 7);
+            let warning = gtk::Image::from_icon_name("dialog-warning-symbolic");
+            warning.add_css_class("postio-settings-account-warning");
+            flagged.append(&warning);
+            flagged.append(&metadata);
+            text.append(&flagged);
+        } else {
+            text.append(&metadata);
+        }
+
+        let box_ = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        box_.add_css_class("postio-settings-account-line");
+        box_.append(&avatar);
+        box_.append(&text);
+
+        // The repair, on the row that needs it. A person whose token has
+        // expired is not looking for a context menu; they are looking for
+        // the button that fixes it, and it belongs where the problem is
+        // stated rather than three keystrokes away.
+        if expired {
+            let reconnect = gtk::Button::with_label("Reconnect");
+            crate::widgets::button::style(
+                &reconnect,
+                crate::widgets::button::Kind::Secondary,
+                crate::widgets::button::Size::Small,
+            );
+            reconnect.set_valign(gtk::Align::Center);
+            let account_id = account.id;
+            reconnect.connect_clicked(glib::clone!(
+                #[weak(rename_to = panel)]
+                self,
+                move |_| panel.request_account_action(account_id, AccountAction::UpdateCredential)
+            ));
+            box_.append(&reconnect);
+        }
+
+        let enabled = gtk::Switch::new();
+        enabled.set_active(account.enabled);
+        enabled.set_valign(gtk::Align::Center);
+        // The one legitimate switch left in this window (ADR 0029 Q2): it
+        // does something when flipped — connects or disconnects the account
+        // — rather than writing a value into a form.
+        enabled.update_property(&[gtk::accessible::Property::Label(&format!(
+            "{} enabled",
+            account.display_name
+        ))]);
+        let account_id = account.id;
+        enabled.connect_active_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |switch| {
+                for callback in panel.imp().account_enabled_changed.borrow().iter() {
+                    callback(account_id, switch.is_active());
+                }
+            }
+        ));
+        box_.append(&enabled);
+
+        row.set_child(Some(&box_));
+        // The row is announced as a unit, so every line has to be part of
+        // the announcement or a screen reader never reaches it.
+        let mut announcement = format!("{}, {}", account.display_name, account.address.address);
+        if account.is_default {
+            announcement.push_str(", default");
+        }
+        announcement.push_str(&format!(", {facts}"));
+        row.update_property(&[gtk::accessible::Property::Label(&announcement)]);
+        row
+    }
+
+    /// The account list itself, for the focus controller `Window` puts on
+    /// it — `Context::Accounts` follows the keyboard into this list and no
+    /// further, so the raw `config.toml` view never enters it (ADR 0005
+    /// Q6c).
+    pub fn accounts_list(&self) -> gtk::ListBox {
+        self.imp().accounts_list.clone()
+    }
+
+    /// The keybinding list itself, for the focus controller `Window` puts
+    /// on it — the same reason [`accounts_list`](Self::accounts_list)
+    /// exists, `Context::Keys` (#1016) in place of `Context::Accounts`.
+    pub fn keys_list(&self) -> gtk::ListBox {
+        self.imp().keys_list.clone()
+    }
+
+    /// The account whose row the keyboard is in, if it is in one.
+    ///
+    /// Focus rather than selection: the rows are `set_selectable(false)` and
+    /// the list is `SelectionMode::None`, because an account row is a thing
+    /// you act on rather than a thing you pick. `focus_child` is the row that
+    /// contains the focus, which is what "the row the keyboard is on" means
+    /// when the focus is actually on the switch inside it.
+    ///
+    /// `None` is a real answer and the callers must respect it: the context
+    /// can be live with the focus somewhere else in the panel, and a command
+    /// that guessed a row would remove an account on a keystroke aimed at
+    /// nothing.
+    pub fn focused_account(&self) -> Option<AccountId> {
+        let row = self
+            .imp()
+            .accounts_list
+            .focus_child()?
+            .downcast::<gtk::ListBoxRow>()
+            .ok()?;
+        let id = row_account_id(&row);
+        id.is_assigned().then_some(id)
+    }
+
+    /// Fires the account-action callbacks, as the row's context menu does.
+    ///
+    /// The keyboard path and the mouse path go through here together on
+    /// purpose: two entry points that each call their own handlers are two
+    /// things to keep in step, and this one ends in an account being removed.
+    pub fn request_account_action(&self, id: AccountId, action: AccountAction) {
+        for callback in self.imp().account_action.borrow().iter() {
+            callback(id, action);
+        }
+    }
+
+    /// Flips `id`'s enabled switch, as clicking it does.
+    ///
+    /// Moves the switch rather than calling the handler directly, so the
+    /// control the person is looking at and the column the handler writes
+    /// cannot disagree — the notify signal the switch emits is what calls
+    /// the handler, exactly as it does for a click.
+    ///
+    /// Answers whether a row for `id` was found.
+    pub fn toggle_account_enabled(&self, id: AccountId) -> bool {
+        let Some(switch) = self.enabled_switch(id) else {
+            return false;
+        };
+        switch.set_active(!switch.is_active());
+        true
+    }
+
+    /// The enabled switch on `id`'s row.
+    fn enabled_switch(&self, id: AccountId) -> Option<gtk::Switch> {
+        let mut index = 0;
+        while let Some(row) = self.imp().accounts_list.row_at_index(index) {
+            index += 1;
+            if row_account_id(&row) != id {
+                continue;
+            }
+            let mut child = row.child()?.first_child();
+            while let Some(widget) = child {
+                if let Ok(switch) = widget.clone().downcast::<gtk::Switch>() {
+                    return Some(switch);
+                }
+                child = widget.next_sibling();
+            }
+            return None;
+        }
+        None
+    }
+
+    /// Runs `handler` when an account row's menu, or a key aimed at the
+    /// focused row, asks for an [`AccountAction`].
+    pub fn connect_account_action(&self, handler: impl Fn(AccountId, AccountAction) + 'static) {
+        self.imp()
+            .account_action
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Called when a row's enabled switch is flipped by hand — never for the
+    /// initial state [`SettingsPanel::set_accounts`] itself sets.
+    pub fn connect_account_enabled_changed(&self, handler: impl Fn(AccountId, bool) + 'static) {
+        self.imp()
+            .account_enabled_changed
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Opens the detail view on `id`'s current settings, as activating its
+    /// row does. Does nothing if `id` is not one of the accounts
+    /// [`SettingsPanel::set_accounts`] last gave this panel.
+    pub fn open_account_detail(&self, id: AccountId) {
+        let imp = self.imp();
+        let Some(account) = imp
+            .accounts
+            .borrow()
+            .iter()
+            .find(|account| account.id == id)
+            .cloned()
+        else {
+            return;
+        };
+        self.ensure_account_detail_fields();
+        imp.account_detail_loading.set(true);
+        imp.account_detail_display_name
+            .get()
+            .expect("built above")
+            .set_text(&account.display_name);
+        imp.account_detail_imap_host
+            .get()
+            .expect("built above")
+            .set_text(&account.incoming.host);
+        imp.account_detail_imap_port
+            .get()
+            .expect("built above")
+            .set_text(&account.incoming.port.to_string());
+        imp.account_detail_smtp_host
+            .get()
+            .expect("built above")
+            .set_text(&account.outgoing.host);
+        // #979: the account's own signatures, and the one it already
+        // prefers. Hidden entirely when it has none — the rule
+        // `composer.rs::set_signatures` states and `set_accounts` cites: a
+        // picker with nothing to choose between can only ever say what is
+        // already true. Nothing in Postio creates a signature yet, so a
+        // prompt to make one would point at a flow that does not exist.
+        {
+            let picker = imp.account_detail_signature.get().expect("built above");
+            // "None" leads the list: an account can have signatures and
+            // prefer none of them, and drawing the first as chosen would
+            // say a default exists that does not (T259).
+            let names: Vec<&str> = std::iter::once("None")
+                .chain(account.signatures.iter().map(|s| s.name.as_str()))
+                .collect();
+            picker.set_model(Some(&gtk::StringList::new(&names)));
+            *imp.account_detail_signature_ids.borrow_mut() =
+                account.signatures.iter().map(|s| s.id).collect();
+            let selected = account
+                .default_signature_id
+                .and_then(|id| account.signatures.iter().position(|s| s.id == id))
+                .map_or(0, |at| at + 1);
+            picker.set_selected(selected as u32);
+            imp.account_detail_signature_row
+                .get()
+                .expect("built above")
+                .set_visible(!account.signatures.is_empty());
+        }
+
+        imp.account_detail_smtp_port
+            .get()
+            .expect("built above")
+            .set_text(&account.outgoing.port.to_string());
+        imp.account_detail_loading.set(false);
+        *imp.account_detail_id.borrow_mut() = Some(id);
+
+        // The account's signatures, rebuilt from what it carries (#1086).
+        // Rebuilt rather than patched for the reason `redraw_filters` is:
+        // the list is small, and a diff is a second description of the same
+        // state free to disagree with the first.
+        if let Some(list) = imp.account_detail_signature_list.get() {
+            clear_rows(list);
+            for signature in &account.signatures {
+                let row = gtk::ListBoxRow::new();
+                let label = gtk::Label::new(Some(&signature.name));
+                label.set_xalign(0.0);
+                label.add_css_class("postio-settings-signature-row");
+                row.set_child(Some(&label));
+                row.set_activatable(true);
+                row.update_property(&[gtk::accessible::Property::Label(&format!(
+                    "Edit the signature {}",
+                    signature.name
+                ))]);
+                list.append(&row);
+            }
+            *imp.account_detail_signature_ids_listed.borrow_mut() =
+                account.signatures.iter().map(|s| s.id).collect();
+            // "Empty is never blank" -- but the Add button below says what to
+            // do about it, so the list simply goes away rather than drawing a
+            // frame around nothing.
+            list.set_visible(!account.signatures.is_empty());
+        }
+
+        self.redraw_account_mailboxes(id);
+        imp.account_detail.set_visible(true);
+        // Reopening the account is how the app returns from a save, so the
+        // editor must not be left over it.
+        imp.signature_editor.set_visible(false);
+        *imp.signature_editor_on.borrow_mut() = None;
+        // The list stays. Selecting a row reveals the form *under* it
+        // (#1179, Design/screens/21) rather than drilling into it, so the
+        // account being edited is still on screen with the others — which
+        // is what makes moving between accounts one click instead of two.
+        imp.accounts_scroller
+            .set_visible(!imp.accounts.borrow().is_empty());
+    }
+
+    /// Builds the detail view's five field widgets, the first time any
+    /// account's detail is opened — never during `build()` or this
+    /// widget's own construction.
+    ///
+    /// `SettingsPanel` is built as a hidden overlay child while `Window::new`
+    /// is still wiring up its own overlay siblings and shortcut controllers
+    /// (`window.rs`), and constructing a widget with its own internal event
+    /// controllers there was found to corrupt keyboard routing for the rest
+    /// of that window (#873, about a `gtk::DropDown`) — `gtk::Entry`
+    /// carries the same kind of internal `GtkText`
+    /// key/IM controllers a `DropDown`'s type-ahead does, so it gets the
+    /// same treatment: built only once a real interaction (opening an
+    /// account's detail) proves the window has long since finished
+    /// constructing.
+    fn ensure_account_detail_fields(&self) {
+        let imp = self.imp();
+        if imp.account_detail_display_name.get().is_some() {
+            return;
+        }
+
+        let display_name = gtk::Entry::new();
+        display_name.add_css_class("postio-settings-account-detail-display-name");
+        display_name.update_property(&[gtk::accessible::Property::Label("Display name")]);
+        display_name.connect_activate(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |entry| {
+                panel.commit_account_edit(AccountEdit::DisplayName(entry.text().to_string()));
+            }
+        ));
+        imp.account_detail
+            .append(&detail_row("Display name", &display_name));
+        let _ = imp.account_detail_display_name.set(display_name);
+
+        let imap_host = gtk::Entry::new();
+        imap_host.add_css_class("postio-settings-account-detail-imap-host");
+        imap_host.update_property(&[gtk::accessible::Property::Label("IMAP host")]);
+        imap_host.connect_activate(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |entry| {
+                panel.commit_account_edit(AccountEdit::ImapHost(entry.text().to_string()));
+            }
+        ));
+        imp.account_detail
+            .append(&detail_row("IMAP host", &imap_host));
+        let _ = imp.account_detail_imap_host.set(imap_host);
+
+        // An `Entry`, not a `SpinButton`. A port is a number a person
+        // types — 993, 587 — and stepping to it one of 65,535 at a time is
+        // not a thing anybody does; the drawing has no spin button anywhere
+        // and neither does this window any more (#1179, ADR 0029 Q3).
+        let imap_port = gtk::Entry::new();
+        imap_port.add_css_class("postio-settings-account-detail-imap-port");
+        imap_port.set_input_purpose(gtk::InputPurpose::Digits);
+        imap_port.set_max_width_chars(6);
+        imap_port.set_halign(gtk::Align::Start);
+        imap_port.update_property(&[gtk::accessible::Property::Label("IMAP port")]);
+        imap_port.connect_activate(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |entry| {
+                // Committed only when it parses. A half-typed `9` on the way
+                // to `993` is not a port anybody asked to connect to, and
+                // writing it would dial one.
+                if let Ok(port) = entry.text().trim().parse::<u16>()
+                    && port > 0
+                {
+                    panel.commit_account_edit(AccountEdit::ImapPort(port));
+                }
+            }
+        ));
+        imp.account_detail
+            .append(&detail_row("IMAP port", &imap_port));
+        let _ = imp.account_detail_imap_port.set(imap_port);
+
+        let smtp_host = gtk::Entry::new();
+        smtp_host.add_css_class("postio-settings-account-detail-smtp-host");
+        smtp_host.update_property(&[gtk::accessible::Property::Label("SMTP host")]);
+        smtp_host.connect_activate(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |entry| {
+                panel.commit_account_edit(AccountEdit::SmtpHost(entry.text().to_string()));
+            }
+        ));
+        imp.account_detail
+            .append(&detail_row("SMTP host", &smtp_host));
+        let _ = imp.account_detail_smtp_host.set(smtp_host);
+
+        // An `Entry`, not a `SpinButton`. A port is a number a person
+        // types — 993, 587 — and stepping to it one of 65,535 at a time is
+        // not a thing anybody does; the drawing has no spin button anywhere
+        // and neither does this window any more (#1179, ADR 0029 Q3).
+        let smtp_port = gtk::Entry::new();
+        smtp_port.add_css_class("postio-settings-account-detail-smtp-port");
+        smtp_port.set_input_purpose(gtk::InputPurpose::Digits);
+        smtp_port.set_max_width_chars(6);
+        smtp_port.set_halign(gtk::Align::Start);
+        smtp_port.update_property(&[gtk::accessible::Property::Label("SMTP port")]);
+        smtp_port.connect_activate(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |entry| {
+                // Committed only when it parses. A half-typed `9` on the way
+                // to `993` is not a port anybody asked to connect to, and
+                // writing it would dial one.
+                if let Ok(port) = entry.text().trim().parse::<u16>()
+                    && port > 0
+                {
+                    panel.commit_account_edit(AccountEdit::SmtpPort(port));
+                }
+            }
+        ));
+        imp.account_detail
+            .append(&detail_row("SMTP port", &smtp_port));
+        let _ = imp.account_detail_smtp_port.set(smtp_port);
+
+        // #979. A dropdown over the account's own signatures, not the
+        // "signature path" field #880's mockup drew: `Account` carries
+        // `signatures: Vec<Signature>` and `default_signature_id`, and there
+        // has never been a filesystem path for that field to have edited.
+        //
+        // The row is built here and *hidden* per account in
+        // `open_account_detail`, because whether it has anything to offer is
+        // a fact about the account rather than about the panel.
+        let signature = gtk::DropDown::from_strings(&[]);
+        signature.add_css_class("postio-settings-account-detail-signature");
+        signature.update_property(&[gtk::accessible::Property::Label("Default signature")]);
+        signature.connect_selected_item_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |picker| {
+                let chosen = panel
+                    .imp()
+                    .account_detail_signature_ids
+                    .borrow()
+                    .get((picker.selected() as usize).wrapping_sub(1))
+                    .copied();
+                panel.commit_account_edit(AccountEdit::DefaultSignature(chosen));
+            }
+        ));
+        let signature_row = detail_row("Default signature", &signature);
+        imp.account_detail.append(&signature_row);
+        let _ = imp.account_detail_signature_row.set(signature_row);
+        let _ = imp.account_detail_signature.set(signature);
+
+        // The account's signatures, and the way to make one (#1086). Every
+        // layer under this existed and worked; nothing could feed it, so
+        // both this list and the composer's picker showed nothing for ever.
+        let signatures = gtk::ListBox::new();
+        signatures.add_css_class("postio-settings-signature-list");
+        signatures.set_selection_mode(gtk::SelectionMode::None);
+        signatures.connect_row_activated(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_, row| {
+                let index = row.index();
+                let id = panel
+                    .imp()
+                    .account_detail_signature_ids_listed
+                    .borrow()
+                    .get(index as usize)
+                    .copied();
+                if let Some(id) = id {
+                    panel.open_signature_editor(Some(id));
+                }
+            }
+        ));
+        imp.account_detail
+            .append(&detail_row("Signatures", &signatures));
+        let _ = imp.account_detail_signature_list.set(signatures);
+
+        let add = gtk::Button::with_label("Add signature");
+        add.add_css_class("postio-settings-signature-add");
+        add.set_halign(gtk::Align::Start);
+        add.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.open_signature_editor(None)
+        ));
+        imp.account_detail.append(&add);
+
+        // "Test connection" (#980), under the servers it is about. The
+        // status line lives beside it rather than in a toast: the result is
+        // something a person reads, compares against the fields above, and
+        // then edits, so it has to stay on screen next to them.
+        let test = gtk::Button::with_label("Test connection");
+        test.add_css_class("postio-settings-account-detail-test");
+        // Its own width, not the row's. Every other control here is a field
+        // the value fills; a full-bleed button reads as the primary action of
+        // the whole screen, which this is not.
+        test.set_halign(gtk::Align::Start);
+        test.update_property(&[gtk::accessible::Property::Label(
+            "Test connection to this account's servers",
+        )]);
+        test.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.ask_test_connection()
+        ));
+        imp.account_detail.append(&detail_row("Connection", &test));
+        let _ = imp.account_detail_test_button.set(test);
+
+        let status = gtk::Label::new(None);
+        status.add_css_class("postio-settings-account-detail-test-status");
+        status.set_xalign(0.0);
+        status.set_wrap(true);
+        // A live region: the result arrives a round trip after the press, so
+        // a screen reader has to be told rather than having to be looking.
+        status.update_property(&[gtk::accessible::Property::Label("")]);
+        status.set_visible(false);
+        imp.account_detail.append(&status);
+        let _ = imp.account_detail_test_status.set(status);
+
+        self.build_signature_editor();
+        // Appended here rather than in `build()` so it reads below the
+        // server fields; the box is empty until an account is opened.
+        imp.account_detail_mailboxes
+            .set_orientation(gtk::Orientation::Vertical);
+        imp.account_detail_mailboxes
+            .add_css_class("postio-settings-account-detail-mailboxes");
+        imp.account_detail.append(&imp.account_detail_mailboxes);
+    }
+
+    /// Rebuilds the Mailboxes group for the account whose detail is open.
+    ///
+    /// Fresh widgets on every open rather than kept ones: the folders differ
+    /// per account, and this is the same trade `redraw_sync` makes -- a handful
+    /// of widgets against having to reconcile two lists that can differ in
+    /// length. It is also where the #873 rule lands: a `gtk::DropDown` is
+    /// built here, reached only from `open_account_detail`, and never while
+    /// the window is still constructing.
+    fn redraw_account_mailboxes(&self, account: AccountId) {
+        let imp = self.imp();
+        let group = &imp.account_detail_mailboxes;
+        while let Some(child) = group.first_child() {
+            group.remove(&child);
+        }
+
+        // "Mailbox roles", the phrase the `[sync]` pane already shows for
+        // the same idea -- not "Folders", which is what the sidebar calls its
+        // ordinary section, and not a third word for one thing.
+        let heading = gtk::Label::new(Some("Mailbox roles"));
+        heading.set_xalign(0.0);
+        heading.add_css_class("postio-settings-account-detail-group");
+        // The same 18px `ui_row` puts either side of a settings row: this
+        // group follows five fields, and flush against the last of them it
+        // reads as a sixth rather than as a heading over what comes next.
+        heading.set_margin_top(space::S6);
+        heading.set_margin_bottom(space::S1);
+        group.append(&heading);
+
+        let data = imp
+            .account_mailboxes
+            .borrow()
+            .iter()
+            .find(|(id, _)| *id == account)
+            .map(|(_, data)| data.clone())
+            .unwrap_or_default();
+
+        if data.folders.is_empty() {
+            // Not a blank frame: an account that has never synced has no
+            // folders to offer, and saying which it is beats an empty row.
+            let empty = gtk::Label::new(Some("Folders appear after the first sync."));
+            crate::widgets::empty_note(&empty, "postio-settings-account-detail-mailboxes-empty");
+            group.append(&empty);
+            return;
+        }
+
+        for (role, title) in MAPPABLE_ROLES {
+            group.append(&detail_row(title, &self.role_dropdown(role, &data)));
+        }
+    }
+
+    /// One role's picker: automatic first, then the account's folders, then
+    /// the mapped folder when the server no longer lists it.
+    fn role_dropdown(&self, role: MailboxRole, data: &AccountMailboxes) -> gtk::DropDown {
+        let chosen = data
+            .chosen
+            .iter()
+            .find(|(mapped, _)| *mapped == role)
+            .map(|(_, path)| path.clone());
+        let resolved = data
+            .resolved
+            .iter()
+            .find(|(mapped, _)| *mapped == role)
+            .map(|(_, path)| path.as_str());
+        // Named only when nothing is chosen: with a choice in force, what
+        // automatic *would* say is a question only the next discovery pass
+        // can answer, and guessing at it here would be a label that lies.
+        let refused = data
+            .refused
+            .iter()
+            .find(|(mapped, _)| *mapped == role)
+            .map(|(_, reason)| reason.as_str());
+        let automatic = match (&chosen, resolved, refused) {
+            (Some(_), _, _) => "Automatic".to_owned(),
+            (None, Some(path), _) => format!("Automatic ({path})"),
+            // The server said no, and said why. Shown here rather than left as
+            // a bare "no folder", which is true and gives a person nothing to
+            // do about it.
+            (None, None, Some(reason)) => format!("Automatic (no folder — {reason})"),
+            (None, None, None) => "Automatic (no folder)".to_owned(),
+        };
+
+        let mut entries = vec![automatic];
+        entries.extend(data.folders.iter().cloned());
+        let dangling = chosen
+            .as_ref()
+            .filter(|path| !data.folders.contains(path))
+            .cloned();
+        if let Some(path) = &dangling {
+            entries.push(format!("{path} (not on this server)"));
+        }
+        let labels: Vec<&str> = entries.iter().map(String::as_str).collect();
+        let dropdown = gtk::DropDown::from_strings(&labels);
+        dropdown.add_css_class("postio-settings-account-detail-role");
+        dropdown.add_css_class(&format!(
+            "postio-settings-account-detail-role-{}",
+            role.as_str()
+        ));
+        dropdown.update_property(&[gtk::accessible::Property::Label(&format!(
+            "{role:?} folder"
+        ))]);
+        dropdown.set_selected(match &chosen {
+            None => 0,
+            Some(path) => match data.folders.iter().position(|folder| folder == path) {
+                Some(index) => index as u32 + 1,
+                // The dangling entry, which is always last.
+                None => entries.len() as u32 - 1,
+            },
+        });
+
+        // Connected *after* `set_selected`, so restoring what is already
+        // stored never reports itself as a change the user made.
+        let folders = data.folders.clone();
+        dropdown.connect_selected_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |dropdown| {
+                let index = dropdown.selected() as usize;
+                if index == 0 {
+                    panel.commit_account_edit(AccountEdit::MailboxRole(role, None));
+                    return;
+                }
+                // Past the folders is the dangling entry: it is the state
+                // already, not a new choice.
+                if let Some(path) = folders.get(index - 1) {
+                    panel.commit_account_edit(AccountEdit::MailboxRole(role, Some(path.clone())));
+                }
+            }
+        ));
+        dropdown
+    }
+
+    /// Every account's folders and role map, for the Mailboxes group.
+    ///
+    /// Order-independent with [`set_accounts`](Self::set_accounts): whichever
+    /// arrives second redraws what is open.
+    pub fn set_account_mailboxes(&self, mailboxes: Vec<(AccountId, AccountMailboxes)>) {
+        *self.imp().account_mailboxes.borrow_mut() = mailboxes;
+        let open = *self.imp().account_detail_id.borrow();
+        if let Some(account) = open {
+            self.redraw_account_mailboxes(account);
+        }
+    }
+
+    /// The signature editor: a name, a body, and the two verbs that need
+    /// somewhere to live (#1086).
+    ///
+    /// A second drill-in rather than more rows on the detail view. A
+    /// signature is a name *and* a body — a two-field form — and the detail
+    /// view is deliberately one control per line; folding a multi-line text
+    /// box into that row rhythm would make both harder to read. The panel
+    /// already drills in once, so this is the same show/hide one level down.
+    fn build_signature_editor(&self) {
+        let imp = self.imp();
+        if imp.signature_editor_name.get().is_some() {
+            return;
+        }
+
+        let back = crate::widgets::icon_button("go-previous-symbolic", "Back to the account");
+        back.add_css_class("postio-settings-signature-back");
+        back.set_halign(gtk::Align::Start);
+        back.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.close_signature_editor()
+        ));
+        imp.signature_editor.append(&back);
+
+        // What this is, and whose: the bare arrow alone said neither.
+        let heading = gtk::Label::new(None);
+        heading.set_xalign(0.0);
+        heading.add_css_class("postio-settings-account-detail-group");
+        heading.set_margin_bottom(space::S1);
+        imp.signature_editor.append(&heading);
+        let _ = imp.signature_editor_heading.set(heading);
+
+        let name = gtk::Entry::new();
+        name.add_css_class("postio-settings-signature-name");
+        name.update_property(&[gtk::accessible::Property::Label("Signature name")]);
+        imp.signature_editor.append(&detail_row("Name", &name));
+        let _ = imp.signature_editor_name.set(name);
+
+        let text = gtk::TextView::new();
+        text.add_css_class("postio-settings-signature-text");
+        text.set_wrap_mode(gtk::WrapMode::WordChar);
+        text.update_property(&[gtk::accessible::Property::Label("Signature text")]);
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_child(Some(&text));
+        scroller.set_min_content_height(120);
+        imp.signature_editor
+            .append(&detail_row("Signature", &scroller));
+        let _ = imp.signature_editor_text.set(text);
+
+        // Why a save was refused -- a name already taken, so far. Hidden
+        // until there is something to say, and never a raw store error:
+        // "UNIQUE constraint failed" is not an answer anybody can act on.
+        let error = gtk::Label::new(None);
+        crate::widgets::callout(&error, "postio-settings-signature-error");
+        error.set_visible(false);
+        imp.signature_editor.append(&error);
+        let _ = imp.signature_editor_error.set(error);
+
+        let verbs = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        verbs.set_halign(gtk::Align::Start);
+        let save = gtk::Button::with_label("Save");
+        save.add_css_class("postio-settings-signature-save");
+        crate::widgets::button::style(
+            &save,
+            crate::widgets::button::Kind::Primary,
+            crate::widgets::button::Size::Regular,
+        );
+        save.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.save_signature()
+        ));
+        verbs.append(&save);
+
+        let delete = gtk::Button::with_label("Delete");
+        delete.add_css_class("postio-settings-signature-delete");
+        delete.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.delete_signature()
+        ));
+        verbs.append(&delete);
+        let _ = imp.signature_editor_delete.set(delete);
+        imp.signature_editor.append(&verbs);
+    }
+
+    /// Hides the form, leaving the list.
+    ///
+    /// Not a "back": the list never went away (`open_account_detail`). This
+    /// is what runs when the selection is cleared, and when a refresh finds
+    /// the account the form was open on gone.
+    pub fn close_account_detail(&self) {
+        let imp = self.imp();
+        *imp.account_detail_id.borrow_mut() = None;
+        imp.account_detail.set_visible(false);
+        imp.accounts_scroller
+            .set_visible(!imp.accounts.borrow().is_empty());
+    }
+
+    /// Called when a field in the account detail view is committed —
+    /// `Enter` in an `Entry`, or any change to a `SpinButton`.
+    /// Called when a signature is saved, with the account and what was typed
+    /// (#1086).
+    ///
+    /// The panel writes nothing, the same split every other edit here uses:
+    /// this layer may not link SQLite. the app persists it and hands
+    /// back either a refreshed account list or, when the store refused,
+    /// [`set_signature_error`](Self::set_signature_error).
+    pub fn connect_signature_saved(&self, handler: impl Fn(AccountId, &SignatureDraft) + 'static) {
+        self.imp()
+            .signature_saved
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Called when a signature is deleted.
+    pub fn connect_signature_deleted(&self, handler: impl Fn(AccountId, SignatureId) + 'static) {
+        self.imp()
+            .signature_deleted
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Open the signature editor on `id`, or on a new signature.
+    pub fn open_signature_editor(&self, id: Option<SignatureId>) {
+        let imp = self.imp();
+        let Some(account) = *imp.account_detail_id.borrow() else {
+            return;
+        };
+        self.build_signature_editor();
+        let signature = id.and_then(|id| {
+            imp.accounts
+                .borrow()
+                .iter()
+                .find(|candidate| candidate.id == account)
+                .and_then(|candidate| {
+                    candidate
+                        .signatures
+                        .iter()
+                        .find(|signature| signature.id == id)
+                        .cloned()
+                })
+        });
+        let address = imp
+            .accounts
+            .borrow()
+            .iter()
+            .find(|candidate| candidate.id == account)
+            .map(|candidate| candidate.address.address.clone())
+            .unwrap_or_default();
+        imp.signature_editor_heading
+            .get()
+            .expect("built above")
+            .set_text(&postio_ui::settings::signature_heading(
+                id.is_some(),
+                &address,
+            ));
+        let name = imp.signature_editor_name.get().expect("built above");
+        let text = imp.signature_editor_text.get().expect("built above");
+        name.set_text(signature.as_ref().map_or("", |s| s.name.as_str()));
+        text.buffer()
+            .set_text(signature.as_ref().map_or("", |s| s.text.as_str()));
+        // Nothing to delete on one that does not exist yet.
+        imp.signature_editor_delete
+            .get()
+            .expect("built above")
+            .set_visible(id.is_some());
+        self.set_signature_error(None);
+        *imp.signature_editor_on.borrow_mut() = Some((account, id));
+        imp.account_detail.set_visible(false);
+        imp.signature_editor.set_visible(true);
+        // The keyboard goes with the eye: still in "Find a setting", the
+        // first thing typed would search instead of naming the signature.
+        name.grab_focus();
+    }
+
+    /// Close the editor and show the account again.
+    pub fn close_signature_editor(&self) {
+        let imp = self.imp();
+        *imp.signature_editor_on.borrow_mut() = None;
+        imp.signature_editor.set_visible(false);
+        imp.account_detail.set_visible(true);
+    }
+
+    /// Say why a save was refused, or clear it.
+    ///
+    /// The editor stays open on what was typed: a duplicate name is fixed by
+    /// changing one word, and throwing the body away to say so would make the
+    /// fix cost more than the mistake.
+    pub fn set_signature_error(&self, reason: Option<String>) {
+        let Some(label) = self.imp().signature_editor_error.get() else {
+            return;
+        };
+        let reason = reason.unwrap_or_default();
+        label.set_visible(!reason.is_empty());
+        label.set_text(&reason);
+        label.update_property(&[gtk::accessible::Property::Label(&reason)]);
+    }
+
+    fn save_signature(&self) {
+        let Some((account, id)) = *self.imp().signature_editor_on.borrow() else {
+            return;
+        };
+        let imp = self.imp();
+        let name = imp.signature_editor_name.get().expect("built").text();
+        let buffer = imp.signature_editor_text.get().expect("built").buffer();
+        let text = buffer
+            .text(&buffer.start_iter(), &buffer.end_iter(), false)
+            .to_string();
+        // An unnamed signature is one the picker cannot offer, so it is
+        // refused here rather than by the store: the picker shows the name.
+        if name.trim().is_empty() {
+            self.set_signature_error(Some("A signature needs a name".to_owned()));
+            return;
+        }
+        let draft = SignatureDraft {
+            id,
+            name: name.to_string(),
+            text,
+        };
+        for handler in imp.signature_saved.borrow().iter() {
+            handler(account, &draft);
+        }
+    }
+
+    fn delete_signature(&self) {
+        let Some((account, Some(id))) = *self.imp().signature_editor_on.borrow() else {
+            return;
+        };
+        for handler in self.imp().signature_deleted.borrow().iter() {
+            handler(account, id);
+        }
+    }
+
+    /// Press "Add signature". For tests.
+    #[doc(hidden)]
+    pub fn test_press_add_signature(&self) -> bool {
+        if self.imp().account_detail_id.borrow().is_none() {
+            return false;
+        }
+        self.open_signature_editor(None);
+        true
+    }
+
+    /// Open the editor on a listed signature, as activating its row does.
+    #[doc(hidden)]
+    pub fn test_open_signature(&self, id: SignatureId) -> bool {
+        if !self
+            .imp()
+            .account_detail_signature_ids_listed
+            .borrow()
+            .contains(&id)
+        {
+            return false;
+        }
+        self.open_signature_editor(Some(id));
+        true
+    }
+
+    /// Type into the editor. For tests.
+    #[doc(hidden)]
+    pub fn test_type_signature(&self, name: &str, text: &str) {
+        let imp = self.imp();
+        if let Some(entry) = imp.signature_editor_name.get() {
+            entry.set_text(name);
+        }
+        if let Some(view) = imp.signature_editor_text.get() {
+            view.buffer().set_text(text);
+        }
+    }
+
+    /// What the editor's name field holds. For tests.
+    #[doc(hidden)]
+    pub fn test_signature_name(&self) -> String {
+        self.imp()
+            .signature_editor_name
+            .get()
+            .map(|entry| entry.text().to_string())
+            .unwrap_or_default()
+    }
+
+    /// What the editor is refusing to save, if anything. For tests.
+    #[doc(hidden)]
+    pub fn test_signature_error_text(&self) -> String {
+        self.imp()
+            .signature_editor_error
+            .get()
+            .map(|label| label.text().to_string())
+            .unwrap_or_default()
+    }
+
+    /// Press Save. For tests.
+    #[doc(hidden)]
+    pub fn test_press_save_signature(&self) -> bool {
+        let open = self.imp().signature_editor_on.borrow().is_some();
+        if open {
+            self.save_signature();
+        }
+        open
+    }
+
+    /// Press Delete. For tests.
+    #[doc(hidden)]
+    pub fn test_press_delete_signature(&self) -> bool {
+        let deletable = matches!(*self.imp().signature_editor_on.borrow(), Some((_, Some(_))));
+        if deletable {
+            self.delete_signature();
+        }
+        deletable
+    }
+
+    /// Called when somebody asks whether an account's stored settings work,
+    /// with the account the detail view is open on (#980).
+    ///
+    /// The panel never connects to anything. Same split as
+    /// [`connect_account_edited`](Self::connect_account_edited): this layer
+    /// may not link SQLite or open a socket, so it reports the gesture and
+    /// the app runs `postio_session::reachability::test_connection` and
+    /// hands the answer back through
+    /// [`set_connection_status`](Self::set_connection_status).
+    pub fn connect_test_connection(&self, handler: impl Fn(AccountId) + 'static) {
+        self.imp()
+            .test_connection
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Fires every `test_connection` handler for whichever account the detail
+    /// view is open on, and puts the row into its running state so the press
+    /// is acknowledged even if the answer takes a round trip.
+    fn ask_test_connection(&self) {
+        let Some(id) = *self.imp().account_detail_id.borrow() else {
+            return;
+        };
+        self.set_connection_status(ConnectionStatus::Testing);
+        for handler in self.imp().test_connection.borrow().iter() {
+            handler(id);
+        }
+    }
+
+    /// Show what the last connection test found.
+    pub fn set_connection_status(&self, status: ConnectionStatus) {
+        let Some(label) = self.imp().account_detail_test_status.get() else {
+            return;
+        };
+        let message = status.message();
+        label.set_visible(!message.is_empty());
+        label.set_text(&message);
+        // The same string to the screen reader: a status that is only a
+        // colour is a status somebody cannot read.
+        label.update_property(&[gtk::accessible::Property::Label(&message)]);
+        // Failure is carried as a class rather than inferred from the text,
+        // so the styling cannot disagree with the answer.
+        if status.failed() {
+            label.add_css_class("postio-settings-account-detail-test-failed");
+        } else {
+            label.remove_css_class("postio-settings-account-detail-test-failed");
+        }
+    }
+
+    /// Press the test-connection button, as a pointer would. For tests.
+    #[doc(hidden)]
+    pub fn test_press_test_connection(&self) -> bool {
+        match self.imp().account_detail_test_button.get() {
+            Some(button) => {
+                button.emit_clicked();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// What the connection status line currently says. For tests.
+    #[doc(hidden)]
+    pub fn test_connection_status_text(&self) -> String {
+        self.imp()
+            .account_detail_test_status
+            .get()
+            .map(|label| label.text().to_string())
+            .unwrap_or_default()
+    }
+
+    /// Runs `handler` when a field of the account detail view is committed.
+    pub fn connect_account_edited(&self, handler: impl Fn(AccountId, AccountEdit) + 'static) {
+        self.imp()
+            .account_edited
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// Fires every `account_edited` handler with `edit`, against whichever
+    /// account the detail view is currently open on. Silently does nothing
+    /// while [`SettingsPanel::open_account_detail`] is populating the
+    /// fields, and if the detail view is not open on anything at all —
+    /// neither should happen from a real field commit, but a stray signal
+    /// during a redraw is cheaper to ignore than to chase.
+    fn commit_account_edit(&self, edit: AccountEdit) {
+        let imp = self.imp();
+        if imp.account_detail_loading.get() {
+            return;
+        }
+        let Some(id) = *imp.account_detail_id.borrow() else {
+            return;
+        };
+        for callback in imp.account_edited.borrow().iter() {
+            callback(id, edit.clone());
+        }
+    }
+
+    /// Opens an account row's context menu exactly as a right-click would,
+    /// registering its actions on `self` — the same shape
+    /// `Sidebar::test_open_saved_search_menu` uses, and for the same reason
+    /// (GTK4 gives a test no way to simulate the click itself; see #424,
+    /// #437). A test drives the result with
+    /// `WidgetExt::activate_action("account.<verb>", None)`.
+    #[doc(hidden)]
+    pub fn test_open_account_menu(&self, x: f64, y: f64) {
+        self.open_account_menu(x, y);
+    }
+
+    /// Closes the account row context menu, if one is open — see
+    /// `Sidebar::test_close_saved_search_menu` for why a test must call this
+    /// before tearing down the window.
+    #[doc(hidden)]
+    pub fn test_close_account_menu(&self) {
+        if let Some(popover) = self.imp().account_menu.take() {
+            popover.popdown();
+        }
+    }
+
+    /// Open an account row's context menu at `(x, y)`, if there is a row
+    /// there to open one for. See [`AccountAction`]'s own doc for why this
+    /// is a fixed, hand-built menu rather than one the command registry
+    /// generates.
+    fn open_account_menu(&self, x: f64, y: f64) {
+        let imp = self.imp();
+        if let Some(previous) = imp.account_menu.take() {
+            previous.popdown();
+        }
+        let Some(row) = imp.accounts_list.row_at_y(y as i32) else {
+            return;
+        };
+        let id = row_account_id(&row);
+        if !id.is_assigned() {
+            return;
+        }
+
+        let menu = gtk::gio::Menu::new();
+        menu.append(Some("Update credential"), Some("account.update-credential"));
+        menu.append(Some("Rebuild search index"), Some("account.rebuild-index"));
+        // The registry's own title, so the menu, the palette and the cheat
+        // sheet say the same words (#960).
+        menu.append(Some("Set as default account"), Some("account.set-default"));
+        menu.append(Some("Remove"), Some("account.remove"));
+
+        let popover = gtk::PopoverMenu::from_model(Some(&menu));
+        popover.set_parent(&imp.accounts_list);
+        popover.set_has_arrow(false);
+        popover.set_halign(gtk::Align::Start);
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+
+        let actions = gtk::gio::SimpleActionGroup::new();
+        for (name, action) in [
+            ("update-credential", AccountAction::UpdateCredential),
+            ("rebuild-index", AccountAction::RebuildIndex),
+            ("set-default", AccountAction::SetDefault),
+            ("remove", AccountAction::Remove),
+        ] {
+            let simple = gtk::gio::SimpleAction::new(name, None);
+            simple.connect_activate(glib::clone!(
+                #[weak(rename_to = panel)]
+                self,
+                move |_, _| panel.request_account_action(id, action)
+            ));
+            actions.add_action(&simple);
+        }
+        // On `self`, not `imp.accounts_list`: matches `Sidebar`'s own reason
+        // — the popover's items resolve the action by walking up from
+        // wherever they are clicked, and inserting the group here is what
+        // lets `test_open_account_menu` drive it through the public type.
+        self.insert_action_group("account", Some(&actions));
+
+        popover.connect_closed(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[weak]
+            popover,
+            move |_| {
+                popover.unparent();
+                let current = panel.imp().account_menu.borrow().clone();
+                if current.as_ref() == Some(&popover) {
+                    panel.imp().account_menu.take();
+                }
+            }
+        ));
+        *imp.account_menu.borrow_mut() = Some(popover.clone());
+        popover.popup();
+    }
+
+    /// Rebuilds the filter rows from the buffer's current text.
+    ///
+    /// Unlike accounts, `[saved_searches]` lives entirely in `config.toml` — there
+    /// is no second store to read, so this parses the buffer itself rather
+    /// than waiting on an outside caller to hand over what to show. Invalid
+    /// TOML mid-edit leaves whatever was last drawn rather than clearing it:
+    /// a typo elsewhere in the file is not a reason to blank out a pane the
+    /// user is not even looking at.
+    fn redraw_filters(&self) {
+        let imp = self.imp();
+        let Ok(config) = Config::from_toml_str(&self.text()) else {
+            return;
+        };
+        clear_rows(&imp.filters_list);
+        let order = filter_display_order(&config);
+        let pinned = config.ordered_filter_keys();
+        for key in &order {
+            imp.filters_list
+                .append(&self.filter_row(key, &config.filters[key], &pinned));
+        }
+        ListOrEmpty::show(&imp.filters_scroller, &imp.filters_empty, !order.is_empty());
+    }
+
+    /// Applies `mutate` to the buffer's current `[saved_searches]` state and writes
+    /// the result back into the buffer — which is what actually reaches disk,
+    /// through the same debounced write every other edit in this panel goes
+    /// through. Invalid TOML mid-edit is left alone: there is no sensible
+    /// `Config` to mutate yet.
+    fn apply_filters_mutation(&self, mutate: impl FnOnce(&mut Config)) {
+        let original = self.text();
+        let Ok(mut config) = Config::from_toml_str(&original) else {
+            return;
+        };
+        mutate(&mut config);
+        match patch_filters(&original, &config.filters) {
+            Ok(patched) => self.imp().buffer.set_text(&patched),
+            Err(error) => tracing::error!(%error, "could not patch [saved_searches]: {error}"),
+        }
+    }
+
+    /// Draws Sync & storage from the buffer's current `[sync]`.
+    ///
+    /// Builds the controls the first time and only *updates* them after —
+    /// the old pane rebuilt every row on every change, because a `DropDown`
+    /// being repopulated fires `selected-notify` and there was no telling
+    /// that apart from a person choosing something.
+    /// [`SegmentedControl::set_selected`] and [`CheckRow::set_active`] both
+    /// know the difference (#1179).
+    fn redraw_sync(&self) {
+        // The controls come first and unconditionally. A file that does not
+        // parse is a file whose *values* cannot be read — it is not a
+        // reason for this pane to have nothing in it, and one unknown
+        // variant three tables away used to empty the whole thing while the
+        // footer, correctly, explained why (#1179).
+        let controls = self.ensure_sync_controls();
+        let Ok(config) = Config::from_toml_str(&self.text()) else {
+            return;
+        };
+        controls
+            .check_for_mail
+            .set_selected(match config.sync.check_for_mail {
+                CheckForMail::Idle => 0,
+                CheckForMail::Poll => 1,
+                CheckForMail::Manual => 2,
+            });
+        controls
+            .attachments
+            .set_selected(match config.sync.attachment_fetch {
+                AttachmentFetch::OnOpen => 0,
+                AttachmentFetch::Eager => 1,
+                AttachmentFetch::Never => 2,
+            });
+        controls
+            .sync_on_startup
+            .set_active(config.sync.sync_on_startup);
+        controls.notify.set_active(config.sync.notify);
+        // Set before anything reads it back: an `Entry` has no silent
+        // setter of its own, and `changed` is not what commits this field —
+        // `activate` is, so a redraw cannot write anything.
+        controls
+            .notify_roles
+            .set_text(&config.sync.notify_roles.join(", "));
+        let interval = humanize_interval(config.sync.poll_interval_secs);
+        controls
+            .interval
+            .set_label(&match config.sync.check_for_mail {
+                CheckForMail::Idle => format!("push · {interval} as a backstop"),
+                CheckForMail::Poll => format!("every {interval}"),
+                CheckForMail::Manual => "only when you ask".to_owned(),
+            });
+        self.refresh_storage_stats();
+    }
+
+    /// The bordered block's two lines, from the footprints `window.rs` has
+    /// measured.
+    ///
+    /// **An incomplete header pass makes every figure a lower bound**, and
+    /// [`postio_core::event::MailFootprint::complete`] is what says so — a
+    /// total that silently climbs every few seconds reads as a bug, so the
+    /// line says `over 1.4 GB` until the pass finishes rather than showing a
+    /// number it will contradict in a moment.
+    fn refresh_storage_stats(&self) {
+        let imp = self.imp();
+        let Some(controls) = imp.sync_controls.get() else {
+            return;
+        };
+        let weights = imp.weights.borrow();
+        let local: u64 = weights.iter().map(|(_, w)| w.local_bytes).sum();
+        let total: u64 = weights.iter().map(|(_, w)| w.total_bytes).sum();
+        let complete = weights.iter().all(|(_, w)| w.complete);
+        controls.stats_size.set_label(&if weights.is_empty() {
+            "stores not measured yet".to_owned()
+        } else {
+            format!(
+                "stored {}\nknown {}",
+                postio_ui::format::human_size_bound(local, complete),
+                postio_ui::format::human_size_bound(total, complete)
+            )
+        });
+
+        let accounts = imp.accounts.borrow().len();
+        controls.stats_accounts.set_label(&format!(
+            "{accounts} account{}",
+            if accounts == 1 { "" } else { "s" }
+        ));
+    }
+
+    /// Applies `mutate` to the buffer's current `[sync]` state and writes
+    /// the result back into the buffer, the same way
+    /// [`apply_filters_mutation`](Self::apply_filters_mutation) does for
+    /// `[saved_searches]`.
+    fn apply_sync_mutation(&self, mutate: impl FnOnce(&mut SyncConfig)) {
+        let original = self.text();
+        let Ok(mut config) = Config::from_toml_str(&original) else {
+            return;
+        };
+        mutate(&mut config.sync);
+        match patch_sync(&original, &config.sync) {
+            Ok(patched) => self.imp().buffer.set_text(&patched),
+            Err(error) => tracing::error!(%error, "could not patch [sync]: {error}"),
+        }
+    }
+
+    /// Builds Sync & storage's controls once, and returns them thereafter.
+    ///
+    /// Lazily, and for #873's reason: building certain controls while the
+    /// host window is still wiring its own shortcut controllers turned out
+    /// to corrupt keyboard routing for the rest of its life. Every pane here
+    /// populates on first draw instead, which is after that construction has
+    /// finished.
+    ///
+    /// # Where the poll interval went
+    ///
+    /// The middle segment says `Every 5 min` and sets both
+    /// `check_for_mail = "poll"` and `poll_interval_secs = 300`, where the
+    /// old pane had a `SpinButton` for the seconds. That is deliberate: the
+    /// drawing has no spin button anywhere (#1179), and an interval in
+    /// seconds is not a choice between three things — it is a number, and
+    /// the pane for typing a number into this file is `Config file`, which
+    /// the footer names from every pane. Somebody who wants ninety seconds
+    /// still has `[sync] poll_interval_secs`, and this control shows them
+    /// what they have chosen rather than rounding it away: an interval that
+    /// is not five minutes still selects this segment, and the stat line
+    /// under it says what the interval actually is.
+    fn ensure_sync_controls(&self) -> &SyncControls {
+        let imp = self.imp();
+        if let Some(controls) = imp.sync_controls.get() {
+            return controls;
+        }
+
+        let check_for_mail =
+            SegmentedControl::new("Check for mail", &["IMAP IDLE", "Every 5 min", "Manual"]);
+        check_for_mail.connect_selected(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |index| {
+                panel.apply_sync_mutation(move |sync| match index {
+                    1 => {
+                        // Only when this is a *move* to polling: choosing
+                        // the segment that is already chosen must not
+                        // overwrite an interval somebody set on purpose.
+                        if sync.check_for_mail != CheckForMail::Poll {
+                            sync.poll_interval_secs = POLL_EVERY_FIVE_MINUTES;
+                        }
+                        sync.check_for_mail = CheckForMail::Poll;
+                    }
+                    2 => sync.check_for_mail = CheckForMail::Manual,
+                    _ => sync.check_for_mail = CheckForMail::Idle,
+                })
+            }
+        ));
+
+        // The drawing draws this as a checkbox, and it cannot be one:
+        // `attachment_fetch` has three values, and a checkbox that can only
+        // say two of them would silently rewrite `never` to `eager` the
+        // first time anybody touched it. Three closed options is exactly
+        // what a segmented control is for (ADR 0029 Q1).
+        let attachments =
+            SegmentedControl::new("Download attachments", &["When opened", "Always", "Never"]);
+        attachments.connect_selected(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |index| {
+                let fetch = match index {
+                    1 => AttachmentFetch::Eager,
+                    2 => AttachmentFetch::Never,
+                    _ => AttachmentFetch::OnOpen,
+                };
+                panel.apply_sync_mutation(move |sync| sync.attachment_fetch = fetch);
+            }
+        ));
+        let sync_on_startup = CheckRow::new("Check for mail when Postio starts");
+        sync_on_startup.connect_toggled(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |active| panel.apply_sync_mutation(move |sync| sync.sync_on_startup = active)
+        ));
+        let notify = CheckRow::new("Notify about new mail");
+        notify.connect_toggled(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |active| panel.apply_sync_mutation(move |sync| sync.notify = active)
+        ));
+
+        let notify_roles = gtk::Entry::new();
+        notify_roles.add_css_class("postio-settings-notify-roles");
+        notify_roles.set_placeholder_text(Some("inbox, flagged"));
+        notify_roles.update_property(&[gtk::accessible::Property::Label(
+            "Mailbox roles worth a notification, comma separated",
+        )]);
+        // On `activate`, not on `changed`: this writes to the file, and
+        // committing a half-typed role list on every keystroke would put
+        // `inbo` in `config.toml` on the way to `inbox`.
+        notify_roles.connect_activate(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |entry| {
+                let roles: Vec<String> = entry
+                    .text()
+                    .split(',')
+                    .map(|role| role.trim().to_owned())
+                    .filter(|role| !role.is_empty())
+                    .collect();
+                panel.apply_sync_mutation(move |sync| sync.notify_roles = roles);
+            }
+        ));
+
+        let interval = stat_line("");
+        let left = SettingsGroup::new();
+        left.section("Check for mail");
+        left.control(check_for_mail.widget()).note(&interval);
+        left.section("Download attachments");
+        left.control(attachments.widget());
+
+        let checks = gtk::Box::new(gtk::Orientation::Vertical, space::S2);
+        checks.append(sync_on_startup.widget());
+        checks.append(notify.widget());
+        left.block(&checks);
+        left.section("Notify for");
+        notify_roles.set_halign(gtk::Align::Start);
+        notify_roles.set_width_chars(24);
+        left.control(&notify_roles);
+        let elsewhere = stat_line("remote images are allowed per sender, under Privacy");
+        // Wraps rather than ellipsising: it is a sentence, not a column of
+        // numbers, and half of it is worse than two lines of it.
+        elsewhere.set_ellipsize(pango::EllipsizeMode::None);
+        elsewhere.set_wrap(true);
+        left.block(&elsewhere);
+
+        // The stat block: bordered, mono, with the one action that has a
+        // command behind it. `Compact index` is in the drawing and is *not*
+        // here — no command compacts an index, and a button wired to
+        // nothing is worse than no button. Rebuilding one account's index
+        // is on that account's own row, which is where it can name what it
+        // is rebuilding.
+        let stats_size = stat_line("");
+        let stats_accounts = stat_line("");
+        let stats = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        stats.add_css_class("postio-stat-block");
+        stats.append(&stats_size);
+        stats.append(&stats_accounts);
+
+        let sync_now = gtk::Button::with_label("Sync now");
+        crate::widgets::button::style(
+            &sync_now,
+            crate::widgets::button::Kind::Secondary,
+            crate::widgets::button::Size::Small,
+        );
+        sync_now.set_halign(gtk::Align::Start);
+        sync_now.set_margin_top(6);
+        sync_now.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.request_command(CommandId::Refresh)
+        ));
+        stats.append(&sync_now);
+
+        let right = SettingsGroup::new();
+        right.section("Local store");
+        right.control(&stats);
+
+        // Every folder backs up to completion unless the person says
+        // otherwise (ADR 0016). Hidden until an app hands the folders over.
+        let backfill_heading = right.section("Back up locally");
+        let backfill = gtk::Box::new(gtk::Orientation::Vertical, space::S1);
+        backfill.add_css_class("postio-settings-backfill");
+        right.control(&backfill);
+        backfill_heading.set_visible(false);
+        backfill.set_visible(false);
+
+        let columns = two_columns(left.widget(), right.widget());
+        stack_columns(&columns, imp.narrow.get());
+        imp.sync_pane.append(&columns);
+
+        let _ = imp.sync_controls.set(SyncControls {
+            check_for_mail,
+            interval,
+            attachments,
+            sync_on_startup,
+            notify,
+            stats_size,
+            stats_accounts,
+            notify_roles,
+            backfill_heading,
+            backfill,
+        });
+        self.redraw_backfill();
+        imp.sync_controls.get().expect("just set")
+    }
+
+    fn redraw_keys(&self) {
+        self.ensure_capture_controller();
+        let imp = self.imp();
+        let Ok(config) = Config::from_toml_str(&self.text()) else {
+            return;
+        };
+        clear_rows(&imp.keys_list);
+        for spec in postio_core::registry::all()
+            .filter(|spec| spec.requires.offered_by(postio_core::Frontend::Focus))
+        {
+            imp.keys_list.append(&self.key_row(spec, &config.keys));
+        }
+    }
+
+    /// Adds `keys_list`'s capture-phase `EventControllerKey`, the first
+    /// time [`redraw_keys`](Self::redraw_keys) runs — never in `build()`.
+    ///
+    /// `SettingsPanel` is built as a hidden overlay child while `Window::new`
+    /// is still wiring up its own overlay siblings and shortcut controllers
+    /// (window.rs), and #873/#880 each found a widget with its own event
+    /// controllers, built during that window, corrupting keyboard routing
+    /// for the rest of it. This controller is not a composite widget's own
+    /// internals the way those two cases were, so it is deferred out of
+    /// `build()` on the same precautionary principle rather than because a
+    /// suite regression was pinned on it specifically — a full-suite
+    /// crash chased during this same issue turned out to be a pre-existing,
+    /// machine-load-dependent flake, reproducible on `main` with none of
+    /// this code present, not something this controller's timing caused or
+    /// fixed. Deferring construction until a real interaction proves the
+    /// window is done being built is cheap and has not been shown to be
+    /// unnecessary, so it stays; see the issue thread for the bisection
+    /// that cleared this controller instead of confirming it.
+    fn ensure_capture_controller(&self) {
+        let imp = self.imp();
+        if imp.capture_controller_installed.get() {
+            return;
+        }
+        imp.capture_controller_installed.set(true);
+
+        // Capture phase: this must see a keypress before anything else in
+        // the panel does, including the row's own rebind `Button`, or the
+        // Space/Enter that presses that button would itself be swallowed
+        // by the button's own activation instead of reaching capture.
+        // Stops propagation only while actually capturing, so ordinary
+        // navigation (Tab between rows, arrow keys in the list) is
+        // untouched otherwise.
+        let capture = gtk::EventControllerKey::new();
+        capture.set_propagation_phase(gtk::PropagationPhase::Capture);
+        capture.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, keyval, _, state| {
+                if panel.imp().capturing.borrow().is_none() {
+                    return glib::Propagation::Proceed;
+                }
+                // Held for one turn of the main loop rather than resolved
+                // here: this fires mid-propagation, before the event has
+                // finished being delivered to whatever has focus (usually
+                // the capturing row's own rebind button) -- and resolving
+                // synchronously means `redraw_keys` tears down that exact
+                // widget while GTK is still routing the event to it.
+                // `MessageList::hold` (list.rs) holds for the same reason:
+                // let delivery finish, then act.
+                glib::idle_add_local_once(glib::clone!(
+                    #[weak]
+                    panel,
+                    move || panel.resolve_capture(keyval, state)
+                ));
+                glib::Propagation::Stop
+            }
+        ));
+        imp.keys_list.add_controller(capture);
+    }
+
+    /// Applies `mutate` to the buffer's current `[keys]` overrides and
+    /// writes the result back into the buffer, the same shape
+    /// [`apply_filters_mutation`](Self::apply_filters_mutation) and
+    /// [`apply_sync_mutation`](Self::apply_sync_mutation) already use.
+    fn apply_keys_mutation(
+        &self,
+        mutate: impl FnOnce(&mut std::collections::BTreeMap<String, String>),
+    ) {
+        let original = self.text();
+        let Ok(mut config) = Config::from_toml_str(&original) else {
+            return;
+        };
+        let mut overrides = config.keys.overrides().clone();
+        mutate(&mut overrides);
+        *config.keys.overrides_mut() = overrides.clone();
+        match patch_keys(&original, &overrides) {
+            Ok(patched) => self.imp().buffer.set_text(&patched),
+            Err(error) => tracing::error!(%error, "could not patch [keys]: {error}"),
+        }
+    }
+
+    /// One command: its title, current effective binding, a rebind button,
+    /// and — only right after a rejected capture on this exact command —
+    /// why it was rejected.
+    fn key_row(
+        &self,
+        spec: &postio_core::CommandSpec,
+        bindings: &postio_config::KeyBindings,
+    ) -> gtk::ListBoxRow {
+        let command = spec.id;
+        let row = gtk::ListBoxRow::new();
+        row.add_css_class("postio-settings-keys-row");
+        row.set_selectable(false);
+
+        let title = gtk::Label::new(Some(spec.title));
+        title.add_css_class("postio-settings-keys-title");
+        title.set_xalign(0.0);
+        title.set_hexpand(true);
+
+        let capturing = self
+            .imp()
+            .capturing
+            .borrow()
+            .is_some_and(|id| id == command);
+        let current = bindings
+            .binding(command.as_str())
+            .unwrap_or(spec.default_binding)
+            .to_owned();
+        // The keycap *is* the control (Design/screens/22): pressing the key
+        // a command is bound to is what you press to change it, and while
+        // it is waiting the cap says `press a key…` in place of the key it
+        // is about to lose. A separate `Rebind` button beside a cap that
+        // was only a label made the row two lines and the verb ambiguous —
+        // it read as though the cap and the button did different things.
+        let rebind = gtk::Button::with_label(if capturing {
+            "press a key…"
+        } else {
+            current.as_str()
+        });
+        rebind.add_css_class("postio-settings-keys-binding");
+        rebind.set_valign(gtk::Align::Center);
+        if capturing {
+            rebind.add_css_class("postio-settings-keys-capturing");
+        }
+        rebind.update_property(&[gtk::accessible::Property::Label(&format!(
+            "Rebind {}, currently {current}",
+            spec.title
+        ))]);
+        rebind.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.toggle_capture(command)
+        ));
+
+        let conflict_text = self
+            .imp()
+            .capture_conflict
+            .borrow()
+            .as_ref()
+            .filter(|(id, _)| *id == command)
+            .map(|(_, message)| message.clone());
+        let conflict = gtk::Label::new(conflict_text.as_deref());
+        conflict.add_css_class("postio-settings-keys-conflict");
+        conflict.set_xalign(0.0);
+        conflict.set_wrap(true);
+        conflict.set_visible(conflict_text.is_some());
+
+        // One line: what it does on the left, the key on the right. The
+        // conflict message is the only thing that ever adds a second, and
+        // only on the row being rebound.
+        let lines = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        lines.set_hexpand(true);
+        lines.append(&title);
+        lines.append(&conflict);
+
+        let box_ = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        box_.add_css_class("postio-settings-keys-line");
+        box_.append(&lines);
+        box_.append(&rebind);
+        row.set_child(Some(&box_));
+        row
+    }
+
+    /// Enters or leaves capture mode for `command`, as its rebind button
+    /// asks — the second click undoes the first, since nothing has
+    /// happened yet to undo.
+    fn toggle_capture(&self, command: CommandId) {
+        let imp = self.imp();
+        let already = *imp.capturing.borrow() == Some(command);
+        *imp.capturing.borrow_mut() = if already { None } else { Some(command) };
+        *imp.capture_conflict.borrow_mut() = None;
+        self.redraw_keys();
+        if !already {
+            imp.keys_list.grab_focus();
+        }
+    }
+
+    /// Resolves whatever [`toggle_capture`](Self::toggle_capture) is
+    /// waiting on with a real keypress — the capture controller's own
+    /// handler, and [`test_capture_key`](Self::test_capture_key)'s.
+    ///
+    /// `Escape` always cancels rather than becoming the new binding: the
+    /// alternative would make "I want out of this" indistinguishable from
+    /// "bind Escape here", and every other capture flow in the wild treats
+    /// it as cancel.
+    fn resolve_capture(&self, keyval: gtk::gdk::Key, state: gtk::gdk::ModifierType) {
+        let Some(command) = *self.imp().capturing.borrow() else {
+            return;
+        };
+        if keyval == gtk::gdk::Key::Escape {
+            *self.imp().capturing.borrow_mut() = None;
+            self.redraw_keys();
+            return;
+        }
+        let Some(chord) = crate::keys::chord(keyval, state) else {
+            // A key this build has no name for -- stay in capture mode and
+            // wait for a real one, the same as pressing a bare modifier.
+            return;
+        };
+        let proposed = chord.to_string();
+
+        let original = self.text();
+        let Ok(config) = Config::from_toml_str(&original) else {
+            *self.imp().capturing.borrow_mut() = None;
+            self.redraw_keys();
+            return;
+        };
+        if let Some(other) = postio_core::registry::binding_conflict(
+            command,
+            &proposed,
+            &config.keys,
+            postio_config::paths::Platform::host(),
+        ) {
+            *self.imp().capturing.borrow_mut() = None;
+            *self.imp().capture_conflict.borrow_mut() =
+                Some((command, format!("Already used by {}", other.title)));
+            self.redraw_keys();
+            return;
+        }
+
+        *self.imp().capturing.borrow_mut() = None;
+        self.apply_keys_mutation(move |overrides| {
+            overrides.insert(command.as_str().to_owned(), proposed);
+        });
+        self.redraw_keys();
+    }
+
+    /// Feeds a keypress to whichever command's row is capturing, as a real
+    /// key controller would. `#[doc(hidden)]` because it exists only for
+    /// tests: a window's own key handling
+    /// resolves a synthetic keypress against the app's own resolver
+    /// directly rather than dispatching a real `GdkEvent`, so it never
+    /// reaches this panel's own capture controller — this is the seam that
+    /// exercises the same logic that controller calls, the same trade
+    /// [`SettingsPanel::test_open_account_menu`](Self::test_open_account_menu)
+    /// already makes for a right click a test cannot reliably land on a
+    /// pixel.
+    #[doc(hidden)]
+    pub fn test_capture_key(&self, keyval: gtk::gdk::Key, state: gtk::gdk::ModifierType) {
+        self.resolve_capture(keyval, state);
+    }
+
+    /// Draws Composing from the buffer's current `[compose]`.
+    /// How many messages were filtered today, for Filtering's count line:
+    /// the host's count, as the header strip shows it. `None` while it is
+    /// not known, and the line says nothing rather than a guess.
+    pub fn set_filtered_today(&self, count: Option<u32>) {
+        if self.imp().filtered_today.replace(count) != count
+            && self.imp().filtering_controls.get().is_some()
+        {
+            self.redraw_filtering();
+        }
+    }
+
+    /// Draws Filtering from the buffer's `[focus]` (spec 007 US9): the
+    /// switch, what it does now, today's count, and what `[focus.filter]`
+    /// holds. The controls come first and unconditionally, as on Sync &
+    /// storage: a file that does not parse leaves them showing what they
+    /// last showed.
+    fn redraw_filtering(&self) {
+        let controls = self.ensure_filtering();
+        let Ok(config) = Config::from_toml_str(&self.text()) else {
+            return;
+        };
+        let imp = self.imp();
+        let page = postio_ui::filtering::page(
+            &config.focus,
+            imp.filtered_today.get(),
+            &imp.keymap.borrow(),
+        );
+        controls.switch.set_active(page.on);
+        controls.state.set_label(&page.state);
+        controls
+            .today
+            .set_label(page.today.as_deref().unwrap_or_default());
+        controls.today.set_visible(page.today.is_some());
+        controls
+            .open
+            .set_key(imp.keymap.borrow().binding(CommandId::GoToFiltered));
+        controls.keys.set(&page.keys);
+        controls.keys.widget().set_visible(!page.keys.is_empty());
+        let panel = self.downgrade();
+        let on_undo: std::rc::Rc<dyn Fn(postio_ui::filtering::Undo)> =
+            std::rc::Rc::new(move |undo| {
+                if let Some(panel) = panel.upgrade() {
+                    panel.take_back(&undo);
+                }
+            });
+        fill_listed(
+            &controls.never,
+            &controls.never_empty,
+            &page.never,
+            "postio-settings-filtering-undo-never",
+            &on_undo,
+        );
+        controls.never_empty.set_label(&page.never_empty);
+        fill_listed(
+            &controls.stopped,
+            &controls.stopped_empty,
+            &page.stopped,
+            "postio-settings-filtering-undo-stopped",
+            &on_undo,
+        );
+    }
+
+    /// Builds Filtering's controls once -- see
+    /// [`ensure_sync_controls`](Self::ensure_sync_controls) for why lazily.
+    fn ensure_filtering(&self) -> &FilteringControls {
+        use postio_ui::filtering;
+        let imp = self.imp();
+        if let Some(controls) = imp.filtering_controls.get() {
+            return controls;
+        }
+
+        let switch = CheckRow::new(filtering::SWITCH);
+        switch
+            .widget()
+            .add_css_class("postio-settings-filtering-switch");
+        switch.connect_toggled(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |on| panel.apply_filtering(on)
+        ));
+        let state = note("postio-settings-filtering-state");
+
+        let today = gtk::Label::new(None);
+        today.add_css_class("postio-settings-filtering-today");
+        today.set_xalign(0.0);
+        let open = std::rc::Rc::new(crate::widgets::KeycapButton::new(
+            Some(CommandId::GoToFiltered),
+            filtering::OPEN,
+            "postio-settings-filtering-open",
+            false,
+        ));
+        crate::widgets::KeycapButton::arm(&open);
+        open.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move || panel.request_command(CommandId::GoToFiltered)
+        ));
+        let count_row = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
+        count_row.add_css_class("postio-settings-filtering-count");
+        count_row.append(&today);
+        count_row.append(&open.widget());
+        let keys = crate::widgets::keyhint::KeyLine::new("postio-settings-filtering-keys");
+
+        let never = listed_box("postio-settings-filtering-never", filtering::NEVER);
+        let never_empty = note("postio-settings-filtering-never-empty");
+        let stopped = listed_box("postio-settings-filtering-stopped", filtering::STOPPED);
+        let stopped_empty = note("postio-settings-filtering-stopped-empty");
+        stopped_empty.set_label(filtering::STOPPED_EMPTY);
+
+        let group = SettingsGroup::on(&imp.filtering_pane);
+        group.control(switch.widget()).note(&state);
+        group.section(filtering::FILTERED);
+        group.control(&count_row);
+        group.note(&note_with(
+            "postio-settings-filtering-kept",
+            filtering::KEPT,
+        ));
+        group.note(keys.widget());
+        group.section(filtering::NEVER);
+        group.control(&note_with(
+            "postio-settings-filtering-guards",
+            filtering::GUARDS,
+        ));
+        // The list, or the sentence saying it is empty: one of the two shows.
+        group.note(&never).note(&never_empty);
+        group.section(filtering::STOPPED);
+        group.control(&stopped).control(&stopped_empty);
+
+        let _ = imp.filtering_controls.set(FilteringControls {
+            switch,
+            state,
+            today,
+            open,
+            keys,
+            never,
+            never_empty,
+            stopped,
+            stopped_empty,
+        });
+        imp.filtering_controls.get().expect("just set")
+    }
+
+    /// Writes the buffer without the `[focus.filter]` entry `undo` names:
+    /// the same write the Filtered list's `R` makes, reversed.
+    fn take_back(&self, undo: &postio_ui::filtering::Undo) {
+        use postio_ui::filtering::Undo;
+        let text = self.text();
+        let written = match undo {
+            Undo::Never(entry) => postio_config::focus_edit::set_never(&text, entry, false),
+            Undo::Marker { sender, kind } => {
+                postio_config::focus_edit::set_stop_marker(&text, sender, kind, false)
+            }
+        };
+        match written {
+            Ok(Some(written)) => self.imp().buffer.set_text(&written),
+            Ok(None) => {}
+            Err(error) => tracing::error!(%error, "could not take back a filter entry: {error}"),
+        }
+    }
+
+    /// Turns `[focus] filtering` on or off in the buffer, which reaches the
+    /// file through the same debounced write every edit here does, and the
+    /// running app through its watcher (FR-162).
+    fn apply_filtering(&self, on: bool) {
+        match postio_config::focus_edit::set_filtering(&self.text(), on) {
+            Ok(Some(written)) => self.imp().buffer.set_text(&written),
+            Ok(None) => {}
+            Err(error) => tracing::error!(%error, "could not write [focus] filtering: {error}"),
+        }
+    }
+
+    fn redraw_compose(&self) {
+        // Controls first — see `redraw_sync` for why.
+        let controls = self.ensure_composing();
+        let Ok(config) = Config::from_toml_str(&self.text()) else {
+            return;
+        };
+        let index = |placement| match placement {
+            SignaturePlacement::AboveQuote => 0,
+            SignaturePlacement::BelowQuote => 1,
+        };
+        controls
+            .on_reply
+            .set_selected(index(config.compose.signature_on_reply));
+        controls
+            .on_forward
+            .set_selected(index(config.compose.signature_on_forward));
+    }
+
+    /// Builds Composing's controls once — see
+    /// [`ensure_sync_controls`](Self::ensure_sync_controls) for why lazily.
+    fn ensure_composing(&self) -> &ComposingControls {
+        let imp = self.imp();
+        if let Some(controls) = imp.composing_controls.get() {
+            return controls;
+        }
+
+        let placement = |index: usize| match index {
+            1 => SignaturePlacement::BelowQuote,
+            _ => SignaturePlacement::AboveQuote,
+        };
+        let options = &["Above the quote", "Below the quote"];
+
+        let on_reply = SegmentedControl::new("Signature on a reply", options);
+        on_reply.connect_selected(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |index| {
+                panel.apply_compose_mutation(move |compose| {
+                    compose.signature_on_reply = placement(index)
+                })
+            }
+        ));
+        let on_forward = SegmentedControl::new("Signature on a forward", options);
+        on_forward.connect_selected(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |index| {
+                panel.apply_compose_mutation(move |compose| {
+                    compose.signature_on_forward = placement(index)
+                })
+            }
+        ));
+
+        let group = SettingsGroup::new();
+        group.section("Signature on a reply");
+        group.control(on_reply.widget());
+        group.section("Signature on a forward");
+        group.control(on_forward.widget());
+        group.block(&stat_line(
+            "a reply answers a fragment · a forward hands the whole message on",
+        ));
+        let column = group.widget();
+        column.set_margin_start(PANE_INSET);
+        column.set_margin_end(PANE_INSET);
+        column.set_margin_top(PANE_INSET);
+        imp.composing_pane.append(column);
+
+        let _ = imp.composing_controls.set(ComposingControls {
+            on_reply,
+            on_forward,
+        });
+        imp.composing_controls.get().expect("just set")
+    }
+
+    /// Applies `mutate` to the buffer's `[compose]` table and writes the
+    /// result back, the same format-preserving path every other structured
+    /// pane uses.
+    fn apply_compose_mutation(&self, mutate: impl FnOnce(&mut postio_config::ComposeConfig)) {
+        let original = self.text();
+        let Ok(mut config) = Config::from_toml_str(&original) else {
+            return;
+        };
+        mutate(&mut config.compose);
+        match patch_compose(&original, &config.compose) {
+            Ok(patched) => self.imp().buffer.set_text(&patched),
+            Err(error) => tracing::error!(%error, "could not patch [compose]: {error}"),
+        }
+    }
+
+    /// One saved search's row: its name (editable), its query (for context,
+    /// not editable here — renaming a filter's query is not a feature this
+    /// pane offers), whether it shows in the sidebar, reorder, and delete.
+    ///
+    /// `pinned_keys` is [`Config::ordered_filter_keys`] — the sidebar's own
+    /// order — so the up/down buttons can tell a row apart from the very
+    /// first or last *pinned* filter, which is not the same thing as this
+    /// row's position in the combined pinned-then-unpinned list this pane
+    /// displays.
+    fn filter_row(
+        &self,
+        key: &str,
+        filter: &FilterConfig,
+        pinned_keys: &[String],
+    ) -> gtk::ListBoxRow {
+        // Owned, not borrowed: every row action below moves its own clone of
+        // this into a `'static` closure, which a `&str` tied to the caller's
+        // stack frame cannot satisfy.
+        let key = key.to_string();
+        let row = gtk::ListBoxRow::new();
+        row.add_css_class("postio-settings-filter-row");
+        row.set_selectable(false);
+
+        let title = filter.name.clone().unwrap_or_else(|| filter.query.clone());
+        let name_entry = gtk::Entry::new();
+        name_entry.set_text(&title);
+        name_entry.add_css_class("postio-settings-filter-name");
+        name_entry.set_hexpand(true);
+        name_entry.update_property(&[gtk::accessible::Property::Label(&format!(
+            "Name for the saved search {}",
+            filter.query
+        ))]);
+        name_entry.connect_activate(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[strong]
+            key,
+            move |entry| {
+                let key = key.clone();
+                let text = entry.text().to_string();
+                panel.apply_filters_mutation(move |config| {
+                    config.rename_filter(&key, &text);
+                });
+            }
+        ));
+
+        let query_label = gtk::Label::new(Some(&filter.query));
+        query_label.add_css_class("postio-settings-filter-query");
+        query_label.set_xalign(0.0);
+        query_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+
+        let lines = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        lines.set_hexpand(true);
+        lines.append(&name_entry);
+        lines.append(&query_label);
+
+        // A checkbox, not a switch: pinned is a value written to the file,
+        // and ADR 0029 Q2 keeps switches for acts.
+        let pinned = CheckRow::new("Pinned");
+        pinned.set_active(filter.pinned);
+        pinned
+            .widget()
+            .update_property(&[gtk::accessible::Property::Label(&format!(
+                "Pin {title} across the command bar"
+            ))]);
+        pinned.connect_toggled(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[strong]
+            key,
+            move |active| {
+                let key = key.clone();
+                panel.apply_filters_mutation(move |config| {
+                    config.set_filter_pinned(&key, active);
+                });
+            }
+        ));
+
+        let position = pinned_keys.iter().position(|candidate| *candidate == key);
+        let up = crate::widgets::icon_button("go-up-symbolic", &format!("Move {title} up"));
+        up.add_css_class("postio-settings-filter-up");
+        up.set_tooltip_text(Some("Move up"));
+        up.set_sensitive(position.is_some_and(|index| index > 0));
+        up.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[strong]
+            key,
+            move |_| {
+                let key = key.clone();
+                panel.apply_filters_mutation(move |config| {
+                    config.move_filter(&key, Reorder::Up);
+                });
+            }
+        ));
+
+        let down = crate::widgets::icon_button("go-down-symbolic", &format!("Move {title} down"));
+        down.add_css_class("postio-settings-filter-down");
+        down.set_tooltip_text(Some("Move down"));
+        down.set_sensitive(position.is_some_and(|index| index + 1 < pinned_keys.len()));
+        down.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[strong]
+            key,
+            move |_| {
+                let key = key.clone();
+                panel.apply_filters_mutation(move |config| {
+                    config.move_filter(&key, Reorder::Down);
+                });
+            }
+        ));
+
+        let delete = crate::widgets::icon_button(
+            "user-trash-symbolic",
+            &format!("Delete the saved search {title}"),
+        );
+        delete.add_css_class("postio-settings-filter-delete");
+        delete.set_tooltip_text(Some("Delete"));
+        delete.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[strong]
+            key,
+            move |_| {
+                let key = key.clone();
+                panel.apply_filters_mutation(move |config| {
+                    config.delete_filter(&key);
+                });
+            }
+        ));
+
+        let box_ = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        box_.set_margin_top(6);
+        box_.set_margin_bottom(6);
+        box_.set_margin_start(12);
+        box_.set_margin_end(12);
+        box_.append(&lines);
+        pinned.widget().set_valign(gtk::Align::Center);
+        box_.append(pinned.widget());
+        // The key that runs it from the command bar, for the first four
+        // pinned: this is where they are put in order, so it is where the
+        // keys are learnt.
+        const RUN: [CommandId; 4] = [
+            CommandId::SavedSearch1,
+            CommandId::SavedSearch2,
+            CommandId::SavedSearch3,
+            CommandId::SavedSearch4,
+        ];
+        if filter.pinned
+            && let Some(command) = position.and_then(|index| RUN.get(index))
+            && let Some(key) = postio_ui::hints::key(&self.imp().keymap.borrow(), *command)
+        {
+            let cap = crate::widgets::keyhint::cap(&key);
+            cap.add_css_class("postio-settings-filter-key");
+            cap.set_valign(gtk::Align::Center);
+            box_.append(&cap);
+        }
+        box_.append(&up);
+        box_.append(&down);
+        box_.append(&delete);
+        row.set_child(Some(&box_));
+        row.update_property(&[gtk::accessible::Property::Label(&format!(
+            "{title}, {}",
+            filter.query
+        ))]);
+        row
+    }
+
+    /// Records `text` as the last configuration known to load without error,
+    /// without touching the buffer.
+    ///
+    /// For a save that reached the file some way other than typing here —
+    /// `$EDITOR`, most of all. Keeping this separate from the buffer-driven
+    /// validity check is what stops a `$EDITOR` save from clobbering an edit
+    /// in progress in this panel: it updates what "last good" means without
+    /// ever touching what is on screen.
+    pub fn note_known_good(&self, text: &str) {
+        *self.imp().last_good.borrow_mut() = Some(text.to_string());
+    }
+
+    /// Restores the file to the last configuration known to load without
+    /// error, and says so on the footer line.
+    ///
+    /// Quietly does nothing when there is no path to write to, or nothing has
+    /// ever validated — the second case cannot happen in practice, since even
+    /// a missing file validates to defaults, but pretending there is always
+    /// something to revert to would risk overwriting a first, never-saved
+    /// edit with nothing.
+    pub fn revert(&self) {
+        let imp = self.imp();
+        let Some(text) = imp.last_good.borrow().clone() else {
+            return;
+        };
+        let Some(path) = imp.path.borrow().clone() else {
+            return;
+        };
+        if let Err(error) = write_atomically(&path, &text) {
+            tracing::error!(path = %path.display(), %error, "cannot revert the config file: {error}");
+            return;
+        }
+        imp.loading.set(true);
+        imp.buffer.set_text(&text);
+        imp.loading.set(false);
+        self.refresh_validity();
+        imp.status
+            .set_label("Reverted to the last configuration that loaded without error.");
+    }
+
+    /// Highlights whichever nav row the cursor currently sits inside.
+    /// The footer follows the cursor while the file itself is on screen.
+    ///
+    /// It used to move the sidebar's selection, back when the sidebar was a
+    /// table of contents for one long text view. The sidebar picks panes
+    /// now, so what the cursor still decides is the one thing it honestly
+    /// can: which table the strip along the foot says you are typing in.
+    fn sync_nav(&self) {
+        if self.imp().current.get() != Section::ConfigFile {
+            return;
+        }
+        self.refresh_footer();
+    }
+
+    fn schedule_write(&self) {
+        let imp = self.imp();
+        if let Some(source) = imp.write_source.borrow_mut().take() {
+            source.remove();
+        }
+        let weak = self.downgrade();
+        let id = glib::timeout_add_local(WRITE_DEBOUNCE, move || {
+            if let Some(panel) = weak.upgrade() {
+                panel.imp().write_source.replace(None);
+                panel.write_now();
+            }
+            glib::ControlFlow::Break
+        });
+        *imp.write_source.borrow_mut() = Some(id);
+    }
+
+    fn write_now(&self) {
+        let Some(path) = self.imp().path.borrow().clone() else {
+            return;
+        };
+        if let Err(error) = write_atomically(&path, &self.text()) {
+            tracing::error!(path = %path.display(), %error, "cannot save the config file: {error}");
+        }
+    }
+
+    /// The header bar the host window mounts: the title, and the field that
+    /// filters the sidebar.
+    ///
+    /// Built here rather than by `window.rs` because the search filters
+    /// *this* sidebar, and a control whose whole behaviour lives in another
+    /// module is how the three keycap implementations happened.
+    pub fn header_bar(&self) -> adw::HeaderBar {
+        self.imp().header_bar.clone()
+    }
+
+    /// The find-a-setting field, for a host that draws its own header
+    /// rather than mounting [`SettingsPanel::header_bar`]: Focus's dialog
+    /// wears the message dialog's header. Taken out of the header bar, so
+    /// the host can place it.
+    pub fn search_field(&self) -> gtk::SearchEntry {
+        let imp = self.imp();
+        if imp.search.parent().is_some() {
+            imp.header_bar.remove(&imp.search);
+        }
+        imp.search.clone()
+    }
+
+    /// Whether a Keyboard row is waiting for the key to bind: every key is
+    /// the panel's until it has one.
+    pub fn is_capturing(&self) -> bool {
+        self.imp().capturing.borrow().is_some()
+    }
+
+    /// Which pane is on screen.
+    pub fn current_section(&self) -> Section {
+        self.imp().current.get()
+    }
+
+    /// Shows exactly one pane, and makes every other part of the frame agree
+    /// with it.
+    ///
+    /// This is the navigation model the rebuild exists for (#1179): the
+    /// window, its header bar and its footer are identical on all eight
+    /// panes, and only the sidebar's selection and the pane's body change.
+    /// Everything that has to move when the selection moves moves here, so
+    /// there is one place to read to know what a pane switch does.
+    pub fn show_section(&self, section: Section) {
+        let imp = self.imp();
+        let previous = imp.current.replace(section);
+        imp.stack.set_visible_child_name(section.label());
+        imp.pane_title.set_label(section.label());
+        imp.pane_description.set_label(section.description());
+        // Only Accounts has a primary action so far. The box stays in the
+        // header on every pane rather than being added and removed, so the
+        // title does not shift sideways as you move down the sidebar.
+        imp.pane_action.set_visible(section == Section::Accounts);
+
+        // Panes that build their controls on first draw (#873) draw here,
+        // which is the first moment one of them is actually looked at.
+        match section {
+            Section::Filtering => self.redraw_filtering(),
+            Section::Sync => self.redraw_sync(),
+            Section::Composing => self.redraw_compose(),
+            Section::Keyboard => {
+                self.ensure_capture_controller();
+                self.redraw_keys();
+            }
+            // Arriving at the file itself from a pane that owns a table
+            // puts the cursor on that table, so "show me the rest of this"
+            // lands where the person just was rather than at line one.
+            Section::ConfigFile if previous.table().is_some() => self.jump_to(previous),
+            _ => {}
+        }
+
+        if let Some(row) = Section::ALL
+            .iter()
+            .position(|candidate| *candidate == section)
+            .and_then(|index| imp.nav_rows.borrow().get(index).cloned())
+            && !row.is_selected()
+        {
+            imp.nav.select_row(Some(&row));
+        }
+        self.refresh_footer();
+    }
+
+    /// Puts the raw view's cursor on `section`'s table.
+    ///
+    /// Only the `Config file` pane has a raw view to move, so this is no
+    /// longer navigation — it is what makes arriving at the file from a form
+    /// land somewhere useful.
+    fn jump_to(&self, section: Section) {
+        let imp = self.imp();
+        let text = self.text();
+        let mut iter = match find_section(&text, section).and_then(|line| {
+            imp.buffer
+                .iter_at_line(i32::try_from(line).unwrap_or(i32::MAX))
+        }) {
+            Some(iter) => iter,
+            None => imp.buffer.end_iter(),
+        };
+        imp.buffer.place_cursor(&iter);
+        imp.view.scroll_to_iter(&mut iter, 0.0, false, 0.0, 0.0);
+    }
+
+    /// Narrows the sidebar to the sections a query matches.
+    ///
+    /// Matching is over the section's own name and the words its pane is
+    /// about, not over the controls themselves: a person typing "idle" wants
+    /// to be *taken to* Sync & storage, and a filter that hid every control but
+    /// one would leave them looking at a pane with a hole in it.
+    fn apply_search(&self, query: &str) {
+        *self.imp().nav_query.borrow_mut() = query.trim().to_lowercase();
+        self.imp().nav.invalidate_filter();
+    }
+
+    /// Whether `section` survives the current search.
+    fn matches_search(&self, section: Section) -> bool {
+        let query = self.imp().nav_query.borrow();
+        if query.is_empty() {
+            return true;
+        }
+        let haystack = format!(
+            "{} {} {}",
+            section.label(),
+            section.description(),
+            section.keywords()
+        )
+        .to_lowercase();
+        query.split_whitespace().all(|word| haystack.contains(word))
+    }
+
+    /// Stack each pane's two columns into one, for a host too narrow to
+    /// give each half room: Focus's dialog, at most 820 wide.
+    pub fn set_narrow(&self, narrow: bool) {
+        let imp = self.imp();
+        if imp.narrow.replace(narrow) == narrow {
+            return;
+        }
+        // Narrow, the panel is as wide as the pane on screen needs, not the
+        // widest of them all.
+        imp.stack.set_hhomogeneous(!narrow);
+        {
+            let mut child = imp.sync_pane.first_child();
+            while let Some(widget) = child {
+                if let Some(row) = widget
+                    .downcast_ref::<gtk::Box>()
+                    .filter(|row| row.widget_name() == TWO_COLUMNS)
+                {
+                    stack_columns(row, narrow);
+                }
+                child = widget.next_sibling();
+            }
+        }
+    }
+
+    /// The sections the list shows now: every one this panel shows that the
+    /// find-a-setting field's words match, in list order.
+    pub fn listed_sections(&self) -> Vec<Section> {
+        Section::ALL
+            .into_iter()
+            .filter(|section| self.shown(*section) && self.matches_search(*section))
+            .collect()
+    }
+
+    /// Whether this panel shows `section` at all: every section Focus
+    /// shows ([`Section::shown_in`]).
+    pub fn shown(&self, section: Section) -> bool {
+        section.shown_in(postio_core::Frontend::Focus)
+    }
+
+    /// Runs `handler` with a folder and whether its backfill is now skipped,
+    /// whenever a person changes one of Sync & storage's folder checks (ADR
+    /// 0016). Never for the state [`SettingsPanel::set_account_folders`]
+    /// draws.
+    pub fn connect_backfill_exclusion_changed(
+        &self,
+        handler: impl Fn(postio_model::ids::MailboxId, bool) + 'static,
+    ) {
+        self.imp()
+            .backfill_handlers
+            .borrow_mut()
+            .push(Box::new(handler));
+    }
+
+    /// One account's folders as they stand, for Sync & storage's per-folder
+    /// backfill control. Empty does nothing: there is no account to name.
+    pub fn set_account_folders(&self, folders: Vec<postio_model::mailbox::Mailbox>) {
+        let Some(account) = folders.first().map(|folder| folder.account_id) else {
+            return;
+        };
+        self.imp().folders.borrow_mut().insert(account, folders);
+        if self.imp().sync_controls.get().is_some() {
+            self.redraw_backfill();
+        }
+    }
+
+    /// Scrolls Sync & storage to "Back up locally", the part of the pane a
+    /// short window keeps below its fold. A no-op while there are no folders.
+    pub fn reveal_backfill(&self) {
+        let Some(controls) = self.imp().sync_controls.get() else {
+            return;
+        };
+        if !controls.backfill_heading.is_visible() {
+            return;
+        }
+        if let Some(scroller) = controls
+            .backfill_heading
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_downcast::<gtk::ScrolledWindow>()
+            && let Some(bounds) = controls
+                .backfill_heading
+                .compute_bounds(&scroller.child().unwrap())
+        {
+            let adjustment = scroller.vadjustment();
+            adjustment.set_value(f64::from(bounds.y()) - 24.0);
+        }
+    }
+
+    /// Whether `path`'s folder is backed up locally, as Sync & storage's
+    /// check for it says; `None` when it draws no check for that folder.
+    pub fn backfill_check(&self, path: &str) -> Option<gtk::CheckButton> {
+        let controls = self.imp().sync_controls.get()?;
+        let mut child = controls.backfill.first_child();
+        while let Some(widget) = child {
+            if let Some(check) = widget.downcast_ref::<gtk::CheckButton>()
+                && check.widget_name() == path
+            {
+                return Some(check.clone());
+            }
+            child = widget.next_sibling();
+        }
+        None
+    }
+
+    /// Draws "Back up locally": a check per selectable folder, checked
+    /// while its backfill runs, under its account's address when there is
+    /// more than one account.
+    fn redraw_backfill(&self) {
+        let imp = self.imp();
+        let Some(controls) = imp.sync_controls.get() else {
+            return;
+        };
+        while let Some(child) = controls.backfill.first_child() {
+            controls.backfill.remove(&child);
+        }
+        let folders = imp.folders.borrow();
+        let accounts = imp.accounts.borrow();
+        let several = folders.len() > 1;
+        for (account, mailboxes) in folders.iter() {
+            if several {
+                let address = accounts
+                    .iter()
+                    .find(|row| row.id == *account)
+                    .map(|row| row.address.address.clone())
+                    .unwrap_or_default();
+                let heading = stat_line(&address);
+                heading.add_css_class("postio-settings-backfill-account");
+                controls.backfill.append(&heading);
+            }
+            for mailbox in mailboxes.iter().filter(|mailbox| mailbox.selectable) {
+                let name = postio_ui::sidebar::path_label(mailbox, mailboxes);
+                let check = CheckRow::new(&name);
+                check.set_active(!mailbox.backfill_excluded);
+                check.widget().set_widget_name(&mailbox.path);
+                check
+                    .widget()
+                    .update_property(&[gtk::accessible::Property::Label(&format!(
+                        "Back up {name} locally",
+                    ))]);
+                let id = mailbox.id;
+                check.connect_toggled(glib::clone!(
+                    #[weak(rename_to = panel)]
+                    self,
+                    move |active| {
+                        for handler in panel.imp().backfill_handlers.borrow().iter() {
+                            handler(id, !active);
+                        }
+                    }
+                ));
+                controls.backfill.append(check.widget());
+            }
+        }
+        let any = !folders.is_empty();
+        controls.backfill_heading.set_visible(any);
+        controls.backfill.set_visible(any);
+    }
+
+    /// Tells the panel who to ask to run a command it has a button for.
+    ///
+    /// The panel raises `CommandId`s and runs none of them, for the same
+    /// reason it never writes an account edit itself: the app owns the store
+    /// and the network, and its window already has the one dispatch every
+    /// keystroke and every menu item goes through. A second path from a
+    /// button straight to the runtime is how two surfaces come to disagree
+    /// about what `Refresh` means.
+    pub fn connect_command(&self, handler: impl Fn(CommandId) + 'static) {
+        self.imp().command.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Asks whoever is listening to run `command`.
+    fn request_command(&self, command: CommandId) {
+        for handler in self.imp().command.borrow().iter() {
+            handler(command);
+        }
+    }
+
+    /// Puts the live key on the footer's `Open in $EDITOR` cap.
+    ///
+    /// The same contract every other keycap in the application keeps: the
+    /// key comes from the resolved keymap, so a `[keys]` rebind changes what
+    /// the button says the moment it changes what the keyboard does. Called
+    /// from `crate::config`, beside the other surfaces that take a keymap.
+    pub fn set_keymap(&self, keymap: &postio_core::Keymap) {
+        if let Some(editor) = self.imp().editor_button.get() {
+            editor.set_key(keymap.binding(CommandId::EditConfig));
+        }
+        if let Some(add) = self.imp().add_account_button.get() {
+            add.set_key(keymap.binding(CommandId::AddAccount));
+        }
+        let save = keymap.binding(CommandId::SaveSearch);
+        self.imp().filters_hint_cap.set_label(save.unwrap_or(""));
+        // No binding, nothing to say: the sentence ends in the key.
+        if let Some(line) = self.imp().filters_hint_cap.parent() {
+            line.set_visible(save.is_some());
+        }
+        self.imp().keymap.replace(keymap.clone());
+        if self.imp().filtering_controls.get().is_some() {
+            self.redraw_filtering();
+        }
+    }
+
+    /// The footer strip: what is being written, and whether it is valid.
+    ///
+    /// Present and identical on every pane, which is half of what makes the
+    /// navigation model legible — the frame does not move, only the pane
+    /// inside it. What changes per pane is one string: the table that pane
+    /// owns, or the whole path on the two panes that own none.
+    fn refresh_footer(&self) {
+        let imp = self.imp();
+        let section = imp.current.get();
+        // On the file itself the cursor decides, so the strip names the
+        // table you are actually typing in rather than the file you already
+        // know you are in.
+        let table = if section == Section::ConfigFile {
+            section_at_line(&self.text(), self.cursor_line()).and_then(Section::table)
+        } else {
+            section.table()
+        };
+        let mut target = match (table, imp.path.borrow().as_ref()) {
+            (Some(table), _) => format!("{table} in {FILE_NAME}"),
+            (None, Some(path)) => display_path(path),
+            (None, None) => FILE_NAME.to_owned(),
+        };
+        // How many keys are not what this build ships with — the one number
+        // the Keyboard pane owes, and the drawing puts it here rather than
+        // on any row (Design/screens/22).
+        if section == Section::Keyboard
+            && let Ok(config) = Config::from_toml_str(&self.text())
+        {
+            let rebound = config.keys.overrides().len();
+            if rebound > 0 {
+                target.push_str(&format!(" · {rebound} rebound"));
+            }
+        }
+        imp.footer_target.set_label(&target);
+    }
+
+    /// What the footer strip says is being written — `[ui] in config.toml`,
+    /// or the whole path on a pane that owns no table.
+    pub fn footer_target_text(&self) -> String {
+        self.imp().footer_target.label().to_string()
+    }
+
+    /// Which line the raw view's cursor is on.
+    fn cursor_line(&self) -> usize {
+        let buffer = &self.imp().buffer;
+        let iter = buffer.iter_at_mark(&buffer.get_insert());
+        usize::try_from(iter.line()).unwrap_or(0)
+    }
+
+    fn build(&self) {
+        let imp = self.imp();
+        self.add_css_class("postio-settings");
+
+        // A dialog to a screen reader: it takes the keyboard and `Escape`
+        // closes it, the same contract as the cheat sheet.
+        self.set_accessible_role(gtk::AccessibleRole::Dialog);
+        self.update_property(&[gtk::accessible::Property::Label("Settings")]);
+
+        self.build_header_bar();
+
+        // ── accounts: one row each, an enable switch, a context menu ─────
+        imp.accounts_list
+            .add_css_class("postio-settings-accounts-list");
+        imp.accounts_list
+            .set_selection_mode(gtk::SelectionMode::Single);
+        imp.accounts_list
+            .update_property(&[gtk::accessible::Property::Label("Accounts")]);
+
+        let accounts_menu = gtk::GestureClick::new();
+        accounts_menu.set_button(gtk::gdk::BUTTON_SECONDARY);
+        accounts_menu.set_propagation_phase(gtk::PropagationPhase::Capture);
+        accounts_menu.connect_pressed(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_, _, x, y| {
+                panel.open_account_menu(x, y);
+            }
+        ));
+        imp.accounts_list.add_controller(accounts_menu);
+
+        // Selecting a row is what reveals the form under the list (#1179):
+        // the drawing has one list and one form, not a list you drill out
+        // of. Activation (Enter, double click) still opens the same form,
+        // so nothing that used to work has stopped.
+        imp.accounts_list.set_activate_on_single_click(true);
+        imp.accounts_list.connect_row_selected(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_, row| {
+                if panel.imp().redrawing.get() {
+                    return;
+                }
+                match row {
+                    Some(row) => {
+                        let id = row_account_id(row);
+                        if id.is_assigned() {
+                            panel.open_account_detail(id);
+                        }
+                    }
+                    None => panel.close_account_detail(),
+                }
+            }
+        ));
+        imp.accounts_list.connect_row_activated(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_, row| {
+                let id = row_account_id(row);
+                if id.is_assigned() {
+                    panel.open_account_detail(id);
+                }
+            }
+        ));
+
+        imp.accounts_scroller.set_child(Some(&imp.accounts_list));
+        imp.accounts_scroller
+            .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Never);
+        imp.accounts_scroller.set_propagate_natural_height(true);
+        imp.accounts_scroller
+            .add_css_class("postio-settings-accounts");
+        imp.accounts_scroller.set_visible(false);
+
+        // ── account detail: display name, IMAP/SMTP host+port (#880) ─────
+        imp.account_detail
+            .add_css_class("postio-settings-account-detail");
+        imp.account_detail.set_visible(false);
+        imp.signature_editor
+            .add_css_class("postio-settings-signature-editor");
+        imp.signature_editor.set_visible(false);
+        // The five field widgets (Entry/SpinButton) are deliberately NOT
+        // built here -- see `ensure_account_detail_fields`'s own doc for
+        // why constructing them this early would repeat #873.
+
+        // `Add account` is the pane's one primary action, in the pane
+        // header where the drawing puts it — not in the sidebar, which
+        // names places rather than verbs.
+        let add_account = std::rc::Rc::new(crate::widgets::KeycapButton::new(
+            Some(CommandId::AddAccount),
+            "Add account",
+            "postio-settings-add-account",
+            true,
+        ));
+        crate::widgets::KeycapButton::arm(&add_account);
+        add_account.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move || panel.request_command(CommandId::AddAccount)
+        ));
+        imp.pane_action.append(&add_account.widget());
+        let _ = imp.add_account_button.set(add_account);
+
+        // The list and the form share one scrolling column, so a long
+        // account list and a long form do not fight over which of them gets
+        // the height (Design/screens/21 shows both at once).
+        let accounts_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        accounts_column.append(&imp.accounts_scroller);
+        accounts_column.append(&imp.account_detail);
+        accounts_column.append(&imp.signature_editor);
+        let accounts_scroll = gtk::ScrolledWindow::new();
+        accounts_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        accounts_scroll.set_vexpand(true);
+        accounts_scroll.set_child(Some(&accounts_column));
+        accounts_scroll.update_property(&[gtk::accessible::Property::Label("Accounts")]);
+        imp.accounts_pane.append(&accounts_scroll);
+
+        // ── filters: one row each, name/query, pinned, reorder, delete ───
+        ListOrEmpty::dress(
+            &imp.filters_list,
+            &imp.filters_scroller,
+            &imp.filters_empty,
+            "postio-settings-filters",
+            "Saved searches",
+            None,
+        );
+        imp.filters_scroller.set_visible(false);
+        imp.filters_empty.set_visible(false);
+
+        imp.filters_pane.append(&imp.filters_scroller);
+        imp.filters_pane.append(&imp.filters_empty);
+        // There is no add form on this page: a search is saved from the
+        // command bar, once it has a query worth keeping.
+        let hint = gtk::Box::new(gtk::Orientation::Horizontal, space::S2);
+        hint.add_css_class("postio-settings-filters-hint");
+        hint.set_halign(gtk::Align::Start);
+        let hint_words = gtk::Label::new(Some("Save a search from the command bar with"));
+        hint_words.add_css_class("postio-settings-pane-description");
+        hint.append(&hint_words);
+        hint.append(&imp.filters_hint_cap);
+        imp.filters_pane.append(&hint);
+
+        // ── privacy: one row per allow-listed sender (#871) ───────────────
+        ListOrEmpty::dress(
+            &imp.privacy_list,
+            &imp.privacy_scroller,
+            &imp.privacy_empty,
+            "postio-settings-privacy",
+            "Senders always allowed to load remote images",
+            Some(ACCOUNTS_MAX_HEIGHT),
+        );
+        // Empty from the start. `set_remote_image_allowlist` may not have
+        // been called yet, and "no senders are always allowed" is equally
+        // true before the list is handed over and after it arrives empty —
+        // whereas a heading with nothing under it is true of neither.
+        ListOrEmpty::show(&imp.privacy_scroller, &imp.privacy_empty, false);
+
+        // ── privacy: one row per past unsubscribe activation (#971) ──────
+        // A second list under the same pane as `privacy_list`, so it gets
+        // its own heading to tell the two apart — the only pane here that
+        // holds two lists.
+        ListOrEmpty::dress(
+            &imp.unsubscribe_list,
+            &imp.unsubscribe_scroller,
+            &imp.unsubscribe_empty,
+            "postio-settings-unsubscribe",
+            "Mailing lists left through one-click unsubscribe",
+            Some(ACCOUNTS_MAX_HEIGHT),
+        );
+        imp.unsubscribe_scroller.set_visible(false);
+        imp.unsubscribe_empty.set_visible(false);
+
+        // ── privacy: the read-receipt count, a fact rather than a toggle
+        // (#970) ───────────────────────────────────────────────────────
+        imp.read_receipt_count
+            .add_css_class("postio-settings-read-receipt-count");
+        imp.read_receipt_count.set_xalign(0.0);
+        imp.read_receipt_count.set_wrap(true);
+        self.set_read_receipt_count(0);
+
+        // ── egress: the connections Postio opened, auditable (#151) ──────
+        ListOrEmpty::dress(
+            &imp.egress_list,
+            &imp.egress_scroller,
+            &imp.egress_empty,
+            "postio-settings-egress",
+            "Recent connections",
+            Some(ACCOUNTS_MAX_HEIGHT),
+        );
+        imp.egress_scroller.set_visible(false);
+
+        let privacy = SettingsGroup::on(&imp.privacy_pane);
+        privacy.section(postio_ui::privacy::ALLOWED);
+        privacy
+            .append(&imp.privacy_scroller)
+            .append(&imp.privacy_empty);
+        privacy.section(postio_ui::privacy::LISTS_LEFT);
+        privacy
+            .append(&imp.unsubscribe_scroller)
+            .append(&imp.unsubscribe_empty);
+        privacy.section(postio_ui::privacy::READ_RECEIPTS);
+        privacy.append(&imp.read_receipt_count);
+        privacy.section(postio_ui::privacy::CONNECTIONS);
+        privacy
+            .append(&imp.egress_scroller)
+            .append(&imp.egress_empty);
+
+        // ── keys: one row per command, a rebind capture button (#881) ────
+        imp.keys_list.add_css_class("postio-settings-keys-list");
+        imp.keys_list.set_selection_mode(gtk::SelectionMode::None);
+        imp.keys_list
+            .update_property(&[gtk::accessible::Property::Label("Keybindings")]);
+
+        // The capture controller is deliberately NOT built here -- see
+        // `ensure_capture_controller`'s own doc for why.
+
+        imp.keys_scroller.set_child(Some(&imp.keys_list));
+        imp.keys_scroller
+            .set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        imp.keys_scroller.set_vexpand(true);
+        imp.keys_scroller.add_css_class("postio-settings-keys");
+        imp.keys_scroller
+            .update_property(&[gtk::accessible::Property::Label("Keybindings")]);
+
+        // `Reset to defaults` is here and `Import mutt bindings` and the
+        // Mnemonic/Vim/Emacs set switcher from the drawing are not: this
+        // build has one set of defaults and no importer, and a control
+        // wired to nothing is worse than a control that is missing.
+        let reset_keys = gtk::Button::with_label("Reset to defaults");
+        crate::widgets::button::style(
+            &reset_keys,
+            crate::widgets::button::Kind::Secondary,
+            crate::widgets::button::Size::Small,
+        );
+        reset_keys.set_halign(gtk::Align::Start);
+        reset_keys.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.reset_keys()
+        ));
+        let keys_actions = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        keys_actions.add_css_class("postio-settings-pane-actions");
+        keys_actions.append(&reset_keys);
+
+        imp.keyboard_pane.append(&imp.keys_scroller);
+        imp.keyboard_pane.append(&keys_actions);
+
+        // ── the file itself: the raw view every pane used to share ───────
+        imp.view.set_buffer(Some(&imp.buffer));
+        imp.view.set_monospace(true);
+        imp.view.set_wrap_mode(gtk::WrapMode::WordChar);
+        imp.view.set_top_margin(4);
+        imp.view.set_left_margin(4);
+        imp.view.add_css_class("postio-settings-view");
+        imp.view
+            .update_property(&[gtk::accessible::Property::Label(FILE_NAME)]);
+
+        let view_scroller = gtk::ScrolledWindow::new();
+        view_scroller.set_child(Some(&imp.view));
+        view_scroller.set_hexpand(true);
+        view_scroller.set_vexpand(true);
+        // A scroll area takes the keyboard so it can be scrolled with one, so
+        // Tab stops here before it reaches the text and a screen reader needs
+        // something to say at that stop.
+        view_scroller.update_property(&[gtk::accessible::Property::Label(FILE_NAME)]);
+
+        imp.revert.add_css_class("postio-settings-revert");
+        crate::widgets::button::style(
+            &imp.revert,
+            crate::widgets::button::Kind::Secondary,
+            crate::widgets::button::Size::Small,
+        );
+        imp.revert.set_halign(gtk::Align::Start);
+        imp.revert.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.revert()
+        ));
+        let config_actions = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        config_actions.add_css_class("postio-settings-pane-actions");
+        config_actions.append(&imp.revert);
+
+        imp.config_pane.append(&view_scroller);
+        imp.config_pane.append(&config_actions);
+
+        // ── the frame: sidebar, one pane, footer ─────────────────────────
+        let body = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        body.add_css_class("postio-settings-body");
+        body.append(&self.build_sidebar());
+        body.append(&self.build_pane_area());
+
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        column.append(&body);
+        column.append(&self.build_footer());
+        self.set_child(Some(&column));
+
+        imp.buffer.connect_changed(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| {
+                if panel.imp().loading.get() {
+                    return;
+                }
+                panel.refresh_validity();
+                panel.redraw_filters();
+                panel.redraw_visible_pane();
+                panel.schedule_write();
+            }
+        ));
+        imp.buffer.connect_cursor_position_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.sync_nav()
+        ));
+
+        // `Escape` closes it, caught in the capture phase so it works
+        // regardless of which child has focus. The same contract
+        // `window.rs`'s own controller uses.
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        keys.connect_key_pressed(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, key, _, _| {
+                if key == gtk::gdk::Key::Escape {
+                    panel.dismiss();
+                    return glib::Propagation::Stop;
+                }
+                glib::Propagation::Proceed
+            }
+        ));
+        self.add_controller(keys);
+
+        self.refresh_validity();
+        self.redraw_filters();
+        // Accounts is where the window opens, per the drawing. Deliberately
+        // *not* redraw_sync() here: `Window::new` constructs
+        // this panel as a hidden child while it is still wiring its own
+        // shortcut controllers, and building certain controls mid-
+        // construction was found to corrupt keyboard routing for the rest
+        // of that window's life -- gtk_finder, gtk_finder_focus,
+        // gtk_move_picker and gtk_toggle_sidebar all failed until it was
+        // removed (#873). Every pane that builds controls populates from
+        // `show_section` instead, which cannot run before the window is up.
+        self.show_section(Section::Accounts);
+    }
+
+    /// The title and the find-a-setting field.
+    fn build_header_bar(&self) {
+        let imp = self.imp();
+        let title = gtk::Label::new(Some("SETTINGS"));
+        title.add_css_class("postio-settings-window-title");
+        imp.header_bar.set_title_widget(Some(&title));
+
+        imp.search.set_placeholder_text(Some("Find a setting"));
+        imp.search.add_css_class("postio-settings-search");
+        imp.search.set_width_chars(24);
+        imp.search
+            .update_property(&[gtk::accessible::Property::Label("Find a setting")]);
+        imp.search.connect_changed(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |entry| panel.apply_search(&entry.text())
+        ));
+        imp.header_bar.pack_start(&imp.search);
+    }
+
+    /// The fixed sidebar: eight sections under two headings.
+    fn build_sidebar(&self) -> gtk::ScrolledWindow {
+        let imp = self.imp();
+        imp.nav.add_css_class("postio-settings-nav-list");
+        imp.nav.set_selection_mode(gtk::SelectionMode::Single);
+        imp.nav.set_activate_on_single_click(true);
+
+        let mut rows = Vec::with_capacity(Section::ALL.len());
+        for section in Section::ALL {
+            let row = gtk::ListBoxRow::new();
+            row.add_css_class("postio-settings-nav-row");
+            let line = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+            let icon = gtk::Image::from_icon_name(icon(section));
+            icon.add_css_class("postio-settings-nav-icon");
+            line.append(&icon);
+            let label = gtk::Label::new(Some(section.label()));
+            label.set_xalign(0.0);
+            label.set_hexpand(true);
+            label.set_ellipsize(pango::EllipsizeMode::End);
+            line.append(&label);
+            row.set_child(Some(&line));
+            row.update_property(&[gtk::accessible::Property::Label(section.label())]);
+            imp.nav.append(&row);
+            rows.push(row);
+        }
+        *imp.nav_rows.borrow_mut() = rows;
+
+        // The two headings, drawn by the list itself rather than as rows of
+        // their own: a heading that is a row is a heading the keyboard stops
+        // on and a screen reader announces as somewhere you can go.
+        imp.nav.set_header_func(|row, before| {
+            let Some(section) = Section::ALL.get(row.index().max(0) as usize) else {
+                return;
+            };
+            let previous = before
+                .and_then(|earlier| Section::ALL.get(earlier.index().max(0) as usize))
+                .map(|earlier| earlier.group());
+            if previous == Some(section.group()) {
+                row.set_header(None::<&gtk::Widget>);
+                return;
+            }
+            let heading = kicker(section.group().label());
+            heading.add_css_class("postio-settings-nav-heading");
+            row.set_header(Some(&heading));
+        });
+
+        imp.nav.set_filter_func(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            #[upgrade_or]
+            true,
+            move |row| {
+                Section::ALL
+                    .get(row.index().max(0) as usize)
+                    .is_none_or(|section| panel.shown(*section) && panel.matches_search(*section))
+            }
+        ));
+
+        imp.nav.connect_row_selected(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_, row| {
+                if let Some(section) = row
+                    .and_then(|row| Section::ALL.get(row.index().max(0) as usize))
+                    .copied()
+                    && panel.current_section() != section
+                {
+                    panel.show_section(section);
+                }
+            }
+        ));
+
+        let scroller = gtk::ScrolledWindow::new();
+        scroller.set_child(Some(&imp.nav));
+        scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroller.add_css_class("postio-settings-nav");
+        scroller.set_size_request(NAV_WIDTH, -1);
+        // A scroll area takes the keyboard so it can be scrolled with one,
+        // which means Tab stops here and a screen reader has to have
+        // something to say. The rows inside are named individually; this
+        // names the region they sit in.
+        scroller.update_property(&[gtk::accessible::Property::Label("Settings sections")]);
+        scroller
+    }
+
+    /// The pane's own heading, its one action, and the stack of eight.
+    fn build_pane_area(&self) -> gtk::Box {
+        let imp = self.imp();
+        imp.pane_title.set_xalign(0.0);
+        imp.pane_title.add_css_class("postio-settings-pane-title");
+        imp.pane_description.set_xalign(0.0);
+        imp.pane_description
+            .add_css_class("postio-settings-pane-description");
+        imp.pane_description
+            .set_ellipsize(pango::EllipsizeMode::End);
+
+        let heading = gtk::Box::new(gtk::Orientation::Vertical, 3);
+        heading.set_hexpand(true);
+        heading.append(&imp.pane_title);
+        heading.append(&imp.pane_description);
+
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        header.add_css_class("postio-settings-pane-header");
+        header.append(&heading);
+        imp.pane_action.set_valign(gtk::Align::Center);
+        header.append(&imp.pane_action);
+
+        // No transition at all: a pane switch is instant, the canvas's
+        // motion rule for exactly this kind of move.
+        imp.stack
+            .set_transition_type(gtk::StackTransitionType::None);
+        imp.stack.set_vexpand(true);
+        for (section, pane) in [
+            (Section::Accounts, &imp.accounts_pane),
+            (Section::Filtering, &imp.filtering_pane),
+            (Section::Filters, &imp.filters_pane),
+            (Section::Composing, &imp.composing_pane),
+            (Section::Keyboard, &imp.keyboard_pane),
+            (Section::Sync, &imp.sync_pane),
+            (Section::Privacy, &imp.privacy_pane),
+            (Section::ConfigFile, &imp.config_pane),
+        ] {
+            pane.add_css_class("postio-settings-pane-body");
+            pane.set_vexpand(true);
+            // A pane with no list of its own to scroll scrolls whole when
+            // the window is shorter than it: Focus's dialog is the window's
+            // height less 80, and one column of Sync & storage is taller.
+            if matches!(
+                section,
+                Section::Filtering | Section::Composing | Section::Sync | Section::Privacy
+            ) {
+                let scroller = gtk::ScrolledWindow::builder()
+                    .hscrollbar_policy(gtk::PolicyType::Never)
+                    .vscrollbar_policy(gtk::PolicyType::Automatic)
+                    .propagate_natural_height(true)
+                    .child(pane)
+                    .build();
+                imp.stack.add_named(&scroller, Some(section.label()));
+                continue;
+            }
+            imp.stack.add_named(pane, Some(section.label()));
+        }
+
+        let area = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        area.add_css_class("postio-settings-pane");
+        area.set_hexpand(true);
+        area.append(&header);
+        area.append(&imp.stack);
+        area
+    }
+
+    /// The strip along the foot: a state mark, what is being written, and
+    /// the way out to `$EDITOR`. Identical on all eight panes.
+    fn build_footer(&self) -> gtk::Box {
+        let imp = self.imp();
+        imp.footer_dot.add_css_class("postio-settings-footer-dot");
+        imp.footer_dot.set_valign(gtk::Align::Center);
+        imp.footer_target
+            .add_css_class("postio-settings-footer-target");
+        imp.footer_target.set_xalign(0.0);
+        imp.footer_target
+            .set_ellipsize(pango::EllipsizeMode::Middle);
+
+        imp.status.set_xalign(0.0);
+        imp.status.set_hexpand(true);
+        imp.status.add_css_class("postio-settings-footer");
+        // An error line is the one thing on the strip that must be read
+        // whole, so it wraps rather than ending in an ellipsis.
+        imp.status.set_wrap(true);
+        imp.status.set_wrap_mode(pango::WrapMode::WordChar);
+
+        // The drawing puts `Open in $EDITOR` on the strip, so it is here.
+        // The command already had a binding and a palette entry; what it did
+        // not have was a way to find it from the settings window, which is
+        // the one place a person is already thinking about the file.
+        let editor = std::rc::Rc::new(crate::widgets::KeycapButton::new(
+            Some(CommandId::EditConfig),
+            "Open in $EDITOR",
+            "postio-settings-editor",
+            false,
+        ));
+        crate::widgets::KeycapButton::arm(&editor);
+        editor.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move || panel.request_command(CommandId::EditConfig)
+        ));
+        let editor_widget = editor.widget();
+        let _ = imp.editor_button.set(editor);
+
+        // `postio-chip-base` carries the box; the tag class carries only its
+        // colours. See `widgets::chip` for why the metrics have one owner.
+        imp.tag.add_css_class("postio-chip-base");
+        imp.tag.add_css_class("postio-settings-tag");
+
+        let footer = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        footer.add_css_class("postio-settings-footer-row");
+        footer.append(&imp.footer_dot);
+        footer.append(&imp.footer_target);
+        footer.append(&imp.tag);
+        footer.append(&imp.status);
+        footer.append(&editor_widget);
+        footer
+    }
+
+    /// Redraws whichever pane is on screen, after the file changed under it.
+    ///
+    /// Only the visible one: the other seven redraw when they are shown, and
+    /// redrawing a pane nobody is looking at on every keystroke is how a
+    /// 250ms write debounce turns into a stutter.
+    fn redraw_visible_pane(&self) {
+        match self.imp().current.get() {
+            Section::Filtering => self.redraw_filtering(),
+            Section::Sync => self.redraw_sync(),
+            Section::Composing => self.redraw_compose(),
+            Section::Keyboard => {
+                self.redraw_keys();
+                // The rebound count lives on the strip, so an edit to
+                // `[keys]` has to reach it.
+                self.refresh_footer();
+            }
+            _ => {}
+        }
+    }
+
+    /// Drops every `[keys]` override, putting the whole keymap back to the
+    /// defaults this build ships.
+    fn reset_keys(&self) {
+        self.apply_keys_mutation(|keys| keys.clear());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- filter_display_order (#869) -----------------------------------------
+
+    #[test]
+    fn filter_display_order_puts_pinned_filters_first_in_sidebar_order_then_unpinned_alphabetically()
+     {
+        let config = Config::from_toml_str(
+            "\
+[saved_searches.b]
+query = \"subject:b\"
+pinned = false
+
+[saved_searches.zebra]
+query = \"is:unread\"
+pinned = true
+order = 1
+
+[saved_searches.apple]
+query = \"has:attach\"
+pinned = true
+order = 0
+
+[saved_searches.a]
+query = \"subject:a\"
+pinned = false
+",
+        )
+        .expect("parses");
+
+        assert_eq!(
+            filter_display_order(&config),
+            vec![
+                "apple".to_string(),
+                "zebra".to_string(),
+                "a".to_string(),
+                "b".to_string(),
+            ],
+            "pinned filters in their explicit order, then unpinned ones by key"
+        );
+    }
+
+    // -- display_path -------------------------------------------------------
+
+    #[test]
+    fn a_path_under_home_is_shown_with_a_tilde() {
+        assert_eq!(
+            display_path_under(
+                Path::new("/home/example/.config/postio/config.toml"),
+                Some(Path::new("/home/example"))
+            ),
+            "~/.config/postio/config.toml"
+        );
+    }
+
+    #[test]
+    fn a_path_outside_home_is_shown_verbatim() {
+        assert_eq!(
+            display_path_under(
+                Path::new("/etc/postio/config.toml"),
+                Some(Path::new("/home/example"))
+            ),
+            "/etc/postio/config.toml"
+        );
+    }
+}

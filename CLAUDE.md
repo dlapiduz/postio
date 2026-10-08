@@ -122,7 +122,7 @@ it in `profile.default`'s `default-filter`, and it runs nightly under
 `check-measurement-tier.py` keeps the two halves honest.
 
 **An interaction is tested as a storyboard, and reviewed before it ships**
-(ADR 0044, `specs/008-storyboards`). A change to how a GTK app behaves under
+(ADR 0044, `specs/008-storyboards`). A change to how an app behaves under
 the keyboard -- where focus lands, where the cursor goes, what a key does,
 what a screen jumps to -- ships with the storyboard that describes it in
 `storyboards/`, written from the acceptance **before** the code, so its run
@@ -150,8 +150,8 @@ cheap.** Measured, warm, on this workstation:
 | | tests | cost |
 |---|---|---|
 | `scripts/test-fast.sh` — changed crates, `--lib` | varies | seconds |
-| `scripts/test-sanity.sh` — whole workspace, `--lib` | 1,313 | ~5s, 19 binaries |
-| the full suite — integration too | 3,169 | ~497s on CI; `app_suite` ~200s to **run**, ~1.2s to link |
+| `scripts/test-sanity.sh` — whole workspace, `--lib` | 3,082 | ~14s, 30 binaries |
+| the full suite — integration too | all | ~25 min on CI; `focus_suite` alone opens a window for each of 288 cases |
 
 `issue-land.sh` runs the **sanity tier** by default; `--full` adds the
 per-crate integration suites. That default exists because several sessions
@@ -208,10 +208,10 @@ nightly was a failure, so a broken join blocks merging rather than sitting in
 a mail. Do not read the fast default as permission to skip integration tests:
 write them, and let the nightly be the thing that runs them.
 
-**Iterate at the cheapest layer that can fail.** `postio-body`'s 49 unit
-tests run in 0.00s and `postio-gtk`'s 330 in 0.42s, while `app_suite` takes
-~200s under `cargo test` (~20s under nextest). TDD pays that twice — once
-for red, once for green. `scripts/test-fast.sh` runs `--lib` for the crates
+**Iterate at the cheapest layer that can fail.** `postio-ui`'s 789 unit
+tests run in 0.11s and `postio-widgets`' 107 in 0.05s, while each of
+`focus_suite`'s cases opens a real window. TDD pays that twice — once for
+red, once for green. `scripts/test-fast.sh` runs `--lib` for the crates
 you changed and links nothing else; use it between edits, and run the
 integration suites to *confirm*, at the end. This is also an argument about
 where logic lives: a rule expressed as a function in `postio-core`,
@@ -220,21 +220,20 @@ rule buried in a widget cannot. It does not license asserting on what a
 layer was handed instead of what a person would see — that is what the
 integration suites and `issue-land.sh` are still for.
 
-Linking is not the cost — ~1.2 s of an `app_suite` cycle. What used to cost
-eleven minutes was a **cold worktree**, and a claim now reuses the tree you
-are in or seeds a new one (#1102): the sanity tier in a reused or seeded
-tree is **about a minute** — Postio's own crates rebuild, the ~470
-dependencies do not — against 19 minutes cold. The measurements, and the sccache finding
-behind them, are in `docs/notes/` ("Where the waiting went", 2026-09-04).
+What used to cost eleven minutes was a **cold worktree**, and a claim now
+reuses the tree you are in or seeds a new one (#1102): the sanity tier in a
+reused or seeded tree is **about a minute** — Postio's own crates rebuild,
+the ~470 dependencies do not — against 19 minutes cold. The measurements,
+and the sccache finding behind them, are in `docs/notes/` ("Where the
+waiting went", 2026-09-04).
 
 **Integration suites run under nextest.** `cargo nextest run -p <crate>
 --test <suite>` runs one binary's tests as separate processes, in parallel;
 `issue-land.sh` and CI already do (`scripts/install-nextest.sh` installs the
-pinned version). Measured on this workspace: `app_suite`
-200 s → 20 s, the whole workspace ~500 s → 119 s. Keep `cargo test` for
-`--lib` — a process per unit test is 2.2x *slower* there, which is why the
-two tiers above use it — and for doctests, which nextest does not run and
-does not say so: `cargo test -p <crate> --doc`.
+pinned version). Keep `cargo test` for `--lib` — a process per unit test is
+2.2x *slower* there, which is why the two tiers above use it — and for
+doctests, which nextest does not run and does not say so: `cargo test -p
+<crate> --doc`.
 
 **Test the crates you changed; the reconcile pass proves the rest.**
 `issue-land.sh` runs the gate chain (fmt, clippy, the sanity tier,
@@ -260,7 +259,7 @@ the fix lands on the same PR. `--wait` is the old watching behaviour, for a
 landing you want to see through.
 
 - **Tests are headless automatically.** The cargo runner puts test binaries on
-  a private mutter compositor; `cargo run -p postio-app` and examples reach
+  a private mutter compositor; `cargo run -p postio-gtk` and examples reach
   the real display. `POSTIO_HEADLESS=0 cargo test` to watch a run;
   `scripts/test-headless.sh --stop` to stop the compositor. Headless is ~3.5x
   faster than a live display — a test that passes on the desktop and fails
@@ -271,18 +270,19 @@ landing you want to see through.
 - **To see the app**: `scripts/run-isolated.sh [commit] [--inspect|--shot]`
   builds a pinned commit with its own target dir and throwaway store. It
   links `--release` — never run it while other sessions are building.
-  `cargo run -p postio-app` runs whatever half-finished state is on disk.
-- **To prove a change reaches the running app**, use the integration tests in
-  `crates/postio-app/tests/app_suite/` (`wiring.rs` lists mail, `keystroke.rs`
-  acts on it, `click_preview.rs` reads it) — the composition root is testable
-  without a GUI. They are one binary behind a custom harness, so run them with
-  `cargo test -p postio-app --test app_suite [name]`, and a new case is a
-  module plus a row in `main.rs`'s `CASES`. To hold one out of a default run,
-  put its name in `IGNORED` beside `CASES` — the table-driven spelling of
-  `#[ignore]` — and say in a comment which issue takes it back. Nothing else
-  about the harness is yours to tidy: its `--list` output is a contract with
-  whatever runs the suite, and breaking it makes a runner report success
-  having run nothing. `list_contract.rs` is what notices.
+  `cargo run -p postio-gtk` runs whatever half-finished state is on disk.
+- **To prove a change reaches the running app**, use `focus_suite`
+  (`crates/postio-gtk/tests/focus_suite/`): a case opens the real window over
+  a fixture store, presses keys with `support::deliver` and clicks with
+  `support::click_at` along the path GTK delivers them, and reads what the
+  window shows. Run `cargo nextest run -p postio-gtk --test focus_suite
+  [name]`; a new case is a module plus a row in `main.rs`'s `CASES`. To hold
+  one out of a default run, put its name in `IGNORED` beside `CASES` — the
+  table-driven `#[ignore]` — with a comment naming what takes it back.
+  Nothing else about the harness is yours to tidy: its `--list` output is a
+  contract with whatever runs the suite, and breaking it makes a runner
+  report success having run nothing; `list_contract.rs` notices.
+  `widgets_suite` is the same harness for `postio-widgets`.
 - **Assert on what a person would see, not on what a layer was handed.** Every
   layer here is tested and passes; the bugs that reach users live *between*
   them (#70 twice, `postio-bl2`). A reader test that checks the reader was
@@ -325,7 +325,10 @@ see.
 `scripts/checks/` names its own fix when it fails. The architectural ones, in
 one line each (the why is `docs/ARCHITECTURE.md` and the ADRs):
 
-- `postio-core`, `postio-session`: no GTK. `postio-gtk`: no SQL, no protocol.
+- `postio-core`, `postio-session`: no GTK. Every interface (`postio-gtk`,
+  `postio-tui`, `postio-ffi`): no turso, rusqlite or io-imap as a *direct*
+  dependency; mail only through the engine crates. `postio-widgets`: no
+  store, protocol or interface at any depth.
 - `postio-search`, `postio-body`: pure leaves — no database engine (turso;
   rusqlite stays banned so the rule survives a rename), no gtk4.
 - `postio-model`: no ammonia/html5ever, database engine, gtk4, or tokio — the
@@ -558,11 +561,14 @@ them before the maintainer does), `/product-manager` and `/steward` (the two
 loops that watch the backlog and the execution).
 `docs/session-prompts.md` says which to run when.
 
-Product truth: `docs/PRODUCT.md`. Visual truth: the design canvas
-(`Design/Mail Client.dc.html`, direction PLATE 1b) — spacing, color,
-proportion defer to it. Keys: `e` reply, `a`/`A` archive, `u` undo,
-`J`/`K` walk a thread; all rebindable, table generated into
-`docs/keybindings.md`. Compose
-takes over the reading pane. The sidebar says "Flagged". v1 scope: Linux,
-IMAP+SMTP, one provider preset table, no AI (deferred to epic E12). OAuth is
-in scope — ADR 0006, tracked under #2.
+Product truth: `docs/PRODUCT.md`. Visual truth: spec 007's `screens.md`, each
+screen against the maintainer's references (`Design/`, local, untracked) —
+spacing, colour, proportion defer to it. Keys: `e` reply, `a`/`A` archive,
+`mod+z` undo, `]`/`[` walk a thread, `mod+Return` send, one keymap for every
+app; all rebindable, table generated into `docs/keybindings.md`. The
+composer opens in the open message's place: a dialog over the list, or the
+pane when reading beside it (`F8`). The app says "Flagged" (`*`, `g *`),
+never "Starred". v1 scope: Linux, IMAP+SMTP, one provider preset table, and no AI
+in Postio itself; a local model the user runs and connects is optional and
+never required (constitution, Scope). Other AI is deferred to epic E12. OAuth
+is in scope — ADR 0006, tracked under #2.

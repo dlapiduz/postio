@@ -88,22 +88,26 @@ pub fn start(account: &Account, wiring: &Wiring) -> Option<Engine> {
         }
     };
 
-    match Engine::spawn(EngineParts {
-        account: account.id,
-        database: wiring.database.clone(),
-        blobs: wiring.blobs.clone(),
-        backend,
-        smtp,
-        tokens,
-        events: wiring.events.clone(),
-        retry: Default::default(),
-        backfill: wiring.backfill,
-        reconnect: Default::default(),
-        watch: wiring.watch,
-        network: NetworkSource::NetworkManager,
-        mailbox_roles: wiring.mailbox_roles.clone(),
-        clock: Arc::new(SystemClock),
-    }) {
+    // With the wiring's filing slot, which only Focus mode fills.
+    match Engine::spawn_filing(
+        EngineParts {
+            account: account.id,
+            database: wiring.database.clone(),
+            blobs: wiring.blobs.clone(),
+            backend,
+            smtp,
+            tokens,
+            events: wiring.events.clone(),
+            retry: Default::default(),
+            backfill: wiring.backfill,
+            reconnect: Default::default(),
+            watch: wiring.watch,
+            network: NetworkSource::NetworkManager,
+            mailbox_roles: wiring.mailbox_roles.clone(),
+            clock: Arc::new(SystemClock),
+        },
+        wiring.filing.clone(),
+    ) {
         Ok(engine) => Some(engine),
         Err(error) => {
             tracing::error!(%error, "the sync engine did not start: {error}");

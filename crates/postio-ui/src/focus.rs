@@ -1,7 +1,7 @@
 //! Where the keyboard goes: Tab's walk across the panes, and the way back
 //! out of a surface it went into.
 //!
-//! `postio-gtk`'s window owned both — a match table for the pane cycle and
+//! The classic app's window owned both — a match table for the pane cycle and
 //! four `before_*` cells remembering the context to restore when the
 //! keyboard leaves the folder list, the parts panel or a settings list —
 //! and the macOS app re-derived the cycle in its own `Pane.next()`. Both

@@ -99,7 +99,21 @@ pub(crate) fn fetched(message: &GmailMessage, position: u32) -> Option<FetchedMe
         envelope: Some(envelope(headers)),
         // Whole-message fetches only in this slice; see the crate docs.
         structure: None,
+        // The metadata format carries every header, so what the three
+        // promoted fields say is known from the request every sync already
+        // makes, and costs nothing more to read (spec 007, research R8).
+        promoted: Some(promoted(headers)),
     })
+}
+
+/// What `List-Unsubscribe`, `Precedence` and `Auto-Submitted` say, by the
+/// one reading of them every backend shares.
+fn promoted(headers: &[GmailMessageHeader]) -> postio_model::promoted::PromotedHeaders {
+    let mut all = postio_model::Headers::new();
+    for header in headers {
+        all.push(header.name.clone(), header.value.clone());
+    }
+    postio_model::promoted::PromotedHeaders::from_headers(&all)
 }
 
 fn envelope(headers: &[GmailMessageHeader]) -> Envelope {

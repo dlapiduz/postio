@@ -13,7 +13,7 @@
 //! | path | peak stack for one trivial sync |
 //! |---|---|
 //! | `MockBackend` | between 512 KiB and 768 KiB |
-//! | real IMAP over loopback (`app_suite::attach_account`) | between 1024 KiB and 1088 KiB |
+//! | real IMAP over loopback (the classic app's `attach_account` case) | between 1024 KiB and 1088 KiB |
 //!
 //! So the smallest sync this project can express — one mailbox, one message,
 //! no latency — already spends about **half** of the engine thread's ceiling,
@@ -21,7 +21,7 @@
 //! one folder, several passes overlapping inside `sync_wave`'s
 //! `FuturesUnordered`, and a server response deep enough to parse. Three
 //! aborts in two minutes on 2026-09-17 are what running out looks like —
-//! `app_suite::attach_account` died with
+//! the classic app's `attach_account` case died with
 //! `std::sys::pal::unix::stack_overflow::imp::signal_handler` on the frame
 //! above `abort`, which is Rust's guard-page handler and not, as #1541
 //! assumed from the `free(): corrupted unsorted chunks` seen in a separate

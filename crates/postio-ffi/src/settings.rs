@@ -5,7 +5,7 @@
 //! edits by hand, and a second writer with its own idea of key order and
 //! comment survival would rewrite work nobody asked it to touch. So the
 //! boundary carries *values*, and every write goes back through
-//! `postio_config`'s `patch_*` functions — the same ones `postio-gtk` uses,
+//! `postio_config`'s `patch_*` functions — the same ones the classic app used,
 //! with the same format-preserving tests behind them.
 //!
 //! # Why a patch takes the text back
@@ -55,7 +55,7 @@ pub struct SettingsSectionFfi {
 /// The two headings the nav groups its sections under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum GroupFfi {
-    /// Accounts, Filters, Composing.
+    /// Accounts, Saved searches, Composing (the Mac shows no Filtering).
     Mail,
     /// Appearance, Keyboard, Sync & storage, Privacy, Config file.
     Application,
@@ -292,12 +292,12 @@ pub struct SyncingFfi {
 
 /// One saved search, as the Filters pane draws it.
 ///
-/// The `key` is the `[filters.<key>]` identity and is **not** what the user
+/// The `key` is the `[saved_searches.<key>]` identity and is **not** what the user
 /// sees: #292 keeps the key stable and TOML-safe so a rename cannot orphan a
 /// filter, and `name` is whatever they actually called it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FilterFfi {
-    /// The stable `[filters.<key>]` identity. Never shown as a label.
+    /// The stable `[saved_searches.<key>]` identity. Never shown as a label.
     pub key: String,
     /// What the user called it, or the key when nobody has renamed it.
     pub name: String,
@@ -307,11 +307,13 @@ pub struct FilterFfi {
     pub pinned: bool,
 }
 
-/// Every settings section, in canvas 3f's nav order.
+/// Every settings section the Mac shows ([`Section::shown_in`]), in canvas
+/// 3f's nav order.
 #[uniffi::export]
 pub fn settings_sections() -> Vec<SettingsSectionFfi> {
     Section::ALL
         .into_iter()
+        .filter(|section| section.shown_in(postio_core::Frontend::Macos))
         .map(|section| SettingsSectionFfi {
             key: section.key().to_string(),
             label: section.label().to_string(),
@@ -463,7 +465,7 @@ pub fn settings_patch_syncing(text: String, syncing: SyncingFfi) -> Result<Strin
 
 /// Every filter in `text`, in the order the sidebar shows them.
 ///
-/// Empty for a file with no `[filters]` in it — which is different from a
+/// Empty for a file with no `[saved_searches]` in it — which is different from a
 /// file that will not parse, and the pane says so differently.
 #[uniffi::export]
 pub fn settings_filters(text: String) -> Option<Vec<FilterFfi>> {

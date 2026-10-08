@@ -7,7 +7,7 @@
 //!
 //! # Why it is here rather than in a frontend
 //!
-//! `postio-gtk` has had one since `postio-xxz`, written against `glib`'s key
+//! The classic app had had one since `postio-xxz`, written against `glib`'s key
 //! file and `$XDG_STATE_HOME`. Neither exists on macOS, and a second
 //! implementation of a *privacy* rule is the one place ADR 0019 Q6's risk is
 //! least acceptable: two allow lists means two answers to "may this sender
@@ -24,9 +24,20 @@
 //! from the same address twice. A domain grant covers every address under it;
 //! neither covers a subdomain of the other, because `mail.example.com` and
 //! `example.com` can be different senders and guessing costs privacy.
+//!
+//! # A sender's treatment
+//!
+//! Beside the grants, [`RemoteImageAllowList`] keeps the treatment a person
+//! chose to always see one sender's mail in (specs/007-postio-focus T213),
+//! under a `[Treatment]` section of the same file. It is the same kind of
+//! thing -- a standing answer about one sender's mail, a view preference
+//! rather than mail data -- and [`AllowList::parse`] ignores the section, so
+//! a frontend that does not offer treatments reads the grants unchanged.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+
+use postio_body::treatment::Treatment;
 
 /// Senders and domains whose remote images load without asking.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -59,6 +70,10 @@ impl AllowList {
             match line {
                 "[addresses]" => section = Some(false),
                 "[domains]" => section = Some(true),
+                // Another section -- `[Treatment]`, which the shell beside
+                // this keeps -- is nobody's grant, and its lines must not be
+                // read as the previous section's.
+                other if other.starts_with('[') && other.ends_with(']') => section = None,
                 entry => match section {
                     Some(true) => list.allow_domain(entry),
                     Some(false) => list.allow(entry),
@@ -170,8 +185,12 @@ fn domain_of(address: &str) -> Option<String> {
         .filter(|domain| !domain.is_empty())
 }
 
-/// The key-file group the desktop app's old allow list kept its senders in.
+/// The key-file group the classic app's old allow list kept its senders in.
 const LEGACY_GROUP: &str = "AlwaysAllow";
+
+/// The section a sender's chosen treatment lives under: the address is the
+/// key, the treatment's attribute value (`app` or `paper`) the value.
+const TREATMENT_SECTION: &str = "Treatment";
 
 /// Senders whose remote images load without asking, across restarts, at the
 /// path the desktop and terminal frontends share.
@@ -180,12 +199,15 @@ const LEGACY_GROUP: &str = "AlwaysAllow";
 /// frontend reads and writes (#1273). Two allow lists meant two answers to
 /// "may this sender see me", and that is the least acceptable place for the
 /// two to drift: the wrong answer is silent and remote. The shell stays
-/// because the call sites in `postio-gtk` and `postio-tui` speak this
+/// because the call sites in the frontends and `postio-tui` speak this
 /// vocabulary -- `senders`, `save`, `path` -- and rewriting them to say the
 /// same things differently would be churn without a reader.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RemoteImageAllowList {
     inner: AllowList,
+    /// The treatment a person chose to always see a sender's mail in
+    /// (specs/007-postio-focus T213), by lowercased address.
+    treatments: BTreeMap<String, Treatment>,
 }
 
 impl RemoteImageAllowList {
@@ -207,13 +229,14 @@ impl RemoteImageAllowList {
     pub fn load_from(path: &Path) -> Self {
         let text = std::fs::read_to_string(path).unwrap_or_default();
         let inner = AllowList::parse(&text);
+        let treatments = treatments_in(&text);
         if !inner.is_empty() || text.trim().is_empty() {
-            return Self { inner };
+            return Self { inner, treatments };
         }
         let Some(inner) = from_key_file(&text) else {
-            return Self { inner };
+            return Self { inner, treatments };
         };
-        let migrated = Self { inner };
+        let migrated = Self { inner, treatments };
         // Best-effort: the grants are in memory and correct either way, and
         // a write that fails only means the migration happens again next
         // launch.
@@ -257,6 +280,30 @@ impl RemoteImageAllowList {
         self.inner.revoke(sender);
     }
 
+    /// The treatment `sender`'s mail is always drawn in, if the person chose
+    /// one ("Always for this sender", specs/007-postio-focus T213).
+    pub fn treatment_for(&self, sender: &str) -> Option<Treatment> {
+        self.treatments.get(&normalize(sender)).copied()
+    }
+
+    /// Remember `treatment` for `sender`, or forget their choice with
+    /// `None`, in memory only -- [`save_to`](Self::save_to) persists it, as
+    /// for [`allow`](Self::allow).
+    pub fn set_treatment(&mut self, sender: &str, treatment: Option<Treatment>) {
+        let sender = normalize(sender);
+        if sender.is_empty() {
+            return;
+        }
+        match treatment {
+            Some(treatment) => {
+                self.treatments.insert(sender, treatment);
+            }
+            None => {
+                self.treatments.remove(&sender);
+            }
+        }
+    }
+
     /// Persist to [`path`](Self::path).
     pub fn save(&self) -> std::io::Result<()> {
         self.save_to(&Self::path())
@@ -264,13 +311,23 @@ impl RemoteImageAllowList {
 
     /// As [`save`](Self::save), to a path you name.
     pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
-        self.inner.save_to(path)
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut text = self.inner.render();
+        if !self.treatments.is_empty() {
+            text.push_str(&format!("\n[{TREATMENT_SECTION}]\n"));
+            for (sender, treatment) in &self.treatments {
+                text.push_str(&format!("{sender}={}\n", treatment.attribute_value()));
+            }
+        }
+        std::fs::write(path, text)
     }
 
     /// `$XDG_STATE_HOME/postio/remote-images.ini`.
     ///
     /// `$XDG_STATE_HOME`, else `~/.local/state`: where GLib's
-    /// `user_state_dir` puts it, so the desktop app finds the file it wrote.
+    /// `user_state_dir` puts it, so the classic app finds the file it wrote.
     pub fn path() -> PathBuf {
         let state = std::env::var_os("XDG_STATE_HOME")
             .filter(|dir| !dir.is_empty())
@@ -284,11 +341,48 @@ impl RemoteImageAllowList {
     }
 }
 
-/// The desktop app's old `[AlwaysAllow]` key file, if that is what `text` is.
+/// An address as the lists key it: trimmed and lowercased.
+fn normalize(address: &str) -> String {
+    address.trim().to_lowercase()
+}
+
+/// The `[Treatment]` section of a saved list: each sender's chosen
+/// treatment. A value no treatment answers to is no choice, so the rule
+/// decides for that sender as if nothing were written.
+fn treatments_in(text: &str) -> BTreeMap<String, Treatment> {
+    let mut in_section = false;
+    let mut treatments = BTreeMap::new();
+    for line in text.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(name) = line
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
+            in_section = name == TREATMENT_SECTION;
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=')
+            && let Some(treatment) = Treatment::from_attribute(value.trim())
+        {
+            let key = normalize(key);
+            if !key.is_empty() {
+                treatments.insert(key, treatment);
+            }
+        }
+    }
+    treatments
+}
+
+/// The classic app's old `[AlwaysAllow]` key file, if that is what `text` is.
 ///
 /// Read without GLib: for one group of boolean keys the format is a few
 /// lines of text, and reading it here is what lets a frontend with no GLib
-/// keep the grants the desktop app made.
+/// keep the grants the classic app made.
 fn from_key_file(text: &str) -> Option<AllowList> {
     let mut in_group = false;
     let mut list = AllowList::new();
@@ -477,5 +571,69 @@ mod tests {
             path.display()
         );
         assert!(!path.to_string_lossy().contains("/.config/"));
+    }
+    #[test]
+    fn a_senders_treatment_survives_a_round_trip_beside_their_images() {
+        let path = scratch("treatment-round-trip");
+        let mut list = RemoteImageAllowList::default();
+        list.allow("ada@example.com");
+        list.set_treatment(" News@Example.com ", Some(Treatment::Paper));
+        list.set_treatment("bea@example.org", Some(Treatment::AppColours));
+        list.save_to(&path).unwrap();
+
+        let reloaded = RemoteImageAllowList::load_from(&path);
+        assert!(
+            reloaded.is_allowed("ada@example.com"),
+            "the images were lost"
+        );
+        assert_eq!(
+            reloaded.treatment_for("news@example.com"),
+            Some(Treatment::Paper)
+        );
+        assert_eq!(
+            reloaded.treatment_for("BEA@example.org"),
+            Some(Treatment::AppColours)
+        );
+        assert_eq!(reloaded.treatment_for("ada@example.com"), None);
+        assert!(
+            !reloaded.is_allowed("news@example.com"),
+            "choosing paper allowed the sender's images"
+        );
+    }
+
+    #[test]
+    fn forgetting_a_senders_treatment_leaves_the_rule_to_decide() {
+        let path = scratch("treatment-forget");
+        let mut list = RemoteImageAllowList::default();
+        list.set_treatment("news@example.com", Some(Treatment::Paper));
+        list.set_treatment("news@example.com", None);
+        list.save_to(&path).unwrap();
+        assert_eq!(
+            RemoteImageAllowList::load_from(&path).treatment_for("news@example.com"),
+            None
+        );
+    }
+
+    #[test]
+    fn an_unknown_treatment_in_the_file_is_no_choice() {
+        let path = scratch("treatment-unknown");
+        std::fs::write(&path, "[Treatment]\nnews@example.com=sepia\n").unwrap();
+        assert_eq!(
+            RemoteImageAllowList::load_from(&path).treatment_for("news@example.com"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_treatment_is_nobodys_grant() {
+        // The section follows `[domains]` in the file, and a reader that did
+        // not know it would take `news@example.com=paper` for a domain.
+        let list = AllowList::parse(
+            "[addresses]\nada@example.com\n\n[domains]\nrelay.example.net\n\n\
+             [Treatment]\nnews@example.com=paper\n",
+        );
+        assert!(list.is_allowed("ada@example.com"));
+        assert!(!list.is_allowed("news@example.com"));
+        assert_eq!(list.domains().count(), 1);
     }
 }

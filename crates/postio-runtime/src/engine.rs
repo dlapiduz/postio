@@ -55,7 +55,7 @@ use postio_storage::{BlobStore, Checkout, Store};
 use postio_sync::initial::Progress;
 use postio_sync::status::StatusTracker;
 use postio_sync::{
-    AttachmentPolicy, Attention, Backfill, BackfillPolicy, BackfillProgress, Drainer,
+    AttachmentPolicy, Attention, Backfill, BackfillPolicy, BackfillProgress, Drainer, FilingPass,
     ReconnectPolicy, RetryPolicy, SmtpContext, Supervisor, SyncError, SyncStatus, Wake, Watch,
     WatchPolicy, Watcher, backfill, discover, initial, resync,
 };
@@ -69,7 +69,7 @@ use postio_sync::backfill::Outcome;
 /// composition root, which depends on `postio-sync` anyway, and a second
 /// enum saying the same thing is a second enum to keep in step. The *frontend*
 /// never sees these — this whole module is behind the `runtime` feature, which
-/// `postio-gtk` cannot enable.
+/// the view layer cannot enable.
 pub use postio_sync::{Blocker, Link, NetworkState};
 
 use postio_core::Event;
@@ -383,6 +383,49 @@ pub struct Engine {
     /// is entirely a `Drop` effect — see [`EngineThread`].
     #[allow(dead_code)]
     thread: Arc<EngineThread>,
+    /// Where this engine's incremental passes find the filing pass they
+    /// hand their arrivals to. See [`FilingSlot`].
+    filing: FilingSlot,
+}
+
+/// Where a host in Focus mode puts the filing pass its engines' incremental
+/// passes run (spec 007, `postio_sync::filing`).
+///
+/// One slot, shared: the host holds it and every engine it starts is spawned
+/// with a clone ([`Engine::spawn_filing`]), so filling it reaches the
+/// engines running and the ones an account added later will start -- and
+/// is already in place when an engine's first pass is an incremental one.
+/// Each pass reads it once, as it starts. Empty in every host Focus did not
+/// switch on, which is every host but Focus's.
+#[derive(Clone, Default)]
+pub struct FilingSlot(Arc<std::sync::RwLock<Option<Arc<dyn FilingPass>>>>);
+
+impl FilingSlot {
+    /// The filing pass, if Focus mode put one here.
+    pub fn get(&self) -> Option<Arc<dyn FilingPass>> {
+        self.0
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// File every incremental pass from now on with `pass`, in every engine
+    /// sharing this slot; `None` takes it away.
+    pub fn set(&self, pass: Option<Arc<dyn FilingPass>>) {
+        *self
+            .0
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = pass;
+    }
+}
+
+impl fmt::Debug for FilingSlot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FilingSlot")
+            .field("filing", &self.get().is_some())
+            .finish()
+    }
 }
 
 /// The engine's thread, joined when the last [`Engine`] handle goes.
@@ -569,6 +612,12 @@ impl Engine {
     ///
     /// Returns as soon as the thread is running; nothing has been drained yet.
     pub fn spawn(parts: EngineParts) -> Result<Engine, EngineError> {
+        Engine::spawn_filing(parts, FilingSlot::default())
+    }
+
+    /// [`Engine::spawn`], its incremental passes filing their arrivals with
+    /// whatever pass `filing` holds as each one starts (spec 007).
+    pub fn spawn_filing(parts: EngineParts, filing: FilingSlot) -> Result<Engine, EngineError> {
         // Unbounded because the sender is the UI and it must never block on
         // the engine. What arrives is a handful of small jobs, not a stream.
         let (jobs, inbox) = async_channel::unbounded::<Job>();
@@ -582,7 +631,8 @@ impl Engine {
             .stack_size(ENGINE_STACK)
             .spawn({
                 let busy = busy.clone();
-                move || run(parts, store, inbox, busy)
+                let filing = filing.clone();
+                move || run(parts, store, inbox, busy, filing)
             })
             .map_err(|error| EngineError::new(format!("the sync engine did not start: {error}")))?;
 
@@ -592,7 +642,14 @@ impl Engine {
                 handle: Mutex::new(Some(handle)),
                 busy,
             }),
+            filing,
         })
+    }
+
+    /// Whether this engine's incremental passes hand their arrivals to a
+    /// filing pass: only under a host in Focus mode.
+    pub fn files_arrivals(&self) -> bool {
+        self.filing.get().is_some()
     }
 
     /// Stop the engine and wait for its thread, whatever else still holds a
@@ -820,7 +877,11 @@ const BODIES_BESIDE_A_WAVE: usize = 8;
 /// delivery waits, not a round-trip rate.
 const BACKFILL_SLICE: Duration = POLL_INTERVAL;
 
-const POLL_INTERVAL: Duration = Duration::from_secs(5);
+/// The engine's tick: how often it wakes due snoozes and looks at the link.
+///
+/// Public because Focus mode's due timer keeps the same five seconds
+/// (spec 007): a reminder fires on the tick a snooze would wake on.
+pub const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The engine's thread: a runtime and a connection of its own.
 ///
@@ -828,7 +889,13 @@ const POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// because a `current_thread` runtime refuses `block_in_place`, and anything
 /// reached from in here that needs a synchronous store read would abort the
 /// process rather than block (`postio_session::blocking`).
-fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, busy: Busy) {
+fn run(
+    parts: EngineParts,
+    store: Store,
+    inbox: async_channel::Receiver<Job>,
+    busy: Busy,
+    filing: FilingSlot,
+) {
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         // Same reasoning as [`ENGINE_STACK`], and needed for the same
@@ -843,6 +910,7 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
             tracing::error!(%error, "the sync engine has no runtime: {error}");
             parts.events.emit(Event::Error {
                 message: format!("the sync engine has no runtime: {error}"),
+                account: None,
             });
             return;
         }
@@ -868,6 +936,7 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
                 inbox_page_pending: false,
                 watcher: None,
                 backfill_covered: false,
+                filing,
             };
             let mut ticker = tokio::time::interval(POLL_INTERVAL);
             // The first tick fires immediately; skipping it would leave the link
@@ -884,7 +953,7 @@ fn run(parts: EngineParts, store: Store, inbox: async_channel::Receiver<Job>, bu
 
             // Attempt the first connection right now, rather than waiting for
             // `ticker`'s first tick to win a race against whatever else is
-            // ready: `postio-app::seed_the_backfill` sends a job the instant
+            // ready: the classic app's backfill seeding sent a job the instant
             // `Engine::spawn` returns, so a job was already queued by the
             // time this loop ever ran for the first time, and `select!`
             // gives no guarantee about which of two simultaneously-ready
@@ -1186,6 +1255,8 @@ struct State {
     /// failed this session) would re-run one query per folder every five
     /// seconds for ever, finding the same nothing.
     backfill_covered: bool,
+    /// The filing pass a host in Focus mode gave this engine, if one has.
+    filing: FilingSlot,
 }
 
 /// How many times any engine in this process has asked the store whether an
@@ -1691,6 +1762,7 @@ async fn discover(parts: &EngineParts, store: &Store) {
         Err(error) => {
             parts.events.emit(Event::Error {
                 message: error.to_string(),
+                account: Some(parts.account),
             });
             return;
         }
@@ -1717,6 +1789,7 @@ async fn discover(parts: &EngineParts, store: &Store) {
         Err(error) => {
             parts.events.emit(Event::Error {
                 message: error.to_string(),
+                account: Some(parts.account),
             });
         }
     }
@@ -1728,7 +1801,7 @@ async fn discover(parts: &EngineParts, store: &Store) {
 ///
 /// `backfill::seed` asks for the newest `seed_batch` messages of one folder
 /// that are still missing a body. That is a batch, and it was being used as a
-/// horizon: `postio-app` seeded every folder once at startup and nothing in
+/// horizon: the classic app seeded every folder once at startup and nothing in
 /// the workspace ever called it again, so when those drained the background
 /// lane had nothing to do for the rest of the process. Every message below
 /// the first batch of its folder waited to be opened, and paid a round trip
@@ -2822,11 +2895,25 @@ async fn sync_wave(
     // glance at the watched inbox. See [`claim_bodies_for_the_wave`] for why a wave
     // cannot wait until it is over to do either.
     let yield_point = tokio::sync::Notify::new();
+    // One filing pass for the wave, as it stood when the wave began.
+    let filing = state.filing.get();
     let make_pass = |mailbox: MailboxId, connection: Checkout| {
         let status = status.clone();
         let cancel = cancel.clone();
         let yield_point = &yield_point;
-        async move { sync_pass(parts, &connection, &status, mailbox, &cancel, yield_point).await }
+        let filing = filing.clone();
+        async move {
+            sync_pass(
+                parts,
+                &connection,
+                &status,
+                mailbox,
+                filing.as_deref(),
+                &cancel,
+                yield_point,
+            )
+            .await
+        }
     };
 
     // Settling writes through its own connection: the lanes' connections
@@ -2992,6 +3079,7 @@ async fn sync_wave(
                 {
                     parts.events.emit(Event::Error {
                         message: error.message().to_string(),
+                        account: Some(parts.account),
                     });
                 }
                 // The interruption conditions, checked here as well as in
@@ -3431,6 +3519,7 @@ async fn sync_pass(
     connection: &Checkout,
     status: &RefCell<StatusTracker>,
     mailbox: MailboxId,
+    filing: Option<&dyn FilingPass>,
     cancel: &postio_account::cancel::CancelToken,
     yield_point: &tokio::sync::Notify,
 ) -> PassOutcome {
@@ -3482,10 +3571,13 @@ async fn sync_pass(
     // means nothing already on screen moved or changed under the user.
     let mut only_arrivals = false;
     let result = if synced_before {
-        resync::resync_mailbox(
+        // Its arrivals go to the filing pass, when a host in Focus mode gave
+        // this engine one; a first sync, below, never files (spec 007).
+        resync::resync_mailbox_filing(
             connection,
             parts.backend.as_ref(),
             &record,
+            filing,
             cancel,
             |progress| committed.batch(progress),
         )
@@ -3495,11 +3587,18 @@ async fn sync_pass(
                 arrived: ids,
                 changed,
                 vanished,
-                ..
+                filed_away,
             } = &outcome
             {
-                arrived = ids.clone();
-                only_arrivals = *vanished == 0 && *changed == ids.len();
+                // What Focus's filing pass filtered or held is not new mail
+                // anybody is told of (FR-153), and not in the inbox a view
+                // would splice it into: the view re-reads instead.
+                arrived = ids
+                    .iter()
+                    .copied()
+                    .filter(|id| !filed_away.contains(id))
+                    .collect();
+                only_arrivals = *vanished == 0 && *changed == ids.len() && filed_away.is_empty();
             }
             summarise_resync(outcome)
         })
@@ -3601,10 +3700,7 @@ async fn settle_pass(
     // (nothing is fetching for it any more) and touches nothing else — in
     // particular not the supervisor, since the link is fine.
     if let Err(PassFailure::Failed(SyncError::Backend(BackendError::Cancelled))) = &result {
-        announce_status(
-            parts,
-            &state.status.borrow_mut().on_sync_finished(mailbox, now),
-        );
+        announce_status(parts, &state.status.borrow_mut().on_sync_abandoned(mailbox));
         return Err(EngineError::new("the sync pass was interrupted"));
     }
 
@@ -3614,6 +3710,24 @@ async fn settle_pass(
                 parts,
                 &state.status.borrow_mut().on_sync_finished(mailbox, now),
             );
+            // A pass that finished says so: `done == total` is how the stream
+            // says "a sync completed", and a pass over an empty mailbox never
+            // counted anything to reach it. Without this a frontend cannot
+            // tell an inbox a first pass found empty from one the first pass
+            // has not reached (T220). Failed and cancelled passes say nothing.
+            if matches!(
+                state.status.borrow().status(),
+                SyncStatus::Idle {
+                    last_sync: Some(_),
+                    ..
+                }
+            ) {
+                parts.events.emit(Event::SyncProgress {
+                    account: parts.account,
+                    done: 0,
+                    total: 0,
+                });
+            }
             if summary.changed() {
                 // A sync is exactly when the set of messages missing a body
                 // changed, so it is exactly when the backfill is worth
@@ -3639,6 +3753,7 @@ async fn settle_pass(
                     Err(error) => {
                         parts.events.emit(Event::Error {
                             message: error.to_string(),
+                            account: Some(parts.account),
                         });
                     }
                 }
@@ -3678,10 +3793,7 @@ async fn settle_pass(
                 let moved = state.supervisor.observe(backend, now);
                 announce_link(parts, state, moved);
             }
-            announce_status(
-                parts,
-                &state.status.borrow_mut().on_sync_finished(mailbox, now),
-            );
+            announce_status(parts, &state.status.borrow_mut().on_sync_abandoned(mailbox));
             Err(EngineError::new(failure.to_string()))
         }
     }
@@ -3718,11 +3830,13 @@ async fn sync(
     // Nobody listens between this pass's batches: it is one mailbox, run
     // for a job, and the job's caller is waiting on the whole of it.
     let yield_point = tokio::sync::Notify::new();
+    let filing = state.filing.get();
     let outcome = sync_pass(
         parts,
         &connection,
         &state.status,
         mailbox,
+        filing.as_deref(),
         &cancel,
         &yield_point,
     )
@@ -3793,6 +3907,7 @@ fn announce_status(parts: &EngineParts, status: &SyncStatus) {
     if let SyncStatus::Error { reason, .. } = status {
         parts.events.emit(Event::Error {
             message: reason.clone(),
+            account: Some(parts.account),
         });
     }
 }
@@ -3816,9 +3931,13 @@ fn connection_of(status: &SyncStatus) -> postio_core::ConnectionState {
             postio_core::ConnectionState::Online
         }
         SyncStatus::Error {
-            needs_credentials, ..
+            needs_credentials,
+            no_password,
+            ..
         } => postio_core::ConnectionState::Failing {
-            reason: if *needs_credentials {
+            reason: if *no_password {
+                postio_core::FailureReason::NoPassword
+            } else if *needs_credentials {
                 postio_core::FailureReason::Auth
             } else {
                 postio_core::FailureReason::Config
@@ -3859,6 +3978,7 @@ fn announce_link(parts: &EngineParts, state: &mut State, moved: Option<Link>) {
         );
         parts.events.emit(Event::Error {
             message: reason.clone(),
+            account: Some(parts.account),
         });
     }
 }
@@ -3916,6 +4036,7 @@ async fn announce_drain(parts: &EngineParts, outcome: &Result<DrainSummary, Engi
             for reason in &summary.failed {
                 events.emit(Event::Error {
                     message: reason.clone(),
+                    account: Some(account),
                 });
             }
             // And deliberately *not* an error (#674). A send that may have
@@ -3930,6 +4051,7 @@ async fn announce_drain(parts: &EngineParts, outcome: &Result<DrainSummary, Engi
         Err(error) => {
             events.emit(Event::Error {
                 message: error.message().to_string(),
+                account: Some(account),
             });
         }
     }
@@ -4051,10 +4173,12 @@ mod tests {
         let auth = super::connection_of(&postio_sync::SyncStatus::Error {
             reason: "the server refused the password".into(),
             needs_credentials: true,
+            no_password: false,
         });
         let config = super::connection_of(&postio_sync::SyncStatus::Error {
             reason: "certificate does not verify".into(),
             needs_credentials: false,
+            no_password: false,
         });
 
         assert_eq!(
@@ -4098,6 +4222,7 @@ mod tests {
             inbox_page_pending: false,
             watcher: None,
             backfill_covered: false,
+            filing: FilingSlot::default(),
         }
     }
 

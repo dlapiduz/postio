@@ -1026,6 +1026,7 @@ fn a_fetched_message_becomes_a_domain_message() {
         size: 4_096,
         envelope: Some(envelope),
         structure: None,
+        promoted: None,
     };
 
     let message = fetched.into_message(AccountId::new(1), MailboxId::new(2));
@@ -1073,6 +1074,7 @@ fn a_fetched_message_with_a_body_structure_carries_its_own_content_type() {
         size: 100,
         envelope: None,
         structure: Some(structure),
+        promoted: None,
     };
 
     let message = fetched.into_message(AccountId::new(1), MailboxId::new(2));
@@ -1092,6 +1094,7 @@ fn a_fetched_message_with_no_body_structure_has_no_content_type() {
         size: 100,
         envelope: None,
         structure: None,
+        promoted: None,
     };
 
     let message = fetched.into_message(AccountId::new(1), MailboxId::new(2));
@@ -1156,6 +1159,7 @@ fn a_fetched_message_carries_the_sections_holding_its_own_text() {
         size: 40 * 1024 * 1024,
         envelope: None,
         structure: Some(structure),
+        promoted: None,
     };
 
     let message = fetched.into_message(AccountId::new(1), MailboxId::new(2));
@@ -1179,6 +1183,7 @@ fn a_fetched_message_with_no_body_structure_names_no_text_sections() {
         size: 100,
         envelope: None,
         structure: None,
+        promoted: None,
     };
 
     let message = fetched.into_message(AccountId::new(1), MailboxId::new(2));
@@ -1311,6 +1316,7 @@ fn a_fetched_message_carries_the_backend_neutral_identity() {
         size: 1,
         envelope: None,
         structure: None,
+        promoted: None,
     };
 
     let message = fetched.into_message(AccountId::new(1), MailboxId::new(2));
@@ -1536,4 +1542,91 @@ fn an_inline_part_the_html_references_is_not_the_body() {
 
     assert_eq!(structure.html_part(), None);
     assert_eq!(structure.attachments().count(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// The promoted headers (spec 007, research R8)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn what_a_fetch_knew_of_the_promoted_headers_reaches_the_domain_message() {
+    let known = postio_model::promoted::PromotedHeaders {
+        unsubscribe_offered: true,
+        automation: postio_model::promoted::PRECEDENCE_LIST,
+    };
+    let fetched = |promoted| FetchedMessage {
+        remote_id: postio_model::RemoteId::new("4242:12"),
+        uid: Uid::new(12),
+        uid_validity: UidValidity::new(4_242),
+        mod_seq: None,
+        flags: FlagSet::new(),
+        internal_date: Utc.with_ymd_and_hms(2026, 8, 20, 9, 31, 0).unwrap(),
+        size: 4_096,
+        envelope: None,
+        structure: None,
+        promoted,
+    };
+    assert_eq!(
+        fetched(Some(known))
+            .into_message(AccountId::new(1), MailboxId::new(2))
+            .promoted,
+        Some(known)
+    );
+    assert_eq!(
+        fetched(None)
+            .into_message(AccountId::new(1), MailboxId::new(2))
+            .promoted,
+        None
+    );
+}
+
+#[tokio::test]
+async fn the_mock_answers_a_filing_fetch_as_a_server_would_and_a_first_sync_s_without() {
+    let newsletter = b"From: Ledger <news@ledger.example>\r\n\
+                       List-Unsubscribe: <https://ledger.example/u/9>\r\n\
+                       Precedence: bulk\r\n\
+                       Subject: This week\r\n\r\nThe numbers.\r\n"
+        .to_vec();
+    let bounce = b"From: MAILER-DAEMON@mail.example.net\r\n\
+                   Auto-Submitted: auto-replied\r\n\
+                   Subject: Undeliverable\r\n\r\nIt bounced.\r\n"
+        .to_vec();
+    let backend = MockBackend::builder()
+        .mailbox(
+            MockMailbox::new("INBOX")
+                .uid_validity(UidValidity::new(4_242))
+                .message(MockMessage::new(newsletter))
+                .message(MockMessage::new(bounce)),
+        )
+        .build();
+    backend.connect().await.expect("connect");
+
+    let filing = backend
+        .fetch_headers_for_filing("INBOX", &UidSet::all(), None, &CancelToken::new())
+        .await
+        .expect("a filing fetch");
+    assert_eq!(
+        filing
+            .iter()
+            .map(|message| message.promoted)
+            .collect::<Vec<_>>(),
+        vec![
+            Some(postio_model::promoted::PromotedHeaders {
+                unsubscribe_offered: true,
+                automation: postio_model::promoted::PRECEDENCE_BULK,
+            }),
+            Some(postio_model::promoted::PromotedHeaders {
+                unsubscribe_offered: false,
+                automation: postio_model::promoted::AUTO_REPLIED,
+            }),
+        ]
+    );
+    let first_sync = backend
+        .fetch_headers("INBOX", &UidSet::all(), None, &CancelToken::new())
+        .await
+        .expect("a first sync's fetch");
+    assert!(
+        first_sync.iter().all(|message| message.promoted.is_none()),
+        "a first sync's fetch asks for none of them"
+    );
 }

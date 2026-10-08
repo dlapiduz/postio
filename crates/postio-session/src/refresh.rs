@@ -97,6 +97,7 @@ fn refresh(
         if let Err(error) = engine.sync(mailbox).await {
             events.emit(Event::Error {
                 message: error.message().to_string(),
+                account: None,
             });
         }
     });

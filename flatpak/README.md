@@ -3,6 +3,13 @@
 `dev.postio.Postio.json` builds Postio against the GNOME 50 runtime. It is
 the manifest a Flathub submission would use as-is.
 
+The app it builds is Focus (`specs/007-postio-focus`, decision C27): the
+`postio-gtk` crate's `postio` binary, under the app id `dev.postio.Postio`,
+with one desktop entry, `dev.postio.Postio.desktop`, which registers both
+`mailto:` and `postio://` links, and the metainfo beside it. `packaging.rs`
+in `postio-gtk`'s tests holds the manifest, the entry, the metainfo and
+the release's check of the bundle to one another.
+
 `dev.postio.PostioTui.json` builds the terminal frontend, `postio-tui`,
 against the plain freedesktop runtime: no GTK and no WebKit, which is most of
 why it is the smaller package. Flathub does not take console-only
@@ -107,13 +114,13 @@ compiles is not. The window closes when Flathub catches up.
 ## Why a PNG icon, not just the scalable SVG
 
 The app ships its real icon as
-`crates/postio-gtk/data/icons/scalable/apps/dev.postio.Postio.svg`, and that
+`crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio.svg`, and that
 is what the running app itself uses (via `postio_gtk::resources`, bundled
 into the `GResource`). For the *installed* desktop icon —
 `/app/share/icons/hicolor/...`, which is what the shell's app grid and
 alt-tab switcher read via the freedesktop icon theme spec — this manifest
 also installs a 128×128 rasterization,
-`crates/postio-gtk/data/icons/128x128/apps/dev.postio.Postio.png`, alongside
+`crates/postio-widgets/data/icons/128x128/apps/dev.postio.Postio.png`, alongside
 16×16 and 32×32 (#1023). Those two smaller ones are not a fallback for the
 same reason: the mark is *drawn* heavier as it shrinks — the slash thickens
 and the unread dot is dropped below 24px — so they are separate artwork
@@ -128,15 +135,14 @@ own icon set from it. For a while it was kept out, because the compose step
 failed to read it (`file-read-error`) and that was taken for the runtime
 lacking an SVG loader. It was the file: an image loader sniffs the first 257
 bytes for `<svg` before it trusts the extension, and the icon opened with a
-680-byte comment. `desktop_entry.rs` in `postio-gtk`'s logic suite now
-asserts the tag sits inside that window for every bundled SVG, and that the
-manifest installs both files.
+680-byte comment. `packaging.rs` in `postio-gtk`'s tests now asserts the
+tag sits inside that window for every bundled SVG.
 
 Regenerate the PNG if the SVG ever changes:
 
 ```bash
-magick -background none crates/postio-gtk/data/icons/scalable/apps/dev.postio.Postio.svg \
-    -resize 128x128 crates/postio-gtk/data/icons/128x128/apps/dev.postio.Postio.png
+magick -background none crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio.svg \
+    -resize 128x128 crates/postio-widgets/data/icons/128x128/apps/dev.postio.Postio.png
 ```
 
 ## Permissions

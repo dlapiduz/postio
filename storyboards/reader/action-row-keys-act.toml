@@ -1,0 +1,34 @@
+# The keys the open message's action row shows do what they say (found by the
+# generated pass).
+#
+# The action row draws Archive `a`, Snooze `s`, Remind `h`, Label `l`, Move
+# `m` and Delete `Del`. The reader's key handler (`reading_key`, window.rs)
+# gives each of them to the window, as the buttons do.
+#
+# Each key opens its picker over the message, and Escape closes the picker
+# only.
+source = { kind = "commit", ref = "88c1f0f7" }
+proof  = "pinned"
+apps   = ["focus"]
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+[[step]]
+command = "open_message"
+settle  = { until = { view = "reader" } }
+check   = { view = "reader", keyboard.region = "reader" }
+
+[[step]]
+command = "add_label"
+check   = { overlay.kind = "picker", keyboard.region = "picker", keyboard.field = "query", keyboard.typing = true }
+expect  = "`l` opens the label picker over the message, as the Label button does, with the caret in its filter field: typing filters."
+
+[[step]]
+key     = "Escape"
+check   = { view = "reader", overlay.kind = "none", app.focus.keyboard.in_message = true }
+expect  = "Escape closes the picker, and the message is still open with the keyboard back on it."
+
+[[step]]
+command = "move"
+check   = { overlay.kind = "picker", keyboard.region = "picker", keyboard.field = "query", keyboard.typing = true }
+expect  = "`m` opens the folder picker, the caret in its filter field as the label picker's is."

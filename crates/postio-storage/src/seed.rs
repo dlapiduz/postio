@@ -1,10 +1,10 @@
 //! Seeding a store with realistic mail, for screenshots, UI tests and benches.
 //!
-//! `examples/shot.rs` in `postio-gtk` has its own hard-coded demo content today,
-//! which means nothing else — a GTK test, a bench — can render the same
-//! mailbox. This module is the one place that builds one, on top of the
-//! ordinary repositories: an account, a folder tree, and messages filed and
-//! threaded exactly as sync would file them.
+//! This module is the one place that builds a demo mailbox, so a screenshot,
+//! a storyboard, a GTK test and a bench all render the same one: Postio's
+//! `postio_gtk::demo` builds its seeds' store halves here. It works on top
+//! of the ordinary repositories: an account, a folder tree, and messages
+//! filed and threaded exactly as sync would file them.
 //!
 //! # Two variants
 //!
@@ -45,7 +45,9 @@
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use postio_model::{
     Account, Attachment, BodyState, EmailAddress, Flag, FlagSet, Mailbox, MailboxRole, Message,
-    RfcMessageId, ids::MessageId, test_corpus,
+    RfcMessageId,
+    ids::{AccountId, MessageId},
+    test_corpus,
 };
 
 use crate::repository::{
@@ -95,6 +97,18 @@ const SMALL_SPREAD_DAYS: i64 = 45;
 /// rows a millisecond apart.
 const LARGE_SPREAD_DAYS: i64 = 730;
 
+/// The conversation lengths of a storyboard's `thirty-threads` seed, for
+/// [`seed_conversations`]: thirty-six threads, mostly single messages, some
+/// exchanges, one of five (specs/008-storyboards R11).
+pub const THIRTY_THREADS: &[usize] = &[
+    1, 2, 1, 1, 3, 1, 1, 2, 1, 1, 1, 4, 1, 2, 1, 1, 1, 3, 1, 1, 2, 1, 1, 1, 5, 1, 1, 2, 1, 1, 1, 3,
+    1, 1, 2, 1,
+];
+
+/// The one conversation of a storyboard's `long-thread` seed, for
+/// [`seed_conversations`]: seven messages, the last two unread.
+pub const LONG_THREAD: &[usize] = &[7];
+
 /// How many messages one write transaction holds, for [`seed_large`].
 ///
 /// Bounds how much of the insert is undone if one row in the batch fails, and
@@ -122,35 +136,72 @@ fn anchor() -> DateTime<Utc> {
 /// worth panicking on rather than threading a `Result` through every call site
 /// that wants one.
 pub async fn seed_small(database: &Store, seed: u64) -> SeedReport {
-    seed_small_into(database, false, seed).await
+    seed_corpus(database, seed, false).await
 }
 
-/// [`seed_small`], plus the corpus' own bodies written into `blobs`.
-///
-/// The difference matters to anything that renders a message rather than
-/// listing one. `seed_small` writes only the database and says so honestly
-/// with [`BodyState::NotFetched`], which is the state a real account is in
-/// before its first backfill — so a reader fed from it draws the "still
-/// downloading" plate, never mail. That is right for a test about the plate
-/// and wrong for a screenshot of the reading pane, which was reduced to
-/// handing the reader a body of its own invention and so could not fail when
-/// the path from the store was broken (#596).
-///
-/// The bodies are the fixtures', decoded by the same `mime::parse` the sync
-/// path uses, so what is rendered is what the corpus holds.
+/// [`seed_small`] with every body already downloaded: the store of an
+/// account that has been open a while, where a hit from search or a reply
+/// finds the message's text and not an "original still downloading" note.
 ///
 /// # Panics
 ///
 /// If a write fails, as [`seed_small`] does.
-pub async fn seed_small_with_bodies(database: &Store, seed: u64) -> SeedReport {
-    seed_small_into(database, true, seed).await
+pub async fn seed_small_downloaded(database: &Store, seed: u64) -> SeedReport {
+    seed_corpus(database, seed, true).await
+}
+
+async fn seed_corpus(database: &Store, seed: u64, downloaded: bool) -> SeedReport {
+    let connection = database.connect().await.expect("a checked-out connection");
+    let account = seeded_account(&connection).await;
+    let folders = create_folders(&connection, &account).await;
+    let mut rng = Rng::new(seed);
+
+    let mut message_count = 0;
+    for fixture in test_corpus::all() {
+        let mailbox = weighted_mailbox(&folders, &mut rng);
+        let received_at = recency(&mut rng, SMALL_SPREAD_DAYS);
+        let parsed = postio_model::mime::parse(fixture.bytes());
+        let mut message = parsed.into_message(account.id, mailbox.id, received_at);
+        message.account_id = account.id;
+        message.mailbox_id = mailbox.id;
+        message.received_at = received_at;
+        message.date = Some(message.received_at);
+        message.flags = assign_flags(&mut rng, mailbox.role);
+        message.sync.body_state = BodyState::NotFetched;
+        let body = message.body.clone();
+
+        let id = file_message(&connection, account.id, message).await;
+        if downloaded && !body.is_empty() {
+            MessageRepository::new(&connection)
+                .set_body(
+                    id,
+                    &crate::repository::StoredBody {
+                        text: body.text,
+                        html: body.html,
+                        headers: None,
+                        headers_truncated: false,
+                        encoding_problems: false,
+                    },
+                    BodyState::Full,
+                )
+                .await
+                .expect("store a seeded body");
+        }
+        message_count += 1;
+    }
+
+    SeedReport {
+        mailboxes: load_folders(&connection, &account).await,
+        account,
+        message_count,
+    }
 }
 
 /// The seeded account: `test_support::account` plus the identity a real one
 /// always has.
 ///
 /// Onboarding gives every account it creates an identity
-/// (`postio_app::onboarding`), so a seed without one describes a state the
+/// (`postio_session::onboarding`), so a seed without one describes a state the
 /// application cannot produce — and anything resting on it rests on a state
 /// that does not occur. The cost was visible rather than theoretical: a reply
 /// driven through the real path rendered "no identity configured" in its
@@ -180,40 +231,6 @@ async fn seeded_account(connection: &Connection) -> Account {
     account
 }
 
-async fn seed_small_into(database: &Store, with_bodies: bool, seed: u64) -> SeedReport {
-    let connection = database.connect().await.expect("a checked-out connection");
-    let account = seeded_account(&connection).await;
-    let folders = create_folders(&connection, &account).await;
-    let mut rng = Rng::new(seed);
-
-    let mut message_count = 0;
-    for fixture in test_corpus::all() {
-        let mailbox = weighted_mailbox(&folders, &mut rng);
-        let received_at = recency(&mut rng, SMALL_SPREAD_DAYS);
-        let parsed = postio_model::mime::parse(fixture.bytes());
-        let body = parsed.body.clone();
-        let mut message = parsed.into_message(account.id, mailbox.id, received_at);
-        message.account_id = account.id;
-        message.mailbox_id = mailbox.id;
-        message.received_at = received_at;
-        message.date = Some(message.received_at);
-        message.flags = assign_flags(&mut rng, mailbox.role);
-        message.sync.body_state = BodyState::NotFetched;
-
-        let id = file_message(&connection, account.id, message).await;
-        if with_bodies {
-            write_body(&connection, id, &body).await;
-        }
-        message_count += 1;
-    }
-
-    SeedReport {
-        mailboxes: load_folders(&connection, &account).await,
-        account,
-        message_count,
-    }
-}
-
 /// Add a second account, with its own folder tree and a share of the corpus.
 ///
 /// [`seed_small`] seeds one account, which is the shape almost everything
@@ -239,7 +256,7 @@ pub async fn seed_extra_account(
     account.incoming.host = "imap.example.net".to_owned();
     account.outgoing.host = "smtp.example.net".to_owned();
     // An identity, because onboarding gives every real account one
-    // (`postio_app::onboarding`) and a seed that does not builds an account
+    // (`postio_session::onboarding`) and a seed that does not builds an account
     // the application itself cannot produce. What that costs is not
     // hypothetical: a reply driven through the real path renders "no identity
     // configured" in its `From` row, so every picture of the composer looks
@@ -448,6 +465,140 @@ pub async fn seed_large(database: &Store, seed: u64, message_count: usize) -> Se
         message_count: inserted,
     }
 }
+
+/// Adds `count` messages to `report`'s inbox, received over the 30 days
+/// before `now` and sent to the account, each with a plain-text body here --
+/// the mail Focus's needs-action pass reads (spec 007 FR-141, SC-011).
+/// Answers their ids.
+///
+/// [`seed_large`] anchors its mail months back and stores no body, which is
+/// right for a list and wrong for this pass: it reads only recent inbox mail
+/// whose body is on this machine. The bodies are shaped like a working
+/// person's mail -- a greeting, an ask or an update, a signature, and often
+/// quoted history -- so the pass cuts own text and reads sentences as it
+/// would in a real store. About a third ask something; the rest do not.
+///
+/// # Panics
+///
+/// If a write fails.
+pub async fn seed_recent_with_bodies(
+    database: &Store,
+    report: &SeedReport,
+    count: usize,
+    now: DateTime<Utc>,
+    seed: u64,
+) -> Vec<MessageId> {
+    let inbox = report
+        .mailbox(MailboxRole::Inbox)
+        .expect("the seed made an inbox")
+        .clone();
+    let account = report.account.clone();
+    let connection = database.connect().await.expect("a checked-out connection");
+    let mut rng = Rng::new(seed);
+    let mut ids = Vec::with_capacity(count);
+    let mut made = 0;
+    while made < count {
+        let end = (made + BATCH_SIZE / 2).min(count);
+        let batch: Vec<_> = (made..end)
+            .map(|n| recent_message(n, &account, &inbox, now, &mut rng))
+            .collect();
+        let written = sql::in_scope(&connection, move |scope| async move {
+            let mut written = Vec::with_capacity(batch.len());
+            for (message, body) in batch {
+                let id = file_message(&scope, message.account_id, message).await;
+                write_body(&scope, id, &body).await;
+                written.push(id);
+            }
+            Ok::<_, crate::Error>(written)
+        })
+        .await
+        .expect("commit a batch of recent mail");
+        ids.extend(written);
+        made = end;
+    }
+    ids
+}
+
+/// One recent message and its body, for [`seed_recent_with_bodies`].
+fn recent_message(
+    n: usize,
+    account: &Account,
+    inbox: &Mailbox,
+    now: DateTime<Utc>,
+    rng: &mut Rng,
+) -> (Message, postio_model::MessageBody) {
+    let received_at = now - Duration::minutes(i64::from(rng.below(30 * 24 * 60 - 60)));
+    let mut message = Message::new(account.id, inbox.id, received_at);
+    message.date = Some(received_at);
+    let (name, address) = RECENT_SENDERS[rng.below(RECENT_SENDERS.len() as u32) as usize];
+    let topic = TOPICS[rng.below(TOPICS.len() as u32) as usize].to_lowercase();
+    message.from = vec![EmailAddress::new(Some(name), address)];
+    message.to = vec![account.address.clone()];
+    message.subject = Some(format!("{topic} #{n}"));
+    message.rfc_message_id = Some(RfcMessageId::new(format!("recent-{n}@example.invalid")));
+    let reader = account
+        .address
+        .name
+        .as_deref()
+        .and_then(|name| name.split_whitespace().next())
+        .unwrap_or("there");
+    let first = name.split_whitespace().next().unwrap_or(name);
+    let pick = |from: &[&str], rng: &mut Rng| {
+        from[rng.below(from.len() as u32) as usize].replace("{t}", &topic)
+    };
+    let lead = if rng.chance(33) {
+        pick(RECENT_ASKS, rng)
+    } else {
+        pick(RECENT_UPDATES, rng)
+    };
+    let news = pick(RECENT_UPDATES, rng);
+    let mut text = format!(
+        "Hi {reader},\n\n{lead}\n\n{news}\n\nThanks,\n{first}\n\n-- \n{name}\nExample Co.\n"
+    );
+    if rng.chance(60) {
+        text.push_str(&format!(
+            "\nOn Mon, 7 Sep 2026 at 09:12, {reader} <{}> wrote:\n\
+             > Could you look at the {topic} when you have a moment?\n\
+             > It is the one we spoke about on Friday.\n",
+            account.address.address,
+        ));
+    }
+    message.preview = Some(text.chars().take(120).collect());
+    message.size = text.len() as u64;
+    message.flags = FlagSet::new();
+    message.sync.body_state = BodyState::NotFetched;
+    let body = postio_model::MessageBody {
+        text: Some(text),
+        html: None,
+    };
+    (message, body)
+}
+
+/// Who writes the recent mail: invented people, at reserved domains.
+const RECENT_SENDERS: &[(&str, &str)] = &[
+    ("Quinn Abara", "quinn.abara@example.net"),
+    ("Tove Bergstrom", "tove.bergstrom@example.com"),
+    ("Yoko Tanaka", "tanaka.yoko@jp.example"),
+    ("Remy Okafor", "remy@example.org"),
+    ("Ines Varga", "ines.varga@example.test"),
+];
+
+/// What a third of the recent mail asks of the reader.
+const RECENT_ASKS: &[&str] = &[
+    "Can you approve the {t} figures by Friday so finance can close the quarter?",
+    "Please leave comments on the {t} by Wednesday; I'd like to freeze it Thursday.",
+    "Could you send me the {t} before the end of the week?",
+    "Would you review the {t} and let me know what you think?",
+    "Are you free to go over the {t} on Tuesday afternoon?",
+];
+
+/// What the rest says: news, with nothing asked.
+const RECENT_UPDATES: &[&str] = &[
+    "Just a note that the {t} went out this morning.",
+    "The {t} is in the shared folder now, for when it is useful.",
+    "We moved the {t} to next month, so nothing is needed this week.",
+    "Everything on the {t} is on track, and the numbers look good.",
+];
 
 /// How many messages the next seeded conversation holds.
 ///
@@ -837,6 +988,67 @@ impl Rng {
     }
 }
 
+/// Stamps every folder `report` created as synced at `at`.
+///
+/// A seed has never talked to a server, so every folder says `never
+/// synced`; a picture of an ordinary day wants one that has.
+///
+/// # Panics
+///
+/// If a write fails, as [`seed_small`] does.
+pub async fn stamp_synced(database: &Store, report: &SeedReport, at: DateTime<Utc>) {
+    let connection = database.connect().await.expect("a checked-out connection");
+    let repository = MailboxRepository::new(&connection);
+    for mailbox in &report.mailboxes {
+        let mut mailbox = mailbox.clone();
+        mailbox.last_synced_at = Some(at);
+        repository
+            .update(&mailbox)
+            .await
+            .expect("stamp a seeded folder");
+    }
+}
+
+/// Queues one message to send and leaves it unsent: the Outbox's one row
+/// (spec 003 FR-012), queued at `at`.
+///
+/// Through [`DraftRepository::queue_send`](crate::repository::DraftRepository::queue_send),
+/// which is what a composer's Send calls, so the row and its count are read
+/// back out of the store as they are for a real send. Nothing drains it.
+///
+/// # Panics
+///
+/// If a write fails, as [`seed_small`] does.
+pub async fn queue_one_to_send(database: &Store, account: AccountId, at: DateTime<Utc>) {
+    let connection = database.connect().await.expect("a checked-out connection");
+    let drafts = crate::repository::DraftRepository::new(&connection);
+    let mut draft = postio_model::Draft::new(account);
+    draft.subject = "Re: maildir index rebuild is O(n²)".to_owned();
+    draft.to = vec![EmailAddress::new(Some("Lena Tomlin"), "lena@example.com")];
+    draft.body.text = Some("Confirmed on 0.4.1 — sending the trace now.".to_owned());
+    drafts.save(&mut draft).await.expect("the draft saves");
+    drafts
+        .queue_send(&mut draft, at)
+        .await
+        .expect("the send queues");
+}
+
+/// Saves one draft and walks away from it: never queued, so it is a draft
+/// someone left rather than a message on its way out.
+///
+/// # Panics
+///
+/// If a write fails, as [`seed_small`] does.
+pub async fn leave_a_draft(database: &Store, account: AccountId) {
+    let connection = database.connect().await.expect("a checked-out connection");
+    let drafts = crate::repository::DraftRepository::new(&connection);
+    let mut draft = postio_model::Draft::new(account);
+    draft.subject = "Notes for Thursday".to_owned();
+    draft.to = vec![EmailAddress::new(Some("Nadia Okafor"), "nadia@example.org")];
+    draft.body.text = Some("Agenda so far: the index rebuild, then the release.".to_owned());
+    drafts.save(&mut draft).await.expect("the draft saves");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -915,38 +1127,6 @@ mod tests {
                 .expect("looking up the reply's thread must not fail"),
             Some(thread_id),
             "a reply fixture must land in its root's thread"
-        );
-    }
-
-    #[tokio::test]
-    async fn seeding_with_bodies_writes_mail_the_reader_can_actually_read() {
-        let database = test_support::memory().await;
-        let report = seed_small_with_bodies(&database, 11).await;
-
-        let connection = database.connect().await.expect("a connection");
-        let repository = MessageRepository::new(&connection);
-        let page = repository
-            .page(&crate::repository::ListQuery::account(report.account.id).limit(u32::MAX))
-            .await
-            .expect("the seeded messages");
-
-        let mut readable = 0;
-        for row in &page {
-            let Some(body) = repository.body(row.id).await.expect("a body record") else {
-                continue;
-            };
-            for text in [body.text, body.html].into_iter().flatten() {
-                assert!(!text.is_empty(), "a body was stored empty");
-                readable += 1;
-            }
-        }
-        // Not merely "some row has a blob id": the point of this seed is that
-        // the bytes are there to be read back, because a reader fed from it
-        // renders mail rather than the "still downloading" plate.
-        assert!(
-            readable > 0,
-            "seeded {} messages and not one had a body that read back",
-            report.message_count
         );
     }
 

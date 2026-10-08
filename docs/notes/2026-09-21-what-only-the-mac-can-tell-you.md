@@ -116,9 +116,9 @@ every `.tag(`.
 ## What to reach for
 
 `crates/postio-ffi/tests/ffi_suite/command_coverage.rs` is the sweep that
-found the forty-nine. It is the macOS counterpart of
-`postio-app`'s `app_suite/command_wiring.rs`, whose own orphan list is empty
-because it has existed long enough to empty it. Its `KNOWN_ORPHANS` list is
+found the forty-nine. The desktop app's counterpart is `focus_suite`'s
+`every_command`, which presses every command the app binds and fails on one
+with no visible effect that `storyboards/gaps/focus.toml` does not name. Its `KNOWN_ORPHANS` list is
 debt and may only shrink: a command that gains a handler and stays listed
 fails the same way a new orphan does.
 

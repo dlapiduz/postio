@@ -35,7 +35,7 @@ already a three-way policy:
 | Recovery | Meaning | Surface behaviour |
 |---|---|---|
 | `None` | Changed no durable state | Nothing |
-| `Undo` | Reversible from the undo stack | "— Undo" toast, `u` works |
+| `Undo` | Reversible from the undo stack | "— Undo" toast, `mod+z` works |
 | `Confirm` | Irreversible enough to ask first | Ask before acting |
 
 A destructive command must carry a non-`None` recovery; a test enforces it.
@@ -48,8 +48,8 @@ write, enqueue the operation, emit the event, repaint. So an action feels
 instant and *is* instant, offline or not. Any design where the user waits on a
 server is wrong here, not slow.
 
-**Nothing is a dead end.** Canvas 3d states the rule: every state "names the
-local store and gives a key, not a shrug". An empty inbox says when it last
+**Nothing is a dead end.** Every state names the local store and gives a
+key, not a shrug. An empty inbox says when it last
 synced. Offline says what still works and what is queued. A sync failure names
 the actual error and offers a retry key. Never a bare "something went wrong",
 never a state with no way forward.
@@ -65,30 +65,32 @@ would make a network request, the question is not whether it is useful but
 whether the user asked for it. A privacy default that is merely *configurable*
 has already lost -- most people never open settings.
 
-**Surfaces are in-place by default; a modal has to earn it.** Postio has exactly
-one modal dialog in the entire app, and everything else — the composer, the
-`Ctrl+K` palette, the `?` cheat sheet, the settings panel — is an overlay or a
-pane on the main window. That is the pattern; keep it.
+**One list, and one pattern over it.** Postio has no sidebar and no panes
+to move between. Everything that is not the list — the open message, the
+composer, the pickers, the key map, Settings — opens over it in one dialog
+pattern (`specs/007-postio-focus/screens.md`, "Interaction rules"), and
+`Esc` closes it back to the same row with the cursor where it was. That is
+the pattern; keep it.
 
 | Want to show | Use |
 |---|---|
-| A command surface, help, settings | An overlay on the main window |
-| Composing a message | The reading pane, list keeps scroll and selection |
-| Something the user must answer before anything else can happen | A modal — and say why in the issue |
+| A message, a picker, help, settings | The one dialog pattern over the list |
+| Composing a message | The open message's place: its dialog, or the pane when reading beside the list (`F8`) |
+| Something the user must answer before anything else can happen | A confirmation — and say why in the issue |
 | Something the user wants *alongside* the main window | A real non-modal window, opt-in only |
 
-A modal is a claim that nothing else in the app matters until this is resolved.
-That is almost never true in a mail client, and it is never true for a
-confirmation that undo could replace. Before adding one, check the reversibility
+A confirmation is a claim that nothing else in the app matters until this is
+resolved. That is almost never true in a mail client, and it is never true
+for an action undo could reverse. Before adding one, check the reversibility
 table above: if the action can carry `Recovery::Undo`, it does not need a
-dialog.
+confirmation.
 
-Detached windows are opt-in, never a default. `postio-c16.2` is the pattern:
-the composer lives in the reading pane, and popping out is a command the user
-runs — not what happens when they press `c`.
+Detached windows are opt-in, never a default: the composer opens in the open
+message's place, and detaching it to a window of its own is a command the
+user runs (`detach_composer`) — not what happens when they press `c`.
 
-**The app teaches itself.** Key hints on the focused row, bindings shown in the
-palette, `?` for the full sheet. A user should learn the keyboard by using the
+**The app teaches itself.** A control shows its key inside it, the command
+bar shows each command's key, and `?` opens the key map. A user should learn the keyboard by using the
 app, never by reading docs.
 
 ---
@@ -108,7 +110,7 @@ the easiest to prevent. Postio's words:
 | **Compose** | New, Write |
 
 Same for tone: labels are lower-case sentence case, imperative for actions
-("Move to…", not "Moving"). Counts are IBM Plex Mono. Dates are relative for
+("Move to…", not "Moving"). Counts are Adwaita Mono. Dates are relative for
 today, absolute beyond.
 
 If you introduce a word the app has not used, you are making a vocabulary
@@ -131,8 +133,8 @@ why:
 4. **Offline** — `ConnectionState::Offline`. What still works? What is queued?
 5. **Failing** — `ConnectionState::Failing`, backing off. Name the reason,
    offer a key.
-6. **Dense** — three row densities and a narrow breakpoint. A design that only
-   works airy is unfinished.
+6. **Narrow** — a laptop's width and GNOME's minimum window size. A design
+   that only works at 1440x900 is unfinished.
 
 `ConnectionState` is `Offline | Connecting | Online | Failing`. If your surface
 shows sync state at all, it must handle all four.
@@ -146,14 +148,14 @@ review is a flow you **write down**: as a storyboard in `storyboards/flows/`
 (the format is `storyboards/README.md`), so it is filmed on every change and
 judged by `/ux-review`, not only walked once. Walk the whole path:
 
-> `/` → type → results → `Enter` opens the thread in the reading pane →
-> `J`/`K` walk it → `e` replies → `Ctrl+Enter` sends → `Esc` returns
+> `/` → type → results → `Enter` opens the message over the list →
+> `]`/`[` walk its thread → `e` replies → `mod+Return` sends → `Esc` returns
 
 At each step ask:
 
 - **Where am I, and how do I get back?** `Esc` should be a reliable exit
   everywhere, and returning should restore position — the list keeps its
-  scroll and its cursor while the reading pane changes under it.
+  scroll and its cursor while a message is open over it or beside it.
 - **Did the app tell me what happened?** Every action produces visible
   feedback. Silent success is indistinguishable from a bug.
 - **Did I lose anything?** Selection, scroll position, a half-written draft,
@@ -169,8 +171,8 @@ At each step ask:
 
 When adding a surface, check it against what exists before inventing:
 
-- Does an existing pattern already solve this? The palette, the query bar, the
-  sidebar list, the toast — reuse beats inventing a fifth pattern.
+- Does an existing pattern already solve this? The command bar, the folders
+  popover, the pickers, the toast — reuse beats inventing a fifth pattern.
 - Does this verb exist in the registry? If yes, use it. If no, does it belong
   there rather than here?
 - Is this word already in the vocabulary above?
@@ -188,11 +190,12 @@ When adding a surface, check it against what exists before inventing:
   protect against the rare case.
 - **A spinner over local data.** Reads are instant; a spinner says "slow" about
   something that is not.
-- **A new overlay.** The palette and the query bar are converging into one
-  surface (`postio-cfd.1`). Adding a third is a regression.
+- **A new bar.** The command bar is the one box for search, going somewhere
+  and running a command (`/` and `mod+k` open it). Adding a second is a
+  regression.
 - **A setting instead of a decision.** Every option is a question asked of
-  every user forever. Config exists for genuine preference (density, keys), not
-  to avoid choosing.
+  every user forever. Config exists for genuine preference (keys, reading
+  beside the list), not to avoid choosing.
 - **An action reachable only by mouse**, or only by keyboard.
 - **Silent state loss** on navigation, resize, or reload.
 - **Wording that differs from the table above**, however slightly.
@@ -201,7 +204,7 @@ When adding a surface, check it against what exists before inventing:
 
 ## Handing off
 
-Implementation mechanics — tokens, GTK traps, motion budget, the
+Implementation mechanics — colour and metric roles, GTK traps, motion budget, the
 render-to-PNG loop — are in `/gtk-design`. This skill decides *what the
 experience should be*; that one gets it built correctly.
 

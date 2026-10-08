@@ -81,6 +81,7 @@ use postio_storage::repository::{
 };
 
 use crate::drain::SyncError;
+use crate::filing::{FiledMessage, FilingEffects, FilingPass};
 use crate::initial::{self, Progress};
 
 /// This module's result type.
@@ -124,6 +125,12 @@ pub enum Outcome {
         /// This is what a desktop notification is about; `changed` alone
         /// cannot tell the two apart.
         arrived: Vec<MessageId>,
+        /// Of `arrived`, the ones a filing pass took out of the inbox's view
+        /// as it filed them (spec 007): filtered into the archive, or held
+        /// for a digest. Focus never announces these (FR-153), and they are
+        /// not in its inbox to splice in. Empty unless a host in Focus mode
+        /// gave the pass one.
+        filed_away: Vec<MessageId>,
     },
 }
 
@@ -216,6 +223,7 @@ async fn enumerate_the_shortfall(
         mailbox,
         initial::DEFAULT_BATCH_SIZE,
         initial::Coverage::Missing,
+        None,
         cancel,
         on_progress,
     )
@@ -235,6 +243,21 @@ pub async fn resync_mailbox(
     connection: &Checkout,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
+    cancel: &CancelToken,
+    on_progress: impl FnMut(Progress),
+) -> Result<Outcome> {
+    resync_mailbox_filing(connection, backend, mailbox, None, cancel, on_progress).await
+}
+
+/// [`resync_mailbox`], handing what an incremental pass files to `filing`
+/// inside the transaction that files it (spec 007): what a host in Focus
+/// mode runs, and nothing else does. See [`crate::filing`] for why only an
+/// incremental pass's arrivals reach it.
+pub async fn resync_mailbox_filing(
+    connection: &Checkout,
+    backend: &dyn MailBackend,
+    mailbox: &Mailbox,
+    filing: Option<&dyn FilingPass>,
     cancel: &CancelToken,
     on_progress: impl FnMut(Progress),
 ) -> Result<Outcome> {
@@ -317,12 +340,22 @@ pub async fn resync_mailbox(
             sync_state
                 .observe(mailbox.id, &reported, Utc::now())
                 .await?;
+            // A backend with no MODSEQ re-reads the folder on every pass
+            // after the first, and this is its incremental pass: what it
+            // inserts arrived since the last one, and goes to the filing
+            // pass as an incremental pull's arrivals do (spec 007). Every
+            // other full pass files the backlog, and none (FR-118).
+            let filing = match reason {
+                FullResyncReason::NoModSeq => filing,
+                _ => None,
+            };
             let report = initial::enumerate(
                 connection,
                 backend,
                 mailbox,
                 initial::DEFAULT_BATCH_SIZE,
                 coverage,
+                filing,
                 cancel,
                 on_progress,
             )
@@ -342,6 +375,7 @@ pub async fn resync_mailbox(
                 &selected,
                 since,
                 previous.uid_next,
+                filing,
                 cancel,
             )
             .await;
@@ -466,6 +500,7 @@ async fn rebuild(
         mailbox,
         initial::DEFAULT_BATCH_SIZE,
         coverage,
+        None,
         cancel,
         on_progress,
     )
@@ -485,6 +520,9 @@ async fn rebuild(
 ///
 /// See the module docs for why vanish detection is conditional on the
 /// arithmetic rather than always run, and why arrivals get a second witness.
+// Eight, because the filing pass a host in Focus mode hands in (spec 007)
+// joined the seven this pass already needed, each its own.
+#[allow(clippy::too_many_arguments)]
 async fn incremental(
     // A pooled connection rather than a bare one, because this is where the
     // write gate lives: the units below take a background permit, and only
@@ -495,6 +533,7 @@ async fn incremental(
     selected: &ServerStatus,
     since: postio_model::ModSeq,
     previous_uid_next: Option<Uid>,
+    filing: Option<&dyn FilingPass>,
     cancel: &CancelToken,
 ) -> Result<Outcome> {
     let messages = MessageRepository::new(connection);
@@ -502,13 +541,16 @@ async fn incremental(
     let known_set: UidSet = known.iter().copied().collect();
     let known_count = known.len() as u32;
 
+    // Both fetches that can bring new mail ask for the headers the filing
+    // pass reads before a body exists (spec 007, research R8); the vanish
+    // check below does not, since it only asks what is still there.
     let mut changed = backend
-        .fetch_headers(&mailbox.path, &UidSet::all(), Some(since), cancel)
+        .fetch_headers_for_filing(&mailbox.path, &UidSet::all(), Some(since), cancel)
         .await?;
 
     if let Some(floor) = unaccounted_arrivals(&changed, selected, previous_uid_next) {
         let arrivals = backend
-            .fetch_headers(
+            .fetch_headers_for_filing(
                 &mailbox.path,
                 &UidSet::from_uid_onwards(floor),
                 None,
@@ -525,6 +567,7 @@ async fn incremental(
     let changed_count = changed.len();
 
     let mut arrived: Vec<MessageId> = Vec::new();
+    let mut filed_away: Vec<MessageId> = Vec::new();
     if !changed.is_empty() {
         let batch: Vec<Message> = changed
             .into_iter()
@@ -559,9 +602,11 @@ async fn incremental(
             // The permit, the transaction and the sizing clock, and another
             // try when the engine says busy: see `initial::write_unit`.
             let account_id = mailbox.account_id;
+            let mailbox_id = mailbox.id;
+            let role = mailbox.role;
             let account_ref = account.as_ref();
             let known_ref = &known_set;
-            let (newly, held) = initial::write_unit(connection, || {
+            let ((newly, effects), held) = initial::write_unit(connection, || {
                 // IMMEDIATE for the reason `initial.rs` gives at its own
                 // transaction (#79): the first statement here is a SELECT,
                 // and a deferred transaction that has to promote a read lock
@@ -577,11 +622,13 @@ async fn incremental(
                     // Indexed once per message, and not at all when nothing
                     // in its search text changed -- which on a resync of
                     // known mail is almost every message (#1587).
-                    crate::initial::upsert_indexed(&connection, &mut written).await?;
+                    let upsert = crate::initial::upsert_indexed(&connection, &mut written).await?;
+                    crate::correspondents::record(&connection, role, account_id, &upsert).await?;
 
                     let threading = ThreadingRepository::new(&connection, account_id);
+                    let mut threads = Vec::with_capacity(written.len());
                     for message in &written {
-                        threading.thread(message).await?;
+                        threads.push(threading.thread(message).await?.thread_id);
                     }
 
                     // Only the arrivals, by the same test twice over: `known_set`
@@ -602,11 +649,37 @@ async fn incremental(
                             }
                         }
                     }
-                    Ok::<_, SyncError>(arrivals)
+
+                    // The arrivals, to the filing pass a host in Focus mode
+                    // installs, in this same transaction: after the upsert
+                    // and the threading, before any event (spec 007). A
+                    // pass that fails takes back only its own writes: the
+                    // mail stays in the inbox and the insert commits.
+                    let mut effects = FilingEffects::default();
+                    if let Some(filing) = filing
+                        && !arrivals.is_empty()
+                    {
+                        let filed: Vec<FiledMessage<'_>> = written
+                            .iter()
+                            .zip(&threads)
+                            .filter(|(message, _)| arrivals.contains(&message.id))
+                            .map(|(message, thread)| FiledMessage {
+                                message,
+                                thread: Some(*thread),
+                                role,
+                            })
+                            .collect();
+                        effects =
+                            crate::filing::file_arrivals(&connection, filing, mailbox_id, &filed)
+                                .await;
+                    }
+                    Ok::<_, SyncError>((arrivals, effects))
                 })
             })
             .await?;
             arrived.extend(newly);
+            filed_away.extend(effects.filtered);
+            filed_away.extend(effects.held);
             initial::unit_wrote(slice.len(), held);
             // One real yield per unit, for the reason `initial.rs` gives at
             // its own batch loop: an uncontended gate and a commit whose work
@@ -644,6 +717,7 @@ async fn incremental(
         changed: changed_count,
         vanished: vanished_count,
         arrived,
+        filed_away,
     })
 }
 

@@ -34,9 +34,7 @@
 //!   [`ParsedQuery::fts_match`]. Building the statement, ranking and snippeting
 //!   belong to the query executor, not here.
 //! * **Chip-ready.** Every token carries its byte [`query::Span`] and its raw
-//!   source text, so the search bar can render one chip per token, find the
-//!   chip under the caret with [`ParsedQuery::token_at`] and pop it with
-//!   [`ParsedQuery::remove_token`].
+//!   source text, so the search bar can render one chip per token.
 //!
 //! # Operators
 //!
@@ -52,17 +50,19 @@
 //! sit behind an `index` cargo feature here, off by default, on the theory
 //! that whoever wired search into the running application would enable it.
 //! Nobody could: Cargo resolves features as a union across the whole
-//! workspace resolve, and `postio-gtk` depends on this crate for the parser
+//! workspace resolve, and the classic app depended on this crate for the parser
 //! alone, so the moment anything turned `index` on, `rusqlite` landed in the
 //! view layer's graph and `scripts/checks/check-crate-boundaries.py` failed —
 //! correctly (`postio-svx`). They now live in `postio-index`, a crate only
 //! the runtime side depends on; this crate stays pure and feature-free, and
-//! `postio-gtk` needs no change to keep reaching [`parse`], [`ParsedQuery`],
+//! The classic app needed no change to keep reaching [`parse`], [`ParsedQuery`],
 //! [`facets`] and [`highlight`].
 
-mod date;
+pub mod date;
 pub mod facets;
 pub mod highlight;
+pub mod matcher;
+pub mod natural;
 mod parser;
 pub mod query;
 pub mod results;

@@ -4,8 +4,8 @@
 - **Spec:** [`specs/008-storyboards`](../../specs/008-storyboards/spec.md)
   (FR-010, FR-015, FR-031; the spec carries the reasoning, this records the
   rule)
-- **Related:** ADR 0043 on `feature/postio-focus` (where the GTK half both
-  desktop apps share lives),
+- **Related:** [ADR 0043](0043-focus-is-the-one-desktop-app.md) (the GTK
+  half lives in `postio-widgets`, beside the one desktop app),
   [ADR 0019](0019-macos-frontend.md) (the frontend the rule will reach next)
 - **Decision:** **Every Postio frontend reports where everything is as one
   shared `Observation`, has a runner that plays the shared storyboard
@@ -46,8 +46,9 @@ defect is invisible again, so it is a boundary, not a nicety.
 
 ## Consequences
 
-- Classic and Focus have runners (`postio-app`, `postio-focus`); the
-  terminal and macOS apps owe one each before their next interaction work
-  (FR-031). The terminal's is the cheapest: its update is already pure.
+- The desktop app has one runner (`postio-gtk`, over `postio-widgets`'
+  GTK half), and storyboards play on it and nothing else since the classic
+  app's removal was approved (ADR 0043; specs/007-postio-focus T265). The terminal and macOS apps owe one each before their next
+  interaction work (FR-031). The terminal's is the cheapest: its update is already pure.
 - `postio-storyboard` is a development crate the shipped frontends never
   depend on; `Observation` lives in `postio-ui`, which they all do.

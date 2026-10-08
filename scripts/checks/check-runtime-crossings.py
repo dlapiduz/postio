@@ -13,7 +13,7 @@ It panics only when that line is actually reached, which for onboarding means
 only on a real first run against a real server -- so every automated signal
 this project has was green while the application could not add an account.
 
-`postio-app/src/feed.rs` already states the rule this violates:
+The classic app's `feed.rs` stated the rule this violates:
 
     The frontend's futures are awaited by `glib::spawn_future_local` on the
     GTK main context. The store's are tokio futures [...] Neither loop can

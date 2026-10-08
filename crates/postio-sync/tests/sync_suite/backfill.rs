@@ -2063,6 +2063,139 @@ async fn the_text_axis_carries_the_inline_images_the_body_references() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Calendar parts ride with the text -- spec 007, T108
+// ---------------------------------------------------------------------------
+
+/// An invitation as a calendar server builds one.
+const INVITE: &str = "BEGIN:VCALENDAR\r\n\
+                      METHOD:REQUEST\r\n\
+                      BEGIN:VEVENT\r\n\
+                      UID:roadmap-review@calendar.example\r\n\
+                      SEQUENCE:0\r\n\
+                      DTSTART:20260929T100000Z\r\n\
+                      DTEND:20260929T104500Z\r\n\
+                      SUMMARY:Roadmap review\r\n\
+                      ORGANIZER:mailto:quinn@example.net\r\n\
+                      END:VEVENT\r\n\
+                      END:VCALENDAR\r\n";
+
+/// A calendar part of a mebibyte: an event with a year of attendees, say.
+const MEBIBYTE: u64 = 1024 * 1024;
+
+/// An invitation: its words, its `text/calendar` alternative, and a second
+/// calendar part of a mebibyte.
+///
+/// Only sections `1` and `2` are seeded. The mock rejects a `BODY[<section>]`
+/// nobody seeded, so a fetch that reached for the big part fails the test
+/// rather than quietly costing a mebibyte no assertion can see.
+fn an_invitation(uid: u32) -> MockMessage {
+    let structure = postio_account::backend::BodyStructure::from_parts(
+        "multipart/mixed",
+        [
+            postio_account::backend::PartNode::new("1", "text/plain", 32)
+                .with_charset("utf-8")
+                .with_encoding("7bit"),
+            postio_account::backend::PartNode::new("2", "text/calendar", INVITE.len() as u64)
+                .with_charset("utf-8")
+                .with_encoding("7bit"),
+            postio_account::backend::PartNode::new("3", "text/calendar", MEBIBYTE)
+                .with_encoding("base64")
+                .with_disposition(postio_account::backend::Disposition::Attachment)
+                .with_filename("everyone.ics"),
+        ],
+    );
+    MockMessage::new(
+        format!(
+            "From: Quinn Abara <quinn@example.net>\r\n\
+             Subject: Roadmap review {uid}\r\n\
+             Message-ID: <invite-{uid}@example.net>\r\n\
+             Content-Type: multipart/mixed; boundary=mix\r\n\
+             \r\n\
+             --mix\r\n\
+             Content-Type: text/plain; charset=utf-8\r\n\
+             \r\n\
+             You are invited.\r\n\
+             --mix--\r\n"
+        )
+        .into_bytes(),
+    )
+    .with_internal_date(at(uid as i64))
+    .with_structure(structure)
+    .with_part("1", &b"You are invited."[..])
+    .with_part("2", INVITE.as_bytes())
+}
+
+#[tokio::test]
+async fn a_calendar_part_is_stored_with_the_body_and_a_mebibyte_one_is_not() {
+    // Focus answers an invitation from the row (US8), and the times it
+    // shows come from the calendar part. So the part rides with the text,
+    // as an inline image does, and is local the moment the body is -- but
+    // only up to 256 KiB, past which it is a payload like any other.
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(an_invitation(1));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[0];
+
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, MEBIBYTE),
+        policy().max_inline_bytes,
+        None,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+
+    let stored = MessageRepository::new(&local.connection)
+        .get(id)
+        .await
+        .expect("get")
+        .expect("row");
+    assert_eq!(
+        MessageRepository::new(&local.connection)
+            .body(id)
+            .await
+            .expect("a body")
+            .and_then(|body| body.text)
+            .as_deref(),
+        Some("You are invited."),
+        "the words landed"
+    );
+    let calendar = stored
+        .attachments
+        .iter()
+        .find(|part| part.part_id.as_deref() == Some("2"))
+        .expect("the calendar part is described");
+    let blob = calendar
+        .blob_id
+        .clone()
+        .expect("a calendar part under 256 KiB is fetched with the text");
+    assert_eq!(
+        local.blobs.get(&blob).expect("the blob"),
+        INVITE.as_bytes(),
+        "stored as sent, for the body stage to read without the network"
+    );
+    let everyone = stored
+        .attachments
+        .iter()
+        .find(|part| part.part_id.as_deref() == Some("3"))
+        .expect("the big calendar part is still described");
+    assert!(
+        everyone.blob_id.is_none(),
+        "a calendar part of a mebibyte is a payload: it stays on the server \
+         until somebody asks for it"
+    );
+    assert_eq!(stored.sync.body_state, BodyState::Partial);
+}
+
 #[tokio::test]
 async fn a_message_whose_inline_parts_all_fit_is_full_once_its_text_lands() {
     // The other side of the cap: when nothing was left on the server, the

@@ -6,20 +6,20 @@
 #
 # # Why this is derived and not a list
 #
-# `issue-land.sh` used to name `postio-gtk postio-app` inline. That is the
-# right *root* set -- they are the crates whose system libraries can be
-# missing -- and the wrong answer, because the question a gate needs is
+# `issue-land.sh` used to name the GTK crates inline. That is the right
+# *root* set -- they are the crates whose system libraries can be missing --
+# and the wrong answer, because the question a gate needs is
 # "what can I not compile", and that is the root set plus everything that
 # reaches it:
 #
 #     glib-sys -> gio-sys -> gio -> glib-build-tools
-#                 [build-dependencies] -> postio-gtk
+#                 [build-dependencies] -> postio-widgets
 #                 [dev-dependencies]   -> postio-bench
 #
 # `postio-bench` has no GTK dependency anybody would notice reading its
-# manifest -- it dev-depends on `postio-gtk`, so `cargo test -p postio-bench`
-# needs WebKit and `cargo test --workspace --exclude postio-gtk` drags the
-# whole stack back in through it. A hardcoded pair would have been correct
+# manifest -- it dev-depends on the desktop app, so `cargo test -p
+# postio-bench` needs WebKit and a `cargo test --workspace` that excludes only
+# the GTK crates drags the whole stack back in through it. A hardcoded pair would have been correct
 # on the day it was written and wrong the next time a crate dev-depends on
 # the frontend: silently, and only on macOS, which is where nobody is
 # looking (#1152).
@@ -64,7 +64,7 @@ meta = json.load(sys.stdin)
 members = {p["name"]: p for p in meta["packages"]}
 
 # The crates whose own system libraries are missing.
-roots = {"postio-gtk", "postio-app"} & members.keys()
+roots = {"postio-widgets", "postio-gtk"} & members.keys()
 
 # Everything that depends on one, by any edge -- normal, build or dev. A dev
 # edge is what makes postio-bench unbuildable, and it is the edge a reader of

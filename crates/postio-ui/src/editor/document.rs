@@ -32,7 +32,7 @@ pub const QUOTE_CLASS: &str = "postio-quote";
 /// The attribute `postio_body` marks a reply quote with.
 ///
 /// Named here rather than imported so this crate does not depend on the body
-/// crate for one string; the two are asserted equal in `postio-gtk`, which
+/// crate for one string; the two are asserted equal in a frontend test, which
 /// sees both.
 pub use postio_body::document::QUOTED_MARKER;
 

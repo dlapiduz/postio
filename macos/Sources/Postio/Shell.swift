@@ -5,7 +5,7 @@ import SwiftUI
 /// The three panes: folders, messages, and the message.
 ///
 /// `NavigationSplitView` rather than the nested `GtkPaned` the Linux frontend
-/// uses. `postio-gtk/src/shell.rs` explains why it avoided
+/// uses. The classic app's shell explained why it avoided
 /// `AdwNavigationSplitView` — it needed the pane position to be a savable
 /// number — and that reasoning is GTK's. Here the native idiom brings sidebar
 /// collapse, a full-height sidebar and toolbar unification for free, and

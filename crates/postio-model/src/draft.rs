@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::account::Identity;
 use crate::address::EmailAddress;
 use crate::attachment::Attachment;
-use crate::ids::{AccountId, DraftId, IdentityId, MessageId, RfcMessageId, ThreadId};
+use crate::ids::{AccountId, DraftId, IdentityId, LabelId, MessageId, RfcMessageId, ThreadId};
 use crate::message::{MessageBody, ServerIdentifiers};
 
 /// What the user was doing when the draft was started.
@@ -177,6 +177,29 @@ pub struct Draft {
     /// [`outgoing::build`](crate::outgoing::build)).
     #[serde(default)]
     pub body_markdown: Option<String>,
+    /// The labels chosen for the message (spec 007 US3): applied to its
+    /// conversation when it is sent, so it and the mail it answers carry
+    /// them. A reply starts with its conversation's own.
+    ///
+    /// Defaults on the way in, so a draft from a side that never heard of
+    /// them has none.
+    #[serde(default)]
+    pub labels: Vec<LabelId>,
+    /// The iCalendar answer this draft carries, when it is the reply to an
+    /// invitation (spec 007 FR-102): a `METHOD:REPLY` object, as
+    /// `postio-calendar` writes it, which
+    /// [`outgoing::build`](crate::outgoing::build) places beside the text as
+    /// the `text/calendar` alternative. `None` for everything a person
+    /// writes.
+    #[serde(default)]
+    pub calendar_reply: Option<String>,
+    /// "Remind if no reply" (spec 007 US3 scenario 5, FR-044): when set,
+    /// sending the message sets a reminder on its conversation, due then.
+    /// If nobody but the person has written in it by that time, the
+    /// conversation comes back to the top of Focus's inbox, marked "No
+    /// reply since". `None` for a draft that asks for no reminder.
+    #[serde(default)]
+    pub remind_at: Option<DateTime<Utc>>,
     /// Attachments added so far. These carry
     /// [`MessageId::UNASSIGNED`](crate::MessageId::UNASSIGNED) as their owner
     /// until the draft becomes a sent message.
@@ -230,6 +253,9 @@ impl Draft {
             // rich would decide for the person what shape their mail takes.
             rich: false,
             body_markdown: None,
+            labels: Vec::new(),
+            calendar_reply: None,
+            remind_at: None,
             attachments: Vec::new(),
             state: DraftState::Editing,
             rfc_message_id: None,
@@ -334,11 +360,87 @@ pub fn closing(draft: &Draft) -> Closing {
     }
 }
 
+/// [`closing`] for a composition that began as `opened`.
+///
+/// A reply opens with a recipient, a subject, an attribution and a quote --
+/// all the app's doing -- so [`closing`] alone would keep every reply ever
+/// opened. A reply or forward still exactly as it opened (same recipients,
+/// same subject, same body bar whitespace and signature) has nothing the
+/// person wrote, and is dropped like an untouched new message. Only a
+/// composition the app built counts: a new message opened with content in
+/// it came from somewhere (a link, an undone send) and is kept, and so is
+/// a draft resumed from the Drafts folder, which the person wrote.
+pub fn closing_since(draft: &Draft, opened: &Draft) -> Closing {
+    if closing(draft) == Closing::Drop {
+        return Closing::Drop;
+    }
+    let written = |draft: &Draft| {
+        let body = draft.body.text.as_deref().unwrap_or_default();
+        crate::signature::split(body).0.trim().to_owned()
+    };
+    let untouched = opened.kind != DraftKind::New
+        && !opened.id.is_assigned()
+        && draft.to == opened.to
+        && draft.cc == opened.cc
+        && draft.bcc == opened.bcc
+        && draft.subject == opened.subject
+        && draft.attachments.len() == opened.attachments.len()
+        && written(draft) == written(opened);
+    if untouched {
+        Closing::Drop
+    } else {
+        Closing::Keep
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::account::Signature;
     use crate::ids::IdentityId;
+
+    fn opened_reply() -> Draft {
+        let mut draft = Draft::new(AccountId::UNASSIGNED);
+        draft.kind = DraftKind::Reply;
+        draft.to = vec![EmailAddress::new(None::<String>, "ada@example.com")];
+        draft.subject = "Re: Plans".to_owned();
+        draft.body.text = Some("\n\nOn 2026-08-26, Ada wrote:\n> hello\n\n-- \nGrace\n".to_owned());
+        draft
+    }
+
+    #[test]
+    fn a_reply_nobody_typed_in_is_dropped() {
+        let opened = opened_reply();
+        let mut now = opened.clone();
+        now.body.text = Some("\n\nOn 2026-08-26, Ada wrote:\n> hello\n".to_owned());
+        assert_eq!(closing_since(&now, &opened), Closing::Drop);
+        assert_eq!(closing_since(&opened, &opened), Closing::Drop);
+    }
+
+    #[test]
+    fn a_reply_with_a_word_written_is_kept() {
+        let opened = opened_reply();
+        let mut now = opened.clone();
+        now.body.text = Some("Thanks!\n\nOn 2026-08-26, Ada wrote:\n> hello\n".to_owned());
+        assert_eq!(closing_since(&now, &opened), Closing::Keep);
+        let mut recipient = opened.clone();
+        recipient.cc = vec![EmailAddress::new(None::<String>, "grace@example.net")];
+        assert_eq!(closing_since(&recipient, &opened), Closing::Keep);
+    }
+
+    #[test]
+    fn a_new_message_opened_with_content_is_kept_even_untouched() {
+        let mut opened = opened_reply();
+        opened.kind = DraftKind::New;
+        assert_eq!(closing_since(&opened, &opened), Closing::Keep);
+    }
+
+    #[test]
+    fn a_saved_draft_resumed_untouched_is_kept() {
+        let mut opened = opened_reply();
+        opened.id = DraftId::new(4);
+        assert_eq!(closing_since(&opened, &opened), Closing::Keep);
+    }
 
     #[test]
     fn a_new_draft_is_dated_by_the_clock_seam() {

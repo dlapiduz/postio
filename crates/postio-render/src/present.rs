@@ -257,6 +257,51 @@ fn sheets(doc: &BaseDocument) -> String {
     out
 }
 
+/// The app-colours treatment's half of the theme rule (T211): the sender's
+/// colours are gone from the markup already, and what is left -- the app's
+/// ink and accent, and a colour the sender set on purpose -- is held to the
+/// floor against what is painted behind it, a colour that misses it drawn
+/// in the container's ink instead ([`theme::guard`]). No background is
+/// changed. The white canvas an image keeps behind it in dark (FR-015) is
+/// the treatment's stylesheet's (`postio-ui`'s `treatment.css`): a mark per
+/// image here made every newsletter in dark lay out twice (T218).
+fn guard_app_colours(
+    doc: &BaseDocument,
+    container: &Node,
+    floor: f64,
+    rules: &mut Rules,
+    plan: &mut Plan,
+) {
+    let Some(ink) = container
+        .primary_styles()
+        .map(|styles| srgb(&styles.clone_color()).0)
+    else {
+        return;
+    };
+    let mut runs = Vec::new();
+    crate::snapshot::text_runs(doc, container.id, &mut runs);
+    let mut seen = std::collections::HashSet::new();
+    let grounds = HashMap::new();
+    for (brush, _) in runs {
+        let Some(element) = element_of(doc, brush) else {
+            continue;
+        };
+        if !seen.insert(element.id) {
+            continue;
+        }
+        let Some(styles) = element.primary_styles() else {
+            continue;
+        };
+        let (colour, _) = srgb(&styles.clone_color());
+        let behind = ground(doc, element.id, &grounds);
+        let kept = theme::guard(colour, behind, ink, floor);
+        if kept.to_u8() != colour.to_u8() {
+            plan.repaired += 1;
+            rules.add(element.id, format!("color: {} !important", css(kept)));
+        }
+    }
+}
+
 /// Decide, from the first layout, what the second must change.
 pub(crate) fn plan(doc: &BaseDocument, request: &RenderRequest) -> Plan {
     let theme = request.theme;
@@ -278,6 +323,38 @@ pub(crate) fn plan(doc: &BaseDocument, request: &RenderRequest) -> Plan {
             .attr(LocalName::from(postio_body::sanitize::MESSAGE_ATTRIBUTE))
             .unwrap_or_default()
             .to_owned();
+        // A body drawn under a treatment (specs/007-postio-focus T211,
+        // T212) has had its rule applied already: paper is never touched,
+        // and app colours is held to the contrast guard alone.
+        match container
+            .attr(LocalName::from(postio_body::treatment::TREATMENT_ATTRIBUTE))
+            .and_then(postio_body::treatment::Treatment::from_attribute)
+        {
+            Some(postio_body::treatment::Treatment::Paper) => {
+                plan.presentations.insert(
+                    scope,
+                    if theme.dark {
+                        Presentation::Paper
+                    } else {
+                        Presentation::Styled
+                    },
+                );
+                continue;
+            }
+            Some(postio_body::treatment::Treatment::AppColours) => {
+                plan.presentations.insert(
+                    scope,
+                    if theme.dark {
+                        Presentation::Adapted
+                    } else {
+                        Presentation::Styled
+                    },
+                );
+                guard_app_colours(doc, container, floor, &mut rules, &mut plan);
+                continue;
+            }
+            None => {}
+        }
         let (facts, canvas) = facts(doc, container, &sheets, &scope);
         let presentation = theme::classify(facts, theme, request.darkened.contains(&scope));
         plan.presentations.insert(scope.clone(), presentation);

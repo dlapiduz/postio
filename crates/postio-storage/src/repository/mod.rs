@@ -33,14 +33,20 @@ mod settings;
 mod accounts;
 mod contact_groups;
 mod contacts;
+mod correspondents;
 mod cross_account;
+mod digests;
 mod drafts;
 mod egress;
+mod filter_decisions;
+mod focus_classified;
 mod labels;
 mod mailbox_roles;
 mod mailboxes;
+mod markers;
 mod messages;
 mod operations;
+mod reminders;
 mod sync_state;
 mod threading;
 mod threads;
@@ -49,21 +55,27 @@ mod unsubscribe;
 pub use accounts::{AccountRepository, IdentityRepository, SignatureRepository};
 pub use contact_groups::ContactGroupRepository;
 pub use contacts::ContactRepository;
+pub use correspondents::{Correspondent, CorrespondentRepository};
 pub use cross_account::{
     CrossAccountMove, CrossAccountMoveRepository, MovePhase, NewCrossAccountMove,
 };
+pub use digests::{DigestRepository, OpenDelivery};
 pub use drafts::{CancelSendOutcome, DraftRepository, ServerCopyLocation};
 pub use egress::EgressLogRepository;
+pub use filter_decisions::{FilterDecision, FilterDecisionRepository, FilterLayer, FilterReason};
+pub use focus_classified::{FocusClassifiedRepository, FocusStage};
 pub use labels::LabelRepository;
 pub use mailbox_roles::MailboxRoleRepository;
 pub use mailboxes::{DraftCounts, MailboxRepository};
+pub use markers::{InviteIdentity, InviteState, Marker, MarkerRepository, MarkerSource};
 pub use operations::{OperationQueueRepository, QueuedOperation};
+pub use reminders::{Reminder, ReminderRepository};
 pub use settings::SettingsRepository;
 pub use sync_state::SyncStateRepository;
 pub use threading::{Threaded, ThreadingRepository};
 pub use threads::{
-    DEFAULT_THREAD_PAGE_SIZE, ThreadCursor, ThreadGroup, ThreadListQuery, ThreadListRow,
-    ThreadOrder, ThreadRepository, UnifiedThreadListQuery,
+    DEFAULT_THREAD_PAGE_SIZE, FocusListQuery, Marked, ThreadCursor, ThreadGroup, ThreadListQuery,
+    ThreadListRow, ThreadOrder, ThreadRepository, UnifiedThreadListQuery,
 };
 pub use unsubscribe::UnsubscribeRepository;
 
@@ -86,6 +98,48 @@ use crate::error::{Error, Result};
 /// same two-tier arrangement the live list query (`where_clause`) is the
 /// other half of.
 pub(crate) const VISIBLE: &str = "deleted_locally = 0 AND (snoozed_until IS NULL OR snoozed_until <= (strftime('%s','now') * 1000))";
+
+/// What Focus's lists leave out beyond what every list does ([`VISIBLE`]),
+/// as a conjunct on the message `alias` names (`"rep."`, `"messages."`, or
+/// `""` for a statement's only `messages`): the one place mail Focus holds
+/// back leaves its inbox (spec 007, research R13).
+///
+/// A message a digest rule holds, until its delivery is archived (`⇧A`):
+/// the digest's own row stands for it in the meantime, and a release
+/// deletes the hold, so the message rejoins. Every read of a Focus scope
+/// appends this -- the window, its representative's `NOT EXISTS` and its
+/// slice, the count, the fold's keys and a flat read of the same view -- so
+/// the rows, the total and the seek marks agree about what a row is. Each
+/// test is a lookup by key into `digest_holds` and, for a delivered hold,
+/// `digest_deliveries`: a cost per candidate row, never a walk.
+///
+/// And a conversation whose reminder fired and still stands (T095): its
+/// reminder's row stands for it, spliced at its place, so its ordinary row
+/// leaves until the reminder settles -- or it would be listed twice. A
+/// lookup by key into `idx_reminders_thread`, for a message in a
+/// conversation.
+pub(crate) fn focus_excludes(alias: &str) -> String {
+    let (message, thread) = if alias.is_empty() {
+        ("messages.id".to_owned(), "messages.thread_id".to_owned())
+    } else {
+        (format!("{alias}id"), format!("{alias}thread_id"))
+    };
+    format!(
+        " AND NOT EXISTS (
+             SELECT 1 FROM digest_holds held
+              WHERE held.message_id = {message}
+                AND (held.delivery_id IS NULL
+                     OR NOT EXISTS (SELECT 1 FROM digest_deliveries delivered
+                                     WHERE delivered.id = held.delivery_id
+                                       AND delivered.archived_at IS NOT NULL)))
+           AND NOT EXISTS (
+             SELECT 1 FROM reminders surfaced
+              WHERE surfaced.thread_id = {thread}
+                AND surfaced.fired_at IS NOT NULL
+                AND surfaced.cancelled_at IS NULL
+                AND surfaced.settled_at IS NULL)"
+    )
+}
 
 /// A timestamp as the schema stores it: milliseconds since the Unix epoch, UTC.
 pub(crate) fn to_millis(at: DateTime<Utc>) -> i64 {

@@ -5,7 +5,7 @@
 reads, and nothing in this repository ever parsed it. It was malformed for
 three releases: a comment spelled a command out in full,
 
-    drawn by `cargo run -p postio-app
+    drawn by `cargo run -p postio-gtk
     --example shot` over a seeded store
 
 and XML forbids a double hyphen inside a comment, so the whole file was

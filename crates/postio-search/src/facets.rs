@@ -27,8 +27,7 @@
 //! what the user typed.
 //!
 //! Refinements are the opposite, and deliberately so: clicking one *appends a
-//! chip*, because it is a token the user could have typed and can pop with
-//! Backspace like any other.
+//! chip*, because it is a token the user could have typed.
 
 /// Which slice of the mailbox a search looks at.
 ///

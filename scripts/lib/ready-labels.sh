@@ -20,7 +20,7 @@
 # was created (#552) rather than for the one it is easy to assume: it is not
 # about which crates compile, it is about **which machine can run the gate**.
 #
-# `postio-gtk` and `postio-app` need WebKitGTK, which has no macOS build at
+# The GTK crates need WebKitGTK, which has no macOS build at
 # all, and `macos/` needs Xcode and a window server. Neither can be worked
 # from the other host, sessions run on several machines, and the claim locks
 # are per-machine -- so the label is the only thing keeping a Linux session

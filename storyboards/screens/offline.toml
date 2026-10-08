@@ -1,7 +1,9 @@
-# Design 12's offline state: the connection drops. Replaces the screen-sweep
-# row `syncing`, which drew search's "still syncing" readout -- the `search`
-# screen shows that now (FR-030).
-source = { kind = "design", ref = "12-states-empty-offline-syncfail" }
-design = "12-states-empty-offline-syncfail"
+# The offline banner: the connection drops (screen 18).
+#
+# Focus's design references are never committed
+# (specs/007-postio-focus/screens.md records each one).
+apps   = ["focus"]
+source = { kind = "design", ref = "focus 18" }
+
 [[step]]
 event = "connection_lost"

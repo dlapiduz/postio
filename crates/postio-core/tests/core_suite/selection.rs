@@ -134,7 +134,7 @@ fn the_four_selection_keys_are_in_the_registry_and_overridable() {
         (CommandId::ToggleSelection, "x"),
         (CommandId::ExtendSelectionDown, "J"),
         (CommandId::ExtendSelectionUp, "K"),
-        (CommandId::SelectAll, "ctrl+a"),
+        (CommandId::SelectAll, "X"),
     ] {
         let spec = registry::get(id);
         assert_eq!(

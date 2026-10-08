@@ -1,0 +1,23 @@
+[package]
+name = "postio-vault"
+description = "Obsidian capture for Postio Focus: task lines and notes appended to a vault on this computer, projects suggested from it, and finished tasks read back."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Due and done dates, as the Tasks plugin writes them.
+chrono = { workspace = true }
+# `MessageId`, which a task's `postio://` link names.
+postio-model.workspace = true
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# A throwaway vault for every test.
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

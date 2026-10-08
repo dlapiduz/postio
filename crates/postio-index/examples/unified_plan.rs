@@ -323,8 +323,9 @@ async fn measure_insert(connection: &Connection, label: &str) {
     for i in 0..20_000i64 {
         connection
             .execute(
-                "INSERT INTO messages (account_id, mailbox_id, received_at, size, body_state)
-                 VALUES (?1, ?2, ?3, 1024, 'headers_only')",
+                "INSERT INTO messages (account_id, mailbox_id, received_at, sort_at, size,
+                                       body_state)
+                 VALUES (?1, ?2, ?3, ?3, 1024, 'headers_only')",
                 (
                     account,
                     mailbox,

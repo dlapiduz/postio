@@ -160,7 +160,7 @@ async fn insert_message(connection: &Connection, message: &Message) -> i64 {
                  preview, size, flags, seen, flagged, answered, draft, deleted, has_attachments,
                  uid, uid_validity, mod_seq, remote_id,
                  body_state, flags_dirty, has_pending_operations, deleted_locally, last_synced_at,
-                 raw_blob_id)
+                 raw_blob_id, sort_at)
              VALUES (
                  ?1, ?2, NULL,
                  ?3, ?4, ?5,
@@ -168,7 +168,7 @@ async fn insert_message(connection: &Connection, message: &Message) -> i64 {
                  ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
                  ?19, ?20, ?21, ?22,
                  ?23, ?24, ?25, ?26, ?27,
-                 ?28)",
+                 ?28, ?9)",
             bind![
                 message.account_id.get(),
                 message.mailbox_id.get(),
@@ -429,8 +429,8 @@ async fn every_body_state_is_storable_and_nothing_else_is() {
     for state in ["not_fetched", "headers_only", "partial", "full"] {
         connection
             .execute(
-                "INSERT INTO messages (account_id, mailbox_id, received_at, body_state)
-                 VALUES (?1, ?2, 0, ?3)",
+                "INSERT INTO messages (account_id, mailbox_id, received_at, sort_at, body_state)
+                 VALUES (?1, ?2, 0, 0, ?3)",
                 bind![account_id, mailbox_id, state],
             )
             .await
@@ -438,8 +438,8 @@ async fn every_body_state_is_storable_and_nothing_else_is() {
     }
     connection
         .execute(
-            "INSERT INTO messages (account_id, mailbox_id, received_at, body_state)
-             VALUES (?1, ?2, 0, 'nonsense')",
+            "INSERT INTO messages (account_id, mailbox_id, received_at, sort_at, body_state)
+             VALUES (?1, ?2, 0, 0, 'nonsense')",
             bind![account_id, mailbox_id],
         )
         .await
@@ -653,8 +653,8 @@ async fn a_thread_and_its_membership_are_storable() {
     for _ in 0..2 {
         connection
             .execute(
-                "INSERT INTO messages (account_id, mailbox_id, thread_id, received_at)
-                 VALUES (?1, ?2, ?3, 0)",
+                "INSERT INTO messages (account_id, mailbox_id, thread_id, received_at, sort_at)
+                 VALUES (?1, ?2, ?3, 0, 0)",
                 bind![account_id, mailbox_id, thread_id],
             )
             .await
@@ -691,7 +691,7 @@ async fn labels_apply_to_many_messages_and_cascade() {
 
     connection
         .execute(
-            "INSERT INTO messages (account_id, mailbox_id, received_at) VALUES (?1, ?2, 0)",
+            "INSERT INTO messages (account_id, mailbox_id, received_at, sort_at) VALUES (?1, ?2, 0, 0)",
             bind![account_id, mailbox_id],
         )
         .await

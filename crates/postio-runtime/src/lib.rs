@@ -3,7 +3,7 @@
 //! # Why this is not in `postio-core`
 //!
 //! `postio-core` is the UI-agnostic contract: commands in, events out, the
-//! command registry, the keymap, the app state. `postio-gtk` depends on it,
+//! command registry, the keymap, the app state. the view layer depends on it,
 //! and so would any other frontend — that is what makes a second one
 //! possible.
 //!
@@ -32,8 +32,8 @@
 //!   after a lid opens is prompt rather than a backoff measured against a
 //!   network that is gone.
 //!
-//! Both are joined to a frontend by `postio-app`, which is the only crate
-//! that knows both halves exist.
+//! Both are joined to a frontend by the app's composition root, which is the
+//! only crate that knows both halves exist.
 
 pub mod engine;
 pub mod network;
@@ -41,8 +41,8 @@ pub mod remote_images;
 pub mod store;
 
 pub use engine::{
-    Clock, DrainSummary, Engine, EngineError, EngineParts, Link, NetworkSource, NetworkState,
-    SyncSummary, SystemClock, retain, stop_retained,
+    Clock, DrainSummary, Engine, EngineError, EngineParts, FilingSlot, Link, NetworkSource,
+    NetworkState, POLL_INTERVAL, SyncSummary, SystemClock, retain, stop_retained,
 };
 // The two policies `EngineParts` is built with. Re-exported rather than left
 // to be reached for through `postio-sync`, because the composition root that

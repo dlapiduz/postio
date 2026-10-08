@@ -177,7 +177,7 @@ async fn the_sidebar_gets_the_inbox_first_and_one_row_per_role() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_sidebars_view_rows_cross_the_boundary() {
     // The assertion that would have failed every day since #1155. `Flagged`
-    // and `Snoozed` were built inside `postio-gtk::feed` as mailboxes with
+    // and `Snoozed` were built inside the classic app's feed as mailboxes with
     // negative ids, so this boundary — which reads the same store through the
     // same shared layer — has never carried either row, and the macOS sidebar
     // has never drawn them.

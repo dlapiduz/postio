@@ -50,7 +50,7 @@ postio-model = { version = "0.4.2", path = "../postio-model" }
 # `default-features = false` because the default set includes `mimalloc`,
 # and that feature makes a *library* install a `#[global_allocator]` into
 # whatever binary links it — an allocator choice belongs to the binary, and
-# `postio-app` makes it explicitly. `fts` stays: the search index is built
+# the desktop app makes it explicitly. `fts` stays: the search index is built
 # on the engine's full-text index method.
 turso = { workspace = true }
 serde_json = { workspace = true }
@@ -69,6 +69,9 @@ tracing = { workspace = true }
 # making `test-support` a default feature.
 postio-model = { path = "../postio-model", features = ["test-corpus"] }
 postio-storage = { path = ".", features = ["test-support"] }
+# The toolkit's main loop without the toolkit: `glib_main_context` proves a store
+# read is pollable on it with no tokio reactor.
+glib = { version = "0.22.9", features = ["v2_72"] }
 tempfile = { workspace = true }
 blake3 = { workspace = true }
 chrono = { workspace = true, features = ["std"] }

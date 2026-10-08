@@ -20,7 +20,7 @@
 //! `docs/keybindings.md` already show: one notation, so a key learned on one
 //! surface is recognised on the next.
 //!
-//! No toolkit here. `postio-gtk`'s `widgets::keyhint` draws these; a second
+//! No toolkit here. The classic app's `widgets::keyhint` drew these; a second
 //! frontend draws the same ones.
 
 use postio_core::{CommandId, Keymap};
@@ -46,23 +46,73 @@ pub fn hint(keymap: &Keymap, command: CommandId, label: &str) -> Option<Hint> {
     })
 }
 
-/// As [`hint`], naming `preferred` when it is one of `command`'s keys.
-///
-/// For a surface the canvas draws with a command's *alternate*: the list's
-/// failure plates say `R` for Refresh, whose primary key is `F5`. The
-/// preference is only honoured while the keymap actually binds it, so a
-/// rebind that takes `R` away falls back to the primary rather than naming a
-/// key that no longer does this.
-pub fn hint_as(keymap: &Keymap, command: CommandId, preferred: &str, label: &str) -> Option<Hint> {
-    let bindings = keymap.bindings(command);
-    let key = bindings
-        .iter()
-        .find(|binding| *binding == preferred)
-        .or_else(|| bindings.first())?;
-    Some(Hint {
-        key: key.clone(),
-        label: label.to_owned(),
-    })
+/// `key`, as the registry spells it, spelled for a screen reader: the
+/// `aria-keyshortcuts` form GTK's `KeyShortcuts` property carries
+/// (FR-096). Modifiers are named in full and joined by `+`, `Return` is
+/// `Enter`, and a capital letter says its Shift. A sequence (`g i`) has no
+/// ARIA spelling and is left as it is.
+pub fn shortcut(key: &str) -> String {
+    if key.contains(' ') {
+        return key.to_owned();
+    }
+    let mut parts: Vec<String> = Vec::new();
+    let mut pieces = key.split('+').peekable();
+    while let Some(piece) = pieces.next() {
+        let last = pieces.peek().is_none();
+        if !last {
+            parts.push(
+                match piece {
+                    "ctrl" | "control" | "mod" => "Control",
+                    "alt" => "Alt",
+                    // A tight cap's spelling ([`short`]), named in full.
+                    "shift" | "\u{21e7}" => "Shift",
+                    "super" | "meta" | "cmd" => "Meta",
+                    other => other,
+                }
+                .to_owned(),
+            );
+            continue;
+        }
+        let name = match piece {
+            // A tight cap's spellings ([`short`]), named in full.
+            "Return" | "\u{21b5}" => "Enter".to_owned(),
+            "Del" => "Delete".to_owned(),
+            letter
+                if letter.chars().count() == 1
+                    && letter.chars().all(char::is_uppercase)
+                    && !parts.iter().any(|part| part == "Shift") =>
+            {
+                parts.push("Shift".to_owned());
+                letter.to_owned()
+            }
+            other => other.to_owned(),
+        };
+        parts.push(name);
+    }
+    parts.join("+")
+}
+
+/// `key`, as a cap in a tight row spells it: `Delete` is `Del`, as the
+/// message dialog's action row draws it (the handoff's SPEC section 2), and
+/// `Return` and `shift` are the glyphs Focus's hint lines and the classic
+/// rail already draw, `↵` and `⇧`, so the composer's `ctrl+shift+Return` is
+/// `ctrl+⇧+↵` (T221). Everything else -- `ctrl`, `alt`, the `+` between
+/// them -- keeps the keymap's spelling. What is pressed, and what a screen
+/// reader hears ([`shortcut`]), keeps the binding's own names; only the cap
+/// is shorter.
+pub fn short(key: &str) -> String {
+    if key.contains(' ') {
+        return key.to_owned();
+    }
+    key.split('+')
+        .map(|piece| match piece {
+            "Delete" => "Del",
+            "Return" => "\u{21b5}",
+            "shift" => "\u{21e7}",
+            other => other,
+        })
+        .collect::<Vec<_>>()
+        .join("+")
 }
 
 /// Just the key for `command`, for a control that draws its own label.
@@ -116,7 +166,55 @@ pub fn line<'a>(hints: impl IntoIterator<Item = &'a Hint>) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_key_is_spelled_for_a_screen_reader_as_aria_keyshortcuts_spells_it() {
+        // FR-096: a keycap is announced as its control's shortcut. ARIA's
+        // `aria-keyshortcuts` names modifiers in full, joined by `+`, and a
+        // shifted letter by its Shift. ARIA has no spelling for a sequence,
+        // so one is left as the registry spells it.
+        assert_eq!(shortcut("e"), "e");
+        assert_eq!(shortcut("ctrl+Return"), "Control+Enter");
+        assert_eq!(shortcut("ctrl+shift+a"), "Control+Shift+a");
+        assert_eq!(shortcut("alt+s"), "Alt+s");
+        assert_eq!(shortcut("Escape"), "Escape");
+        assert_eq!(shortcut("E"), "Shift+E");
+        assert_eq!(shortcut("g i"), "g i");
+        assert_eq!(shortcut("super+k"), "Meta+k");
+    }
     use super::*;
+
+    #[test]
+    fn a_tight_cap_compacts_delete_return_and_shift_and_nothing_else() {
+        assert_eq!(short("Delete"), "Del");
+        assert_eq!(short("shift+Delete"), "\u{21e7}+Del");
+        // The composer's caps (T221): `ctrl+shift+Return` was the widest
+        // thing in its bar.
+        assert_eq!(short("ctrl+Return"), "ctrl+\u{21b5}");
+        assert_eq!(short("ctrl+shift+Return"), "ctrl+\u{21e7}+\u{21b5}");
+        assert_eq!(short("ctrl+shift+a"), "ctrl+\u{21e7}+a");
+        assert_eq!(short("Return"), "\u{21b5}");
+        for key in ["e", "E", "Escape", "ctrl+h", "g i", ".", "alt+s"] {
+            assert_eq!(short(key), key);
+        }
+        assert_eq!(
+            shortcut("Delete"),
+            "Delete",
+            "a screen reader hears the name"
+        );
+        for (key, heard) in [
+            ("Delete", "Delete"),
+            ("ctrl+Return", "Control+Enter"),
+            ("ctrl+shift+Return", "Control+Shift+Enter"),
+            ("ctrl+shift+a", "Control+Shift+a"),
+        ] {
+            assert_eq!(
+                shortcut(&short(key)),
+                heard,
+                "a cap read back for its shortcut is named in full"
+            );
+        }
+    }
 
     fn rebound(command: CommandId, key: &str) -> Keymap {
         let mut overrides = postio_config::KeyBindings::default();
@@ -146,25 +244,12 @@ mod tests {
 
     #[test]
     fn an_unbound_command_has_no_hint() {
-        // An override outranks a default, so giving `d` to compose leaves
-        // Delete -- one key, no alternate -- with no key at all: palette-only.
-        // Compose itself cannot be the example; it has `mod+n` to fall back on.
-        let keymap = rebound(CommandId::Compose, "d");
+        // An override outranks a default, so giving `Delete` to compose
+        // leaves Delete -- one key, no alternate -- with no key at all:
+        // palette-only. Compose itself cannot be the example; it has `mod+n`
+        // to fall back on.
+        let keymap = rebound(CommandId::Compose, "Delete");
         assert_eq!(hint(&keymap, CommandId::Delete, "Delete"), None);
-    }
-
-    #[test]
-    fn a_preferred_key_is_named_only_while_it_is_bound() {
-        let retry = |keymap: &Keymap| {
-            hint_as(keymap, CommandId::Refresh, "R", "Retry now").map(|hint| hint.key)
-        };
-        assert_eq!(retry(Keymap::defaults()).as_deref(), Some("R"));
-        // Giving `R` to archive takes it from Refresh; the plate falls back
-        // to the key Refresh still has.
-        assert_eq!(
-            retry(&rebound(CommandId::Archive, "R")).as_deref(),
-            Some("F5")
-        );
     }
 
     #[test]

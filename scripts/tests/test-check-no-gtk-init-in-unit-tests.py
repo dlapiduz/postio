@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Self-test for scripts/checks/check-no-gtk-init-in-unit-tests.py.
 
-The check exists because a unit test in `crates/postio-gtk/src/toast.rs`
-called `adw::init()` and aborted CI with SIGABRT. Once that test moved to
+The check exists because a toast's unit test in the GTK crate called
+`adw::init()` and aborted CI with SIGABRT. Once that test moved to
 `tests/`, the tree became clean — and a guard that passes on a clean tree
 passes whether it works or not.
 
@@ -111,15 +111,15 @@ def main() -> int:
         should_fail=False,
     )
 
-    # Production code *must* initialize GTK somewhere. `postio-gtk/src/app.rs`
-    # and `postio-app/src/lib.rs` both do, correctly, on the main thread.
+    # Production code *must* initialize GTK somewhere. The desktop app's
+    # `app.rs` does, correctly, on the main thread.
     case(
         "production code may initialize GTK",
         "pub fn run() {\n    if adw::init().is_err() {\n        return;\n    }\n}\n",
         should_fail=False,
     )
 
-    # The regression itself: postio-gtk/src/toast.rs, before it moved.
+    # The regression itself: a toast's unit tests, before they moved.
     case(
         "a unit test that initializes GTK fails",
         "pub fn toast() {}\n"
@@ -204,8 +204,8 @@ def main() -> int:
         expect_text="adw::init",
     )
 
-    # Prose about the rule is not a violation of it. `postio-gtk/src/app.rs`
-    # and `src/lib.rs` both spell `adw::init()` in doc comments.
+    # Prose about the rule is not a violation of it. The desktop app's
+    # `app.rs` spells `adw::init()` in doc comments.
     case(
         "a comment naming the call is not a call",
         "#[cfg(test)]\n"
@@ -220,7 +220,7 @@ def main() -> int:
         should_fail=False,
     )
 
-    # The escape hatch. `postio-app/src/compose.rs` keeps one GTK-touching
+    # The escape hatch. A crate with no lib target may keep one GTK-touching
     # unit test on purpose; the marker is where that decision is written down.
     case(
         "a recorded exception passes",
@@ -237,8 +237,8 @@ def main() -> int:
 
     # The marker clears a file for *one* init, which is what its own wording
     # claims ("the only one"). It used to clear the file outright, so a second
-    # GTK test could be added to `postio-app/src/compose.rs` without
-    # tripping anything -- and it was. It passed locally for weeks, because
+    # GTK test could be added to the same file without tripping anything --
+    # and it was. It passed locally for weeks, because
     # whichever test ran second found the display gone and skipped, then
     # panicked with "two different threads" the first time a runner gave both
     # of them one at once. The exception the marker records is singular.

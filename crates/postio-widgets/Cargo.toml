@@ -1,0 +1,71 @@
+[package]
+name = "postio-widgets"
+description = "The GTK widgets and presenters both desktop apps share: the message view, the composer, and the small widgets of the visual language."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[features]
+# Test-only: the render thread's hooks, so a test can hold a render past its
+# deadline through a caller that builds the view's content itself. Off by
+# default; the suites that need it turn it on from their dev-dependencies.
+test-hooks = ["postio-render/test-hooks"]
+
+[dependencies]
+adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
+# The presenters hand work between a watcher's or a runtime's thread and the
+# main loop.
+async-channel = { workspace = true }
+blake3 = { workspace = true }
+chrono = { workspace = true, features = ["std"] }
+gio = "0.22.9"
+glib = { version = "0.22.9", features = ["v2_72"] }
+gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
+pango = { version = "0.22.9", features = ["v1_56"] }
+postio-body.workspace = true
+# The store's host, asked for everything a presenter shows (ADR 0041).
+postio-client.workspace = true
+postio-config.workspace = true
+# The command registry and keymap the keycaps and action bars read.
+postio-core.workspace = true
+postio-model.workspace = true
+# The reading renderer (spec 006): BodyView draws its snapshots.
+postio-render.workspace = true
+postio-ui.workspace = true
+# The capture's error: why a window could not become a picture.
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }
+tracing = { workspace = true }
+# Remote image URLs, parsed before a fetcher is asked (spec 006 T137).
+url = { workspace = true }
+# The composer's editing surface, until ADR 0039's native editor is built
+# (research R1). Nothing else here draws with WebKit.
+webkit6 = { version = "0.6", features = ["v2_50", "gtk_v4_18"] }
+
+[build-dependencies]
+glib-build-tools = "0.22.8"
+postio-ui.workspace = true
+
+[dev-dependencies]
+# The crate's own suite, with its hooks on: a render held past its deadline
+# (the plain-text fallback, T218).
+postio-widgets = { path = ".", features = ["test-hooks"] }
+postio-model = { workspace = true, features = ["test-corpus"] }
+postio-test-support = { workspace = true, features = ["logs"] }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tracing-subscriber = { workspace = true }
+
+# The shared crate's GTK suite: a custom harness, for two reasons -- GTK
+# initializes on exactly one thread per process (#41), and libtest runs tests
+# on a pool. See tests/widgets_suite/main.rs.
+[[test]]
+name = "widgets_suite"
+path = "tests/widgets_suite/main.rs"
+harness = false
+
+[lints]
+workspace = true

@@ -21,6 +21,10 @@
 #   scripts/run-isolated.sh HEAD --inspect  # with the GTK Inspector attached
 #   scripts/run-isolated.sh HEAD --shot     # render a PNG instead of opening
 #   scripts/run-isolated.sh HEAD --provision  # add a real account to the scratch store
+#   scripts/run-isolated.sh HEAD --install-desktop  # also give Postio its dock icon (see below)
+#
+# It runs Postio, the `postio` binary.
+#   scripts/run-isolated.sh HEAD --reset-store  # set the scratch store aside, start a fresh one
 #   scripts/run-isolated.sh --clean         # discard the worktree and store
 #
 # The store lives under $ROOT/state and persists between runs, so a synced
@@ -45,11 +49,15 @@ shift || true
 INSPECT=0
 SHOT=0
 PROVISION=0
+INSTALL_DESKTOP=0
+RESET_STORE=0
 for arg in "$@"; do
     case "$arg" in
         --inspect) INSPECT=1 ;;
         --shot) SHOT=1 ;;
         --provision) PROVISION=1 ;;
+        --install-desktop) INSTALL_DESKTOP=1 ;;
+        --reset-store) RESET_STORE=1 ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
 done
@@ -74,15 +82,15 @@ export CARGO_TARGET_DIR="$TARGET"
 
 # A throwaway store, so nothing the app does can reach a real mailbox, a real
 # config, or the state the real Postio keeps. Config is resolved by
-# postio-config/src/paths.rs; the state files by glib::user_state_dir() in
-# postio-gtk/src/state.rs and postio-gtk/src/reader/allowlist.rs.
+# postio-config/src/paths.rs; the state files under $XDG_STATE_HOME by
+# postio-widgets/src/state.rs and postio-ui/src/allowlist.rs.
 export XDG_DATA_HOME="$STATE/data"
 export XDG_CONFIG_HOME="$STATE/config"
 # XDG_STATE_HOME was missed until #215, and it is not only window geometry:
 # $XDG_STATE_HOME/postio/remote-images.ini is the standing "always allow
 # images from this sender" list. Clicking that once while looking at the demo
 # store wrote a real exception into the real file -- which then decided what
-# postio-gtk's tests saw, because a Window builds a Reader that loads it. That
+# the GTK tests saw, because a window builds a reader that loads it. That
 # cost a p1 nobody could bisect, since the cause was never in the tree.
 export XDG_STATE_HOME="$STATE/state"
 
@@ -116,14 +124,54 @@ if [ "$PROVISION" = 1 ]; then
     exec cargo run --release -p postio-session --bin postio-provision
 fi
 
-if [ "$SHOT" = 1 ]; then
-    OUT="$ROOT/shot-$SHA.png"
-    cargo run --release -p postio-app --example shot -- "$OUT" demo
-    echo "wrote $OUT"
-    exit 0
+# A scratch store an earlier build wrote at a schema this one cannot carry
+# forward: set it aside (state/data/postio/set-aside/<when>/, not deleted)
+# and start a fresh one with the accounts carried across. config.toml and the
+# keyring are untouched; the next run syncs the mail again. `postio-store
+# status` says first whether this is needed -- a store a migration reaches
+# is carried forward on open, and needs nothing.
+if [ "$RESET_STORE" = 1 ]; then
+    cargo run --release -p postio-session --bin postio-store -- status
+    exec cargo run --release -p postio-session --bin postio-store -- reset
 fi
 
-echo "building (first run compiles GTK deps; later runs are incremental)…"
-cargo build --release -p postio-app
-echo "running — Ctrl-C to stop"
-exec "$TARGET/release/postio"
+# Postio (spec 007) on the scratch store and XDG dirs above, so an account
+# provisioned with --provision is there too.
+{
+    if [ "$SHOT" = 1 ]; then
+        OUT="$ROOT/shot-$SHA.png"
+        cargo run --release -p postio-gtk --example shot -- "$OUT" 01
+        echo "wrote $OUT"
+        exit 0
+    fi
+    # --- --install-desktop (T217) -----------------------------------------
+    # The binary draws the Postio icon in its own window (a bundled icon theme
+    # and a default icon name), but a dock or window switcher on Wayland
+    # (COSMIC, GNOME) shows the icon of the *desktop entry* the compositor
+    # matches to the window's app id, and a plain cargo build installs none.
+    # This puts Postio's entry and the package's icon where the session looks,
+    # under your home only, with Exec= on the isolated binary. Opt-in: it
+    # writes outside $ROOT. Remove with the two rm lines it prints.
+    if [ "$INSTALL_DESKTOP" = 1 ]; then
+        DATA="${HOME}/.local/share"
+        APPS="$DATA/applications"
+        ICONS="$DATA/icons/hicolor"
+        ID=dev.postio.Postio
+        mkdir -p "$APPS" "$ICONS/scalable/apps" "$ICONS/symbolic/apps"
+        sed "s|^Exec=.*|Exec=$TARGET/release/postio %U|" \
+            "$TREE/crates/postio-gtk/data/$ID.desktop" > "$APPS/$ID.desktop"
+        install -m644 "$TREE/crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio.svg" \
+            "$ICONS/scalable/apps/dev.postio.Postio.svg"
+        install -m644 "$TREE/crates/postio-widgets/data/icons/scalable/apps/dev.postio.Postio-symbolic.svg" \
+            "$ICONS/symbolic/apps/dev.postio.Postio-symbolic.svg"
+        command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" || true
+        command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$ICONS" || true
+        echo "installed $APPS/$ID.desktop and the Postio icon under $ICONS"
+        echo "undo: rm $APPS/$ID.desktop $ICONS/scalable/apps/dev.postio.Postio.svg $ICONS/symbolic/apps/dev.postio.Postio-symbolic.svg"
+    fi
+    # --- end --install-desktop ---------------------------------------------
+    echo "building Postio (first run compiles GTK deps; later runs are incremental)…"
+    cargo build --release -p postio-gtk --bin postio
+    echo "running — Ctrl-C to stop"
+    exec "$TARGET/release/postio"
+}

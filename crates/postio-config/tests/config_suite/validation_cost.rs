@@ -25,7 +25,7 @@
 //!
 //! The regressions that would actually break the promise: validation that
 //! re-parses per key, that copies the whole table per entry, or that grows
-//! super-linearly in the number of `[filters]`. Each shows up here as a
+//! super-linearly in the number of `[saved_searches]`. Each shows up here as a
 //! number, on every machine, identically.
 //!
 //! A single-test binary on purpose. A `#[global_allocator]` sees every
@@ -68,7 +68,7 @@ theme = "dark"
 archive = "x"
 summarize = "g s"
 
-[filters.needs-reply]
+[saved_searches.needs-reply]
 query = "is:unread from:team"
 pinned = true
 
@@ -88,7 +88,7 @@ poll_interval_secs = 300
 /// number look good.
 const NORMAL_CEILING: usize = 400;
 
-/// How many `[filters]` the growth check compares.
+/// How many `[saved_searches]` the growth check compares.
 const FEW: usize = 10;
 const MANY: usize = 100;
 
@@ -101,7 +101,7 @@ fn with_filters(count: usize) -> String {
     let mut text = String::from("[ui]\ndensity = \"compact\"\n\n[keys]\narchive = \"x\"\n\n");
     for n in 0..count {
         text.push_str(&format!(
-            "[filters.saved-{n}]\nquery = \"is:unread from:team{n}\"\npinned = true\n\n"
+            "[saved_searches.saved-{n}]\nquery = \"is:unread from:team{n}\"\npinned = true\n\n"
         ));
     }
     text
@@ -140,7 +140,7 @@ fn validating_a_config_costs_a_bounded_amount_of_work() {
     );
 
     // And it has to stay linear in the size of the file. A validation that
-    // is quadratic in `[filters]` passes the ceiling above on a small config
+    // is quadratic in `[saved_searches]` passes the ceiling above on a small config
     // and makes the panel unusable on a large one — which is exactly the
     // shape a wall-clock assertion on one fixture cannot see.
     let few = allocations_per_validation(&with_filters(FEW), 10);

@@ -4,9 +4,10 @@
 //! person using it: no echo, clicks become escape sequences, the shell's own
 //! screen gone. So every mode entered is recorded as it is entered, and
 //! leaving undoes exactly those, in reverse order -- on quit, on a panic
-//! (a hook, which runs before `panic = "abort"` takes the process), around
-//! `$EDITOR`, and around `Ctrl+Z` (`contracts/tui-surface.md` §Terminal
-//! state).
+//! (a hook, which runs before `panic = "abort"` takes the process), and
+//! around `$EDITOR` (`contracts/tui-surface.md` §Terminal state). Not around
+//! `Ctrl+Z`: it arrives as a key and is undo, as in every Postio app, and
+//! nothing here suspends the process (specs/007-postio-focus T030).
 //!
 //! The modes go through [`Console`], so the order is testable against a
 //! recording instead of a real terminal.
@@ -71,8 +72,8 @@ impl Session {
         first
     }
 
-    /// Hand the terminal over -- to `$EDITOR`, or to the shell on `Ctrl+Z` --
-    /// and take it back afterwards in the same modes.
+    /// Hand the terminal over to `$EDITOR`, and take it back afterwards in the
+    /// same modes.
     pub fn suspended<T>(
         &mut self,
         console: &mut impl Console,

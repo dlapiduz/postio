@@ -1,0 +1,1330 @@
+/* Focus's own surfaces (contracts/focus-surface.md), over the shared
+ * widgets' rules.
+ *
+ * The shared sheet is imported first, so both are one provider: GTK compares
+ * specificity only inside one, and a rule here that repeats a shared
+ * selector wins by coming later (postio_widgets::style). Every value is a
+ * role from focus-colours.css or the shared metrics; nothing is typed in.
+ *
+ * TYPE IS IN `rem`, NEVER `px`, so GNOME's text scaling moves it.
+ * MOTION BUDGET (CLAUDE.md): transitions here are <= 100ms or absent.
+ */
+
+@import url("resource:///dev/postio/Widgets/widgets.css");
+
+/* ── The window ──────────────────────────────────────────────────────── */
+window.focus-window {
+  font-family: var(--postio-font-body);
+  background-color: var(--postio-surface);
+  color: var(--postio-ink);
+}
+
+/* The pages before the inbox -- the wait, and why there is no mail -- on
+   the window's surface, painted by the page itself so what is drawn does
+   not depend on the window's own background being part of the frame. */
+.focus-opening,
+.focus-unavailable {
+  background-color: var(--postio-surface);
+  color: var(--postio-ink);
+}
+
+/* The top bar (46 px): compose, the command-bar field, the sync label, the
+   main menu and close. Before the inbox it holds close alone (T216). */
+.focus-top-bar {
+  min-height: 46px;
+  padding: 0 var(--postio-space-4);
+  background-color: var(--postio-header);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-command-field {
+  min-height: 32px;
+  padding: 0 var(--postio-space-3);
+  border-radius: var(--postio-radius-lg);
+  border-color: var(--postio-hairline);
+  background-color: var(--postio-raised-bg);
+  font-family: var(--postio-font-body);
+  font-weight: normal;
+  font-size: var(--postio-text-ui);
+}
+
+/* A keycap: the key a control runs, framed and in mono, wherever Focus
+   draws one -- inside a control or standing alone. Every one comes from
+   the keymap (postio_widgets::widgets::keyhint). */
+.postio-keyhint,
+.postio-key {
+  min-height: 16px;
+  min-width: 8px;
+  padding: 0 4px;
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: var(--postio-radius-md);
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-micro);
+  color: var(--postio-dim);
+  opacity: 1;
+}
+
+/* Inside a control the cap is a light hint beside the control's words, not a
+   second frame competing with the control's own edge: hairline, not the
+   strong rule a cap standing alone needs (T175). */
+.postio-keyhint {
+  border-color: var(--postio-hairline);
+}
+
+/* Buttons at the design's proportions (screens 04 and 05; T175, T177): a
+   regular button is 30px, a small one 26px, and a bar's verbs are the
+   quiet 26px kind -- no frame of their own, a tint under the pointer. The
+   shared sheet draws every verb of an action bar framed. */
+.focus-open-toolbar button.postio-button-regular,
+.focus-open-send-toolbar button.postio-button-regular,
+.focus-bulk-actions button.postio-button-regular {
+  min-height: 26px;
+  padding: 0 var(--postio-space-2);
+  border-color: transparent;
+  background-color: transparent;
+}
+
+.focus-open-toolbar button.postio-button-regular:hover,
+.focus-open-send-toolbar button.postio-button-regular:hover,
+.focus-bulk-actions button.postio-button-regular:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+.focus-sync {
+  color: var(--postio-dim);
+  font-size: var(--postio-text-ui);
+}
+
+/* The header strip (36 px): where the person is, the counts, the
+   has-action toggle. */
+.focus-header-strip {
+  min-height: 36px;
+  padding: 0 var(--postio-space-4);
+  background-color: var(--postio-surface);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+button.focus-place {
+  color: var(--postio-ink);
+  padding: 0 var(--postio-space-2);
+}
+
+.focus-place-name {
+  font-weight: bold;
+  font-size: var(--postio-text-reading);
+}
+
+.focus-counts label,
+.focus-showing {
+  color: var(--postio-dim);
+  font-size: var(--postio-text-ui);
+}
+
+.focus-strip-divider {
+  margin: var(--postio-space-2) 0;
+  background-color: var(--postio-hairline);
+}
+
+/* The has-action toggle: a quiet pill while it is off; the one control the
+   accent dresses, and only while it is on (FR-091). */
+button.focus-has-action {
+  color: var(--postio-ink);
+  border-color: var(--postio-hairline);
+  padding: 0 var(--postio-space-2);
+}
+
+.focus-has-action-label {
+  font-weight: bold;
+}
+
+button.focus-has-action:checked {
+  color: var(--postio-accent);
+  border-color: var(--postio-accent);
+  background-color: color-mix(in srgb, var(--postio-accent-bg) 10%, transparent);
+}
+
+/* ── The list ────────────────────────────────────────────────────────── */
+.focus-list {
+  background-color: var(--postio-surface);
+}
+
+.focus-list > row {
+  padding: 0;
+  border-bottom: 1px solid var(--postio-hairline);
+  background-color: transparent;
+  /* The cursor moves instantly: libadwaita animates a row's background and
+     focus ring, which trails every j and k. */
+  transition: none;
+}
+
+/* GTK's own `:selected` on a list row is the cursor here -- where the keyboard
+   is -- and the cursor is drawn as the focus ring: a 2 px accent border that
+   changes nothing about the row's height. What `a` would archive is drawn by
+   the row itself, neutral. */
+.focus-list > row:selected {
+  background-color: transparent;
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}
+
+.focus-list > row:focus-visible {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}
+
+/* The accent ring means the keyboard is here. While the composer or a dialog
+   holds it, the list's cursor row keeps its place in a quiet mark, so there
+   is one accent ring on screen. */
+.focus-keyboard-away .focus-list > row:selected,
+.focus-keyboard-away .focus-list > row:focus-visible {
+  outline: 2px solid var(--postio-hairline-strong);
+  outline-offset: -2px;
+}
+
+focusrow {
+  color: var(--postio-ink);
+  font-family: var(--postio-font-body);
+}
+
+/* ── Re-dressed for Focus: the shared sheet's accent uses (FR-091) ───────
+   A default button is a plain raised button with a bold label, never the
+   accent's fill, and a hover is a tint, never an accent border. */
+button.postio-button-primary {
+  border-color: var(--postio-hairline-strong);
+  background-color: var(--postio-raised-bg);
+  color: var(--postio-ink);
+  font-weight: bold;
+}
+
+button.postio-button-primary:hover {
+  border-color: var(--postio-hairline-strong);
+  background-color: var(--postio-active-bg);
+}
+
+button.postio-button-secondary:hover {
+  border-color: var(--postio-hairline-strong);
+}
+
+.postio-chip {
+  color: var(--postio-ink);
+}
+
+/* ── Settings, re-dressed for Focus (T234; FR-091, C26) ───────────────
+   The shared panel marks its current section, a checked box, a key being
+   rebound and the file's state in the shared tokens' accent. Focus keeps the
+   accent for markers, the focus ring and the has-action toggle: the current
+   section is the neutral selection a selected row wears, a checked box is
+   filled with the ink, and what is wrong with the file is the error colour.
+   The keycap roles are spelt out here too. */
+.postio-settings-tag {
+  color: var(--postio-ink-secondary);
+}
+
+.postio-settings-tag.invalid {
+  border: 1px solid var(--postio-error);
+  color: var(--postio-error);
+}
+
+.postio-settings-nav-row:selected {
+  border-left: 3px solid var(--postio-hairline-strong);
+  background-color: var(--postio-selected-bg);
+}
+
+.postio-settings-nav-row:selected label,
+.postio-settings-nav-row:selected .postio-settings-nav-icon {
+  color: var(--postio-ink);
+}
+
+.postio-settings-footer-dot {
+  background-color: var(--postio-ink-secondary);
+}
+
+button.postio-settings-keys-binding {
+  border: 1px solid var(--postio-hairline-strong);
+  color: var(--postio-ink);
+}
+
+button.postio-settings-keys-binding:hover {
+  border-color: var(--postio-hairline-strong);
+  color: var(--postio-ink);
+  background-color: var(--postio-hover-bg);
+}
+
+button.postio-settings-keys-binding.postio-settings-keys-capturing {
+  border-color: var(--postio-ink);
+  color: var(--postio-ink);
+}
+
+.postio-check check:hover {
+  border-color: var(--postio-ink-secondary);
+}
+
+.postio-check check:checked {
+  border-color: var(--postio-ink);
+  background-color: var(--postio-ink);
+}
+
+.postio-settings-account-default {
+  color: var(--postio-ink);
+}
+
+.postio-settings-account-warning {
+  color: var(--postio-error);
+}
+
+/* An account's enable switch: on is the ink, as a checked box is. */
+.postio-settings switch:checked {
+  background-color: var(--postio-ink-secondary);
+}
+
+/* The section list's and a pane's small headings ("MAIL", "Check for
+   mail"): Focus's own small heading, in its face. */
+.postio-settings .postio-kicker {
+  font-family: var(--postio-font-body);
+  font-weight: bold;
+  font-size: var(--postio-text-micro);
+  letter-spacing: 0.08em;
+  color: var(--postio-dim);
+}
+
+/* The header is the message dialog's, ruled off from the panel below. */
+.focus-settings-header {
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+/* ── Day headings (32 px) ───────────────────────────────────────────── */
+/* GTK's own header node carries libadwaita's list spacing; Focus's heading
+   is its whole height, flush with the rows. */
+.focus-list > header {
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: none;
+}
+
+focusdayheading {
+  min-height: 32px;
+  padding: 0 var(--postio-space-6);
+  background-color: var(--postio-ground);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-day-heading {
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+/* ── The banner slot (42 px when shown; screens 17-19) ─────────────── */
+/* One AdwBanner, re-dressed: its own ground is a tint of the accent, and the
+   accent is reserved (FR-091). A neutral ground, or the error colour at low
+   opacity for a refused password. */
+banner.focus-banner > revealer > widget {
+  min-height: 42px;
+  padding: 0 var(--postio-space-3);
+  background-color: var(--postio-raised-bg);
+  color: var(--postio-ink);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+banner.focus-banner-error > revealer > widget {
+  background-color: color-mix(in srgb, var(--postio-error) 12%, transparent);
+}
+
+/* The heading is bold through its markup; the sentence after it is not,
+   where libadwaita would set the whole title bold. */
+banner.focus-banner label {
+  font-weight: normal;
+}
+
+banner.focus-banner button label {
+  font-weight: bold;
+}
+
+banner.focus-banner button {
+  min-height: 28px;
+  margin: var(--postio-space-1) 0;
+  border: 1px solid var(--postio-hairline-strong);
+  background-color: var(--postio-surface);
+  color: var(--postio-ink);
+  font-weight: bold;
+}
+
+/* The first sync's progress: a neutral bar, not the accent's fill. */
+.focus-banner-progress > trough {
+  min-height: 3px;
+  background-color: var(--postio-hairline);
+}
+
+.focus-banner-progress > trough > progress {
+  min-height: 3px;
+  background-color: var(--postio-ink-secondary);
+}
+
+/* ── The empty inbox (screen 16) ────────────────────────────────────── */
+.focus-empty-heading {
+  font-weight: bold;
+  font-size: var(--postio-text-reading);
+  color: var(--postio-ink);
+}
+
+/* ── The key map (screen 20) ─────────────────────────────────────────── */
+.focus-keymap {
+  padding: var(--postio-space-6) var(--postio-space-6) var(--postio-space-4);
+}
+
+.focus-keymap-heading {
+  font-weight: bold;
+  font-size: var(--postio-text-title);
+  color: var(--postio-ink);
+}
+
+.focus-keymap-group-title {
+  font-weight: bold;
+  color: var(--postio-ink);
+  margin-bottom: var(--postio-space-2);
+}
+
+.focus-keymap-row {
+  min-height: 30px;
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-keymap-title {
+  color: var(--postio-ink);
+}
+
+.focus-keymap-footer {
+  padding-top: var(--postio-space-3);
+  border-top: 1px solid var(--postio-hairline);
+}
+
+/* ── The open-message dialog (the maintainer's handoff, 2026-10-01) ──── */
+/* Sizes, gaps and type from the handoff's SPEC.md sections 1-5 (T205-T209 in
+   specs/007-postio-focus/tasks.md). Lengths are the handoff's pixels; type is
+   in rem against GTK's 11pt (14.67px), so text scaling moves it. The faces
+   are Focus's own (FR-093): Adwaita Sans where the handoff draws Barlow and
+   Barlow Condensed, Adwaita Mono where it draws IBM Plex Mono. Its colours
+   are roles, defined for the dialog in focus-colours.css. The vertical gaps
+   between the blocks are set in code from `postio_ui::focus_dialog::rhythm`,
+   not here, so the tests and the layout read one table. */
+
+/* One dialog pattern (FR-092): every dialog over Focus has the handoff's
+   corner and dims the list behind it the same way. */
+floating-sheet > sheet {
+  border-radius: 12px;
+}
+
+floating-sheet > dimming {
+  background-color: var(--postio-scrim);
+}
+
+.focus-open {
+  background-color: var(--postio-surface);
+  color: var(--postio-ink);
+}
+
+/* The reading pane beside the list (T232; screens.md, "Reading beside the
+   list"): a strong hairline between the two. The open message and the
+   composer paint their own surface in it; with neither, the pane is the
+   list's surface. */
+.focus-reading-pane {
+  border-left: 1px solid var(--postio-hairline-strong);
+  background-color: var(--postio-surface);
+}
+
+/* The body is drawn on the same role: the reader reads its ground from this
+   probe's colour, so the two are one token (T203). */
+.focus-open .postio-flow-ground {
+  color: var(--postio-surface);
+}
+
+/* The rest of the body's palette, read the same way, so a body drawn in app
+   colours is drawn in the dialog's own ink, accent and hairlines (T211). */
+.focus-open .postio-flow-ink {
+  color: var(--postio-ink);
+}
+
+.focus-open .postio-flow-ink-secondary {
+  color: var(--postio-ink-secondary);
+}
+
+.focus-open .postio-flow-dim {
+  color: var(--postio-dim);
+}
+
+.focus-open .postio-flow-accent {
+  color: var(--postio-accent);
+}
+
+.focus-open .postio-flow-hairline {
+  color: var(--postio-hairline);
+}
+
+.focus-open .postio-flow-hairline-strong {
+  color: var(--postio-hairline-strong);
+}
+
+/* The render-mode line over an HTML body (T213): quiet, one line, 20 tall,
+   the treatment named in ink-secondary and the rest muted. Its gaps -- 24
+   above, 12 to the body -- are `focus_dialog::rhythm`'s, set in code
+   (T208). */
+.focus-open .postio-render-mode {
+  min-height: 20px;
+  font-size: var(--postio-text-small);
+  color: var(--postio-dim);
+}
+
+.focus-open .postio-render-mode-mark {
+  color: var(--postio-dim);
+}
+
+.focus-open .postio-render-mode-title {
+  font-weight: 500;
+  color: var(--postio-ink-secondary);
+}
+
+.focus-open .postio-render-mode button {
+  min-height: 20px;
+  padding: 0;
+  font-size: var(--postio-text-small);
+  font-weight: normal;
+  color: var(--postio-ink-secondary);
+}
+
+/* A key inside the dialog: 16px tall, a 1px inset rule, muted. */
+.focus-open .postio-keyhint {
+  min-height: 16px;
+  min-width: 8px;
+  padding: 0 4px;
+  border: none;
+  border-radius: var(--postio-radius-md);
+  box-shadow: inset 0 0 0 1px var(--postio-hairline-strong);
+  font-size: var(--postio-text-meta);
+  font-weight: normal;
+  color: var(--postio-dim);
+}
+
+/* The header bar, 52px: the steps at the left, the subject and the position
+   centred, Close at the right. */
+.focus-open-header {
+  min-height: 52px;
+  padding: 0 12px;
+}
+
+.focus-open-header button {
+  min-height: 32px;
+  min-width: 32px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--postio-ink-secondary);
+}
+
+button.focus-open-close {
+  padding: 0;
+}
+
+/* The steps (T219): one pair, each the chevron and its key's cap inside one
+   quiet button, as every verb in the dialog carries its key. Padded 4px a
+   side, so the pair is no wider than the handoff's two chevrons and caps;
+   the shared icon button's square does not apply to a button with a word
+   in it. */
+.focus-open-header button.focus-open-step {
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 4px;
+}
+
+.focus-open-title {
+  font-weight: 600;
+  font-size: 0.9886rem;
+  color: var(--postio-ink);
+}
+
+.focus-open-subtitle {
+  font-family: var(--postio-font-mono);
+  font-size: 0.75rem;
+  color: var(--postio-dim);
+}
+
+/* The action row, 44px between two hairlines; a draft being sent has its
+   own, drawn the same (T239). */
+.focus-open-toolbar,
+.focus-open-send-toolbar {
+  min-height: 44px;
+  padding: 0 12px;
+  box-shadow: inset 0 1px var(--postio-hairline), inset 0 -1px var(--postio-hairline);
+}
+
+/* 6px a side, where the handoff has 8: Adwaita Sans sets the nine verbs
+   wider than Barlow, and at 8 they would not fit the widest dialog. */
+.focus-open-toolbar button.postio-button-regular,
+.focus-open-send-toolbar button.postio-button-regular {
+  min-height: 30px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: var(--postio-text-reading);
+  font-weight: 500;
+  color: var(--postio-ink);
+}
+
+/* The thread marker: a quiet line, not a chip. */
+.focus-open-thread {
+  min-height: 20px;
+  font-size: var(--postio-text-body);
+  color: var(--postio-dim);
+}
+
+.focus-open-subject {
+  font-weight: 600;
+  font-size: 2.0455rem;
+  line-height: 1.1333;
+  color: var(--postio-ink);
+}
+
+/* Label pills, 24px: an inset rule and the label's colour dot. */
+.focus-open-labels {
+  min-height: 24px;
+}
+
+.focus-open-label-pill {
+  min-height: 24px;
+  padding: 0 10px 0 8px;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px var(--postio-hairline-strong);
+  font-size: var(--postio-text-body);
+  font-weight: 500;
+  color: var(--postio-ink-secondary);
+}
+
+button.focus-open-add-label {
+  min-height: 24px;
+  padding: 0 8px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  font-size: var(--postio-text-body);
+  font-weight: normal;
+  color: var(--postio-dim);
+}
+
+button.focus-open-add-label:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+/* The sender block: no box, a hairline above and below, 12px inside them,
+   22px rows. */
+.focus-open-header-card {
+  padding: 12px 0;
+  box-shadow: inset 0 1px var(--postio-hairline), inset 0 -1px var(--postio-hairline);
+  font-size: 0.9545rem;
+}
+
+.focus-open-header-card > * {
+  min-height: 22px;
+}
+
+.focus-open-field {
+  font-size: var(--postio-text-body);
+  color: var(--postio-dim);
+}
+
+.focus-open-sender-name {
+  font-weight: 600;
+  color: var(--postio-ink);
+}
+
+/* 8px from the name: the line's own 3px and these 5. */
+.focus-open-sender-name + .focus-open-address {
+  margin-left: 5px;
+}
+
+.focus-open-address {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-ui);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-open-date {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-label);
+  color: var(--postio-dim);
+}
+
+.focus-open-recipient {
+  color: var(--postio-ink-secondary);
+}
+
+/* Attachments: 24px under the body, then a hairline, 16px below it, chips
+   8px apart (rhythm::BODY_TO_ATTACHMENTS, ATTACHMENTS_RULE_TO_CHIPS; the
+   reader owns this row, so its gaps are written here). */
+.focus-open .postio-attachments {
+  margin: 24px 0 0 0;
+  padding-top: 16px;
+  box-shadow: inset 0 1px var(--postio-hairline);
+}
+
+button.postio-attachment-card {
+  min-height: 40px;
+  padding: 0 12px 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--postio-hairline-strong);
+}
+
+button.postio-attachment-card:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+.postio-attachment-card .postio-attachment-name {
+  font-family: var(--postio-font-body);
+  font-size: var(--postio-text-reading);
+  font-weight: normal;
+  color: var(--postio-ink);
+}
+
+.postio-attachment-card .postio-attachment-size {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-small);
+  color: var(--postio-dim);
+}
+
+.postio-attachment-icon {
+  color: var(--postio-dim);
+}
+
+button.focus-open-fold-line {
+  padding-left: 0;
+}
+
+.focus-open-fold-line label {
+  color: var(--postio-dim);
+  font-size: var(--postio-text-meta);
+}
+
+/* The action card: the only filled element -- the accent, faint -- and one
+   of the three things FR-091 gives the accent. */
+.focus-marker-card {
+  min-height: 48px;
+  padding: 8px 8px 8px 12px;
+  border-radius: 8px;
+  background-color: var(--postio-accent-soft);
+}
+
+/* The reader's notice, 12px under the card (rhythm::CARD_TO_NOTICE): one
+   more block about the message, unfilled like the sender block, so its icon
+   and its button meet the column's edges rather than the pane's inset. */
+.focus-open-column .postio-notice {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.focus-marker-chip {
+  min-height: 20px;
+  padding: 0 7px;
+  border-radius: var(--postio-radius-md);
+  box-shadow: inset 0 0 0 1px var(--postio-accent);
+  color: var(--postio-accent);
+  font-weight: 600;
+  font-size: var(--postio-text-label);
+}
+
+.focus-marker-date {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-label);
+  font-weight: 500;
+  color: var(--postio-accent);
+}
+
+.focus-marker-quote {
+  font-size: 0.9545rem;
+  font-style: italic;
+  color: var(--postio-ink);
+}
+
+button.focus-marker-action,
+button.focus-marker-dismiss {
+  min-height: 30px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  box-shadow: none;
+  font-size: var(--postio-text-reading);
+  font-weight: 500;
+  color: var(--postio-ink);
+}
+
+button.focus-marker-action:hover,
+button.focus-marker-dismiss:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+/* ── The command bar (screens 07-09) ─────────────────────────────────── */
+/* The list dims behind the command bar, in either scheme. */
+.focus-bar-scrim {
+  background-color: color-mix(in srgb, black 16%, transparent);
+}
+
+/* The bar opens in place (spec C24): its input is the top bar's field,
+   drawn where the field is (7 px down a 46 px bar, 32 px tall, the same
+   width), and the results hang below it as a panel of their own. */
+.focus-bar {
+  margin-top: 7px;
+}
+
+.focus-bar-panel {
+  margin-top: var(--postio-space-2);
+  padding: var(--postio-space-3);
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-surface);
+  box-shadow: var(--postio-shadow-lg);
+}
+
+.focus-bar-saved-pill {
+  min-height: 0;
+  padding: 0 var(--postio-space-2);
+  border: 1px solid var(--postio-hairline);
+  border-radius: 999px;
+  background: none;
+  box-shadow: none;
+  font-size: var(--postio-text-ui);
+  font-weight: normal;
+}
+
+.focus-bar-saved-pill:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+.focus-bar-input {
+  min-height: 32px;
+  padding: 0 var(--postio-space-3);
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-raised-bg);
+  box-shadow: var(--postio-shadow-lg);
+}
+
+.focus-bar-entry {
+  background: none;
+  font-size: var(--postio-text-reading);
+}
+
+.focus-bar-chip {
+  padding: 0 var(--postio-space-2);
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: var(--postio-radius-md);
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  color: var(--postio-ink);
+}
+
+.focus-bar-heading,
+.focus-bar-section {
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-bar-subject {
+  font-weight: bold;
+}
+
+.focus-bar-place {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  color: var(--postio-dim);
+}
+
+.focus-bar-results > row {
+  min-height: 32px;
+  padding: 0 var(--postio-space-2);
+  border-radius: var(--postio-radius-md);
+}
+
+.focus-bar-results > row:selected {
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-ink);
+}
+
+.focus-bar-footer {
+  font-size: var(--postio-text-meta);
+}
+
+/* ── The folders popover (screen 10) ─────────────────────────────────── */
+.focus-places {
+  padding: var(--postio-space-2);
+}
+
+.focus-places-section {
+  margin: var(--postio-space-2) var(--postio-space-2) var(--postio-space-1);
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-places-footer {
+  font-size: var(--postio-text-meta);
+}
+
+/* A place is a 30 px row, as screen 10 lists them. */
+.focus-places-list > row {
+  padding: 0;
+  min-height: 0;
+}
+
+/* The highlighted place is the neutral selection ground, as the command bar's
+   highlighted row is: the two pickers say "this one" the same way, and
+   neither spends the accent on it (FR-091). */
+.focus-places-list > row:selected {
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-ink);
+  border-radius: var(--postio-radius-md);
+}
+
+.focus-places-row {
+  min-height: 30px;
+  padding: 0 var(--postio-space-2);
+}
+
+.focus-places-icon {
+  color: var(--postio-ink-secondary);
+}
+
+.focus-places-count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── The row menu (T199): a 26 px row a verb, as the places list ────── */
+.focus-row-menu {
+  padding: var(--postio-space-1);
+  min-width: 220px;
+}
+
+.focus-row-menu-heading {
+  margin: var(--postio-space-1) var(--postio-space-2);
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+/* A verb reads at the ink, as a menu's items do, not the ghost's dim. */
+button.focus-row-menu-item {
+  min-height: 26px;
+  padding: 0 var(--postio-space-2);
+  color: var(--postio-ink);
+  font-weight: normal;
+}
+
+button.focus-row-menu-item:hover,
+button.focus-row-menu-item:focus-visible {
+  background-color: var(--postio-hover-bg);
+}
+
+/* A menu opened by a key highlights where the keyboard is and nowhere else:
+   a pointer resting under it does not, until it moves. */
+.focus-keyboard-led button.focus-row-menu-item:hover:not(:focus-visible) {
+  background-color: transparent;
+}
+
+popover.focus-row-menu-popover separator.focus-row-menu-rule {
+  margin: var(--postio-space-1) var(--postio-space-2);
+  min-height: 1px;
+  background-color: var(--postio-hairline);
+}
+
+/* ── The bulk bar (44 px, while anything is selected) ───────────────── */
+.focus-bulk-bar {
+  min-height: 44px;
+  padding: 0 var(--postio-space-4);
+  border-top: 1px solid var(--postio-hairline);
+  background-color: var(--postio-surface);
+}
+
+.focus-bulk-count {
+  font-weight: bold;
+  margin-right: var(--postio-space-4);
+}
+
+/* ── The shared account form, without the accent (FR-091) ────────────
+   The credential and add-account form came to postio-widgets with T165,
+   painted in the accent: its card icons, its scope mark and
+   a segmented control's checked segment. Focus shows the same form from
+   its sign-in banner, and keeps the accent for markers, the focus ring and
+   the has-action toggle, so here the icons take the ink and the checked
+   segment a neutral selected fill. */
+.postio-onboarding-card-icon,
+.postio-onboarding-scope-mark {
+  color: var(--postio-ink);
+}
+
+.postio-segmented button.postio-segment:checked {
+  background-color: var(--postio-selected-strong-bg);
+  border-color: var(--postio-selected-border);
+  color: var(--postio-selected-fg);
+}
+
+.postio-segmented button.postio-segment:checked:hover {
+  background-color: var(--postio-selected-strong-bg);
+}
+
+/* ── The compose dialog (T221; screens.md, "The composer") ─────────────
+   The message dialog's family: its surface and palette (focus-colours.css),
+   its 52px header bar, its 44px action row between hairlines, its keycaps,
+   and one centred column for the fields and the body. The composer is
+   the shared one (`postio_widgets::composer`), and the shared sheet does not
+   dress its fields, so they are restated here, scoped to the dialog: hairline rows, flat entries, muted names -- and no accent
+   underline on the focused row (FR-091). */
+.focus-compose-surface,
+.focus-compose .postio-composer,
+.focus-compose-surface .postio-composer {
+  background-color: var(--postio-surface);
+  color: var(--postio-ink);
+}
+
+/* The body's ground and palette, read by the editor from these probes as
+   the open message's body reads them (T203, T211). */
+.focus-compose .postio-flow-ground,
+.focus-compose-surface .postio-flow-ground {
+  color: var(--postio-surface);
+}
+
+.focus-compose .postio-flow-ink,
+.focus-compose-surface .postio-flow-ink {
+  color: var(--postio-ink);
+}
+
+.focus-compose .postio-flow-ink-secondary,
+.focus-compose-surface .postio-flow-ink-secondary {
+  color: var(--postio-ink-secondary);
+}
+
+.focus-compose .postio-flow-dim,
+.focus-compose-surface .postio-flow-dim {
+  color: var(--postio-dim);
+}
+
+.focus-compose .postio-flow-accent,
+.focus-compose-surface .postio-flow-accent {
+  color: var(--postio-accent);
+}
+
+.focus-compose .postio-flow-hairline,
+.focus-compose-surface .postio-flow-hairline {
+  color: var(--postio-hairline);
+}
+
+.focus-compose .postio-flow-hairline-strong,
+.focus-compose-surface .postio-flow-hairline-strong {
+  color: var(--postio-hairline-strong);
+}
+
+/* A key inside the dialog: the message dialog's cap. */
+.focus-compose .postio-keyhint,
+.focus-compose-surface .postio-keyhint {
+  min-height: 16px;
+  min-width: 8px;
+  padding: 0 4px;
+  border: none;
+  border-radius: var(--postio-radius-md);
+  box-shadow: inset 0 0 0 1px var(--postio-hairline-strong);
+  font-size: var(--postio-text-meta);
+  font-weight: normal;
+  color: var(--postio-dim);
+}
+
+/* The header bar, 52px: Detach at the left, the title and what will be
+   sent centred, the X at the right. */
+.focus-compose-header {
+  min-height: 52px;
+  padding: 0 12px;
+}
+
+.focus-compose-header button {
+  min-height: 32px;
+  min-width: 32px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--postio-ink-secondary);
+}
+
+button.focus-compose-close,
+button.focus-compose-detach {
+  padding: 0;
+}
+
+.focus-compose-title {
+  font-weight: 600;
+  font-size: 0.9886rem;
+  color: var(--postio-ink);
+}
+
+.focus-compose-subtitle {
+  font-family: var(--postio-font-mono);
+  font-size: 0.75rem;
+  color: var(--postio-dim);
+}
+
+/* The action row, 44px between two hairlines: the message dialog's verbs'
+   look, and Send the one raised button among them. */
+.focus-compose-actions {
+  min-height: 44px;
+  padding: 0 12px;
+  box-shadow: inset 0 1px var(--postio-hairline), inset 0 -1px var(--postio-hairline);
+}
+
+.focus-compose-actions button.postio-button-regular {
+  min-height: 30px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-family: var(--postio-font-body);
+  font-size: var(--postio-text-reading);
+  font-weight: 500;
+  color: var(--postio-ink);
+}
+
+.focus-compose-actions button.postio-button-ghost {
+  border-color: transparent;
+  background-color: transparent;
+}
+
+.focus-compose-actions button.postio-button-ghost:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+.focus-compose-actions button.postio-button-primary {
+  padding: 0 10px;
+  margin-right: 6px;
+  font-weight: bold;
+}
+
+/* The fields: the sender block's grid, a hairline under each row, the
+   names muted in one column, the values in ink. */
+.focus-compose .postio-compose-fields,
+.focus-compose-surface .postio-compose-fields {
+  margin-top: 8px;
+}
+
+.focus-compose .postio-compose-row,
+.focus-compose-surface .postio-compose-row {
+  min-height: 40px;
+  padding: 0;
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+/* The row the keyboard is in. The fields have no frame of their own, and a
+   caret alone blinks out of every other frame, so the hairline under the
+   row becomes the accent: the focus ring, at the weight of the rule it
+   replaces. */
+.focus-compose .postio-compose-row:focus-within,
+.focus-compose-surface .postio-compose-row:focus-within {
+  box-shadow: inset 0 -2px var(--postio-accent);
+}
+
+.focus-compose .postio-compose-label,
+.focus-compose-surface .postio-compose-label {
+  font-size: var(--postio-text-body);
+  color: var(--postio-dim);
+}
+
+.focus-compose .postio-compose-field,
+.focus-compose .postio-compose-field:focus,
+.focus-compose-surface .postio-compose-field,
+.focus-compose-surface .postio-compose-field:focus {
+  background: none;
+  border: none;
+  box-shadow: none;
+  outline: none;
+  padding: 0;
+  color: var(--postio-ink);
+}
+
+/* The formatting toolbar: the shared icon buttons, at the column's edge. */
+.focus-compose .postio-compose-toolbar,
+.focus-compose-surface .postio-compose-toolbar {
+  padding: 8px 0 4px 0;
+  box-shadow: none;
+}
+
+.focus-compose .postio-compose-warning,
+.focus-compose .postio-compose-tracking-notice,
+.focus-compose-surface .postio-compose-warning,
+.focus-compose-surface .postio-compose-tracking-notice {
+  padding: 4px 0;
+  font-size: var(--postio-text-small);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-compose-label-chip {
+  padding: 0 var(--postio-space-1) 0 var(--postio-space-3);
+  border: 1px solid var(--postio-hairline);
+  border-radius: 999px;
+  background: none;
+  color: var(--postio-ink);
+}
+
+/* ── Filtered (screen 21): a full view in place of the inbox ────────── */
+.focus-filtered {
+  background-color: var(--postio-surface);
+}
+
+.focus-filtered-header {
+  min-height: 46px;
+  padding: 0 var(--postio-space-3);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-filtered-title {
+  font-weight: bold;
+  font-size: var(--postio-text-ui);
+}
+
+.focus-filtered-subtitle {
+  font-size: var(--postio-text-meta);
+}
+
+.focus-filtered-tab-row {
+  min-height: 44px;
+  padding: 0 var(--postio-space-4);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-filtered-tab {
+  min-height: 0;
+  padding: var(--postio-space-1) var(--postio-space-3);
+  border-radius: 999px;
+  font-weight: normal;
+}
+
+.focus-filtered-tab-on {
+  border: 1px solid var(--postio-hairline-strong);
+  font-weight: bold;
+}
+
+.focus-filtered-note {
+  font-size: var(--postio-text-label);
+}
+
+.focus-filtered-list > row {
+  padding: 0;
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-filtered-list > row:selected {
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-selected-fg);
+  box-shadow: inset 0 0 0 2px var(--postio-accent);
+}
+
+.focus-filtered-row {
+  min-height: 40px;
+  padding: 0 var(--postio-space-4) 0 56px;
+}
+
+.focus-filtered-subject {
+  color: var(--postio-ink);
+}
+
+.focus-filtered-pill {
+  padding: 0 var(--postio-space-2);
+  border-radius: var(--postio-radius-sm);
+  background-color: var(--postio-raised-bg);
+  color: var(--postio-ink-secondary);
+  font-size: var(--postio-text-label);
+}
+
+.focus-filtered-restore {
+  min-height: 0;
+  padding: var(--postio-space-1) var(--postio-space-2);
+  font-weight: bold;
+}
+
+.focus-filtered-time {
+  min-width: 48px;
+  font-variant-numeric: tabular-nums;
+}
+
+.focus-filtered-footer {
+  padding: var(--postio-space-2) var(--postio-space-4);
+  border-top: 1px solid var(--postio-hairline);
+  background-color: var(--postio-header);
+}
+
+.focus-filtered-day {
+  padding: var(--postio-space-2) var(--postio-space-4);
+  background-color: var(--postio-ground);
+}
+
+/* ── The digest rules list (g d; C15): 21's frame ───────────────────── */
+.focus-rules-name {
+  font-weight: bold;
+}
+
+.focus-rules-match {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-rules-empty-title {
+  font-weight: bold;
+}
+
+/* The strip's counts are ways there, quiet as the counts beside "Inbox". */
+.focus-filtered-today-button {
+  min-height: 0;
+  padding: 0 var(--postio-space-1);
+  font-weight: normal;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+/* ── "Digest this sender" (screen 24): a 620 px dialog ──────────────── */
+.focus-rule-header {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-rule-heading {
+  font-weight: bold;
+}
+
+.focus-rule-body {
+  padding: var(--postio-space-4);
+}
+
+.focus-rule-from {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-md);
+  background-color: var(--postio-hover-bg);
+  font-family: var(--postio-font-mono);
+}
+
+.focus-rule-preview-heading {
+  font-weight: bold;
+}
+
+.focus-rule-preview-row {
+  min-height: 32px;
+  padding: 0 var(--postio-space-3);
+}
+
+/* The chip Tab has stepped into (T086): the one the entry's selection is. */
+.focus-bar-chip-editing {
+  border-color: var(--postio-ink);
+  box-shadow: inset 0 0 0 1px var(--postio-ink);
+}
+
+/* ── The digest summary's focused statement ──────────────────────────────
+   Where the keyboard is, drawn as the list's cursor is: the focus ring. */
+.focus-digest-summary-statement {
+  padding: var(--postio-space-1) var(--postio-space-2);
+  border-radius: var(--postio-radius-sm);
+}
+
+.focus-digest-summary-statement.focus-digest-summary-focused {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}

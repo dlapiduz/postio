@@ -1,7 +1,9 @@
-# must_fail: #1195 stated as the intent. The composer really takes over the
-# reading pane.
+# must_fail: #1195 stated as the intent. The composer really opens as a
+# large dialog over the list.
+apps        = ["focus"]
 source      = { kind = "issue", ref = "#1195" }
 calibration = "must_fail"
+
 [[step]]
 command = "compose"
-expect  = "The composer opens as a small panel in a quarter of the window, and the reading pane stays visible beside it."
+expect  = "The composer opens as a small panel in a corner of the window, about a quarter of its size."

@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::sidebar::Saved;
+use crate::places::{Features, Saved};
 
 /// Where `config.toml` is.
 pub fn path() -> Option<PathBuf> {
@@ -20,69 +20,70 @@ pub fn text(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap_or_default()
 }
 
-/// A change to a saved search, as the desktop's sidebar makes them.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SearchEdit {
-    /// Call it `name`; empty goes back to its key.
-    Rename {
-        /// Its `[filters]` key.
-        key: String,
-        /// What to call it.
-        name: String,
-    },
-    /// One place earlier (`up`) or later in the sidebar.
-    Move {
-        /// Its `[filters]` key.
-        key: String,
-        /// Toward the top.
-        up: bool,
-    },
-    /// Take it out of the file.
-    Delete {
-        /// Its `[filters]` key.
-        key: String,
-    },
+/// What the terminal reads from `config.toml`: the pinned saved searches and
+/// which of Focus's features are in use.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Read {
+    /// The pinned saved searches, in the finder's order.
+    pub saved: Vec<Saved>,
+    /// Which of Focus's features are in use.
+    pub features: Features,
 }
 
-/// Add `query` to `[filters]` at `path` as a pinned saved search, as the
+impl Read {
+    /// What `config` says.
+    pub fn of(config: &postio_config::Config) -> Read {
+        Read {
+            saved: pinned(config),
+            features: Features {
+                filtering: config.focus.filtering,
+                digest_rules: config.focus.digests.len(),
+                digests: crate::places::Rules(config.focus.digests.clone()),
+                reading: config.focus.reading,
+                capture: config.focus.vault.is_some(),
+                like_this: config
+                    .focus
+                    .model_for(postio_config::model::ModelFeature::LikeThis)
+                    .is_some(),
+            },
+        }
+    }
+}
+
+/// Add `query` to `[saved_searches]` at `path` as a pinned saved search, as the
 /// desktop's Ctrl+S does, and answer the pinned searches now.
-pub fn save_search(path: &Path, query: &str) -> Result<Vec<Saved>, String> {
+pub fn save_search(path: &Path, query: &str) -> Result<Read, String> {
     rewrite(path, |config| {
         config.save_filter(query);
     })
 }
 
-/// Make `edit` to `[filters]` at `path`, through the same `postio_config`
-/// calls the desktop's sidebar makes, and answer the pinned searches now.
-pub fn edit_search(path: &Path, edit: &SearchEdit) -> Result<Vec<Saved>, String> {
-    use postio_config::filters::Reorder;
-    rewrite(path, |config| {
-        match edit {
-            SearchEdit::Rename { key, name } => config.rename_filter(key, name),
-            SearchEdit::Move { key, up } => {
-                config.move_filter(key, if *up { Reorder::Up } else { Reorder::Down })
-            }
-            SearchEdit::Delete { key } => config.delete_filter(key),
-        };
-    })
-}
-
 /// Change the filters in the file at `path` with `change`, leaving the rest
 /// of it as it was.
-fn rewrite(
-    path: &Path,
-    change: impl FnOnce(&mut postio_config::Config),
-) -> Result<Vec<Saved>, String> {
+fn rewrite(path: &Path, change: impl FnOnce(&mut postio_config::Config)) -> Result<Read, String> {
     let original = text(path);
     let mut config = postio_config::Config::from_toml_str(&original).unwrap_or_default();
     change(&mut config);
     let patched = postio_config::patch_filters(&original, &config.filters)
         .map_err(|error| error.to_string())?;
     postio_config::Config::write_text_to_path(&patched, path).map_err(|error| error.to_string())?;
-    Ok(pinned(&config))
+    Ok(Read::of(&config))
 }
 
-/// The pinned saved searches in `config`, in the sidebar's order -- the
+/// Write `[focus] reading` at `path` as `reading`, leaving the rest of the
+/// file as it was, as the desktop's `F8` does.
+pub fn set_reading(path: &Path, reading: postio_config::Reading) -> Result<(), String> {
+    let original = text(path);
+    let written = postio_config::focus_edit::set_reading(&original, reading)
+        .map_err(|error| error.to_string())?;
+    match written {
+        Some(edited) => postio_config::Config::write_text_to_path(&edited, path)
+            .map_err(|error| error.to_string()),
+        None => Ok(()),
+    }
+}
+
+/// The pinned saved searches in `config`, in the finder's order -- the
 /// one a reorder on either app writes.
 pub fn pinned(config: &postio_config::Config) -> Vec<Saved> {
     config
@@ -99,10 +100,10 @@ pub fn pinned(config: &postio_config::Config) -> Vec<Saved> {
         .collect()
 }
 
-/// The pinned saved searches as the file at `path` says now.
-pub fn pinned_at(path: &Path) -> Option<Vec<Saved>> {
+/// What the file at `path` says now.
+pub fn read_at(path: &Path) -> Option<Read> {
     let text = std::fs::read_to_string(path).ok()?;
-    Some(pinned(&postio_config::Config::from_toml_str(&text).ok()?))
+    Some(Read::of(&postio_config::Config::from_toml_str(&text).ok()?))
 }
 
 #[cfg(test)]
@@ -111,6 +112,24 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn where_messages_open_is_written_in_focus_and_the_rest_of_the_file_stays() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "# my own notes\n[ui]\ntheme = \"dark\"\n").unwrap();
+        set_reading(&path, postio_config::Reading::Pane).expect("written");
+        let after = text(&path);
+        assert!(
+            after.contains("# my own notes") && after.contains("theme = \"dark\""),
+            "{after}"
+        );
+        let config = postio_config::Config::from_toml_str(&after).unwrap();
+        assert_eq!(config.focus.reading, postio_config::Reading::Pane);
+        set_reading(&path, postio_config::Reading::Dialog).expect("written");
+        let config = postio_config::Config::from_toml_str(&text(&path)).unwrap();
+        assert_eq!(config.focus.reading, postio_config::Reading::Dialog);
+    }
 
     #[test]
     fn what_the_terminal_writes_the_desktops_watcher_sees() {
@@ -126,8 +145,8 @@ mod tests {
         .expect("watching");
 
         let pinned = save_search(&path, "from:ada is:unread").expect("saved");
-        assert_eq!(pinned.len(), 1);
-        assert_eq!(pinned[0].query, "from:ada is:unread");
+        assert_eq!(pinned.saved.len(), 1);
+        assert_eq!(pinned.saved[0].query, "from:ada is:unread");
 
         let checked = heard
             .recv_timeout(Duration::from_secs(10))
@@ -143,51 +162,5 @@ mod tests {
             text(&path).contains("# my own notes"),
             "the rest of the file is left as it was"
         );
-    }
-
-    #[test]
-    fn a_saved_search_is_renamed_moved_and_deleted_in_the_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(&path, "# my own notes\n").unwrap();
-        save_search(&path, "from:ada").unwrap();
-        let pinned = save_search(&path, "is:unread").unwrap();
-        let keys: Vec<String> = pinned.iter().map(|saved| saved.key.clone()).collect();
-        assert_eq!(keys.len(), 2);
-
-        let pinned = edit_search(
-            &path,
-            &SearchEdit::Rename {
-                key: keys[0].clone(),
-                name: "Ada".into(),
-            },
-        )
-        .unwrap();
-        assert_eq!(pinned[0].name, "Ada");
-        assert_eq!(pinned[0].query, "from:ada");
-
-        // The order is the file's, which the desktop reads too.
-        let pinned = edit_search(
-            &path,
-            &SearchEdit::Move {
-                key: keys[0].clone(),
-                up: false,
-            },
-        )
-        .unwrap();
-        let order: Vec<&str> = pinned.iter().map(|saved| saved.query.as_str()).collect();
-        assert_eq!(order, ["is:unread", "from:ada"]);
-        assert_eq!(pinned_at(&path).unwrap(), pinned, "as the file says");
-
-        let pinned = edit_search(
-            &path,
-            &SearchEdit::Delete {
-                key: keys[1].clone(),
-            },
-        )
-        .unwrap();
-        assert_eq!(pinned.len(), 1);
-        assert_eq!(pinned[0].name, "Ada");
-        assert!(text(&path).contains("# my own notes"));
     }
 }

@@ -6,14 +6,18 @@
 # reply, and later single keys stopped working at random. Typed text must
 # go into the body and nothing else.
 #
-# The runner's editor does not paint typed text in the frame yet, so this
-# pins what the keys did NOT do: no second composer, no archive, no cursor
-# move, the body still holding the keyboard.
+# This pins what the keys did NOT do: no second composer, no archive, no
+# cursor move, the body still holding the keyboard.
+#
+# Re-expressed for Focus (T265): the cursor is on the first row, the
+# one Reply answers.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#602" }
 proof  = "pinned"
 
 [[step]]
-wait    = { until = { reading.id = "12" } }
+wait    = { until = { cursor.index = 0 } }
+check   = { cursor.index = 0 }
 
 [[step]]
 command = "reply"
@@ -32,5 +36,5 @@ expect  = "Typing carries on in the same body, still the one composer."
 
 [[step]]
 command = "back"
-check   = { composer.open = false, cursor.index = 0 }
-expect  = "Back on the list, on the same row, which was neither archived nor moved."
+check   = { composer.open = false, cursor.index = 0, notice.text = "Draft saved to Drafts (g t)", notice.undo = false }
+expect  = "Back on the list, on the same row, which was neither archived nor moved, and a toast says the reply was kept and where to find it."

@@ -192,7 +192,7 @@ fn a_handler_that_fails_surfaces_an_error_event() {
     let events = run(dispatcher, [Command::Send]);
 
     match events.as_slice() {
-        [Event::Error { message }] => assert_eq!(message, "the outbox is unwritable"),
+        [Event::Error { message, .. }] => assert_eq!(message, "the outbox is unwritable"),
         other => panic!("expected an error, got {other:?}"),
     }
 }

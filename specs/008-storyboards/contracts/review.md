@@ -9,7 +9,7 @@ between them, and what comes back. The reasoning is in research R9 and R10.
 implementing session                      ux-reviewer (fresh agent, Opus)
 ────────────────────                      ──────────────────────────────
 /ux-review
-  storyboards.sh run --app <app> --variants
+  storyboards.sh run --variants
   storyboards.sh base
   postio-storyboard bundle  ──► bundle/
   postio-storyboard prompt  ──► prompt.txt ──────►  reads the SKILL.md files,
@@ -53,11 +53,10 @@ are listed by count only.
 
 **Design screens.** The bundle copies only the screens a storyboard names.
 
-- **Classic** names the canvas renders already in `Design/screens/`, from
-  `01-inbox-reading.png` to `24-app-icon.png`.
-- **Focus** names the scrubbed references committed on
-  `feature/postio-focus`. These are the ones its `shot` compares against at
-  1440×900.
+- A storyboard's `design` names a render committed in `Design/screens/`.
+  Postio's own references are never committed
+  (specs/007-postio-focus/screens.md), so a screen that has none cites
+  screens.md's number in a comment and the bundle carries no design for it.
 - **Never `Design/postio-focus-design/`.** That folder is untracked and its
   PNGs carry a real first name. A bundle may be summarised on a public PR, so
   `bundle` refuses any design path outside the committed reference
@@ -105,9 +104,9 @@ is:
     {
       "storyboard": "archive-walks-down",
       "step": "archive",
-      "app": "classic",
+      "app": "focus",
       "variant": "default",
-      "frame": "runs/classic/archive-walks-down/default/02.outlined.png",
+      "frame": "runs/focus/archive-walks-down/default/02.outlined.png",
       "verdict": "fail",
       "severity": "wrong",
       "says": "After archiving, the list scrolls back to the top and the cursor lands on the first row, so the next `a` archives a message the person never looked at.",
@@ -118,9 +117,9 @@ is:
     {
       "storyboard": "archive-walks-down",
       "step": "archive",
-      "app": "classic",
+      "app": "focus",
       "variant": "scheme=dark",
-      "frame": "runs/classic/archive-walks-down/scheme=dark/02.outlined.png",
+      "frame": "runs/focus/archive-walks-down/scheme=dark/02.outlined.png",
       "severity": "polish",
       "says": "The undo toast's button has less contrast than the canvas's.",
       "rule": "canvas 07-dark"

@@ -68,8 +68,8 @@ and `postio-app`.
 > `postio-account` was still `postio-imap` (#153); the block above is the
 > record of what was run.** The workspace has twenty crates now
 > (`Cargo.toml` members), `postio-ffi` and `postio-ui` among them, and the
-> exclusion set is unchanged: `postio-gtk` and `postio-app` are still the
-> only two behind `glib-2.0`. The Swift frontend this ADR plans is built —
+> exclusion set is still the GTK crates, the only ones behind `glib-2.0`:
+> today `postio-gtk` (the desktop app) and `postio-widgets`. The Swift frontend this ADR plans is built —
 > `macos/Package.swift`, `macos/Sources/Postio` and `macos/Sources/PostioKit`
 > over `crates/postio-ffi` — as the read-only slice the decision line
 > describes; compose is still deferred.

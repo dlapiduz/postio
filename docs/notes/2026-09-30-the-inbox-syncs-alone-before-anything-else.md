@@ -8,15 +8,13 @@ backfill or the watcher has to keep that, because Postio Focus's whole screen
 is the inbox ("with Focus it is critical that the inbox headers and messages
 sync first", maintainer).
 
-## What was wrong
+## Why ranking is not enough
 
-`sync_priority` ranks which mailbox *starts* first, and `queue_every_mailbox`
-sorts by it. That is not the same as INBOX *finishing* first. `sync_wave`
-admits up to `sync_lanes` mailboxes at once, so INBOX started beside the next
-folder(s) in rank, their header batches interleaved on the one store writer
-and the one connection budget, and every committed batch in any lane rang the
-yield point that claimed bodies for whichever folder had rows. The log of the
-mock server shows other mailboxes' header fetches between INBOX's.
+`sync_priority` ranks which mailbox *starts* first. That is not INBOX
+*finishing* first: `sync_wave` admits up to `sync_lanes` mailboxes at once, so
+without the rule below INBOX's header batches interleave with the next
+folders' on the one store writer and the one connection budget, and every
+committed batch in any lane claims bodies for whichever folder has rows.
 
 ## The rule
 

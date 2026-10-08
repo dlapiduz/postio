@@ -775,6 +775,7 @@ struct Candidate {
     from_name: Option<String>,
     from_address: Option<String>,
     received_at: DateTime<Utc>,
+    preview: Option<String>,
     snippet: String,
     bm25: f64,
     sender_times_seen: i64,
@@ -792,6 +793,7 @@ impl Candidate {
                 .from_address
                 .map(|address| EmailAddress::new(self.from_name, address)),
             received_at: self.received_at,
+            preview: self.preview,
             snippet: self.snippet,
             score: self.score,
         }
@@ -826,6 +828,9 @@ struct Plan {
     /// than, say, an unrelated `from:` value that happens to also be a valid
     /// (if redundant) constraint on the same rows.
     match_param: Option<turso::Value>,
+    /// The same expression for the body index: each term folded the way the
+    /// body text was, joined after folding. See [`Plan::match_params`].
+    body_match_param: Option<turso::Value>,
 }
 
 impl Plan {
@@ -865,6 +870,7 @@ impl Plan {
         let account = request.account;
         let mut has_match = false;
         let mut match_param = None;
+        let mut body_match_param = None;
 
         // Negated terms are excluded across both indexes rather than folded
         // into each one's own match, and that is a correctness fix rather
@@ -898,6 +904,13 @@ impl Plan {
             .collect::<Vec<_>>();
         if !positive.is_empty() {
             let expr = positive.join(" AND ");
+            body_match_param = Some(turso::Value::Text(
+                positive
+                    .iter()
+                    .map(|literal| postio_model::fold::fold(literal))
+                    .collect::<Vec<_>>()
+                    .join(" AND "),
+            ));
             // The match itself has moved into the join (see `Plan::join_sql`),
             // because free text now has to reach two indexes and a row that
             // matched in either one is a hit. `MATCH` cannot be written as an
@@ -938,6 +951,7 @@ impl Plan {
             account,
             has_match,
             match_param,
+            body_match_param,
         }
     }
 
@@ -999,24 +1013,26 @@ impl Plan {
     /// composing a statement has to think about the order once, here, rather
     /// than each getting it right separately.
     fn match_params(&self, _form: Form) -> Vec<turso::Value> {
-        let Some(expr) = &self.match_param else {
+        let (Some(expr), Some(folded)) = (&self.match_param, &self.body_match_param) else {
             return Vec::new();
         };
         // The body index is built over folded text, so the body's half of the
         // expression is folded to match. The metadata index is not -- its
         // columns are stored as they read -- so that half goes through
         // unchanged. Both or neither, per `postio_model::fold`.
-        let folded = match expr {
-            turso::Value::Text(text) => turso::Value::Text(postio_model::fold::fold(text)),
-            other => other.clone(),
-        };
+        //
+        // Each term is folded before the terms are joined, never the joined
+        // expression: folding lowercases, and to the index a lowercase `and`
+        // is a word rather than the operator. Folding the whole of
+        // `"meeting" AND "agenda"` asked every body for "meeting", "and" or
+        // "agenda" -- most of a real mailbox, 200 seconds to count.
         // Two, either way. The driven form writes the term as `?1`/`?2` and
         // uses each twice -- once to score, once to match -- because
         // `fts_score` returns `0.0` when the two are different parameters;
         // see [`HITS_JOIN`]. The probed form has no score and one `fts_match`
         // per arm, and its `?`s are bare because its match sits in the
         // `WHERE`, after the conditions.
-        vec![expr.clone(), folded]
+        vec![expr.clone(), folded.clone()]
     }
 
     /// [`Plan::source_sql`], but for `fetch` specifically, where the join order
@@ -1340,9 +1356,9 @@ impl Plan {
                  (SELECT max(c.times_seen) FROM contacts c
                     WHERE c.address_normalized = a.address_normalized
                       {affinity}) AS sender_times_seen,
-                 0 AS unused
+                 sub.preview
              FROM (SELECT
-                     m.id, m.thread_id, m.mailbox_id, m.subject, m.received_at,
+                     m.id, m.thread_id, m.mailbox_id, m.subject, m.received_at, m.preview,
                      (SELECT r.id FROM recipients r
                         WHERE r.message_id = m.id AND r.kind = 'from'
                         ORDER BY r.position LIMIT 1) AS from_recipient
@@ -1397,6 +1413,7 @@ impl Plan {
                         from_name: row.col(5)?,
                         from_address: row.col(6)?,
                         sender_times_seen: row.col::<Option<i64>>(7)?.unwrap_or(0),
+                        preview: row.col(8)?,
                         // Filled in below, from the pool.
                         bm25: 0.0,
                         // Filled by whoever can read the body — see
@@ -1578,6 +1595,23 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
                 State::Unread => ("m.seen = 0".to_string(), Vec::new()),
                 State::Read => ("m.seen = 1".to_string(), Vec::new()),
                 State::Flagged => ("m.flagged = 1".to_string(), Vec::new()),
+                // The promoted headers' columns (spec 007, research R8).
+                // NULL is "not known yet", and a NULL comparison is no
+                // match: mail whose headers nothing has read is neither.
+                State::Bulk => (
+                    format!(
+                        "(m.unsubscribe_offered = 1 OR (m.automation & {}) <> 0)",
+                        postio_model::promoted::PRECEDENCE
+                    ),
+                    Vec::new(),
+                ),
+                State::Automated => (
+                    format!(
+                        "(m.automation & {}) <> 0",
+                        postio_model::promoted::AUTO_SUBMITTED
+                    ),
+                    Vec::new(),
+                ),
             }
         }
         Filter::After(date) => (
@@ -1698,6 +1732,7 @@ mod tests {
             account: AccountScope::Unified,
             has_match: true,
             match_param: Some(turso::Value::Text("invoice".to_owned())),
+            body_match_param: Some(turso::Value::Text("invoice".to_owned())),
         }
     }
 

@@ -14,7 +14,7 @@
 //! everyone, permanently, and does nothing for the next runner that is
 //! busier. Two landings on 2026-09-02 did exactly that: `postio-config`'s
 //! watch debounce went 60 ms → 300 ms and its quiet period 400 → 600 ms, and
-//! `app_suite`'s dwell went 80 ms → 500 ms. Neither made its test correct.
+//! the classic app suite's dwell went 80 ms → 500 ms. Neither made its test correct.
 //!
 //! With one definition, patience becomes a dial: see [`patience`].
 //!
@@ -93,7 +93,7 @@ pub fn patience_from(raw: Option<&str>) -> Duration {
 /// `base`, scaled by `POSTIO_TEST_PATIENCE`.
 ///
 /// For a suite whose deadline is deliberately not [`patience`]'s. Several
-/// were written with their own base -- `app_suite` waits 10s for the engine
+/// were written with their own base -- the classic app suite waited 10s for the engine
 /// to settle, which is a considered number and not the same question as "how
 /// long before a wait is a failure". Those keep their base and still answer
 /// to the dial, instead of being rounded to this crate's default and either
@@ -218,7 +218,8 @@ pub fn settle_until_within(
                 );
             }
             // The deadline, not this crate's default. `settle_until_within`
-            // is called with 120s by `gtk_suite`'s own wrapper, and saying
+            // is called with 120s by the classic GTK suite's own
+            // wrapper, and saying
             // "{BASE_MILLIS}ms" there described a budget that was never in
             // force — which read as a deadline firing twenty-four times late
             // and sent #1452 looking for a pump that had blocked (#957).
@@ -360,8 +361,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "deadline was 20ms")]
     fn a_timeout_reports_the_deadline_it_actually_had() {
-        // #957. `gtk_suite` has its own `settle_until` that waits **120
-        // seconds**, deliberately -- those cases wait on WebKit loading a
+        // #957. The classic GTK suite had its own `settle_until` that waited
+        // **120 seconds**, deliberately -- those cases wait on WebKit loading a
         // document, which is a different order of thing from "a widget
         // should have updated by now". Every timeout it produced said
         //

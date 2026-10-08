@@ -20,7 +20,7 @@ use postio_config::paths::Platform;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
-use postio_core::{Context, ContextSet, Recovery, registry};
+use postio_core::{Context, ContextSet, Recovery, Requirement, RequirementSet, registry};
 
 fn document_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -49,6 +49,10 @@ fn where_available(contexts: ContextSet) -> String {
             Context::Parts => "parts panel",
             Context::Accounts => "account list",
             Context::Keys => "keybinding list",
+            Context::Picker => "picker",
+            Context::Digest => "digest",
+            Context::Filtered => "Filtered view",
+            Context::Capture => "capture sheet",
         })
         .collect();
     let mut sentence = names.join(", ");
@@ -56,6 +60,25 @@ fn where_available(contexts: ContextSet) -> String {
         first.make_ascii_uppercase();
     }
     sentence
+}
+
+/// Which apps offer a command, when it is not all of them: the one keymap
+/// gives every command the same key in every app, and an app that does not
+/// offer one leaves its key free (specs/007-postio-focus research R4).
+fn which_apps(requires: RequirementSet) -> &'static str {
+    // Focus is the desktop app and the terminal (spec 007 C27, C29), so a
+    // Focus command is one only macOS leaves out.
+    if requires.contains(Requirement::Focus) {
+        " (not macOS)"
+    } else if requires.contains(Requirement::Terminal) {
+        " (terminal)"
+    } else if requires.contains(Requirement::Graphical) {
+        " (not the terminal)"
+    } else if requires.contains(Requirement::ThreePane) {
+        " (macOS)"
+    } else {
+        ""
+    }
 }
 
 fn keys(binding: &str) -> String {
@@ -75,10 +98,13 @@ fn render() -> String {
          change the registry and run `POSTIO_UPDATE_DOCS=1 cargo test -p postio-ui`. -->\n\
          \n\
          Every command below is also in the `Ctrl+K` palette and the `?` cheat\n\
-         sheet, because all three are generated from one table.\n\
+         sheet of every app that offers it, because all three are generated\n\
+         from one table.\n\
          \n\
-         Bindings come from the design canvas — `e` replies, not `r`.\n\
-         `docs/PRODUCT.md` §8 records that resolution; this table is the registry.\n\
+         Every Postio app has this one keymap. A command only some apps offer\n\
+         says which in the Where column, and keeps its key free in the others.\n\
+         `docs/PRODUCT.md` §8 records how the keys were settled; this table is\n\
+         the registry.\n\
          \n\
          ## Rebinding\n\
          \n\
@@ -87,7 +113,7 @@ fn render() -> String {
          \n\
          ```toml\n\
          [keys]\n\
-         archive = \"y\"\n\
+         archive = \"w\"\n\
          first_message = \"g g\"\n\
          ```\n\
          \n\
@@ -126,7 +152,7 @@ fn render() -> String {
         let recovery = match spec.recovery {
             Recovery::None => "",
             Recovery::Undo => "Undoable",
-            // Deliberately not "Undoable": `u` does not reach it, and the
+            // Deliberately not "Undoable": undo does not reach it, and the
             // keyboard reference is where somebody looks to find out which
             // key does what (#1481).
             Recovery::Window => "Undo briefly",
@@ -134,9 +160,10 @@ fn render() -> String {
         };
         let _ = writeln!(
             out,
-            "| {bindings} | {} | {} | {recovery} | `{}` |",
+            "| {bindings} | {} | {}{} | {recovery} | `{}` |",
             spec.title,
             where_available(spec.contexts),
+            which_apps(spec.requires),
             spec.id
         );
     }

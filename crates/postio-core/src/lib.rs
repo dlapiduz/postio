@@ -51,6 +51,7 @@
 
 pub mod action;
 pub mod aim;
+pub mod blocking;
 pub mod bridge;
 pub mod command;
 pub mod config;
@@ -67,12 +68,12 @@ pub mod undo;
 
 pub use action::{ActionId, ExtId};
 pub use bridge::{Bridge, CommandHandler, CommandSender, EventSink, EventStream};
-pub use command::{Command, CommandId, MessageTarget, UnknownCommand};
+pub use command::{Command, CommandId, KeptRule, MessageTarget, UnknownCommand};
 pub use config::{ConfigChange, ConfigService, Keymap, SharedConfig};
 pub use context::{Context, ContextSet, UnknownContext};
 pub use dispatch::{CommandError, Dispatcher, Invocation};
 pub use event::{ConnectionState, Event, FailureReason, MailFootprint};
 pub use invocation::{EventEnvelope, InvocationId, InvocationOutcome};
-pub use registry::{Availability, CommandSpec, Recovery, Requirement, RequirementSet};
+pub use registry::{Availability, CommandSpec, Frontend, Recovery, Requirement, RequirementSet};
 pub use state::{AppState, Resolved, Scope, Selection, SharedState, StateSnapshot, ViewMode};
 pub use undo::{UndoEntry, UndoKind, UndoStack};

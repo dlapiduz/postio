@@ -122,6 +122,10 @@ pub enum Category {
     /// Colour choices that stress legibility across light, dark and high
     /// contrast: a white page, dark text on nothing, sender dark styling.
     ThemeContrast,
+    /// Text that tries to instruct an assistant reading the mail:
+    /// instruction-shaped and tool-shaped. It is data, never instructions
+    /// (ADR 0009 Q4, ADR 0010).
+    PromptInjection,
 }
 
 impl Category {
@@ -153,6 +157,7 @@ impl Category {
         Category::Designed,
         Category::Hostile,
         Category::ThemeContrast,
+        Category::PromptInjection,
     ];
 
     /// The category's stable, lower-kebab-case name.
@@ -184,6 +189,7 @@ impl Category {
             Category::Designed => "designed",
             Category::Hostile => "hostile",
             Category::ThemeContrast => "theme-contrast",
+            Category::PromptInjection => "prompt-injection",
         }
     }
 
@@ -370,6 +376,8 @@ corpus! {
         "A message whose inline styling tries to leave its own block: position fixed and absolute, a viewport-sized overlay, z-index, a transform, and viewport units \u{2014} beside ordinary colour and a layout table that must survive.",
     "html-every-url-vector": [Html, RemoteContent, Hostile] =>
         "Every way HTML and CSS name a remote resource: @import, @font-face, backgrounds, list markers, cursors, border images, content, a conditional rule, a background attribute, a pixel.",
+    "html-gmail-reply-chain": [Html, MultipartAlternative, PlainText, Threading] =>
+        "A webmail reply chain: two nested quoted blockquotes, an attribution line each, no colours or page of its own.",
     "html-illegible-sender-dark": [Html, ThemeContrast] =>
         "The sender's own dark-mode styling sets #333 text on #222: honoured, but not trusted.",
     "html-legacy-font-center": [Html] =>
@@ -380,10 +388,18 @@ corpus! {
         "A cid: PNG cut off halfway: the decoder must fail into a sized placeholder.",
     "html-newsletter": [Html, MultipartAlternative, QuotedPrintable, MailingList, Designed] =>
         "A real-shaped newsletter: nested layout tables, inline CSS, a media query, List-Unsubscribe and One-Click.",
+    "html-newsletter-many-tables": [Html, MultipartAlternative, MailingList, Designed, RemoteContent] =>
+        "A long release-notes newsletter: two dozen nested layout tables, remote images, no page of its own; app colours, and a text part.",
+    "html-newsletter-own-page": [Html, MailingList, Designed, ThemeContrast] =>
+        "A newsletter that paints its own page (a body background) in a 640px layout table: rendered as sent, on paper.",
     "html-oversized-image": [Html, MultipartRelated, InlineImage, Base64, Hostile] =>
         "A PNG whose header declares 20,000 x 20,000 pixels in under a kilobyte: decode limits, not trust.",
+    "html-receipt-fixed-width": [Html, RemoteContent, Designed] =>
+        "A receipt with no background anywhere but a 560px layout table and a remote logo: paper by its layout alone.",
     "html-responsive-media": [Html, Designed] =>
         "Two columns that stack under @media (max-width: 600px): responsive rules judged against the pane's width.",
+    "html-responsive-stacked-cells": [Html, MultipartAlternative, MailingList, Designed] =>
+        "Layout-table cells made display:block by @media (max-width: 600px): the stacked columns are drawn in the 480px column.",
     "html-rtl-mixed": [Html] =>
         "Arabic and Hebrew paragraphs with Latin runs inside, plus an English line: bidirectional layout.",
     "html-script-forms": [Html, Hostile] =>
@@ -400,10 +416,28 @@ corpus! {
         "About 40,000 pixels of lines with a unique last one: no height at which content may be cut off.",
     "html-white-page-reply": [Html, ThemeContrast, Threading] =>
         "A desktop-client reply that stamps a white page and black text on everything: correspondence, not design.",
+    "html-work-black-text": [Html, ThemeContrast] =>
+        "Office-client work mail: black text set on every span, Calibri, a bordered table with tinted headers, one red sentence.",
     "inline-disposed-body": [MultipartAlternative, PlainText, Html, QuotedPrintable] =>
         "Both alternatives carry Content-Disposition: inline \u{2014} the part that *is* the message, marked the way an attachment is.",
     "inline-image-cid": [MultipartRelated, InlineImage, Html, Base64, Attachment] =>
         "Two inline PNGs referenced by cid:, plus a third cid: reference with no matching part.",
+    "invite-cancel": [Calendar, MultipartAlternative, PlainText, QuotedPrintable, Base64] =>
+        "An Outlook-style METHOD:CANCEL for invite-windows-zone's UID, at SEQUENCE 1: the marker says cancelled and offers no answer.",
+    "invite-iana-zone": [Calendar, MultipartMixed, MultipartAlternative, NestedMultipart, Attachment, PlainText, Html, Base64, QuotedPrintable] =>
+        "A Google-style request on an IANA zone with its VTIMEZONE, an attendee inside a VALARM, and the same ICS again as an attachment.",
+    "invite-quoted-printable": [Calendar, MultipartAlternative, PlainText, QuotedPrintable] =>
+        "An Apple-style request whose calendar part is quoted-printable, with quoted CN and EMAIL parameters, the week after the clocks go back.",
+    "invite-update-sequence": [Calendar, MultipartAlternative, PlainText, Html, Base64, QuotedPrintable] =>
+        "invite-iana-zone's event moved to a new time: the same UID at SEQUENCE 1 with a later DTSTAMP, which replaces the marker's time.",
+    "invite-utc-times": [Calendar, MultipartMixed, MultipartAlternative, NestedMultipart, Attachment, PlainText, Html, Base64] =>
+        "A Zoom-style request in UTC with no VTIMEZONE, a stray TZID property to ignore, and the calendar attached rather than an alternative.",
+    "invite-weekly-exdate": [Calendar, MultipartMixed, MultipartAlternative, NestedMultipart, Attachment, PlainText, Base64] =>
+        "A Thunderbird-style weekly event with two EXDATEs, six-digit zone offsets, and occurrences on both sides of a DST change.",
+    "invite-windows-zone": [Calendar, MultipartAlternative, PlainText, Html, QuotedPrintable, Base64] =>
+        "An Outlook-style request on a Windows zone name with its VTIMEZONE, base64 calendar part, and X-MICROSOFT properties to ignore.",
+    "invite-zone-without-vtimezone": [Calendar, MultipartMixed, Attachment, PlainText] =>
+        "A booking-page request whose DTSTART names Asia/Kolkata and carries no VTIMEZONE: the zone is resolved by name, half-hour offset and all.",
     "list-thread-01-root": [Threading, MailingList, PlainText] =>
         "Thread root: the message every other list-thread fixture hangs off.",
     "list-thread-02-reply": [Threading, MailingList, PlainText] =>
@@ -440,12 +474,16 @@ corpus! {
         "text/plain with format=flowed and delsp=yes, quoting its parent — reflowing and quote detection.",
     "plain-text-simple": [PlainText, Threading] =>
         "The smallest realistic message: 7bit us-ascii, a signature delimiter, nothing unusual.",
+    "top-posted-reply-signature": [MultipartAlternative, PlainText, Html, Threading] =>
+        "A reply above its quote in both parts: the answer, a signature, then the history as > lines and as a <blockquote>.",
     "transactional-shipping-notice": [MultipartAlternative, PlainText, Html, MailingList, Designed] =>
         "A shipping notice whose plain part carries a repeated label: value block \u{2014} the facts reader view lifts above the body copy.",
     "transfer-encoding-base64": [Base64, PlainText] =>
         "A plain-text body encoded base64, as export tools emit even when there is nothing to escape.",
     "transfer-encoding-quoted-printable": [QuotedPrintable, PlainText, EncodedWord] =>
         "Quoted-printable with soft line breaks, a literal =3D, encoded trailing whitespace and accented runs.",
+    "untrusted-instructions": [PlainText, PromptInjection] =>
+        "One honest question, then instructions and a tool call aimed at an assistant: none of it may become an action, a request or a marker.",
 }
 
 /// Every fixture in the corpus, in file-name order.

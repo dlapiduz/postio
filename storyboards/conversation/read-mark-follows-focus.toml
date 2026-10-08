@@ -1,27 +1,30 @@
-# Opening a conversation marks only the focused message read, and does not
-# tear the pane down to do it (#797, #1400).
+# Opening a conversation reads the message shown, and does not tear the
+# view down to do it (#797, #1400).
 #
 # The defect: opening marked the newest message read without the focus
 # ever reaching it, and the mark itself rebuilt the conversation, so the
-# pane flashed a moment after it opened. The long-thread has its last two
-# messages unread; opening focuses message 7, so after the dwell message 7
-# is read and message 6 still is not. The run fails on a blank frame, and
+# view flashed a moment after it opened. The long-thread has its last two
+# messages unread; opening shows message 7, and after the dwell the open
+# message must be exactly as it was. The run fails on a blank frame, and
 # `reading.id` must be the same before and after.
 #
-# The runner's store takes no writes (its command handler is a stand-in),
-# so the unread badge cannot be asserted: what this pins is that dwelling
-# on the focused message leaves the pane exactly as it was.
+# Re-expressed for Focus (T265): its open message shows one message, and its
+# read clock marks it after the dwell (T237).
+apps   = ["focus"]
 source = { kind = "issue", ref = "#797" }
 proof  = "pinned"
 seed   = "long-thread"
 
 [[step]]
+command = "next_message"
+
+[[step]]
 id      = "open"
-wait    = { until = { reading.id = "7" } }
-check   = { reading.focused = 6 }
-expect  = "The conversation appears with message 7 focused; nothing has been marked yet."
+command = "open_message"
+check   = { view = "reader", reading.id = "7", app.focus.cursor.unread = 2 }
+expect  = "The conversation opens on message 7; nothing has been marked yet, and both of the conversation's last messages are unread."
 
 [[step]]
 wait    = { ms = 1500 }
-check   = { reading.id = { same_as = "open" }, reading.focused = 6 }
-expect  = "After the dwell the pane is exactly as it was: no redraw, no scroll, focus still on the newest message."
+check   = { reading.id = { same_as = "open" }, view = "reader", reading.scroll = { same_as = "open" }, app.focus.cursor.unread = 1 }
+expect  = "After the dwell the message is exactly as it was: no redraw, no scroll, still message 7, now read: one unread message is left."

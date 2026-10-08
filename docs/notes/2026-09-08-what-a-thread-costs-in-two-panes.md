@@ -8,7 +8,8 @@ and ends with an open question it could not answer:
 > here has tested it.
 
 Measured now, both arrangements, same fixture thread, same instrument, one
-machine. `cargo run -p postio-app --example pane_comparison -- <stacked|document> <n>`.
+machine, with the classic app's `pane_comparison` example (`<stacked|document>
+<n>`), which went with that app in spec 007 T256.
 
 ## The numbers
 

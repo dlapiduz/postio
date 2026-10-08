@@ -26,6 +26,9 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+# The `.eml` corpus, for ADR 0008's differential test between the executor
+# and `postio_search::matcher`.
+postio-model = { workspace = true, features = ["test-corpus"] }
 postio-storage = { workspace = true, features = ["test-support"] }
 # Tests only: the engine is async, so its tests need a runtime.
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -17,12 +17,14 @@ use postio_ui::keymap::{Binding, Chord, Key, KeyContext, Modifiers, Outcome};
 const PALETTE_SURFACES: &[Context] = &[
     Context::List,
     Context::Search,
-    Context::Sidebar,
     Context::Reader,
     Context::Conversation,
-    Context::Parts,
     Context::Composer,
     Context::Accounts,
+    Context::Picker,
+    Context::Digest,
+    Context::Filtered,
+    Context::Capture,
 ];
 
 /// Commands whose surface the terminal does not have yet, each with the task
@@ -93,7 +95,7 @@ fn every_command_is_reachable_by_a_key_this_terminal_sends_and_by_the_palette() 
     // As this terminal asks: its composer's `$EDITOR` and preview are
     // offered here and nowhere else (`Requirement::Terminal`).
     let open = Availability {
-        terminal: true,
+        frontend: postio_core::Frontend::Terminal,
         ..Availability::open(Scope::Account(postio_model::AccountId::new(1)))
     };
     let mut unreachable = Vec::new();

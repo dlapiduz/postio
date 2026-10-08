@@ -1,23 +1,36 @@
-# A one-message thread shows one Reply bar, and `e` opens one composer
-# (#1173, #822).
+# A one-message thread shows one Reply, and `e` opens one composer (#1173,
+# #822).
 #
 # The defect: a single message drew a per-message Reply row and the
 # conversation's own bar, both bound to `e`, so the key was ambiguous and
-# the pane showed the same buttons twice.
+# the reader showed the same buttons twice.
+#
+# Re-expressed for Focus (T265): the fourth row of the demo inbox is a
+# single message; `Return` opens it over the list, and its verbs are one row
+# of buttons.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#1173" }
 proof  = "pinned"
 
 [[step]]
-wait    = { until = { reading.id = "12" } }
+command = "next_message"
 
 [[step]]
-id      = "newsletter"
 command = "next_message"
-settle  = { until = { reading.id = { changed = true } } }
-check   = { reading.id = "30" }
-expect  = "The newsletter is a single-message thread. The pane shows exactly one reply bar, in the header; the message card below has none of its own."
+
+[[step]]
+command = "next_message"
+
+[[step]]
+command = "next_message"
+
+[[step]]
+id      = "single"
+command = "open_message"
+check   = { view = "reader", reading.id = { changed = true } }
+expect  = "A single message is open. Its verbs are one row, with one Reply; nothing is drawn twice."
 
 [[step]]
 command = "reply"
 check   = { composer.open = true, keyboard.field = "body" }
-expect  = "Exactly one composer opens, as a reply to the newsletter."
+expect  = "Exactly one composer opens, as a reply to that message."

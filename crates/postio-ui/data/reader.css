@@ -1,12 +1,12 @@
 /* Postio's reading-pane stylesheet, injected into the `WebView` that
- * renders a message body (crates/postio-gtk/src/reader/view.rs).
+ * renders a message body (the classic app's reader view).
  *
  * This is NOT the GTK stylesheet tokens.css/shell.css are. A `WebView` has
  * its own CSS engine with no notion of GTK's style context, so the
  * `--postio-*` custom properties tokens.css defines are invisible here.
  * Structure only, below: every colour is a `var(--r-*)` reference, and those
  * variables are generated from the same design tokens by
- * `crates/postio-gtk/src/tokens.rs::generate_reader` into the checked-in
+ * the classic app's token generator into the checked-in
  * `data/reader-tokens.css`, loaded into this document ahead of this file
  * (see `reader_css` in view.rs). Retune the design system, rebuild, and both
  * sheets follow — the pipeline #296 fixed. A drift test
@@ -51,6 +51,19 @@ body {
 
 body:empty::before {
   content: "";
+}
+
+/* Why a body is shown as its plain text (spec 006 FR-023; T218): a quiet
+   line above the body, drawn as the reader's other notices are -- small,
+   dim, in the reader's own face -- never a line of the message. Outside
+   the body's container, because these are Postio's words. The renderer
+   writes it (`postio_render::NOTICE_CLASS`). */
+.postio-fallback-notice {
+  margin: 0 0 12px 0;
+  font-family: "Barlow", sans-serif;
+  font-size: 12.5px;
+  line-height: 20px;
+  color: var(--r-dim);
 }
 
 /* The message body's own bounded surface (postio-3s2): a sender's content
@@ -160,6 +173,17 @@ img {
   height: auto;
 }
 
+/* A picture held back has no source, so what is left is the box the sender
+   gave it: for a hero image, a blank as tall as the picture, which reads as
+   a message that failed to load. A held picture is a marked strip, never
+   taller than a few lines of text. */
+img:not([src]) {
+  box-sizing: border-box;
+  max-height: 48px;
+  border: 1px dashed var(--r-hairline-strong);
+  border-radius: var(--r-radius);
+}
+
 table {
   max-width: 100%;
 }
@@ -218,7 +242,7 @@ blockquote {
 
 /* Where the search matched, per canvas 2b's `preview · match highlighted`.
    The artboard's own steel tint at 28%: strong enough to find by scanning,
-   weak enough to read straight through. `crate::search::mark_html` puts
+   weak enough to read straight through. `postio_ui::search::mark_html` puts
    these in, after the sanitizer, and only for terms the executed query
    actually asked for.
 

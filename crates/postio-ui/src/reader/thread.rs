@@ -35,7 +35,9 @@
 
 use postio_body::sanitize::RemoteImages;
 
-use super::document::{Sheet, contain_body_in, scroll_markers, senders_stylesheet, wrap_document};
+use super::document::{
+    Sheet, contain_body_in, number_quote_folds, scroll_markers, senders_stylesheet, wrap_document,
+};
 
 /// The conversation chrome, appended only to a conversation document.
 const THREAD_CSS: &str = include_str!("../../data/thread.css");
@@ -123,22 +125,6 @@ pub fn verb_of(uri: &str) -> Option<(MessageVerb, String)> {
 /// A message's fold is its anchor; a quote's is `<anchor>-q<n>`, numbered
 /// in document order within its message.
 pub const FOLD_ATTRIBUTE: &str = "data-postio-fold";
-
-/// The opening tag `postio-body` folds quoted text with. A sender cannot
-/// write it: the sanitizer strips every `postio-` class.
-const QUOTE_FOLD: &str = "<details class=\"postio-quote\"";
-
-/// Give every quote fold in one message's body its id.
-fn number_quote_folds(body: &str, anchor: &str) -> String {
-    let mut parts = body.split(QUOTE_FOLD);
-    let mut out = String::with_capacity(body.len());
-    out.push_str(parts.next().unwrap_or_default());
-    for (n, rest) in parts.enumerate() {
-        out.push_str(&format!("{QUOTE_FOLD} {FOLD_ATTRIBUTE}=\"{anchor}-q{n}\""));
-        out.push_str(rest);
-    }
-    out
-}
 
 /// The element id a message carries, so a pane can scroll to it.
 ///
@@ -324,7 +310,7 @@ fn quoted(text: &str) -> String {
 ///
 /// The frontend's view of a message -- who, when, whether it is open, and its
 /// body still unsanitised -- which [`compose`] turns into an [`Entry`]. It
-/// lived in `postio-gtk`'s reader, and moved here with [`compose`] so the
+/// lived in the classic app's reader, and moved here with [`compose`] so the
 /// macOS pane composes the same document from the same decisions rather than
 /// a second copy of them (#1595).
 ///
@@ -538,7 +524,7 @@ fn entry_html(entry: &Entry<'_>) -> String {
     // user cannot make is not a privacy feature, it is a dead end: blocking
     // without a way to unblock is the feature missing its other half. With
     // JavaScript off, a verb inside the document is a navigation, which
-    // `postio_gtk::reader::view` intercepts by scheme.
+    // the classic app's reader view intercepted by scheme.
     let blocked = match entry.blocked {
         0 => String::new(),
         count => {
@@ -602,7 +588,7 @@ fn entry_html(entry: &Entry<'_>) -> String {
     // were scoped to, and without it they match nothing.
     let body = contain_body_in(entry.body, Some(entry.scope));
     let anchor = message_anchor(entry.scope);
-    let body = number_quote_folds(&body, &anchor);
+    let body = number_quote_folds(&body, &format!("{anchor}-"));
     let recipients = recipients_html(entry.recipients, entry.cc);
     // A normal string, not a raw one: a raw string cannot be line-continued,
     // and the backslash would be a character in the markup — which is what
@@ -1138,6 +1124,29 @@ mod tests {
             "a message with nothing to fold gained a fold from its neighbour: \
              {grace}"
         );
+    }
+
+    /// The label a conversation's quote fold carries is the single
+    /// message's: how many lines it hides (spec 007 FR-034).
+    #[test]
+    fn a_conversations_quote_fold_says_how_many_lines_it_hides() {
+        let body = postio_model::MessageBody {
+            text: None,
+            html: Some("<p>ok</p><blockquote><p>one</p><p>two</p></blockquote>".to_owned()),
+        };
+        let rendered = crate::reader::document::body_html_in(
+            &body,
+            RemoteImages::Blocked,
+            crate::reader::document::Rendering::Original,
+            Some("7"),
+        );
+        let document = conversation_document(
+            &[entry("7", "Ada", &rendered.html, true)],
+            RemoteImages::Blocked,
+            Sheet::Theme,
+        );
+        let fold = r#"<details class="postio-quote" data-postio-fold="m-7-q0"><summary>2 quoted lines</summary>"#;
+        assert!(document.contains(fold), "{fold} is not in {document}");
     }
 
     #[test]

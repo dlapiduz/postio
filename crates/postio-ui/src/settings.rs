@@ -12,16 +12,20 @@
 //! *values* is `postio_config`'s job, and writing them is its `patch_*`
 //! functions'.
 //!
-//! What does **not** live here is anything a toolkit names: `postio-gtk`
+//! What does **not** live here is anything a toolkit names: the classic app
 //! keeps its own `icon` beside this, because a GTK symbolic icon name is not
 //! an SF Symbol and neither frontend should carry the other's.
 
-/// One of the eight sections the nav lists, in canvas order.
+/// One of the nine sections the nav lists, in canvas order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     /// One row per account, and the form for the selected one.
     Accounts,
-    /// `[filters]` — named saved queries.
+    /// `[focus] filtering` and `[focus.filter]` -- whether Focus files spam
+    /// and automated updates away, and what the person has told it about
+    /// that (spec 007 US9). The words are [`crate::filtering`]'s.
+    Filtering,
+    /// `[saved_searches]` — named saved queries.
     Filters,
     /// `[compose]` — signatures, and where one goes above a quote.
     Composing,
@@ -34,7 +38,7 @@ pub enum Section {
     /// The remote-image allow-list (#871) and what has been unsubscribed
     /// from — never a `config.toml` table at all, unlike every other pane
     /// here: it is view state, kept in its own `$XDG_STATE_HOME` key-file
-    /// (see `postio_gtk::reader::RemoteImageAllowList`, which owns the file;
+    /// (see the classic app's reader remote-image allow-list, which owns the file;
     /// not linkable from here — this crate is below the frontends, not beside
     /// them).
     Privacy,
@@ -53,7 +57,7 @@ pub enum Section {
 /// looking under the same heading as one looking for "what is my address".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
-    /// Accounts, Filters, Composing.
+    /// Accounts, Filtering, Saved searches, Composing.
     Mail,
     /// Appearance, Keyboard, Sync & storage, Privacy, Config file.
     Application,
@@ -79,8 +83,9 @@ impl Group {
 
 impl Section {
     /// Every section, in nav order — the drawing's order, grouped.
-    pub const ALL: [Section; 8] = [
+    pub const ALL: [Section; 9] = [
         Section::Accounts,
+        Section::Filtering,
         Section::Filters,
         Section::Composing,
         Section::Appearance,
@@ -93,7 +98,9 @@ impl Section {
     /// Which sidebar heading this pane sits under.
     pub fn group(self) -> Group {
         match self {
-            Section::Accounts | Section::Filters | Section::Composing => Group::Mail,
+            Section::Accounts | Section::Filtering | Section::Filters | Section::Composing => {
+                Group::Mail
+            }
             Section::Appearance
             | Section::Keyboard
             | Section::Sync
@@ -104,7 +111,7 @@ impl Section {
 
     /// The top-level TOML key this section's headers start with.
     ///
-    /// `[accounts]` and `[filters]` never appear as a bare header — every
+    /// `[accounts]` and `[saved_searches]` never appear as a bare header — every
     /// account and filter is its own dotted table, `[accounts.personal]` —
     /// so matching is by prefix, not by literal line. `Privacy` never
     /// appears at all, the same as `Accounts` since #470: the nav item
@@ -114,8 +121,12 @@ impl Section {
             Section::Appearance => "ui",
             Section::Keyboard => "keys",
             Section::Accounts => "accounts",
+            // `[focus]` holds `filtering` and the `[focus.filter]` table the
+            // page lists; the rest of `[focus]` (digests, the vault, the
+            // model) is edited where it is used, and in the file.
+            Section::Filtering => "focus",
             Section::Sync => "sync",
-            Section::Filters => "filters",
+            Section::Filters => "saved_searches",
             Section::Composing => "compose",
             Section::Privacy => "privacy",
             // Not a table: the pane shows every table there is.
@@ -127,12 +138,13 @@ impl Section {
     ///
     /// The pane repeats its sidebar name as its heading on purpose: with one
     /// pane on screen at a time, the title is the only thing that says which
-    /// of the eight you are looking at without moving your eyes back to the
+    /// of them you are looking at without moving your eyes back to the
     /// sidebar.
     pub fn label(self) -> &'static str {
         match self {
             Section::Accounts => "Accounts",
-            Section::Filters => "Filters",
+            Section::Filtering => "Filtering",
+            Section::Filters => "Saved searches",
             Section::Composing => "Composing",
             Section::Appearance => "Appearance",
             Section::Keyboard => "Keyboard",
@@ -146,11 +158,14 @@ impl Section {
     pub fn description(self) -> &'static str {
         match self {
             Section::Accounts => "Every account this installation signs in to.",
-            Section::Filters => "Saved searches, and which of them the sidebar shows.",
+            Section::Filtering => "Spam and updates, archived as they arrive, with a reason.",
+            Section::Filters => {
+                "Saved searches, and which of them are pinned across the command bar."
+            }
             Section::Composing => "Signatures, and where one goes when a quote sits under it.",
             Section::Appearance => "How the message list is drawn, and how much of it fits.",
             Section::Keyboard => "Every command and the key that runs it.",
-            Section::Sync => "When mail is fetched, and what the local store keeps.",
+            Section::Sync => "When mail syncs, and what the local store keeps.",
             Section::Privacy => "What Postio will not do without being asked.",
             Section::ConfigFile => "The whole file, as text. Everything above writes here.",
         }
@@ -167,7 +182,11 @@ impl Section {
     pub fn keywords(self) -> &'static str {
         match self {
             Section::Accounts => "account address imap smtp password oauth signature server remove",
-            Section::Filters => "saved search query pinned sidebar filter",
+            Section::Filtering => {
+                "filtering filtered spam promotion notification receipt shipping social \
+                 automated updates archive never pinned restore sweep marker"
+            }
+            Section::Filters => "saved search query pinned command bar filter",
             Section::Composing => "signature reply forward quote compose",
             Section::Appearance => "theme dark light density row height avatars hover font",
             Section::Keyboard => "key binding shortcut rebind keys chord",
@@ -175,6 +194,25 @@ impl Section {
             Section::Privacy => "remote images trackers unsubscribe read receipts connections",
             Section::ConfigFile => "toml file text editor raw",
         }
+    }
+
+    /// Whether `frontend`'s settings show this section.
+    ///
+    /// A section is shown where the app honours what it sets. Focus honours
+    /// none of Appearance's `[ui]` keys -- its row is one fixed design and it
+    /// follows the system's scheme (`specs/007-postio-focus`
+    /// classic-parity.md rows 18, 19) -- so a control there would change
+    /// nothing a person could see.
+    ///
+    /// The Mac does not show Filtering: Focus's rules act only while Focus
+    /// runs, on the desktop or in the terminal (spec 007 US11, scenario 4),
+    /// so a switch there would turn something the Mac never does.
+    pub fn shown_in(self, frontend: postio_core::Frontend) -> bool {
+        use postio_core::Frontend;
+        !matches!(
+            (self, frontend),
+            (Section::Appearance, Frontend::Focus) | (Section::Filtering, Frontend::Macos)
+        )
     }
 
     /// The `config.toml` table this pane owns, for the footer line.
@@ -190,7 +228,8 @@ impl Section {
             // otherwise sends somebody to edit a file that does not describe
             // their account, which is worse than saying nothing.
             Section::Accounts => None,
-            Section::Filters => Some("[filters]"),
+            Section::Filtering => Some("[focus]"),
+            Section::Filters => Some("[saved_searches]"),
             Section::Composing => Some("[compose]"),
             Section::Appearance => Some("[ui]"),
             Section::Keyboard => Some("[keys]"),
@@ -210,7 +249,8 @@ impl Section {
             // The one people most need told, because every other pane in the
             // window *is* about the file.
             Section::Accounts => "accounts are in the encrypted store, not in config.toml",
-            Section::Filters => "[filters] in config.toml · applied live",
+            Section::Filtering => "[focus] in config.toml · applied live",
+            Section::Filters => "[saved_searches] in config.toml · applied live",
             Section::Composing => "[compose] in config.toml · applied live",
             Section::Appearance => "[ui] in config.toml · applied live",
             Section::Keyboard => "[keys] in config.toml · applied live",
@@ -297,9 +337,93 @@ pub const MAPPABLE_ROLES: [(postio_model::mailbox::MailboxRole, &str); 5] = [
     (postio_model::mailbox::MailboxRole::Junk, "Junk"),
 ];
 
+/// What the signature editor is headed: whether it makes a signature or
+/// changes one, and whose account it is for.
+pub fn signature_heading(editing: bool, account: &str) -> String {
+    let verb = if editing {
+        "Edit signature"
+    } else {
+        "New signature"
+    };
+    format!("{verb} \u{b7} {account}")
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_signature_editor_names_what_it_makes_and_for_whom() {
+        assert_eq!(
+            super::signature_heading(false, "ada@example.com"),
+            "New signature \u{b7} ada@example.com"
+        );
+        assert_eq!(
+            super::signature_heading(true, "ada@example.com"),
+            "Edit signature \u{b7} ada@example.com"
+        );
+    }
+
     use super::*;
+
+    #[test]
+    fn focus_shows_every_section_but_the_one_whose_keys_it_does_not_honour() {
+        // Appearance is `[ui]`: theme, density, hover actions and avatars,
+        // none of which Focus honours (classic-parity.md rows 18, 19).
+        let focus: Vec<Section> = Section::ALL
+            .into_iter()
+            .filter(|section| section.shown_in(postio_core::Frontend::Focus))
+            .collect();
+        assert_eq!(
+            focus,
+            [
+                Section::Accounts,
+                Section::Filtering,
+                Section::Filters,
+                Section::Composing,
+                Section::Keyboard,
+                Section::Sync,
+                Section::Privacy,
+                Section::ConfigFile,
+            ]
+        );
+        assert!(
+            Section::ALL
+                .into_iter()
+                .all(|section| section.shown_in(postio_core::Frontend::Terminal)),
+            "the terminal shows all nine: filtering runs while it has the store"
+        );
+    }
+
+    #[test]
+    fn macos_shows_no_filtering_page_because_filtering_does_not_run_there() {
+        // Focus's rules act only while Focus runs, on the desktop or in the
+        // terminal (spec 007 US11, scenario 4): a switch on the Mac would
+        // turn something the Mac never does.
+        let macos: Vec<Section> = Section::ALL
+            .into_iter()
+            .filter(|section| section.shown_in(postio_core::Frontend::Macos))
+            .collect();
+        assert!(!macos.contains(&Section::Filtering), "{macos:?}");
+        assert_eq!(macos.len(), Section::ALL.len() - 1, "{macos:?}");
+    }
+
+    #[test]
+    fn filtering_is_a_mail_page_over_the_focus_table() {
+        assert_eq!(Section::Filtering.label(), "Filtering");
+        assert_eq!(Section::Filtering.group(), Group::Mail);
+        assert_eq!(Section::Filtering.table(), Some("[focus]"));
+        let said = Section::Filtering.description();
+        assert!(said.contains("reason"), "{said:?}");
+        // Found by what a person would type looking for it.
+        for word in ["spam", "promotion", "filtered", "never"] {
+            assert!(
+                Section::Filtering.keywords().contains(word),
+                "{word} finds Filtering"
+            );
+        }
+        let text = "[ui]\ndensity = \"compact\"\n\n[focus.filter]\nnever = []\n\n[focus]\nfiltering = false\n";
+        assert_eq!(find_section(text, Section::Filtering), Some(3));
+        assert_eq!(section_at_line(text, 7), Some(Section::Filtering));
+    }
 
     const SAMPLE: &str = "\
 # edits here and in the panel are the same file
@@ -420,7 +544,10 @@ idle = true
     #[test]
     fn a_dotted_header_is_matched_by_its_first_segment() {
         assert_eq!(header_key("[accounts.personal.imap]"), Some("accounts"));
-        assert_eq!(header_key("[filters.urgent]"), Some("filters"));
+        assert_eq!(
+            header_key("[saved_searches.urgent]"),
+            Some("saved_searches")
+        );
     }
 
     #[test]
@@ -488,5 +615,20 @@ idle = true
     #[test]
     fn section_at_line_past_the_end_of_the_file_is_the_last_section() {
         assert_eq!(section_at_line(SAMPLE, 999), Some(Section::Sync));
+    }
+}
+
+#[cfg(test)]
+mod saved_search_words {
+    use super::Section;
+
+    /// Focus has no sidebar, and "Filters" is a mailbox's name there
+    /// (`Filtered`): the page says what it is and where its pins go.
+    #[test]
+    fn the_saved_searches_page_names_no_sidebar_and_borrows_no_mailbox_name() {
+        assert_eq!(Section::Filters.label(), "Saved searches");
+        let said = Section::Filters.description();
+        assert!(!said.contains("sidebar"), "{said:?}");
+        assert!(said.contains("command bar"), "{said:?}");
     }
 }

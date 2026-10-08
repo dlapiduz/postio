@@ -221,6 +221,20 @@ def main() -> int:
         crate="postio-gtk",
         should_fail=False,
     )
+    # The composer moves into the shared crate with its `test_*` hooks, which
+    # a test on a real display calls (ADR 0043; specs/007-postio-focus R1).
+    case(
+        "the shared desktop crate's test accessors are not scanned",
+        lib="pub fn test_autosave_now() {}\n",
+        crate="postio-widgets",
+        should_fail=False,
+    )
+    case(
+        "the second desktop app's test accessors are not scanned",
+        lib="pub fn banner_visible() -> bool { true }\n",
+        crate="postio-gtk",
+        should_fail=False,
+    )
     case(
         "a #[doc(hidden)] item is not scanned",
         lib="#[doc(hidden)]\npub fn test_open_menu() {}\n",

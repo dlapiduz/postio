@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Run tests on a display of their own, so GTK stops throwing windows at you.
 #
-# crates/postio-gtk has ~20 test binaries that present real windows, and on a
-# live GNOME session every one of them flashes onto your desktop, steals focus
-# mid-keystroke, and leaves you unable to use the machine while the suite runs.
+# The GTK suites present real windows, and on a live GNOME session every one
+# of them flashes onto your desktop, steals focus mid-keystroke, and leaves
+# you unable to use the machine while the suite runs.
 #
 # The fix is a second compositor, not a second machine. mutter --headless is
 # already installed here (it is GNOME's own), so this costs no new dependency
@@ -12,7 +12,7 @@
 # test that passes here passes for the same reasons it passes in production.
 #
 # Usage:
-#   scripts/test-headless.sh cargo test -p postio-gtk
+#   scripts/test-headless.sh cargo test -p postio-widgets
 #   scripts/test-headless.sh cargo test --workspace --no-fail-fast
 #   scripts/test-headless.sh --stop        # shut the compositor down
 #   scripts/test-headless.sh --status

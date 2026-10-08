@@ -18,14 +18,18 @@ members = [
     "crates/postio-core",
     "crates/postio-runtime",
     "crates/postio-session",
-    "crates/postio-gtk",
-    "crates/postio-app",
     "crates/postio-ffi",
     "crates/postio-bench",
     "crates/postio-test-support",
     "crates/postio-client",
     "crates/postio-host",
     "crates/postio-tui",
+    "crates/postio-widgets",
+    "crates/postio-gtk",
+    "crates/postio-classify",
+    "crates/postio-calendar",
+    "crates/postio-ai",
+    "crates/postio-vault",
     "crates/postio-storyboard",
 ]
 # Upstream crates carried with Postio's patches applied: sources, not
@@ -66,13 +70,17 @@ default-members = [
     "crates/postio-core",
     "crates/postio-runtime",
     "crates/postio-session",
-    "crates/postio-gtk",
-    "crates/postio-app",
     "crates/postio-bench",
     "crates/postio-test-support",
     "crates/postio-client",
     "crates/postio-host",
     "crates/postio-tui",
+    "crates/postio-widgets",
+    "crates/postio-gtk",
+    "crates/postio-classify",
+    "crates/postio-calendar",
+    "crates/postio-ai",
+    "crates/postio-vault",
     "crates/postio-storyboard",
 ]
 
@@ -155,6 +163,11 @@ postio-gtk     = { path = "crates/postio-gtk" }
 postio-test-support = { path = "crates/postio-test-support" }
 postio-client = { path = "crates/postio-client" }
 postio-host    = { path = "crates/postio-host" }
+postio-widgets = { path = "crates/postio-widgets" }
+postio-classify = { path = "crates/postio-classify" }
+postio-calendar = { path = "crates/postio-calendar" }
+postio-ai      = { path = "crates/postio-ai" }
+postio-vault   = { path = "crates/postio-vault" }
 postio-storyboard = { path = "crates/postio-storyboard" }
 
 # Third-party crates two or more members share, so a version, a feature
@@ -183,7 +196,7 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring"]
 toml = "1.1.4"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
-turso = { version = "=0.8.0-pre.11", default-features = false, features = ["fts"] }
+turso = { version = "=0.8.1", default-features = false, features = ["fts"] }
 url = "2.5.8"
 zeroize = "1.9.0"
 
@@ -209,8 +222,8 @@ strip = true
 # stack, and diagnosis here happens through tests and POSTIO_LOG, not a
 # debugger. This was tuned once to `line-tables-only` without measuring what
 # that left behind, and what it left behind was most of it. Measured on the
-# `app_suite` test binary, cold builds of `cargo test --no-run -p postio-app
-# --test app_suite` at `-j6` with sccache off, on an idle box:
+# classic app's test binary (`app_suite`, since removed), cold builds of
+# `cargo test --no-run` at `-j6` with sccache off, on an idle box:
 #
 #     debug                 cold build   binary   .debug sections
 #     "line-tables-only"      301/307s   239 MB       153.6 MB
@@ -259,8 +272,8 @@ debug = 0
 # **counts** off SQLite's trace hook rather than as timings (CLAUDE.md,
 # "Gated as counts, not as timings") and `cargo bench` measures release. But
 # what it moves is the wall clock of the suites people wait on, and it moves
-# it a long way: `cargo test -p postio-app --test app_suite` runs in **200s**
-# with this at `2` and **382s** with it at `1`. Nearly double, for ~20s of
+# it a long way: the classic app's suite ran in **200s** with this at `2`
+# and **382s** with it at `1`. Nearly double, for ~20s of
 # cold-build time saved.
 #
 # So this line is not a leftover to tidy away: it is the reason the
@@ -269,22 +282,22 @@ debug = 0
 [profile.dev.package."*"]
 opt-level = 2
 
-# Turso from Postio's fork: v0.8.0-pre.11 plus fuzzy and prefix word
+# Turso from Postio's fork: v0.8.1 plus fuzzy and prefix word
 # expansion in the full-text index (turso#8359, closed upstream unmerged,
 # ported) and a per-word `~N` opt-in. Search uses it only for the words it
 # offers when a query finds nothing; every query it runs is quoted, and a
 # quoted query is parsed exactly as upstream parses it. Every turso crate
 # comes from the one commit, so no two copies of a type meet.
 [patch.crates-io]
-turso = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
-turso_core = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
-turso_ext = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
-turso_macros = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
-turso_parser = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
-turso_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
-turso_sdk_kit_macros = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
-turso_sync_engine = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
-turso_sync_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "c2ac9f25db74613eed163b99105de69e206f688b" }
+turso = { git = "https://github.com/dlapiduz/turso", rev = "3d7dac16368534d6691113da368a1d3f24b9e929" }
+turso_core = { git = "https://github.com/dlapiduz/turso", rev = "3d7dac16368534d6691113da368a1d3f24b9e929" }
+turso_ext = { git = "https://github.com/dlapiduz/turso", rev = "3d7dac16368534d6691113da368a1d3f24b9e929" }
+turso_macros = { git = "https://github.com/dlapiduz/turso", rev = "3d7dac16368534d6691113da368a1d3f24b9e929" }
+turso_parser = { git = "https://github.com/dlapiduz/turso", rev = "3d7dac16368534d6691113da368a1d3f24b9e929" }
+turso_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "3d7dac16368534d6691113da368a1d3f24b9e929" }
+turso_sdk_kit_macros = { git = "https://github.com/dlapiduz/turso", rev = "3d7dac16368534d6691113da368a1d3f24b9e929" }
+turso_sync_engine = { git = "https://github.com/dlapiduz/turso", rev = "3d7dac16368534d6691113da368a1d3f24b9e929" }
+turso_sync_sdk_kit = { git = "https://github.com/dlapiduz/turso", rev = "3d7dac16368534d6691113da368a1d3f24b9e929" }
 
 # Blitz 0.3.0-beta.2 with Postio's patch queue applied (`patches/blitz/`,
 # checked by `scripts/blitz-patches.sh verify`): the reading renderer's

@@ -50,8 +50,8 @@ mod tests {
 /// back, an edit channel carrying `innerHTML`, and a reflection channel
 /// saying what formatting is in force at the caret.
 ///
-/// One copy, because a second one is a second dialect. The GTK reader's
-/// `gtk_editable_dialect.rs` proves the surface emits `<p>` paragraphs and
+/// One copy, because a second one is a second dialect. The classic app's reader
+/// `gtk_editable_dialect.rs` proved the surface emits `<p>` paragraphs and
 /// element-form bold/italic; a macOS surface running a *different* script
 /// would emit `<div>`s and `<span style>`s, `parse` would narrow them to
 /// something else, and the two composers would disagree about what the same
@@ -110,7 +110,7 @@ pub fn markdown_table_js() -> String {
 mod editor_script_tests {
     use super::EDITOR_SCRIPT;
 
-    /// `postio-gtk` still `include_str!`s its own copy, because this branch
+    /// The classic app `include_str!`d its own copy, because this branch
     /// is worked from a Mac and `issue-land.sh` will not land a crate whose
     /// gates cannot run there. Until a Linux session points it here, the two
     /// files are pinned to each other: this fails the moment either is
@@ -144,8 +144,10 @@ mod editor_script_tests {
 
     #[test]
     fn the_gtk_copy_of_the_bridge_has_not_drifted_from_this_one() {
-        let gtk =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../postio-gtk/data/editor.js");
+        // The GTK copy is postio-widgets' since the composer moved there
+        // (ADR 0043).
+        let gtk = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../postio-widgets/src/composer/editor.js");
         let theirs = std::fs::read_to_string(&gtk)
             .unwrap_or_else(|error| panic!("reading {}: {error}", gtk.display()));
         assert_eq!(
@@ -226,7 +228,7 @@ pub fn link_script(href: &str) -> Option<String> {
 ///
 /// The same shape as [`link_script`], and for its reason: both composers run
 /// this, so an image inserted on a Mac and one inserted on Linux are the same
-/// edit. The caret fallback is the one `postio-gtk`'s editor learned: a
+/// edit. The caret fallback is the one the classic app's editor learned: a
 /// picture can be the first gesture into a fresh body, and `insertHTML`
 /// silently does nothing without a selection.
 pub fn image_script(content_id: &str, alt: &str) -> Option<String> {
@@ -541,5 +543,188 @@ mod schedule_tests {
                 );
             }
         }
+    }
+}
+
+/// What the toast says when Escape leaves a composition that holds writing:
+/// that it was kept, and the way back to it. `drafts_key` is the key that
+/// goes to Drafts, when one is bound.
+pub fn kept_note(drafts_key: Option<&str>) -> String {
+    match drafts_key {
+        Some(key) => format!("Draft saved to Drafts ({key})"),
+        None => "Draft saved to Drafts".to_owned(),
+    }
+}
+
+/// What the header calls a composition (contracts/focus-surface.md,
+/// "Compose"): "New message", or what it answers.
+pub fn title(kind: postio_model::DraftKind) -> &'static str {
+    match kind {
+        postio_model::DraftKind::New => "New message",
+        postio_model::DraftKind::Reply => "Reply",
+        postio_model::DraftKind::ReplyAll => "Reply to all",
+        postio_model::DraftKind::Forward => "Forward",
+    }
+}
+
+/// What the composer says when the message a reply or forward answers has
+/// no body here yet: the quote below the attribution is not there, and the
+/// person should not send believing it is. `None` when the body is local.
+pub fn unquoted_note(source: &postio_model::Message) -> Option<&'static str> {
+    (!source.sync.body_state.has_body()).then_some("Original still downloading \u{2014} not quoted")
+}
+
+/// What the subtitle says will be sent: "Plain text · 58 words", or "Rich
+/// text" once the body carries structure the text part cannot (the
+/// composer sends an HTML part only then).
+pub fn summary(draft: &postio_model::Draft) -> String {
+    let words = draft
+        .body
+        .text
+        .as_deref()
+        .map(|text| postio_model::signature::split(text).0)
+        .unwrap_or_default()
+        .split_whitespace()
+        .count();
+    let kind = if draft.body.html.is_some() {
+        "Rich text"
+    } else {
+        "Plain text"
+    };
+    let words = match words {
+        1 => "1 word".to_owned(),
+        count => format!("{count} words"),
+    };
+    format!("{kind} \u{b7} {words}")
+}
+
+/// The header's subtitle: what will be sent, then what has happened to the
+/// draft, when anything has -- "Plain text · 58 words · Draft saved locally
+/// 16:12" -- as the message dialog's says "Message 5 of 60 · thread of 6".
+pub fn subtitle(summary: &str, note: &str) -> String {
+    if note.is_empty() {
+        summary.to_owned()
+    } else {
+        format!("{summary} \u{b7} {note}")
+    }
+}
+
+/// "Draft saved locally 16:12", for a save that landed at `at`.
+pub fn saved_at(at: chrono::DateTime<chrono::Utc>) -> String {
+    format!(
+        "Draft saved locally {}",
+        at.with_timezone(&chrono::Local).format("%H:%M")
+    )
+}
+
+/// What the reminder verb says: "Remind", as the message dialog's action
+/// row names the same command, and the day once one is chosen ("Remind ·
+/// Tue 29 Sep"), in the person's own time zone. The whole of it -- "if no
+/// reply" -- is the verb's tooltip and accessible name ([`remind_meaning`]),
+/// the palette's title and the picker's heading; the row has room for the
+/// day, not for both (T221).
+pub fn remind_words(at: Option<chrono::DateTime<chrono::Utc>>) -> String {
+    match at {
+        Some(at) => format!(
+            "Remind \u{b7} {}",
+            at.with_timezone(&chrono::Local).format("%a %-d %b")
+        ),
+        None => "Remind".to_owned(),
+    }
+}
+
+/// What the reminder verb means, said in full: "Remind if no reply", and
+/// the day once one is chosen.
+pub fn remind_meaning(at: Option<chrono::DateTime<chrono::Utc>>) -> String {
+    match at {
+        Some(at) => format!(
+            "Remind if no reply \u{b7} {}",
+            at.with_timezone(&chrono::Local).format("%a %-d %b")
+        ),
+        None => "Remind if no reply".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod frame_tests {
+    use chrono::{Local, TimeZone, Utc};
+    use postio_model::{AccountId, Draft, DraftKind};
+
+    use super::*;
+
+    #[test]
+    fn the_subtitle_counts_the_words_that_will_be_sent_and_says_which_kind() {
+        let mut draft = Draft::new(AccountId::UNASSIGNED);
+        assert_eq!(summary(&draft), "Plain text \u{b7} 0 words");
+        draft.body.text = Some("Hi Ada,\n\nThe sheet is attached.".to_owned());
+        assert_eq!(summary(&draft), "Plain text \u{b7} 6 words");
+        draft.body.text = Some("One".to_owned());
+        assert_eq!(summary(&draft), "Plain text \u{b7} 1 word");
+        draft.body.html = Some("<p><b>One</b></p>".to_owned());
+        assert_eq!(summary(&draft), "Rich text \u{b7} 1 word");
+    }
+
+    #[test]
+    fn a_message_without_its_body_says_it_is_not_quoted() {
+        use postio_model::{BodyState, Message};
+        let mut source = Message::new(
+            AccountId::UNASSIGNED,
+            postio_model::ids::MailboxId::UNASSIGNED,
+            chrono::Utc::now(),
+        );
+        for state in [BodyState::NotFetched, BodyState::HeadersOnly] {
+            source.sync.body_state = state;
+            assert!(unquoted_note(&source).is_some(), "{state:?} said nothing");
+        }
+        for state in [BodyState::Partial, BodyState::Full] {
+            source.sync.body_state = state;
+            assert_eq!(unquoted_note(&source), None, "{state:?} has a body");
+        }
+    }
+
+    #[test]
+    fn the_signature_is_not_counted_as_written() {
+        let mut draft = Draft::new(AccountId::UNASSIGNED);
+        draft.body.text = Some("Looks good.\n\n-- \nAda Norwood\nExample Corp".to_owned());
+        assert_eq!(summary(&draft), "Plain text \u{b7} 2 words");
+    }
+
+    #[test]
+    fn the_subtitle_says_what_will_be_sent_then_what_happened() {
+        assert_eq!(
+            subtitle("Plain text \u{b7} 0 words", ""),
+            "Plain text \u{b7} 0 words"
+        );
+        assert_eq!(
+            subtitle("Plain text \u{b7} 58 words", "Draft saved locally 16:12"),
+            "Plain text \u{b7} 58 words \u{b7} Draft saved locally 16:12"
+        );
+    }
+
+    #[test]
+    fn remind_is_the_message_dialogs_word_and_says_its_day() {
+        assert_eq!(remind_words(None), "Remind");
+        assert_eq!(remind_meaning(None), "Remind if no reply");
+        let at = Local
+            .with_ymd_and_hms(2026, 9, 29, 9, 0, 0)
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(remind_words(Some(at)), "Remind \u{b7} Tue 29 Sep");
+        assert_eq!(
+            remind_meaning(Some(at)),
+            "Remind if no reply \u{b7} Tue 29 Sep"
+        );
+    }
+
+    #[test]
+    fn the_header_names_a_composition_as_the_screens_do() {
+        assert_eq!(title(DraftKind::New), "New message");
+        assert_eq!(title(DraftKind::ReplyAll), "Reply to all");
+    }
+
+    #[test]
+    fn the_kept_note_names_where_the_draft_went_and_the_key_there() {
+        assert_eq!(kept_note(Some("g t")), "Draft saved to Drafts (g t)");
+        assert_eq!(kept_note(None), "Draft saved to Drafts");
     }
 }

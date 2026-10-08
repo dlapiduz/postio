@@ -6,7 +6,7 @@
 //! time goes: ~3,000 tests execute in 108s inside a `cargo test` step that
 //! takes ~497s (#841).
 //!
-//! Nothing here touches GTK, so unlike `postio-gtk`'s `gtk_suite` this keeps
+//! Nothing here touches GTK, so unlike a suite that needs a display, this keeps
 //! libtest's ordinary harness and its thread pool. The cases were already
 //! running in parallel *within* each of the old binaries; they now do so
 //! across all of them, which is the same guarantee and one link.
@@ -29,21 +29,33 @@ mod connections;
 mod contact_groups;
 mod contact_rank_index;
 mod contacts;
+mod correspondents;
+mod digests;
 mod draft_indexes;
 mod drafts;
 mod encryption;
+mod filter_decisions;
+mod focus_classified;
+mod focus_inbox;
+mod focus_plans;
 mod labels;
 mod list_statement_count;
 mod mailbox_counts;
 mod mailbox_roles;
 mod mailbox_size;
 mod mailboxes;
+mod markers;
 mod messages;
+mod migrations;
 mod operations;
+mod promoted_headers;
 mod reclaim_pages;
+mod reminders;
 mod schema_fidelity;
 mod seed_is_honest;
+mod seed_shapes;
 mod snoozed_due_index;
+mod sort_at;
 mod statement_cache;
 mod store_key;
 mod sync_state;

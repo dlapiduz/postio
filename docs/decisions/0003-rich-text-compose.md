@@ -42,7 +42,7 @@ More than it looks, and it changes the shape of the work. Measured at `37c10b8`:
 | Inline images as `cid:` parts | **Built** — `an_inline_image_round_trips_with_its_content_id_and_is_referenced_from_the_html` passes |
 | Draft persistence for HTML | **Built** — `drafts.body_html` (`crates/postio-storage/src/schema.rs`) |
 | Reading HTML safely | Built — `crates/postio-body/src/sanitize.rs` (ammonia; moved out of the reader by ADR 0004), hardened `WebView`, `postio-cid:` scheme |
-| Composing HTML | **Built** — the composer holds `crate::editor::Editor`, a `contenteditable` WebView (`crates/postio-gtk/src/editor.rs`); it was a `gtk::TextView` when this was measured |
+| Composing HTML | **Built** — the composer holds `postio_widgets::composer::editor::Editor`, a `contenteditable` WebView (`crates/postio-widgets/src/composer/editor.rs`); it was a `gtk::TextView` when this was measured |
 | Generating `text/plain` | **Built** — `postio_body::Document::to_text` (`crates/postio-body/src/document.rs`) |
 | Quoting an HTML message | **Built** — `crates/postio-body/src/quote.rs`, [ADR 0033](0033-a-reply-quotes-what-the-reader-shows.md); "HTML-only content is not quoted" was the rule when this was measured |
 

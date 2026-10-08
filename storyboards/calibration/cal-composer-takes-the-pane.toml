@@ -1,6 +1,8 @@
 # must_pass: the twin of cal-composer-in-a-corner.
+apps        = ["focus"]
 source      = { kind = "issue", ref = "#1195" }
 calibration = "must_pass"
+
 [[step]]
 command = "compose"
-expect  = "The composer takes over the reading pane, with its fields at the top, and the message list stays where it was."
+expect  = "The composer opens as a large dialog over the list, with its fields at the top and the list dimmed behind it."

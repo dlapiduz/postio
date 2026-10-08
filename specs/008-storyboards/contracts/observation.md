@@ -27,46 +27,39 @@ That is why ADR 0044 records them (plan § ADR).
    is shown. They are not inferred from its label (research R6).
 6. **Ids are store ids**, as strings. A seed makes them stable.
 
-## Classic (`postio-gtk::window::Window::observe`)
+## Focus (`postio-gtk::window::FocusWindow::observe`)
+
+Postio's window is the one every storyboard is played on (ADR 0043;
+specs/007-postio-focus T265).
 
 | Field | Source |
 |---|---|
-| `view` | `context()` and `reader_occupant()` (`shell.rs:378`): `Conversation` → `conversation`; `Composer` → `composer`; `SearchPreview` → `search`. Settings window open → `settings`. Orientation showing → `first_run`. Locked store → `locked`. Otherwise `list`. |
-| `scope` | `scope()` (`window.rs:3076`), by display name |
-| `keyboard.region` | The focus widget's ancestors. `sidebar`, list view → `list`, reader view → `reader`, conversation → `conversation`, composer → `composer`, finder → `search` or `picker` (mailbox mode), palette, cheat sheet → `cheatsheet`, settings window → `settings`, `adw::AlertDialog` → `dialog`. |
-| `keyboard.field` | `composer().focused_field()` (`composer.rs:897`), when the region is `composer`. `query` when the region is `search`. |
-| `keyboard.typing` | `is_typing()` (`window.rs:2960`, private, so read inside `observe`) |
-| `keyboard.reachable` | The shared GTK half's `reachable(&window)` (research R3) |
-| `cursor.*` | `list().cursor().selected()`, `cursor_id()` (`list_view.rs:357, 914`), and the row's subject |
-| `rows.*` | The list model's `n_items()`, and the first visible row from the list's vadjustment |
-| `selection.count` | `list().selection()` (`list_view.rs:362`) |
-| `overlay.*` | `finder().is_open()` + `mode()` (`finder.rs:578, 588`); `cheatsheet().is_visible()`; palette; any presented `adw::Dialog` |
-| `notice.*` | `toast().showing()` (`toast.rs:74`), plus the new `tone()` and `offers_undo()` |
-| `banner.title` | The connection or sync banner, if one is showing |
-| `reading.id` | `reading()` (`window.rs:1365`) |
-| `reading.focused` | `conversation().focused_index()` (`conversation.rs:2552`) |
-| `reading.scroll` | `reader().view()`'s vadjustment, or the conversation's one-document view |
-| `composer.*` | `has_composer()`, `composer().is_open()`, detached state |
-| `back_depth` | `None` (Classic's Back is a cascade, `window.rs:2732`) |
-| `app.classic.pane` | `shell().focused_pane()` (`shell.rs:554`) |
-| `app.classic.reader_occupant` | `reader_occupant()` |
-
-## Focus (`postio-focus::window::FocusWindow::observe`, on `feature/postio-focus`)
-
-| Field | Source |
-|---|---|
-| `view` | `reading()` open → `reader`; `digest()` showing → `digest`; `filtered()` active → `filtered`; `bar()` open → `search`; composer dialog → `composer`; otherwise `list` |
-| `keyboard.region` | Focus widget ancestors. List pane → `list`; open dialog → `reader`; bar → `search`; places → `picker`; `open_picker()` → `picker`; `row_menu()` → `menu`; key map dialog → `dialog`; rule dialog → `dialog` |
-| `keyboard.typing` | The same `typing` that `handle_key` computes (`window.rs:611`) |
-| `cursor.*` | `pane().cursor().selected()`, `cursor_row()` (`window.rs:1515`) |
-| `selection.count` | `selection()` (`window.rs:1510`) |
-| `overlay.*` | `bar().is_open()`, `places().is_open()`, `open_picker()`, `row_menu().is_open()`, `key_map()`, `rule_dialog()` |
-| `notice.*` | `toast_showing()` (`window.rs:3741`), plus the new `tone()` and `offers_undo()` |
-| `banner.title` | `banner_showing()` (`window.rs:2925`) |
-| `reading.*` | `reading()` (`window.rs:3351`); scroll from `reader().view().scrolled_for_test()` (focus: `postio-widgets/src/reader/view.rs:1585`) |
-| `back_depth` | `None` (Back is a cascade, focus: `window.rs:1263`) |
-| `app.focus.bulk` | Whether the bulk bar is shown, and its summary. This needs a getter; `bulk.rs:102` has only a setter. |
+| `view` | An unavailable page (`unavailable_reason()`: a locked keyring, a store in use) → `locked`; Settings open → `settings`; the composer showing, in its dialog or the reading pane → `composer`; the add-account dialog → `first_run`; `reading()` open, in its dialog or the reading pane → `reader`; `digest()` showing → `digest`; `filtered()` active → `filtered`; `bar()` open → `search`; otherwise `list` |
+| `scope` | `place_name()`: the header strip's "Inbox", "Drafts", "Flagged", "Outbox" |
+| `keyboard.region` | The focus widget and the dialog over the window. `row_menu()` → `menu`; places or `open_picker()` → `picker`; Settings → `settings`; key map, rule dialog, raw source, open chooser, capture sheet, add account → `dialog`; the composer → `composer`; the open message, in its dialog or beside the list (T232) → `reader`; the digest window → `dialog`; the bar → `search`; the list pane → `list`. With focus on nothing, or on a control in the top bar or foot strip while the list's context holds, `list`: the window's capture-phase controller takes every key first, and in that context they are the list's |
+| `keyboard.field` | The composer's `focused_field()` (`to`, `cc`, `bcc`, `subject`, `body`) when the region is `composer`; `query` when it is `search` or `picker` |
+| `keyboard.typing` | `is_typing()`, the same answer `handle_key` gives the resolver |
+| `keyboard.reachable` | The shared GTK half's `reachable(&window)`, or nothing focused and nothing over the window |
+| `cursor.*` | `pane().cursor().selected()`, `cursor_row()`; a digest row's subject is its rule's name |
+| `rows.count` | The list's `n_items()`. `rows.first_visible` is not observed: the list is windowed over the store |
+| `selection.count` | `selection()`, an everything-but predicate counted against the rows |
+| `overlay.*` | Key map → `keymap`; rule dialog → `dialog`/`rule`; Settings → `dialog`/`settings`; raw source and the open chooser → `dialog`/`raw-source`, `open-choice`; `row_menu()` → `menu`; `open_picker()` → `picker`; places → `picker`/`places`; the bar → `finder` |
+| `notice.*` | `toast_showing()`, with the tone and undo the toast recorded when it was shown |
+| `banner.title` | `banner_showing()` |
+| `reading.id` | The open message's `shown()`, while the view is `reader` |
+| `reading.scroll` | The open message's `scroll_extent()`. `reading.focused` is not observed: one message is shown at a time (C2) |
+| `composer.*` | `open` as `view`, or a composition in a window of its own; `detached` is that composer's `is_detached()` |
+| `back_depth` | `None` (Back is a cascade) |
+| `app.focus.bulk` | Whether the bulk bar is shown, and its summary (`Bulk::summary`) |
+| `app.focus.cursor.unread` | How many messages of the cursor's conversation are unread, as the list row carries it: a message read by the dwell takes one off |
 | `app.focus.digest_page` | `digest().showing()` |
+| `app.focus.settings.section`, `.listed` | While Settings is open: the pane on screen (`current_section()`, its label), and the sections its list shows for what the find-a-setting field holds (`listed_sections()`), as one string joined by ", " |
+| `app.focus.bar.typed`, `.heading`, `.messages` | The bar's field, its results heading ("Conversations · 8 matches") and how many messages it lists: the hits, which the list behind it never shows |
+| `app.focus.bar.highlighted`, `.highlighted_id`, `.highlighted_text` | The row Return would run: its kind (`message`, `order`, `search`, `command`, `place`, ...), the message it opens, and what it says |
+
+An app field is named by its whole key (`app.focus.bar.messages`), one key
+per value, because a check reads the rest of its path after `app.` as one
+key.
 
 ## Later apps
 

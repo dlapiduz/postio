@@ -77,7 +77,7 @@ pub fn current(extents: &[Extent], scroll: f64, height: f64) -> Option<usize> {
 /// From the brief: a length appears *"only on messages long enough to matter
 /// (over ~40 lines), so you can see the essay before you scroll into it"*. A
 /// count on every row is noise; a count on the long ones is information.
-pub const LENGTH_THRESHOLD: u32 = 40;
+const LENGTH_THRESHOLD: u32 = 40;
 
 /// What one rail row says.
 ///
@@ -160,10 +160,10 @@ pub enum Presentation {
 }
 
 /// Below this the rail unmounts and the header carries the counter.
-pub const UNMOUNT_BELOW: i32 = 1100;
+const UNMOUNT_BELOW: i32 = 1100;
 
 /// Below this the rail narrows, at and above it the rail is full width.
-pub const NARROW_BELOW: i32 = 1240;
+const NARROW_BELOW: i32 = 1240;
 
 /// Which presentation a window of `width` gets, if any.
 ///

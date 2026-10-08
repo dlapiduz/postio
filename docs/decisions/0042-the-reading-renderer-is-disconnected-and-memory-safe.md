@@ -1,6 +1,6 @@
 # ADR 0042 — The reading renderer is disconnected and memory-safe
 
-- **Status:** Accepted (2026-09-27), with `specs/006-email-rendering`
+- **Status:** Accepted (2026-09-27), with `specs/006-email-rendering`. Built
 - **Spec:** [`specs/006-email-rendering`](../../specs/006-email-rendering/spec.md)
   (FR-001, FR-023a, FR-025; research R18)
 - **Related:** [ADR 0032](0032-the-conversation-is-one-document.md) (whose
@@ -17,8 +17,8 @@
 
 ## Context
 
-Spec 006 moved the reading pane from WebKit, a separate process with its
-own sandbox, to `postio-render` (Blitz, parley, vello_cpu) inside the
+Spec 006 moved the reader from WebKit, a separate process with its own
+sandbox, to `postio-render` (Blitz, parley, vello_cpu) inside the
 application. The maintainer accepted that on one condition: everything that
 parses or decodes message content is memory-safe code, and the renderer
 cannot reach the network by construction rather than by a setting. The
@@ -58,9 +58,11 @@ keep obeying after the feature has landed.
   it in.
 - `scripts/checks/check-crate-boundaries.py`'s `RULES["postio-render"]`
   bans the network and storage crates by name, on product edges.
-- `postio-render`'s `egress` suite and `postio-gtk`'s `gtk_reader` hold rule
-  4 in both directions: blocked mail reaches no loopback listener, and the
-  same mail reaches it once consent is given.
+- `postio-render`'s `egress` suite holds rule 4 in both directions (the
+  classic app's `gtk_reader` did too, until T256): blocked mail reaches no
+  loopback listener, and the same mail reaches it once consent is given. Focus's
+  `focus_suite::remote_images` holds it in the app: nothing is asked for
+  before Show, Show fetches once, and Always holds for that sender alone.
 
 ## Rejected
 

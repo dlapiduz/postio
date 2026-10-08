@@ -194,6 +194,8 @@ const NAMED_KEYS: &[(&str, &str)] = &[
 /// `?` and `question` have to be the same chord, or a binding copied out of a
 /// GDK key table would never match a key the user can actually press.
 const PUNCTUATION_NAMES: &[(&str, char)] = &[
+    // Focus's has-action toggle (specs/007-postio-focus FR-017).
+    ("exclam", '!'),
     ("plus", '+'),
     ("minus", '-'),
     ("equal", '='),
@@ -241,8 +243,8 @@ impl Key {
 
     /// The keysym name of this key: `question` for `?`, `Return` for Return,
     /// the character itself for a letter or digit. The inverse of [`parse`]'s
-    /// alias tables, and the spelling X11 and `gtk_accelerator_parse` accept
-    /// -- which is what the GTK frontend renders menu accelerators with.
+    /// alias tables, and the spelling X11 and `gdk::Key::from_name` accept
+    /// -- which is how the storyboard runner turns a chord into a key press.
     ///
     /// [`parse`]: Chord::from_platform_key
     pub fn keysym_name(&self) -> String {
@@ -548,6 +550,14 @@ pub enum KeyContext {
     Accounts,
     /// The keybinding list in settings, once the keyboard is in it.
     Keys,
+    /// A picker anchored to a row (spec 007).
+    Picker,
+    /// A digest's window (spec 007).
+    Digest,
+    /// The Filtered view (spec 007).
+    Filtered,
+    /// The capture sheet (spec 007, milestone 3).
+    Capture,
 }
 
 impl KeyContext {
@@ -585,6 +595,17 @@ impl KeyContext {
             // hatch sits in the same panel, and a fall-through here would
             // let a mail binding fire while the keyboard is on a rebind row.
             Self::Keys => &[Self::Keys, Self::Global],
+            // Focus's three (spec 007). A picker sits over a row, so `x` or
+            // `a` falling through would act on the mail under it; a digest
+            // and the Filtered view are surfaces of their own, whose `A` and
+            // `R` mean something else there. Each takes its own keys, and
+            // `Escape` and the palette from Global.
+            Self::Picker => &[Self::Picker, Self::Global],
+            Self::Digest => &[Self::Digest, Self::Global],
+            Self::Filtered => &[Self::Filtered, Self::Global],
+            // The capture sheet sits over a message, as a picker does: a
+            // letter falling through would act on the mail under it.
+            Self::Capture => &[Self::Capture, Self::Global],
         }
     }
 }
@@ -608,6 +629,10 @@ impl From<Context> for KeyContext {
             Context::Parts => Self::Parts,
             Context::Accounts => Self::Accounts,
             Context::Keys => Self::Keys,
+            Context::Picker => Self::Picker,
+            Context::Digest => Self::Digest,
+            Context::Filtered => Self::Filtered,
+            Context::Capture => Self::Capture,
         }
     }
 }
@@ -695,6 +720,27 @@ impl Keymap {
     /// cannot read costs its command a key and is reported; it never stops the
     /// application, which would leave the user with no way to fix it.
     pub fn from_commands(commands: &postio_core::Keymap) -> (Self, Vec<String>) {
+        Self::build(commands, None)
+    }
+
+    /// [`from_commands`](Self::from_commands) for one app: only the commands
+    /// `frontend` offers are bound.
+    ///
+    /// Every app shares one keymap, and a command only another app offers
+    /// keeps its key there (specs/007-postio-focus research R4). Here that
+    /// key is bound to nothing, so it does what an unbound key does, rather
+    /// than reaching a command this app would refuse as "not wired up".
+    pub fn from_commands_for(
+        commands: &postio_core::Keymap,
+        frontend: postio_core::Frontend,
+    ) -> (Self, Vec<String>) {
+        Self::build(commands, Some(frontend))
+    }
+
+    fn build(
+        commands: &postio_core::Keymap,
+        frontend: Option<postio_core::Frontend>,
+    ) -> (Self, Vec<String>) {
         let mut keymap = Self::new();
         let mut problems = Vec::new();
 
@@ -703,6 +749,9 @@ impl Keymap {
         // `bind` already takes the id as a string, so nothing below this line
         // cares which half it came from.
         for spec in registry::every_action() {
+            if frontend.is_some_and(|app| !spec.requires.offered_by(app)) {
+                continue;
+            }
             for binding in commands.bindings(spec.id) {
                 let contexts: Vec<KeyContext> = if spec.contexts == ContextSet::ANY {
                     vec![KeyContext::Global]
@@ -752,30 +801,6 @@ impl Keymap {
         }
         Match::None
     }
-}
-
-/// The chord currently bound to a command, for rendering a native
-/// accelerator — GTK's menu `accel`, AppKit's `NSMenuItem` key equivalent.
-///
-/// A native menu is not in any one context, so a [`KeyContext::Global`]
-/// binding wins; otherwise the first context binding stands in. Only a
-/// single-chord binding qualifies: `g g` cannot be drawn as an accelerator,
-/// and showing its first half would be a lie. `None` means the menu item
-/// simply shows no key.
-pub fn trigger_for_command(keymap: &Keymap, command: &str) -> Option<Chord> {
-    let mut fallback = None;
-    for (context, binding, bound) in keymap.entries() {
-        if bound != command || binding.len() != 1 {
-            continue;
-        }
-        if context == KeyContext::Global {
-            return Some(binding.first().clone());
-        }
-        if fallback.is_none() {
-            fallback = Some(binding.first().clone());
-        }
-    }
-    fallback
 }
 
 enum Match<'a> {
@@ -831,21 +856,16 @@ impl Resolver {
         (Self::new(keymap), problems)
     }
 
-    /// Rebuilds the table after `config.toml` changed, without a restart.
-    ///
-    /// Called when a reload reports `ConfigChange { keys: true }`. Returns the
-    /// problems to report — core's first, since "`y` is already bound to
-    /// `flag`" is what the user needs to hear, and this crate's parse failures
-    /// after.
-    ///
-    /// Everything downstream — the palette, the cheat sheet, the key hints —
-    /// reads [`postio_core::Keymap`] directly and so follows on its own; this
-    /// is only the half that has to be reparsed into chords.
-    pub fn apply_commands(&mut self, commands: &postio_core::Keymap) -> Vec<String> {
-        let (keymap, problems) = Keymap::from_commands(commands);
+    /// [`from_commands`](Self::from_commands) for one app: the resolver an
+    /// app presses keys through, binding only the commands `frontend`
+    /// offers (see [`Keymap::from_commands_for`]).
+    pub fn from_commands_for(
+        commands: &postio_core::Keymap,
+        frontend: postio_core::Frontend,
+    ) -> (Self, Vec<String>) {
+        let (keymap, problems) = Keymap::from_commands_for(commands, frontend);
         let problems = Self::all_problems(commands, &keymap, problems);
-        self.set_keymap(keymap);
-        problems
+        (Self::new(keymap), problems)
     }
 
     /// `commands.problems()`, this crate's own parse failures, and any

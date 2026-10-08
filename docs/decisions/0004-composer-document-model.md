@@ -13,8 +13,8 @@
 - **Decision:** a new domain-rank crate, **`postio-body`**, owns the document,
   the HTML subset, the parser, the serialiser, quoting and sanitisation — in
   both directions. `postio-model` does **not** gain an HTML parser.
-  `postio-gtk` keeps the `WebView` and loses `reader/sanitize.rs` and
-  `reader/quote.rs`.
+  `postio-gtk` (the classic view layer of the time) keeps the `WebView` and
+  loses `reader/sanitize.rs` and `reader/quote.rs`.
 
 ---
 
@@ -31,7 +31,7 @@ Measured at `0e0ec08`.
 | Incoming sanitisation (ammonia) | Built | `crates/postio-body/src/sanitize.rs` (was `gtk/src/reader/sanitize.rs`) |
 | Quote folding | Built | `crates/postio-body/src/quote.rs` (was `gtk/src/reader/quote.rs`) |
 | `Document`, HTML→text, HTML parse | **Built** | `crates/postio-body/src/document.rs`, `parse.rs` |
-| Composer body | **Built** — `crate::editor::Editor`, a WebView (was a `gtk::TextView`) | `crates/postio-gtk/src/editor.rs` |
+| Composer body | **Built** — `postio_widgets::composer::editor::Editor`, a WebView (was a `gtk::TextView`) | `crates/postio-widgets/src/composer/editor.rs` |
 
 So the reader half is finished and in the wrong crate, and the composer half
 does not exist. That is the shape of the work.
@@ -75,8 +75,8 @@ expensive possible place to spend it.
 
 `postio-body` depends on `postio-model` (for `Attachment` and content ids) and
 on `ammonia`. Nothing else in the workspace acquires `ammonia` transitively
-except the crates that actually render or compose a body: `postio-gtk` and
-`postio-app`.
+except the crates that actually render or compose a body (`postio-gtk` and
+`postio-app`, when this was written).
 
 This is the same argument that already split `postio-search` from
 `postio-index`, and the same shape: a pure leaf with no SQL and no toolkit,

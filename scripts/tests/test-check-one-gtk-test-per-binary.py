@@ -3,8 +3,8 @@
 
 The check exists because three integration test files each held two
 display-needing `#[test]`s and had been running one of them, at random, since
-they were written — reporting `ok` for both (#355). Once those moved into the
-`gtk_suite` harness the tree became clean, and a guard that passes on a clean
+they were written — reporting `ok` for both (#355). Once those moved into a
+custom harness the tree became clean, and a guard that passes on a clean
 tree passes whether it works or not.
 
 So the failure modes are exercised here instead: throwaway git repositories in
@@ -152,7 +152,7 @@ def main() -> int:
         "several harness cases in one file are fine",
         f"pub fn first() {{\n{GUARD}}}\n\npub fn second() {{\n{GUARD}}}\n",
         expect_fail=False,
-        detail="gtk_suite cases are pub fn, run in sequence, and are the fix",
+        detail="harness cases are pub fn, run in sequence, and are the fix",
     )
 
     if FAILURES:

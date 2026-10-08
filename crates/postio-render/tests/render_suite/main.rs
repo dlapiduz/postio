@@ -32,4 +32,5 @@ mod snapshot;
 mod text_index;
 mod thread;
 mod thread_document;
+mod treatment;
 mod zoom;

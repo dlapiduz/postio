@@ -8,7 +8,7 @@ Mac at all. Too large and a host that could have tested a crate silently
 does not.
 
 The interesting case is neither root: **postio-bench dev-depends on
-postio-gtk**, so it needs WebKit and nothing in its own manifest says so.
+postio-widgets**, so it needs WebKit and nothing in its own manifest says so.
 That edge is why the set is derived rather than named, and it is the case a
 hand-written list gets wrong the first time somebody adds one.
 
@@ -44,9 +44,9 @@ FAILURES: list[str] = []
 # reach them at all.
 WORKSPACE = {
     "packages": [
-        {"name": "postio-gtk", "dependencies": [{"name": "postio-ui"}]},
-        {"name": "postio-app", "dependencies": [{"name": "postio-gtk"}]},
-        {"name": "postio-bench", "dependencies": [{"name": "postio-gtk"}]},
+        {"name": "postio-widgets", "dependencies": [{"name": "postio-ui"}]},
+        {"name": "postio-gtk", "dependencies": [{"name": "postio-widgets"}]},
+        {"name": "postio-bench", "dependencies": [{"name": "postio-widgets"}]},
         {"name": "postio-ui", "dependencies": [{"name": "postio-core"}]},
         {"name": "postio-core", "dependencies": []},
     ]
@@ -108,12 +108,12 @@ def main() -> int:
     case(
         "a host missing webkitgtk cannot build the frontend",
         run(["webkitgtk-6.0"]),
-        ["postio-app", "postio-bench", "postio-gtk"],
+        ["postio-bench", "postio-gtk", "postio-widgets"],
     )
     case(
         "a host missing all three says the same",
         run(["gtk4", "libadwaita-1", "webkitgtk-6.0"]),
-        ["postio-app", "postio-bench", "postio-gtk"],
+        ["postio-bench", "postio-gtk", "postio-widgets"],
     )
 
     # The case a hand-written list gets wrong. `postio-bench` reaches the
@@ -128,7 +128,7 @@ def main() -> int:
     )
 
     # ...and the crates the frontend depends *on* stay buildable. The edge
-    # only points one way: postio-ui is what postio-gtk needs, not the
+    # only points one way: postio-ui is what postio-widgets needs, not the
     # reverse, and a set that swallowed it would stop a Mac testing almost
     # anything.
     case(

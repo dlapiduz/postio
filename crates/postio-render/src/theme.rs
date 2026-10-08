@@ -225,6 +225,23 @@ pub fn repair(text: Rgb, ground: Rgb, floor: f64) -> Rgb {
     }
 }
 
+/// The contrast guard of the app-colours treatment (specs/007-postio-focus
+/// T211): a colour the sender set on purpose -- a red "URGENT" -- is kept
+/// only where it reaches `floor` against `surface`, and drawn in `ink`
+/// otherwise.
+///
+/// Not [`repair`]: repair moves a colour until it reads, which keeps the
+/// sender's hue on a ground the sender never saw. App colours is the app's
+/// palette with the sender's colour as an exception, and an exception that
+/// does not read on this surface is not made to; it goes back to ink.
+pub fn guard(colour: Rgb, surface: Rgb, ink: Rgb, floor: f64) -> Rgb {
+    if contrast(colour, surface) >= floor {
+        colour
+    } else {
+        ink
+    }
+}
+
 /// A CSS colour as an engine's computed style reports it, and its alpha:
 /// how the tests spell the palette they assert against.
 #[cfg(test)]
@@ -457,6 +474,25 @@ mod tests {
 
     /// The bug the user reported, repaired: dark text on the dark reader
     /// ground, moved in lightness only until it reads.
+    #[test]
+    fn the_guard_keeps_a_colour_that_reads_and_inks_one_that_does_not() {
+        // The handoff's surfaces and inks (SPEC.md section 6).
+        let (light, light_ink) = (hex("#fdfdfb"), hex("#1c2321"));
+        let (dark, dark_ink) = (hex("#1c2120"), hex("#e7ecea"));
+        let red = hex("#c00000");
+        assert!(contrast(red, light) >= 4.5 && contrast(red, dark) < 4.5);
+        assert_eq!(guard(red, light, light_ink, 4.5), red, "red reads on light");
+        assert_eq!(guard(red, dark, dark_ink, 4.5), dark_ink, "and not on dark");
+        // Exactly at the floor is enough; just under it is not.
+        let grey = hex("#767676");
+        assert!(contrast(grey, hex("#ffffff")) >= 4.5);
+        assert_eq!(guard(grey, hex("#ffffff"), light_ink, 4.5), grey);
+        let lighter = hex("#777777");
+        assert_eq!(guard(lighter, hex("#ffffff"), light_ink, 4.5), light_ink);
+        // High contrast asks for 7:1, and red on light does not reach it.
+        assert_eq!(guard(red, light, light_ink, 7.0), light_ink);
+    }
+
     #[test]
     fn repair_meets_the_floor_in_lightness_only() {
         let ground = hex("#2b2b2d");

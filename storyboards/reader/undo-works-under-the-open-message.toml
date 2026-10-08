@@ -1,0 +1,37 @@
+# Undo, offered by the toast, works from the open message.
+#
+# Found while writing delete-acts-in-the-open-message (88c1f0f7). With a
+# message open, Delete (or Archive) removes it and the dialog goes on to the
+# next one, and the toast behind it offers Undo -- and the toast
+# offers Undo from above the dialog; `ctrl+z` reaches the same undo.
+#
+# `reading_key` hands Undo to the window, with the dialog up. The undo puts
+# the message the person was reading back in the list, and the open message
+# goes back to it with the list's cursor: the two never point at different
+# conversations (US2 scenario 2).
+source = { kind = "commit", ref = "88c1f0f7" }
+proof  = "pinned"
+apps   = ["focus"]
+seed   = "long-newsletter"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "open_message"
+settle  = { until = { view = "reader" } }
+[[step]]
+command = "delete"
+check   = { view = "reader", rows.count = 59, notice.undo = true }
+
+[[step]]
+command = "undo"
+check   = { rows.count = 60, reading.id = "90", cursor.id = "90", view = "reader", app.focus.reading.position = "Message 4 of 59 · thread of 6" }
+expect  = "Undo restores the conversation, as it does from the list, and takes the open message back to it: the cursor is on it, and the header's place is its own."

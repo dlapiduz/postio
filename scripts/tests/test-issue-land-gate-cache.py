@@ -5,7 +5,7 @@ Long commands on this workstation get killed sometimes (documented in
 docs/engineering-notes.md), and every killed `issue-land.sh` retry used to
 re-run the whole gate chain -- clippy and the full per-crate test suite,
 minutes each -- against a tree that had not changed a byte since the gates
-last went green. Landing #109 paid the postio-app gates three times that way.
+last went green. Landing #109 paid the app crate's gates three times that way.
 
 So the script records `git write-tree` (the staged tree's content hash --
 staging already happens before the gates, #270) plus the crate list after

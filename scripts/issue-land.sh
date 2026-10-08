@@ -39,7 +39,7 @@ set -euo pipefail
 # `cargo nextest` gives every test its own process and runs test *binaries*
 # concurrently, where `cargo test` runs them one after another. With 140
 # binaries that is most of the cost: measured on this workspace, sccache off,
-# idle box, `app_suite` goes 200s -> 20.4s and the whole workspace ~500s ->
+# idle box, the app's suite went 200s -> 20.4s and the whole workspace ~500s ->
 # 118.6s.
 #
 # It is **not** faster at everything, and the difference decides where it is
@@ -372,8 +372,9 @@ echo
 #
 # The gate chain runs over the crates this branch changed. On a host missing
 # their system libraries that is not a weaker gate, it is no gate at all, and
-# the work lands anyway. A macOS session cannot build `postio-gtk` or
-# `postio-app`: gtk4 and libadwaita have arm64 bottles but webkitgtk has none,
+# the work lands anyway. A macOS session cannot build the GTK crates
+# (`postio-widgets`, `postio-gtk`): gtk4 and libadwaita have arm64 bottles
+# but webkitgtk has none,
 # and the reader and composer are both WebKit views. CI would notice on the
 # pull request, but only after the branch is pushed and only if someone reads
 # it -- and on a repository where several agents work at once on different
@@ -385,8 +386,8 @@ echo
 #
 # Derived rather than named. The roots are the two crates whose system
 # libraries can be missing; the answer is those *plus everything that reaches
-# them*, which is not the same set -- `postio-bench` dev-depends on
-# `postio-gtk`, so it needs WebKit too and nothing in its own manifest says
+# them*, which is not the same set -- `postio-bench` dev-depends on the
+# desktop app, so it needs WebKit too and nothing in its own manifest says
 # so. A hardcoded pair was right the day it was written and would go wrong
 # the next time a crate dev-depends on the frontend, silently and only on
 # macOS (#1152). See `scripts/unbuildable-crates.sh`.
@@ -410,7 +411,7 @@ else
             || MISSING_LIBS="${MISSING_LIBS:+$MISSING_LIBS }$lib"
     done
     UNBUILDABLE=""
-    [ -n "$MISSING_LIBS" ] && UNBUILDABLE="postio-gtk postio-app"
+    [ -n "$MISSING_LIBS" ] && UNBUILDABLE="postio-widgets postio-gtk"
 fi
 
 BLOCKED=""
@@ -431,8 +432,8 @@ fi
 
 # A crate the unbuildable ones depend on still lands -- refusing would leave a
 # macOS session unable to do any work at all -- but the gap goes on the PR
-# rather than into somebody's memory. `postio-app` depends on every other
-# workspace crate, directly or transitively, so when it is unbuildable any
+# rather than into somebody's memory. The desktop app depends on most other
+# workspace crates, directly or transitively, so when it is unbuildable a
 # changed crate is unproven against the frontend.
 VERIFY_LABEL=""
 VERIFY_NOTE=""
@@ -520,7 +521,7 @@ fi
 # that has not changed a byte since is not re-proven. Long commands on this
 # workstation get killed sometimes (docs/engineering-notes.md), and every
 # killed landing used to re-pay clippy and the full per-crate test suite on
-# a retry that changed nothing -- #109's landing paid its postio-app gates
+# a retry that changed nothing -- #109's landing paid its app crate's gates
 # three times that way. `git write-tree` hashes the staged tree, staging
 # just happened above, and rust-toolchain.toml is tracked: an edit, a
 # rebase, whatever `cargo fmt` just rewrote, or a toolchain bump all change
@@ -665,7 +666,7 @@ if [ "$GATES_GREEN" != 1 ]; then
         # crate changed, so the #555 hard stop correctly did not fire, and
         # then the tier compiled the whole workspace anyway and died on
         # `glib-sys` (#1152). Excluding the two obvious crates is not enough
-        # either -- `postio-bench` dev-depends on `postio-gtk` and drags the
+        # either -- `postio-bench` dev-depends on the desktop app and drags the
         # stack back in -- which is why the list is derived.
         SANITY_EXCLUDES=()
         for crate in $UNBUILDABLE; do
@@ -688,7 +689,7 @@ if [ "$GATES_GREEN" != 1 ]; then
     # green, and `main` goes red for the next session unlucky enough to touch
     # the crate whose tests stopped building. That happened twice in one day
     # (#419): `Event::BackfillProgress` gained `footprint`, and six call
-    # sites in postio-gtk's tests were never updated.
+    # sites in the GTK crate's tests were never updated.
     #
     # `check`, not `build` or `test`: no codegen, no linking, nothing
     # executed -- the cheapest question that covers the whole workspace, and
@@ -697,7 +698,7 @@ if [ "$GATES_GREEN" != 1 ]; then
     # What it costs, measured on this workstation (#419): 6m20s against a
     # cold target directory, 0.6s warm. A landing pays somewhere between,
     # depending on how much of the graph the per-crate gates above already
-    # compiled -- close to nothing for a postio-gtk branch, most of the
+    # compiled -- close to nothing for a GTK-crate branch, most of the
     # frontend for a leaf-crate one. A retry after a killed run pays the warm
     # number, and the gate cache above usually skips it entirely.
     #
@@ -980,33 +981,31 @@ fi
 # real `gh` call below.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/require-gh.sh"
 
-# Storyboards (specs/008-storyboards, FR-022/023). A branch that changes a
-# GTK app's interaction should arrive with a `/ux-review` of the tree it
-# lands. Never a refusal -- the review is advisory and the catalogue is
-# young -- but never silent either: a current review's summary goes on the
-# PR, and a missing or stale one is a warning and a label anybody can see.
-# "Current" is the review key, built from the app crates' and the catalogue's
-# git tree ids, so a rebase that leaves them alone keeps it (research R13).
-STORYBOARD_APP=""
+# Storyboards (specs/008-storyboards, FR-022/023). A branch that changes the
+# app's interaction should arrive with a `/ux-review` of the tree it lands.
+# Never a refusal -- the review is advisory and the catalogue is young --
+# but never silent either: a current review's summary goes on the PR, and a
+# missing or stale one is a warning and a label anybody can see. "Current"
+# is the review key, built from the app crates' and the catalogue's git tree
+# ids, so a rebase that leaves them alone keeps it (research R13). The app
+# is Postio, whose crates are postio-gtk and postio-widgets (T265).
+STORYBOARD_REVIEWED=0
 for crate in $CRATES; do
     case "$crate" in
-        postio-gtk|postio-app)
-            case "$STORYBOARD_APP" in focus|all) STORYBOARD_APP=all ;; *) STORYBOARD_APP=classic ;; esac ;;
-        postio-focus|postio-widgets)
-            case "$STORYBOARD_APP" in classic|all) STORYBOARD_APP=all ;; *) STORYBOARD_APP=focus ;; esac ;;
+        postio-gtk|postio-widgets) STORYBOARD_REVIEWED=1 ;;
     esac
 done
 STORYBOARD_LABEL=""
 STORYBOARD_NOTE=""
 STORYBOARD_SUMMARY=""
-if [ -n "$STORYBOARD_APP" ]; then
+if [ "$STORYBOARD_REVIEWED" = 1 ]; then
     STORYBOARD_FILE="Design/review/${BRANCH//\//-}/summary.md"
     # `|| true`: under `set -e` and `pipefail` a tree without the script (a
     # self-test's sandbox, an older base) would otherwise end the landing
     # here with exit 127 and no word, after the push. No key is a warning.
     STORYBOARD_KEY=""
     if [ -x scripts/storyboards.sh ]; then
-        STORYBOARD_KEY=$(scripts/storyboards.sh key --app "$STORYBOARD_APP" 2>/dev/null | tail -1) || true
+        STORYBOARD_KEY=$(scripts/storyboards.sh key 2>/dev/null | tail -1) || true
     fi
     STORYBOARD_SEEN=""
     if [ -f "$STORYBOARD_FILE" ]; then
@@ -1018,7 +1017,7 @@ if [ -n "$STORYBOARD_APP" ]; then
     else
         STORYBOARD_LABEL="interactions-unreviewed"
         if [ -z "$STORYBOARD_SEEN" ]; then
-            STORYBOARD_NOTE="This changes a GTK app's interaction and has no storyboard review. Run \`/ux-review\` (specs/008-storyboards) and push again."
+            STORYBOARD_NOTE="This changes the app's interaction and has no storyboard review. Run \`/ux-review\` (specs/008-storyboards) and push again."
         else
             STORYBOARD_NOTE="The storyboard review on file is for an earlier tree than this one. Run \`/ux-review\` again and push."
         fi
@@ -1127,7 +1126,7 @@ if [ "$PR_STATE" = "OPEN" ] && [ -n "$STORYBOARD_NOTE" ]; then
 fi
 if [ -n "$STORYBOARD_LABEL" ]; then
     gh label create "$STORYBOARD_LABEL" --color FBCA04 \
-        --description "Changes a GTK app's interaction without a current /ux-review" >/dev/null 2>&1 || true
+        --description "Changes the app's interaction without a current /ux-review" >/dev/null 2>&1 || true
     if gh pr edit --add-label "$STORYBOARD_LABEL" >/dev/null 2>&1; then
         echo "labelled $STORYBOARD_LABEL"
     else

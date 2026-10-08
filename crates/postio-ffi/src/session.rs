@@ -32,6 +32,18 @@ pub enum SessionError {
         /// A sentence for the user, naming the platform's keyring.
         message: String,
     },
+    /// The store was written at a schema this build cannot carry forward
+    /// (`postio_session::Remedy::StartOver`).
+    ///
+    /// Its own case, not a `StoreUnavailable`: trying again meets the same
+    /// file every time, so a surface that offers "Try again" for it is a dead
+    /// end. The way forward is starting the store over, which sets it aside
+    /// rather than deleting it (`postio_session::start_over`).
+    #[error("{message}")]
+    StoreFromAnotherBuild {
+        /// A sentence for the user, already written by the store layer.
+        message: String,
+    },
     /// The tokio runtime the engine needs could not be started.
     #[error("{message}")]
     RuntimeUnavailable {
@@ -41,6 +53,18 @@ pub enum SessionError {
 }
 
 impl SessionError {
+    /// Maps a store refusal onto the case the frontend routes on: whether
+    /// trying again can help, or only starting the store over.
+    fn from_refusal(refusal: postio_session::Refusal) -> Self {
+        let message = refusal.sentence;
+        match refusal.remedy {
+            postio_session::Remedy::TryAgain => SessionError::StoreUnavailable { message },
+            postio_session::Remedy::StartOver { .. } => {
+                SessionError::StoreFromAnotherBuild { message }
+            }
+        }
+    }
+
     /// Maps a keyring failure onto the case the frontend routes on.
     ///
     /// A match rather than `to_string`, and that is the entire point of this
@@ -75,7 +99,7 @@ const THREAD_LIMIT: u32 = 500;
 /// Not a `uniffi::Record`: it can carry a caller-supplied runtime and command
 /// bus, which are Rust types with no crossing. Swift uses the exported
 /// constructor on [`Session`] instead, and this is the in-process API that
-/// `postio-app`-shaped callers and tests use.
+/// callers and tests use.
 pub struct SessionOptions {
     store_path: Option<std::path::PathBuf>,
     bridge: Option<(tokio::runtime::Handle, CommandSender)>,
@@ -98,9 +122,9 @@ pub struct SessionOptions {
 ///
 /// `handle_locally` is the implementation; this is the same list as data, so
 /// that `command_coverage.rs` can sweep every registry command and say which
-/// of them reach nothing at all. `postio-gtk` has the same pair — its sweep is
-/// `app_suite/command_wiring.rs`, and its `KNOWN_ORPHANS` list is empty
-/// because that sweep has existed long enough to have emptied it.
+/// of them reach nothing at all. The classic app had the same pair — its sweep was
+/// the classic app's command-wiring test, and its `KNOWN_ORPHANS` list was empty
+/// because that sweep had existed long enough to have emptied it.
 ///
 /// They are here and not in Swift because what they move — the cursor, the
 /// selection, the row window — is here. A frontend that moved them would need
@@ -266,7 +290,7 @@ impl SessionOptions {
 
     /// An in-memory session on a runtime and command bus the caller owns.
     ///
-    /// `postio-app` builds its own [`Bridge`] and hands the parts to
+    /// The classic app built its own [`Bridge`] and handed the parts to
     /// [`Wiring`]; a frontend on this boundary must be able to do the same,
     /// or it would end up with two runtimes and the deadlock that implies.
     #[cfg(feature = "testing")]
@@ -325,6 +349,8 @@ impl SessionOptions {
 #[derive(Debug, Clone)]
 enum ConfigSource {
     /// Exactly this document. An empty one is the built-in defaults.
+    /// Only a test asks for one, so a build without `testing` never makes it.
+    #[cfg_attr(not(feature = "testing"), allow(dead_code))]
     Document(String),
     /// Whatever `config.toml` this installation has, or the defaults if there
     /// is none. What a shipping application wants, and what a test gets only
@@ -390,7 +416,10 @@ fn config_source(_options: &SessionOptions) -> ConfigSource {
 /// preferences file, which is the same call `load_key_bindings` makes above.
 fn build_resolver(keys: &postio_config::keys::KeyBindings) -> postio_ui::keymap::Resolver {
     let keymap = postio_core::Keymap::resolve(keys);
-    let (resolver, problems) = postio_ui::keymap::Resolver::from_commands(&keymap);
+    // The macOS app's commands only: a key the one keymap keeps for another
+    // app is bound to nothing here (specs/007-postio-focus R4).
+    let (resolver, problems) =
+        postio_ui::keymap::Resolver::from_commands_for(&keymap, postio_core::Frontend::Macos);
     for problem in &problems {
         tracing::warn!(%problem, "a key binding could not be used");
     }
@@ -498,8 +527,8 @@ struct Link {
     _hearing: async_channel::Sender<()>,
 }
 
-/// Connect this frontend to `host` as its client, the way `postio-app`'s
-/// window is connected to its own.
+/// Connect this frontend to `host` as its client, the way the classic app's
+/// window was connected to its own.
 ///
 /// Answers the session's wiring, the stream it drains, and its [`Link`].
 /// The wiring is the host's with its `store` -- what the list counts and
@@ -578,8 +607,8 @@ pub struct Session {
     /// contend with whatever else is holding the session.
     list: Arc<Mutex<postio_ui::list::ListWindow<crate::RowFfi>>>,
     /// What the window is showing, what a page of it means and what an event
-    /// does to it — [`postio_ui::paging::Paging`], the policy `postio-gtk`'s
-    /// feed follows too, so a page fetch and an event reaction are one rule
+    /// does to it — [`postio_ui::paging::Paging`], the policy the classic app's
+    /// feed followed too, so a page fetch and an event reaction are one rule
     /// on both frontends.
     paging: Mutex<postio_ui::paging::Paging>,
     /// What the user has marked, and where the keyboard is.
@@ -744,7 +773,7 @@ pub struct Session {
     offline: Arc<std::sync::atomic::AtomicBool>,
     /// The engines this session started, kept alive for as long as it is.
     ///
-    /// Retained rather than leaked, for the reason `postio-app` records:
+    /// Retained rather than leaked, for the reason the classic app recorded:
     /// dropping an engine at process exit can leave a sync pass's write torn
     /// mid-commit, and the pre-1.0 store engine's recovery is not one to bet
     /// on when waiting for the pass is cheap.
@@ -1910,7 +1939,7 @@ impl Session {
     /// the keyring beside the token it is about — `config.toml` strips
     /// anything token-shaped on the way through, which is the whole reason
     /// it is there (#870). So the row cannot be assembled from the store
-    /// alone, and `postio-app` reaches for exactly the same value the same
+    /// alone, and the classic app reached for exactly the same value the same
     /// way before handing it to its panel's `set_token_expiries`.
     ///
     /// **Only for an account that has one.** The filter is
@@ -2083,7 +2112,7 @@ impl Session {
     /// Reading the store's key from the OS keyring is a synchronous round
     /// trip that can wait on a user prompt, and it has to finish before there
     /// is a store — so this blocks the calling thread, bounded by the
-    /// keyring's own timeout rather than indefinitely. `postio-app` does the
+    /// keyring's own timeout rather than indefinitely. The classic app did the
     /// same thing before any window exists. **A Swift caller must not invoke
     /// it on the main actor**: it belongs in a launch task, with the unlock
     /// surface shown if it comes back [`SessionError::KeyringLocked`].
@@ -2259,8 +2288,9 @@ impl Session {
         // blocks. That is what the sentence above about the keyring is
         // already telling a Swift caller -- do not invoke this on the main
         // actor -- and it covers the store open for exactly the same reason.
-        let (database, blobs) = blocking(postio_session::open_store_at(path, &key))
-            .map_err(|message| SessionError::StoreUnavailable { message })?;
+        let (database, blobs) =
+            blocking(postio_session::open_store_at_reporting(path, &key, &|_| {}))
+                .map_err(SessionError::from_refusal)?;
 
         let config = load_config(&source);
         let keys = config.keys;
@@ -2740,8 +2770,6 @@ impl Session {
     /// A read of its own rather than a field on the document, because the
     /// document is a string handed to a web view and this is native chrome
     /// above it — the same split every notice in the strip has.
-    ///
-    /// See [`decode_caveat_ffi`](Self::decode_caveat_ffi).
     pub async fn decode_caveat(&self, message: i64) -> Option<String> {
         // A view over `reader_answers` — see `reader_notice`.
         self.reader_answers(message, crate::RemoteImagesFfi::Blocked, false)
@@ -2758,8 +2786,6 @@ impl Session {
     /// than a habit of whoever writes the frontend: drawing a message can
     /// reach this and cannot reach
     /// [`activate_unsubscribe`](Self::activate_unsubscribe).
-    ///
-    /// See [`unsubscribe_offer_ffi`](Self::unsubscribe_offer_ffi).
     pub async fn unsubscribe_offer(&self, message: i64) -> Option<crate::UnsubscribeOfferFfi> {
         // A view over `message_facts` — see `reader_notice`.
         self.message_facts(message).await.offer
@@ -2847,7 +2873,7 @@ impl Session {
         // The merge rule, not a `sort_by_key` written out here: each
         // account's rows come back newest-first on their own, and joining
         // several of those lists is a decision about what the pane shows,
-        // which `postio-app`'s privacy pane was already making with its own
+        // which the classic app's privacy pane was already making with its own
         // copy of the same line. `postio_ui::unsubscribe::newest_first` is
         // the one answer now, tie-break included.
         postio_ui::unsubscribe::newest_first(&mut activations);
@@ -3812,7 +3838,7 @@ impl Session {
                 })?;
         // `save_and_sync`, not `save`. **A local write without its queue row
         // never reaches the server** -- that is the repository method's own
-        // sentence, and it is why `postio-app` has used this one since drafts
+        // sentence, and it is why the classic app had used this one since drafts
         // existed. Every macOS save path goes through here: autosave, attach,
         // detach, and both ends of the editor hand-off. With the plain `save`
         // a reply begun on the Mac was in Drafts on the Mac and nowhere else.
@@ -3848,7 +3874,7 @@ impl Session {
         };
         // Refused rather than queued: an unaddressed draft would close the
         // window and drain as impossible — the words gone and no message
-        // sent. The same check `postio-gtk`'s composer makes, for the same
+        // sent. The same check the classic app's composer made, for the same
         // two reasons.
         if !draft.has_recipients() {
             return Some("This message has no recipient yet.".to_owned());
@@ -4027,7 +4053,7 @@ impl Session {
     /// **The whole of this frontend's aiming**, and it decides nothing: what
     /// a gesture acts on is `postio_core::aim`'s rule, and this hands it the
     /// facts — the scope on screen, what is marked, where the keyboard is,
-    /// and the rows the window is holding. `postio-app` is the same three
+    /// and the rows the window is holding. The classic app was the same three
     /// lines over GTK's own widgets (#589, #721). Two adapters, one rule; a
     /// second copy of the rule here is exactly what that issue removed.
     ///
@@ -4057,8 +4083,8 @@ impl Session {
         };
 
         // The commands that move this frontend's own state rather than the
-        // engine's, handled here and not sent down. `postio-gtk`'s
-        // `run_action` does exactly the same with the same ids -- the list
+        // engine's, handled here and not sent down. The classic app's
+        // `run_action` did exactly the same with the same ids -- the list
         // walks its own rows, and `Command::NextMessage` reaching the engine
         // would be a message to nobody.
         //
@@ -4128,7 +4154,7 @@ impl Session {
     /// supply -- the character the key would type, the key's name when it
     /// types none, and the modifiers held -- and this hands them to
     /// `postio_ui::keymap`, which owns the table, the chords, the sequences
-    /// and the leader timeout. `postio-gtk`'s `resolve_key` is the same shape
+    /// and the leader timeout. The classic app's `resolve_key` was the same shape
     /// over GDK. Two adapters, one keymap; that is what keeps `[keys]`
     /// meaning the same thing on both platforms (ADR 0019 Q4).
     ///
@@ -4185,7 +4211,7 @@ impl Session {
 
         // The silent path, and the one that is impossible to diagnose without
         // it: a key that does nothing, with nothing said about why.
-        // `postio-gtk`'s `resolve_key` logs the same three inputs for the same
+        // The classic app's `resolve_key` logged the same three inputs for the same
         // reason -- "it randomly stopped working" becomes one line naming
         // which of them it was. No message content: a chord, a context and a
         // flag are not mail.
@@ -4203,8 +4229,8 @@ impl Session {
     /// Run `id` here if it is this frontend's own state, and say whether it
     /// was.
     ///
-    /// The split is the one `PRODUCT.md` §9 draws and `postio-gtk` already
-    /// implements: **the cursor is not the selection**, and neither is
+    /// The split is the one `PRODUCT.md` §9 draws and the classic app already
+    /// implemented: **the cursor is not the selection**, and neither is
     /// anything the engine knows about. Moving down a list and marking a row
     /// are frontend state; archiving what is marked is not.
     fn handle_locally(&self, id: postio_core::CommandId) -> bool {
@@ -4284,9 +4310,10 @@ impl Session {
                     .map(|mailbox| postio_core::Scope::Account(mailbox.account_id))
                     .unwrap_or(postio_core::Scope::Unified)
             }
-            ListScope::Unified | ListScope::Snoozed(_) | ListScope::Thread(_) => {
-                postio_core::Scope::Unified
-            }
+            ListScope::Unified
+            | ListScope::Snoozed(_)
+            | ListScope::Thread(_)
+            | ListScope::Focus(_) => postio_core::Scope::Unified,
         }
     }
 
@@ -4329,12 +4356,17 @@ impl Session {
     /// this type rather than an assumption: a `Session` is constructed *over*
     /// an open store, so there is no interval in which one does not exist.
     /// The window-first startup that makes [`Requirement::StoreOpen`] worth
-    /// evaluating is `postio-app`'s (#1114), and a frontend that ever grows
+    /// evaluating was the classic app's (#1114), and a frontend that ever grows
     /// the same shape answers here instead of at a menu.
     ///
     /// [`Requirement::StoreOpen`]: postio_core::Requirement::StoreOpen
     fn availability(&self) -> postio_core::Availability {
-        postio_core::Availability::open(*self.account_scope.lock().expect("account scope lock"))
+        postio_core::Availability {
+            frontend: postio_core::Frontend::Macos,
+            ..postio_core::Availability::open(
+                *self.account_scope.lock().expect("account scope lock"),
+            )
+        }
     }
 
     /// The palette's rows for `query`, best first.
@@ -4711,7 +4743,7 @@ impl Session {
     ///
     /// **Not `invoke`, and the difference matters.** `MarkReadOnDwell` is
     /// deliberately not a registry command: it routes to
-    /// `CommandId::MarkUnread`'s handler so there is one "mark read" in the
+    /// `CommandId::ToggleRead`'s handler so there is one "mark read" in the
     /// vocabulary, and it is the one dispatch that is *not* recorded on the
     /// undo stack — `u` takes back what you did, and reading a mailbox
     /// produces one of these per message rested on. Going through `invoke`
@@ -4719,7 +4751,7 @@ impl Session {
     /// actually wanted back.
     ///
     /// The message is named rather than taken from the cursor, for the reason
-    /// `postio-app` gives on the same call: the cursor may have moved on
+    /// The classic app gave on the same call: the cursor may have moved on
     /// between the frontend's timer firing and this running, and the message
     /// that was read is the one the clock was started for.
     pub fn mark_read_on_dwell(&self, message: i64) {
@@ -4879,7 +4911,7 @@ impl Session {
     ///
     /// What the page *is* — an offset read of the scope, or a slice of the
     /// search ranking — is [`postio_ui::paging::Paging::fetch_for`]'s answer,
-    /// the same one `postio-gtk`'s feed gets; only the crossing to the store
+    /// the same one the classic app's feed got; only the crossing to the store
     /// and back is this boundary's.
     fn fetch(&self, generation: u64, page: u32) {
         let fetch = self.paging.lock().expect("paging lock").fetch_for(page);
@@ -4983,8 +5015,8 @@ impl Session {
     /// **One query language.** `postio-search` parses it, here, for both
     /// frontends -- Swift does not re-implement operator parsing, or `from:`
     /// would mean one thing on Linux and another on a Mac. The run is
-    /// `postio_session::search::execute`, the same function the GTK finder
-    /// calls, so the hit limit and the excerpt rule are one decision rather
+    /// `postio_session::search::execute`, the same function the classic app's finder
+    /// called, so the hit limit and the excerpt rule are one decision rather
     /// than two.
     ///
     /// Blocking, like [`open_scope`](Self::open_scope) and for the same
@@ -5415,7 +5447,7 @@ impl Session {
             // `encoding_problems` is bound and not used *here* deliberately,
             // and is no longer the gap it was: the caveat it carries is
             // native chrome above the document rather than markup inside it
-            // — the same split the GTK reader's `DecodeNotice` has (#901) —
+            // — the same split the classic app's reader `DecodeNotice` had (#901) —
             // so it crosses as [`decode_caveat`](Self::decode_caveat), which
             // reads the same flag through the same load. Named rather than
             // elided so the next reader of this arm finds the other half.
@@ -5733,7 +5765,7 @@ impl Session {
             if let Ok(mut found) = blocking(store.mailboxes(account.id)) {
                 // The rows that are views rather than folders -- Flagged,
                 // Snoozed, and the Outbox when it holds something. Built by
-                // the same shared layer the GTK feed asks, which is the whole
+                // the same shared layer the classic app's feed asked, which is the whole
                 // point: this boundary has never carried them, so the macOS
                 // sidebar has never drawn them (#1155 moved the *order* here
                 // and left the rows behind).
@@ -6167,7 +6199,7 @@ impl Session {
 
     /// What the window does when an event says the list moved.
     ///
-    /// [`postio_ui::paging::Paging::plan`]'s table, the one `postio-gtk`'s
+    /// [`postio_ui::paging::Paging::plan`]'s table, the one the classic app's
     /// feed follows: new mail in the open scope is inserted at the top,
     /// changed rows have the pages holding them re-read in place, and a scope
     /// whose membership or order moved is reloaded. Before the table crossed
@@ -6189,8 +6221,8 @@ impl Session {
     /// change because a folder did.
     fn react(&self, event: &postio_core::Event) {
         // Rows that have left the mailbox cannot stay selected: the next
-        // action would be aimed at mail that is no longer there. `postio-app`
-        // says the same thing in the same words on the GTK side — and it is
+        // action would be aimed at mail that is no longer there. The classic app
+        // said the same thing in the same words on the GTK side — and it is
         // here rather than in either frontend because the selection is here,
         // and because `Everything { except }` is a predicate a frontend
         // cannot re-derive without enumerating the mailbox it is about.
@@ -6261,7 +6293,7 @@ impl Session {
     /// `open` read `[sync]` rather than merely compiling has to reach in
     /// anyway. A comparison rather than a raw accessor so this crate need
     /// not name `postio_sync`/`postio_runtime`'s policy types at its own
-    /// boundary — `postio-app` reaches `with_backfill`/`with_watch` the same
+    /// boundary — the classic app reached `with_backfill`/`with_watch` the same
     /// way, through `postio_session`'s functions, and never names them
     /// either.
     #[cfg(feature = "testing")]

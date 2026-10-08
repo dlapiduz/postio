@@ -1,7 +1,7 @@
 //! The local store, read directly off the database engine.
 //!
 //! The half of [`super`] that owns a database. Behind the `runtime` feature
-//! because `postio-gtk` depends on `postio-core` and must not have the engine
+//! because the view layer depends on `postio-core` and must not have the engine
 //! anywhere in its dependency graph; whatever assembles the running
 //! application turns the feature on, and the view layer never does.
 
@@ -12,9 +12,11 @@ use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use postio_model::FocusScope;
 use postio_storage::repository::{
-    ListCursor, ListQuery, MailboxRepository, MessageListRow, MessageRepository, ThreadCursor,
-    ThreadListQuery, ThreadListRow, ThreadRepository, UnifiedThreadListQuery,
+    DraftRepository, FocusListQuery, ListCursor, ListQuery, MailboxRepository, MessageListRow,
+    MessageRepository, ThreadCursor, ThreadGroup, ThreadListQuery, ThreadListRow, ThreadRepository,
+    UnifiedThreadListQuery,
 };
 use postio_storage::{Checkout, Store};
 
@@ -48,6 +50,11 @@ pub struct LocalStore {
     /// The unified list's length, and what the store looked like when it
     /// was counted -- see [`unified_total`].
     unified_count: Arc<Mutex<Option<(UnifiedWitness, u32)>>>,
+    /// The same bargain for Focus's inbox (spec 007): its own marks, since
+    /// it is its own list, and its inboxes and length against the same
+    /// witness -- see [`focus_inbox`].
+    focus_marks: Arc<Mutex<Marks<ThreadCursor>>>,
+    focus_count: Arc<Mutex<Option<FocusCounted>>>,
     /// The last threaded count of a folder, and the cheap number it was taken
     /// against. See [`CountedFolder`].
     folder_counts: Arc<Mutex<HashMap<MailboxId, CountedFolder>>>,
@@ -143,6 +150,104 @@ pub fn unified_counted() -> u64 {
 
 static UNIFIED_COUNTED: AtomicU64 = AtomicU64::new(0);
 
+/// How many times this process has counted Focus's inbox. For tests: the
+/// sibling of [`unified_counted`], for the same promise -- counted once and
+/// kept while nothing it is made of moves.
+#[doc(hidden)]
+pub fn focus_counted() -> u64 {
+    FOCUS_COUNTED.load(Ordering::Relaxed)
+}
+
+static FOCUS_COUNTED: AtomicU64 = AtomicU64::new(0);
+
+/// Focus's inbox as last read: the inboxes it is made of, how many rows it
+/// has, and the witness both were read against.
+#[derive(Debug, Clone)]
+struct FocusCounted {
+    witness: UnifiedWitness,
+    inboxes: Vec<(AccountId, MailboxId)>,
+    total: u32,
+}
+
+/// Each inbox in view, its message total and how far it has synced: one
+/// row per inbox, no scan of mail.
+async fn inbox_witness(connection: &Checkout) -> Result<UnifiedWitness, postio_storage::Error> {
+    postio_storage::sql::all(
+        connection,
+        "SELECT m.id, m.total_count, coalesce(s.highest_mod_seq, 0)
+           FROM accounts a JOIN mailboxes m
+             ON m.account_id = a.id AND m.role = 'inbox'
+           LEFT JOIN sync_state s ON s.mailbox_id = m.id
+          WHERE a.enabled = 1 AND a.pending_deletion = 0 AND m.selectable = 1
+          ORDER BY m.id",
+        (),
+        |row| {
+            use postio_storage::sql::RowExt as _;
+            Ok((row.col(0)?, row.col(1)?, row.col(2)?))
+        },
+    )
+    .await
+}
+
+/// What Focus's inbox count is allowed to outlive: the unified list's
+/// witness, and what Focus holds back. One statement, the inboxes' rows and
+/// one more.
+///
+/// The extra row is there because holding mail moves no folder: a digest
+/// rule's hold, its release, and an archived delivery each change which
+/// messages are Focus's rows while every inbox's counts and sync state stay
+/// where they were, and a count kept against those alone would outlive the
+/// rows it counted -- and so would the seek marks checked against it (spec
+/// 007, T134). The digest tables are counted whole, which is a walk of each:
+/// they hold digest mail only, a small fraction of any mailbox, and never
+/// the mail itself.
+async fn focus_witness(connection: &Checkout) -> Result<UnifiedWitness, postio_storage::Error> {
+    postio_storage::sql::all(
+        connection,
+        "SELECT m.id, m.total_count, coalesce(s.highest_mod_seq, 0)
+           FROM accounts a JOIN mailboxes m
+             ON m.account_id = a.id AND m.role = 'inbox'
+           LEFT JOIN sync_state s ON s.mailbox_id = m.id
+          WHERE a.enabled = 1 AND a.pending_deletion = 0 AND m.selectable = 1
+         UNION ALL
+         SELECT 0, (SELECT count(*) FROM digest_holds),
+                (SELECT count(*) FROM digest_deliveries WHERE archived_at IS NOT NULL)
+          ORDER BY 1",
+        (),
+        |row| {
+            use postio_storage::sql::RowExt as _;
+            Ok((row.col(0)?, row.col(1)?, row.col(2)?))
+        },
+    )
+    .await
+}
+
+/// Focus's inbox: which inboxes it is made of and how many rows it has, from
+/// the cache while its witness ([`focus_witness`]) has not moved. A page in
+/// the steady state is then the witness, the window, its participants and
+/// its markers.
+async fn focus_inbox(
+    connection: &Checkout,
+    cache: &Mutex<Option<FocusCounted>>,
+    threads: &ThreadRepository<'_>,
+) -> Result<(Vec<(AccountId, MailboxId)>, u32), postio_storage::Error> {
+    let witness = focus_witness(connection).await?;
+    if let Some(held) = &*cache.lock().expect("not poisoned")
+        && held.witness == witness
+    {
+        return Ok((held.inboxes.clone(), held.total));
+    }
+    FOCUS_COUNTED.fetch_add(1, Ordering::Relaxed);
+    let inboxes = threads.unified_inboxes().await?;
+    let total = threads.focus_count(&inboxes).await?;
+    *cache.lock().expect("not poisoned") = Some(FocusCounted {
+        witness,
+        inboxes: inboxes.clone(),
+        total,
+    });
+    Ok((inboxes, total))
+}
+
 /// The cheap facts the unified count is allowed to outlive: each inbox in
 /// view, its message total and how far it has synced. The unified list's
 /// `Witness`, for the same trade and the same reasons (#1610).
@@ -166,21 +271,7 @@ async fn unified_total(
     cache: &Mutex<Option<(UnifiedWitness, u32)>>,
     threads: &ThreadRepository<'_>,
 ) -> Result<u32, postio_storage::Error> {
-    let witness: UnifiedWitness = postio_storage::sql::all(
-        connection,
-        "SELECT m.id, m.total_count, coalesce(s.highest_mod_seq, 0)
-           FROM accounts a JOIN mailboxes m
-             ON m.account_id = a.id AND m.role = 'inbox'
-           LEFT JOIN sync_state s ON s.mailbox_id = m.id
-          WHERE a.enabled = 1 AND a.pending_deletion = 0 AND m.selectable = 1
-          ORDER BY m.id",
-        (),
-        |row| {
-            use postio_storage::sql::RowExt as _;
-            Ok((row.col(0)?, row.col(1)?, row.col(2)?))
-        },
-    )
-    .await?;
+    let witness = inbox_witness(connection).await?;
     if let Some((held, total)) = &*cache.lock().expect("not poisoned")
         && *held == witness
     {
@@ -362,6 +453,8 @@ impl LocalStore {
             thread_marks: Arc::new(Mutex::new(Marks::default())),
             unified_marks: Arc::new(Mutex::new(Marks::default())),
             unified_count: Arc::new(Mutex::new(None)),
+            focus_marks: Arc::new(Mutex::new(Marks::default())),
+            focus_count: Arc::new(Mutex::new(None)),
             folder_counts: Arc::new(Mutex::new(HashMap::new())),
             removals: Arc::new(Mutex::new(Vec::new())),
         }
@@ -405,7 +498,22 @@ impl LocalStore {
                     .remember(request.offset + rows.len() as u32, last.cursor());
             }
 
-            let rows = rows.into_iter().map(summarise).collect();
+            let mut rows: Vec<MessageSummary> = rows.into_iter().map(summarise).collect();
+            // A draft or queued message is from the person themselves, so
+            // its row names who it is to instead.
+            let writing: Vec<_> = rows
+                .iter()
+                .filter(|row| row.send_state.is_some())
+                .map(|row| row.id)
+                .collect();
+            if !writing.is_empty() {
+                let mut to = DraftRepository::new(&connection)
+                    .recipients_of(&writing)
+                    .await?;
+                for row in &mut rows {
+                    row.to = to.remove(&row.id).unwrap_or_default();
+                }
+            }
             Ok(MessagePage { total, rows })
         })
         .await
@@ -422,7 +530,14 @@ impl LocalStore {
     /// part of the conversation it belongs to.
     async fn lists_conversations(&self, scope: ListScope) -> Result<bool, StoreError> {
         let ListScope::Mailbox(mailbox) = scope else {
-            return Ok(matches!(scope, ListScope::Account(_) | ListScope::Unified));
+            return Ok(match scope {
+                // Messages, like the per-account views they span.
+                ListScope::Focus(FocusScope::Snoozed | FocusScope::Flagged) => false,
+                _ => matches!(
+                    scope,
+                    ListScope::Account(_) | ListScope::Unified | ListScope::Focus(_)
+                ),
+            });
         };
         self.read(move |connection| async move {
             let folder = MailboxRepository::new(&connection)
@@ -459,6 +574,9 @@ impl LocalStore {
     async fn read_thread_page(&self, request: PageRequest) -> Result<ThreadPage, StoreError> {
         if matches!(request.scope, ListScope::Unified) {
             return self.read_unified_page(request).await;
+        }
+        if let ListScope::Focus(scope) = request.scope {
+            return self.read_focus_page(scope, request).await;
         }
         let marks = self.thread_marks.clone();
         let counts = self.folder_counts.clone();
@@ -608,14 +726,124 @@ impl LocalStore {
 
             let rows = groups
                 .into_iter()
-                .map(|group| summarise_thread(group.row))
+                .map(summarise_group)
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(ThreadPage { total, rows })
         })
         .await
     }
 
+    /// One page of Focus's inbox (spec 007): every enabled account's inbox,
+    /// one row per conversation, over [`ThreadRepository::focus_page_at`].
+    ///
+    /// The unified page's bargain -- seek to the nearest mark, skip the rest,
+    /// stop trusting the marks when a seek lands past the end -- with its
+    /// own marks and a count kept against [`focus_witness`], so a
+    /// one-account page in the steady state is four statements: the
+    /// witness, the window, its participants and its markers.
+    async fn read_focus_page(
+        &self,
+        scope: FocusScope,
+        request: PageRequest,
+    ) -> Result<ThreadPage, StoreError> {
+        if scope == FocusScope::HasAction {
+            return self.read_has_action_page(request).await;
+        }
+        let marks = self.focus_marks.clone();
+        let cache = self.focus_count.clone();
+        self.read(move |connection| async move {
+            let threads = ThreadRepository::new(&connection);
+            let (inboxes, total) = focus_inbox(&connection, &cache, &threads).await?;
+
+            let start = {
+                let mut marks = marks.lock().expect("not poisoned");
+                marks.check(total);
+                marks.nearest(request.offset)
+            };
+            let (seek, skip) = match start {
+                Some((at, cursor)) => (Some(cursor), request.offset - at),
+                None => (None, request.offset),
+            };
+            let query = FocusListQuery {
+                inboxes,
+                limit: request.limit,
+                after: seek,
+            };
+            let mut groups = threads.focus_page_at(&query, skip).await?;
+            // A mark the rows moved under: read from the top once, as the
+            // unified page does (#1534).
+            if groups.is_empty() && seek.is_some() && request.offset < total {
+                marks.lock().expect("not poisoned").forget();
+                groups = threads
+                    .focus_page_at(
+                        &FocusListQuery {
+                            after: None,
+                            ..query
+                        },
+                        request.offset,
+                    )
+                    .await?;
+            }
+            if let Some(last) = groups.last() {
+                marks
+                    .lock()
+                    .expect("not poisoned")
+                    .remember(request.offset + groups.len() as u32, last.cursor());
+            }
+
+            let rows = groups
+                .into_iter()
+                .map(summarise_group)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ThreadPage { total, rows })
+        })
+        .await
+    }
+
+    /// One page of the has-action filter (spec 007 T048): the inbox's rows
+    /// that draw a marker, read from the markers -- which conversations
+    /// carry one, then those conversations' rows -- rather than by walking
+    /// the inbox. Five statements: the inboxes, the marked, the window, its
+    /// participants and its markers.
+    async fn read_has_action_page(&self, request: PageRequest) -> Result<ThreadPage, StoreError> {
+        self.read(move |connection| async move {
+            let threads = ThreadRepository::new(&connection);
+            let inboxes = threads.unified_inboxes().await?;
+            let marked = threads.focus_marked(&inboxes).await?;
+            let groups = threads
+                .focus_marked_page(&inboxes, &marked, request.offset, request.limit)
+                .await?;
+            let rows = groups
+                .into_iter()
+                .map(summarise_group)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ThreadPage {
+                total: marked.len(),
+                rows,
+            })
+        })
+        .await
+    }
+
     async fn read_thread_count(&self, scope: ListScope) -> Result<u32, StoreError> {
+        if let ListScope::Focus(FocusScope::HasAction) = scope {
+            return self
+                .read(move |connection| async move {
+                    let threads = ThreadRepository::new(&connection);
+                    let inboxes = threads.unified_inboxes().await?;
+                    Ok(threads.focus_marked(&inboxes).await?.len())
+                })
+                .await;
+        }
+        if let ListScope::Focus(FocusScope::Inbox) = scope {
+            let cache = self.focus_count.clone();
+            return self
+                .read(move |connection| async move {
+                    let threads = ThreadRepository::new(&connection);
+                    Ok(focus_inbox(&connection, &cache, &threads).await?.1)
+                })
+                .await;
+        }
         if matches!(scope, ListScope::Unified) {
             let cache = self.unified_count.clone();
             return self
@@ -770,7 +998,8 @@ async fn count(
         ListScope::Account(_)
         | ListScope::Unified
         | ListScope::Outbox(_)
-        | ListScope::Thread(_) => None,
+        | ListScope::Thread(_)
+        | ListScope::Focus(_) => None,
     };
     if let Some(total) = cached.filter(|total| *total > 0) {
         return Ok(total);
@@ -826,7 +1055,26 @@ async fn thread_query(
         ListScope::Unified => Err(StoreError::new(
             "The unified list is not scoped to one account",
         )),
+        // Never reached either: Focus's lists take their own branch.
+        ListScope::Focus(_) => Err(StoreError::new(
+            "Focus's lists are not scoped to one account",
+        )),
     }
+}
+
+/// One row of a list that folds a conversation across accounts, as the
+/// frontend needs it: the head's row, naming the other copies an action on
+/// it must reach.
+fn summarise_group(group: ThreadGroup) -> Result<ThreadSummary, StoreError> {
+    let head = group.row.id;
+    let mut summary = summarise_thread(group.row)?;
+    summary.copies = group
+        .members
+        .into_iter()
+        .map(|(_, thread)| thread)
+        .filter(|thread| Some(*thread) != head)
+        .collect();
+    Ok(summary)
 }
 
 /// One thread row, as the frontend needs it.
@@ -847,6 +1095,10 @@ fn summarise_thread(row: ThreadListRow) -> Result<ThreadSummary, StoreError> {
         flagged: row.is_flagged,
         has_attachments: row.has_attachments,
         last_at: row.last_at,
+        // Only Focus's page reads markers; every other list's rows have
+        // none to draw.
+        marker: row.marker,
+        copies: Vec::new(),
         representative: MessageSummary {
             id: latest.id,
             thread: latest.thread_id,
@@ -861,6 +1113,7 @@ fn summarise_thread(row: ThreadListRow) -> Result<ThreadSummary, StoreError> {
             send_at: latest.send_at,
             has_attachments: latest.has_attachments,
             thread_count: row.message_count.max(1),
+            to: Vec::new(),
         },
     })
 }
@@ -881,6 +1134,7 @@ fn summarise(row: MessageListRow) -> MessageSummary {
         send_at: row.send_at,
         has_attachments: row.has_attachments,
         thread_count: thread_count.max(1),
+        to: Vec::new(),
     }
 }
 

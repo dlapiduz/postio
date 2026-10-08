@@ -173,7 +173,7 @@ jobs:
       # to add to every crate on every PR, but the five crates named in
       # scripts/coverage-floors.json are cheap enough, and pure/logic enough,
       # that a real regression here is worth blocking on rather than only
-      # noticing later. postio-gtk and the rest are deliberately not run
+      # noticing later. The GTK crates and the rest are deliberately not run
       # here -- see that file's own comment for why a single global number
       # would be actively misleading across crates this different.
       - name: cargo llvm-cov (gated crates)
@@ -242,8 +242,8 @@ jobs:
       # measurements, which is the part only this job does.
       #
       # It is here because the *local* landing gate stopped running it (#847):
-      # several sessions share one workstation, and a postio-app integration
-      # binary is an ~11-minute compile and link, so landing had become
+      # several sessions share one workstation, and the desktop app's
+      # integration binary was an ~11-minute compile and link, so landing had become
       # something you queued for. Locally the gate is now the workspace's unit
       # tests -- 1,313 of them in ~5s.
       #

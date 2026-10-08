@@ -9,7 +9,7 @@ sibling's (#1102), but two kinds of tree never got that:
     2026-09-30 three Focus lanes were compiling from nothing, 15 to 19
     minutes each, at the exact commit of a warm 24 GB sibling (#1717).
   * any sibling not named `issue-*`. The claim's candidates were
-    `issue-*/target/debug` and the shared checkout, so `postio-focus` --
+    `issue-*/target/debug` and the shared checkout, so `postio-gtk` --
     the warmest tree on the box -- was never a seed for anything.
 
 `worktree-seed.sh <tree>` is the claim's seeding, callable on any tree, and
@@ -100,7 +100,7 @@ def main() -> int:
         repo, worktrees = world(Path(directory))
         tree(repo, worktrees, "issue-1", "libolder.rlib")
         time.sleep(1.1)  # mtimes at one-second resolution on some filesystems
-        focus = tree(repo, worktrees, "postio-focus", "libwarmest.rlib")
+        focus = tree(repo, worktrees, "postio-gtk", "libwarmest.rlib")
         lane = tree(repo, worktrees, "focus-walk5-input")
 
         r = seed(repo, worktrees, lane)

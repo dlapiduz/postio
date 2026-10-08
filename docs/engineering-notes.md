@@ -35,19 +35,17 @@ tracked
 as GitHub issues under the [Postio Roadmap](https://github.com/users/dlapiduz/projects/2)
 project). Approved plan: `~/.claude/plans/ethereal-fluttering-kettle.md`.
 
-**Design source of truth.** `Design/Mail Client.dc.html` is a Claude Design
-canvas whose PLATE direction (option 1b — airy desktop, 40px rows, key hints
-on the focused row only) was chosen. It settled several questions an earlier
-brief had answered differently, and **PRODUCT.md now records the resolution**
-rather than the argument: keys are `e`=reply, `a`=archive, `A`=archive-thread,
-`u`=undo, `t`=thread; compose takes over the reading pane rather than opening a
-window; the sidebar says "Flagged" not "Starred". The canvas remains the
-authority on *visual* detail, and that target is the Industry design system's
-*identity* (Barlow / Barlow Condensed /
-IBM Plex Mono, steel accent `#5980a6`, hairlines) *without* its wireframe
-chrome (no blueprint corner marks, no transparent line-drawing cards), keeping
-real Adwaita window chrome. The canvas path `~/.config/postmark/` is an
-earlier project name — use `postio`.
+**Design source of truth.** The desktop app is the Focus design (ADR 0043).
+Each screen is specified in `specs/007-postio-focus/contracts/focus-surface.md`
+and held against the maintainer's reference images (the local, untracked
+`Design/` folder) in `specs/007-postio-focus/screens.md`, which records every
+difference and its reason; spec 007's C25 and C26 put the system font and the
+system accent in place of the handoff's. The classic app's PLATE canvas
+(`Design/Mail Client.dc.html`) went with that app (spec 007 T256). The keys
+are the one keymap (`docs/keybindings.md`): `e` reply, `a`/`A` archive,
+`mod+z` undo, `]`/`[` walk a thread. The composer opens in the open message's
+place; the app says "Flagged", not "Starred". The canvas path
+`~/.config/postmark/` is an earlier project name — use `postio`.
 
 **Hard constraints from the user.** (1) TDD is mandatory — failing test
 first, then implementation. (2) The app must feel instant — transitions
@@ -67,24 +65,24 @@ live to a spammer, so it must be deliberately user-initiated). The audit is
 proved with a local request-logging server against the
 `html-tracking-pixel-remote-images` corpus fixture, not asserted.
 
-**Surfaces policy** (audited 2026-08-23). The app has exactly **one** modal
-(`adw::AlertDialog` in `composer.rs`, the discard-draft confirmation). The
-palette, cheat sheet and settings panel are all `add_overlay` on the main
-window, not dialogs — `AccessibleRole::Dialog` on the panel and cheat sheet is
-a screen-reader role, not a window. The composer takes over the reading pane
-per canvas 2a; the list keeps its scroll and selection. Policy: in-place
-overlay is the default, a modal must be justified in the issue that adds one,
-detached windows are opt-in only. The discard modal could become an undo
-toast since drafts are in SQLite — deliberately left alone for now at the
-user's call.
+**Surfaces policy.** Everything that is not the list — the open message, the
+composer, the pickers, the key map, Settings — opens over the list in one
+dialog pattern, and `Esc` closes it back onto the same row
+(`specs/007-postio-focus/screens.md`, "Interaction rules"). Detached windows
+are opt-in only (`detach_composer`). A confirmation must be justified in the
+work that adds one, and undo usually replaces it; discarding a draft is one
+that asks first. (The classic app's 2026-08-23 audit — one modal, overlays
+for everything else, the composer in the reading pane — went with that app,
+spec 007 T256.)
 
 **There is exactly one way to express "which messages".** A search is a
-query; a saved search is a named query; a virtual folder in the sidebar is a
-pinned saved search; a filter/rule is a saved search plus actions evaluated on
-arrival. `crates/postio-config/src/filters.rs` already implements the schema
-and names it this way (`[filters]` — named saved queries, with `pinned = show
-in sidebar`), and the sidebar renders pinned filters as saved-search rows
-now; there is still no rules engine on `main` (#5, the work is on
+query; a saved search is a named query; a pinned search is a saved search the
+app keeps a place for (the command bar on the desktop, the sidebar on macOS);
+a filter/rule is a saved search plus actions evaluated on arrival.
+`crates/postio-config/src/filters.rs` already implements the schema and names
+it this way (`[saved_searches]` — named saved queries, with `pinned`), and the
+desktop app's command bar and the macOS sidebar offer pinned filters now;
+there is still no rules engine on `main` (#5, the work is on
 `feature/rules`). The boundary that keeps this honest: parsing
 lives in `postio-search` (pure, no SQL/toolkit), `postio-config` keeps queries
 as TEXT and never parses, `postio-index` executes a parsed query against
@@ -92,24 +90,22 @@ the engine's `USING fts` indexes. **Do not invent a second matching language for
 one syntax to learn, and dry-run comes free by running the query. What this
 does *not* say: a real IMAP mailbox is not a saved search. It has
 UIDVALIDITY, server state, a `MailboxRole`, and mail physically lives in it;
-`a` archives *into* one. The sidebar shows two lookalike things that behave
-differently — mailboxes mail moves between, and virtual folders that are
-queries re-run on open. Collapsing that breaks move, archive and sync. Full
+`a` archives *into* one. The folders popover (and the macOS sidebar) lists two
+lookalike things that behave differently — mailboxes mail moves between, and
+views that are queries re-run on open. Collapsing that breaks move, archive and sync. Full
 write-up: `docs/ARCHITECTURE.md` section 6.
 
 **Selection and cursor are never the same thing.** The message list has two
 states. *Cursor* — where the keyboard is. `GtkSingleSelection` is the cursor,
 not the selection; the name is GTK's, the meaning is ours. Moved by `j`/`k`/
-click. Drawn as canvas 1b draws it: accent tint ground, 3px steel left edge,
-key hints on it alone. *Selection* — what an action will hit.
+click. Drawn as the focus ring, in the accent. *Selection* — what an action will hit.
 `postio_core::state::Selection` (`These(ids) | Everything{except}`) — never a
 `Vec` for select-all, because the list is windowed over the paged store. Built
 deliberately: `x`, Ctrl-click, Shift-click, a click on the row's check square,
-Ctrl+A. Drawn as a steel check replacing the avatar chip, on
-`--postio-selected-strong-bg`. The check is what carries "selected", not the
-ground: the two grounds are one step apart in light and the *same colour* in
-dark (canvas 3c), so a ground-only distinction is invisible in dark. A glyph
-reads at a glance and survives high contrast. **A plain click clears the
+Ctrl+A. Drawn as a checked box in the row's gutter on a neutral ground, never
+the accent, which is the cursor's (spec 007 FR-091). The check is what
+carries "selected", not the ground: a glyph reads at a glance and survives
+high contrast. **A plain click clears the
 selection and only moves the cursor** — it does not select the row it lands
 on. Two consequences: reading mail one message at a time would otherwise put
 a bulk bar over the list on every click, and pressing `x` on the row you just
@@ -119,23 +115,18 @@ action with an empty selection must act on the *cursor* row —
 `AppState::focus_on` already says the selection follows only when the user
 asks. Whoever resolves `MessageTarget::Selection` must fall back to focus
 when the selection is empty — without that fallback, `a` after a plain click
-archives nothing. The bulk bar is in the list header, replacing the unread
-count and the sort while it is up: three verbs (archive/delete/move), each
-carrying its key hint, each dispatching the registry's `CommandId`. Everything
-else stays in the palette.
+archives nothing. The bulk bar sits under the list while anything is
+selected, each verb carrying its key, each dispatching the registry's
+`CommandId`.
 
-**The composer takes over the reading pane only.** (canvas 2a) The list keeps
-its scroll and selection, and `gtk_composer.rs` asserts it. One reading pane
-means one composition: opening compose while a started draft is retained
-reopens that draft rather than replacing it, and the status line says so.
-`Esc` **never** discards — it closes and keeps the draft, and
-`composer::closing()` is the unit-tested rule for whether there is anything
-to keep (recipients, a subject, or body text above the signature; the
-signature the composer inserted does not count). Discard is `Ctrl+D` only, it
-confirms first, and it is deliberately *not* a button beside Send. The shell
-wears a `composing` CSS class while it's open, which dims the sidebar and
-list per the canvas — exempted under `.postio-hc`, because high contrast
-exists to raise contrast.
+**The composer takes the open message's place.** It opens in the open
+message's dialog, or in the pane when reading beside the list, and the list
+keeps its scroll and its cursor (spec 007 FR-050). `Esc` **never** discards —
+it closes and keeps the draft, and `composer::closing()` is the unit-tested
+rule for whether there is anything to keep (recipients, a subject, or body
+text above the signature; the signature the composer inserted does not
+count). Discard is `Ctrl+D` only, it confirms first, and it is deliberately
+*not* a button beside Send.
 
 **Keymap override precedence.** An explicit `[keys]` entry outranks a
 built-in default that wants the same key: the override takes it, the
@@ -154,11 +145,10 @@ reader by #166 — there is no composer buffer to resume, so there was nothing
 else to do. The gap #175 closed is narrower than it looks: the reader still
 cannot edit the message, but before this it would happily render the message
 as though it were an ordinary, readable one once the body backfilled, with no
-signal that the row was a dead end. `load_body_or_reason`
-(`crates/postio-app/src/compose.rs`) now checks `message.flags.is_draft()`
-*before* it looks at `BodyState`, and reports
-`postio_gtk::reader::Absent::ForeignDraft` regardless of whether the body has
-downloaded — a foreign draft is never "worth waiting for" the way
+signal that the row was a dead end. `postio_session::reading::load_with_row`
+checks `message.flags.is_draft()` *before* it looks at `BodyState`, and
+reports `Absent::ForeignDraft` (`postio_ui::reader::document`) regardless of
+whether the body has downloaded — a foreign draft is never "worth waiting for" the way
 `Absent::Partial` is, so it does not get a retry key either.
 
 Adopting the row into a local `Draft` — so it becomes editable — was
@@ -174,54 +164,18 @@ those has an obvious default, which is why this stayed the cheap interim —
 say so on the row — rather than becoming a v1 feature. Revisit if multi-client
 drafting becomes a real workflow rather than an edge case.
 
-**Saved searches (#10) landed as add/list/activate; rename, reorder and
-delete did not.** ARCHITECTURE.md §6 already settled what a saved search
-*is* — `postio-config::FilterConfig`'s `[filters.<name>]`, `pinned = true`
-meaning "show it in the sidebar" — so #10 was wiring, not design: nothing
-read `FilterConfig` at runtime and the sidebar had no third section. What
-shipped is deliberately the acceptance criteria and no more: `Ctrl+S` names
-a save from the query text itself (`Config::save_filter`, a slug with `-2`,
-`-3` on a collision), the sidebar's "Saved searches" section renders every
-pinned entry and reports the query when one is picked, and
-`Window::run_search` opens the box with it and runs it immediately rather
-than waiting out the debounce a keystroke would. A user who wants to rename
-one, or stop pinning it, edits `config.toml` by hand — `Ctrl+E` already
-opens it — same as any `[filters]` entry before this issue.
-
-The write path is intentionally decoupled from the `ConfigService` /
-`LiveConfig` handle `postio-gtk/src/config.rs::install_at` already owns:
-`Ctrl+S` calls `Config::load_from_path` fresh, adds the filter, saves, and
-repaints the sidebar directly, rather than mutating the cached `service`
-and routing through `ConfigService::apply`. The file watcher reaches the
-same state a moment later and repaints again — redundant, and harmless,
-because `set_saved_searches` replaces the list rather than appending to it.
-Routing the write through `service` instead would have needed either
-`ConfigService` to grow a save method or the closure holding it to move
-into two places at once; reading fresh avoids both for one extra disk read
-per save, which is not a path anyone times. This is also what closes half of
-§6's "Schema built, not wired" note — the sidebar now reads `[filters]` live,
-including a hand-edit while the app is running, through the same
-`ConfigChanged::filters` the watcher already computed and nothing consumed
-before this.
-
-Rename, reorder and delete are real gaps, not omissions nobody noticed —
-they were in the issue's own "What", just not its "Acceptance". File them
-as their own issue(s) before calling saved searches "done" in any
-roadmap sense.
-
 ## Architecture reference
 
 Postio's architecture and the reasoning behind it live in
 `docs/ARCHITECTURE.md` (the decisions, each with why it's load-bearing),
 `docs/decisions/` (long-form ADRs, e.g. `0001-imap-library.md`), and
 `docs/archive/architecture-review-2026-08.md` (standing critique + known gaps). The
-crate diagram in `README.md` is mermaid and the one in `CLAUDE.md` is ASCII —
-if you update one, update the other; both were previously wrong in the same
-way (`postio-search` drawn as a child of `postio-gtk`, `postio-index`
-omitted entirely). `postio-search` is a pure *shared* leaf (query language, no
-SQL, no toolkit) depended on by `postio-gtk`, `postio-index`, `postio-runtime`
-and `postio-app`; `postio-index` owns `turso` (its `fts` feature) and the
-fts executor.
+crate diagram is the mermaid one in `docs/ARCHITECTURE.md`; an earlier copy
+was once wrong (`postio-search` drawn as a child of the GTK view layer,
+`postio-index` omitted entirely). `postio-search` is a pure *shared* leaf
+(query language, no SQL, no toolkit) depended on by every frontend, the host,
+`postio-index` and `postio-runtime`; `postio-index` owns `turso` (its `fts`
+feature) and the fts executor.
 
 **`EventStream` is not `Clone`, and the reason is a trap rather than a
 preference.** It wraps an `async_channel::Receiver`, and that receiver is
@@ -269,7 +223,7 @@ nothing is unreachable; it is only not on the *stack*.
 
 Two shapes follow from it and are worth copying:
 - **The command is the same verb, not a new one.**
-  `Command::MarkReadOnDwell` answers `CommandId::MarkUnread` from
+  `Command::MarkReadOnDwell` answers `CommandId::ToggleRead` from
   `Command::id()`, so it routes to the same handler and the registry still
   holds one "mark read". A registry entry of its own would also have needed a
   key binding it could never be reached by —
@@ -283,18 +237,14 @@ Two shapes follow from it and are worth copying:
   write is still worth hearing about.
 
 **A dwell timer must be cancelled by anything that makes "in front of a
-person" untrue**, not only by the cursor moving. `MessageListView::cancel_dwell`
-is called by the window on focus loss (`is-active`) and whenever the composer
-takes the reading pane (`sync_reading_pane`). Both are facts about the window
-rather than the list, which is why they are pushed in rather than watched for
-in the pane. Without the focus one, a machine left alone overnight comes back
-with whatever the cursor happened to be on marked read.
-
-The autoselect case was already handled before this landed: `SingleSelection`
-parks the cursor on row 0 as soon as the model has rows, and `report_cursor`'s
-`landed` flag keeps that from counting as a landing. That is what stops merely
-launching Postio from marking the newest message read — see the comment on
-`imp::MessageListView::landed`, which anticipated this issue by name.
+person" untrue**, not only by the cursor moving. In the classic app (removed,
+spec 007 T256) the window cancelled it on focus loss (`is-active`) and when
+the composer took the reading pane; without the focus one, a machine left
+alone overnight came back with whatever the cursor was on marked read. In the
+desktop app the clock belongs to the open message (`postio_gtk::open`,
+`cancel_dwell`): it starts when a message opens, so merely launching Postio
+marks nothing read, and stops when the message closes, when another opens,
+and when the person presses `r` (`focus_suite`'s `read_on_dwell`).
 
 **To assert on what a widget *draws*, wait for frames and then wait for the
 pixels to stop moving.** Neither half is optional, and #90 spent two attempts
@@ -305,8 +255,8 @@ when nothing is pending, so a pump loop can spin its whole budget without the
 frame clock ticking once. A CSS state change (focus, hover, a class added)
 reaches the pixels only through a frame, so a test that pumps and then
 snapshots is sampling whichever side of that frame it landed on. Count real
-frames with a tick callback instead; `gtk_focus_visible.rs::frames` is the
-worked example.
+frames with a tick callback instead; `widgets_suite`'s
+`settings_accounts.rs::frames` is a worked example.
 
 Counting frames is still not enough. A fixed budget is a guess that holds
 until the machine is loaded, and the symptom is nasty: the first focus test
@@ -346,14 +296,15 @@ provide the chrome: an `adw::ToolbarView` with an `adw::HeaderBar` in
 `add_top_bar`, which is what `window.rs` does for the main window and what the
 detached composer (#48) does for its own. This is invisible to a widget test
 and obvious the moment you render it, so if you build a second window, render
-it: `cargo run -p postio-app --example shot -- /tmp/x.png demo compose
-detached`.
+it: `cargo run -p postio-gtk --example shot` (give it a screen in the table at
+the top of `examples/shot.rs` if it has none), or film it with a storyboard
+(`scripts/storyboards.sh`).
 
 **Reparenting a widget is how you move a surface without losing its state.**
-The composer detaches by taking the same widget out of the reading pane and
-into a window — `reader.remove(&composer)`, then the new window's layout
-`set_content(Some(&composer))` — rather than by building a second composer
-from the draft. Everything a rebuild would have to copy (every entry's text,
+The composer (`postio_widgets::composer::Composer::detach`) detaches by taking
+the same widget out of its holder and into a window — `holder.remove(self)`,
+then the new window's layout `set_content(...)` — rather than by building a
+second composer from the draft. Everything a rebuild would have to copy (every entry's text,
 the `GtkTextBuffer`'s cursor, the identity `DropDown`'s selection, the
 `postio_body::EditHistory`) simply never moves, so "detaching keeps them" is a
 property of doing it this way rather than a list of things to remember. The
@@ -369,7 +320,8 @@ Two things that follow, and bit while building it:
 
 **A satellite window's keys must forward to the main window's resolver, not
 grow a keymap of their own.** The detached composer installs an
-`EventControllerKey` that calls `Window::handle_key_in`, so `[keys]` in
+`EventControllerKey` that hands the key to its host's resolver
+(`ComposerHost::handle_key`, in `postio_widgets::composer`), so `[keys]` in
 `config.toml`, the registry and the palette all reach both containers and
 there is only one keymap to keep in step. Two things genuinely differ and are
 therefore passed in rather than read off the main window: the keyboard
@@ -381,11 +333,11 @@ single-key binding.
 
 
 **The cursor, the selection and an activation are three different facts, and
-a surface that follows the wrong one silently follows nothing.** `postio-gtk`'s
-message list keeps them apart on purpose: `j`/`k` move the *cursor*, `x` and
-`Shift+J` change the *selection* an action would hit, and Enter or a double
-click *activates*. That separation is correct and `gtk_selection.rs` enforces
-it — but it means "wire this to the list" is not a well-formed instruction,
+a surface that follows the wrong one silently follows nothing.** The classic
+app's message list (removed, spec 007 T256) kept them apart on purpose: `j`/`k`
+moved the *cursor*, `x` and `Shift+J` changed the *selection* an action would
+hit, and Enter or a double click *activated*. That separation is correct —
+but it means "wire this to the list" is not a well-formed instruction,
 and picking the wrong one produces a surface that is fully built, fully
 tested, and fed by nothing.
 
@@ -394,7 +346,8 @@ That is exactly how #70 shipped: `reading.rs` fed the reading pane from
 user guessed that Return was required. Every layer underneath passed. If you
 are wiring a surface to the list, say out loud which of the three you mean.
 
-Three consequences worth knowing before you use `connect_cursor_moved`:
+Three consequences the classic list's `connect_cursor_moved` met, which any
+surface that follows a cursor meets again:
 
 - **`SingleSelection` autoselects row 0 as soon as the model has rows.** That
   is not a person choosing anything, so it is deliberately *not* reported.
@@ -422,9 +375,9 @@ minutes, so a correctly-working client looked broken.
 `MessageRepository::body_blobs` answers a row naming no blobs *both* for a
 message nobody has downloaded and for one that was downloaded and had nothing
 in it. Identical at the blob layer, opposite to a reader — one is worth
-waiting for and one is finished. `compose.rs::load_body_or_reason` reads
-`message.sync.body_state.has_body()` first for that reason;
-`postio_gtk::reader::Absent` is the vocabulary it maps onto.
+waiting for and one is finished. `postio_session::reading::load_with_row`
+reads `message.sync.body_state.has_body()` first for that reason;
+`postio_ui::reader::document::Absent` is the vocabulary it maps onto.
 
 `load_body` keeps its old shape beside it, because the reply path genuinely
 does not care: quoting nothing is the right degraded behaviour there.
@@ -457,7 +410,7 @@ result is meaningless. The window is filled *synchronously* inside
 `ListStore::splice`, not during idle, so the cost lands on the frame that
 populates the list. Corollary: the cost that matters is per row *widget*, not
 per item — a 4-label `GtkBox` row cost 18.3ms to fill a window against 6.8ms
-for a single custom `snapshot()` row. `crates/postio-gtk/tests/gtk_list_recycling.rs`
+for a single custom `snapshot()` row. `widgets_suite`'s `list_recycling.rs`
 is the harness.
 
 **GTK integration tests catch real keystrokes and real focus changes.**
@@ -472,18 +425,17 @@ pass on re-run. If a GTK test fails with an unexpected character, or a borrow
 panic in a module you didn't touch, re-run before investigating. Under
 `xvfb-run` (or `scripts/test-headless.sh`, see CLAUDE.md) neither can happen.
 
-**GTK theme startup order matters.** `adw::init()` → `postio_gtk::fonts::install()`
-(must run *before* the first widget: a `PangoContext` caches the family it
-resolved) → `postio_gtk::style::install_for_application(&app)`, which loads
-the generated `tokens.css` from GResource and tags every window with
-`.postio-dark`/`.postio-hc`. GTK 4.22 does *not* honour
-`@media (prefers-color-scheme/prefers-contrast)` in an application-priority
-CSS provider (only in the theme provider, loaded with an explicit variant),
-and libadwaita puts no dark class on the tree — that's why the dark/
-high-contrast blocks in `data/tokens.css` are keyed off `:root` classes.
-Overriding libadwaita's CSS variables (`--window-bg-color` etc.) at
-`:root.postio-dark` does repaint stock widgets; overriding `@define-color`
-does not scope per-class.
+**A media query in the app's sheet reads the provider's scheme.** GTK 4.20
+evaluates `@media (prefers-color-scheme)` in an application-priority provider
+against that provider's own setting, not the system's.
+`postio_gtk::style::install` keeps it in step with `AdwStyleManager`, which is
+what makes `focus-colours.css`'s dark block hold exactly when the app is dark;
+it also registers the shared sheet's resource (`postio_widgets::style::register`)
+before parsing `focus.css`, which imports it. Overriding libadwaita's CSS
+variables does repaint stock widgets; overriding `@define-color` does not
+scope per-class. (The classic app worked around an older GTK with
+`.postio-dark`/`.postio-hc` classes over a generated `tokens.css` and fonts
+installed before the first widget; that went with it, spec 007 T256.)
 
 **One test function per GTK integration-test binary — load-bearing, not
 style.** GTK initialises once and libtest runs a binary's tests on separate
@@ -494,23 +446,22 @@ code because it never executed; moved to its own binary it failed correctly.
 If a new GTK test passes on the first try against code you haven't fixed yet,
 check it isn't sharing a binary.
 
-**`postio-gtk` examples/tests cannot read a store.**
-`scripts/checks/check-crate-boundaries.py` counts a crate's *own* dev-dependencies,
-and an example is built from that graph — so `postio-gtk` cannot have an
-example (or test) that touches `postio-storage`, because the engine crate
-(`turso`) would land in the view layer's graph and fail CI. This is why the render-to-PNG
-tool lives at `crates/postio-app/examples/shot.rs`
-(`cargo run -p postio-app --example shot`) rather than in `postio-gtk` — its
-demo mode reads a seeded store. The complement is
-`crates/postio-gtk/examples/surface.rs`: surfaces reached by a keystroke
-rather than by data, built from `postio-gtk`'s own types with no database at
-all.
+**The desktop app's own code cannot reach the store; its demo can.**
+`scripts/checks/check-crate-boundaries.py` holds `postio-gtk` to no `turso`,
+`rusqlite` or `io-imap` as a *direct* dependency, dev-dependencies included;
+the engine reaches it only through `postio-host`. The seeded store that
+`shot` and the storyboard runner need sits behind the `demo` feature
+(`postio-storage` with `test-support`, and `postio-index`), off in a normal
+build, which is why `cargo run -p postio-gtk --example shot` reads a seeded
+store while the app's code does no SQL. (The classic view layer banned the
+engine at any depth, which is why its shot lived in `postio-app`; both went
+in spec 007 T256.)
 
 **`AppState` is pushed into, never pulled from.**
-`postio_core::state::AppState` does *not* observe `postio-gtk`;
-`crates/postio-app/src/commands.rs::mirror` pushes the window's mailbox,
-selection and cursor into it in the instant *before* a command is sent
-(`Window::connect_action`), and nothing else writes it. Two reasons: the
+`postio_core::state::AppState` does *not* observe a frontend;
+`postio_core::aim::mirror` pushes the frontend's mailbox, selection and cursor
+into it in the instant *before* a command is sent (the terminal and the macOS
+boundary call it), and nothing else writes it. Two reasons: the
 selection genuinely lives in the list widget (it's what the user built with
 `x`, Ctrl-click, Ctrl+A) so a pull can't be one gesture out of date, and a
 signal-driven push would have to fire on every `j` — the interaction that
@@ -518,12 +469,13 @@ happens most and has the tightest budget. The mirror maps
 `Selection::Everything` by calling `select_all()` then `toggle_selection()`
 per exception, so the predicate is never resolved into the ids it stands for.
 It emits into a sink whose reader was dropped on purpose (the "quiet sink"):
-the window is where those `SelectionChanged` events came from. If you add
+the view is where those `SelectionChanged` events came from. If you add
 state the handlers resolve against, mirror it here, not with a signal.
 
-**The window delivers one invocation, not two paths.** `postio-gtk`'s
-`Window` has two seams out and they are two *views* of one invocation, not
-two paths a command can take. `connect_command` carries a `CommandId` (the
+**The window delivers one invocation, not two paths.** The classic app's
+`Window` (removed, spec 007 T256) had two seams out, and they were two *views*
+of one invocation, not two paths a command can take; the rule holds for any
+window with more than one way out. `connect_command` carries a `CommandId` (the
 composer, the config editor — consumers that need only the verb);
 `connect_action` carries a whole `postio_core::Command` (the command bus,
 which needs to know what the verb was aimed at). `Window::run` (keyboard,
@@ -535,8 +487,7 @@ to both would see every gesture twice. Before this was fixed, the mouse path
 fired both with *different* invocations (an id defaulting to "the
 selection", then the Command naming the hovered row), so one click on a
 row's archive button archived the selection *and* that row; the keyboard
-never reached `connect_action` at all. Pinned by
-`crates/postio-gtk/tests/gtk_dispatch.rs`. Do not add a third way out.
+never reached `connect_action` at all. Do not add a third way out.
 
 **The file-transfer portal carries *references*, not bytes — a dragged-out
 file that is deleted after the drop leaves the receiver with nothing, and no
@@ -567,12 +518,11 @@ Two consequences worth keeping:
   live trade-off rather than a settled one.** Nothing in Postio deletes it
   today, so in practice the window never fires; the day something does — a
   startup sweep, a size cap, a "clear cache" verb — it fires silently.
-  `crates/postio-app/tests/drag_out_portal.rs` pins the mechanism down so
-  that change fails a test instead of a user's drop.
-
-That test file is also the sandbox check: run unchanged inside
-`flatpak run dev.postio.Postio` it proves the sandboxed path, which is the
-only part of #121 a session on the host cannot answer.
+  The classic app's `tests/drag_out_portal.rs` pinned the mechanism down so
+  that change would fail a test instead of a user's drop, and doubled as the
+  sandbox check inside `flatpak run dev.postio.Postio`. It went with that app
+  (spec 007 T256); `widgets_suite`'s `drag_out.rs` proves the provider writes
+  late, not the portal's references, so that guard has no successor yet.
 
 ## Storage, sync & search internals
 
@@ -749,7 +699,7 @@ still needs a restart; nothing in the store does.
 got, and in the entire workspace nothing called it. So the longest phase of a
 first sync — the bodies, not the message list — reached the frontend as no
 event at all, and `announce_status` maps `Syncing` with no progress onto
-`ConnectionState::Online`, which the sidebar draws as **idle**. The
+`ConnectionState::Online`, which the classic sidebar drew as **idle**. The
 application was reported as doing nothing while it downloaded a mailbox
 (#74). That is worse than silence: a user watching `idle` concludes it is
 stuck and goes looking for a bug that is not there.
@@ -787,14 +737,15 @@ Two details worth keeping:
   sticks — `syncing 89%` on a finished folder was the original version of this
   bug, and `downloading 2000 of 2000` would have been the new one.
 
-**The sidebar status line holds counts, never bytes (#411).** The column is
-`SIDEBAR_WIDTH = 212` from canvas 1b and deliberately fixed — about 25
+**The classic sidebar's status line held counts, never bytes (#411).** The
+column was `SIDEBAR_WIDTH = 212` from canvas 1b and deliberately fixed — about 25
 monospace characters, and `mail 12400 of 81744` is already 19. A byte clause
 was written for that line, measured against the column at render time, and
 shed at every width there is; the measuring code was deleted with it.
 
-Do not put it back, in any spelling. The two numbers answer different
-questions: a count that climbs is a **liveness** signal, which is what #74
+The reasoning outlives that line (it went with the classic app, spec 007
+T256): wherever the app says it is syncing, do not put bytes there, in any
+spelling. The two numbers answer different questions: a count that climbs is a **liveness** signal, which is what #74
 filed this line for, and a byte figure that sits still through a large fetch
 reads as *stalled*. Bytes are a **cost** signal — asked once, deliberately,
 when deciding what to switch on. Already rejected: a shorter spelling
@@ -803,10 +754,9 @@ two clauses (a line whose meaning changes every few seconds is worse than
 either), and moving bytes to line 1 by dropping `· IMAP` (line 1 would mean
 different things at different times, which is a mode in miniature).
 
-The bytes still reach that surface through `SyncStatus::detail_in_full`,
-which builds the tooltip and the accessible description from one string.
-Cost itself lives on the settings panel's account rows, where the figure is
-per account like the footprint is.
+In the classic app the bytes reached that surface only through its tooltip
+and accessible description. Cost itself lives on the settings window's
+account rows, where the figure is per account like the footprint is.
 
 **Mailbox counts are maintained by triggers, not by call sites.**
 `mailboxes.total_count`/`unread_count`/`flagged_count` are maintained by
@@ -1213,16 +1163,15 @@ The check is asynchronous for the reason every keyring call in this codebase
 is: `KeyringSecretStore` is a tokio future bounded by a 10s timeout, so it is
 spawned on the engine runtime and answered on the glib main context. Reading
 it inline would have swapped a wrong guess for a startup that stalls behind a
-locked keyring. `postio_app::open_or_onboard` is that decision in a function
-rather than in the `activate` closure, so a test can drive it over a real
-`Window` — `crates/postio-app/tests/startup_repair.rs`, which fails against
-the 0.1.0 routing.
+locked keyring. In the desktop app, `focus_suite`'s `startup_repair` case
+drives that state over a real window: an account row with no credential
+offers the repair.
 
 
 **A bulk flag write rebuilds `messages.flags` rather than editing it.** The
 column is documented as canonical spellings in `FlagSet` order, and five of
 them — `\Seen`, `\Answered`, `\Flagged`, `\Deleted`, `\Draft` — are
-denormalised into booleans beside it so the list and the sidebar never parse a
+denormalised into booleans beside it so the list and the counts never parse a
 string. Those five are also, and not by accident, the five lowest-ranked
 persistable flags in `Flag::rank`. That is what makes a whole-mailbox flag
 write expressible without reading a row: the text is always "those five, in
@@ -1377,17 +1326,16 @@ autosaved and is itself a row in that folder now. It flushes the pending
 autosave first: the debounce would otherwise fire against the draft that
 replaced it, writing one draft's words onto another's row.
 
-**`Return` on a list row cannot be tested through `Window::handle_key`.**
-Activation reaches `connect_activated` through `GtkListView`'s own
-`list.activate-item` action, which needs the view to hold the keyboard;
-`handle_key` goes through the keymap and never touches the widget. That is why
-`ListPane::test_activate_cursor` invokes the action rather than calling the
-handlers — a wiring that came loose between the action and the signal still
-has to show. `crates/postio-app/tests/resume_draft.rs` is the worked example.
-
-Similarly, `Sidebar::select` is documented as selecting "without reporting it
-back as a user action", so a test that uses it changes the sidebar and leaves
-the list showing the previous folder. Click the row instead.
+**A key a test hands to the window's handler is not a key a person
+presses.** In the classic app (removed, spec 007 T256), `Return` on a list row
+reached `connect_activated` through `GtkListView`'s own `list.activate-item`
+action, which needed the view to hold the keyboard, while `Window::handle_key`
+went through the keymap and never touched the widget; and `Sidebar::select`
+selected "without reporting it back as a user action", so a test that used it
+changed the sidebar and left the list on the previous folder. In
+`focus_suite`, press keys with `support::deliver`, which sends them along
+GTK's own path from the focus up, and click with `support::click_at`, not
+through a handler or a programmatic setter that skips the report.
 
 **An integration test must assert the thing it names, not a number that
 happens to move when it happens** (2026-08-26, #364). `e2e.rs`'s delivery
@@ -1572,8 +1520,8 @@ real blocking work in the loop.
 `POSTIO_TEST_PATIENCE`, so a loaded machine is one environment variable away
 from deadlines that fit it. #957 is what it cost that the dial stopped at the
 edge of `postio_test_support`: forty-six deadlines across the suites were
-written by hand, and all three of the `gtk_suite` cases that flake on this
-workstation were among them. `gtk_composer_toolbar` waited a constant twenty
+written by hand, and all three of the classic `gtk_suite` cases that flaked on
+this workstation were among them. `gtk_composer_toolbar` waited a constant twenty
 seconds. So the one lever a session had — turn the dial up before a local
 full-suite run — reached every wait except the ones that needed it, and
 "leave it, CI is the arbiter" kept looking like the only option on the table.
@@ -1595,15 +1543,15 @@ responsive the moment it is finally asked; the ping measures the bridge after
 the contention, not during it. The message says so now.
 
 *The config watcher is not the rename-loses-the-inode bug.*
-`gtk_settings::the_settings_panel_edits_the_file_in_place` fails on "the
-external save never reached the running app" roughly one full-suite run in
-three (reproduced: 1 of 3 runs of the whole `gtk_suite` binary on a
+The classic `gtk_settings::the_settings_panel_edits_the_file_in_place` failed
+on "the external save never reached the running app" roughly one full-suite
+run in three (reproduced: 1 of 3 runs of the whole `gtk_suite` binary on a
 workstation with three other worktrees compiling). `ConfigWatcher` watches the
 **directory**, not the file, so a `rename` over `config.toml` keeps the watch;
 and `touches` scans every path on the event, so notify's paired
 `RenameMode::Both` — whose `paths[0]` is the temp name — still matches. Both
-of the obvious explanations are therefore ruled out, and the cause is still
-open.
+of the obvious explanations are therefore ruled out, and the cause was still
+open when that suite went (spec 007 T256).
 
 **A tokio future awaited on the GTK main context type-checks, passes clippy,
 and panics the first time the line is reached.** `spawn_future_local` runs on
@@ -1679,12 +1627,12 @@ vanishes is thread scheduling, so it is a fresh coin flip every run, and that
 file had been reporting `ok` for both since the day it was written.
 
 `gtk_composer_autosave.rs`, `gtk_finder.rs` and `gtk_settings.rs` (this note
-missed the third) are now cases in `tests/gtk_suite/`, and
-`scripts/checks/check-one-gtk-test-per-binary.py` refuses a new one — a rule
-written down here plainly did not hold on its own. A file may still carry
-several tests when only one needs a display: `gtk_shell.rs` builds a window
-in one and parses the stylesheet as text in the other, and the check is
-written to allow exactly that.
+missed the third) became cases in the classic app's `gtk_suite`; today every
+GUI case is a row in `focus_suite` or `widgets_suite`, and
+`scripts/checks/check-one-gtk-test-per-binary.py` refuses a new standalone
+file with more than one — a rule written down here plainly did not hold on
+its own. A file may still carry several tests when only one needs a display,
+and the check is written to allow exactly that.
 
 **A scroll area is a tab stop, and an unnamed one announces nothing.**
 `GtkScrolledWindow` takes the keyboard so it can be scrolled with one, which
@@ -1719,12 +1667,12 @@ lesson: a crash this shape cannot be shown absent by running the suite again.
 
 What to do instead: put anything needing a display in `crates/<crate>/tests/`,
 where cargo gives each integration test file its own process.
-`crates/postio-gtk/tests/gtk_toast.rs` is the worked example, and every other
-`gtk_*.rs` beside it follows the same `if adw::init().is_err() || ...` guard.
+Today that means a case in a custom-harness suite (`focus_suite`,
+`widgets_suite`), which runs every case in one process after one
+`adw::init`.
 
 The one legitimate exception is a crate with no lib target — an integration
-test has nothing to link against. `postio-app` is a binary crate and keeps
-exactly one GTK-touching unit test in `src/compose.rs` for that reason.
+test has nothing to link against. No GTK crate is one today.
 
 `scripts/checks/check-no-gtk-init-in-unit-tests.py` enforces this in CI and in
 `issue-land.sh`. It reads `#[cfg(test)]`/`#[test]` spans rather than grepping
@@ -1779,29 +1727,28 @@ complete in-memory `MailBackend` including bodies. So a real `Engine` over a
 mock does full syncs, backfills and body fetches with no network and no
 display, in the default suite. Proof already in the tree:
 `postio-runtime/tests/engine.rs::a_seeded_body_is_actually_fetched`, and
-`postio-app/src/refresh.rs`'s own tests. `MailBackend` is the seam, and
+`postio-session/src/refresh.rs`'s own tests. `MailBackend` is the seam, and
 CLAUDE.md already names it as the boundary — adding a second trait over
 `Engine` would be a duplicate seam kept in step by hand. If you want an
-engine call from `postio-app` under test, build the `Engine` with a
+engine call under test, build the `Engine` with a
 `MockBackend` (`refresh.rs` is the nine-line template) rather than
 abstracting `Engine`.
 
-**`postio-app` has a lib target — the composition root is testable.** New
-modules go in `src/lib.rs` as `pub mod`, not in `main.rs` — `main.rs` is
-three lines over `postio_app::run()`. Integration tests live in
-`crates/postio-app/tests/` and this is the only place the wiring itself can
-be asserted; four of eight shipped wiring bugs lived here precisely because a
-bin-only crate can't be linked by `tests/`. The harness shape that matters:
-start from the composition root (`feed_the_window`, the same function `run`
-calls), never the widget; assert the pane *has* content, never that it
-renders content it was given — that's the only assertion that can fail when
-the wiring is missing; assert as far from the trigger as possible
-(`keystroke.rs` asserts in SQLite, not in the widget); use
-`settle_until(|| cond)` with a deadline pumping
-`glib::MainContext::default().iteration(false)`, because page reads cross to
-the runtime and answer over a channel; one `#[test]` per binary since GTK
-initialises once (see the GTK section above). `feed_the_window` reads the
-local store only — `start_syncing` is the half that dials a server, split out
+**`postio-gtk` has a lib target — the composition root is testable.** New
+modules go in `src/lib.rs` as `pub mod`; the `postio` binary's `main.rs` is a
+few lines over it. Integration tests live in `crates/postio-gtk/tests/` and
+this is the only place the wiring itself can be asserted; four of eight
+wiring bugs the classic app shipped lived in its composition root precisely
+because a bin-only crate can't be linked by `tests/`. The harness shape that
+matters: start from the composition root (`startup::adopt`, which the binary
+runs, reached through `support::Fixture`), never the widget; assert the
+surface *has* content, never that it renders content it was given — that's
+the only assertion that can fail when the wiring is missing; assert as far
+from the trigger as possible (`e2e.rs` asserts at the server); use
+`settle_until(|| cond)` with a deadline, because reads cross to the host's
+runtime and answer over a channel; one process, one `adw::init`, every case
+a row in `CASES` (see the GTK section above). `adopt` reads the local store
+only — `Session::start_syncing` is the half that dials a server, split out
 so a wiring test never opens a socket.
 
 **Test infrastructure gaps** (audited state, may now be partly closed —
@@ -1924,7 +1871,8 @@ Three things that are easy to get wrong here:
   composition root was passing `Probe::run` a `CancelToken::new()` and
   dropping it, so no probe in the shipping application was cancellable
   whatever the layers below could do. `ProbeCancellation` in
-  `postio-app/src/onboarding.rs` is the half that does the cancelling.
+  `postio-widgets/src/present/onboarding.rs` is the half that does the
+  cancelling.
 ## Fuzzing the hostile-input pipeline
 
 Every message Postio parses is attacker-controlled, and the `.eml` corpus —
@@ -2102,7 +2050,7 @@ infallible, and it has to hold against the next such bug too. It moved out of
 reach a caller that wants to log it — catching inside meant `parse_inner`
 always returned a value and nothing downstream could tell a contained failure
 from an ordinary empty message. `postio-sync`'s backfill is the caller that
-cares; the reading pane deliberately is **not**, for the reason above.
+cares; the reader deliberately is **not**, for the reason above.
 
 **Fixing a crash uncovers the crash behind it, and the next one was ours.**
 With the panic contained, `parse_message` ran further into the same inputs and
@@ -2238,7 +2186,8 @@ process. `postio-account`'s `skip_counter` watches io-imap's
 `LogTracer::init()`, which *is* a `set_logger`, so calling `.init()` takes
 that one slot and leaves the counter inert: a `CHANGEDSINCE` fetch that
 silently dropped deltas is then reported as a complete incremental pull.
-**Never use `.init()` on the subscriber in `postio-app`.** Use
+**Never use `.init()` on the subscriber** (`postio-session/src/logging.rs`
+installs it for the apps). Use
 `tracing::subscriber::set_global_default()`, and install the bridge *first*
 via `postio_account::imap::install_skip_counter_forwarding_to(Some(Box::new(LogTracer::new())))`,
 which composes the counter and the bridge into the one logger the process is
@@ -2247,7 +2196,7 @@ allowed. `skip_counter_is_counting()` reports whether it worked, and
 bug in the first live run.
 
 **Logging levels and what may be logged.** (1) *Scope*: a bare `POSTIO_LOG`
-level is expanded by `postio-app/src/logging.rs::scope()` into
+level is expanded by `postio-session/src/logging.rs::scope()` into
 `"warn,postio_*=<level>,io_imap=<level>"` — applied literally, so
 `POSTIO_LOG=debug` means rustls enumerating 146 CA certificates before the
 first line about mail. A directive containing `=` or `,` passes through
@@ -2517,8 +2466,8 @@ error: unresolved link to `run`
   --> crates/postio-session/src/lib.rs:88:72
 ```
 
-Worse, the link cannot simply be repointed: `postio-app` depends on
-`postio-session`, so rustdoc cannot resolve *upward* from the dependency to
+Worse, the link could not simply be repointed: `postio-app` depended on
+`postio-session`, and rustdoc cannot resolve *upward* from a dependency to
 its dependent at all. The fix is to name the item in prose rather than link
 it, and say why it is not a link.
 
@@ -2865,7 +2814,7 @@ most recently; a label the queue query never returns is enforced by the query.
 runs clippy and the tests over the crates a branch changed. On a host missing
 their system libraries that is not a weaker gate — it is *no* gate, and the
 branch merges anyway. This is live rather than hypothetical: a macOS session
-cannot build `postio-gtk` or `postio-app`, because gtk4 and libadwaita have
+cannot build `postio-widgets` or `postio-gtk`, because gtk4 and libadwaita have
 arm64 bottles but **webkitgtk has none**, and the reader and the composer are
 both WebKit views. So the land script now asks the host what it can build:
 
@@ -2873,9 +2822,10 @@ both WebKit views. So the land script now asks the host what it can build:
   committed or pushed;
 - a changed crate the unbuildable ones *depend on* still lands — refusing would
   leave such a session unable to do any work at all — but the PR gets
-  `needs-linux-verify` and a warning in its body. `postio-app` depends on every
-  other workspace crate directly or transitively, so when it is unbuildable,
-  *any* changed crate is unproven against the frontend.
+  `needs-linux-verify` and a warning in its body. `postio-gtk` depends on
+  nearly every other workspace crate directly or through `postio-host`, so
+  when it is unbuildable, almost any changed crate is unproven against the
+  frontend.
 
 The probe is `pkg-config`, not `uname`: a Linux box without the `-dev` packages
 is in exactly the same position, and a check keyed on the operating system
@@ -2912,8 +2862,8 @@ gets them by setting `CARGO_PROFILE_DEV_DEBUG=line-tables-only` (or `2`) for
 that build. Changing the setting invalidates every cached compile once.
 
 **The headless runner keys on cargo's 16-hex metadata suffix** to decide what
-runs on the private compositor: `deps/gtk_list-0123456789abcdef` goes
-headless, `postio-app` and examples reach the real display — before #315 the
+runs on the private compositor: `deps/focus_suite-0123456789abcdef` goes
+headless, the `postio` binary and examples reach the real display — before #315 the
 README's own `cargo run -p postio-app` launched the app invisibly.
 `scripts/tests/test-headless-runner.py` pins the contract with a stubbed
 mutter, so it runs anywhere, fast.
@@ -2971,7 +2921,7 @@ message's row and deliberately does *not* touch its blobs, because the
 schema delegates reclamation to the sweep, so **deleting mail freed nothing,
 ever**. The worst case needs no user at all — a `UIDVALIDITY` reset wipes and
 re-syncs a whole mailbox, orphaning every blob in it at once. All three are
-wired now from `postio_app::reclaim_disk`, beside the body-index catch-up —
+wired now from `postio_host::maintenance::reclaim_disk`, beside the body-index catch-up —
 the first two by #416, `evict_to_fit` by #862, which had to invent the caller
 *and* the ceiling it reads.
 
@@ -2983,8 +2933,9 @@ was empty on every message in every real store). The pattern is now specific
 enough to state: **a `pub fn` in a leaf crate, fully tested, is not evidence
 that anything calls it** — and its own unit tests pass just as happily either
 way, so the suite gives no signal at all. The tests that catch this class live
-at the far end, in `crates/postio-app/tests/app_suite/`, and assert *"a store
-this application opened has had X done to it"* rather than *"X works"*.
+at the far end, in `postio-host`'s `tests/` (`reclaim.rs`) and `focus_suite`,
+and assert *"a store this application opened has had X done to it"* rather
+than *"X works"*.
 
 **And `scripts/checks/check-uncalled-pub-fn.py` now catches it before a
 person has to (#421).** Run against the commit before #327 it names
@@ -3018,7 +2969,7 @@ to be true.
 `evict_to_fit` was the one baseline entry whose reason was known: #416 scoped
 it out on purpose, because it needed a `[storage] max_bytes` to read before
 anything could call it. #862 wired it — `postio_session::enforce_storage_ceiling`,
-spawned from `postio_app::reclaim_disk` behind the two free sweeps — and its
+spawned from `reclaim_disk` (now `postio_host::maintenance`) behind the two free sweeps — and its
 line is gone from the baseline, which is the only way a line there may leave.
 
 **A setting that parses and does nothing is its own failure mode.** The other
@@ -3051,6 +3002,7 @@ its own file under `docs/notes/`, named by date and title; a new entry is a
 new file plus one line here. `scripts/checks/check-notes-index.py` refuses a
 note that is not listed, and a listing that names no file.
 
+- [The store migrates what it can and starts over what it cannot](notes/2026-10-01-store-migrations-and-starting-over.md) — a `HEAD` change comes with a `schema::MIGRATIONS` step from the stamp it replaces and that `HEAD` kept in `tests/schemas/`; a stamp no step reaches is refused with `Remedy::StartOver`, never "Try again", and `postio_session::start_over` (Focus's "Start a fresh store", `postio-store reset`) sets the store aside and carries the accounts across (2026-10-01, spec 007 T215).
 - [The INBOX syncs alone before anything else](notes/2026-09-30-the-inbox-syncs-alone-before-anything-else.md) — a wave admits no other mailbox while an INBOX pass is queued or running, nor while INBOX's newest `seed_batch` of bodies is on the wire, and claims no background body during INBOX's header pass; ranking who *starts* first never made INBOX *finish* first (2026-09-30, #1709).
 - [What a storyboard capture costs, and which renderer repeats itself](notes/2026-10-01-what-a-storyboard-capture-costs.md) — one capture of a 1280×800 window costs ~25 ms median, 37 ms p95, so settle sampling takes every second tick; the default renderer gives different bytes in two processes and cairo the same, so storyboard runs pin `GSK_RENDERER=cairo` and record it (2026-10-01, specs/008-storyboards T005).
 - [One feature set for the landing gate: measured, and left alone](notes/2026-10-01-one-feature-set-for-the-gate-measured-and-left-alone.md) — per-crate gate commands do build dependency variants (145-233 artifacts not shared with the workspace form), but one `clippy --workspace` measured 103-136 s against 18-75 s for today's `clippy -p` + `check --workspace`, and workspace doctests cost 36 s a landing; the gate stays per-crate until `-Zfeature-unification` is stable (2026-10-01).
@@ -3063,8 +3015,7 @@ note that is not listed, and a listing that names no file.
 - [io-imap discards all but the last untagged SEARCH line](notes/2026-09-17-io-imap-drops-search-results.md) — `ids = search_ids` where it means `extend`, so a SEARCH result split across lines keeps only its last one and a trailing empty line keeps nothing; iCloud listed 0 UIDs for a 60,934-message Archive, which then recorded itself as fully synced (2026-09-17).
 - [What the engine swap could not keep](notes/2026-09-13-what-the-engine-swap-could-not-keep.md) — what Turso could not carry over from SQLCipher and FTS5: eight things, each with the test that pins it, and five smaller ones found reconciling the docs (2026-09-13).
 - [A slow sync pass stops every folder behind it](notes/2026-09-13-a-slow-pass-stops-every-folder-behind-it.md) — fifteen folders queued, two started, one finished; the time was inside tantivy, and the obvious wave fix breaks the job guarantee.
-- [What the frontend audit found, and what remains](notes/2026-09-13-what-the-frontend-audit-found-and-what-remains.md) — the mapped-but-not-done half: three decoupling moves, the widget census, and the costs deliberately left.
-- [What the simplification pass changed, and what it kept](notes/2026-09-14-what-the-simplification-pass-changed-and-kept.md) — the answer to "what can be simpler": eight things landed, seven looked at and kept with the reason, and the practices observed on the way (2026-09-14).
+- [What remains open from the frontend audit, and what was kept on purpose](notes/2026-09-13-what-the-frontend-audit-found-and-what-remains.md) — `notify_roles` not crossing the FFI, the untamed fts merge cost and the slow bulk fixture; and `zbus`, `styles.rs`, the recount functions, `RETAINED`, `cc-wrapper.sh` and `blake3`, each looked at and kept with the reason (2026-09-13).
 - [Seven improvements, and what each cost](notes/2026-09-14-seven-improvements-and-what-each-cost.md) — the body index off the sync lane, bodies versioned and zstd again, a counted interaction gate, WebKit fail-fast and split CI jobs, `postio-diag`, eleven dead functions gone and `prune_settled` wired, an unused-dependency gate (2026-09-14).
 - [A condvar in a runtime, and a future nobody awaits](notes/2026-09-12-a-condvar-in-a-runtime-and-a-future-nobody-awaits.md) — the write gate deadlocked a runtime, `let x = f();` drops a future the compiler cannot see, and `busy_timeout` defaulted to zero (2026-09-12).
 - [A score that is zero and says nothing](notes/2026-09-12-a-score-that-is-zero-and-says-nothing.md) — `fts_score` answers `0.0` for any arithmetic around it, and for a term bound as a different parameter than the match's; the rows are right and only the ranking is gone (2026-09-12).
@@ -3109,7 +3060,6 @@ note that is not listed, and a listing that names no file.
 - 2026-09-04 — [Two OAuth expiries, and only one of them is a failure (2026-09-04, #954)](notes/2026-09-04-two-oauth-expiries-and-only-one-of-them-is-a-failure.md)
 - 2026-09-05 — [The error log was never switched on (2026-09-05, #1184)](notes/2026-09-05-the-error-log-was-never-switched-on.md)
 - 2026-09-05 — [The app that ran, logged, and drew nothing (2026-09-05, #1156)](notes/2026-09-05-the-app-that-ran-logged-and-drew-nothing.md)
-- 2026-09-08 — [Building a reading pane on a WebView (2026-09-08, #1316)](notes/2026-09-08-building-a-reading-pane-on-a-webview.md)
 - 2026-09-08 — [What a thread costs, in both panes (2026-09-08, #1348)](notes/2026-09-08-what-a-thread-costs-in-two-panes.md) — ADR 0032's unanswered question, measured: one document is flat at ~101 MiB and 50-100 ms whatever the thread length, where a reader per message grows ~31 MiB of Pss and reaches 1.34 s at fifty.
 - 2026-09-09 — [The suite cannot see a laid-out page (2026-09-09, #1334)](notes/2026-09-09-the-suite-cannot-see-a-laid-out-page.md) — the test display renders nothing, so an assertion may read the cascade but never the layout; four CI rounds went to learning it, and `getComputedStyle(el).width` is the one that looks safe and is not.
 - 2026-09-12 — [A draft is already a message row (2026-09-12, specs/003)](notes/2026-09-12-a-draft-is-already-a-message-row.md) — #166 mirrors every draft into Drafts in the same transaction, offline, so the Outbox needed no second row model: it and Drafts are two predicates over one folder. Also why `total_count` is not the Drafts badge, why a sidebar row must not be identified by `MailboxId`, and the duplicate `LIST_COLUMNS` that broke the unified list while every storage test passed.

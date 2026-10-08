@@ -1,0 +1,89 @@
+# Keys under the open message scroll it and do not move the list (a19c4bbb,
+# de495089).
+#
+# The defects: a dialog stops GTK's key path, so the window never saw a key
+# while a message was open -- `j` and `k` did nothing, and Up and Down fell
+# through to focus moves that jumped the list behind (a19c4bbb). Once they
+# arrived, Down and Up were the list's next and previous message, so they
+# stepped the list behind the dialog and the message could not be scrolled
+# (de495089). Both fixed on the Focus branch before storyboards existed, so
+# this is pinned: Down, Up, Page Down, Page Up, Space, End and Home move the
+# message's scroll offset and nothing else, while `j` and `k` step to the
+# next and previous message.
+#
+# The `long-newsletter` seed is the one message tall enough to scroll: the
+# Harbor row refiled as a long newsletter, the fifth row down. (The
+# catalogue's first reading, "j/k scroll the message", was loose: `j` and
+# `k` step the dialog's message, and the arrows scroll it.)
+source = { kind = "commit", ref = "de495089" }
+proof  = "pinned"
+apps   = ["focus"]
+seed   = "long-newsletter"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+id      = "on-it"
+command = "next_message"
+check   = { keyboard.region = "list", cursor.index = 4 }
+
+[[step]]
+id      = "open"
+command = "open_message"
+settle  = { until = { view = "reader" } }
+check   = { view = "reader", keyboard.region = "reader", reading.id = "90", reading.scroll.offset = 0, cursor.index = { same_as = "on-it" } }
+expect  = "The message opens in its dialog, at its top, over the list; the cursor stays on its row."
+
+[[step]]
+key    = "Down"
+check  = { reading.scroll.offset = { changed = true }, reading.id = "90", cursor.index = { same_as = "on-it" }, keyboard.region = "reader" }
+expect = "Down scrolls the message a line. The list behind keeps its cursor and does not jump."
+
+[[step]]
+key    = "Page_Down"
+check  = { reading.scroll.offset = { changed = true }, reading.id = "90", cursor.index = { same_as = "on-it" } }
+expect = "Page Down scrolls a page."
+
+[[step]]
+key    = "space"
+check  = { reading.scroll.offset = { changed = true }, reading.id = "90", cursor.index = { same_as = "on-it" } }
+expect = "Space pages down, as Page Down does."
+
+[[step]]
+key    = "Up"
+check  = { reading.scroll.offset = { changed = true }, reading.id = "90", cursor.index = { same_as = "on-it" } }
+expect = "Up scrolls back a line."
+
+[[step]]
+key    = "Page_Up"
+check  = { reading.scroll.offset = { changed = true }, reading.id = "90", cursor.index = { same_as = "on-it" } }
+expect = "Page Up scrolls back a page."
+
+[[step]]
+key    = "End"
+check  = { reading.scroll.offset = { changed = true }, reading.id = "90", cursor.index = { same_as = "on-it" } }
+expect = "End goes to the bottom of the message."
+
+[[step]]
+key    = "Home"
+check  = { reading.scroll.offset = 0, reading.id = "90", cursor.index = { same_as = "on-it" } }
+expect = "Home goes back to the top."
+
+[[step]]
+id     = "next"
+key    = "j"
+settle = { until = { reading.id = { changed = true } } }
+check  = { reading.id = { changed = true }, view = "reader", keyboard.region = "reader" }
+expect = "`j` steps the dialog to the next message; the keyboard stays in the dialog."
+
+[[step]]
+key    = "k"
+settle = { until = { reading.id = "90" } }
+check  = { reading.id = "90", view = "reader", keyboard.region = "reader" }
+expect = "`k` steps back to the message the dialog opened on."

@@ -43,6 +43,8 @@ use postio_session::actions::{self, Actions};
 use postio_session::refresh;
 use postio_storage::{BlobStore, Store};
 
+pub use focus::{FocusHandle, FocusSetup};
+
 /// The store's owner in this process, serving the clients connected to it.
 ///
 /// Dropping it stops its runtime, and with it the engines.
@@ -72,6 +74,12 @@ struct Inner {
     notify: Mutex<postio_config::SyncConfig>,
     /// The engine syncing each account, once started.
     engines: Engines,
+    /// Focus mode's tasks, once Focus has switched it on (spec 007). `None`
+    /// in every host but Focus's.
+    focus: Mutex<Option<FocusHandle>>,
+    /// Where `config.toml` is, when the host was opened on one: where Focus
+    /// writes the person's corrections, unless told otherwise.
+    config_path: Mutex<Option<std::path::PathBuf>>,
 }
 
 /// The engine syncing each account: at most one per account, however many
@@ -288,7 +296,9 @@ const BLOCKING_THREADS: usize = 8;
 fn verbs(wiring: &Wiring, state: &SharedState) -> Dispatcher {
     let builder = actions::wire(
         Dispatcher::builder(),
-        Actions::new(wiring.database.clone(), state.clone()),
+        Actions::new(wiring.database.clone(), state.clone())
+            .with_blob_store(wiring.blobs.clone())
+            .with_focus(wiring.focus.clone()),
     );
     refresh::wire(builder, wiring.engine.clone(), state.clone()).build()
 }
@@ -342,19 +352,38 @@ impl Host {
     /// `report` hears each wait before it starts -- the keyring, then the
     /// store's own stages -- so a frontend can say what it is waiting on.
     /// Blocks the calling thread for all of it. `Err` is a sentence for a
-    /// person: a keyring that will not answer, or a store that will not open
-    /// -- among them [`postio_storage::Error::InUse`], another Postio having
-    /// it open.
+    /// person and the way past it: a keyring that will not answer, or a
+    /// store that will not open -- among them [`postio_storage::Error::InUse`],
+    /// another Postio having it open, which trying again gets past, and a
+    /// schema no migration reaches, which only starting over does.
     pub fn open(
         config_path: Option<&std::path::Path>,
         secrets: Arc<dyn postio_account::secret::SecretStore>,
         report: &dyn Fn(postio_ui::list_state::Waiting),
-    ) -> Result<Host, String> {
+    ) -> Result<Host, postio_session::Refusal> {
+        Host::open_at(
+            config_path,
+            &postio_session::paths::store_path(),
+            secrets,
+            report,
+        )
+    }
+
+    /// [`Host::open`], over the store at `store` rather than this
+    /// installation's: for a suite that needs a store per case, which a
+    /// process-wide `POSTIO_STORE` cannot give it.
+    pub fn open_at(
+        config_path: Option<&std::path::Path>,
+        store: &std::path::Path,
+        secrets: Arc<dyn postio_account::secret::SecretStore>,
+        report: &dyn Fn(postio_ui::list_state::Waiting),
+    ) -> Result<Host, postio_session::Refusal> {
+        use postio_session::Refusal;
         use postio_ui::list_state::Waiting;
 
         report(Waiting::Keyring);
         let key = postio_session::store_key_blocking(secrets.as_ref())
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| postio_session::key_refusal(&error))?;
         let (database, blobs) = {
             // Its own runtime, dropped before the host's exists: opening the
             // store is async, and nothing else is running yet to host it.
@@ -363,15 +392,21 @@ impl Host {
                 .enable_all()
                 .build()
                 .map_err(|error| {
-                    format!("Postio could not start the worker that opens its store: {error}")
+                    Refusal::try_again(format!(
+                        "Postio could not start the worker that opens its store: {error}"
+                    ))
                 })?;
-            runtime.block_on(postio_session::open_store_reporting(&key, &|stage| {
-                report(match stage {
-                    postio_session::Opening::Store => Waiting::Store,
-                    postio_session::Opening::Migrating => Waiting::Migrating,
-                    postio_session::Opening::Indexing => Waiting::Indexing,
-                })
-            }))?
+            runtime.block_on(postio_session::open_store_at_reporting(
+                store,
+                &key,
+                &|stage| {
+                    report(match stage {
+                        postio_session::Opening::Store => Waiting::Store,
+                        postio_session::Opening::Migrating => Waiting::Migrating,
+                        postio_session::Opening::Indexing => Waiting::Indexing,
+                    })
+                },
+            ))?
         };
 
         let sync_config = config_path
@@ -391,9 +426,12 @@ impl Host {
                 .with_watch(postio_session::watch_policy(&sync_config))
                 .with_storage_ceiling(storage_ceiling)
                 .with_secrets(secrets)
-        })?;
+        })
+        .map_err(Refusal::try_again)?;
         // Which folders' arrivals are worth a notification.
         host.notify_with(sync_config);
+        *host.inner.config_path.lock().expect("never poisoned") =
+            config_path.map(std::path::Path::to_path_buf);
         Ok(host)
     }
 
@@ -419,6 +457,8 @@ impl Host {
             queue,
             notify: Mutex::new(postio_config::SyncConfig::default()),
             engines: Engines::default(),
+            focus: Mutex::new(None),
+            config_path: Mutex::new(None),
             offers: Mutex::new(HashMap::new()),
             oauth_offers: Mutex::new(HashMap::new()),
             sign_ins: Mutex::new(HashMap::new()),
@@ -469,6 +509,45 @@ impl Host {
         async move { deciding.await.ok().flatten() }
     }
 
+    /// [`Host::notification`], for Focus: only about the arrivals Focus's
+    /// inbox still lists, never mail it filtered or held (FR-153). `None`
+    /// when none of them stayed.
+    pub fn focus_notification(
+        &self,
+        mailbox: postio_model::MailboxId,
+        messages: Vec<postio_model::MessageId>,
+        attention: postio_ui::notify::Attention,
+    ) -> impl std::future::Future<Output = Option<postio_ui::notify::Notification>> + Send + 'static
+    {
+        let inner = Arc::clone(&self.inner);
+        let deciding = self.inner.runtime().spawn(async move {
+            let stayed = async {
+                let reader = inner.wiring.database.read().await?;
+                postio_storage::repository::ThreadRepository::new(&reader)
+                    .stayed_in_focus(mailbox, &messages)
+                    .await
+            };
+            let stayed = stayed.await.unwrap_or_else(|error| {
+                tracing::warn!(%error, "could not read which arrivals stayed in Focus");
+                Vec::new()
+            });
+            if stayed.is_empty() {
+                return None;
+            }
+            let config = inner.notify.lock().expect("never poisoned").clone();
+            notify::decide_arrival(
+                &inner.wiring.database,
+                inner.wiring.store.as_ref(),
+                &config,
+                mailbox,
+                &stayed,
+                attention,
+            )
+            .await
+        });
+        async move { deciding.await.ok().flatten() }
+    }
+
     /// The verbs each frontend's dispatcher answers, for a frontend that
     /// filters its gestures by them as the desktop's window does.
     pub fn wired(&self) -> Vec<postio_core::CommandId> {
@@ -480,6 +559,11 @@ impl Host {
     /// The wiring every read and the engines hang off.
     pub fn wiring(&self) -> &Wiring {
         &self.inner.wiring
+    }
+
+    /// Whether Focus mode has been switched on ([`Host::enable_focus`]).
+    pub fn focus_enabled(&self) -> bool {
+        self.inner.focus.lock().expect("never poisoned").is_some()
     }
 
     /// Start a sync engine for every enabled account, on the host's runtime.
@@ -512,13 +596,29 @@ impl Host {
         });
     }
 
+    /// The host's runtime, for a frontend that has work of its own to run
+    /// there: Focus's remote-image fetch, as the desktop app runs its own.
+    pub fn runtime(&self) -> tokio::runtime::Handle {
+        self.inner.runtime().clone()
+    }
+
     /// Stop the engines and mark a clean end, before the host is dropped.
     ///
     /// Engines first: they are the one thing still writing on threads of
     /// their own, and a write torn by the process exit is left for a pre-1.0
-    /// engine to recover (`postio-app`'s `run` says the same, and did this).
+    /// engine to recover (the classic app's startup said the same, and did this).
     pub fn stop(&self) {
         postio_runtime::stop_retained();
+        self.close();
+    }
+
+    /// What [`Host::stop`] does once nothing is syncing: Focus's mark kept
+    /// current, so nothing that landed since its last tick is sorted again
+    /// at the next open, and the store's clean end. Apart so a test can
+    /// close one host of several in a process -- the engines
+    /// [`postio_runtime::stop_retained`] stops are the whole process's.
+    pub(crate) fn close(&self) {
+        self.keep_focus_mark();
         postio_session::blocking::now(postio_session::end_session(&self.inner.wiring.database));
     }
 
@@ -654,11 +754,11 @@ impl Inner {
                 let hub = self.hub.clone();
                 InOrder::Pending(Box::pin(async move {
                     match queued.await {
-                        Ok(moved) => {
-                            if let Some(mailbox) = moved {
+                        Ok(queued) => {
+                            if let Some(mailbox) = queued.drafts {
                                 hub.emit(Event::MessageListChanged { account, mailbox });
                             }
-                            Resp::Queued(moved)
+                            Resp::Queued(queued)
                         }
                         Err(error) => Resp::Failed(error),
                     }
@@ -700,7 +800,12 @@ impl Inner {
             Some(invocation) => entry.sink.with_origin(invocation),
             None => entry.sink.clone(),
         };
-        tracing::debug!(client = queued.client.0, kind = ?entry.kind, "running a command");
+        tracing::debug!(
+            client = queued.client.0,
+            kind = ?entry.kind,
+            command = %queued.command.id(),
+            "running a command"
+        );
         entry.verbs.dispatch(queued.command, sink).await;
     }
 
@@ -734,6 +839,18 @@ impl Inner {
             Req::Labels(account) => {
                 Resp::Labels(compose::labels(&self.wiring.database, account).await)
             }
+            Req::LabelCounts(account) => {
+                Resp::LabelCounts(compose::label_counts(&self.wiring.database, account).await)
+            }
+            Req::CreateLabel { account, name } => {
+                Resp::Label(compose::create_label(&self.wiring.database, account, &name).await)
+            }
+            Req::ThreadLabels(threads) => {
+                Resp::ThreadLabels(compose::thread_labels(&self.wiring.database, &threads).await)
+            }
+            Req::FocusCounts => compose::focus_counts(&self.wiring.database)
+                .await
+                .map_or_else(Resp::Failed, Resp::FocusCounts),
             Req::ReplySource(message) => Resp::ReplySource(
                 compose::reply_source(&self.wiring.database, message)
                     .await
@@ -821,7 +938,8 @@ impl Inner {
                 Ok(()) => Resp::Done,
                 Err(error) => Resp::Failed(error),
             },
-            Req::BeginOAuth(submission) => match self.begin_oauth(*submission).await {
+            Req::BeginOAuth { submission, then } => match self.begin_oauth(*submission, then).await
+            {
                 Ok(consent) => Resp::Consent(Box::new(consent)),
                 Err(sentence) => Resp::Failed(postio_model::listing::StoreError::new(sentence)),
             },
@@ -840,8 +958,11 @@ impl Inner {
                 }
                 Resp::Done
             }
-            Req::Discover(address) => Resp::Onboarding(Box::new(self.discover(&address).await)),
-            Req::AddAccount(submission) => match self.add_account(*submission).await {
+            Req::Discover { address, stop } => {
+                Resp::Onboarding(Box::new(self.discover(&address, stop).await))
+            }
+            Req::AddAccount { submission, then } => match self.add_account(*submission, then).await
+            {
                 Ok(()) => Resp::Done,
                 Err(sentence) => Resp::Failed(postio_model::listing::StoreError::new(sentence)),
             },
@@ -883,6 +1004,12 @@ impl Inner {
                 .map_or_else(Resp::Failed, Resp::Seen),
             Req::RetireOrientation => {
                 done(settings::retire_orientation(&self.wiring.database).await)
+            }
+            Req::MoveRecent => settings::move_recent(&self.wiring.database)
+                .await
+                .map_or_else(Resp::Failed, Resp::MoveRecent),
+            Req::NoteMove(mailbox) => {
+                done(settings::note_move(&self.wiring.database, mailbox).await)
             }
             Req::SaveAccount {
                 submission,
@@ -1019,11 +1146,95 @@ impl Inner {
                 .draft_counts(account)
                 .await
                 .map_or_else(Resp::Failed, Resp::DraftCounts),
+            Req::DigestPreview { queries, since } => focus::rules::preview(self, &queries, since)
+                .await
+                .map_or_else(Resp::Failed, Resp::DigestPreview),
+            Req::SaveDigestRule { replacing, rule } => {
+                done(focus::rules::save(self, replacing, rule).await)
+            }
+            Req::DeleteDigestRule(name) => focus::rules::delete(self, name)
+                .await
+                .map_or_else(Resp::Failed, Resp::Count),
+            Req::RawSource(message) => match parts::raw_source(
+                &self.wiring.database,
+                &self.wiring.blobs,
+                self.wiring.engine.get().cloned(),
+                message,
+            )
+            .await
+            {
+                Ok(bytes) => Resp::RawSource(bytes),
+                Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+            },
+            Req::DigestLikeThis(message) => focus::like_this(self, message)
+                .await
+                .map_or_else(Resp::Failed, Resp::DigestLikeThis),
+            Req::DigestSummary(delivery) => focus::digest_summary(self, delivery)
+                .await
+                .map_or_else(Resp::Failed, Resp::DigestSummary),
+            Req::Surfaced => focus::surfaced(self)
+                .await
+                .map_or_else(Resp::Failed, Resp::Surfaced),
+            Req::AccountOf(message) => {
+                let found = async {
+                    let reader = self.wiring.database.read().await?;
+                    postio_storage::repository::MessageRepository::new(&reader)
+                        .get(message)
+                        .await
+                };
+                found.await.map_or_else(
+                    |error| Resp::Failed(error.into()),
+                    |found| Resp::AccountOf(found.map(|message| message.account_id)),
+                )
+            }
+            Req::Held(messages) => focus::digests::held(self, &messages)
+                .await
+                .map_or_else(Resp::Failed, Resp::Held),
+            Req::DigestWaiting(rules) => focus::digests::waiting(self, &rules)
+                .await
+                .map_or_else(Resp::Failed, Resp::Counts),
+            Req::DeliveryMessages(delivery) => focus::digests::delivery_messages(self, delivery)
+                .await
+                .map_or_else(Resp::Failed, Resp::Rows),
+            Req::FilteredTabs => focus::filtered::tabs(self)
+                .await
+                .map_or_else(Resp::Failed, Resp::FilteredTabs),
+            Req::Filtered {
+                reason,
+                offset,
+                limit,
+            } => focus::filtered::page(self, reason, offset, limit)
+                .await
+                .map_or_else(Resp::Failed, Resp::Filtered),
+            Req::Vault { subject } => focus::vault::picture(self, subject)
+                .await
+                .map_or_else(Resp::Failed, Resp::Vault),
+            Req::CaptureTask { project, task } => focus::vault::capture_task(self, project, task)
+                .await
+                .map_or_else(Resp::Failed, Resp::Captured),
+            Req::CaptureNote { note, entry } => focus::vault::capture_note(self, note, entry)
+                .await
+                .map_or_else(Resp::Failed, Resp::Captured),
+            Req::SweepPreview => match self.wiring.focus.config() {
+                Some(config) => {
+                    postio_session::focus::sweep_preview(&self.wiring.database, &config)
+                        .await
+                        .map_or_else(
+                            |sentence| {
+                                Resp::Failed(postio_model::listing::StoreError::new(sentence))
+                            },
+                            Resp::Count,
+                        )
+                }
+                None => Resp::Failed(postio_model::listing::StoreError::new(
+                    "Filtering the inbox needs Postio Focus",
+                )),
+            },
         }
     }
 
     /// An account change, as the desktop's settings make it
-    /// (`postio-app`'s `settings_accounts`). Everyone's sidebar hears of it.
+    /// (the desktop's settings panel, over `AccountOp`). Everyone's sidebar hears of it.
     async fn account(
         &self,
         op: postio_client::protocol::AccountOp,
@@ -1104,12 +1315,24 @@ impl Inner {
     /// the desktop's probe, options and reading of it
     /// (`postio_session::onboarding`). What the probe offered for JMAP is
     /// kept for the submission that follows.
-    async fn discover(&self, address: &str) -> postio_ui::onboarding::Status {
+    ///
+    /// `stop` is the frontend's: pulling it cancels the probe's token on
+    /// the spot, so a probe the person has moved on from holds no socket
+    /// open (#57), and it answers as one that found nothing.
+    async fn discover(
+        &self,
+        address: &str,
+        stop: postio_client::protocol::Stop,
+    ) -> postio_ui::onboarding::Status {
         let probe = postio_account::discovery::Probe::with_options(
             self.wiring.discovery.clone(),
             postio_session::onboarding::probe_options(),
         );
         let cancel = postio_account::discovery::CancelToken::new();
+        stop.on_stop({
+            let cancel = cancel.clone();
+            move || cancel.cancel()
+        });
         match probe.run(address, &cancel).await {
             Ok(report) => {
                 let jmap = report.settings().and_then(|settings| {
@@ -1151,15 +1374,20 @@ impl Inner {
     async fn begin_oauth(
         &self,
         submission: postio_ui::onboarding::Submission,
+        then: postio_client::protocol::AfterSave,
     ) -> Result<postio_ui::onboarding::BrowserSignIn, String> {
         let key = submission.address.to_ascii_lowercase();
-        let offer = self
+        let probed = self
             .oauth_offers
             .lock()
             .expect("never poisoned")
             .get(&key)
-            .cloned()
-            .ok_or_else(|| "This address's provider has no browser sign-in.".to_owned())?;
+            .cloned();
+        let offer = match probed {
+            Some(offer) => Some(offer),
+            None => self.stored_offers(&key).await.1,
+        }
+        .ok_or_else(|| "This address's provider has no browser sign-in.".to_owned())?;
         let client = submission
             .oauth_client
             .clone()
@@ -1180,7 +1408,9 @@ impl Inner {
         let scopes = offer.scopes.clone();
         let refresh = offer.refresh_token_lifetime_days;
         let provider = postio_session::onboarding::provider_name(&submission.settings);
+        let saved_scopes = scopes.clone();
         self.runtime().spawn(async move {
+            let scopes = saved_scopes;
             let settings = postio_session::onboarding::connection_settings(&submission);
             let signed_in = postio_session::onboarding::run_sign_in(
                 &settings, &client, &offer, &opener, &cancel,
@@ -1204,7 +1434,7 @@ impl Inner {
                 }
                 Err(postio_session::onboarding::SignInError::Failed(reason)) => Err(reason),
             };
-            if outcome.is_ok() {
+            if outcome.is_ok() && then == postio_client::protocol::AfterSave::Sync {
                 start_engine_for(&wiring, &engines, &submission.address).await;
             }
             let _ = finished.send(Some(outcome));
@@ -1219,13 +1449,7 @@ impl Inner {
             .unwrap_or_default();
         Ok(postio_ui::onboarding::BrowserSignIn {
             provider,
-            scopes: self
-                .oauth_offers
-                .lock()
-                .expect("never poisoned")
-                .get(&key)
-                .map(|offer| offer.scopes.clone())
-                .unwrap_or_default(),
+            scopes,
             redirect_uri,
             authorize_url: url.to_string(),
         })
@@ -1259,17 +1483,25 @@ impl Inner {
     /// Prove `submission`'s credentials, save the account, and start its
     /// sync: the desktop's order, so a refused sign-in writes nothing. The
     /// error is the first-run screen's sentence.
+    ///
+    /// `then` says whether the host starts the account's sync or leaves it
+    /// to the frontend (`AfterSave`).
     async fn add_account(
         &self,
         submission: postio_ui::onboarding::Submission,
+        then: postio_client::protocol::AfterSave,
     ) -> Result<(), String> {
-        let jmap = self
+        let key = submission.address.to_ascii_lowercase();
+        let probed = self
             .offers
             .lock()
             .expect("never poisoned")
-            .get(&submission.address.to_ascii_lowercase())
-            .cloned()
-            .flatten();
+            .get(&key)
+            .cloned();
+        let jmap = match probed {
+            Some(offer) => offer,
+            None => self.stored_offers(&key).await.0,
+        };
         let backend = match &self.wiring.mail {
             // Handed a mail server (a test's), the proof is signing in to it.
             Some(mail) => postio_account::backend::MailBackend::connect(mail.backend.as_ref())
@@ -1286,8 +1518,62 @@ impl Inner {
         )
         .await?;
         // Its engine, and only its: the others are already running.
-        start_engine_for(&self.wiring, &self.engines, &submission.address).await;
+        if then == postio_client::protocol::AfterSave::Sync {
+            start_engine_for(&self.wiring, &self.engines, &submission.address).await;
+        }
         Ok(())
+    }
+
+    /// What an account already saved at `address` was signed in with: its
+    /// JMAP session and its browser sign-in's endpoints. A credential
+    /// update proves over what the account already uses, with no probe
+    /// first -- the form arrives filled in from the account's own row.
+    async fn stored_offers(
+        &self,
+        address: &str,
+    ) -> (
+        Option<postio_account::discovery::JmapOffer>,
+        Option<postio_account::discovery::OAuthOffer>,
+    ) {
+        let Ok(connection) = self.wiring.database.read().await else {
+            return (None, None);
+        };
+        let Some(account) = postio_storage::repository::AccountRepository::new(&connection)
+            .list()
+            .await
+            .ok()
+            .and_then(|accounts| {
+                accounts
+                    .into_iter()
+                    .find(|account| account.address.address.eq_ignore_ascii_case(address))
+            })
+        else {
+            return (None, None);
+        };
+        let jmap = match &account.backend {
+            postio_model::account::Backend::Jmap { session_url } => {
+                Some(postio_account::discovery::JmapOffer {
+                    session_url: session_url.clone(),
+                })
+            }
+            // A Gmail-REST repair re-proves through OAuth like any other
+            // Gmail account; a maildir has no server to prove anything
+            // against at all.
+            postio_model::account::Backend::Imap
+            | postio_model::account::Backend::Gmail
+            | postio_model::account::Backend::Maildir { .. } => None,
+        };
+        let oauth = account
+            .oauth
+            .as_ref()
+            .map(|oauth| postio_account::discovery::OAuthOffer {
+                issuer: None,
+                authorize: Some(oauth.authorize_url.clone()),
+                token: Some(oauth.token_url.clone()),
+                scopes: oauth.scopes.split_whitespace().map(str::to_owned).collect(),
+                refresh_token_lifetime_days: oauth.refresh_token_lifetime_days,
+            });
+        (jmap, oauth)
     }
 
     /// A search, as the desktop's bar runs it: in the scope asked (every
@@ -1371,7 +1657,7 @@ impl Inner {
     /// Record that the person asked to leave `message`'s list, and name it.
     ///
     /// The list is its `List-Id`, else the sender's domain -- the desktop
-    /// reader's rule (#971), moved here from `postio-app` so every frontend
+    /// reader's rule (#971), moved here from the classic app so every frontend
     /// records it the same way. Only ever answered for a deliberate act.
     async fn unsubscribe(&self, message: postio_model::MessageId) -> Resp {
         use postio_model::listing::StoreError;
@@ -1558,6 +1844,7 @@ impl Transport for Local {
 
 pub mod compose;
 pub mod export;
+mod focus;
 pub mod maintenance;
 pub mod notify;
 pub mod onboarding;
@@ -1568,4 +1855,8 @@ pub mod settings;
 pub mod startup;
 
 #[cfg(test)]
+mod model_tests;
+#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod verbs_tests;

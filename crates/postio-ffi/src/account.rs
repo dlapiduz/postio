@@ -94,7 +94,7 @@ impl AccountFfi {
     ///
     /// `token` is handed in because this side cannot read it: the expiry
     /// lives in the keyring, the read is asynchronous, and this is not — the
-    /// same split `postio-gtk`'s panel makes with `set_token_expiries`, for
+    /// same split the classic app's panel made with `set_token_expiries`, for
     /// the same reason. [`crate::Session::accounts`] is what does the
     /// reading.
     pub(crate) fn of(

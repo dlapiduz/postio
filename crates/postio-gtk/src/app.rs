@@ -1,222 +1,181 @@
-//! The application object, and the startup order everything else depends on.
+//! The application: its id, its one window, and the order things start in.
 //!
-//! [`run`] is the whole of `main`. The order it works in is not arbitrary:
-//!
-//! 1. Start the [`Timeline`] — the budget is measured from process start.
-//! 2. `adw::init()`, so there is a display to fail loudly about.
-//! 3. Register the embedded fonts **before the first widget exists**. A
-//!    `PangoContext` keeps the family it has already resolved, so a face added
-//!    later never reaches a label that already exists.
-//! 4. Install the generated tokens and the bundled icon theme on the display.
-//! 5. Build the application, and open a [`Window`] on `activate`.
-//!
-//! # Configuration
-//!
-//! The window is built on the registry's default bindings so that it can be
-//! constructed without touching the disk — that is what lets the widget tests
-//! run hermetically. `activate` then hands it to [`crate::config::install`],
-//! which lays the user's `[keys]` over them and keeps doing so as the file
-//! changes.
+//! The store starts opening on a thread before GTK does anything, as the
+//! desktop app's does (#1604): the keyring and the engine's open of an
+//! encrypted file need nothing from the window. The window then comes up at
+//! once and says what it waits for if the wait is long; the inbox fills from
+//! the store; and sync starts after the first frame.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::Arc;
 
 use adw::prelude::*;
-use gtk::{gdk, glib};
+use gtk::{gio, glib};
 
-use crate::startup::{self, Phase, Timeline};
-use crate::window::Window;
-use crate::{fonts, resources, style};
+use crate::startup::{self, Session};
+use crate::window::FocusWindow;
 
-/// The application ID: the D-Bus name, the desktop entry's basename, the
-/// Wayland `app_id` the compositor matches a window to its entry by, and the
-/// name of the bundled icon. All four have to agree.
+/// Postio's application id: the D-Bus name a second launch finds the first
+/// by, the desktop entry's basename and the Wayland `app_id` a window is
+/// matched to that entry by. Focus is Postio (spec 007, C27; ADR 0043), so it
+/// is the id the desktop package has always had. Nothing on disk is keyed by
+/// it outside a sandbox: config, state and the store live under `postio` in
+/// the XDG directories, so the switch moved none of them.
 pub const APP_ID: &str = "dev.postio.Postio";
 
-/// The name of the binary that lands on `PATH`, as the desktop entry's `Exec`
-/// spells it. The crate is `postio-gtk`; what a user types is `postio`.
-pub const BINARY: &str = "postio";
+/// The app's name, as its window title and About dialog say it. Focus is
+/// Postio (spec 007, C27); "Postio Focus" was its name as a second launcher.
+pub const NAME: &str = "Postio";
 
-/// Run Postio. This is `main`.
+/// The icon Postio is drawn with, which the Flatpak installs and the
+/// desktop entry's `Icon=` names: the window's default icon, the desktop
+/// entry and the binary's bundled theme all use this name.
+pub const ICON_NAME: &str = "dev.postio.Postio";
+
+/// Focus's application, as `run` starts it.
+pub fn application() -> adw::Application {
+    // Tell the compositor which application this is: GNOME matches a
+    // window to its desktop entry by the Wayland `app_id`, which GDK takes
+    // from the program name -- the binary's, `postio`, unless it is set.
+    // The entry is `dev.postio.Postio.desktop`, and its `StartupWMClass`
+    // names the same id. Reported against the 0.4.2 Flatpak: with the
+    // binary's name instead, a session looked for `postio.desktop`, found
+    // nothing, and drew a generic icon under a generic name.
+    glib::set_prgname(Some(APP_ID));
+    adw::Application::builder()
+        .application_id(APP_ID)
+        // The desktop entry registers `x-scheme-handler/mailto` and
+        // `x-scheme-handler/postio` with `%U`, so a link clicked elsewhere
+        // arrives as a file to open; without this flag GApplication drops
+        // it (T159, T244).
+        .flags(gio::ApplicationFlags::HANDLES_OPEN)
+        .build()
+}
+
+/// The whole program: open the store, show the inbox, run until closed.
 pub fn run() -> glib::ExitCode {
-    let timeline = Timeline::start();
+    // The budget is measured from process start (`postio_widgets::startup`).
+    let timeline = postio_widgets::startup::Timeline::start();
+    let config_path = postio_config::paths::config_path().ok();
+    // Before anything else can have anything to say: a store that will not
+    // open and a keyring that will not answer both happen before there is
+    // any UI to report them in.
+    let logging = postio_session::logging::init(
+        &config_path
+            .as_deref()
+            .map(postio_session::logging::config_at)
+            .unwrap_or_default(),
+    );
+    // Held for the life of the process: dropping it stops the watch, and
+    // `[logging]` exists to retune a running Postio.
+    let _log_watch = config_path.as_deref().and_then(|path| logging.watch(path));
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "postio starting");
+
+    let config = Rc::new(
+        config_path
+            .as_deref()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|text| postio_config::Config::from_toml_str(&text).ok())
+            .unwrap_or_default(),
+    );
+
+    // One keyring for the installation, read on the opening thread.
+    let secrets: Arc<dyn postio_account::secret::SecretStore> =
+        Arc::new(postio_account::secret::KeyringSecretStore::default());
+    let opener = startup::Opener::new(config_path.clone(), secrets);
+    // Before GTK: the open overlaps the whole of GTK's own start.
+    let early = RefCell::new(Some(opener.open_on_a_thread()));
 
     if adw::init().is_err() {
-        tracing::error!("no display; the UI needs a Wayland or X11 session");
+        // Name what GTK was given: an empty pair is a terminal outside the
+        // desktop session (a tmux or ssh shell), which is not a broken build.
+        let named = |key: &str| std::env::var(key).unwrap_or_default();
+        tracing::error!(
+            wayland_display = %named("WAYLAND_DISPLAY"),
+            display = %named("DISPLAY"),
+            "no display; Focus needs a Wayland or X11 session (set WAYLAND_DISPLAY or DISPLAY)"
+        );
         return glib::ExitCode::FAILURE;
     }
-    timeline.mark(Phase::Init);
+    timeline.mark(postio_widgets::startup::Phase::Init);
 
-    // Fonts first, before any widget: see the module docs.
-    if let Err(error) = fonts::install() {
-        // Recoverable: the design degrades to system fallbacks, which is
-        // ugly but usable, and refusing to start over a font would be worse.
-        tracing::warn!(%error, "the embedded fonts did not install");
-    }
-    timeline.mark(Phase::Fonts);
+    let session: Rc<RefCell<Option<Session>>> = Rc::default();
+    let application = application();
+    application.connect_activate({
+        let session = Rc::clone(&session);
+        move |application| {
+            // A second launch raises the window it already has.
+            if let Some(window) = application.active_window() {
+                window.present();
+                return;
+            }
+            let window = FocusWindow::new(Some(application));
+            startup::time(&window, timeline.clone());
+            // Nothing unless `postio_widgets::jank` is enabled at debug.
+            postio_widgets::jank::install(&window);
+            window.present();
+            let progress = early
+                .borrow_mut()
+                .take()
+                .unwrap_or_else(|| opener.open_on_a_thread());
+            let opened: Rc<dyn Fn(Session)> = {
+                let session = Rc::clone(&session);
+                let window = window.downgrade();
+                let config_path = config_path.clone();
+                Rc::new(move |opened: Session| {
+                    // `[keys]` and `[focus]` apply while Focus runs (T060).
+                    if let (Some(path), Some(window)) = (config_path.as_deref(), window.upgrade()) {
+                        opened.follow_config(&window, path);
+                    }
+                    let session = Rc::clone(&session);
+                    session.replace(Some(opened));
+                    if let Some(window) = window.upgrade() {
+                        // The network after the frame the stored mail is
+                        // drawn in, never before it.
+                        let warm = window.downgrade();
+                        startup::after_first_frame(&window, move || {
+                            if let Some(session) = session.borrow().as_ref() {
+                                session.start_syncing();
+                            }
+                            // The composer's web process, while nobody is
+                            // waiting on it (#1216).
+                            if let Some(window) = warm.upgrade() {
+                                window.warm_composer();
+                            }
+                        });
+                    }
+                })
+            };
+            startup::open(
+                &window,
+                progress,
+                Rc::clone(&config),
+                opener.clone(),
+                opened,
+            );
+        }
+    });
 
-    if let Some(display) = gdk::Display::default() {
-        style::install(&display);
-        install_icons(&display);
-    }
-    timeline.mark(Phase::Styles);
-
-    build_with(timeline).run()
-}
-
-/// The application object, with no windows open yet.
-///
-/// This builds and wires; it does **not** perform the startup order above.
-/// [`run`] does that, and anything else driving this object — a test, a bench
-/// — has to do the same three steps first: `adw::init`, [`fonts::install`],
-/// then [`style::install`] and [`install_icons`].
-pub fn build() -> adw::Application {
-    build_with(Timeline::start())
-}
-
-/// As [`build`], recording into a timeline the caller already owns.
-pub fn build_with(timeline: Timeline) -> adw::Application {
-    build_with_id(timeline, APP_ID)
-}
-
-/// As [`build_with`], under an application id of the caller's choosing.
-///
-/// # Why a test needs this
-///
-/// A `GApplication` exports itself on the session bus at a path derived from
-/// its id, and two of them cannot share one. `NON_UNIQUE` only declines the
-/// *name*; the object is exported either way. So a second test registering
-/// [`APP_ID`] in the same process gets
-///
-/// ```text
-/// An object is already exported for the interface org.gtk.Application
-///   at /dev/postio/Postio
-/// ```
-///
-/// which is a real constraint and not a quirk of the harness: the gtk suite
-/// is one binary, by design.
-///
-/// CI never saw it. A runner with no session bus registers nothing, so the
-/// export cannot collide there — it fails only on a machine with a real bus,
-/// which is to say on a developer's, which is the worst place to find it.
-///
-/// A test that is *about* the id — that the desktop entry and the icon agree
-/// with it — keeps [`build`]. A test that merely needs an application takes
-/// an id of its own.
-pub fn build_with_id(timeline: Timeline, application_id: &str) -> adw::Application {
-    resources::register();
-
-    // Tell the compositor which application this is.
-    //
-    // GNOME matches a window to its desktop entry by the Wayland `app_id`,
-    // and GDK takes that from `g_get_prgname()` — which defaults to the
-    // *binary* name, `postio`. So a session looked for `postio.desktop`,
-    // found nothing, and drew the fallback icon under a generic name, with a
-    // perfectly correct `dev.postio.Postio.desktop` sitting beside it. The
-    // application ID, the desktop entry, the icon and `StartupWMClass` all
-    // agreed with each other; the one value that had to agree with *them*
-    // was never set at all.
-    //
-    // Reported against the 0.4.2 Flatpak, where it cost the switcher's Quit
-    // entry too: a window the shell cannot place in an application is one it
-    // will not offer application actions for.
-    glib::set_prgname(Some(application_id));
-
-    let app = adw::Application::builder()
-        .application_id(application_id)
-        .resource_base_path(resources::PREFIX)
-        // The desktop entry says `Exec=postio %U` and registers the
-        // `mailto` scheme, so a link clicked in a browser arrives here as a
-        // file to open. Without this flag GApplication has nowhere to put it
-        // and drops it: the app launched, empty, and every layer between the
-        // entry and the composer was individually correct.
-        .flags(gio::ApplicationFlags::HANDLES_OPEN)
-        .build();
-
-    // `open` replaces `activate` when there is something to open, so it does
-    // the same first -- one window, raised if it is already there -- and then
-    // hands each link to the window, which holds it until the composition
-    // root has an account to compose from (`Window::deliver_mailto`).
-    app.connect_open(|app, files, _hint| {
-        app.activate();
-        let Some(window) = app.active_window().and_downcast::<Window>() else {
-            return;
-        };
-        for file in files {
-            let uri = file.uri();
-            match postio_model::mailto::Mailto::parse(&uri) {
-                Some(mailto) => window.deliver_mailto(mailto),
-                // The scheme only: a URI is an address, and an address never
-                // goes in a log.
-                None => tracing::warn!(
-                    scheme = uri.split(':').next().unwrap_or(""),
-                    "asked to open a URI whose scheme Postio does not handle; ignored"
-                ),
+    // A `postio://` link: the window first, as a launch would bring it,
+    // then the message the link names -- gone to, never acted on.
+    application.connect_open(|application, files, _| {
+        application.activate();
+        let window = application.active_window().and_downcast::<FocusWindow>();
+        if let Some(window) = window {
+            for file in files {
+                window.open_link(&file.uri());
             }
         }
     });
 
-    app.connect_activate(move |app| {
-        // Launching Postio a second time raises the window that is already
-        // open rather than opening another one, and must not overwrite the
-        // startup that was actually measured.
-        if let Some(open) = app.active_window() {
-            open.present();
-            return;
-        }
+    // The command line's only arguments are links to open.
+    let code = application.run();
 
-        let window = Window::new(app);
-        // Before anything else touches it: the phases between `Window` and
-        // `FirstFrame` are marked by whoever points the panes at the store,
-        // and that caller has only the window to reach a timeline through
-        // (#1479).
-        window.set_timeline(timeline.clone());
-        crate::config::install(&window);
-        // Nothing unless `postio_gtk::jank` is enabled; see the module.
-        crate::jank::install(&window);
-        // Installed here, unconditionally, rather than left to whoever wires
-        // storage into it: the `win.compose` action and the `c` binding must
-        // exist even when there is no store or no account yet, the same way
-        // the rest of the window stays usable with nothing behind it.
-        window.composer();
-        install_actions(app, &window);
-        timeline.mark(Phase::Window);
-        report_shell_frame(&window, &timeline);
-        window.present();
-    });
-
-    app
-}
-
-/// Wires the actions the header's main menu already refers to.
-///
-/// The menu (`header::build`) has named `app.preferences` since before there
-/// was anything behind it; this is that connection. `app.about` and
-/// `win.show-help-overlay` are still unbound — out of scope here, and each
-/// one clicks the menu into doing nothing rather than crashing, which is why
-/// nothing noticed until now.
-fn install_actions(app: &adw::Application, window: &Window) {
-    let preferences = gio::SimpleAction::new("preferences", None);
-    preferences.connect_activate(glib::clone!(
-        #[weak]
-        window,
-        move |_, _| window.toggle_settings()
-    ));
-    app.add_action(&preferences);
-}
-
-/// Make the bundled icon resolvable by name, and adopt it as the default.
-pub fn install_icons(display: &gdk::Display) {
-    resources::register();
-    gtk::IconTheme::for_display(display).add_resource_path(resources::ICONS);
-    gtk::Window::set_default_icon_name(APP_ID);
-}
-
-/// Mark the moment the compositor first shows the window.
-///
-/// Pixels, not a usable UI: since #1114 the store opens behind a window that
-/// is already up, so this says the shell arrived and nothing about whether
-/// there is any mail in it. What closes the timeline is
-/// [`startup::report_usable`], called by whoever fed the panes — this crate
-/// builds windows and does not know when that happened.
-fn report_shell_frame(window: &Window, timeline: &Timeline) {
-    let timeline = timeline.clone();
-    startup::on_first_frame(window, move || timeline.mark(Phase::Shell));
+    // The engines first, then the clean-shutdown mark, before the host's
+    // runtime goes with it.
+    if let Some(session) = session.borrow_mut().take() {
+        session.stop();
+    }
+    code
 }

@@ -182,6 +182,9 @@ fn operator(negated: bool, field: Field, raw: &str, today: NaiveDate) -> TokenKi
             // An earlier brief wrote `is:starred`; the canvas renamed it to
             // Flagged, and docs/PRODUCT.md §7 keeps the old spelling as an alias.
             "flagged" | "starred" | "star" => filter(Filter::Is(State::Flagged)),
+            // The promoted headers' operators (spec 007, research R8).
+            "bulk" => filter(Filter::Is(State::Bulk)),
+            "automated" => filter(Filter::Is(State::Automated)),
             _ => partial(value),
         },
         Field::After => match parse_date(&value, today) {

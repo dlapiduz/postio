@@ -8,20 +8,27 @@ row. Nothing failed, because a CSS rule for a class nobody sets is not an
 error -- it is only a paragraph a reader has to understand before learning it
 does nothing, and a place the next restyle edits to no effect.
 
-The rule: a `.postio-*` or `.conversation-*` class selector in
-`crates/postio-gtk/data/*.css` must be named somewhere in the Rust sources.
+The rule: a `.postio-*` or `.conversation-*` class selector in a desktop
+crate's stylesheets -- `crates/{postio-widgets,postio-gtk}/data/*.css`,
+the shared crate's included (ADR 0043) -- must be named somewhere in the Rust
+sources.
 A mention is the class as a whole token outside a `//` comment line, or a
 string that composes it -- `"postio-account-{index}"` covers every class
 starting `postio-account-`, and `"{class}-hint"` every class ending `-hint`.
 Tests count, because a test that looks a class up is using it; the token
 generator (`crates/postio-ui/src/tokens.rs`) does not, because it is where
-`tokens.css`'s rules are *written*, not where a widget wears one.
+the generated sheets' rules are *written*, not where a widget wears one.
 
 Fix: delete the rule (or just the dead selector from its group). If the class
-is in `tokens.css`, delete it from the generator in
-`crates/postio-ui/src/tokens.rs` and rebuild -- the file is generated. If the
+is in a generated sheet (`postio-widgets`' `metrics.css`), delete it from the
+generator in `crates/postio-ui/src/tokens.rs` and rebuild. If the
 class really is set, spell it so it can be found: a literal, or a `format!`
 whose literal prefix or suffix names it.
+
+Usage:
+    python3 scripts/checks/check-no-dead-css.py                  # the repository
+    python3 scripts/checks/check-no-dead-css.py --root DIR       # a fixture repository
+    python3 scripts/checks/check-no-dead-css.py SHEETS_DIR CRATES_DIR
 """
 
 from __future__ import annotations
@@ -31,9 +38,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-STYLESHEETS = sorted((ROOT / "crates/postio-gtk/data").glob("*.css"))
-SOURCES = ROOT / "crates"
-GENERATOR = ROOT / "crates/postio-ui/src/tokens.rs"
+# The crates whose `data/` holds stylesheets: the desktop app, and the crate
+# holding the widget rules it draws with (ADR 0043; specs/007-postio-focus R1).
+CRATES = ("postio-widgets", "postio-gtk")
+
+
+def stylesheets(root: Path) -> list[Path]:
+    return [sheet for crate in CRATES for sheet in sorted((root / "crates" / crate / "data").glob("*.css"))]
+
 
 CLASS = re.compile(r"\.((?:postio|conversation)-[A-Za-z0-9_-]+)")
 COMMENT = re.compile(r"/\*.*?\*/", re.S)
@@ -93,12 +105,17 @@ def dead(classes: dict[str, tuple[Path, int]], code: tuple[str, str]) -> list[st
 
 
 def main(argv: list[str]) -> int:
-    # Arguments are for the self-test: <stylesheets dir> <sources dir>.
-    if len(argv) == 3:
+    # Arguments are for the self-test: `--root <repository>`, or
+    # <stylesheets dir> <sources dir>.
+    root = ROOT
+    if len(argv) == 3 and argv[1] == "--root":
+        root = Path(argv[2])
+    if len(argv) == 3 and argv[1] != "--root":
         sheets = sorted(Path(argv[1]).glob("*.css"))
         sources, generator = Path(argv[2]), Path(argv[2]) / "postio-ui/src/tokens.rs"
     else:
-        sheets, sources, generator = STYLESHEETS, SOURCES, GENERATOR
+        sheets = stylesheets(root)
+        sources, generator = root / "crates", root / "crates/postio-ui/src/tokens.rs"
 
     classes = styled(sheets)
     unused = dead(classes, mentions(sources, generator))
@@ -109,7 +126,7 @@ def main(argv: list[str]) -> int:
     for name in unused:
         sheet, line = classes[name]
         try:
-            where = sheet.relative_to(ROOT)
+            where = sheet.relative_to(root)
         except ValueError:
             where = sheet
         print(f"  {where}:{line}: .{name}")

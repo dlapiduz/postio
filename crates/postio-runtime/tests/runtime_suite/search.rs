@@ -3,7 +3,7 @@
 //!
 //! Before `postio-svx`, `postio_search`'s executor sat behind an `index`
 //! Cargo feature that nothing in the workspace could turn on without pulling
-//! `rusqlite` into `postio-gtk`'s graph (Cargo resolves features as a union
+//! `rusqlite` into the view layer's graph (Cargo resolves features as a union
 //! across the whole workspace resolve), so `search` had never run inside
 //! Postio. `postio-index` is the split that fixes it: this test does not
 //! exercise the executor's *behaviour* — `postio-index`'s own tests already

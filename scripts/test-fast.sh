@@ -10,8 +10,8 @@
 # Measured on this workstation, warm:
 #
 #     postio-body unit tests (49)        0.00s
-#     postio-gtk lib tests (330)         0.42s
-#     postio-app --test app_suite (43)   ~200s under cargo test, ~20s under nextest
+#     a GTK crate's lib tests (330)      0.42s
+#     the app's GTK suite (43 cases)     ~200s under cargo test, ~20s under nextest
 #
 # (This used to blame an "eleven-minute compile and link". It was a cold
 # worktree, since fixed at the claim -- #1101, #1102.)
@@ -23,8 +23,8 @@
 #
 # What this does NOT do, deliberately:
 #
-#   * integration tests (`tests/`), including the app_suite and gtk_suite
-#     harnesses -- those link the world, and they are what `issue-land.sh`
+#   * integration tests (`tests/`), including the `focus_suite` and
+#     `widgets_suite` harnesses -- those link the world, and they are what `issue-land.sh`
 #     runs and what proves the layers are joined up;
 #   * clippy, formatting, or the repository invariants;
 #   * anything at all about crates you did not touch.

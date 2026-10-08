@@ -237,6 +237,52 @@ async fn a_structured_only_query_orders_newest_first_and_carries_no_snippet() {
     assert!(results.hits.iter().all(|hit| hit.snippet.is_empty()));
 }
 
+/// A result row can show the message's first line without reading a body:
+/// the hit carries the preview the list shows.
+#[tokio::test]
+async fn a_hit_carries_the_messages_first_line() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+
+    let mut with = Message::new(account.id, mailbox, at(8));
+    with.from = vec![EmailAddress::new(Some("ada"), "ada@example.com")];
+    with.subject = Some("Harbour".to_owned());
+    with.preview = Some("Three berths free this weekend.".to_owned());
+    MessageRepository::new(&connection)
+        .create(&mut with)
+        .await
+        .expect("create message");
+    message(
+        &connection,
+        &account,
+        mailbox,
+        "ada",
+        "Harbour again",
+        at(9),
+    )
+    .await;
+
+    let found = search_for(&connection, &account, "harbour").await;
+    let preview_of = |id| {
+        found
+            .hits
+            .iter()
+            .find(|hit| hit.message_id == id)
+            .expect("hit")
+            .preview
+            .clone()
+    };
+    assert_eq!(
+        preview_of(with.id).as_deref(),
+        Some("Three berths free this weekend.")
+    );
+    assert_eq!(found.hits.len(), 2);
+}
+
 #[tokio::test]
 async fn search_never_crosses_accounts() {
     let database = test_support::memory().await;
@@ -290,7 +336,7 @@ async fn search_never_crosses_accounts() {
 /// so it could reconstruct one -- it is a rusqlite-only leaf and
 /// `check-crate-boundaries.py` keeps it that way -- the excerpt is cut by
 /// `postio_search::highlight::snippet` from the body text, by whoever can
-/// read it. `postio_app::search` is that caller.
+/// read it. The session layer's search is that caller.
 #[tokio::test]
 async fn a_matching_query_leaves_the_snippet_for_a_layer_that_can_read_bodies() {
     let database = test_support::memory().await;
@@ -745,6 +791,53 @@ async fn free_text_reaches_the_body_index_and_the_metadata_index() {
     expected.sort_by_key(|id| id.get());
 
     assert_eq!(ids, expected, "a hit in either index is a hit");
+}
+
+#[tokio::test]
+async fn two_words_need_both_in_the_body_too() {
+    // The body half of the match is folded to meet the folded body text,
+    // and folding the whole expression lowercased its `AND` too: to the
+    // index a lowercase `and` is a word, not an operator, so two words
+    // asked the bodies for either word *or "and"*. On a real mailbox that
+    // was most of it -- 10,000 hits for a phrase that matched 87, and two
+    // hundred seconds to count them, which stopped the search box. One
+    // body has both words; the other has only "and".
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+
+    let both = with_body(
+        &connection,
+        &account,
+        mailbox,
+        "Thursday",
+        "the meeting agenda is attached",
+        at(9),
+    )
+    .await;
+    with_body(
+        &connection,
+        &account,
+        mailbox,
+        "Groceries",
+        "bread and milk",
+        at(8),
+    )
+    .await;
+
+    assert_eq!(
+        found(&connection, account.id, "meeting agenda").await,
+        vec![both.id],
+        "two words matched a body holding neither, through its \"and\""
+    );
+    assert_eq!(
+        found(&connection, account.id, "Meeting Agenda").await,
+        vec![both.id],
+        "and the fold still meets the body however the words are cased"
+    );
 }
 
 #[tokio::test]

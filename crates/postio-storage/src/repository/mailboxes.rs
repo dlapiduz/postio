@@ -231,15 +231,20 @@ impl<'a> MailboxRepository<'a> {
     ) -> Result<Option<Mailbox>> {
         sql::first(
             self.connection,
-            &format!(
-                "SELECT {MAILBOX_COLUMNS} {FROM_MAILBOXES}
-              WHERE m.account_id = ?1 AND m.role = ?2 AND m.selectable = 1
-              ORDER BY m.path LIMIT 1"
-            ),
+            &Self::explain_by_role(),
             bind![account_id.get(), role.as_str()],
             read_mailbox,
         )
         .await
+    }
+
+    /// The SQL [`Self::by_role`] runs: a seek on the account and role.
+    pub fn explain_by_role() -> String {
+        format!(
+            "SELECT {MAILBOX_COLUMNS} {FROM_MAILBOXES}
+              WHERE m.account_id = ?1 AND m.role = ?2 AND m.selectable = 1
+              ORDER BY m.path LIMIT 1"
+        )
     }
 
     /// Every mailbox in an account, ordered by path.

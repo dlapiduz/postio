@@ -1,14 +1,16 @@
 # Escape leaves a search, and the list is the folder again (#1474, #1011).
 #
-# The defect: once the finder had closed over its results, Escape did
-# nothing, and the list stayed stuck on the hits. Pinned: the row count
-# must come back to the folder's own.
+# The defect: once a search had run, Escape did nothing, and the window
+# stayed stuck on the hits. The folder's own rows must be what is left.
 #
-# Search is live, so the list narrows while the query is typed; Return then
-# hands the keyboard to the hits.
+# Re-expressed for Focus (T265): Focus's command bar does not narrow the
+# inbox behind it. Typing lists the matches in the bar under the search row,
+# which stays above them; Return takes the highlight to the first hit, the
+# bar keeping the keyboard, and Escape closes the bar over an inbox that
+# never changed.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#1474" }
 proof  = "pinned"
-design = "05-search"
 
 [[step]]
 command = "search"
@@ -16,16 +18,16 @@ check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing
 
 [[step]]
 type    = "harbour"
-settle  = { until = { rows.count = { changed = true } } }
-check   = { keyboard.region = "search", rows.count = { changed = true } }
-expect  = "The list narrows to what matches as the query is typed."
+settle  = { until = { app.focus.bar.messages = { changed = true } } }
+check   = { keyboard.region = "search", rows.count = { same_as = 0 }, app.focus.bar.highlighted = "search", app.focus.bar.messages = { changed = true } }
+expect  = "The matches are listed as the word is typed, headed by their count, with the search row still above them; the inbox behind it is not narrowed."
 
 [[step]]
 key     = "Return"
-check   = { keyboard.region = "list", keyboard.typing = false }
-expect  = "The keyboard moves to the hits; the query stays in the field."
+check   = { keyboard.region = "search", keyboard.typing = true, overlay.kind = "finder", app.focus.bar.highlighted = "message" }
+expect  = "Return takes the highlight to the first match; the keyboard stays in the bar."
 
 [[step]]
 command = "back"
-check   = { keyboard.region = "list", overlay.kind = "none", rows.count = { same_as = 0 } }
-expect  = "The list is the Inbox again, every row back; the search is gone."
+check   = { keyboard.region = "list", overlay.kind = "none", view = "list", rows.count = { same_as = 0 } }
+expect  = "The bar is gone and the list is the Inbox, every row there; nothing of the search is left."

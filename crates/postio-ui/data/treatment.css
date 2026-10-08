@@ -1,0 +1,240 @@
+/* The two treatments a message body is drawn in (specs/007-postio-focus
+ * T211, T212; the design handoff's SPEC.md section 7). The reader stamps
+ * `data-postio-treatment` on the body's container
+ * (`postio_ui::reader::document::document_for_treated`); a body drawn
+ * without one -- the classic reader -- is styled by none of this.
+ *
+ * Every colour is a `var(--r-*)` the generated palette defines, and which a
+ * column that flows the body (Focus's open message) overrides with its own
+ * tokens, read from the toolkit at each render. Nothing here names a colour
+ * of the app's; the two keywords and the one rgba below are the paper's own
+ * white, its default black text, and the 8% that stands in for
+ * `brightness(0.92)`.
+ *
+ * The body's inner rhythm is the handoff's (SPEC.md section 4), and this
+ * is its one home -- the column a body flows in adds only that the body has
+ * no frame (`postio-widgets`' `FLOW_FLAT_CSS`): paragraphs 12 apart, list
+ * items 4 apart with a 20 indent, the sign-off 20 above the attribution
+ * line, the quote toggle 4 below it and 28 tall, and no gap under the last
+ * block, so what follows the body measures from its last line.
+ */
+
+/* ── App colours ─────────────────────────────────────────────────────────
+ * Barlow 15/24 in ink, links in the accent, tables drawn in strong
+ * hairlines: the sender's colours and type were taken out of the markup
+ * (`postio_body::treatment::app_colours`), and this is what replaces them. */
+
+.postio-body[data-postio-treatment="app"] {
+  font-family: "Barlow", sans-serif;
+  font-size: 15px;
+  line-height: 24px;
+  color: var(--r-ink);
+}
+
+.postio-body[data-postio-treatment="app"] p {
+  margin: 0 0 12px 0;
+}
+
+.postio-body[data-postio-treatment="app"] ul,
+.postio-body[data-postio-treatment="app"] ol {
+  margin: 0 0 12px 0;
+  padding-left: 20px;
+}
+
+.postio-body[data-postio-treatment="app"] li {
+  margin: 0;
+}
+
+.postio-body[data-postio-treatment="app"] li + li {
+  margin-top: 4px;
+}
+
+.postio-body[data-postio-treatment="app"] h1,
+.postio-body[data-postio-treatment="app"] h2,
+.postio-body[data-postio-treatment="app"] h3,
+.postio-body[data-postio-treatment="app"] h4,
+.postio-body[data-postio-treatment="app"] h5,
+.postio-body[data-postio-treatment="app"] h6 {
+  font-family: "Barlow", sans-serif;
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 24px;
+  margin: 20px 0 4px 0;
+  color: var(--r-ink);
+}
+
+.postio-body[data-postio-treatment="app"] h1 {
+  font-size: 20px;
+  line-height: 28px;
+}
+
+.postio-body[data-postio-treatment="app"] h2 {
+  font-size: 17px;
+  line-height: 24px;
+}
+
+.postio-body[data-postio-treatment="app"] a {
+  color: var(--r-accent);
+}
+
+.postio-body[data-postio-treatment="app"] img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* In dark an image keeps the white canvas it was drawn for (spec 006
+   FR-015): a transparent logo made for a white page stays legible. A rule
+   here rather than the renderer's repair pass, which would lay the whole
+   body out a second time to set it (T218). */
+@media (prefers-color-scheme: dark) {
+  .postio-body[data-postio-treatment="app"] img {
+    background-color: white;
+  }
+}
+
+.postio-body[data-postio-treatment="app"] table.postio-grid {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0 0 12px 0;
+}
+
+.postio-body[data-postio-treatment="app"] table.postio-grid td,
+.postio-body[data-postio-treatment="app"] table.postio-grid th {
+  border: 1px solid var(--r-hairline-strong);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.postio-body[data-postio-treatment="app"] table.postio-grid th {
+  font-weight: 600;
+}
+
+/* A grid's cells hold the sender's paragraphs; the cell's padding is the
+   gap, not a paragraph margin under the last line. */
+.postio-body[data-postio-treatment="app"] td > p:last-child,
+.postio-body[data-postio-treatment="app"] th > p:last-child {
+  margin-bottom: 0;
+}
+
+.postio-body[data-postio-treatment="app"] blockquote {
+  margin: 0 0 12px 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--r-hairline-strong);
+  color: var(--r-ink-secondary);
+}
+
+.postio-body[data-postio-treatment="app"] pre.postio-body-text {
+  font-family: "Barlow", sans-serif;
+  margin: 0 0 12px 0;
+}
+
+/* The attribution line -- "On Monday, Ana wrote:" -- which the body
+   pipeline marks (`postio_body::quote::ATTRIBUTION_CLASS`): 20 under the
+   sign-off, the toggle 4 under it, smaller and muted. */
+.postio-body[data-postio-treatment="app"] .postio-attribution {
+  margin-top: 20px;
+  margin-bottom: 0;
+  font-size: 13.5px;
+  line-height: 20px;
+  color: var(--r-dim);
+}
+
+.postio-body[data-postio-treatment="app"] details.postio-quote {
+  margin: 4px 0 0 0;
+  padding-left: 0;
+  border-left: 0;
+}
+
+.postio-body[data-postio-treatment="app"] details.postio-quote > summary {
+  font-size: 13.5px;
+  line-height: 28px;
+  padding: 0;
+  color: var(--r-ink-secondary);
+}
+
+.postio-body[data-postio-treatment="app"] details.postio-quote blockquote {
+  background: none;
+  padding: 0 0 0 12px;
+  border-radius: 0;
+}
+
+/* The last block keeps no gap under it, at any depth: the body ends at its
+   last line. */
+.postio-body[data-postio-treatment="app"] :is(p, pre, ul, ol, blockquote, table, details):last-child {
+  margin-bottom: 0;
+}
+
+/* ── Paper ───────────────────────────────────────────────────────────────
+ * Exactly as sent, on a white sheet: radius 6, a hairline edge drawn
+ * outside the sheet so it takes no width from the layout, and the light
+ * palette inside whatever the reader's scheme (the rule after this sheet,
+ * written from the generated palette). Never inverted, never recoloured:
+ * the renderer leaves a sheet's colours alone.
+ *
+ * `--paper-edge` is the column's hairline, taken at the root before the
+ * sheet's light palette redefines `--r-hairline` for what is inside it. */
+
+:root {
+  --paper-edge: var(--r-hairline);
+}
+
+.postio-body[data-postio-treatment="paper"] {
+  position: relative;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px var(--paper-edge);
+  background: white;
+  color: black;
+  color-scheme: light;
+  min-height: 0;
+  max-width: none;
+}
+
+/* As sent: a layout keeps the width it was built at. The reader's own
+   `max-width: 100%` would squeeze a 640px newsletter into a narrower column
+   and break its proportions; on paper it keeps them, and the renderer zooms
+   the whole sheet to fit instead (`postio_render::render::PAPER_FIT_FLOOR`). */
+.postio-body[data-postio-treatment="paper"] table,
+.postio-body[data-postio-treatment="paper"] img {
+  max-width: none;
+}
+
+/* Mail the rule put on paper has its own margins; a page it painted fills
+   the sheet edge to edge. */
+.postio-body[data-postio-treatment="paper"] .postio-canvas {
+  margin: 0;
+  padding: 0;
+}
+
+/* A page whose sender set no margins gets a browser's: 8px in from the
+   sheet's edge, which is where any browser would have drawn it. */
+.postio-body[data-postio-treatment="paper"] .postio-page-margin {
+  padding: 8px;
+}
+
+/* Correspondence put on paper by choice has none, so the sheet gives it the
+   handoff's 20/24. */
+.postio-body[data-postio-treatment="paper"] .postio-letter {
+  padding: 20px 24px;
+}
+
+/* Dark mode dims the sheet to 92%, the handoff's `brightness(0.92)`: an 8%
+   black veil over it, which is the same arithmetic on every pixel and needs
+   no filter pass from the engine. Over the sheet, not the page around it,
+   and never under anything a click could reach -- the view hit-tests its
+   own snapshot, not this box. */
+@media (prefers-color-scheme: dark) {
+  .postio-body[data-postio-treatment="paper"]::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.08);
+    pointer-events: none;
+  }
+}

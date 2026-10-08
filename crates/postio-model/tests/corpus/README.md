@@ -94,6 +94,7 @@ Fixtures are tagged, not filed — most carry several tags.
 | `designed` | a layout its sender built — the fixtures rendering fidelity is judged on (spec 006 SC-002) |
 | `hostile` | tries to escape its box, execute, phone home, or exhaust the renderer |
 | `theme-contrast` | colour choices that stress legibility across light, dark and high contrast |
+| `prompt-injection` | text that tries to instruct an assistant reading the mail: it is data, never instructions |
 
 ## The fixtures
 
@@ -103,6 +104,7 @@ Fixtures are tagged, not filed — most carry several tags.
 |---|---|
 | `plain-text-simple.eml` | The smallest realistic message: 7bit us-ascii, a `-- ` signature delimiter, a `Return-Path`. The happy path everything else is measured against. |
 | `plain-text-flowed-reply.eml` | `format=flowed; delsp=yes` with quoted parent text. Reflowing, quote-depth detection, and a correctly linked reply. |
+| `top-posted-reply-signature.eml` | A reply written above what it answers, in both parts of a text + HTML pair: the answer, a `-- ` signature, the attribution line, then the quoted history, as `>` lines in the plain part and a `<blockquote>` in the HTML. The HTML also carries a `<title>`. Own-text extraction (spec 007 T115) keeps the answer and leaves out the history, the signature and the title; the plain part wraps a sentence the HTML does not, which tells the two readings apart. |
 | `headers-only-no-body.eml` | The file ends after the last header: no blank line, no body. Trivially breaks any parser that splits on `\r\n\r\n` without a fallback. |
 | `header-folding-received-chain.eml` | A three-hop `Received` chain, `DKIM-Signature`, multi-line `Authentication-Results`, a folded `Subject` and a folded multi-recipient `To`. Header unfolding, at length. |
 | `charset-utf-8-emoji-rtl.eml` | Valid UTF-8 that is still hard to render: ZWJ emoji sequences, flags, RTL Arabic and Hebrew, combining marks, astral-plane glyphs, an embedded BOM. Byte length, char length and grapheme count all differ. |
@@ -130,6 +132,26 @@ Fixtures are tagged, not filed — most carry several tags.
 | `calendar-invite.eml` | `text/calendar; method=REQUEST` inside an alternative inside a mixed part, plus the same ICS again as an attachment. Line folding and escaping inside the ICS itself. |
 | `bounce-delivery-status.eml` | A Postfix bounce: `multipart/report; report-type=delivery-status`, a `message/delivery-status` part, and the original message embedded as `message/rfc822` — nested message parsing. |
 
+### Invitations
+
+Added for `specs/007-postio-focus` spike S1 (T007): the shapes an invitation
+arrives in, which the calendar adapter (`crates/postio-calendar`) is tested
+against. Each is written in the style of one generator, so the quirks are
+realistic, but every value is invented. Ada Norwood is the invitee in all of
+them, so an RSVP test always has an attendee to answer as. The times are
+chosen so that the zone matters: a wrong offset gives a wrong instant.
+
+| File | Exercises |
+|---|---|
+| `invite-windows-zone.eml` | Outlook-style: `DTSTART;TZID=W. Europe Standard Time` with the matching `VTIMEZONE`, a base64 calendar part, `X-MICROSOFT-*` properties and a `VALARM`. The Windows name has to map to `Europe/Berlin`; 10:00 on 6 October is 08:00 UTC, in summer time. |
+| `invite-cancel.eml` | Outlook-style `METHOD:CANCEL` with `STATUS:CANCELLED` for the UID of `invite-windows-zone.eml`, at `SEQUENCE:1`: the cancellation that has to find the marker it cancels. |
+| `invite-iana-zone.eml` | Google-style: `America/New_York` with its `VTIMEZONE` and `X-LIC-LOCATION`, `Auto-Submitted: auto-generated` on an invitation, parameters folded mid-token, an `ATTENDEE` inside the `VALARM` that is not a guest, RSVP links in the text that must never be followed, and the ICS again as an `application/ics` attachment. |
+| `invite-update-sequence.eml` | The event of `invite-iana-zone.eml` moved to another day: the same UID, `SEQUENCE:1` and a later `DTSTAMP`. What replaces a marker's time. |
+| `invite-quoted-printable.eml` | Apple-style: the calendar part is quoted-printable, so `=3D` must be decoded before any parameter is read; quoted `CN` and `EMAIL` parameters, properties out of order, a structured location, and a `UID` inside the `VALARM`. `Europe/London` on 3 November, after the clocks go back: GMT, not BST. |
+| `invite-utc-times.eml` | Zoom-style: `DTSTART` and `DTEND` in UTC with no `VTIMEZONE`, a stray `TZID` property that must not move them, an `ATTENDEE` with no `PARTSTAT`, and the calendar as a base64 attachment beside the alternative rather than inside it. |
+| `invite-weekly-exdate.eml` | Thunderbird-style weekly `RRULE` until 22 December with two `EXDATE`s, six-digit `TZOFFSETFROM` values, and occurrences either side of the 1 November DST change in `America/Chicago`: 09:30 local is 14:30 UTC in October and 15:30 UTC after. |
+| `invite-zone-without-vtimezone.eml` | A booking page's request whose `DTSTART;TZID=Asia/Kolkata` refers to a `VTIMEZONE` the calendar never defines. The zone has to be resolved by name, and its offset is five and a half hours. |
+
 ### HTML and remote content
 
 | File | Exercises |
@@ -150,6 +172,7 @@ survive without a connection, a crash or a hang.
 | `html-designed-three-column.eml` | A three-column campaign in nested layout tables: a `cid:` hero image, three coloured cards, a button, a dark footer. Columns must stay columns. |
 | `html-transactional-receipt.eml` | A receipt with a hidden preheader (must not render or copy), a `data:` logo, and a totals table whose cells must copy tab- and newline-separated. |
 | `html-responsive-media.eml` | Two blocks that stack under `@media (max-width: 600px)`: responsive rules must be judged against the width the pane actually gives, and against zoom. |
+| `html-responsive-stacked-cells.eml` | A parish newsletter in a layout table at most 600px wide whose two-column rows are `<td class="stack">` cells, made `display:block; width:100%` by `@media (max-width: 600px)` -- the usual way mail stacks its columns on a phone. No page of its own, so it is drawn in app colours, in a 480px column where the query applies; a `display:block` cell is not a cell, and the engine dropped every one until `patches/blitz/0002` (specs/007-postio-focus T222). |
 | `html-class-styled.eml` | A `<style>` block that selects its own classes and an `id`. Stripping `class` made every such rule dead (#1545). |
 | `html-legacy-font-center.eml` | Early-2000s markup: `<font color face size>`, `<center>`, and `<body bgcolor text link vlink>`. The body's attributes are the page canvas the sender assumed. |
 | `html-legacy-table-attrs.eml` | Table attributes browsers still honour and some engines do not: `valign`, `cellpadding`, `cellspacing`, `border`, `align=center`, `img align`, and a `cid:` `background` on a cell. |
@@ -167,6 +190,21 @@ survive without a connection, a crash or a hang.
 | `html-script-forms.eml` | A `<script>`, `onload`/`onerror`/`onclick` handlers, `javascript:` links in two spellings, and a credentials form. Nothing runs; no such link launches. |
 | `html-rtl-mixed.eml` | Arabic and Hebrew paragraphs with Latin runs inside: bidirectional layout and shaping in HTML. |
 | `html-cjk-emoji.eml` | Chinese, Japanese and Korean paragraphs plus ZWJ emoji and flags: font fallback with no missing glyphs. |
+
+### Rendering treatments: app colours or paper (spec 007)
+
+Added for the message dialog redesign (`specs/007-postio-focus` T210): mail
+shaped like what the design handoff draws, so the classifier that picks a
+body's treatment (`postio_body::treatment`) is proven on real-shaped markup.
+`plain-text-simple.eml` is the plain-text case; these are the HTML ones.
+
+| File | Exercises |
+|---|---|
+| `html-work-black-text.eml` | Office-client work mail: `color:black` on every span, Calibri in a `<style>` block, `&nbsp;` spacer paragraphs, a bordered table whose header cells are tinted, a dark-red sentence, a grey signature. Paints no page, so it is drawn in app colours: the black is dropped, the red kept only where it reads. |
+| `html-gmail-reply-chain.eml` | A webmail reply with two nested quoted messages, each behind an attribution line, a list and a bold line. No colours, no page: app colours, with the quotes folded. |
+| `html-newsletter-many-tables.eml` | A 45 KB release-notes newsletter with no page background: 24 sections, each a nested two-column layout table with a remote image (blocked), buttons and links, a scoped `<style>` with media queries, and a text part. Drawn in app colours; how long an ordinary newsletter takes to lay out, and what its plain-text fallback looks like (specs/007-postio-focus T218). |
+| `html-newsletter-own-page.eml` | A newsletter whose `<body>` paints its own page and whose content sits in a 640px layout table with a tinted hero block. Rendered as sent, on paper. |
+| `html-receipt-fixed-width.eml` | A receipt with no background anywhere but a 560px layout table and a remote logo: paper by its layout alone, which is the trigger a colour test cannot see. |
 
 ### Character sets
 
@@ -219,6 +257,18 @@ linked badly in three different real-world ways.
 |---|---|
 | `pgp-signed.eml` | PGP/MIME `multipart/signed; micalg=pgp-sha256`. The signed part must be preserved byte-exactly, headers and transfer encoding included — canonicalization mistakes here are the classic reason a good signature reports as broken. The armour is synthetic and will not verify. |
 | `pgp-encrypted.eml` | PGP/MIME `multipart/encrypted`: the `Version: 1` control part plus an armoured blob. Synthetic; it will not decrypt. |
+
+### Instructions aimed at an assistant
+
+Mail is attacker-controlled text, and an assistant that reads it is the
+target (ADR 0009 Q4). This is the fixture ADR 0009 and ADR 0010 name: a body
+holding instruction-shaped and tool-shaped text, which every reader of mail
+must treat as data. Nothing in it may become a command, a queued send, a
+connection or a needs-action marker (`specs/007-postio-focus` T119).
+
+| File | Exercises |
+|---|---|
+| `untrusted-instructions.eml` | A plain message to Ada Norwood with one honest question in the sender's own words, then an "AI assistant:" that says to ignore previous instructions, a dated demand to reply with password reset codes, an order to forward every invoice, a `<tool_call>` block naming `send_mail`, and a note to "any automated agent". The demand names a deadline, so a detector that took it at its word would mark it ahead of the honest question. |
 
 ## Extending the corpus
 

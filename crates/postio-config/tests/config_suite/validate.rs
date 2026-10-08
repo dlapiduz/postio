@@ -19,7 +19,7 @@ theme = "dark"
 archive = "x"
 summarize = "g s"
 
-[filters.needs-reply]
+[saved_searches.needs-reply]
 query = "is:unread from:team"
 pinned = true
 
@@ -253,9 +253,9 @@ fn zero_valued_sync_settings_are_reported() {
 
 #[test]
 fn an_empty_filter_query_is_reported() {
-    let checked = check("[filters.needs-reply]\nquery = \"\"\npinned = true\n");
+    let checked = check("[saved_searches.needs-reply]\nquery = \"\"\npinned = true\n");
     let err = checked.validation.first_error().expect("an error");
-    assert_eq!(err.path, "filters.needs-reply.query");
+    assert_eq!(err.path, "saved_searches.needs-reply.query");
     assert!(err.message.contains("needs-reply"), "{}", err.message);
 }
 
@@ -288,7 +288,7 @@ density = "enormous"
 [keys]
 reply = "ctrl+"
 
-[filters.x]
+[saved_searches.x]
 query = ""
 "#;
     let checked = check(text);
@@ -481,4 +481,439 @@ email = "ada@example.com"
         retired.line >= 4,
         "it should point at the table, not the top of the file"
     );
+}
+
+// ------------------------------------------------------- [[focus.digests]] --
+//
+// Spec 007 T132, contracts/config.md: validation reports an unparsable
+// query by the rule's name and the query's index, an unknown cadence, a day
+// that does not fit the cadence, and a duplicate name. A rule that fails is
+// not applied; the others still are (ADR 0008 Q6), so none of these stop
+// the file from loading.
+
+/// data-model.md's example rule, and a daily one beside it.
+const DIGESTS: &str = r#"[[focus.digests]]
+name    = "Newsletters"
+match   = ["from:news@localfirst.example", "from:editor@ledger.example"]
+cadence = "weekly"
+day     = "saturday"
+at      = "16:00"
+
+[[focus.digests]]
+name    = "School"
+match   = ["from:office@school.example"]
+cadence = "monthly"
+day     = 28
+at      = "08:30"
+"#;
+
+/// Every error for `text`, as `(path, message)`.
+fn errors(text: &str) -> Vec<(String, String)> {
+    check(text)
+        .validation
+        .errors()
+        .iter()
+        .map(|err| (err.path.clone(), err.message.clone()))
+        .collect()
+}
+
+/// A digest rule named `name`, with the rest given as TOML lines.
+fn rule(name: &str, rest: &str) -> String {
+    format!("[[focus.digests]]\nname = \"{name}\"\n{rest}\n")
+}
+
+#[test]
+fn good_digest_rules_are_valid_and_all_apply() {
+    let checked = check(DIGESTS);
+    assert!(
+        checked.validation.is_valid(),
+        "{:?}",
+        checked.validation.errors()
+    );
+    let config = checked.config.expect("a config");
+    let names: Vec<&str> = config
+        .focus
+        .applicable_digests()
+        .into_iter()
+        .map(|(rule, _)| rule.name.as_str())
+        .collect();
+    assert_eq!(names, ["Newsletters", "School"]);
+}
+
+#[test]
+fn an_unknown_cadence_is_reported_by_the_rules_name() {
+    let text = rule(
+        "Newsletters",
+        "match = [\"from:news@localfirst.example\"]\ncadence = \"fortnightly\"\nat = \"16:00\"",
+    );
+    let found = errors(&text);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let (path, message) = &found[0];
+    assert_eq!(path, "focus.digests[0].cadence");
+    assert!(message.contains("Newsletters"), "{message}");
+    assert!(message.contains("fortnightly"), "{message}");
+}
+
+#[test]
+fn a_day_that_does_not_fit_the_cadence_is_reported() {
+    for (rest, why) in [
+        (
+            "cadence = \"weekly\"\nday = 15\nat = \"09:00\"",
+            "a weekly rule's day is a weekday",
+        ),
+        (
+            "cadence = \"weekly\"\nat = \"09:00\"",
+            "a weekly rule names its day",
+        ),
+        (
+            "cadence = \"weekly\"\nday = \"someday\"\nat = \"09:00\"",
+            "a weekday by name",
+        ),
+        (
+            "cadence = \"monthly\"\nday = \"saturday\"\nat = \"09:00\"",
+            "a monthly rule's day is a day of the month",
+        ),
+        (
+            "cadence = \"monthly\"\nday = 31\nat = \"09:00\"",
+            "a monthly day stops at 28, so every month has one",
+        ),
+        (
+            "cadence = \"monthly\"\nday = 0\nat = \"09:00\"",
+            "a monthly day starts at 1",
+        ),
+        (
+            "cadence = \"daily\"\nday = \"monday\"\nat = \"09:00\"",
+            "a daily rule has no day",
+        ),
+    ] {
+        let text = rule("Rule", &format!("match = [\"from:a@example.com\"]\n{rest}"));
+        let found = errors(&text);
+        assert_eq!(found.len(), 1, "{why}: {found:?}");
+        assert!(found[0].1.contains("Rule"), "{why}: {}", found[0].1);
+    }
+}
+
+#[test]
+fn a_time_that_is_not_a_clock_time_is_reported() {
+    for at in ["25:00", "9", "noon", ""] {
+        let text = rule(
+            "Rule",
+            &format!("match = [\"from:a@example.com\"]\ncadence = \"daily\"\nat = \"{at}\""),
+        );
+        let found = errors(&text);
+        assert_eq!(found.len(), 1, "{at:?}: {found:?}");
+        assert!(found[0].1.contains("Rule"), "{}", found[0].1);
+    }
+}
+
+#[test]
+fn a_duplicate_name_is_reported_at_the_later_rule_and_only_the_first_applies() {
+    let body = "match = [\"from:a@example.com\"]\ncadence = \"daily\"\nat = \"09:00\"";
+    let text = format!("{}\n{}", rule("Twice", body), rule("Twice", body));
+    let checked = check(&text);
+    let found = errors(&text);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, "focus.digests[1].name");
+    assert!(found[0].1.contains("Twice"), "{}", found[0].1);
+    let config = checked
+        .config
+        .expect("a semantic problem does not stop the file loading");
+    assert_eq!(config.focus.applicable_digests().len(), 1);
+}
+
+#[test]
+fn an_empty_query_is_reported_by_the_rules_name_and_its_place() {
+    let text = rule(
+        "Newsletters",
+        "match = [\"from:news@localfirst.example\", \"  \"]\ncadence = \"daily\"\nat = \"09:00\"",
+    );
+    let found = errors(&text);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let (path, message) = &found[0];
+    assert_eq!(path, "focus.digests[0].match[1]");
+    assert!(message.contains("Newsletters"), "{message}");
+    assert!(message.contains('2'), "the second query: {message}");
+}
+
+#[test]
+fn a_rule_with_no_query_or_no_name_is_reported() {
+    let no_query = rule("Empty", "cadence = \"daily\"\nat = \"09:00\"");
+    assert_eq!(errors(&no_query).len(), 1, "{:?}", errors(&no_query));
+    let no_name = "[[focus.digests]]\nmatch = [\"from:a@example.com\"]\ncadence = \"daily\"\nat = \"09:00\"\n";
+    assert_eq!(errors(no_name).len(), 1, "{:?}", errors(no_name));
+}
+
+#[test]
+fn a_rule_that_fails_is_not_applied_and_the_others_still_are() {
+    let bad = rule(
+        "Broken",
+        "match = [\"from:a@example.com\"]\ncadence = \"hourly\"\nat = \"09:00\"",
+    );
+    let text = format!("{DIGESTS}\n{bad}");
+    let checked = check(&text);
+    assert!(!checked.validation.is_valid());
+    let config = checked
+        .config
+        .expect("a semantic problem does not stop the file loading");
+    let names: Vec<&str> = config
+        .focus
+        .applicable_digests()
+        .into_iter()
+        .map(|(rule, _)| rule.name.as_str())
+        .collect();
+    assert_eq!(names, ["Newsletters", "School"]);
+}
+
+// --------------------------------------------------- [focus.filter] never --
+//
+// Spec 007 T123, contracts/config.md: an entry is an address or a whole
+// domain (`@example.org`). One that is neither is reported by its place,
+// never by what it says, and it pins nobody.
+
+#[test]
+fn never_entries_that_are_addresses_or_domains_are_valid() {
+    let checked = check(
+        "[focus.filter]\nnever = [\"pinned@example.org\", \"@example.net\", \"Ada@Example.COM\"]\n",
+    );
+    assert!(
+        checked.validation.is_valid(),
+        "{:?}",
+        checked.validation.errors()
+    );
+}
+
+#[test]
+fn a_never_entry_that_is_neither_an_address_nor_a_domain_is_reported_by_its_place() {
+    for (entry, why) in [
+        ("pinned", "no domain"),
+        ("@", "an at sign and nothing after"),
+        ("pinned@", "no domain after the at sign"),
+        ("two@at@example.org", "two at signs"),
+        ("   ", "blank"),
+        ("pinned @example.org", "a space inside"),
+    ] {
+        let text = format!("[focus.filter]\nnever = [\"ada@example.com\", \"{entry}\"]\n");
+        let found = errors(&text);
+        assert_eq!(found.len(), 1, "{why}: {found:?}");
+        let (path, message) = &found[0];
+        assert_eq!(path, "focus.filter.never[1]", "{why}");
+        // A lone `@` is in the message's own example; anything longer the
+        // message has no business repeating.
+        assert!(
+            entry.trim().len() < 2 || !message.contains(entry.trim()),
+            "{why}: the message repeats the entry: {message}"
+        );
+        assert!(message.contains('2'), "{why}: the second entry: {message}");
+    }
+}
+
+// ------------------------------------------- [focus.filter] stop_markers --
+//
+// Spec 007 T118, contracts/config.md: each entry names a sender and a kind,
+// `question` or `todo`. One that does not is reported by its place, never
+// by what it says, and stops nothing.
+
+#[test]
+fn stop_markers_that_name_a_sender_and_a_kind_are_valid() {
+    let checked = check(
+        "[focus.filter]\nstop_markers = [{ sender = \"news@ledger.example\", kind = \"question\" }, \
+         { sender = \"@example.net\", kind = \"todo\" }]\n",
+    );
+    assert!(
+        checked.validation.is_valid(),
+        "{:?}",
+        checked.validation.errors()
+    );
+}
+
+#[test]
+fn a_stop_marker_with_no_sender_or_an_unknown_kind_is_reported_by_its_place() {
+    for (entry, why) in [
+        (
+            "{ sender = \"news@ledger.example\", kind = \"invite\" }",
+            "a kind nobody dismisses",
+        ),
+        (
+            "{ sender = \"news\", kind = \"question\" }",
+            "not an address",
+        ),
+        ("{ kind = \"todo\" }", "no sender"),
+    ] {
+        let text = format!(
+            "[focus.filter]\nstop_markers = [{{ sender = \"ada@example.com\", kind = \"todo\" }}, {entry}]\n"
+        );
+        let found = errors(&text);
+        assert_eq!(found.len(), 1, "{why}: {found:?}");
+        let (path, message) = &found[0];
+        assert_eq!(path, "focus.filter.stop_markers[1]", "{why}");
+        assert!(message.contains('2'), "{why}: the second entry: {message}");
+        assert!(
+            !message.contains("ledger") && !message.contains("news"),
+            "{why}: the message repeats the entry: {message}"
+        );
+    }
+}
+
+// --------------------------------------------------------- [focus.model] --
+//
+// Spec 007 T152, contracts/config.md: the person's own model, off unless the
+// section is there. Its endpoint must be on this computer, and anything else
+// is reported with the reason; a section that cannot be used names no model
+// for any feature, and the file still loads.
+
+const MODEL: &str = r#"[focus.model]
+endpoint = "http://127.0.0.1:11434/v1"
+model    = "a-small-model"
+"#;
+
+#[test]
+fn no_model_section_names_no_model_for_any_feature() {
+    // SC-016's first half at the config: absent means off, and nothing in
+    // the file points anywhere.
+    let checked = check("[focus]\nfiltering = true\n");
+    assert!(checked.validation.is_valid());
+    let config = checked.config.expect("a config");
+    assert_eq!(config.focus.model, None);
+    for feature in postio_config::ModelFeature::ALL {
+        assert!(config.focus.model_for(feature).is_none(), "{feature:?}");
+    }
+}
+
+#[test]
+fn a_model_section_names_the_model_for_each_feature_it_leaves_on() {
+    let checked = check(MODEL);
+    assert!(
+        checked.validation.is_valid(),
+        "{:?}",
+        checked.validation.errors()
+    );
+    let config = checked.config.expect("a config");
+    for feature in postio_config::ModelFeature::ALL {
+        let (endpoint, model) = config.focus.model_for(feature).expect("switched on");
+        assert_eq!(model, "a-small-model");
+        assert_eq!(endpoint.authority(), "127.0.0.1:11434");
+    }
+
+    let off = check(&format!("{MODEL}needs_action = false\nlike_this = false\n"))
+        .config
+        .expect("a config");
+    use postio_config::ModelFeature::{DigestSummary, LikeThis, NeedsAction};
+    assert!(off.focus.model_for(NeedsAction).is_none());
+    assert!(off.focus.model_for(LikeThis).is_none());
+    assert!(off.focus.model_for(DigestSummary).is_some());
+}
+
+#[test]
+fn an_endpoint_on_another_computer_is_refused_and_says_why() {
+    let text = MODEL.replace("127.0.0.1", "192.0.2.7");
+    let found = errors(&text);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let (path, message) = &found[0];
+    assert_eq!(path, "focus.model.endpoint");
+    assert!(
+        message.contains("the model must run on this computer"),
+        "{message}"
+    );
+    let config = check(&text).config.expect("the file still loads");
+    for feature in postio_config::ModelFeature::ALL {
+        assert!(
+            config.focus.model_for(feature).is_none(),
+            "a refused endpoint is used by no feature"
+        );
+    }
+}
+
+#[test]
+fn a_model_section_with_no_endpoint_or_no_model_is_reported() {
+    let found = errors("[focus.model]\nmodel = \"a-small-model\"\n");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, "focus.model");
+    assert!(found[0].1.contains("endpoint"), "{}", found[0].1);
+
+    let found = errors("[focus.model]\nendpoint = \"http://localhost:8080/v1\"\n");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, "focus.model");
+    assert!(found[0].1.contains("model"), "{}", found[0].1);
+    let config = check("[focus.model]\nendpoint = \"http://localhost:8080/v1\"\n")
+        .config
+        .expect("a config");
+    assert!(
+        config
+            .focus
+            .model_for(postio_config::ModelFeature::NeedsAction)
+            .is_none()
+    );
+}
+
+#[test]
+fn a_model_section_keeps_what_this_version_does_not_know() {
+    let config = check(&format!("{MODEL}temperature = 0.2\n"))
+        .config
+        .expect("a config");
+    let model = config.focus.model.expect("the section");
+    assert!(model.extras.contains_key("temperature"));
+}
+
+// --------------------------------------------------------- [focus.vault] --
+//
+// Spec 007 T157, contracts/config.md: the Obsidian vault Focus captures
+// into, a folder on this computer, with its tasks note and projects folder
+// relative to it.
+
+#[test]
+fn a_vault_section_names_its_folder_and_notes() {
+    let checked = check(
+        "[focus.vault]\npath = \"/home/someone/Notes\"\ntasks_note = \"Inbox/Tasks.md\"\n\
+         projects = \"Projects\"\n",
+    );
+    assert!(
+        checked.validation.is_valid(),
+        "{:?}",
+        checked.validation.errors()
+    );
+    let vault = checked
+        .config
+        .expect("a config")
+        .focus
+        .vault
+        .expect("the section");
+    assert_eq!(
+        vault.root(),
+        Some(std::path::PathBuf::from("/home/someone/Notes"))
+    );
+    assert_eq!(
+        vault.tasks_note(),
+        std::path::PathBuf::from("Inbox/Tasks.md")
+    );
+    assert_eq!(vault.projects(), Some(std::path::PathBuf::from("Projects")));
+
+    let plain = check("[focus.vault]\npath = \"/srv/vault\"\n")
+        .config
+        .expect("a config")
+        .focus
+        .vault
+        .expect("the section");
+    assert_eq!(plain.tasks_note(), std::path::PathBuf::from("Tasks.md"));
+    assert_eq!(plain.projects(), None);
+    assert_eq!(check("").config.expect("a config").focus.vault, None);
+}
+
+#[test]
+fn a_vault_path_that_is_not_a_folder_on_this_computer_or_a_note_outside_it_is_reported() {
+    for (text, path) in [
+        ("[focus.vault]\npath = \"Notes\"\n", "focus.vault.path"),
+        ("[focus.vault]\ntasks_note = \"Tasks.md\"\n", "focus.vault"),
+        (
+            "[focus.vault]\npath = \"/srv/vault\"\ntasks_note = \"../Tasks.md\"\n",
+            "focus.vault.tasks_note",
+        ),
+        (
+            "[focus.vault]\npath = \"/srv/vault\"\nprojects = \"/srv/projects\"\n",
+            "focus.vault.projects",
+        ),
+    ] {
+        let found = errors(text);
+        assert_eq!(found.len(), 1, "{text}: {found:?}");
+        assert_eq!(found[0].0, path, "{text}");
+    }
 }

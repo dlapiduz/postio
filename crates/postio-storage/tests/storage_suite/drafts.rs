@@ -1185,6 +1185,36 @@ async fn saving_a_draft_puts_it_in_the_drafts_folder_at_once() {
 }
 
 #[tokio::test]
+async fn a_drafts_list_row_can_be_told_who_it_is_to() {
+    // The row's sender is the person themselves; the list names the
+    // recipients instead, read for a whole page in one statement.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, drafts_mailbox) = account_with_drafts(&connection).await;
+
+    let mut draft = a_draft(account.id);
+    let drafts = DraftRepository::new(&connection);
+    drafts.save(&mut draft).await.expect("save the draft");
+    let query = postio_storage::repository::ListQuery {
+        scope: postio_storage::repository::ListScope::Mailbox(drafts_mailbox),
+        limit: 50,
+        after: None,
+    };
+    let row = MessageRepository::new(&connection)
+        .page(&query)
+        .await
+        .expect("a page")
+        .remove(0);
+
+    let to = drafts
+        .recipients_of(&[row.id, MessageId::new(9_999)])
+        .await
+        .expect("recipients");
+    assert_eq!(to.get(&row.id), Some(&draft.to), "To only, not Cc");
+    assert_eq!(to.len(), 1, "a message that is no draft has none");
+}
+
+#[tokio::test]
 async fn the_row_a_draft_owns_is_marked_as_a_draft_and_as_read() {
     // The list already draws a draft mark and says "Draft" in the accessible
     // label off `MessageListRow::draft`; unread is for mail that arrived.
@@ -1384,7 +1414,7 @@ async fn a_drafts_row_leads_back_to_the_draft_it_is_listing() {
 #[tokio::test]
 async fn a_message_that_is_not_a_drafts_row_leads_nowhere() {
     // Another client's draft, which has no local buffer to open. What happens
-    // then is `postio-app`'s decision; what is certain here is that there is
+    // then is the frontend's decision; what is certain here is that there is
     // nothing to find — including when its row number happens to be a draft's
     // id, which is the coincidence a link keyed on the wrong column survives.
     let database = test_support::memory().await;
@@ -2305,4 +2335,103 @@ async fn an_appended_drafts_server_copy_is_counted_as_refused() {
         0,
         "and it is the drafts mailbox that is short, not every mailbox"
     );
+}
+
+#[tokio::test]
+async fn a_re_saved_draft_rises_to_the_top_of_drafts_again() {
+    // Drafts is ordered by the list's sort key, and a draft's row takes
+    // `received_at` from `updated_at` on every save. The key is set when a
+    // row is filed, so a save that moves `received_at` later has to move
+    // the key with it, or a draft being written sinks under ones nobody
+    // has touched since (spec 007, research R7).
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, mailbox) = account_with_drafts(&connection).await;
+    let drafts = DraftRepository::new(&connection);
+
+    let mut first = a_draft(account.id);
+    first.subject = "First".to_owned();
+    first.updated_at = at(1);
+    drafts.save(&mut first).await.expect("save");
+    let mut second = a_draft(account.id);
+    second.subject = "Second".to_owned();
+    second.updated_at = at(2);
+    drafts.save(&mut second).await.expect("save");
+    assert_eq!(folder(&connection, mailbox).await, ["Second", "First"]);
+
+    first.updated_at = at(3);
+    drafts.save(&mut first).await.expect("save again");
+    assert_eq!(
+        folder(&connection, mailbox).await,
+        ["First", "Second"],
+        "the draft just saved is the one at the top"
+    );
+}
+
+#[tokio::test]
+async fn a_draft_keeps_the_labels_chosen_for_it_until_it_is_sent() {
+    // Spec 007 US3 scenario 4: labels chosen in the composer are applied to
+    // the conversation when the message is sent, so the draft carries them
+    // until then -- across autosaves, and in either app.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = test_support::account(&connection).await;
+    let labels = postio_storage::repository::LabelRepository::new(&connection);
+    let mut harbour = postio_model::Label::new(account.id, "Harbour");
+    let mut travel = postio_model::Label::new(account.id, "Travel");
+    labels.create(&mut harbour).await.expect("a label");
+    labels.create(&mut travel).await.expect("a label");
+    let drafts = DraftRepository::new(&connection);
+
+    let mut draft = a_draft(account.id);
+    draft.labels = vec![harbour.id, travel.id];
+    let id = drafts.save(&mut draft).await.expect("save");
+    assert_eq!(
+        drafts
+            .get(id)
+            .await
+            .expect("get")
+            .expect("the draft")
+            .labels,
+        vec![harbour.id, travel.id]
+    );
+
+    draft.labels = vec![travel.id];
+    drafts.save(&mut draft).await.expect("save again");
+    assert_eq!(
+        drafts
+            .get(id)
+            .await
+            .expect("get")
+            .expect("the draft")
+            .labels,
+        vec![travel.id],
+        "an autosave writes the set the composer holds"
+    );
+}
+
+#[tokio::test]
+async fn a_draft_keeps_its_remind_if_no_reply_until_it_is_sent() {
+    // Spec 007 US3 scenario 5 (T096): "Remind if no reply" set in the
+    // composer becomes a reminder when the message is sent, so the draft
+    // carries its time until then -- across autosaves, and cleared when the
+    // person takes it off.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let account = test_support::account(&connection).await;
+    let drafts = DraftRepository::new(&connection);
+    let tuesday = chrono::DateTime::parse_from_rfc3339("2026-09-29T07:00:00Z")
+        .expect("a time")
+        .to_utc();
+
+    let mut draft = a_draft(account.id);
+    draft.remind_at = Some(tuesday);
+    let id = drafts.save(&mut draft).await.expect("save");
+    let read = drafts.get(id).await.expect("get").expect("the draft");
+    assert_eq!(read.remind_at, Some(tuesday));
+
+    draft.remind_at = None;
+    drafts.save(&mut draft).await.expect("save again");
+    let read = drafts.get(id).await.expect("get").expect("the draft");
+    assert_eq!(read.remind_at, None, "taken off, it stays off");
 }

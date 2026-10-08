@@ -12,6 +12,15 @@
 //! `specs/005-tui-frontend` T017, and `quit ctrl+q` for the terminal, which has
 //! no close button (T039), and `show_images`, `always_show_images` and
 //! `unsubscribe`, which were banner buttons with no key (T044, T048).
+//!
+//! The one keymap every app shares (specs/007-postio-focus T029,
+//! contracts/keymap.md) is the one deliberate move of existing rows: each
+//! line it changed is a key the contract names, `mark_unread` and
+//! `focus_sidebar` became `toggle_read` and `go_to_folders`, and Focus's
+//! own commands were added as rows of their own -- `switch_treatment O`,
+//! the open message's app colours or original (T213), among them. `quit`
+//! gained `ctrl+w`, Close window, so the window that says why there is no
+//! mail closes as every desktop window does (T216).
 
 use postio_config::KeyBindings;
 use postio_config::paths::Platform;

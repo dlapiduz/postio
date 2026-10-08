@@ -251,9 +251,11 @@ pub fn config_at(path: &Path) -> LoggingConfig {
 /// — see the module docs.
 const OURS: &[&str] = &[
     "postio",
-    "postio_app",
+    "postio_ai",
     "postio_bench",
     "postio_body",
+    "postio_calendar",
+    "postio_classify",
     "postio_client",
     "postio_config",
     "postio_core",
@@ -277,6 +279,8 @@ const OURS: &[&str] = &[
     "postio_storyboard",
     "postio_tui",
     "postio_ui",
+    "postio_vault",
+    "postio_widgets",
     "io_imap",
 ];
 
@@ -525,7 +529,7 @@ mod tests {
         // is checked against the directory that defines it.
         let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
-            .expect("crates/postio-app has a parent");
+            .expect("the crate directory has a parent");
         let mut missing = Vec::new();
         for entry in std::fs::read_dir(crates).expect("the crates directory") {
             let name = entry.expect("a directory entry").file_name();

@@ -208,6 +208,265 @@ const ENTRIES: &[Entry] = &[
         default: "true",
         description: "Prefix each log line with the time it was emitted.",
     },
+    // ── [focus] ───────────────────────────────────────────────────────
+    Entry {
+        path: "focus.filtering",
+        kind: "boolean",
+        default: "true",
+        description: "Focus files spam and automated updates away as they arrive, each \
+                       with its reason and one key from restored. `false` stops filing new \
+                       mail away; what is already filtered stays where it is.",
+    },
+    Entry {
+        path: "focus.reading",
+        kind: "string",
+        default: "\"dialog\"",
+        description: "Where Enter opens a message in Focus: `dialog`, over the list, or \
+                       `pane`, beside it. A window narrower than 980 px uses the dialog \
+                       whatever this says. F8 switches it.",
+    },
+    // ── [focus.filter] ────────────────────────────────────────────────
+    Entry {
+        path: "focus.filter.never",
+        kind: "array of strings",
+        default: "[]",
+        description: "Senders Focus never files away: pinned, or restored from Filtered. \
+                       An entry is an address (`ada@example.com`) or a whole domain \
+                       (`@example.com`), which covers that domain only.",
+    },
+    Entry {
+        path: "focus.filter.stop_markers",
+        kind: "array of tables",
+        default: "[]",
+        description: "Marker kinds stopped for a sender, each `{ sender, kind }` with `kind` \
+                       `question` or `todo`. Focus writes one when a kind is dismissed three \
+                       times for the same sender, and undo takes it back.",
+    },
+    // ── [[focus.digests]] ─────────────────────────────────────────────
+    Entry {
+        path: "focus.digests.name",
+        kind: "string",
+        default: "none (required)",
+        description: "What the digest row and the rules list call it. Unique among the rules.",
+    },
+    Entry {
+        path: "focus.digests.match",
+        kind: "array of strings",
+        default: "none (required)",
+        description: "Queries in the one search language. The rule holds a message when any \
+                       of them matches it.",
+    },
+    Entry {
+        path: "focus.digests.cadence",
+        kind: "string",
+        default: "none (required)",
+        description: "`daily`, `weekly` or `monthly`.",
+    },
+    Entry {
+        path: "focus.digests.day",
+        kind: "string or integer",
+        default: "unset",
+        description: "A weekday for a weekly rule (`saturday`), a day from 1 to 28 for a \
+                       monthly one, and absent for a daily one.",
+    },
+    Entry {
+        path: "focus.digests.at",
+        kind: "string",
+        default: "none (required)",
+        description: "The local time it comes due, as `HH:MM`.",
+    },
+    // ── [focus.model] ─────────────────────────────────────────────────
+    Entry {
+        path: "focus.model.endpoint",
+        kind: "string",
+        default: "none (required)",
+        description: "Where the model runtime listens, on this computer only: \
+                       `http://127.0.0.1:<port>/v1`, `http://[::1]:<port>/v1`, \
+                       `http://localhost:<port>/v1`, or `unix:` and a socket's absolute path. \
+                       Anything else is refused, and no model is used.",
+    },
+    Entry {
+        path: "focus.model.model",
+        kind: "string",
+        default: "none (required)",
+        description: "The model's name, as the runtime serves it.",
+    },
+    Entry {
+        path: "focus.model.needs_action",
+        kind: "boolean",
+        default: "true",
+        description: "Ask the model which mail asks a question or sets a to-do, in place of \
+                       the built-in detector. The detector answers whenever the model does not.",
+    },
+    Entry {
+        path: "focus.model.digest_summary",
+        kind: "boolean",
+        default: "true",
+        description: "Have the model write each digest's summary, every statement citing the \
+                       mail it came from.",
+    },
+    Entry {
+        path: "focus.model.like_this",
+        kind: "boolean",
+        default: "true",
+        description: "Offer \"Digest mail like this\", which asks the model for a rule.",
+    },
+    // ── [focus.vault] ─────────────────────────────────────────────────
+    Entry {
+        path: "focus.vault.path",
+        kind: "string",
+        default: "none (required)",
+        description: "The Obsidian vault's folder, written from `/` or `~/`.",
+    },
+    Entry {
+        path: "focus.vault.tasks_note",
+        kind: "string",
+        default: "\"Tasks.md\"",
+        description: "Where a task goes when no project is chosen, relative to the vault and \
+                       inside it.",
+    },
+    Entry {
+        path: "focus.vault.projects",
+        kind: "string",
+        default: "unset",
+        description: "A folder of project notes, relative to the vault and inside it, besides \
+                       the notes whose frontmatter says `type: project`.",
+    },
+];
+
+/// A table inside a section that is documented as a section of its own:
+/// its keys are rows under its own heading, not one row of their parent's.
+/// `array` is an array of tables, `[[...]]`, written once per entry.
+struct Nested {
+    path: &'static str,
+    array: bool,
+}
+
+const NESTED: &[Nested] = &[
+    Nested {
+        path: "focus.filter",
+        array: false,
+    },
+    Nested {
+        path: "focus.digests",
+        array: true,
+    },
+    Nested {
+        path: "focus.model",
+        array: false,
+    },
+    Nested {
+        path: "focus.vault",
+        array: false,
+    },
+];
+
+/// Every nested table filled in, as a person would write it. It is printed
+/// under `[focus]`, and [`reference_config`] reads it, so an example that
+/// stops parsing, or stops naming every key, fails the tests below.
+const FOCUS_EXAMPLE: &str = "\
+[focus]
+filtering = true
+reading = \"dialog\"
+
+[focus.filter]
+never = [\"ada@example.com\", \"@example.org\"]
+stop_markers = [{ sender = \"grace@example.net\", kind = \"question\" }]
+
+[[focus.digests]]
+name = \"Newsletters\"
+match = [\"from:news@example.org\", \"from:digest@example.net\"]
+cadence = \"weekly\"
+day = \"saturday\"
+at = \"09:00\"
+
+[focus.model]
+endpoint = \"http://127.0.0.1:11434/v1\"
+model = \"a-small-model\"
+needs_action = true
+digest_summary = true
+like_this = true
+
+[focus.vault]
+path = \"~/Notes\"
+tasks_note = \"Tasks.md\"
+projects = \"Projects\"
+";
+
+/// What each section says after its table, where a row is not enough.
+const PROSE: &[(&str, &str)] = &[
+    (
+        "ui",
+        "The macOS app's appearance. The desktop app and the terminal read none \
+         of these: they follow the system's light and dark, and draw rows at \
+         fixed heights.\n",
+    ),
+    (
+        "focus",
+        "Focus's settings: what it files away, what it holds into digests, \
+         and the model and vault it may use. The desktop app and the terminal \
+         are Focus and read them; the macOS app reads none of them. The \
+         contract they are built to is \
+         [`specs/007-postio-focus/contracts/config.md`](../specs/007-postio-focus/contracts/config.md).\n\
+         \n\
+         Focus writes to this file itself, when a sender is restored, a marker \
+         kind is stopped, or a digest rule is made, stopped or removed. It \
+         writes the way the settings window saves: everything it does not own is \
+         kept as written, and the file is replaced whole. A running app picks \
+         the change up as it would an edit in `$EDITOR`.\n\
+         \n\
+         Every table below, filled in:\n\
+         \n\
+         ```toml\n",
+    ),
+    (
+        "focus.filter",
+        "Validation reports an entry that is not an address or a whole domain, \
+         or a stopped marker with no sender or an unknown kind. It names the \
+         entry by its position, never by its content, and that entry is ignored.\n",
+    ),
+    (
+        "focus.digests",
+        "One table per rule. The file's order is the order the rules are \
+         matched in, and the first rule that matches holds the message. Mail \
+         with an invitation, a question or a to-do in it is never held, and \
+         neither is a conversation you have written in.\n\
+         \n\
+         **When a rule comes due.** The next delivery is the first time the \
+         cadence, day and `at` name after the previous delivery, or after the \
+         rule was made, in the local time zone. Days are counted on the \
+         calendar, not as 24-hour spans, so a weekly digest keeps its time \
+         across a change of the clocks. A time the clocks skip is pushed \
+         forward by the gap, and a time they repeat comes due once, at its \
+         first occurrence. Monthly days stop at 28, so every month has one. A \
+         delivery that came due while Focus was closed is made once when it \
+         next opens, and a delivery with nothing held is not made at all.\n\
+         \n\
+         A rule that does not validate is not applied, and the other rules \
+         still are. Validation reports a missing or repeated name, a rule with \
+         no query, an empty query or one the search language cannot read, an \
+         unknown cadence, a day that does not fit the cadence, and a time that \
+         is not one.\n",
+    ),
+    (
+        "focus.model",
+        "**Absent means off.** Without this section nothing connects to a \
+         model, and Postio never looks for one: the built-in detector marks \
+         questions and to-dos, and digests open on their list of mail. Postio \
+         ships no model and starts none. It speaks to the one you run, through \
+         the OpenAI-compatible `/chat/completions` that common local runtimes \
+         serve, and names no runtime or model itself. A section with no \
+         endpoint, no model, or an endpoint on another computer is reported \
+         and used for nothing.\n",
+    ),
+    (
+        "focus.vault",
+        "Where Focus captures a message as a task or a note. A task is one \
+         Obsidian Tasks line whose link opens the message in Focus, as \
+         `postio://message/<id>`. A vault that is not a folder on this \
+         computer, or a note or folder named outside it, is reported, and \
+         nothing is captured until it is fixed.\n",
+    ),
 ];
 
 /// A `Config` built so every documented key actually serialises, for the
@@ -222,32 +481,83 @@ const ENTRIES: &[Entry] = &[
 fn reference_config() -> Config {
     let mut config = Config::default();
     config.storage.max_bytes = Some(0);
+    // `[focus]`'s nested tables are empty or absent by default, and neither
+    // is written out: the example fills every one of them in.
+    config.focus = Config::from_toml_str(FOCUS_EXAMPLE)
+        .expect("the `[focus]` example parses")
+        .focus;
     config
 }
 
-/// Every `section.key` path a serialised [`reference_config`] carries.
+/// Every key path a serialised [`reference_config`] carries.
 ///
-/// Two levels only: `[section]` then its leaves. Nothing in the schema
-/// nests deeper than that, and `[accounts]`/`[filters]`/`[mailboxes]`/`[keys]`
-/// are dynamic maps that serialise as bare, empty tables with no leaves of
-/// their own to collect -- they are documented as sections in the rendered
-/// prose instead, not as rows in this table.
+/// `[section]` then its leaves, and one level further for the tables in
+/// [`NESTED`], whose keys are documented as a section of their own; an
+/// array of tables contributes the keys of its entries. Everything else
+/// is a leaf. `[accounts]`/`[saved_searches]`/`[mailboxes]`/`[keys]` are dynamic
+/// maps that serialise as bare, empty tables with no leaves of their own to
+/// collect -- they are documented as sections in the rendered prose
+/// instead, not as rows in this table.
 fn schema_paths() -> Vec<String> {
     let text = toml::to_string(&reference_config()).expect("Config always serialises");
     let value: toml::Value = toml::from_str(&text).expect("what was just serialised, parses");
-    let mut paths = Vec::new();
     let toml::Value::Table(sections) = value else {
         panic!("a config document is always a table at the top level");
     };
+    let mut paths = Vec::new();
     for (section, contents) in sections {
         if let toml::Value::Table(fields) = contents {
-            for key in fields.keys() {
-                paths.push(format!("{section}.{key}"));
-            }
+            collect(&section, &fields, &mut paths);
         }
     }
     paths.sort();
+    paths.dedup();
     paths
+}
+
+fn collect(prefix: &str, fields: &toml::Table, paths: &mut Vec<String>) {
+    for (key, value) in fields {
+        let path = format!("{prefix}.{key}");
+        let nested = NESTED.iter().any(|nested| nested.path == path);
+        match value {
+            toml::Value::Table(inner) if nested => collect(&path, inner, paths),
+            toml::Value::Array(entries) if nested => {
+                for entry in entries {
+                    if let toml::Value::Table(inner) = entry {
+                        collect(&path, inner, paths);
+                    }
+                }
+            }
+            _ => paths.push(path),
+        }
+    }
+}
+
+/// What a section's heading says: `[focus.filter]`, or `[[focus.digests]]`
+/// for an array of tables.
+fn heading(section: &str) -> String {
+    if NESTED
+        .iter()
+        .any(|nested| nested.path == section && nested.array)
+    {
+        format!("[[{section}]]")
+    } else {
+        format!("[{section}]")
+    }
+}
+
+/// The prose after `section`'s table, if it has any. `[focus]`'s ends by
+/// opening a code block for [`FOCUS_EXAMPLE`], which is closed here.
+fn prose(section: &str, out: &mut String) {
+    let Some((_, text)) = PROSE.iter().find(|(name, _)| *name == section) else {
+        return;
+    };
+    out.push('\n');
+    out.push_str(text);
+    if section == "focus" {
+        out.push_str(FOCUS_EXAMPLE);
+        out.push_str("```\n");
+    }
 }
 
 fn render() -> String {
@@ -256,7 +566,7 @@ fn render() -> String {
         "# Configuration reference\n\
          \n\
          <!-- Generated from `postio-config`'s schema by\n\
-         `crates/postio-config/tests/config_doc.rs`. Do not edit by hand:\n\
+         `crates/postio-config/tests/config_suite/config_doc.rs`. Do not edit by hand:\n\
          change the schema and run `POSTIO_UPDATE_DOCS=1 cargo test -p postio-config`. -->\n\
          \n\
          `~/.config/postio/config.toml` is the settings -- there is no separate\n\
@@ -271,13 +581,14 @@ fn render() -> String {
 
     let mut section = "";
     for entry in ENTRIES {
-        let (this_section, key) = entry.path.split_once('.').expect("path has a section");
+        let (this_section, key) = entry.path.rsplit_once('.').expect("path has a section");
         if this_section != section {
             if !section.is_empty() {
+                prose(section, &mut out);
                 out.push('\n');
             }
             section = this_section;
-            let _ = writeln!(out, "## `[{section}]`\n");
+            let _ = writeln!(out, "## `{}`\n", heading(section));
             let _ = writeln!(out, "| Key | Type | Default | Description |");
             let _ = writeln!(out, "|---|---|---|---|");
         }
@@ -287,6 +598,7 @@ fn render() -> String {
             entry.kind, entry.default, entry.description
         );
     }
+    prose(section, &mut out);
     out.push('\n');
 
     out.push_str(
@@ -297,7 +609,7 @@ fn render() -> String {
          \n\
          ```toml\n\
          [keys]\n\
-         archive = \"y\"\n\
+         archive = \"w\"\n\
          first_message = \"g g\"\n\
          command_palette = \"mod+p\"\n\
          ```\n\
@@ -329,7 +641,7 @@ fn render() -> String {
          security = \"implicit-tls\"\n\
          ```\n\
          \n\
-         ## `[filters.<id>]`\n\
+         ## `[saved_searches.<id>]`\n\
          \n\
          A named, pinned search -- one table per saved search, keyed the same\n\
          way accounts are.\n\

@@ -8,7 +8,7 @@
 //! in either of them (ADR 0019).
 //!
 //! The tree, the box drawing, the words each row and each detail pane says,
-//! and above all [`save_name`] arrived from `postio-gtk::parts`, which is
+//! and above all [`save_name`] arrived from the classic app's parts, which is
 //! where they were written and where the bugs that shaped them were found.
 //! What stayed behind is the widget.
 //!

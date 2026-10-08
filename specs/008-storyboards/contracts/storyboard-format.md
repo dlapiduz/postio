@@ -26,8 +26,7 @@ storyboards/
 ├── screens/               # zero-step storyboards: the old screens.sh table (FR-030)
 ├── calibration/           # the reviewer's known-true and known-false set (R10)
 └── gaps/
-    ├── classic.toml
-    └── focus.toml
+    └── focus.toml         # the app's, for the generated pass
 ```
 
 The directory is the surface, for batching reviews (R9). It never changes the
@@ -42,7 +41,7 @@ source  = { kind = "issue", ref = "#1687" }
 proof   = "pinned"              # base | open | pinned, required when kind = issue
 seed    = "thirty-threads"      # default "small"
 preset  = "settings/account-form"   # optional, app-declared
-apps    = "auto"                # or ["classic"], ["classic", "focus"]
+apps    = "auto"                # or ["focus"], ["focus", "terminal"]
 vary    = { scheme = ["light", "dark"], width = ["wide", "narrow"] }
 design  = "01-inbox-reading"
 routing = "chain"               # or "real": the whole storyboard needs real routing
@@ -144,7 +143,7 @@ expect  = "After archiving, the cursor returns to the first row of the list."
 ## Gap list
 
 ```toml
-# storyboards/gaps/classic.toml
+# storyboards/gaps/focus.toml
 [[gap]]
 command = "show_images"
 context = "reader"

@@ -43,8 +43,9 @@ query *can* be cheap — and it is weaker in a nameable way: it sees a `SCAN` of
 table and is blind to a `SEARCH` that seeks one column of a wide index and then
 walks everything under it. Measured, #1479's own aggregate is the second kind.
 
-`app_suite/startup_reads.rs` asserts that blindness rather than papering over
-it, and fails if the engine ever reports it honestly.
+The classic app's `app_suite/startup_reads.rs` asserted that blindness rather
+than papering over it; it went with that app in spec 007 T256, and
+`focus_suite`'s `startup_reads` counts reads without asserting it.
 
 ## 3. A partial index is either a constraint or nothing
 
@@ -95,8 +96,8 @@ Hence a policy instead of a step: `Store::is_worth_reclaiming` asks for the
 holes to be both ≥64 MiB and ≥25% of the file before `reclaim_free_pages` is
 allowed to stall the writers, and the housekeeping worker asks on each pass.
 The thresholds are `store::reclaim_policy`'s to prove;
-`app_suite/reclaim_pages.rs` proves the application reaches them, and its
-second case fails the moment the incremental pragma arrives — which is the
+`postio-host`'s `tests/reclaim.rs` proves the application reaches them, and
+its last case fails the moment the incremental pragma arrives — which is the
 signal to take #381's conversion back out of the archive.
 
 ## 6. Bodies are plain text

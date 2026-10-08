@@ -224,6 +224,11 @@ fn check_text(text: &str, errors: &mut Vec<ValidationError>) -> Option<Config> {
         check_sync(config, &map, errors);
         check_filters(config, &map, errors);
         check_mailboxes(config, &map, errors);
+        check_never(config, &map, errors);
+        check_stop_markers(config, &map, errors);
+        check_digests(config, &map, errors);
+        check_model(config, &map, errors);
+        check_vault(config, &map, errors);
     }
     config
 }
@@ -345,7 +350,7 @@ fn push(
 /// `[accounts.<id>]` parses and is not read by anything (#470).
 ///
 /// It described a real-looking editing path for an existing account's host,
-/// port, security and display name. `postio-app` takes all of those from
+/// port, security and display name. The classic app took all of those from
 /// SQLite, written once by onboarding, so editing the section saved,
 /// re-parsed without complaint, and changed nothing about the account that
 /// was running. A schema that round-trips and does nothing is worse than no
@@ -539,9 +544,204 @@ fn check_filters(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationEr
             push(
                 errors,
                 map,
-                format!("filters.{name}.query"),
+                format!("saved_searches.{name}.query"),
                 false,
                 format!("filter `{name}` has an empty query"),
+            );
+        }
+    }
+}
+
+/// `[focus.filter] never` (spec 007 T123, contracts/config.md): an entry
+/// that is neither an address nor a whole domain, by its place and never by
+/// what it says -- it is somebody's address, or meant to be.
+fn check_never(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationError>) {
+    for (place, entry) in config.focus.filter.never.iter().enumerate() {
+        if crate::focus::never_entry(entry).is_none() {
+            push(
+                errors,
+                map,
+                format!("focus.filter.never[{place}]"),
+                true,
+                format!(
+                    "entry {} of `[focus.filter] never` is neither an address nor a whole \
+                     domain such as `@example.org`, so it pins nobody",
+                    place + 1
+                ),
+            );
+        }
+    }
+}
+
+/// `[focus.filter] stop_markers` (spec 007 T118, contracts/config.md): an
+/// entry that names no sender's address, or a kind that is not `question`
+/// or `todo`, by its place and never by what it says.
+fn check_stop_markers(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationError>) {
+    for (place, stop) in config.focus.filter.stop_markers.iter().enumerate() {
+        if !stop.is_well_formed() {
+            push(
+                errors,
+                map,
+                format!("focus.filter.stop_markers[{place}]"),
+                true,
+                format!(
+                    "entry {} of `[focus.filter] stop_markers` needs a sender's address and a \
+                     kind, `question` or `todo`, so it stops nothing",
+                    place + 1
+                ),
+            );
+        }
+    }
+}
+
+/// `[[focus.digests]]` (spec 007 T132, contracts/config.md): each rule by
+/// its name, and a query by its place in the rule.
+///
+/// Semantic, all of it: a rule that fails is not applied, and neither the
+/// file nor the other rules stop applying because of it (ADR 0008 Q6,
+/// [`crate::FocusConfig::applicable_digests`]). Whether a query reads in
+/// full is the query language's to say, and this crate keeps queries as
+/// text rather than parse them (`docs/ARCHITECTURE.md`, the one query
+/// language), so that check is `postio_ui::digest`'s.
+fn check_digests(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationError>) {
+    let mut named: Vec<&str> = Vec::new();
+    for (index, rule) in config.focus.digests.iter().enumerate() {
+        let at = format!("focus.digests[{index}]");
+        let name = rule.name.trim();
+        let called = if name.is_empty() {
+            format!("digest rule {}", index + 1)
+        } else {
+            format!("digest rule `{name}`")
+        };
+        if name.is_empty() {
+            push(
+                errors,
+                map,
+                at.clone(),
+                false,
+                format!("{called} has no `name`"),
+            );
+        } else if named.contains(&name) {
+            push(
+                errors,
+                map,
+                format!("{at}.name"),
+                true,
+                format!("two digest rules are called `{name}`; only the first applies"),
+            );
+        } else {
+            named.push(name);
+        }
+        if rule.queries.is_empty() {
+            push(
+                errors,
+                map,
+                at.clone(),
+                false,
+                format!("{called} matches nothing; give it a query under `match`"),
+            );
+        }
+        for (place, query) in rule.queries.iter().enumerate() {
+            if query.trim().is_empty() {
+                push(
+                    errors,
+                    map,
+                    format!("{at}.match[{place}]"),
+                    true,
+                    format!("query {} of {called} is empty", place + 1),
+                );
+            }
+        }
+        if let Err(problem) = rule.due() {
+            let key = match problem {
+                crate::DueError::UnknownCadence(_) => "cadence",
+                crate::DueError::NotATime => "at",
+                _ => "day",
+            };
+            push(
+                errors,
+                map,
+                format!("{at}.{key}"),
+                true,
+                format!("{called}: {problem}"),
+            );
+        }
+    }
+}
+
+/// `[focus.model]` (spec 007 T152, contracts/config.md): a section that
+/// names no endpoint or no model, or an endpoint that is not on this
+/// computer, with the reason. Semantic: the section is used by no feature,
+/// and the rest of the file applies.
+fn check_model(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationError>) {
+    let Some(model) = &config.focus.model else {
+        return;
+    };
+    let (path, at_value, message) = match model.usable() {
+        Ok(_) => return,
+        Err(crate::ModelProblem::NoEndpoint) => (
+            "focus.model".to_owned(),
+            false,
+            "`[focus.model]` names no `endpoint`, so no model is used; give the address the \
+             runtime listens on, such as `http://127.0.0.1:11434/v1`"
+                .to_owned(),
+        ),
+        Err(crate::ModelProblem::NoModel) => (
+            "focus.model".to_owned(),
+            false,
+            "`[focus.model]` names no `model`, so no model is used; give the name the \
+             runtime serves it by"
+                .to_owned(),
+        ),
+        Err(crate::ModelProblem::Refused(refused)) => (
+            "focus.model.endpoint".to_owned(),
+            true,
+            format!("`[focus.model]`: {refused}, so no model is used"),
+        ),
+    };
+    push(errors, map, path, at_value, message);
+}
+
+/// `[focus.vault]` (spec 007 T157, contracts/config.md): a vault that is
+/// not a folder on this computer, and a note or folder named outside it.
+/// Semantic: nothing is captured until it reads, and the rest of the file
+/// applies. By key, never by the path, which is the person's.
+fn check_vault(config: &Config, map: &SourceMap, errors: &mut Vec<ValidationError>) {
+    let Some(vault) = &config.focus.vault else {
+        return;
+    };
+    if vault.path.trim().is_empty() {
+        push(
+            errors,
+            map,
+            "focus.vault".to_owned(),
+            false,
+            "`[focus.vault]` names no `path`, so nothing is captured; give the vault's folder"
+                .to_owned(),
+        );
+    } else if vault.root().is_none() {
+        push(
+            errors,
+            map,
+            "focus.vault.path".to_owned(),
+            true,
+            "`[focus.vault] path` must be a folder on this computer, written from `/` or `~/`"
+                .to_owned(),
+        );
+    }
+    for (key, value) in [
+        ("tasks_note", vault.tasks_note.as_deref()),
+        ("projects", vault.projects.as_deref()),
+    ] {
+        if let Some(value) = value
+            && !crate::focus::stays_inside(std::path::Path::new(value.trim()))
+        {
+            push(
+                errors,
+                map,
+                format!("focus.vault.{key}"),
+                true,
+                format!("`[focus.vault] {key}` must be inside the vault, written relative to it"),
             );
         }
     }

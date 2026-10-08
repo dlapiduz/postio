@@ -19,8 +19,9 @@
 use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, Attachment, AttachmentId, BlobId, Disposition, Draft, DraftId, DraftKind,
-    DraftState, EmailAddress, IdentityId, MailboxRole, MessageBody, MessageId, ModSeq, Operation,
-    OperationTarget, RemoteId, RfcMessageId, ServerIdentifiers, ThreadId, Uid, UidValidity,
+    DraftState, EmailAddress, IdentityId, LabelId, MailboxRole, MessageBody, MessageId, ModSeq,
+    Operation, OperationTarget, RemoteId, RfcMessageId, ServerIdentifiers, ThreadId, Uid,
+    UidValidity,
 };
 
 /// Where an appended draft landed, as [`DraftRepository::set_server_copy`]
@@ -68,7 +69,8 @@ pub struct DraftRepository<'a> {
 const DRAFT_COLUMNS: &str = "\
 id, account_id, identity_id, kind, in_reply_to_message_id, thread_id, subject, body_text,
 body_html, rich, state, uid, uid_validity, mod_seq, remote_id, created_at, updated_at,
-rfc_message_id, forwarded_message_id, body_markdown";
+rfc_message_id, forwarded_message_id, body_markdown, label_ids, calendar_reply,
+remind_at";
 
 impl<'a> DraftRepository<'a> {
     /// Borrows a connection.
@@ -108,7 +110,10 @@ impl<'a> DraftRepository<'a> {
                             updated_at = ?16,
                             rfc_message_id = ?17,
                             forwarded_message_id = ?18,
-                            body_markdown = ?19
+                            body_markdown = ?19,
+                            label_ids = ?20,
+                            calendar_reply = ?21,
+                            remind_at = ?22
                       WHERE id = ?1",
                     bind![
                         draft.id.get(),
@@ -137,6 +142,9 @@ impl<'a> DraftRepository<'a> {
                         reservation_for(draft),
                         optional_message(draft.forwarded_from),
                         draft.body_markdown,
+                        label_ids(draft),
+                        draft.calendar_reply,
+                        draft.remind_at.map(to_millis),
                     ],
                 )
                 .await?;
@@ -154,9 +162,9 @@ impl<'a> DraftRepository<'a> {
                                          thread_id, subject, body_text, body_html, rich, state,
                                          uid, uid_validity, mod_seq, remote_id, created_at,
                                          updated_at, rfc_message_id, forwarded_message_id,
-                                         body_markdown)
+                                         body_markdown, label_ids, calendar_reply, remind_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                             ?16, ?17, ?18, ?19)",
+                             ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
                     bind![
                         account_id,
                         optional_identity(draft.identity_id),
@@ -184,6 +192,9 @@ impl<'a> DraftRepository<'a> {
                         reservation_for(draft),
                         optional_message(draft.forwarded_from),
                         draft.body_markdown,
+                        label_ids(draft),
+                        draft.calendar_reply,
+                        draft.remind_at.map(to_millis),
                     ],
                 )
                 .await?;
@@ -578,6 +589,45 @@ impl<'a> DraftRepository<'a> {
 
         self.fill(&mut draft).await?;
         Ok(Some(draft))
+    }
+
+    /// Who each of `messages` is to, for the ones that are drafts: the `To`
+    /// recipients in order, read for all of them in one statement.
+    ///
+    /// What a Drafts or Outbox row names, since its sender is the person
+    /// themselves. A message that is no draft has no entry.
+    pub async fn recipients_of(
+        &self,
+        messages: &[MessageId],
+    ) -> Result<std::collections::HashMap<MessageId, Vec<EmailAddress>>> {
+        let mut found: std::collections::HashMap<MessageId, Vec<EmailAddress>> =
+            std::collections::HashMap::new();
+        for chunk in messages.chunks(500) {
+            let placeholders = vec!["?"; chunk.len()].join(", ");
+            let mut statement = sql::statement(
+                self.connection,
+                &format!(
+                    "SELECT drafts.message_id, r.name, a.address FROM recipients r
+                       JOIN drafts ON drafts.id = r.draft_id
+                       JOIN addresses a ON a.id = r.address_id
+                      WHERE r.kind = 'to' AND drafts.message_id IN ({placeholders})
+                      ORDER BY drafts.message_id, r.position, r.id"
+                ),
+            )
+            .await?;
+            let params: Vec<i64> = chunk.iter().map(|id| id.get()).collect();
+            let rows = sql::mapped(&mut statement, params, |row| {
+                Ok((
+                    MessageId::new(row.col::<i64>(0)?),
+                    EmailAddress::new(row.col::<Option<String>>(1)?, row.col::<String>(2)?),
+                ))
+            })
+            .await?;
+            for (message, address) in rows {
+                found.entry(message).or_default().push(address);
+            }
+        }
+        Ok(found)
     }
 
     /// The draft a message row in the Drafts folder is listing, if it is
@@ -1160,6 +1210,16 @@ async fn write_attachments(connection: &Connection, draft: &mut Draft) -> Result
     Ok(())
 }
 
+/// `draft.labels` as the `label_ids` column spells them.
+fn label_ids(draft: &Draft) -> String {
+    draft
+        .labels
+        .iter()
+        .map(|label| label.get().to_string())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn read_draft(row: &Row) -> Result<Draft> {
     let kind: String = row.col(3)?;
     // 10, not 9: `rich` sits after `body_html` in `DRAFT_COLUMNS` (#1271),
@@ -1197,6 +1257,14 @@ fn read_draft(row: &Row) -> Result<Draft> {
         },
         rfc_message_id: row.col::<Option<String>>(17)?.map(RfcMessageId::new),
         body_markdown: row.col(19)?,
+        labels: row
+            .col::<String>(20)?
+            .split_whitespace()
+            .filter_map(|id| id.parse().ok())
+            .map(LabelId::new)
+            .collect(),
+        calendar_reply: row.col(21)?,
+        remind_at: row.col::<Option<i64>>(22)?.map(from_millis),
         created_at: from_millis(row.col(15)?),
         updated_at: from_millis(row.col(16)?),
     })

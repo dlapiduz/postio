@@ -1,6 +1,6 @@
 //! Turning the log on, from a frontend that has no `main` of its own.
 //!
-//! `postio-app` does this as the first thing in its `main`, and says why:
+//! The classic app did this as the first thing in its `main`, and said why:
 //! *startup is exactly when a trace is worth having — an account that will not
 //! open, a store that will not migrate and a keyring that will not answer all
 //! happen before there is any UI to report them in.* Every one of those is
@@ -45,7 +45,7 @@ pub fn start_logging() {
             .map(logging::config_at)
             .unwrap_or_default(),
     );
-    // Leaked deliberately, the way `postio-app` holds its own for the life of
+    // Leaked deliberately, the way the classic app held its own for the life of
     // the process: dropping the watcher stops the watch, and re-tuning a
     // running Postio through `[logging]` is the whole point of that section.
     // There is no other owner here -- this is a free function, not a `main`.
@@ -57,7 +57,7 @@ pub fn start_logging() {
     // — the Config file pane, `⌘E` and a file manager all find something to
     // read and edit rather than a blank buffer that documents nothing.
     //
-    // `postio-app` has done this since it had a settings surface; macOS
+    // The classic app had done this since it had a settings surface; macOS
     // never did, and the empty editor was the first thing the pane showed
     // when it was built. Here rather than in `Session::open`, because
     // settings are a file and the settings window works with no session at

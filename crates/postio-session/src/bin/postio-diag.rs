@@ -40,6 +40,7 @@ usage: postio-diag [--store <postio.db>] <command>
   encoding  the bodies carrying the decode caveat, and what their parts declared
   shape     rows per page, with and without the body columns
   pending   what the background lanes still owe: backfill, index, queue
+  search <words>  the search box's query, timed, as typed and quoted
 
 Reads only. Opens the live store -- close Postio first -- or the copy --store
 names. The key comes from the keyring, or POSTIO_STORE_KEY.";
@@ -55,6 +56,11 @@ async fn main() -> ExitCode {
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return ExitCode::SUCCESS;
+            }
+            // `search` takes the rest of the line as its words.
+            "search" if command.is_none() => {
+                let words: Vec<String> = arguments.by_ref().collect();
+                command = Some(format!("search {}", words.join(" ")));
             }
             other if command.is_none() => command = Some(other.to_owned()),
             other => {

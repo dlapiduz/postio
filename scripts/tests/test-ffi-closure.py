@@ -7,7 +7,7 @@ job (#1449), and the whole argument for it is that the three crates outside
 version would pass every test here on the day it was written and go on
 skipping the macOS runner for a crate somebody later wired into the bindings.
 
-So the cases below do not check for `postio-app`, `postio-gtk` and
+So the cases below do not check for the GTK crates and
 `postio-bench`. They build workspaces whose graphs differ from this one and
 check the answer moved with the graph -- which is the only way to tell a
 derivation from a lookup table.

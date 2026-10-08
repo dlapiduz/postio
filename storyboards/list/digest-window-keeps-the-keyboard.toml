@@ -1,0 +1,35 @@
+# The digest window answers keys after it opens (found by the generated pass).
+#
+# The window that opens from the "Weekly digest" row used to report its
+# keyboard as unreachable and drop a second `j`: the keyboard was left on a
+# row of the plain list that the summary hides, so nothing on the focus chain
+# took the key (the 92a093b8 family, in a dialog that commit did not reach).
+# Now the summary takes `j` and `k` as it takes `]` and `[`, the focused
+# statement holds the keyboard and wears the ring, and a key pressed in the
+# window is heard. Every key in `Context::Digest` (`j`, `k`, `Return`, `Tab`,
+# `g i`) depends on it.
+source = { kind = "commit", ref = "92a093b8" }
+proof  = "pinned"
+apps   = ["focus"]
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+[[step]]
+command = "next_message"
+check   = { cursor.index = 1 }
+
+[[step]]
+command = "open_message"
+settle  = { until = { view = "digest" } }
+check   = { view = "digest", keyboard.reachable = true, app.focus.digest.reference = 0 }
+expect  = "The digest opens on its summary with its first statement ringed, and a key pressed now is heard."
+
+[[step]]
+command = "next_message"
+check   = { view = "digest", keyboard.reachable = true, app.focus.digest.reference = 1 }
+expect  = "`j` is heard: the ring moves to the next statement, and the keyboard is still reachable afterwards."
+
+[[step]]
+command = "next_message"
+check   = { view = "digest", keyboard.reachable = true, app.focus.digest.reference = 1 }
+expect  = "A second `j` is heard too: the summary has two statements, so the ring stays on the last."

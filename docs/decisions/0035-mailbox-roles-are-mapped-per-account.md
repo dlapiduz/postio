@@ -160,8 +160,9 @@ Drafts    [ Automatic (Drafts)          ▾ ]
   reasoning holds).
 
 The mailbox list crosses the crate boundary the way the account list does —
-`postio-app` reads `MailboxRepository::list_for_account` and pushes it into
-the panel — because `postio-gtk` cannot see `postio-storage`.
+the settings presenter (`postio_widgets::present::settings::accounts`) reads
+it through the client and pushes it into the panel — because
+`postio-widgets` cannot see `postio-storage`.
 
 ## What this does not decide
 

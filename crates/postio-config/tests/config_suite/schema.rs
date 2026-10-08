@@ -23,7 +23,7 @@ fn empty_file_yields_defaults() {
 
 #[test]
 fn empty_sections_yield_defaults() {
-    let cfg = Config::from_toml_str("[ui]\n[keys]\n[sync]\n[filters]\n")
+    let cfg = Config::from_toml_str("[ui]\n[keys]\n[sync]\n[saved_searches]\n")
         .expect("empty sections must parse");
     assert_eq!(cfg, Config::default());
 }
@@ -158,7 +158,7 @@ port = 465
 security = "implicit-tls"
 "#;
 
-// ------------------------------------------------------- [sync] / [filters] --
+// ------------------------------------------------------- [sync] / [saved_searches] --
 
 #[test]
 fn parses_the_sync_section() {
@@ -207,7 +207,7 @@ fn attachments_are_fetched_on_open_unless_the_file_says_otherwise() {
 fn parses_named_filters() {
     let cfg = Config::from_toml_str(
         r#"
-        [filters.needs-reply]
+        [saved_searches.needs-reply]
         query = "is:unread from:team"
         pinned = true
         "#,
@@ -257,7 +257,7 @@ account_future = { nested = true }
 host = "imap.example.com"
 imap_future = "kept"
 
-[filters.needs-reply]
+[saved_searches.needs-reply]
 query = "is:unread"
 filter_future = 1
 "#;
@@ -404,4 +404,114 @@ fn an_unparseable_role_is_dropped_rather_than_guessed() {
     )
     .unwrap();
     assert!(cfg.role_overrides().is_empty());
+}
+
+/// Spec 007 T132: a `[[focus.digests]]` rule is read, and its cadence, day
+/// and time are when it comes due.
+#[test]
+fn a_digest_rule_says_when_it_comes_due() {
+    use chrono::{NaiveTime, Weekday};
+    use postio_config::Due;
+
+    let config = postio_config::Config::from_toml_str(
+        r#"[[focus.digests]]
+name    = "Newsletters"
+match   = ["from:news@localfirst.example", "from:editor@ledger.example"]
+cadence = "weekly"
+day     = "saturday"
+at      = "16:00"
+
+[[focus.digests]]
+name    = "Morning"
+match   = ["from:alerts@example.org"]
+cadence = "daily"
+at      = "7:05"
+
+[[focus.digests]]
+name    = "Statements"
+match   = ["from:bank@example.net"]
+cadence = "monthly"
+day     = 3
+at      = "09:00"
+"#,
+    )
+    .expect("parse");
+    let rules = &config.focus.digests;
+    assert_eq!(rules[0].name, "Newsletters");
+    assert_eq!(
+        rules[0].queries,
+        ["from:news@localfirst.example", "from:editor@ledger.example"]
+    );
+    let at = |h, m| NaiveTime::from_hms_opt(h, m, 0).expect("a time");
+    assert_eq!(
+        rules[0].due(),
+        Ok(Due::Weekly {
+            day: Weekday::Sat,
+            at: at(16, 0)
+        })
+    );
+    assert_eq!(rules[1].due(), Ok(Due::Daily { at: at(7, 5) }));
+    assert_eq!(
+        rules[2].due(),
+        Ok(Due::Monthly {
+            day: 3,
+            at: at(9, 0)
+        })
+    );
+}
+
+/// Spec 007 T123: `[focus] filtering` is on unless the file turns it off
+/// (FR-119), and `[focus.filter] never` lists the senders Focus never files
+/// away: an address, or a whole domain (contracts/config.md).
+#[test]
+fn focus_filtering_is_on_unless_turned_off() {
+    let config = postio_config::Config::from_toml_str("").expect("parse");
+    assert!(config.focus.filtering, "on when Focus first opens");
+    assert!(config.focus.filter.never.is_empty());
+
+    let config = postio_config::Config::from_toml_str(
+        r#"[focus]
+filtering = false
+
+[focus.filter]
+never = ["pinned@example.org", "@example.net"]
+"#,
+    )
+    .expect("parse");
+    assert!(!config.focus.filtering);
+    assert_eq!(
+        config.focus.filter.never,
+        ["pinned@example.org", "@example.net"]
+    );
+}
+
+/// Which senders `[focus.filter] never` covers: an address, in any case,
+/// and every address at a domain named whole -- that domain only, not the
+/// ones under it. An entry that is neither pins nobody.
+#[test]
+fn a_never_entry_names_an_address_or_a_whole_domain() {
+    let config = postio_config::Config::from_toml_str(
+        r#"[focus.filter]
+never = ["Pinned@Example.org", "@lists.example.net", "not an address"]
+"#,
+    )
+    .expect("parse");
+    let never = |address: &str| {
+        config
+            .focus
+            .filter
+            .never_filters(&postio_model::EmailAddress::new(None::<&str>, address))
+    };
+
+    assert!(never("pinned@example.org"));
+    assert!(never("PINNED@EXAMPLE.ORG"));
+    assert!(!never("other@example.org"));
+    assert!(never("news@lists.example.net"));
+    assert!(never("News@LISTS.example.NET"));
+    assert!(
+        !never("news@example.net"),
+        "the domain named, not its parent"
+    );
+    assert!(!never("news@a.lists.example.net"), "nor one under it");
+    assert!(!never("not an address"));
 }

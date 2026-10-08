@@ -1,373 +1,807 @@
-//! Render a window to a texture, and say so when it cannot be done.
+//! The capture sheet (spec 007 US15, T158; screen 25): `t` on a message
+//! captures a task into the person's Obsidian vault, `n` a note.
 //!
-//! # Why this is in the library rather than in the tool that uses it
+//! - **The text** is the action sentence, verbatim, when the message has a
+//!   marker that quotes one, and its subject otherwise; `alt+s` puts the
+//!   subject in its place.
+//! - **The due day** comes from the mail when it names one, with quick
+//!   picks beside it.
+//! - **The project** is suggested from the vault with its reason, and
+//!   `mod+p` changes it.
+//! - **The preview** is the exact line `postio-vault` will append, in the
+//!   Obsidian Tasks format with the `postio://` link before the date.
 //!
-//! There were three copies of it — `postio-app`'s `shot` example,
-//! `postio-gtk`'s `surface` example, and `gtk_focus_visible`'s `pixels` —
-//! and the two that write PNGs made the *caller* settle the window first, by
-//! counting eight frames, before asking for the picture.
-//!
-//! A frame count is not a condition. Eight frames on an idle workstation is a
-//! wait; eight frames on a surface the compositor has stopped presenting is a
-//! five-second timeout, an empty snapshot, one printed line and no file —
-//! and nothing distinguished that from success except going to look for the
-//! file afterwards. So the wait belongs to the thing that knows what it is
-//! waiting for, and what it waits for is a condition: the window has a
-//! picture.
-//!
-//! (`gtk_focus_visible` keeps its own frame counting on purpose. It compares
-//! two samples across a state change, so the frames *are* the thing it is
-//! measuring.)
-//!
-//! # What stops a window having a picture, measured
-//!
-//! #809 reported that `shot` wrote nothing here and blamed the frame
-//! callback. The frame callback is the trigger, but not the mechanism, and
-//! the difference decides whether it can be fixed. Measured on this
-//! workstation with the screen blanked — an `AdwApplicationWindow`, mapped,
-//! presented, and allocated 600x400 throughout:
-//!
-//! ```text
-//! after present                 child 600x400   picture: yes
-//! after queue_resize + pump     child 600x400   picture: NO
-//! after request_phase(LAYOUT)   child 600x400   picture: NO
-//! after request_phase(PAINT)    child 600x400   picture: NO
-//! after allocating the child    child 600x400   picture: yes
-//! ```
-//!
-//! GTK refuses to snapshot a widget with a pending resize — `Trying to
-//! snapshot AdwDialogHost without a current allocation`, on stderr, once per
-//! attempt. The pending resize is serviced in the frame clock's layout
-//! phase, and a compositor that has stopped presenting never runs one, so
-//! **any** invalidation after the last presented frame leaves the window
-//! permanently unrenderable. The window's own width and height still read
-//! back as the old allocation, which is why this looks like nothing is
-//! wrong.
-//!
-//! Asking the frame clock for the phase directly does not help; it is
-//! throttled by exactly the thing that has stopped. Doing the layout
-//! ourselves does, and is repeatable.
-//!
-//! # What this path cannot do
-//!
-//! A compositor is still required. GTK will not snapshot an unmapped widget
-//! at all, so a window that was realized but never presented has no picture
-//! and no way to get one — measured too, and pinned by `gtk_capture.rs`.
-//! That rules out the shape #809 hoped for, of rendering a widget tree on a
-//! machine with no seat: the way to run this where there is no desktop
-//! session is to give it a headless one, which is what
-//! `scripts/headless-runner.sh` now does for the two examples that render.
+//! `mod+Return` writes it, through the host, on this computer. The sheet is
+//! a dialog over the window, like every window over the app (FR-092), and
+//! its keys are `Context::Capture`'s.
 
-use std::path::Path;
-use std::time::{Duration, Instant};
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
-use gtk::prelude::*;
-use gtk::{gdk, glib, graphene};
+use adw::prelude::*;
+use chrono::NaiveDate;
+use gtk::glib;
+use postio_client::Client;
+use postio_client::protocol::VaultPicture;
+use postio_core::{CommandId, Keymap};
+use postio_ui::capture;
+use postio_ui::hints;
+use postio_vault::{NoteEntry, Project, Reason, Task};
+use postio_widgets::widgets::keyhint;
+use postio_widgets::widgets::space::{S1, S2, S3};
+use postio_widgets::widgets::{Kind, Size};
 
-/// How long to wait for a window to become drawable, before scaling.
-///
-/// Generous: this bounds "the compositor is not going to show this window",
-/// which is a conclusion worth being slow about, and none of it is paid on
-/// the ordinary path, where the picture is ready on the first look.
-pub const PATIENCE: Duration = Duration::from_secs(5);
+/// The dialog's widget name, so the window can tell it from another.
+pub const DIALOG_NAME: &str = "focus-capture";
 
-/// A picture of a window, and what it cost to get one.
-#[derive(Debug)]
-pub struct Picture {
-    /// What the window draws.
-    pub texture: gdk::Texture,
-    /// See [`Written::stalled`].
-    pub stalled: bool,
+pub use postio_ui::capture::{Mode, NO_VAULT};
+
+/// The sheet's size: screen 25's.
+const WIDTH: i32 = 660;
+const HEIGHT: i32 = 600;
+
+pub use postio_ui::capture::Source;
+
+/// What a written capture said, for the window's toast.
+type Written = Rc<dyn Fn(String)>;
+
+/// The sheet. See the module.
+pub struct CaptureSheet {
+    client: Client,
+    dialog: adw::Dialog,
+    mode: Cell<Mode>,
+    source: RefCell<Option<Source>>,
+    keymap: RefCell<Keymap>,
+    task_toggle: gtk::ToggleButton,
+    note_toggle: gtk::ToggleButton,
+    cancel: gtk::Button,
+    write: gtk::Button,
+    from: gtk::Label,
+    field_title: gtk::Label,
+    entry: gtk::Entry,
+    hint: gtk::Box,
+    due_box: gtk::Box,
+    due_day: gtk::Label,
+    picks: gtk::Box,
+    due: Cell<Option<NaiveDate>>,
+    project_title: gtk::Label,
+    project_name: gtk::Label,
+    project_note: gtk::Label,
+    change: gtk::Button,
+    filter: gtk::SearchEntry,
+    projects: gtk::ListBox,
+    projects_shown: RefCell<Vec<Option<Project>>>,
+    preview_title: gtk::Label,
+    preview: gtk::Label,
+    footnote: gtk::Label,
+    picture: RefCell<VaultPicture>,
+    project: RefCell<Option<Project>>,
+    /// Whether the project on screen is the one the vault suggested.
+    suggested: Cell<bool>,
+    written: RefCell<Option<Written>>,
+    /// Between presenting and closing.
+    open: Rc<Cell<bool>>,
+    me: RefCell<std::rc::Weak<CaptureSheet>>,
 }
 
-/// What a written picture turned out to be.
-#[derive(Debug)]
-pub struct Written {
-    pub width: i32,
-    pub height: i32,
-    /// Whether the compositor had stopped presenting this window.
-    ///
-    /// The picture is still the widgets' own, and is worth looking at. What
-    /// it may not contain is anything drawn by a *different* process: the
-    /// reader's WebKit view composites through the same compositor, and on a
-    /// stalled surface it renders as a black rectangle. That reads exactly
-    /// like a broken reader, so a caller that does not say this out loud is
-    /// handing someone a picture that lies.
-    pub stalled: bool,
-}
+impl CaptureSheet {
+    /// The commands the sheet has a control for.
+    pub fn controls() -> Vec<CommandId> {
+        vec![
+            CommandId::CaptureTask,
+            CommandId::CaptureNote,
+            CommandId::CaptureChangeProject,
+            CommandId::CaptureUseSubject,
+            CommandId::CaptureWrite,
+            CommandId::Back,
+        ]
+    }
 
-/// Why a window could not be turned into a picture.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    /// GTK will not snapshot a widget the compositor is not showing.
-    ///
-    /// `mapped: false` means the window never reached the compositor at all,
-    /// which nothing here can rescue. `mapped: true` means it did, and the
-    /// layout could not be forced either.
-    #[error(
-        "the window never became drawable within {waited:.1?} (mapped: {mapped}, \
-         allocation: {width}x{height}) — nothing is painted to a surface the \
-         compositor is not showing. A blanked or locked screen is the commonest \
-         cause on a workstation; on a machine with no session, run it under \
-         scripts/test-headless.sh."
-    )]
-    NeverDrawable {
-        waited: Duration,
-        mapped: bool,
-        width: i32,
-        height: i32,
-    },
+    /// A closed sheet writing through `client`, its keys from `keymap`.
+    pub fn new(client: Client, keymap: &Keymap) -> Rc<Self> {
+        let cancel = gtk::Button::new();
+        postio_widgets::widgets::button::style(&cancel, Kind::Secondary, Size::Small);
+        let task_toggle = gtk::ToggleButton::new();
+        let note_toggle = gtk::ToggleButton::new();
+        note_toggle.set_group(Some(&task_toggle));
+        let modes = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        modes.add_css_class("linked");
+        modes.add_css_class("focus-capture-modes");
+        modes.append(&task_toggle);
+        modes.append(&note_toggle);
+        let write = gtk::Button::new();
+        postio_widgets::widgets::button::style(&write, Kind::Primary, Size::Small);
+        write.add_css_class("focus-capture-write");
+        let header = gtk::CenterBox::new();
+        header.add_css_class("focus-capture-header");
+        header.set_start_widget(Some(&cancel));
+        header.set_center_widget(Some(&modes));
+        header.set_end_widget(Some(&write));
 
-    /// A realized window has a renderer; an unrealized one does not.
-    #[error("the window has no renderer, so there is nothing to render through")]
-    NoRenderer,
+        let from = gtk::Label::new(None);
+        from.set_xalign(0.0);
+        from.add_css_class("dim-label");
+        from.set_ellipsize(pango::EllipsizeMode::End);
 
-    /// The picture exists and the file does not.
-    #[error("cannot write {path}: {source}")]
-    Write {
-        path: String,
-        #[source]
-        source: glib::BoolError,
-    },
-}
+        let field_title = gtk::Label::new(Some("Task"));
+        field_title.set_xalign(0.0);
+        field_title.add_css_class("caption");
+        let entry = gtk::Entry::new();
+        entry.add_css_class("focus-capture-text");
+        let hint = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+        hint.add_css_class("dim-label");
+        let field = gtk::Box::new(gtk::Orientation::Vertical, S1);
+        field.add_css_class("focus-capture-field");
+        field.append(&field_title);
+        field.append(&entry);
+        field.append(&hint);
 
-/// [`PATIENCE`], scaled by `POSTIO_TEST_PATIENCE`.
-///
-/// The same dial every suite here answers to, and deliberately not a second
-/// one: a machine slow enough to need longer here needs longer everywhere,
-/// and a constant edited in this file would slow every run to fix one box.
-fn patience() -> Duration {
-    let factor: f64 = std::env::var("POSTIO_TEST_PATIENCE")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .filter(|factor: &f64| *factor > 0.0)
-        .unwrap_or(1.0);
-    PATIENCE.mul_f64(factor)
-}
+        let due_title = gtk::Label::new(Some("Due"));
+        due_title.set_xalign(0.0);
+        due_title.add_css_class("caption");
+        let due_day = gtk::Label::new(None);
+        due_day.set_xalign(0.0);
+        due_day.add_css_class("heading");
+        let due_words = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        due_words.set_hexpand(true);
+        due_words.append(&due_title);
+        due_words.append(&due_day);
+        let picks = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+        picks.set_valign(gtk::Align::Center);
+        let due_box = gtk::Box::new(gtk::Orientation::Horizontal, S2);
+        due_box.add_css_class("focus-capture-due");
+        due_box.append(&due_words);
+        due_box.append(&picks);
 
-/// Render `widget` to a picture, waiting until it can be.
-///
-/// The wait is [`PATIENCE`], scaled; use [`texture_within`] to say otherwise.
-pub fn texture(widget: &impl IsA<gtk::Widget>) -> Result<Picture, Error> {
-    texture_within(widget, patience())
-}
+        let project_title = gtk::Label::new(None);
+        project_title.set_xalign(0.0);
+        project_title.add_css_class("caption");
+        project_title.set_wrap(true);
+        let project_name = gtk::Label::new(None);
+        project_name.set_xalign(0.0);
+        project_name.add_css_class("heading");
+        let project_note = gtk::Label::new(None);
+        project_note.set_xalign(0.0);
+        project_note.add_css_class("monospace");
+        project_note.add_css_class("dim-label");
+        let named = gtk::Box::new(gtk::Orientation::Horizontal, S2);
+        named.append(&project_name);
+        named.append(&project_note);
+        let project_words = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        project_words.set_hexpand(true);
+        project_words.append(&project_title);
+        project_words.append(&named);
+        let change = gtk::Button::new();
+        postio_widgets::widgets::button::style(&change, Kind::Secondary, Size::Small);
+        change.set_valign(gtk::Align::Center);
+        let project_row = gtk::Box::new(gtk::Orientation::Horizontal, S2);
+        project_row.append(&project_words);
+        project_row.append(&change);
+        let filter = gtk::SearchEntry::new();
+        filter.set_placeholder_text(Some("Filter projects in your vault"));
+        filter.set_visible(false);
+        let projects = gtk::ListBox::new();
+        projects.add_css_class("boxed-list");
+        projects.add_css_class("focus-capture-projects");
+        projects.set_visible(false);
+        let project_box = gtk::Box::new(gtk::Orientation::Vertical, S2);
+        project_box.add_css_class("focus-capture-project");
+        project_box.append(&project_row);
+        project_box.append(&filter);
+        project_box.append(&projects);
 
-/// Render `widget` to a picture, giving up after `deadline`.
-///
-/// Turns the main loop itself, so the caller does not have to settle the
-/// window first — and a caller that tried would be guessing at a number of
-/// frames this can simply watch for.
-pub fn texture_within(
-    widget: &impl IsA<gtk::Widget>,
-    deadline: Duration,
-) -> Result<Picture, Error> {
-    let widget = widget.as_ref();
-    let started = Instant::now();
+        let preview_title = gtk::Label::new(None);
+        preview_title.set_xalign(0.0);
+        preview_title.add_css_class("heading");
+        let preview = gtk::Label::new(None);
+        preview.set_xalign(0.0);
+        preview.set_wrap(true);
+        preview.set_wrap_mode(pango::WrapMode::WordChar);
+        preview.set_selectable(true);
+        preview.add_css_class("monospace");
+        preview.add_css_class("focus-capture-preview");
+        let footnote = gtk::Label::new(None);
+        footnote.set_xalign(0.0);
+        footnote.set_wrap(true);
+        footnote.add_css_class("dim-label");
+        footnote.add_css_class("caption");
 
-    // A blocking iteration is what lets the frame clock tick — a
-    // non-blocking one returns immediately when nothing is pending, so a
-    // fixed number of them is not a wait at all and no frame need happen
-    // inside it (#90). The heartbeat is what guarantees the blocking
-    // iteration returns.
-    let context = glib::MainContext::default();
-    let heartbeat =
-        glib::timeout_add_local(Duration::from_millis(10), || glib::ControlFlow::Continue);
-    // What is waited for is a *presented* frame, which is the one thing that
-    // separates "the compositor has not got to this window yet" from "the
-    // compositor is not going to". The picture itself does not depend on the
-    // answer — see `drawn` — but whether to warn about it does, and that
-    // distinction cannot be made without spending the wait.
-    let stalled = loop {
-        if presenting(widget) {
-            break false;
-        }
-        if started.elapsed() >= deadline {
-            break true;
-        }
-        context.iteration(true);
-    };
-    heartbeat.remove();
+        let body = gtk::Box::new(gtk::Orientation::Vertical, S3);
+        body.add_css_class("focus-capture-body");
+        body.set_margin_start(S3);
+        body.set_margin_end(S3);
+        body.set_margin_top(S3);
+        body.set_margin_bottom(S3);
+        body.append(&from);
+        body.append(&field);
+        body.append(&due_box);
+        body.append(&project_box);
+        body.append(&preview_title);
+        body.append(&preview);
+        body.append(&footnote);
+        let scrolled = gtk::ScrolledWindow::builder()
+            .child(&body)
+            .vexpand(true)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .build();
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        content.add_css_class("focus-capture");
+        content.append(&header);
+        content.append(&scrolled);
+        let dialog = adw::Dialog::builder()
+            .title("Capture")
+            .content_width(WIDTH)
+            .content_height(HEIGHT)
+            .child(&content)
+            .build();
+        dialog.set_widget_name(DIALOG_NAME);
 
-    let Some(node) = drawn(widget) else {
-        return Err(Error::NeverDrawable {
-            waited: started.elapsed(),
-            mapped: widget.is_mapped(),
-            width: widget.width(),
-            height: widget.height(),
+        let sheet = Rc::new(CaptureSheet {
+            client,
+            dialog,
+            mode: Cell::new(Mode::Task),
+            source: RefCell::default(),
+            keymap: RefCell::new(keymap.clone()),
+            task_toggle,
+            note_toggle,
+            cancel,
+            write,
+            from,
+            field_title,
+            entry,
+            hint,
+            due_box,
+            due_day,
+            picks,
+            due: Cell::default(),
+            project_title,
+            project_name,
+            project_note,
+            change,
+            filter,
+            projects,
+            projects_shown: RefCell::default(),
+            preview_title,
+            preview,
+            footnote,
+            picture: RefCell::default(),
+            project: RefCell::default(),
+            suggested: Cell::new(false),
+            written: RefCell::default(),
+            open: Rc::default(),
+            me: RefCell::default(),
         });
-    };
-
-    let renderer = widget
-        .native()
-        .and_then(|native| native.renderer())
-        .ok_or(Error::NoRenderer)?;
-    let bounds = graphene::Rect::new(0.0, 0.0, widget.width() as f32, widget.height() as f32);
-    Ok(Picture {
-        texture: renderer.render_texture(&node, Some(&bounds)),
-        stalled,
-    })
-}
-
-/// Render `widget` as it is this instant, without waiting for the
-/// compositor.
-///
-/// For a caller that is already watching frames go by — storyboard settle
-/// sampling takes one of these per frame-clock tick — and for whom
-/// [`texture_within`]'s wait for a presented frame would be paid every time.
-/// A widget with no allocation or no renderer is the same [`Error`] it is
-/// there.
-pub fn texture_now(widget: &impl IsA<gtk::Widget>) -> Result<gdk::Texture, Error> {
-    render_now(widget.as_ref(), None::<fn(&gtk::Snapshot)>)
-}
-
-/// [`texture_now`] with `overlay` drawn over the widget's own picture.
-///
-/// The widget's render node and whatever `overlay` snapshots are wrapped in
-/// one container node, so the overlay is in the widget's own coordinates and
-/// is never part of the widget: the plain frame stays what it was.
-pub fn texture_with(
-    widget: &impl IsA<gtk::Widget>,
-    overlay: impl FnOnce(&gtk::Snapshot),
-) -> Result<gdk::Texture, Error> {
-    render_now(widget.as_ref(), Some(overlay))
-}
-
-fn render_now<F: FnOnce(&gtk::Snapshot)>(
-    widget: &gtk::Widget,
-    overlay: Option<F>,
-) -> Result<gdk::Texture, Error> {
-    let never_drawable = || Error::NeverDrawable {
-        waited: Duration::ZERO,
-        mapped: widget.is_mapped(),
-        width: widget.width(),
-        height: widget.height(),
-    };
-    let node = drawn(widget).ok_or_else(never_drawable)?;
-    let node = match overlay {
-        None => node,
-        Some(overlay) => {
-            let snapshot = gtk::Snapshot::new();
-            snapshot.append_node(&node);
-            overlay(&snapshot);
-            snapshot.to_node().ok_or_else(never_drawable)?
-        }
-    };
-    let renderer = widget
-        .native()
-        .and_then(|native| native.renderer())
-        .ok_or(Error::NoRenderer)?;
-    let bounds = graphene::Rect::new(0.0, 0.0, widget.width() as f32, widget.height() as f32);
-    Ok(renderer.render_texture(&node, Some(&bounds)))
-}
-
-/// The window's picture, laid out first.
-///
-/// `None` for a widget with no allocation as well as for one GTK will not
-/// snapshot: a zero-sized window yields a node that renders to nothing,
-/// which is a blank PNG rather than an error, and a blank PNG that reports
-/// success is the failure this module exists to stop.
-///
-/// # The layout is done here rather than waited for
-///
-/// GTK refuses to snapshot a widget with a pending resize, and a pending
-/// resize is serviced in the frame clock's layout phase — which a compositor
-/// that has stopped presenting never runs. So the window stays permanently
-/// unrenderable while reporting its old width and height, which is what
-/// #809 saw and read as a missing frame.
-///
-/// `allocate` is the call a parent makes on its child, which is exactly the
-/// relationship here, and the size is the window's own last allocation, so
-/// this invents no geometry: it re-runs the pass that was queued and never
-/// serviced. Asking the frame clock for the phase directly does not work —
-/// it is throttled by the very thing that has stopped — and was measured not
-/// to.
-///
-/// Done on every capture rather than only as a rescue, so there is one path
-/// and the tests exercise it. The picture is therefore of the window's
-/// child, which for a `GtkWindow` fills it: the window widget's own CSS
-/// background is not in the node. Postio's content paints its own plate, so
-/// nothing visible is lost; a bare `GtkWindow` leaning on the default
-/// background would render transparent.
-fn drawn(widget: &gtk::Widget) -> Option<gtk::gsk::RenderNode> {
-    if widget.width() <= 0 || widget.height() <= 0 {
-        return None;
+        sheet.me.replace(Rc::downgrade(&sheet));
+        sheet.dialog.connect_closed({
+            let open = Rc::clone(&sheet.open);
+            move |_| open.set(false)
+        });
+        sheet.wire();
+        sheet.set_keymap(keymap);
+        sheet
     }
-    let snapshot = gtk::Snapshot::new();
-    match laid_out(widget) {
-        Some((window, child)) => window.snapshot_child(&child, &snapshot),
-        None => {
-            let paintable = gtk::WidgetPaintable::new(Some(widget));
-            paintable.snapshot(
-                &snapshot,
-                f64::from(widget.width()),
-                f64::from(widget.height()),
+
+    fn weak(&self) -> std::rc::Weak<CaptureSheet> {
+        self.me.borrow().clone()
+    }
+
+    fn wire(&self) {
+        let weak = self.weak();
+        let each = move |command: CommandId| {
+            let weak = weak.clone();
+            move || {
+                if let Some(sheet) = weak.upgrade() {
+                    sheet.run(command);
+                }
+            }
+        };
+        let back = each(CommandId::Back);
+        self.cancel.connect_clicked(move |_| back());
+        let write = each(CommandId::CaptureWrite);
+        self.write.connect_clicked(move |_| write());
+        let change = each(CommandId::CaptureChangeProject);
+        self.change.connect_clicked(move |_| change());
+        for (toggle, mode) in [
+            (&self.task_toggle, Mode::Task),
+            (&self.note_toggle, Mode::Note),
+        ] {
+            let weak = self.weak();
+            toggle.connect_toggled(move |toggle| {
+                if toggle.is_active()
+                    && let Some(sheet) = weak.upgrade()
+                    && sheet.mode.get() != mode
+                {
+                    sheet.set_mode(mode);
+                }
+            });
+        }
+        let weak = self.weak();
+        self.entry.connect_changed(move |_| {
+            if let Some(sheet) = weak.upgrade() {
+                sheet.show_preview();
+            }
+        });
+        let weak = self.weak();
+        self.filter.connect_search_changed(move |_| {
+            if let Some(sheet) = weak.upgrade() {
+                sheet.list_projects();
+            }
+        });
+        let weak = self.weak();
+        self.projects.connect_row_activated(move |_, row| {
+            if let Some(sheet) = weak.upgrade() {
+                sheet.choose_project_at(row.index());
+            }
+        });
+        // Enter in the filter takes the first project it shows.
+        let weak = self.weak();
+        self.filter.connect_activate(move |_| {
+            if let Some(sheet) = weak.upgrade() {
+                sheet.choose_project_at(0);
+            }
+        });
+    }
+
+    /// Run `handler` with what a written capture says.
+    pub fn connect_written(&self, handler: impl Fn(String) + 'static) {
+        self.written.replace(Some(Rc::new(handler)));
+    }
+
+    /// Read every key the sheet shows from `keymap`.
+    pub fn set_keymap(&self, keymap: &Keymap) {
+        self.keymap.replace(keymap.clone());
+        let key = |command| hints::key(keymap, command);
+        self.cancel.set_child(Some(&keyhint::labelled(
+            "Cancel",
+            key(CommandId::Back).as_deref(),
+        )));
+        self.task_toggle.set_child(Some(&keyhint::labelled(
+            "Task",
+            key(CommandId::CaptureTask).as_deref(),
+        )));
+        self.note_toggle.set_child(Some(&keyhint::labelled(
+            "Note",
+            key(CommandId::CaptureNote).as_deref(),
+        )));
+        self.change.set_child(Some(&keyhint::labelled(
+            "Change",
+            key(CommandId::CaptureChangeProject).as_deref(),
+        )));
+        while let Some(child) = self.hint.first_child() {
+            self.hint.remove(&child);
+        }
+        self.hint.append(&gtk::Label::new(Some(
+            "The sentence from the mail, as written \u{b7}",
+        )));
+        // A control, as every key is (constitution II): what `alt+s` does.
+        let use_subject = gtk::Button::new();
+        postio_widgets::widgets::button::style(&use_subject, Kind::Ghost, Size::Small);
+        use_subject.set_child(Some(&keyhint::labelled(
+            "use the subject instead",
+            key(CommandId::CaptureUseSubject).as_deref(),
+        )));
+        let weak = self.weak();
+        use_subject.connect_clicked(move |_| {
+            if let Some(sheet) = weak.upgrade() {
+                sheet.run(CommandId::CaptureUseSubject);
+            }
+        });
+        self.hint.append(&use_subject);
+        self.show_mode();
+    }
+
+    /// Open over `parent` for `source`, as a task or a note, and read the
+    /// vault's projects for it.
+    pub fn open(&self, parent: &impl IsA<gtk::Widget>, source: Source, mode: Mode) {
+        let text = source
+            .sentence
+            .clone()
+            .unwrap_or_else(|| source.subject.clone());
+        self.from.set_text(&format!(
+            "From {} \u{b7} {} \u{b7} {}",
+            source.sender, source.subject, source.when
+        ));
+        self.due.set(source.due);
+        self.project.replace(None);
+        self.suggested.set(false);
+        self.picture.replace(VaultPicture::default());
+        self.filter.set_text("");
+        self.filter.set_visible(false);
+        self.projects.set_visible(false);
+        let subject = source.subject.clone();
+        self.source.replace(Some(source));
+        self.entry.set_text(&text);
+        self.set_mode(mode);
+        self.show_project();
+        self.open.set(true);
+        self.dialog.present(Some(parent));
+        // The keyboard in the text, the text left as it is: selecting it
+        // all would let the first key typed replace the sentence.
+        self.entry.grab_focus_without_selecting();
+        self.read_vault(subject);
+    }
+
+    /// Read the vault's projects, the suggestion and the open tasks.
+    fn read_vault(&self, subject: String) {
+        let client = self.client.clone();
+        let weak = self.weak();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
+            // reads the vault on a thread of its own (ADR 0041).
+            let read = client.vault(&subject).await;
+            let Some(sheet) = weak.upgrade() else {
+                return;
+            };
+            match read {
+                Ok(picture) => {
+                    let suggested = picture
+                        .suggestion
+                        .as_ref()
+                        .map(|suggestion| suggestion.project.clone());
+                    sheet.suggested.set(suggested.is_some());
+                    sheet.project.replace(suggested);
+                    sheet.picture.replace(picture);
+                    sheet.show_project();
+                    sheet.list_projects();
+                }
+                Err(error) => sheet.project_title.set_text(&error.to_string()),
+            }
+        });
+    }
+
+    /// Run `command`, as its key or its control asked.
+    pub fn run(&self, command: CommandId) {
+        match command {
+            CommandId::Back => self.close(),
+            CommandId::CaptureTask => self.set_mode(Mode::Task),
+            CommandId::CaptureNote => self.set_mode(Mode::Note),
+            CommandId::CaptureUseSubject => {
+                if let Some(source) = self.source.borrow().clone() {
+                    self.entry.set_text(&source.subject);
+                }
+            }
+            CommandId::CaptureChangeProject => {
+                let shown = !self.projects.is_visible();
+                self.filter.set_visible(shown);
+                self.projects.set_visible(shown);
+                if shown {
+                    self.list_projects();
+                    self.filter.grab_focus();
+                } else {
+                    self.entry.grab_focus();
+                }
+            }
+            CommandId::CaptureWrite => self.write(),
+            _ => {}
+        }
+    }
+
+    fn set_mode(&self, mode: Mode) {
+        self.mode.set(mode);
+        match mode {
+            Mode::Task => self.task_toggle.set_active(true),
+            Mode::Note => self.note_toggle.set_active(true),
+        }
+        self.show_mode();
+    }
+
+    /// What depends on task or note: the heading, the due row, the button,
+    /// and the preview.
+    fn show_mode(&self) {
+        let keymap = self.keymap.borrow().clone();
+        let mode = self.mode.get();
+        let (field, button, preview) = (mode.field(), mode.button(), mode.preview_title());
+        self.field_title.set_text(field);
+        self.write.set_child(Some(&keyhint::labelled(
+            button,
+            hints::key(&keymap, CommandId::CaptureWrite).as_deref(),
+        )));
+        self.preview_title.set_text(preview);
+        self.due_box.set_visible(self.mode.get().has_due());
+        self.show_due();
+        self.show_preview();
+    }
+
+    /// The due day and its quick picks: today, the coming Monday,
+    /// Wednesday and Friday, the mail's own day among them, and none.
+    fn show_due(&self) {
+        while let Some(child) = self.picks.first_child() {
+            self.picks.remove(&child);
+        }
+        let chosen = self.due.get();
+        let picks = capture::quick_picks(postio_ui::clock::now().date_naive(), chosen);
+        for capture::Pick { words, day } in picks {
+            let pick = gtk::ToggleButton::with_label(&words);
+            // The day chosen is ringed, the rest are quiet (screen 25).
+            let kind = if day == chosen {
+                Kind::Secondary
+            } else {
+                Kind::Ghost
+            };
+            postio_widgets::widgets::button::style(&pick, kind, Size::Small);
+            pick.add_css_class("focus-capture-pick");
+            pick.set_active(day == chosen);
+            let weak = self.weak();
+            pick.connect_clicked(move |_| {
+                if let Some(sheet) = weak.upgrade() {
+                    sheet.due.set(day);
+                    sheet.show_due();
+                    sheet.show_preview();
+                }
+            });
+            self.picks.append(&pick);
+        }
+        self.due_day.set_text(&capture::due_label(chosen));
+    }
+
+    /// The project chosen, why, and where its note is.
+    fn show_project(&self) {
+        let picture = self.picture.borrow();
+        let project = self.project.borrow().clone();
+        let named = picture
+            .suggestion
+            .as_ref()
+            .filter(|_| self.suggested.get())
+            .map(|suggestion| match &suggestion.reason {
+                // The word as the subject has it, which the vault read
+                // folded: the project's own name says it as written.
+                Reason::NamedInSubject(_) => suggestion.project.name.as_str(),
+            });
+        self.project_title.set_text(&capture::project_title(named));
+        match project {
+            Some(project) => {
+                self.project_name.set_text(&project.name);
+                self.project_note
+                    .set_text(&project.note.display().to_string());
+            }
+            None => {
+                self.project_name.set_text(capture::INBOX);
+                self.project_note.set_text(&capture::inbox_note(
+                    &picture.tasks_note.display().to_string(),
+                ));
+            }
+        }
+        drop(picture);
+        self.show_preview();
+    }
+
+    /// The projects the filter lets through, and the tasks note.
+    fn list_projects(&self) {
+        while let Some(row) = self.projects.first_child() {
+            self.projects.remove(&row);
+        }
+        let picture = self.picture.borrow();
+        let wanted = self.filter.text().to_lowercase();
+        let open = |note: &std::path::Path| {
+            picture
+                .tasks
+                .iter()
+                .filter(|task| task.note == note && !task.finished)
+                .count()
+        };
+        let mut shown: Vec<Option<Project>> = picture
+            .projects
+            .iter()
+            .filter(|project| capture::project_listed(&project.name, &wanted))
+            .cloned()
+            .map(Some)
+            .collect();
+        if capture::inbox_listed(&wanted) {
+            shown.push(None);
+        }
+        let chosen = self.project.borrow().clone();
+        for project in &shown {
+            let (name, note) = match project {
+                Some(project) => (project.name.clone(), project.note.display().to_string()),
+                None => (
+                    capture::INBOX.to_owned(),
+                    capture::inbox_note(&picture.tasks_note.display().to_string()),
+                ),
+            };
+            let count = open(
+                project
+                    .as_ref()
+                    .map_or(picture.tasks_note.as_path(), |project| {
+                        project.note.as_path()
+                    }),
             );
+            let row = adw::ActionRow::builder()
+                .title(glib::markup_escape_text(&name))
+                .subtitle(glib::markup_escape_text(&note))
+                .activatable(true)
+                .build();
+            let count = gtk::Label::new(Some(&capture::open_count(count)));
+            count.add_css_class("dim-label");
+            row.add_suffix(&count);
+            if *project == chosen {
+                row.add_prefix(&gtk::Image::from_icon_name("object-select-symbolic"));
+            }
+            self.projects.append(&row);
+        }
+        drop(picture);
+        self.projects_shown.replace(shown);
+    }
+
+    /// Choose the project listed at `index`, and put the list away.
+    fn choose_project_at(&self, index: i32) {
+        let chosen = usize::try_from(index)
+            .ok()
+            .and_then(|index| self.projects_shown.borrow().get(index).cloned());
+        let Some(project) = chosen else {
+            return;
+        };
+        let suggested = self
+            .picture
+            .borrow()
+            .suggestion
+            .as_ref()
+            .is_some_and(|suggestion| Some(&suggestion.project) == project.as_ref());
+        self.suggested.set(suggested);
+        self.project.replace(project);
+        self.filter.set_visible(false);
+        self.projects.set_visible(false);
+        self.show_project();
+        self.entry.grab_focus();
+    }
+
+    /// The note a note entry goes to: the project's, or the tasks note.
+    fn note_path(&self) -> std::path::PathBuf {
+        self.project
+            .borrow()
+            .as_ref()
+            .map(|project| project.note.clone())
+            .unwrap_or_else(|| self.picture.borrow().tasks_note.clone())
+    }
+
+    /// The task as it stands.
+    fn task(&self) -> Option<Task> {
+        let source = self.source.borrow();
+        let source = source.as_ref()?;
+        Some(Task {
+            text: self.entry.text().to_string(),
+            message: source.message,
+            due: self.due.get(),
+        })
+    }
+
+    /// The note entry as it stands.
+    fn entry(&self) -> Option<NoteEntry> {
+        let source = self.source.borrow();
+        let source = source.as_ref()?;
+        Some(NoteEntry {
+            text: self.entry.text().to_string(),
+            message: source.message,
+            quote: None,
+        })
+    }
+
+    /// The exact line that will be appended.
+    fn show_preview(&self) {
+        let line = match self.mode.get() {
+            Mode::Task => self.task().map(|task| task.line()),
+            Mode::Note => self
+                .entry()
+                .map(|entry| entry.lines().trim_end().to_owned()),
+        };
+        self.preview.set_text(line.as_deref().unwrap_or_default());
+        let place = self
+            .project
+            .borrow()
+            .as_ref()
+            .map_or_else(|| capture::INBOX.to_owned(), |project| project.name.clone());
+        self.footnote
+            .set_text(&capture::footnote(self.mode.get(), &place, self.due.get()));
+    }
+
+    /// Append what the sheet shows to the vault, through the host; close
+    /// and say so once it is written.
+    fn write(&self) {
+        let project = self.project.borrow().clone();
+        let place = project
+            .as_ref()
+            .map_or_else(|| "Inbox".to_owned(), |project| project.name.clone());
+        let client = self.client.clone();
+        let weak = self.weak();
+        match self.mode.get() {
+            Mode::Task => {
+                let Some(task) = self.task() else {
+                    return;
+                };
+                let due = task.due;
+                glib::spawn_future_local(async move {
+                    // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
+                    let written = client.capture_task(project, task).await;
+                    if let Some(sheet) = weak.upgrade() {
+                        let said = due.map_or_else(
+                            || format!("Task added to {place}"),
+                            |day| format!("Task added to {place} \u{b7} due {}", day.format("%a")),
+                        );
+                        sheet.done(written.map(|_| said));
+                    }
+                });
+            }
+            Mode::Note => {
+                let Some(entry) = self.entry() else {
+                    return;
+                };
+                let note = self.note_path();
+                glib::spawn_future_local(async move {
+                    // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
+                    let written = client.capture_note(note, entry).await;
+                    if let Some(sheet) = weak.upgrade() {
+                        sheet.done(written.map(|_| format!("Note added to {place}")));
+                    }
+                });
+            }
         }
     }
-    snapshot.to_node()
-}
 
-/// Whether the compositor is presenting this window right now.
-///
-/// A `GtkWidgetPaintable` over a **native** widget answers out of the
-/// surface, so it is empty exactly when the surface has no presented frame —
-/// which is why it is the wrong way to take a picture and the right way to
-/// ask this question.
-///
-/// It cannot, on its own, tell "no frame yet" from "no frame ever": that is
-/// what the wait in [`texture_within`] is for. Two other spellings were tried
-/// first and neither works here. `GDK_TOPLEVEL_STATE_SUSPENDED` is the
-/// compositor's own word for it and would be better if it were set — mutter
-/// does not set it for a window that has merely stopped receiving frame
-/// callbacks, measured. Asking the frame clock for a layout or paint phase
-/// does nothing, because it is throttled by the very thing that has stopped.
-fn presenting(widget: &gtk::Widget) -> bool {
-    let paintable = gtk::WidgetPaintable::new(Some(widget));
-    let snapshot = gtk::Snapshot::new();
-    paintable.snapshot(
-        &snapshot,
-        f64::from(widget.width().max(1)),
-        f64::from(widget.height().max(1)),
-    );
-    snapshot.to_node().is_some()
-}
-
-/// The window and its child, with any pending resize settled.
-fn laid_out(widget: &gtk::Widget) -> Option<(&gtk::Window, gtk::Widget)> {
-    let window = widget.downcast_ref::<gtk::Window>()?;
-    let child = GtkWindowExt::child(window)?;
-    if child.width() <= 0 || child.height() <= 0 {
-        return None;
+    fn done(&self, written: Result<String, postio_model::listing::StoreError>) {
+        let said = match written {
+            Ok(said) => {
+                self.close();
+                said
+            }
+            Err(error) => error.to_string(),
+        };
+        let handler = self.written.borrow().clone();
+        if let Some(handler) = handler {
+            handler(said);
+        }
     }
-    child.allocate(child.width(), child.height(), -1, None);
-    Some((window, child))
-}
 
-/// Render `widget` and write it to `path`.
-///
-/// **Nothing is written when this fails**, so the file's existence is a fact
-/// a caller can act on — which is what lets `shot` exit non-zero and mean it.
-pub fn png(widget: &impl IsA<gtk::Widget>, path: &Path) -> Result<Written, Error> {
-    png_within(widget, path, patience())
-}
+    /// Close, writing nothing.
+    pub fn close(&self) {
+        self.dialog.close();
+    }
 
-/// [`png`], giving up after `deadline`.
-pub fn png_within(
-    widget: &impl IsA<gtk::Widget>,
-    path: &Path,
-    deadline: Duration,
-) -> Result<Written, Error> {
-    let picture = texture_within(widget, deadline)?;
-    picture
-        .texture
-        .save_to_png(path)
-        .map_err(|source| Error::Write {
-            path: path.display().to_string(),
-            source,
-        })?;
-    Ok(Written {
-        width: picture.texture.width(),
-        height: picture.texture.height(),
-        stalled: picture.stalled,
-    })
+    /// Whether the sheet is over the window.
+    pub fn is_open(&self) -> bool {
+        self.open.get()
+    }
+
+    /// Whether the sheet is up and drawn.
+    pub fn is_shown(&self) -> bool {
+        self.dialog
+            .child()
+            .is_some_and(|child| child.is_mapped() && child.width() > 0)
+    }
+
+    /// The text to capture, as it stands.
+    pub fn text(&self) -> String {
+        self.entry.text().to_string()
+    }
+
+    /// The exact line the preview shows.
+    pub fn preview(&self) -> String {
+        self.preview.text().to_string()
+    }
+
+    /// Every label the sheet shows, in order.
+    pub fn texts(&self) -> Vec<String> {
+        let mut said = Vec::new();
+        let mut stack = vec![self.dialog.clone().upcast::<gtk::Widget>()];
+        while let Some(widget) = stack.pop() {
+            if !widget.is_visible() {
+                continue;
+            }
+            if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+                let text = label.text().to_string();
+                if !text.is_empty() {
+                    said.push(text);
+                }
+            }
+            let mut child = widget.last_child();
+            while let Some(next) = child {
+                child = next.prev_sibling();
+                stack.push(next);
+            }
+        }
+        said
+    }
+
+    /// The dialog.
+    pub fn dialog(&self) -> &adw::Dialog {
+        &self.dialog
+    }
 }

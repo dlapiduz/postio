@@ -5,7 +5,7 @@
 //! rights. The executor needs `rusqlite` to build them; the frontend consumes
 //! them and must never link SQLite at all
 //! (`scripts/checks/check-crate-boundaries.py`). Keeping the shapes here lets
-//! `postio-gtk` name the thing it is drawing instead of maintaining a
+//! a frontend name the thing it is drawing instead of maintaining a
 //! parallel copy of it that could drift.
 
 use std::time::Duration;
@@ -64,6 +64,9 @@ pub struct SearchHit {
     pub from: Option<EmailAddress>,
     /// When the server received it.
     pub received_at: DateTime<Utc>,
+    /// The message's first line, as the list shows it: what tells two hits
+    /// with one subject apart without opening either.
+    pub preview: Option<String>,
     /// A snippet of the matching text, with each match wrapped in the
     /// markers [`crate::highlight`] defines. Empty for a query with no free
     /// text to snippet; [`crate::highlight::from_snippet`] reads it back.

@@ -18,7 +18,7 @@ const SAMPLE: &str = "\
 [sync]
 idle = true
 
-[filters.urgent]
+[saved_searches.urgent]
 query = \"is:unread\"
 pinned = true
 ";
@@ -28,15 +28,15 @@ pinned = true
 /// reorder over it a refusal and tells nothing about the direction that was
 /// asked for.
 const THREE: &str = "\
-[filters.a]
+[saved_searches.a]
 query = \"from:ada\"
 pinned = true
 
-[filters.b]
+[saved_searches.b]
 query = \"from:grace\"
 pinned = true
 
-[filters.c]
+[saved_searches.c]
 query = \"from:alan\"
 pinned = true
 ";
@@ -221,7 +221,7 @@ fn deleting_takes_the_row_away() {
     assert!(
         !std::fs::read_to_string(dir.path().join("config.toml"))
             .expect("the file")
-            .contains("[filters.urgent]")
+            .contains("[saved_searches.urgent]")
     );
 }
 
@@ -240,7 +240,7 @@ fn the_rest_of_the_file_survives_a_saved_search() {
     );
     assert!(after.contains("idle = true"), "[sync] moved:\n{after}");
     assert!(
-        after.contains("[filters.has-attach]"),
+        after.contains("[saved_searches.has-attach]"),
         "and the save itself still has to land:\n{after}"
     );
 }
@@ -248,9 +248,10 @@ fn the_rest_of_the_file_survives_a_saved_search() {
 #[test]
 fn a_config_that_will_not_parse_is_refused_and_left_alone() {
     // The tempting fallback -- a broken file tells us nothing, so start from
-    // the defaults -- would write an empty `[filters]` over searches the user
+    // the defaults -- would write an empty `[saved_searches]` over searches the user
     // still has. Refusing is the only reading that cannot lose them.
-    let broken = "[ui]\ndensity = 42\n\n[filters.keep]\nquery = \"is:unread\"\npinned = true\n";
+    let broken =
+        "[ui]\ndensity = 42\n\n[saved_searches.keep]\nquery = \"is:unread\"\npinned = true\n";
     let (dir, path) = config(broken);
 
     let refused = save_search(path.clone(), "has:attach".to_owned());

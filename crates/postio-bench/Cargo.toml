@@ -28,7 +28,10 @@ futures-util = { workspace = true }
 gtk = { version = "0.11.4", package = "gtk4", features = ["v4_20"] }
 postio-config.workspace = true
 postio-core.workspace = true
+# `list_scroll` and `composer_open`: Focus's row and its composer frame.
 postio-gtk.workspace = true
+postio-host.workspace = true
+postio-widgets.workspace = true
 postio-account.workspace = true
 postio-index.workspace = true
 postio-model = { workspace = true, features = ["test-corpus"] }
@@ -56,10 +59,6 @@ workspace = true
 # store, sync and list benchmarks. `harness = false` on every one: each owns
 # its `main`, whether through criterion or by printing its own table.
 [[bench]]
-name = "action_round_trip"
-harness = false
-
-[[bench]]
 name = "perf_budgets"
 harness = false
 
@@ -69,10 +68,6 @@ harness = false
 
 [[bench]]
 name = "composer_open"
-harness = false
-
-[[bench]]
-name = "conversation_rows"
 harness = false
 
 [[bench]]

@@ -87,6 +87,7 @@ fn events_cover_the_repaint_surface() {
         },
         Event::Error {
             message: "connection refused".into(),
+            account: None,
         },
     ];
 

@@ -1,12 +1,15 @@
-# Archive under the cursor, and the row below takes its place (#1687).
+# Archive under the cursor, and the row below takes its place (#1687, #1746).
 #
-# The defect: archiving or deleting under the cursor scrolled the list to
-# the top and moved the cursor somewhere else, so the next `a` archived a
-# message the person never looked at. Fixed before storyboards existed, so
-# this is pinned: the checks name the exact row the cursor must land on.
-source = { kind = "issue", ref = "#1687" }
+# The defect: archiving or deleting under the cursor moved the cursor
+# somewhere else, so the next `a` archived a message the person never looked
+# at. The classic app's #1687 was fixed and pinned here; Focus has its own
+# form of it, #1746: the archived row's cursor was not handed to the row
+# that takes its place, so the cursor was gone and the next `a` archived
+# nothing. Focus opens with the cursor on index 0, so the two `j` leave it on
+# index 1 and then 2.
+apps   = ["focus"]
+source = { kind = "issue", ref = "#1746" }
 proof  = "pinned"
-design = "06-mouse-parity-undo"
 
 [[step]]
 id      = "down"
@@ -21,7 +24,7 @@ check   = { cursor.index = 2 }
 [[step]]
 command = "archive"
 check   = { keyboard.region = "list", cursor.index = { same_as = "second" }, notice.undo = true }
-expect  = "The archived row is gone and the one below takes its place under the cursor. The list does not scroll and nothing jumps."
+expect  = "The archived row is gone and the one below takes its place under the cursor ring. The list does not scroll and nothing jumps."
 
 [[step]]
 command = "archive"
@@ -30,5 +33,5 @@ expect  = "A second archive works on the row that took the first one's place."
 
 [[step]]
 command = "undo"
-check   = { keyboard.region = "list" }
-expect  = "The last archived row comes back, in its place."
+check   = { keyboard.region = "list", cursor.index = { same_as = "second" }, notice.undo = false }
+expect  = "The archived rows come back in their place, the cursor is on the first of them, and the list has not scrolled. The toast says it was undone and offers nothing more to undo."

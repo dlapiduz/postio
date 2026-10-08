@@ -4,7 +4,7 @@
 The check exists because #842's dial stops at the edge of
 `postio_test_support`. Every deadline that goes through that crate answers to
 `POSTIO_TEST_PATIENCE`; the forty-six written by hand do not, and all three
-of the `gtk_suite` cases #957 names are among them. So the one lever a
+of the GTK suite cases #957 names are among them. So the one lever a
 session has for a local full-suite run on a loaded box -- turn the dial up --
 reaches everything except the tests that flake.
 

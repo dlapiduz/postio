@@ -28,7 +28,7 @@ density = \"compact\"
 theme = \"dark\"
 some_future_key = 42
 
-[filters.urgent]
+[saved_searches.urgent]
 query = \"is:unread\"
 ";
 
@@ -50,7 +50,7 @@ fn patching_appearance_leaves_everything_outside_the_ui_table_verbatim() {
         "sync moved:\n{patched}"
     );
     assert!(
-        patched.contains("[filters.urgent]\nquery = \"is:unread\""),
+        patched.contains("[saved_searches.urgent]\nquery = \"is:unread\""),
         "filters moved:\n{patched}"
     );
     assert!(
@@ -112,14 +112,17 @@ fn appearance_is_unreadable_from_a_file_that_will_not_parse() {
 }
 
 #[test]
-fn the_nav_lists_all_eight_sections_by_human_name_under_two_headings() {
+fn the_nav_lists_the_macs_eight_sections_by_human_name_under_two_headings() {
+    // Filtering is not among them: Focus's rules act only while Focus runs,
+    // on the desktop or in the terminal (spec 007 US11, scenario 4), so the
+    // Mac has nothing for its switch to turn.
     let sections = settings_sections();
     let labels: Vec<&str> = sections.iter().map(|s| s.label.as_str()).collect();
     assert_eq!(
         labels,
         [
             "Accounts",
-            "Filters",
+            "Saved searches",
             "Composing",
             "Appearance",
             "Keyboard",
@@ -127,7 +130,7 @@ fn the_nav_lists_all_eight_sections_by_human_name_under_two_headings() {
             "Privacy",
             "Config file",
         ],
-        "the nav order and names are the ones the GTK window already shows"
+        "the nav order and names are the shared table's"
     );
 
     // The grouping is the nav's shape, and a frontend that guessed it would
@@ -137,7 +140,7 @@ fn the_nav_lists_all_eight_sections_by_human_name_under_two_headings() {
         .filter(|s| s.group == GroupFfi::Mail)
         .map(|s| s.label.as_str())
         .collect();
-    assert_eq!(mail, ["Accounts", "Filters", "Composing"]);
+    assert_eq!(mail, ["Accounts", "Saved searches", "Composing"]);
     assert_eq!(settings_group_label(GroupFfi::Application), "APPLICATION");
 }
 
@@ -500,12 +503,12 @@ fn every_sync_field_survives_a_round_trip() {
 // --- the Filters pane (#1156) ----------------------------------------------
 
 const FILTERS: &str = "\
-[filters.urgent]
+[saved_searches.urgent]
 query = \"is:unread flag:flagged\"
 pinned = true
 order = 1
 
-[filters.newsletters]
+[saved_searches.newsletters]
 query = \"list:*\"
 name = \"Mailing lists\"
 a_key_this_build_does_not_know = true

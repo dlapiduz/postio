@@ -1,13 +1,18 @@
 # ADR 0024 — Layout intent is stored; the viewport's constraint is applied, never written back
 
-- **Status:** Accepted (2026-09-02)
+- **Status:** Accepted (2026-09-02). Built in the classic app's three-pane
+  shell, which was removed with that app (T256, ADR 0043). The desktop app
+  follows the same rule:
+  `[focus] reading` is the intent (the open message over the list or beside
+  it), and a window narrower than 980 px opens the dialog without touching
+  the setting (spec 007 T232)
 - **Date:** 2026-09-02
 - **Decision by:** a `/ux-architect` session, on the question
   [#825](https://github.com/dlapiduz/postio/issues/825) raised: what should
   the layout do at laptop width?
 - **Issue:** [#825](https://github.com/dlapiduz/postio/issues/825)
-- **Related:** `PRODUCT.md` §9 (three panes, adapting), §19 (PLATE 1b),
-  `crates/postio-gtk/src/shell.rs` (the modes and their thresholds),
+- **Related:** `PRODUCT.md` §9 (as it was: three panes, adapting), the
+  classic app's `shell.rs` (the modes and their thresholds; removed in T256),
   [#502](https://github.com/dlapiduz/postio/issues/502) (one owner for the
   reading pane), CLAUDE.md's motion budget
 - **Decision:** The adaptive layout is **already designed and implemented**;

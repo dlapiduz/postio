@@ -13,7 +13,8 @@
 //! Paging by `OFFSET` counts rows from the top every time, so it is `O(offset)`
 //! *and* it skips a row whenever a message arrives while the user is scrolling:
 //! everything shifts down by one and the next page starts one row too late.
-//! [`ListCursor`] is the sort key itself — `(received_at, id)` — so the next
+//! [`ListCursor`] is the sort key itself — `(sort_at, id)` for a folder,
+//! `(received_at, id)` for a query view — so the next
 //! page continues exactly where the last one ended no matter what arrived in
 //! between, and the index turns it into a seek.
 //!
@@ -36,6 +37,8 @@ use postio_model::{
 /// list wants the same answer to the same question, and #670 is what
 /// stopped this being one of five spellings of it.
 pub use postio_model::ListScope;
+
+use postio_model::promoted::PromotedHeaders;
 
 use super::{from_millis, require_persisted, to_millis, unknown_enum};
 
@@ -68,7 +71,8 @@ pub struct MessageListRow {
     pub subject: Option<String>,
     /// The snippet under the subject.
     pub preview: Option<String>,
-    /// When the server received it; the sort key.
+    /// When the server received it: the sort key of every list but a
+    /// folder's, which is [`Self::sort_at`].
     pub received_at: DateTime<Utc>,
     /// Whether it has been read.
     pub seen: bool,
@@ -99,6 +103,9 @@ pub struct MessageListRow {
     /// the conversation's members, participants, folders and labels -- for
     /// one number (#1613).
     pub thread_count: Option<u32>,
+    /// Its place in a folder's lists: `received_at` when it was filed, and
+    /// the wake time once a snooze has woken it (spec 007, research R7).
+    pub sort_at: DateTime<Utc>,
 }
 
 impl MessageListRow {
@@ -112,6 +119,7 @@ impl MessageListRow {
     pub fn cursor(&self) -> ListCursor {
         ListCursor {
             received_at: self.received_at,
+            sort_at: self.sort_at,
             id: self.id,
         }
     }
@@ -120,8 +128,10 @@ impl MessageListRow {
 /// A position in the list: the sort key of the last row already shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ListCursor {
-    /// The row's `received_at`.
+    /// The row's `received_at`, which a query view resumes by.
     pub received_at: DateTime<Utc>,
+    /// The row's `sort_at`, which a folder resumes by.
+    pub sort_at: DateTime<Utc>,
     /// The row's id, which breaks ties between messages received in the same
     /// millisecond and is what makes the order total.
     pub id: MessageId,
@@ -221,6 +231,24 @@ pub enum MessageSet {
         /// Rows the user deselected. Built by clicking, so it is short.
         except: Vec<MessageId>,
     },
+    /// What Postio Focus's inbox lists of one account's inbox, less the
+    /// conversations taken back out of the selection (spec 007, T167).
+    ///
+    /// Focus's membership, not the folder's: mail held for a digest is not
+    /// listed, so a whole-view selection there never reaches it -- the same
+    /// test [`super::focus_excludes`] puts on every read of Focus's inbox.
+    /// A Focus row is a conversation folded across accounts, so what is
+    /// taken back out is conversations: every one a deselected row stands
+    /// for, in whichever account this unit is.
+    InFocusInbox {
+        /// The inbox the predicate is about.
+        mailbox: MailboxId,
+        /// Messages the user deselected that belong to no conversation.
+        except: Vec<MessageId>,
+        /// The conversations the deselected rows stand for, every folded
+        /// copy included.
+        except_threads: Vec<ThreadId>,
+    },
     /// Every flagged message in an account, wherever it is filed, less the
     /// rows taken back out of the selection.
     ///
@@ -284,7 +312,9 @@ impl MessageSet {
     /// it names put them.
     pub fn mailbox(&self) -> Option<MailboxId> {
         match self {
-            MessageSet::InMailbox { mailbox, .. } => Some(*mailbox),
+            MessageSet::InMailbox { mailbox, .. } | MessageSet::InFocusInbox { mailbox, .. } => {
+                Some(*mailbox)
+            }
             // A smart folder is not a folder, here as everywhere else --
             // and an aggregate over accounts is further from one still.
             MessageSet::Flagged { .. } | MessageSet::Queued(_) => None,
@@ -337,6 +367,35 @@ impl MessageSet {
                 sql.push_str(&without_conversations(except, first + 1));
                 let mut arguments = vec![mailbox.get()];
                 arguments.extend(except.iter().map(|id| id.get()).collect::<Vec<_>>());
+                (sql, arguments)
+            }
+            MessageSet::InFocusInbox {
+                mailbox,
+                except,
+                except_threads,
+            } => {
+                let mut sql = format!(
+                    "messages.mailbox_id = ?{first} AND messages.{}{}",
+                    super::VISIBLE,
+                    super::focus_excludes("messages.")
+                );
+                let mut next = first + 1;
+                if !except.is_empty() {
+                    sql.push_str(&format!(
+                        " AND messages.id NOT IN ({})",
+                        placeholders(except.len(), next)
+                    ));
+                    next += except.len();
+                }
+                if !except_threads.is_empty() {
+                    sql.push_str(&format!(
+                        " AND (messages.thread_id IS NULL OR messages.thread_id NOT IN ({}))",
+                        placeholders(except_threads.len(), next)
+                    ));
+                }
+                let mut arguments = vec![mailbox.get()];
+                arguments.extend(except.iter().map(|id| id.get()));
+                arguments.extend(except_threads.iter().map(|id| id.get()));
                 (sql, arguments)
             }
             // The subquery is bounded by two integers, so SQLite seeks the
@@ -458,10 +517,16 @@ pub enum FlagSource {
 }
 
 /// What one [`MessageRepository::upsert_batch`] did.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UpsertReport {
     /// Messages that were not known locally.
     pub inserted: usize,
+    /// Which rows those are: the messages this batch wrote a row for, as
+    /// distinct from ones it matched and updated -- among them a sent copy
+    /// this client filed before the server named it, which a sync adopts by
+    /// its Message-ID. What counts a message once, on the pass that first
+    /// filed it (the `correspondents` a Sent folder's sync records).
+    pub inserted_ids: Vec<MessageId>,
     /// Messages that already had a row under the same server identity.
     pub updated: usize,
     /// Messages whose flags the queue was still holding intent about, so the
@@ -627,7 +692,8 @@ id, account_id, mailbox_id, thread_id, rfc_message_id, in_reply_to, reference_id
 date, received_at, preview, size, flags, has_attachments, uid, uid_validity, mod_seq,
 remote_id, body_state, flags_dirty, has_pending_operations, deleted_locally, last_synced_at,
 raw_blob_id, content_type, list_id, text_part_id, text_part_headers,
-html_part_id, html_part_headers, snoozed_until, text_is_flowed, read_receipt_requested";
+html_part_id, html_part_headers, snoozed_until, text_is_flowed, read_receipt_requested,
+unsubscribe_offered, automation";
 
 /// The columns a list row needs, and not one more.
 ///
@@ -653,7 +719,17 @@ messages.size, messages.send_state, messages.send_at,
     JOIN addresses ON addresses.id = recipients.address_id
   WHERE recipients.message_id = messages.id AND recipients.kind = 'from'
   ORDER BY recipients.position LIMIT 1),
-(SELECT threads.message_count FROM threads WHERE threads.id = messages.thread_id)";
+(SELECT threads.message_count FROM threads WHERE threads.id = messages.thread_id),
+messages.sort_at";
+
+/// [`LIST_COLUMNS`], read off the message `alias` names rather than off
+/// `messages`: for a statement whose list row is one of several things it
+/// reads, as Focus's window reads its representative alongside the
+/// conversation. Rewritten from the one list, never copied, for the reason
+/// `ThreadRepository`'s `latest_messages_for` gives.
+pub(crate) fn list_columns_of(alias: &str) -> String {
+    LIST_COLUMNS.replace("messages.", &format!("{alias}."))
+}
 
 impl<'a> MessageRepository<'a> {
     /// Borrows a connection.
@@ -858,6 +934,7 @@ impl<'a> MessageRepository<'a> {
                         message.id = insert(&transaction, message).await?;
                         write_children(&transaction, message).await?;
                         report.inserted += 1;
+                        report.inserted_ids.push(message.id);
                     }
                 }
             }
@@ -911,6 +988,52 @@ impl<'a> MessageRepository<'a> {
         message.attachments = read_attachments(self.connection, id).await?;
         message.labels = read_labels(self.connection, id).await?;
         Ok(Some(message))
+    }
+
+    /// The newest message's id: every message stored after it has a larger
+    /// one, since ids are never reused (`AUTOINCREMENT`). What Focus marks
+    /// the mail it has accounted for with (spec 007 FR-134). One lookup at
+    /// the end of the key.
+    pub async fn newest_id(&self) -> Result<Option<MessageId>> {
+        sql::first(
+            self.connection,
+            "SELECT id FROM messages ORDER BY id DESC LIMIT 1",
+            (),
+            |row| Ok(MessageId::new(row.col(0)?)),
+        )
+        .await
+    }
+
+    /// A window of `mailbox`'s mail as Focus's inbox holds it -- what the
+    /// list shows, less the mail a digest holds -- newest first, after
+    /// `after` (a row's `sort_at` and id): what a sweep of the inbox walks,
+    /// a window at a time, so the inbox is never read whole (spec 007
+    /// FR-118). One statement, a seek on `idx_messages_list`.
+    pub async fn focus_inbox_window(
+        &self,
+        mailbox: MailboxId,
+        after: Option<(DateTime<Utc>, MessageId)>,
+        limit: u32,
+    ) -> Result<Vec<(MessageId, DateTime<Utc>)>> {
+        let (at, id) = after.map_or((i64::MAX, i64::MAX), |(at, id)| (to_millis(at), id.get()));
+        sql::all(
+            self.connection,
+            &Self::explain_focus_inbox_window(),
+            bind![mailbox.get(), at, id, i64::from(limit)],
+            |row| Ok((MessageId::new(row.col(0)?), from_millis(row.col(1)?))),
+        )
+        .await
+    }
+
+    /// The SQL [`Self::focus_inbox_window`] runs.
+    pub fn explain_focus_inbox_window() -> String {
+        format!(
+            "SELECT id, sort_at FROM messages
+              WHERE mailbox_id = ?1 AND {}{} AND (sort_at, id) < (?2, ?3)
+              ORDER BY sort_at DESC, id DESC LIMIT ?4",
+            super::VISIBLE,
+            super::focus_excludes("messages.")
+        )
     }
 
     /// One window of the message list, newest first.
@@ -991,9 +1114,10 @@ impl<'a> MessageRepository<'a> {
     pub fn explain(&self, query: &ListQuery) -> String {
         format!(
             "SELECT {LIST_COLUMNS} FROM messages WHERE {} \
-             ORDER BY messages.received_at DESC, messages.id DESC LIMIT {}",
+             ORDER BY messages.{key} DESC, messages.id DESC LIMIT {}",
             where_clause(query, query.after.is_some()),
-            query.limit
+            query.limit,
+            key = order_key(&query.scope),
         )
     }
 
@@ -1166,6 +1290,25 @@ impl<'a> MessageRepository<'a> {
         Ok(sql::execute(self.connection, &sql, parameters).await? as usize)
     }
 
+    /// Records what a message's promoted headers say (spec 007, research
+    /// R8), and answers whether the message is still here.
+    ///
+    /// For the body's own headers, when a first sync did not ask for them:
+    /// one statement, and a message expunged meanwhile is no error.
+    pub async fn set_promoted(&self, id: MessageId, promoted: PromotedHeaders) -> Result<bool> {
+        let written = sql::execute(
+            self.connection,
+            "UPDATE messages SET unsubscribe_offered = ?2, automation = ?3 WHERE id = ?1",
+            bind![
+                id.get(),
+                i64::from(promoted.unsubscribe_offered),
+                i64::from(promoted.automation)
+            ],
+        )
+        .await?;
+        Ok(written > 0)
+    }
+
     /// Hides messages pending a remote delete or move, or brings them back.
     ///
     /// This is what makes delete feel instant and undo possible: the row stays,
@@ -1268,9 +1411,27 @@ impl<'a> MessageRepository<'a> {
         woken.sort_unstable();
 
         if !woken.is_empty() {
+            // A woken message comes back at the top (spec 007, research R7):
+            // its place in its folder's lists becomes the time it woke, and
+            // its conversation moves there too for the account-wide list,
+            // which is ordered by the thread. First, while the snoozes still
+            // say which conversations and when.
             sql::execute(
                 self.connection,
-                "UPDATE messages SET snoozed_until = NULL
+                "UPDATE threads
+                    SET last_at = max(last_at, (
+                        SELECT max(snoozed_until) FROM messages
+                         WHERE messages.thread_id = threads.id AND account_id = ?1
+                           AND snoozed_until IS NOT NULL AND snoozed_until <= ?2))
+                  WHERE id IN (SELECT thread_id FROM messages
+                                WHERE account_id = ?1 AND snoozed_until IS NOT NULL
+                                  AND snoozed_until <= ?2 AND thread_id IS NOT NULL)",
+                bind![account.get(), now_millis],
+            )
+            .await?;
+            sql::execute(
+                self.connection,
+                "UPDATE messages SET sort_at = max(sort_at, snoozed_until), snoozed_until = NULL
                   WHERE account_id = ?1 AND snoozed_until IS NOT NULL AND snoozed_until <= ?2",
                 bind![account.get(), now_millis],
             )
@@ -1566,18 +1727,7 @@ impl<'a> MessageRepository<'a> {
     ) -> Result<Vec<BackfillCandidate>> {
         sql::all(
             self.connection,
-            "SELECT messages.id, messages.uid, messages.size, messages.received_at,
-                    mailboxes.path, messages.remote_id, mailboxes.role
-               FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
-              WHERE messages.mailbox_id = ?1
-                AND messages.body_headers IS NULL
-                AND messages.raw_blob_id IS NULL
-                AND messages.body_state IN ('partial', 'full')
-                AND messages.uid IS NOT NULL
-                AND messages.remote_id IS NOT NULL
-                AND messages.deleted_locally = 0
-              ORDER BY messages.received_at DESC
-              LIMIT ?2",
+            NEEDING_A_HEADER_FETCH,
             bind![mailbox_id.get(), limit],
             |row| read_backfill_candidate(row, mailbox_id, role_at(row, 6)?),
         )
@@ -1782,20 +1932,7 @@ impl<'a> MessageRepository<'a> {
     ) -> Result<Vec<BackfillCandidate>> {
         sql::all(
             self.connection,
-            "SELECT messages.id, messages.uid, messages.size, messages.received_at,
-                    mailboxes.path, messages.remote_id, mailboxes.role
-               FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
-              WHERE messages.mailbox_id = ?1
-                AND messages.body_state = 'partial'
-                AND messages.uid IS NOT NULL
-                AND messages.remote_id IS NOT NULL
-                AND messages.deleted_locally = 0
-                AND EXISTS (SELECT 1 FROM attachments
-                             WHERE attachments.message_id = messages.id
-                               AND attachments.blob_id IS NULL
-                               AND attachments.part_id IS NOT NULL)
-              ORDER BY messages.received_at DESC
-              LIMIT ?2 OFFSET ?3",
+            NEEDING_PAYLOADS,
             bind![mailbox_id.get(), limit, offset],
             |row| read_backfill_candidate(row, mailbox_id, role_at(row, 6)?),
         )
@@ -1857,61 +1994,44 @@ impl<'a> MessageRepository<'a> {
         // the single statement walked the folder and filtered it, and newest
         // first the rows it passed over were exactly the bodies already
         // fetched -- more of them on every top-up. Each arm below is a seek
-        // into an index that holds its rows in the order they are wanted, so
-        // the window is read and nothing else. Each is asked for the whole
-        // `offset + limit`, because the merged order, not any arm's, decides
-        // which are skipped.
-        const SELECT: &str = "SELECT messages.id, messages.uid, messages.size, \
-                    messages.received_at, mailboxes.path, messages.remote_id, mailboxes.role
-               FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id";
-        const FILTER: &str = "messages.uid IS NOT NULL
-                AND messages.remote_id IS NOT NULL
-                AND messages.deleted_locally = 0
-              ORDER BY messages.received_at DESC, messages.id DESC
-              LIMIT ?2";
+        // into an index that holds its rows in the order they are wanted
+        // (`sort_at`, the folder's own list key, so a woken snooze at the top
+        // of the folder is fetched first), so the window is read and nothing
+        // else. Each is asked for the whole `offset + limit`, because the
+        // merged order, not any arm's, decides which are skipped.
         let window = i64::from(limit) + i64::from(offset);
 
-        let mut found = Vec::new();
-        for state in ["not_fetched", "headers_only"] {
-            found.extend(
-                sql::all(
-                    self.connection,
-                    &format!(
-                        "{SELECT}
-              WHERE messages.mailbox_id = ?1 AND messages.body_state = '{state}'
-                AND {FILTER}"
-                    ),
-                    bind![mailbox_id.get(), window],
-                    |row| read_backfill_candidate(row, mailbox_id, role_at(row, 6)?),
-                )
-                .await?,
-            );
+        let mut found: Vec<(i64, BackfillCandidate)> = Vec::new();
+        for arm in BACKFILL_ARMS {
+            let statement = backfill_arm(arm.predicate);
+            let read = |row: &Row| {
+                Ok((
+                    row.col::<i64>(7)?,
+                    read_backfill_candidate(row, mailbox_id, role_at(row, 6)?)?,
+                ))
+            };
+            let rows = if arm.uses_parser_version {
+                let arguments = bind![mailbox_id.get(), window, postio_model::mime::PARSER_VERSION];
+                sql::all(self.connection, &statement, arguments, read).await?
+            } else {
+                let arguments = bind![mailbox_id.get(), window];
+                sql::all(self.connection, &statement, arguments, read).await?
+            };
+            found.extend(rows);
         }
-        found.extend(
-            sql::all(
-                self.connection,
-                &format!(
-                    "{SELECT}
-              WHERE messages.mailbox_id = ?1 AND messages.body_encoding_problems = 1
-                AND messages.body_parsed_with < ?3
-                AND {FILTER}"
-                ),
-                bind![mailbox_id.get(), window, postio_model::mime::PARSER_VERSION],
-                |row| read_backfill_candidate(row, mailbox_id, role_at(row, 6)?),
-            )
-            .await?,
-        );
 
         // A message can be in two arms: still owing its body and carrying the
-        // caveat. Newest first, ties by id as each arm ordered them.
-        found.sort_by(|a, b| {
-            (b.received_at, b.message_id.get()).cmp(&(a.received_at, a.message_id.get()))
+        // caveat. Newest first by `sort_at`, ties by id as each arm ordered
+        // them.
+        found.sort_by(|(a_at, a), (b_at, b)| {
+            (b_at, b.message_id.get()).cmp(&(a_at, a.message_id.get()))
         });
-        found.dedup_by_key(|candidate| candidate.message_id);
+        found.dedup_by_key(|(_, candidate)| candidate.message_id);
         Ok(found
             .into_iter()
             .skip(offset as usize)
             .take(limit as usize)
+            .map(|(_, candidate)| candidate)
             .collect())
     }
 
@@ -2089,12 +2209,95 @@ impl<'a> MessageRepository<'a> {
 /// arrangement `mailboxes.snoozed_count` (migration 0021) is the cached
 /// half of. [`ListScope::Snoozed`] inverts it: that view's entire point is
 /// the messages every other scope is hiding.
+/// A folder's messages still owed a header block the raw blob cannot give,
+/// newest first: what [`MessageRepository::messages_needing_a_header_fetch`]
+/// asks.
+///
+/// The three walks here are mailbox-scoped and newest first by the folder's
+/// own list key, `sort_at`, which is the order `idx_messages_list` holds: so
+/// each seeks the folder and stops at its window rather than gathering the
+/// folder's candidates to sort them, and what the person sees at the top of
+/// the folder, a woken snooze included, is fetched first.
+const NEEDING_A_HEADER_FETCH: &str = "\
+SELECT messages.id, messages.uid, messages.size, messages.received_at,
+       mailboxes.path, messages.remote_id, mailboxes.role
+  FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
+ WHERE messages.mailbox_id = ?1
+   AND messages.body_headers IS NULL
+   AND messages.raw_blob_id IS NULL
+   AND messages.body_state IN ('partial', 'full')
+   AND messages.uid IS NOT NULL
+   AND messages.remote_id IS NOT NULL
+   AND messages.deleted_locally = 0
+ ORDER BY messages.sort_at DESC
+ LIMIT ?2";
+
+/// A folder's messages with an attachment still to download, newest first:
+/// [`MessageRepository::needing_payloads_from`]'s walk.
+const NEEDING_PAYLOADS: &str = "\
+SELECT messages.id, messages.uid, messages.size, messages.received_at,
+       mailboxes.path, messages.remote_id, mailboxes.role
+  FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
+ WHERE messages.mailbox_id = ?1
+   AND messages.body_state = 'partial'
+   AND messages.uid IS NOT NULL
+   AND messages.remote_id IS NOT NULL
+   AND messages.deleted_locally = 0
+   AND EXISTS (SELECT 1 FROM attachments
+                WHERE attachments.message_id = messages.id
+                  AND attachments.blob_id IS NULL
+                  AND attachments.part_id IS NOT NULL)
+ ORDER BY messages.sort_at DESC
+ LIMIT ?2 OFFSET ?3";
+
+/// One arm of [`MessageRepository::needing_backfill_from`]'s walk: the
+/// predicate that selects its rows, and whether it binds `?3` to the parser
+/// version.
+struct BackfillArm {
+    predicate: &'static str,
+    uses_parser_version: bool,
+}
+
+/// A folder's messages still owed a body come from three seeks, each into an
+/// index that holds its rows newest first by `sort_at`
+/// (`idx_messages_body_state`, `idx_messages_body_problems`), merged in code.
+const BACKFILL_ARMS: [BackfillArm; 3] = [
+    BackfillArm {
+        predicate: "messages.body_state = 'not_fetched'",
+        uses_parser_version: false,
+    },
+    BackfillArm {
+        predicate: "messages.body_state = 'headers_only'",
+        uses_parser_version: false,
+    },
+    BackfillArm {
+        predicate: "messages.body_encoding_problems = 1 AND messages.body_parsed_with < ?3",
+        uses_parser_version: true,
+    },
+];
+
+/// One arm's statement. `sort_at` is the last column, for the merge.
+fn backfill_arm(predicate: &str) -> String {
+    format!(
+        "SELECT messages.id, messages.uid, messages.size, messages.received_at, \
+                mailboxes.path, messages.remote_id, mailboxes.role, messages.sort_at
+           FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
+          WHERE messages.mailbox_id = ?1 AND {predicate}
+            AND messages.uid IS NOT NULL
+            AND messages.remote_id IS NOT NULL
+            AND messages.deleted_locally = 0
+          ORDER BY messages.sort_at DESC, messages.id DESC
+          LIMIT ?2"
+    )
+}
+
 const NOT_YET_DUE: &str =
     "(messages.snoozed_until IS NULL OR messages.snoozed_until <= (strftime('%s','now') * 1000))";
 const STILL_SNOOZED: &str =
     "messages.snoozed_until IS NOT NULL AND messages.snoozed_until > (strftime('%s','now') * 1000)";
 
 fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
+    let focus: String;
     let (scope, snooze) = match query.scope {
         // The Drafts exclusion rides on the generic mailbox scope, because
         // the mirror row for a draft being sent is *in* the Drafts folder --
@@ -2143,6 +2346,34 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
             NOT_YET_DUE,
         ),
         ListScope::Thread(_) => ("messages.thread_id = ?1", NOT_YET_DUE),
+        // Focus's inbox, read flat: the unified view's inboxes, less what
+        // Focus holds back -- the same `focus_excludes` its window asks
+        // (spec 007).
+        // The has-action filter too: nothing reads either flat -- both list
+        // conversations -- and a flat read of it is its inbox's messages.
+        // Focus's two views over every account: the per-account views' own
+        // predicates, with the account a membership test against the enabled
+        // ones, which `idx_messages_account_*` seeks once per account.
+        ListScope::Focus(postio_model::FocusScope::Flagged) => (
+            "messages.account_id IN (SELECT id FROM accounts
+                 WHERE enabled = 1 AND pending_deletion = 0) AND messages.flagged = 1",
+            NOT_YET_DUE,
+        ),
+        ListScope::Focus(postio_model::FocusScope::Snoozed) => (
+            "messages.account_id IN (SELECT id FROM accounts
+                 WHERE enabled = 1 AND pending_deletion = 0)",
+            STILL_SNOOZED,
+        ),
+        ListScope::Focus(_) => {
+            focus = format!(
+                "messages.mailbox_id IN (
+                 SELECT m.id FROM accounts a JOIN mailboxes m
+                     ON m.account_id = a.id AND m.role = 'inbox'
+                  WHERE a.enabled = 1 AND a.pending_deletion = 0 AND m.selectable = 1){}",
+                super::focus_excludes("messages.")
+            );
+            (focus.as_str(), NOT_YET_DUE)
+        }
     };
     // Numbered from however many arguments the scope itself bound, so a
     // scope that names nothing does not leave a hole at ?1.
@@ -2162,9 +2393,10 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
         //
         // `plan_seeks_past_the_cursor` is what notices if this regresses, and
         // it asserts on the plan rather than on a clock.
+        let key = order_key(&query.scope);
         format!(
-            " AND messages.received_at <= ?{first}
-              AND (messages.received_at < ?{first} OR messages.id < ?{})",
+            " AND messages.{key} <= ?{first}
+              AND (messages.{key} < ?{first} OR messages.id < ?{})",
             first + 1
         )
     } else {
@@ -2176,7 +2408,7 @@ fn where_clause(query: &ListQuery, with_cursor: bool) -> String {
 fn scope_arguments(scope: &ListScope) -> Vec<i64> {
     match scope {
         // Nothing to bind: the scope is every enabled account's inbox.
-        ListScope::Unified => Vec::new(),
+        ListScope::Unified | ListScope::Focus(_) => Vec::new(),
         ListScope::Mailbox(id) => vec![id.get()],
         ListScope::Account(id)
         | ListScope::Flagged(id)
@@ -2189,10 +2421,26 @@ fn scope_arguments(scope: &ListScope) -> Vec<i64> {
 fn page_arguments(query: &ListQuery) -> Vec<i64> {
     let mut arguments = scope_arguments(&query.scope);
     if let Some(cursor) = query.after {
-        arguments.push(to_millis(cursor.received_at));
+        arguments.push(to_millis(match query.scope {
+            ListScope::Mailbox(_) => cursor.sort_at,
+            _ => cursor.received_at,
+        }));
         arguments.push(cursor.id.get());
     }
     arguments
+}
+
+/// The column a scope's flat list is ordered by (spec 007, research R7).
+///
+/// A folder by `sort_at`, over `idx_messages_list`, which its conversation
+/// list shares, so a woken snooze is at the top of both. Every query view
+/// by `received_at`, over the account and recency indexes that search and
+/// the body sweep walk by that column too.
+fn order_key(scope: &ListScope) -> &'static str {
+    match scope {
+        ListScope::Mailbox(_) => "sort_at",
+        _ => "received_at",
+    }
 }
 
 /// ` AND ...` excluding every conversation `except` names, or nothing at all.
@@ -2241,6 +2489,11 @@ pub(crate) fn placeholders(count: usize, first: usize) -> String {
 /// Shared with [`MessageRepository::upsert_batch`], which is already inside
 /// one: SQLite has no nested transactions, and a resync must not commit half a
 /// page of messages.
+///
+/// `sort_at` is kept at least `received_at` rather than written: a resync
+/// must not put a woken snooze back where it was, and a draft's row, whose
+/// `received_at` is the draft's last save, must still rise to the top of
+/// Drafts when it is saved again (spec 007, research R7).
 async fn write_update(connection: &Connection, message: &mut Message) -> Result<()> {
     let id = require_persisted(message.id.get(), "message")?;
 
@@ -2257,7 +2510,9 @@ async fn write_update(connection: &Connection, message: &mut Message) -> Result<
                 last_synced_at = ?29, raw_blob_id = ?30, content_type = ?31, list_id = ?32,
                 text_part_id = ?33, text_part_headers = ?34,
                 html_part_id = ?35, html_part_headers = ?36, text_is_flowed = ?37,
-                read_receipt_requested = ?38
+                read_receipt_requested = ?38, sort_at = max(sort_at, ?11),
+                unsubscribe_offered = coalesce(?39, unsubscribe_offered),
+                automation = coalesce(?40, automation)
           WHERE id = ?1",
         row_values(id, message),
     )
@@ -2304,10 +2559,11 @@ async fn insert(connection: &Connection, message: &Message) -> Result<MessageId>
                                deleted_locally, last_synced_at, raw_blob_id, content_type,
                                list_id, text_part_id, text_part_headers,
                                html_part_id, html_part_headers, text_is_flowed,
-                               read_receipt_requested)
+                               read_receipt_requested, sort_at, unsubscribe_offered,
+                               automation)
          VALUES (NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                  ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31,
-                 ?32, ?33, ?34, ?35, ?36, ?37, ?38)",
+                 ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?11, ?39, ?40)",
     )
     .await?
     .execute(row_values(0, message))
@@ -2399,6 +2655,18 @@ fn row_values(id: i64, message: &Message) -> Vec<turso::Value> {
         maybe_text(message.html_part_headers.clone()),
         boolean(message.text_is_flowed),
         boolean(message.read_receipt_requested),
+        // NULL while not known, which `write_update` reads as "keep what is
+        // there" rather than as "none of the three".
+        maybe_integer(
+            message
+                .promoted
+                .map(|promoted| i64::from(promoted.unsubscribe_offered)),
+        ),
+        maybe_integer(
+            message
+                .promoted
+                .map(|promoted| i64::from(promoted.automation)),
+        ),
     ]
 }
 
@@ -2628,33 +2896,53 @@ fn read_message(row: &Row) -> Result<Message> {
         snoozed_until: row.col::<Option<i64>>(30)?.map(from_millis),
         text_is_flowed: row.col(31)?,
         read_receipt_requested: row.col(32)?,
+        promoted: match (row.col::<Option<bool>>(33)?, row.col::<Option<i64>>(34)?) {
+            (Some(unsubscribe_offered), Some(automation)) => Some(PromotedHeaders {
+                unsubscribe_offered,
+                // Only this crate writes the column, from a `u8`.
+                automation: u8::try_from(automation).unwrap_or_default(),
+            }),
+            _ => None,
+        },
     })
 }
 
 pub(crate) fn read_list_row(row: &Row) -> Result<MessageListRow> {
-    let from_address: Option<String> = row.col(14)?;
+    read_list_row_at(row, 0)
+}
+
+/// [`read_list_row`], for a statement whose [`LIST_COLUMNS`] start at
+/// column `first` rather than at the front.
+pub(crate) fn read_list_row_at(row: &Row, first: usize) -> Result<MessageListRow> {
+    let from_address: Option<String> = row.col(first + 14)?;
     Ok(MessageListRow {
-        id: MessageId::new(row.col(0)?),
-        thread_id: row.col::<Option<i64>>(1)?.map(ThreadId::new),
+        id: MessageId::new(row.col(first)?),
+        thread_id: row.col::<Option<i64>>(first + 1)?.map(ThreadId::new),
         from: from_address
             .map(|address| {
-                Ok::<_, Error>(EmailAddress::new(row.col::<Option<String>>(13)?, address))
+                Ok::<_, Error>(EmailAddress::new(
+                    row.col::<Option<String>>(first + 13)?,
+                    address,
+                ))
             })
             .transpose()?,
-        subject: row.col(2)?,
-        preview: row.col(3)?,
-        received_at: from_millis(row.col(4)?),
-        seen: row.col(5)?,
-        flagged: row.col(6)?,
-        answered: row.col(7)?,
+        subject: row.col(first + 2)?,
+        preview: row.col(first + 3)?,
+        received_at: from_millis(row.col(first + 4)?),
+        seen: row.col(first + 5)?,
+        flagged: row.col(first + 6)?,
+        answered: row.col(first + 7)?,
         send_state: row
-            .col::<Option<String>>(11)?
+            .col::<Option<String>>(first + 11)?
             .as_deref()
             .and_then(DraftState::from_name),
-        send_at: row.col::<Option<i64>>(12)?.map(from_millis),
-        has_attachments: row.col(9)?,
-        size: row.col::<i64>(10)? as u64,
-        thread_count: row.col::<Option<i64>>(15)?.map(|count| count.max(0) as u32),
+        send_at: row.col::<Option<i64>>(first + 12)?.map(from_millis),
+        has_attachments: row.col(first + 9)?,
+        size: row.col::<i64>(first + 10)? as u64,
+        thread_count: row
+            .col::<Option<i64>>(first + 15)?
+            .map(|count| count.max(0) as u32),
+        sort_at: from_millis(row.col(first + 16)?),
     })
 }
 
@@ -3012,4 +3300,52 @@ fn line_count(text: &str) -> i64 {
         return 0;
     }
     text.lines().count() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support;
+
+    /// The backfill's folder walks ask for the folder's newest candidates, a
+    /// window at a time, every time the scheduler seeds. The header-fetch walk
+    /// seeks `idx_messages_list`; the payload walk and the bodies walk's three
+    /// arms each seek the `sort_at`-ordered body-state or body-problems index. In neither case
+    /// does a statement gather the folder's candidates to sort them -- a
+    /// folder of 60,000 messages, for fifty.
+    #[tokio::test]
+    async fn the_backfill_s_folder_walks_seek_an_index_and_never_sort() {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let mut walks: Vec<(String, String, &str)> = vec![
+            (
+                "a header fetch".into(),
+                NEEDING_A_HEADER_FETCH.into(),
+                "idx_messages_list",
+            ),
+            (
+                "payloads".into(),
+                NEEDING_PAYLOADS.into(),
+                "idx_messages_body_state",
+            ),
+        ];
+        for (arm, index) in BACKFILL_ARMS.iter().zip(
+            ["idx_messages_body_state"; 2]
+                .into_iter()
+                .chain(["idx_messages_body_problems"]),
+        ) {
+            walks.push((
+                format!("bodies ({})", arm.predicate),
+                backfill_arm(arm.predicate),
+                index,
+            ));
+        }
+        for (walk, sql, index) in walks {
+            let plan = test_support::plan(&connection, &sql).await;
+            assert!(
+                plan.contains(index) && !test_support::sorts(&plan),
+                "{walk}: the walk sorts rather than seeking {index}:\n{plan}"
+            );
+        }
+    }
 }

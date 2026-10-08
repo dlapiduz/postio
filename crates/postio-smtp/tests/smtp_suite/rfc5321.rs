@@ -121,7 +121,7 @@ async fn a_body_whose_last_line_has_no_crlf_is_still_terminated_correctly() {
     // `.CRLF` would produce `...text.` on one line: the server would never
     // see a terminator, and the message would hang or absorb whatever came
     // next.
-    let built = postio_model::outgoing::build(&draft_with("Looking now."), &ada(), &[], None);
+    let built = postio_model::outgoing::build(&draft_with("Looking now."), &ada(), &[], None, None);
     assert!(
         !built.raw.ends_with(b"\r\n"),
         "this test is about a message that does not end with CRLF; the \
@@ -166,7 +166,7 @@ async fn a_body_line_that_is_a_bare_dot_is_stuffed_before_it_reaches_the_wire() 
     // the terminator, and the message is delivered truncated at the dot with
     // no error anywhere — the recipient simply gets less than was written.
     let built =
-        postio_model::outgoing::build(&draft_with("before\r\n.\r\nafter"), &ada(), &[], None);
+        postio_model::outgoing::build(&draft_with("before\r\n.\r\nafter"), &ada(), &[], None, None);
     assert!(
         String::from_utf8_lossy(&built.raw)
             .lines()
@@ -214,7 +214,7 @@ async fn a_bcc_recipient_is_an_envelope_address_and_never_a_header() {
     let mut draft = draft_with("Looking now.");
     draft.cc = vec![EmailAddress::new(None::<String>, "cc@example.net")];
     draft.bcc = vec![EmailAddress::new(None::<String>, "quiet@example.org")];
-    let built = postio_model::outgoing::build(&draft, &ada(), &[], None);
+    let built = postio_model::outgoing::build(&draft, &ada(), &[], None, None);
 
     let recipients: Vec<String> = draft
         .all_recipients()
@@ -346,7 +346,7 @@ fn no_generated_line_comes_near_the_thousand_octet_limit() {
         ("a long unbroken word", "y".repeat(4000)),
         ("many short lines", "short\r\n".repeat(400)),
     ] {
-        let built = postio_model::outgoing::build(&draft_with(&body), &ada(), &[], None);
+        let built = postio_model::outgoing::build(&draft_with(&body), &ada(), &[], None, None);
         let longest = String::from_utf8_lossy(&built.raw)
             .lines()
             .map(str::len)
@@ -413,7 +413,7 @@ async fn a_non_ascii_message_goes_out_seven_bit_clean() {
     // make it fail for the known gap and stop guarding the body.
     let mut draft = draft_with("Grüße, Grace — φ ≈ 1.618");
     draft.subject = "Grüße".to_owned();
-    let built = postio_model::outgoing::build(&draft, &ada(), &[], None);
+    let built = postio_model::outgoing::build(&draft, &ada(), &[], None, None);
 
     let (mut session, connector) = open(happy_script()).await;
     session

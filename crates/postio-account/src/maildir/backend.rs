@@ -368,6 +368,12 @@ impl MailBackend for MaildirBackend {
                 size: raw.len() as u64,
                 envelope: Some(envelope_of(&parsed)),
                 structure: None,
+                // The whole message is on disk and its headers already
+                // parsed, so the filing pass's fields cost nothing to read
+                // (spec 007, research R8) -- whichever fetch asked.
+                promoted: Some(postio_model::promoted::PromotedHeaders::from_headers(
+                    &parsed.headers,
+                )),
             });
         }
         Ok(fetched)

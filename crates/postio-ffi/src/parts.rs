@@ -26,7 +26,7 @@
 //! the boundary is arranged to make the asking explicit rather than to trust
 //! that it happened:
 //!
-//! - **Listing fetches nothing.** [`Session::message_parts`] reads the rows a
+//! - **Listing fetches nothing.** [`Session::message_parts`](crate::Session::message_parts) reads the rows a
 //!   sync already wrote from `BODYSTRUCTURE` and has no route to the bytes.
 //!   Drawing a panel cannot touch the network, so a panel cannot be the thing
 //!   that leaks.
@@ -34,7 +34,7 @@
 //!   speculatively. There is no "prefetch the attachments of the open
 //!   message" call here and there must not be one.
 //! - **Postio names the file on every path that hands it over.**
-//!   [`Session::export_part`] — what "Open with…" and a drag-out are built on
+//!   [`Session::export_part`](crate::Session::export_part) — what "Open with…" and a drag-out are built on
 //!   — takes a *directory* and nothing else, so a frontend cannot pass the
 //!   sender's `filename=` through to the filesystem even by accident.
 //! - **Nothing here launches anything.** The `NSWorkspace` call is Swift's,
@@ -48,7 +48,7 @@
 //!
 //! # Listing is instant; getting bytes is not
 //!
-//! [`Session::message_parts`] is a bounded indexed read and answers in
+//! [`Session::message_parts`](crate::Session::message_parts) is a bounded indexed read and answers in
 //! milliseconds, which is why a panel can be drawn straight from a keypress.
 //! The other four — `partBytes`, `savePart`, `exportPart`, `saveAllParts` —
 //! are the opposite, and it is worth saying plainly because they look the

@@ -13,7 +13,7 @@ import PostioFFI
 ///
 /// # The rules are GTK's, and so are the reasons
 ///
-/// `postio_gtk::sidebar::Sidebar::step` has had them since it had a tree:
+/// The classic app's sidebar step had them since it had a tree:
 ///
 /// - **One list across every section.** The sidebar looks like one column, so
 ///   `j` crosses from the last favourite into the first account folder
@@ -169,7 +169,7 @@ public enum SidebarWalk {
 /// Two kinds because the rows are two kinds. A saved search has no
 /// `SidebarRowId` — it is not a mailbox, and inventing one for it is how a
 /// `List` ends up with rows it can never select — so it is named by its
-/// `[filters]` key, which is what every saved-search verb takes anyway.
+/// `[saved_searches]` key, which is what every saved-search verb takes anyway.
 public enum SidebarCursor: Hashable, Sendable {
     case folder(SidebarRowId)
     case savedSearch(String)

@@ -73,10 +73,10 @@ import Testing
         // navs that drift are two different applications.
         let store = SettingsStore(path: tempPath("nav"))
         #expect(store.sections.map(\.label) == [
-            "Accounts", "Filters", "Composing", "Appearance",
+            "Accounts", "Saved searches", "Composing", "Appearance",
             "Keyboard", "Sync & storage", "Privacy", "Config file",
         ])
-        #expect(store.sections(in: .mail).map(\.label) == ["Accounts", "Filters", "Composing"])
+        #expect(store.sections(in: .mail).map(\.label) == ["Accounts", "Saved searches", "Composing"])
         #expect(store.selected == "ui", "the only pane built on macOS so far")
     }
 
@@ -169,7 +169,7 @@ import Testing
         // The keys `SettingsPaneView` switches on, kept beside the switch
         // rather than inferred: the point is to fail when the core grows a
         // section and this frontend has not caught up.
-        let drawn: Set<String> = ["accounts", "filters", "compose", "ui", "keys", "sync", "privacy", ""]
+        let drawn: Set<String> = ["accounts", "saved_searches", "compose", "ui", "keys", "sync", "privacy", ""]
 
         let sections = Set(settingsSections().map(\.key))
 

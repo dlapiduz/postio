@@ -20,7 +20,7 @@ pub use kurbo::{Point, Rect};
 pub use render::{BASE_URL, FOLD_ATTRIBUTE, Raster, rasterize, render};
 pub use resources::Resources;
 pub use theme::{Presentation, Rgb, Theme};
-pub use thread::{DEFAULT_RENDER_DEADLINE, Renderer};
+pub use thread::{DEFAULT_RENDER_DEADLINE, NOTICE_CLASS, Renderer};
 
 /// One message's key in a composed conversation: what its container's
 /// `data-postio-message` carries, and what its `cid:` references resolve in.
@@ -36,6 +36,11 @@ pub struct RenderRequest {
     /// The message's plain-text alternative, drawn if the render falls
     /// back (FR-023).
     pub plain_text: String,
+    /// What is drawn in place of the document if the render falls back:
+    /// the plain text composed as the reader composes a plain-text body, so
+    /// it takes the same column, face and rhythm (T218). `None` draws
+    /// `plain_text` by the renderer's own minimal path.
+    pub fallback: Option<Fallback>,
     /// The input cap the sanitizer found the body over, if any: such a
     /// request is drawn as `plain_text` and never reaches the engine.
     pub over_cap: Option<postio_body::Cap>,
@@ -54,6 +59,19 @@ pub struct RenderRequest {
     pub toggled_folds: Vec<String>,
     /// The messages shown in Reader view (R16).
     pub reader_view: Vec<Scope>,
+}
+
+/// A plain-text body composed by the reader, drawn if a render falls back.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Fallback {
+    /// The whole document, as the reader would draw the message's plain
+    /// text.
+    pub document: String,
+    /// Whether the document says why it is showing, in a quiet line above
+    /// the body ([`FallbackReason::notice`]). False when the surface says it
+    /// itself -- Focus's render-mode line -- because a swap is never silent
+    /// (FR-023), and said twice it is noise.
+    pub notice: bool,
 }
 
 /// The surface a document is laid out for.
@@ -100,6 +118,10 @@ pub struct RenderedDocument {
     /// Messages whose text cannot reach the high-contrast floor on their
     /// paper: the reader opens them in Reader view instead (FR-013b).
     pub needs_reader_view: Vec<Scope>,
+    /// The scale a paper body was zoomed by to fit its column, on top of
+    /// the reader's own zoom: 1.0 when it fitted, or nothing was on paper,
+    /// and never below [`render::PAPER_FIT_FLOOR`] (T207, T212).
+    pub fit: f64,
     /// Counts this snapshot among the live ones while it exists.
     _live: Live,
 }
@@ -182,6 +204,24 @@ pub struct TextIndex {
     /// Sorted by `range.start`, non-overlapping; every visible glyph is in
     /// exactly one.
     pub clusters: Vec<Cluster>,
+}
+
+/// A sentence kept by its words, and where it sat in the text it was read
+/// from: what [`TextIndex::locate`] finds again in a rendered body (spec 007
+/// research R2).
+///
+/// The offset cannot address the index directly. The index's text is in
+/// laid-out reading order, with whitespace collapsed, `alt` text in and
+/// closed folds out, so a sentence is found by its words. The offset only
+/// says which occurrence it was when the words repeat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Excerpt<'a> {
+    /// The sentence, as it was read.
+    pub text: &'a str,
+    /// Where it started, in chars into the text it was read from.
+    pub offset: usize,
+    /// That text's length, in chars.
+    pub source_len: usize,
 }
 
 /// A run of text drawn in one colour on one ground.
@@ -309,4 +349,23 @@ pub enum FallbackReason {
     OverCap(postio_body::Cap),
     /// Nothing in the message could be decoded as a body.
     Undecodable,
+}
+
+impl FallbackReason {
+    /// Why, as the end of a sentence: "this message took too long to lay
+    /// out". What a surface naming the fallback itself says.
+    pub fn why(self) -> &'static str {
+        match self {
+            FallbackReason::Deadline => "this message took too long to lay out",
+            FallbackReason::Panicked => "this message could not be laid out",
+            FallbackReason::OverCap(_) => "this message is too large to lay out",
+            FallbackReason::Undecodable => "this message could not be read",
+        }
+    }
+
+    /// The notice a fallback document carries: never a silent swap
+    /// (FR-023).
+    pub fn notice(self) -> String {
+        format!("Shown as plain text: {}.", self.why())
+    }
 }

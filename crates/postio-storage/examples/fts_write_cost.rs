@@ -39,8 +39,9 @@ async fn header_batch(store: &Store, from: i64, rows: i64) -> (f64, f64) {
         let one = Instant::now();
         connection
             .execute(
-                "INSERT INTO messages (account_id, mailbox_id, received_at, subject, remote_id)
-                 SELECT account_id, id, ?2, ?3, ?4 FROM mailboxes WHERE id = 1",
+                "INSERT INTO messages (account_id, mailbox_id, received_at, sort_at, subject,
+                                       remote_id)
+                 SELECT account_id, id, ?2, ?2, ?3, ?4 FROM mailboxes WHERE id = 1",
                 postio_storage::sql::bind![1_i64, n, format!("subject {n}"), format!("99:{n}")],
             )
             .await

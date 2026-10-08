@@ -471,7 +471,7 @@ async fn a_sync_pass_puts_the_servers_mail_in_the_local_store() {
 #[tokio::test]
 async fn a_resync_that_finds_new_mail_announces_it() {
     // postio-du6: `Event::NewMail` existed, was consumed by
-    // `postio_gtk::feed`, and nothing ever emitted it -- the trigger a
+    // the classic app's feed, and nothing ever emitted it -- the trigger a
     // desktop notification needs simply never fired.
     let database = test_support::memory().await;
     let account =
@@ -895,6 +895,30 @@ async fn a_connection_that_will_not_open_leaves_the_queue_where_it_is() {
             }
         )),
         "the UI was not told the connection is the problem"
+    );
+}
+
+#[tokio::test]
+async fn a_failing_connection_says_which_account_the_error_is_about() {
+    // T260. The sync's own words travel as `Event::Error` beside the typed
+    // state, and a frontend showing two accounts at once has to put them on
+    // the right one: the error names the engine's account.
+    let (engine, _database, report, events, _backend, _directory) =
+        engine_with(|backend| backend.fail_all(Fault::Io("the line went dead".to_owned()))).await;
+
+    engine.drain().await.expect_err("the transport failed");
+
+    let said: Vec<_> = announced(&events)
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::Error { message, account } => Some((message, account)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        said.iter()
+            .any(|(message, account)| !message.is_empty() && *account == Some(report.account.id)),
+        "no error named the failing account: {said:?}"
     );
 }
 
@@ -1452,14 +1476,17 @@ async fn a_fresh_account_learns_its_folders_from_the_server() {
                 .await
                 .expect("list");
             drop(connection);
-            if !found.is_empty() {
+            // All six, not the first: discovery writes the server's three
+            // and then creates the rest, and a poll between the two (a
+            // loaded machine finds it) read three.
+            if found.len() >= 6 {
                 return found;
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
     })
     .await
-    .expect("the engine connected and never wrote down a single folder");
+    .expect("the engine connected and never wrote down its folders");
 
     // Six: the three the mock server lists, plus the Archive, Drafts and Junk
     // discovery creates because it has none (spec 003 FR-026). What this test
@@ -1480,7 +1507,7 @@ async fn a_fresh_account_learns_its_folders_from_the_server() {
 
 #[tokio::test]
 async fn a_requested_body_does_not_wait_for_the_supervisors_first_tick() {
-    // #109: `postio-app::seed_the_backfill` sends a job the instant
+    // #109: the classic app's backfill seeding sent a job the instant
     // `Engine::spawn` returns, so a job is reliably already queued by the
     // time an account's engine's own loop runs for the first time. Before
     // this was fixed, the very first connection attempt happened only on
@@ -2597,4 +2624,105 @@ async fn an_idle_engine_does_not_poll_the_queue() {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     drop(engine);
+}
+
+#[tokio::test]
+async fn a_finished_pass_over_an_empty_mailbox_says_a_sync_completed() {
+    // T220: a pass with nothing to fetch counts nothing, so `done == total`
+    // was never reached and a frontend could not tell "the first pass found
+    // the inbox empty" from "the first pass has not got there yet".
+    let database = test_support::memory().await;
+    let account =
+        postio_storage::test_support::account(&database.connect().await.expect("a connection"))
+            .await;
+    let mailbox = {
+        let connection = database.connect().await.expect("a connection");
+        let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .create(&mut mailbox)
+            .await
+            .expect("the folder is created");
+        mailbox
+    };
+    let empty = MockBackend::builder()
+        .mailbox(postio_account::backend::MockMailbox::new("INBOX"))
+        .build();
+    let (engine, events, _directory) = engine_over(&database, account.id, empty);
+
+    engine.sync(mailbox.id).await.expect("a sync pass");
+
+    assert!(
+        announced(&events).iter().any(|event| matches!(
+            event,
+            Event::SyncProgress {
+                done: 0,
+                total: 0,
+                ..
+            }
+        )),
+        "the pass finished and the stream never said so"
+    );
+}
+
+#[tokio::test]
+async fn a_pass_that_failed_is_not_announced_as_a_completed_sync() {
+    // T220: an interrupted or failed first pass must not read as a finished
+    // one -- the inbox it never filled would be called empty.
+    let database = test_support::memory().await;
+    let account =
+        postio_storage::test_support::account(&database.connect().await.expect("a connection"))
+            .await;
+    let mailbox = {
+        let connection = database.connect().await.expect("a connection");
+        let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .create(&mut mailbox)
+            .await
+            .expect("the folder is created");
+        mailbox
+    };
+    let backend = Arc::new(server());
+    let (engine, events, _directory) = engine_over_arc(&database, account.id, backend.clone());
+    // The link is up and cached once a pass has run; only then is the
+    // fault certain to land on the next pass's own call.
+    engine.sync(mailbox.id).await.expect("a first pass");
+    // The first pass's own completion can still be on its way when sync()
+    // returns; read until it has arrived, so nothing of the first pass is
+    // left to be counted against the second.
+    let first_done = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            if announced(&events).iter().any(|event| {
+                matches!(
+                    event,
+                    Event::SyncProgress {
+                        done: 0,
+                        total: 0,
+                        ..
+                    }
+                )
+            }) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    assert!(first_done.is_ok(), "the first pass never said it finished");
+    let _ = announced(&events);
+    backend.fail_all(Fault::Rejected("no".to_owned()));
+
+    engine.sync(mailbox.id).await.expect_err("the pass failed");
+
+    let seen = announced(&events);
+    assert!(
+        !seen.iter().any(|event| matches!(
+            event,
+            Event::SyncProgress {
+                done: 0,
+                total: 0,
+                ..
+            }
+        )),
+        "a failed pass was announced as a completed sync: {seen:?}"
+    );
 }

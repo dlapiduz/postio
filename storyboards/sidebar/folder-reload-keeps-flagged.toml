@@ -1,32 +1,30 @@
 # A folder reload keeps the list on Flagged (#813).
 #
 # The defect: a mailbox-list reload (resync, rename) threw the list out of
-# Flagged back to the inbox. Fixed, so pinned: the list stays Flagged and
-# the cursor stays put. Classic's observed scope is the account, not the
-# view row, so Flagged is pinned by its row count (9 in the small seed; the
-# inbox has 34).
+# Flagged back to the inbox. The list must stay Flagged and the cursor stay
+# put.
+#
+# Re-expressed for Focus (T265): `g *` lists flagged mail (eight rows in the
+# small seed, T257), and the reload is the engine saying the mailboxes
+# changed.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#813" }
 proof  = "pinned"
 
 [[step]]
-command = "focus_sidebar"
-
-[[step]]
-command = "next_folder"
-settle  = { until = { rows.count = 9 } }
-check   = { rows.count = 9 }
-
-[[step]]
-command = "cycle_pane"
-check   = { keyboard.region = "list" }
+command = "go_to_flagged"
+settle  = { until = { rows.count = 8 } }
+check   = { scope = "Flagged", rows.count = 8, cursor.index = 0, app.focus.keyboard.row = "70" }
+expect  = "Flagged opens with the cursor ring on its first row, and the keyboard on that same row."
 
 [[step]]
 id      = "down"
 command = "next_message"
-check   = { cursor.index = 1 }
+check   = { cursor.index = 1, keyboard.region = "list", cursor.id = "65", app.focus.keyboard.row = "65" }
+expect  = "The ring is on the second row and only there: the keyboard followed the cursor, so no second ring stays on the first."
 
 [[step]]
 event   = "mailboxes_changed"
 settle  = { watch_ms = 500 }
-check   = { rows.count = 9, cursor.index = { same_as = "down" } }
+check   = { scope = "Flagged", rows.count = 8, cursor.index = { same_as = "down" }, cursor.id = { same_as = "down" } }
 expect  = "The list is still Flagged, with the cursor where it was. Nothing jumps back to the inbox."

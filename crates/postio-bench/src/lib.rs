@@ -5,10 +5,9 @@
 //! Cargo compiles a package's whole dev-dependency graph when it tests that
 //! package, whichever target was asked for. `criterion` and the ~13 crates
 //! behind it (plotters, clap, rayon, ciborium, regex, ...) were therefore
-//! built to run a single integration test in `postio-app`, `postio-core`,
-//! `postio-gtk`, `postio-index` and `postio-runtime` -- the five crates a
-//! session is most likely to be iterating on, and the ones `issue-land.sh`
-//! gates most often.
+//! built to run a single integration test in `postio-core`,
+//! `postio-index` and `postio-runtime` -- crates a session is most likely
+//! to be iterating on, and the ones `issue-land.sh` gates most often.
 //!
 //! Moving the bench targets into a crate of their own takes that cost out of
 //! the inner loop entirely: benching still runs `cargo bench --workspace`,

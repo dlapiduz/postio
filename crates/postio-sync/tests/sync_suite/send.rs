@@ -2001,3 +2001,404 @@ async fn a_forward_whose_original_is_gone_names_the_file_it_could_not_carry() {
         postio_model::DraftState::Failed
     );
 }
+
+// ── Who the person wrote to (spec 007, T075) ────────────────────────────────
+
+/// How many messages the person has sent to `address`.
+async fn sent_to(connection: &Connection, address: &str) -> Option<u32> {
+    postio_storage::repository::CorrespondentRepository::new(connection)
+        .get(&EmailAddress::new(None::<String>, address))
+        .await
+        .expect("a read")
+        .map(|correspondent| correspondent.sent_count)
+}
+
+/// Queues `draft` to be sent, and drains the queue over `script`.
+async fn send_one(
+    connection: &Connection,
+    account: &Account,
+    mut draft: Draft,
+    script: SmtpScript,
+) -> postio_sync::DrainReport {
+    let draft_id = DraftRepository::new(connection)
+        .save(&mut draft)
+        .await
+        .expect("save draft");
+    OperationQueueRepository::new(connection)
+        .enqueue(
+            account.id,
+            OperationTarget::Draft(draft_id),
+            &Operation::Send { draft: draft_id },
+            at(9),
+        )
+        .await
+        .expect("enqueue");
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+    let tokens = a_password_source(account).await;
+    let connector = ScriptedConnector::new(script);
+    let blobs = TempBlobs::new();
+    drain_one(
+        connection,
+        &backend,
+        SmtpContext {
+            connector: &connector,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn sending_to_three_addresses_adds_one_to_each_correspondent() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _sent) = account_with_sent(&connection).await;
+    let mut draft = a_draft(&account, "grace@example.net");
+    draft
+        .to
+        .push(EmailAddress::new(Some("Tove"), "tove@example.org"));
+    draft.cc = vec![EmailAddress::new(None::<String>, "quinn@example.com")];
+
+    let report = send_one(&connection, &account, draft, accepting_script()).await;
+    assert_eq!(report.applied, 1, "{report:?}");
+
+    for to in ["grace@example.net", "tove@example.org", "quinn@example.com"] {
+        assert_eq!(sent_to(&connection, to).await, Some(1), "{to}");
+    }
+    assert_eq!(
+        sent_to(&connection, "ada@example.com").await,
+        None,
+        "the sender is nobody she wrote to"
+    );
+}
+
+#[tokio::test]
+async fn a_send_the_server_refused_wrote_to_nobody() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _sent) = account_with_sent(&connection).await;
+
+    let report = send_one(
+        &connection,
+        &account,
+        a_draft(&account, "grace@example.net"),
+        script_replying_to_rcpt("550 no such user"),
+    )
+    .await;
+    assert_eq!(report.failed.len(), 1, "{report:?}");
+
+    assert!(
+        !postio_storage::repository::CorrespondentRepository::new(&connection)
+            .wrote_to(&EmailAddress::new(None::<String>, "grace@example.net"))
+            .await
+            .expect("a read"),
+        "nothing was delivered, so nobody was written to"
+    );
+}
+
+// ── Labels chosen before sending (spec 007 US3 scenario 4, T077) ────────────
+
+#[tokio::test]
+async fn labels_chosen_before_sending_are_carried_by_the_conversation() {
+    // "Given labels chosen before sending, When the message is sent, Then
+    // its conversation carries them." A reply carries its conversation's
+    // label forward and adds one: the sent copy has both, the message it
+    // answers gains the new one as the label verb would give it -- locally,
+    // and queued for the server as its keyword -- and the copy the server
+    // files in Sent carries both keywords from its append.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, sent) = account_with_sent(&connection).await;
+    let inbox = test_support::mailbox(&connection, &account, "INBOX")
+        .await
+        .id;
+    let messages = MessageRepository::new(&connection);
+    let labels = postio_storage::repository::LabelRepository::new(&connection);
+    let mut harbour = postio_model::Label::new(account.id, "Harbour");
+    let mut travel = postio_model::Label::new(account.id, "Travel");
+    labels.create(&mut harbour).await.expect("a label");
+    labels.create(&mut travel).await.expect("a label");
+
+    // The message being answered: in the inbox, threaded, labelled Harbour.
+    let mut parent = postio_model::Message::new(account.id, inbox, at(8));
+    parent.subject = Some("Harbour plan".to_owned());
+    parent.rfc_message_id = Some(postio_model::RfcMessageId::new("plan@example.invalid"));
+    parent.from = vec![EmailAddress::new(None::<String>, "grace@example.net")];
+    parent.labels = vec![harbour.id];
+    parent.flags = [
+        postio_model::Flag::Seen,
+        postio_model::Flag::Keyword("Harbour".to_owned()),
+    ]
+    .into_iter()
+    .collect();
+    let parent_id = messages.create(&mut parent).await.expect("the parent");
+    postio_storage::repository::ThreadingRepository::new(&connection, account.id)
+        .thread(&messages.get(parent_id).await.expect("get").expect("there"))
+        .await
+        .expect("thread the parent");
+    let conversation = messages
+        .get(parent_id)
+        .await
+        .expect("get")
+        .expect("there")
+        .thread_id
+        .expect("the parent is in a thread");
+
+    let mut draft = a_draft(&account, "grace@example.net");
+    draft.in_reply_to = Some(parent_id);
+    draft.thread_id = Some(conversation);
+    draft.labels = vec![harbour.id, travel.id];
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+    let draft_id = DraftRepository::new(&connection)
+        .save(&mut draft)
+        .await
+        .expect("save draft");
+    OperationQueueRepository::new(&connection)
+        .enqueue(
+            account.id,
+            OperationTarget::Draft(draft_id),
+            &Operation::Send { draft: draft_id },
+            at(9),
+        )
+        .await
+        .expect("enqueue");
+    let tokens = a_password_source(&account).await;
+    let connector = ScriptedConnector::new(accepting_script());
+    let blobs = TempBlobs::new();
+    let report = drain_one(
+        &connection,
+        &backend,
+        SmtpContext {
+            connector: &connector,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await;
+    assert_eq!(report.applied, 1, "{report:?}");
+
+    // The conversation carries both.
+    let thread = postio_storage::repository::ThreadRepository::new(&connection)
+        .get(conversation)
+        .await
+        .expect("a read")
+        .expect("the conversation");
+    assert_eq!(thread.labels, vec![harbour.id, travel.id]);
+
+    // The sent copy carries both, as labels and as keywords.
+    let copy = messages
+        .page(&postio_storage::repository::ListQuery {
+            scope: postio_storage::repository::ListScope::Mailbox(sent),
+            limit: 10,
+            after: None,
+        })
+        .await
+        .expect("a page of Sent")
+        .first()
+        .map(|row| row.id)
+        .expect("the reply was filed in Sent");
+    let copy = messages.get(copy).await.expect("get").expect("there");
+    assert_eq!(copy.thread_id, Some(conversation));
+    assert_eq!(copy.labels, vec![harbour.id, travel.id]);
+    for name in ["Harbour", "Travel"] {
+        assert!(
+            copy.flags
+                .contains(&postio_model::Flag::Keyword(name.to_owned())),
+            "the sent copy's {name} keyword: {:?}",
+            copy.flags
+        );
+    }
+
+    // The message it answers gains Travel, as `add_label` would give it.
+    let parent = messages.get(parent_id).await.expect("get").expect("there");
+    assert_eq!(parent.labels, vec![harbour.id, travel.id]);
+    assert!(
+        parent
+            .flags
+            .contains(&postio_model::Flag::Keyword("Travel".to_owned()))
+    );
+    let queued = OperationQueueRepository::new(&connection)
+        .pending(account.id, at(12))
+        .await
+        .expect("the queue");
+    assert!(
+        queued.iter().any(|operation| {
+            operation.target == OperationTarget::Message(parent_id)
+                && matches!(
+                    &operation.operation,
+                    Operation::SetFlags { flags }
+                        if flags.contains(&postio_model::Flag::Keyword("Travel".to_owned()))
+                )
+        }),
+        "the server is told, as for any label: {queued:?}"
+    );
+
+    // And the server's own copy in Sent carries both keywords.
+    let on_server = backend
+        .fetch_headers(
+            "Sent",
+            &postio_account::backend::UidSet::all(),
+            None,
+            &postio_account::cancel::CancelToken::new(),
+        )
+        .await
+        .expect("the server's Sent");
+    assert_eq!(on_server.len(), 1);
+    for name in ["Harbour", "Travel"] {
+        assert!(
+            on_server[0]
+                .flags
+                .contains(&postio_model::Flag::Keyword(name.to_owned())),
+            "appended with its {name} keyword: {:?}",
+            on_server[0].flags
+        );
+    }
+}
+
+// ── Remind if no reply, set in the composer (spec 007 US3 scenario 5, T096) ─
+
+#[tokio::test]
+async fn a_draft_s_remind_if_no_reply_becomes_a_reminder_on_its_conversation() {
+    // "Given 'Remind if no reply · Tue 29 Sep' set in the composer, When
+    // the message is sent" -- the conversation the sent copy is filed into
+    // has a reminder due then, waiting on a reply to that copy, and it is
+    // set locally as the copy is filed, before anything else can answer.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, sent) = account_with_sent(&connection).await;
+    let due = at(9) + chrono::Duration::days(3);
+    let mut draft = a_draft(&account, "grace@example.net");
+    draft.remind_at = Some(due);
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+    let draft_id = DraftRepository::new(&connection)
+        .save(&mut draft)
+        .await
+        .expect("save draft");
+    OperationQueueRepository::new(&connection)
+        .enqueue(
+            account.id,
+            OperationTarget::Draft(draft_id),
+            &Operation::Send { draft: draft_id },
+            at(9),
+        )
+        .await
+        .expect("enqueue");
+    let tokens = a_password_source(&account).await;
+    let connector = ScriptedConnector::new(accepting_script());
+    let blobs = TempBlobs::new();
+    let report = drain_one(
+        &connection,
+        &backend,
+        SmtpContext {
+            connector: &connector,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await;
+    assert_eq!(report.applied, 1, "{report:?}");
+
+    let messages = MessageRepository::new(&connection);
+    let copy = messages
+        .page(&postio_storage::repository::ListQuery {
+            scope: postio_storage::repository::ListScope::Mailbox(sent),
+            limit: 10,
+            after: None,
+        })
+        .await
+        .expect("a page of Sent")
+        .first()
+        .map(|row| row.id)
+        .expect("the message was filed in Sent");
+    let copy = messages.get(copy).await.expect("get").expect("there");
+    let conversation = copy.thread_id.expect("the sent copy is in a thread");
+    let reminder = postio_storage::repository::ReminderRepository::new(&connection)
+        .standing(conversation)
+        .await
+        .expect("a read")
+        .expect("sending set a reminder on the conversation");
+    assert_eq!(reminder.due_at, due, "due when the composer said");
+    assert_eq!(
+        reminder.anchor, copy.id,
+        "waiting on a reply to what was sent"
+    );
+    assert_eq!(reminder.fired_at, None, "not fired yet");
+}
+
+#[tokio::test]
+async fn a_draft_with_no_remind_if_no_reply_sets_no_reminder() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, sent) = account_with_sent(&connection).await;
+    let mut draft = a_draft(&account, "grace@example.net");
+    let backend = MockBackend::builder()
+        .mailbox(MockMailbox::new("Sent"))
+        .build();
+    backend.connect().await.expect("connect");
+    let draft_id = DraftRepository::new(&connection)
+        .save(&mut draft)
+        .await
+        .expect("save draft");
+    OperationQueueRepository::new(&connection)
+        .enqueue(
+            account.id,
+            OperationTarget::Draft(draft_id),
+            &Operation::Send { draft: draft_id },
+            at(9),
+        )
+        .await
+        .expect("enqueue");
+    let tokens = a_password_source(&account).await;
+    let connector = ScriptedConnector::new(accepting_script());
+    let blobs = TempBlobs::new();
+    drain_one(
+        &connection,
+        &backend,
+        SmtpContext {
+            connector: &connector,
+            tokens: &tokens,
+            blobs: &blobs.store,
+        },
+        account.id,
+    )
+    .await;
+    let messages = MessageRepository::new(&connection);
+    let copy = messages
+        .page(&postio_storage::repository::ListQuery {
+            scope: postio_storage::repository::ListScope::Mailbox(sent),
+            limit: 10,
+            after: None,
+        })
+        .await
+        .expect("a page of Sent")
+        .first()
+        .map(|row| row.id)
+        .expect("the message was filed in Sent");
+    let conversation = messages
+        .get(copy)
+        .await
+        .expect("get")
+        .expect("there")
+        .thread_id
+        .expect("in a thread");
+    assert_eq!(
+        postio_storage::repository::ReminderRepository::new(&connection)
+            .standing(conversation)
+            .await
+            .expect("a read"),
+        None
+    );
+}

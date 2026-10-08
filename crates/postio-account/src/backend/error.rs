@@ -218,6 +218,18 @@ impl BackendError {
         )
     }
 
+    /// Whether the user has to supply a password before anything will work:
+    /// a refused or expired one ([`is_authentication_failure`]), or none in
+    /// the keyring at all. Not the same as a refusal -- nothing reached the
+    /// server, so no attempt counts against the account -- but the same
+    /// remedy, and retrying cannot help either.
+    ///
+    /// [`is_authentication_failure`]: Self::is_authentication_failure
+    pub fn needs_a_password(&self) -> bool {
+        self.is_authentication_failure()
+            || matches!(self, Self::Secret(SecretError::NotFound { .. }))
+    }
+
     /// Whether the mailbox's cached state must be thrown away and refetched.
     pub fn requires_full_resync(&self) -> bool {
         matches!(
@@ -269,5 +281,6 @@ mod tests {
             account: "ada@example.com".to_owned(),
         });
         assert!(!missing.is_authentication_failure());
+        assert!(missing.needs_a_password(), "but it does need a password");
     }
 }

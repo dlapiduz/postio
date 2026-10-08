@@ -31,8 +31,8 @@ public enum MimeType {
     /// What a picture's bytes say it is, or `nil` when they are not one
     /// (#1571).
     ///
-    /// From the bytes rather than the name, for the reason `postio-gtk`'s
-    /// composer gives: a `.png` that is really a JPEG would reach the
+    /// From the bytes rather than the name, for the reason the classic app's
+    /// composer gave: a `.png` that is really a JPEG would reach the
     /// recipient declared wrongly, and the declaration is all their client
     /// has to go on. `ImageIO`, not AppKit, so this goes to a phone as it is.
     public static func ofImage(_ bytes: Data) -> String? {

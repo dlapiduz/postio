@@ -4,7 +4,7 @@
 //! I/O of any kind — only value types and the logic that belongs to them
 //! (flag canonicalization, special-use resolution, subject normalization).
 //! `postio-storage` persists these types, `postio-account` translates the wire into
-//! them, `postio-gtk` renders them, and none of that leaks back here. That is
+//! them, frontends render them, and none of that leaks back here. That is
 //! what lets a second protocol or a second frontend be added without reshaping
 //! the model, and CI enforces it.
 //!
@@ -49,6 +49,7 @@ pub mod contact;
 pub mod contact_group;
 pub mod draft;
 pub mod egress;
+pub mod filing;
 pub mod flag;
 pub mod fold;
 pub mod headers;
@@ -63,12 +64,14 @@ pub mod mime;
 pub mod net;
 pub mod operation;
 pub mod outgoing;
+pub mod promoted;
 pub mod reply;
 pub mod scope;
 pub mod signature;
 pub mod signature_default;
 pub mod size;
 pub mod subject;
+pub mod summary;
 pub mod sync;
 #[cfg(feature = "test-corpus")]
 pub mod test_corpus;
@@ -88,17 +91,17 @@ pub use draft::{Draft, DraftKind, DraftState};
 pub use flag::{Flag, FlagSet};
 pub use headers::{Header, Headers};
 pub use ids::{
-    AccountId, AttachmentId, BlobId, ContactGroupId, ContactId, DraftId, Generation, IdentityId,
-    LabelId, MailboxId, MessageId, ModSeq, OperationId, RemoteId, RfcMessageId, SignatureId,
-    ThreadId, Uid, UidValidity,
+    AccountId, AttachmentId, BlobId, ContactGroupId, ContactId, DeliveryId, DraftId, Generation,
+    IdentityId, LabelId, MailboxId, MessageId, ModSeq, OperationId, ReminderId, RemoteId,
+    RfcMessageId, SignatureId, ThreadId, Uid, UidValidity,
 };
 pub use label::Label;
 pub use mailbox::{Mailbox, MailboxCounts, MailboxRole, RoleKind, RoleOverrides};
 pub use message::{BodyState, LocalSyncState, Message, MessageBody, ServerIdentifiers};
 pub use mime::{ParsedMessage, ParsedPart};
 pub use operation::{Operation, OperationRange, OperationState, OperationTarget};
-pub use outgoing::{BuiltMessage, OutgoingAttachment};
-pub use scope::{Arrival, ListScope, Reaction};
+pub use outgoing::{BuiltMessage, CalendarMethod, CalendarPart, OutgoingAttachment};
+pub use scope::{Arrival, FocusScope, ListScope, Reaction};
 pub use subject::{is_reply, normalize_subject};
 pub use sync::{FullResyncReason, MailboxStatus, ResyncPlan, SyncState};
 pub use thread::Thread;

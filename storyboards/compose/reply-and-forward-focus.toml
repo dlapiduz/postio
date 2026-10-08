@@ -2,13 +2,17 @@
 #
 # The defect: Forward opened with the keyboard in the body, where there is
 # no recipient yet, and Reply did nothing at all unless the row had first
-# been activated. Here the cursor is on a row that was never opened.
+# been opened. Here the cursor is on a row that was never opened.
+#
+# Re-expressed for Focus (T265): the cursor opens on the first row, which
+# Reply and Forward answer from the list.
+apps   = ["focus"]
 source = { kind = "issue", ref = "#690" }
 proof  = "pinned"
 
 [[step]]
-wait    = { until = { reading.id = "12" } }
-check   = { cursor.index = 0 }
+wait    = { until = { cursor.index = 0 } }
+check   = { cursor.index = 0, view = "list" }
 
 [[step]]
 command = "reply"
@@ -22,4 +26,4 @@ check   = { composer.open = false }
 [[step]]
 command = "forward"
 check   = { composer.open = true, keyboard.field = "to" }
-expect  = "The forward is seeded with the original and the caret is in To, where a recipient is wanted."
+expect  = "The forward is seeded with the original and the caret is in To, where a recipient is wanted. The To row shows it holds the keyboard: its rule under it is the accent, as no other row's is."

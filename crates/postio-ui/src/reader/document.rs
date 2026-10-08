@@ -4,7 +4,7 @@
 //! The highest risk in a second frontend is that the privacy invariants
 //! silently fork: two readers, two content security policies, two link
 //! policies, drifting invisibly until somebody's mail phones home. The
-//! structural answer is here — `postio-gtk`'s WebKitGTK view and a macOS
+//! structural answer is here — the classic app's WebKitGTK view and a macOS
 //! `WKWebView` do not *agree* on the CSP, they **call the same function**.
 //! What stays behind in each frontend is toolkit glue: how to hand this
 //! string to a web view, nothing about what the string says.
@@ -18,17 +18,8 @@ use postio_body::sanitize;
 /// renderers are asked under, re-exported so a caller preparing ahead needs
 /// no second path to it.
 pub use postio_body::sanitize::RemoteImages;
+use postio_body::treatment::{self, TREATMENT_ATTRIBUTE, Treatment, Trigger};
 use postio_model::message::MessageBody;
-
-/// The security origin every rendered message loads under.
-///
-/// A fixed, non-`http(s)` scheme so a message's content is never same-origin
-/// with any real site — nothing it contains gets that site's cookies, and
-/// nothing on that site sees this page as one of its own frames. Nothing is
-/// ever registered to handle this scheme, so a relative reference a sender
-/// left in place resolves to a fetch that fails closed rather than one that
-/// quietly reaches a host.
-pub const DOCUMENT_BASE_URI: &str = "postio-reader:///";
 
 /// Why the reading pane has no body to draw.
 ///
@@ -320,7 +311,23 @@ fn reader_css() -> String {
     let mut css = embedded_font_faces().to_owned();
     css.push_str(include_str!("../../data/reader-tokens.css"));
     css.push_str(include_str!("../../data/reader.css"));
+    css.push_str(include_str!("../../data/treatment.css"));
+    css.push_str(&paper_palette_css());
     css
+}
+
+/// The paper sheet's palette: the light scheme, whatever the reader's, so
+/// anything of Postio's drawn on the sheet -- a quote fold's summary, a
+/// search match -- reads on white the way it does in light mode (T212). Read
+/// out of the generated palette, like [`senders_sheet_css`], so the colour
+/// has one source.
+fn paper_palette_css() -> String {
+    format!(
+        "\n.{}[{TREATMENT_ATTRIBUTE}=\"{}\"] {{{}\n}}\n",
+        sanitize::BODY_CLASS,
+        Treatment::Paper.attribute_value(),
+        light_tokens()
+    )
 }
 
 /// The reader's ground colour for the given scheme, as the generated palette
@@ -385,15 +392,15 @@ pub struct Face {
 /// the type system rather than of a handler remembering to check. Nothing
 /// here is a path, so there is no traversal to get wrong.
 ///
-/// The bytes have one owner (#799): `postio-gtk`'s Pango integration
-/// (`fonts::install_into`) reads them from here rather than keeping a second
+/// The bytes have one owner (#799): the classic app's Pango integration
+/// (`fonts::install_into`) read them from here rather than keeping a second
 /// copy in its own `GResource` bundle.
 ///
 /// `static`, not `const`: a `const` is re-evaluated at every use site, so a
 /// second crate reading `FACES` would get its own freshly promoted copy of
 /// every byte array — the exact duplication this table exists to remove, just
 /// moved from the `GResource` bundle into the linker's `.rodata` instead. A
-/// `static` has one address for the life of the binary, so `postio-gtk`
+/// `static` has one address for the life of the binary, so the classic app
 /// referencing it costs a pointer, not 909 KB.
 ///
 /// Provenance — <https://github.com/google/fonts>, `main`, fetched 2026-08-22:
@@ -457,25 +464,6 @@ pub static FACES: &[Face] = &[
         style: "normal",
         bytes: include_bytes!("../../data/fonts/ibm-plex-mono/IBMPlexMono-Medium.ttf"),
     },
-];
-
-/// Each vendored family's licence text, as `(family, OFL text)` — the same
-/// families [`FACES`] embeds, read from beside them so the licence a family
-/// ships under can never drift from the bytes it names.
-///
-/// `postio-gtk`'s About dialog (`fonts::licenses`) attributes the fonts from
-/// here rather than from a copy that could go stale. `static` for the same
-/// reason as [`FACES`].
-pub static LICENSES: &[(&str, &str)] = &[
-    ("Barlow", include_str!("../../data/fonts/barlow/OFL.txt")),
-    (
-        "Barlow Condensed",
-        include_str!("../../data/fonts/barlow-condensed/OFL.txt"),
-    ),
-    (
-        "IBM Plex Mono",
-        include_str!("../../data/fonts/ibm-plex-mono/OFL.txt"),
-    ),
 ];
 
 /// The face `name` refers to, or `None`.
@@ -704,6 +692,101 @@ pub struct Rendered {
     /// The input cap the HTML body exceeded, if any: then `html` is the
     /// plain-text alternative, and the reader says why (spec 006 R6).
     pub over_cap: Option<postio_body::Cap>,
+    /// Which treatment it was drawn in, when it was drawn under one
+    /// ([`body_html_treated`]); `None` for the classic reader, which has no
+    /// treatments.
+    pub treated: Option<Treated>,
+}
+
+/// How a body was treated (specs/007-postio-focus T210-T213): what the
+/// render-mode line says, and what `⇧O` switches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Treated {
+    /// The treatment it is drawn in.
+    pub shown: Treatment,
+    /// What the rule chose for it, before any choice the person made.
+    pub classified: Treatment,
+    /// Why the rule chose paper, when it did.
+    pub trigger: Option<Trigger>,
+    /// Whether the body is HTML: plain text has no other treatment to
+    /// offer, so no line names one.
+    pub html: bool,
+}
+
+impl Treated {
+    /// Plain text, or HTML too large to draw: app colours, with nothing to
+    /// switch to.
+    pub const TEXT: Treated = Treated {
+        shown: Treatment::AppColours,
+        classified: Treatment::AppColours,
+        trigger: None,
+        html: false,
+    };
+}
+
+/// What the render-mode line above an HTML body says (T213; the handoff's
+/// screens 03, 11-13): the treatment, why, and the way to the other one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RenderModeWords {
+    /// The treatment, named: "App colours", "Original layout, on paper".
+    pub title: &'static str,
+    /// Why, quietly: "sender colours and fonts removed".
+    pub detail: &'static str,
+    /// The switch to the other treatment, beside its key.
+    pub action: &'static str,
+    /// Whether to offer "Always for this sender": the person chose something
+    /// other than what is remembered for this sender.
+    pub offer_always: bool,
+}
+
+/// What the line says about a body drawn as `treated`, for a sender whose
+/// remembered choice is `remembered`; `None` for plain text, which has no
+/// other treatment and gets no line.
+///
+/// Words only, so the wording is proven without a display; the reader's
+/// line draws them.
+pub fn render_mode_words(
+    treated: Treated,
+    remembered: Option<Treatment>,
+) -> Option<RenderModeWords> {
+    if !treated.html {
+        return None;
+    }
+    let (title, detail, action) = match (treated.shown, treated.classified) {
+        (Treatment::AppColours, _) => (
+            "App colours",
+            "sender colours and fonts removed",
+            "Show original",
+        ),
+        (Treatment::Paper, Treatment::Paper) => (
+            "Original layout, on paper",
+            if treated
+                .trigger
+                .is_some_and(|trigger| !trigger.is_background())
+            {
+                "this message lays out its own page"
+            } else {
+                "this message sets its own background"
+            },
+            "Use app colours",
+        ),
+        (Treatment::Paper, Treatment::AppColours) => (
+            "Original colours, on paper",
+            "as the sender styled it",
+            "Use app colours",
+        ),
+    };
+    let kept = remembered == Some(treated.shown);
+    Some(RenderModeWords {
+        title,
+        detail: if kept {
+            "always for this sender"
+        } else {
+            detail
+        },
+        action,
+        offer_always: !kept && (treated.shown != treated.classified || remembered.is_some()),
+    })
 }
 
 impl Rendered {
@@ -867,6 +950,7 @@ pub fn body_html_in(
                 links_kept: reduced.links_kept,
                 links_dropped: reduced.links_dropped,
                 over_cap: None,
+                treated: None,
             };
         }
     }
@@ -902,6 +986,19 @@ pub fn body_html_in(
     Rendered::default()
 }
 
+/// A message's plain text as the body a plain-text fallback draws: what
+/// [`body_html`] makes of a body with no HTML part, without counting as a
+/// body sanitised -- there is no sanitiser here, and the fallback is built
+/// for every load on the interface thread, so it must not read as the
+/// preparation T223 keeps off it.
+pub fn plain_text_body_html(text: &str) -> String {
+    if text.trim().is_empty() {
+        String::new()
+    } else {
+        quote::text_to_html(text)
+    }
+}
+
 /// A message whose HTML is over an input cap: its plain-text alternative,
 /// or a line saying there is nothing else to show. Never blank.
 fn over_cap(body: &MessageBody, cap: postio_body::Cap) -> Rendered {
@@ -912,6 +1009,126 @@ fn over_cap(body: &MessageBody, cap: postio_body::Cap) -> Rendered {
     Rendered {
         html,
         over_cap: Some(cap),
+        ..Rendered::default()
+    }
+}
+
+/// The class an HTML body drawn in app colours is wrapped in: Postio's own
+/// typography applies inside it, where [`ORIGINAL_CLASS`] reverts it.
+pub const APP_COLOURS_CLASS: &str = "postio-app-colours";
+
+/// The class a body is wrapped in when it goes on paper by the person's
+/// choice rather than the rule's: correspondence, which has no page margins
+/// of its own, so the sheet gives it some (`treatment.css`). Mail the rule
+/// put on paper is drawn edge to edge, its own margins its own business.
+pub const LETTER_CLASS: &str = "postio-letter";
+
+/// The class a body the rule put on paper is wrapped in when its sender
+/// said nothing about the page's margins: a browser draws a page 8px in from
+/// its edge by default, so a sheet drawn "as sent" does too
+/// (`treatment.css`). A sender who set their own -- `margin: 0` on a
+/// newsletter's `<body>` -- gets exactly those.
+pub const PAGE_MARGIN_CLASS: &str = "postio-page-margin";
+
+/// Whether the page's own style, as the sanitiser lifted it off `<html>`
+/// and `<body>`, sets a margin or padding.
+fn sets_page_margin(canvas: &sanitize::Canvas) -> bool {
+    canvas.style.split(';').any(|declaration| {
+        declaration.split_once(':').is_some_and(|(property, _)| {
+            let property = property.trim().to_ascii_lowercase();
+            property.starts_with("margin") || property.starts_with("padding")
+        })
+    })
+}
+
+/// The body markup under a treatment (specs/007-postio-focus T210-T212):
+/// sanitised, classified, and drawn in app colours or as sent, on paper.
+///
+/// `chosen` is the person's choice -- `⇧O` on this message, or "Always for
+/// this sender" -- and wins over the rule; `None` lets the rule decide
+/// ([`treatment::classify`]). Plain text is always app colours and has no
+/// other to switch to.
+///
+/// Always [`Rendering::Original`]: reader view is the classic reader's
+/// answer to bulk mail, and paper is this one's.
+pub fn body_html_treated(
+    body: &MessageBody,
+    remote: RemoteImages,
+    chosen: Option<Treatment>,
+    scope: Option<&str>,
+) -> Rendered {
+    let Some(html) = body.html.as_deref().filter(|html| !html.trim().is_empty()) else {
+        return Rendered {
+            treated: Some(Treated::TEXT),
+            ..body_html_in(body, remote, Rendering::Original, scope)
+        };
+    };
+    crate::reader::cost::bump(&crate::reader::cost::BODIES_SANITISED, 1);
+    let sanitized = sanitize::sanitize_body_in(html, remote, scope);
+    if let Some(cap) = sanitized.over_cap {
+        return Rendered {
+            treated: Some(Treated::TEXT),
+            ..over_cap(body, cap)
+        };
+    }
+    treat_sanitized(&sanitized, chosen)
+}
+
+/// What a sanitised HTML body looks like under a treatment: classified, then
+/// drawn in app colours or on paper. The half of [`body_html_treated`] that
+/// is not the sanitiser, split off so [`prepare_treated`] can run the
+/// sanitiser once and treat both ways.
+fn treat_sanitized(sanitized: &sanitize::Sanitized, chosen: Option<Treatment>) -> Rendered {
+    crate::reader::cost::bump(&crate::reader::cost::BODIES_TREATED, 1);
+    let trigger = treatment::paper_trigger(sanitized);
+    let classified = if trigger.is_some() {
+        Treatment::Paper
+    } else {
+        Treatment::AppColours
+    };
+    let shown = chosen.unwrap_or(classified);
+    let (html, styles) = match shown {
+        Treatment::AppColours => (
+            format!(
+                r#"<div class="{APP_COLOURS_CLASS}">{}</div>"#,
+                quote::fold_html_quotes(&treatment::app_colours(&sanitized.html))
+            ),
+            treatment::app_colours_css(&sanitized.styles),
+        ),
+        Treatment::Paper => {
+            let letter = if classified != Treatment::Paper {
+                format!(" {LETTER_CLASS}")
+            } else if !sets_page_margin(&sanitized.canvas) {
+                format!(" {PAGE_MARGIN_CLASS}")
+            } else {
+                String::new()
+            };
+            (
+                on_canvas(
+                    &format!(
+                        r#"<div class="{ORIGINAL_CLASS}{letter}">{}</div>"#,
+                        quote::fold_html_quotes(&sanitized.html)
+                    ),
+                    sanitized,
+                ),
+                treatment::light_only(&sanitized.styles),
+            )
+        }
+    };
+    Rendered {
+        html,
+        styles,
+        held_back: HeldBack {
+            remote_images: sanitized.remote_blocked,
+            trackers: sanitized.trackers,
+        },
+        rendering: Rendering::Original,
+        treated: Some(Treated {
+            shown,
+            classified,
+            trigger,
+            html: true,
+        }),
         ..Rendered::default()
     }
 }
@@ -1003,16 +1220,71 @@ pub fn contain_body_in(content: &str, scope: Option<&str>) -> String {
 /// a style: #323 gave the sender's content a visible edge so that markup
 /// imitating application chrome has a harder time, and a reader missing it
 /// would look completely fine.
+///
+/// It also gives the message's quote folds their ids, as a conversation's
+/// are given theirs, so the renderer can open one (spec 007 FR-034).
 pub fn document_for(content: &str, styles: &str, remote: RemoteImages, sheet: Sheet) -> String {
     wrap_document(
         &format!(
             "{}{}{}",
             senders_stylesheet(styles),
-            contain_body(content),
+            number_quote_folds(&contain_body(content), ""),
             scroll_markers()
         ),
         remote,
         sheet,
+    )
+}
+
+/// The opening tag `postio-body` folds quoted text with. A sender cannot
+/// write it: the sanitizer strips every `postio-` class.
+const QUOTE_FOLD: &str = "<details class=\"postio-quote\"";
+
+/// Give every quote fold in `content` its id, `<prefix>q<n>`, numbered in
+/// document order: what the renderer opens and closes a fold by
+/// ([`FOLD_ATTRIBUTE`](super::thread::FOLD_ATTRIBUTE), spec 006 R15). In a
+/// conversation the prefix is the message's anchor and a dash, so no two
+/// messages' quotes share one; a single message needs none.
+pub(crate) fn number_quote_folds(content: &str, prefix: &str) -> String {
+    let fold = super::thread::FOLD_ATTRIBUTE;
+    let mut parts = content.split(QUOTE_FOLD);
+    let mut out = String::with_capacity(content.len());
+    out.push_str(parts.next().unwrap_or_default());
+    for (n, rest) in parts.enumerate() {
+        out.push_str(&format!("{QUOTE_FOLD} {fold}=\"{prefix}q{n}\""));
+        out.push_str(rest);
+    }
+    out
+}
+
+/// [`document_for`], for a body drawn under `treatment`: its container
+/// carries [`TREATMENT_ATTRIBUTE`], which is what `treatment.css` styles and
+/// what the renderer reads to leave paper alone and hold app colours to the
+/// contrast guard.
+pub fn document_for_treated(
+    content: &str,
+    styles: &str,
+    remote: RemoteImages,
+    treatment: Treatment,
+) -> String {
+    wrap_document(
+        &format!(
+            "{}{}{}",
+            senders_stylesheet(styles),
+            number_quote_folds(&contain_body_treated(content, treatment), ""),
+            scroll_markers()
+        ),
+        remote,
+        Sheet::Theme,
+    )
+}
+
+/// [`contain_body`], naming the treatment the body is drawn in.
+pub fn contain_body_treated(content: &str, treatment: Treatment) -> String {
+    format!(
+        r#"<div class="{}" {TREATMENT_ATTRIBUTE}="{}">{content}</div>"#,
+        sanitize::BODY_CLASS,
+        treatment.attribute_value()
     )
 }
 
@@ -1072,6 +1344,10 @@ pub struct Prepared {
     verdict: bool,
     rendering: Rendering,
     rendered: Rendered,
+    /// The body drawn each way, when prepared for a reader that treats
+    /// ([`prepare_treated`]): the person's `O` is then a choice between two
+    /// finished documents, not work.
+    treated: Option<Box<[Rendered; 2]>>,
 }
 
 impl Prepared {
@@ -1091,25 +1367,69 @@ impl Prepared {
     pub fn rendered(&self) -> &Rendered {
         &self.rendered
     }
+
+    /// The body as [`body_html_treated`] would draw it under `chosen` (`None`
+    /// is the rule's), if this was prepared by [`prepare_treated`] from
+    /// exactly `body`, under exactly `remote`.
+    pub fn treated_for(
+        &self,
+        body: &MessageBody,
+        remote: RemoteImages,
+        chosen: Option<Treatment>,
+    ) -> Option<&Rendered> {
+        if self.remote != remote || self.body != *body {
+            return None;
+        }
+        let [app, paper] = &**self.treated.as_ref()?;
+        let shown = chosen
+            .or_else(|| app.treated.map(|treated| treated.classified))
+            .unwrap_or(Treatment::AppColours);
+        Some(match shown {
+            Treatment::AppColours => app,
+            Treatment::Paper => paper,
+        })
+    }
 }
 
-/// Render `body` for the single-message reader ahead of time: the same as
-/// [`prepare`], with no scope stamped on its references, which is what
-/// [`body_html`] draws for one message on its own.
+/// Render `body` for a reader that draws treatments (Focus), ahead of time:
+/// sanitised once, classified, and drawn both in app colours and on paper,
+/// so opening the message and switching its treatment are both free of the
+/// work (specs/007-postio-focus T223).
 ///
-/// For a worker: the reader-view verdict and the sanitising are the two
-/// html5ever parses a message costs, and the main thread is where neither
-/// belongs -- each is paid on every message the cursor settles on.
-pub fn prepare_message(body: &MessageBody, remote: RemoteImages) -> Prepared {
-    let verdict = suits_reader_view(body);
-    let rendering = opening_rendering();
+/// For a worker. No reader-view verdict is judged: a treating reader has no
+/// reader view, and the verdict is another html5ever parse.
+pub fn prepare_treated(body: &MessageBody, remote: RemoteImages) -> Prepared {
+    let both = match body.html.as_deref().filter(|html| !html.trim().is_empty()) {
+        None => {
+            let text = body_html_treated(body, remote, None, None);
+            [text.clone(), text]
+        }
+        Some(html) => {
+            crate::reader::cost::bump(&crate::reader::cost::BODIES_SANITISED, 1);
+            let sanitized = sanitize::sanitize_body_in(html, remote, None);
+            match sanitized.over_cap {
+                Some(cap) => {
+                    let capped = Rendered {
+                        treated: Some(Treated::TEXT),
+                        ..over_cap(body, cap)
+                    };
+                    [capped.clone(), capped]
+                }
+                None => [
+                    treat_sanitized(&sanitized, Some(Treatment::AppColours)),
+                    treat_sanitized(&sanitized, Some(Treatment::Paper)),
+                ],
+            }
+        }
+    };
     Prepared {
         scope: String::new(),
         body: body.clone(),
         remote,
-        verdict,
-        rendering,
-        rendered: body_html(body, remote, rendering),
+        verdict: false,
+        rendering: Rendering::Original,
+        rendered: both[0].clone(),
+        treated: Some(Box::new(both)),
     }
 }
 
@@ -1129,6 +1449,7 @@ pub fn prepare(scope: &str, body: &MessageBody, remote: RemoteImages) -> Prepare
         verdict,
         rendering,
         rendered: body_html_in(body, remote, rendering, Some(scope)),
+        treated: None,
     }
 }
 
@@ -1331,30 +1652,6 @@ mod render_cache_tests {
             0,
             "an earlier offer was thrown away by a later one"
         );
-    }
-
-    #[test]
-    fn a_message_prepared_for_the_single_reader_is_what_it_would_draw() {
-        let newsletter = body("<table><tr><td>Weekly digest</td></tr></table>");
-        let prepared = prepare_message(&newsletter, RemoteImages::Blocked);
-        let rendering = if suits_reader_view(&newsletter) {
-            Rendering::Reader
-        } else {
-            Rendering::Original
-        };
-        assert_eq!(
-            prepared.verdict_for(&newsletter),
-            Some(rendering == Rendering::Reader)
-        );
-        assert!(prepared.serves(&newsletter, RemoteImages::Blocked, rendering));
-        assert_eq!(
-            *prepared.rendered(),
-            body_html(&newsletter, RemoteImages::Blocked, rendering),
-            "the single reader's references carry no scope, and nor may this"
-        );
-        // Anything else is not what it was prepared for.
-        assert!(!prepared.serves(&newsletter, RemoteImages::Allowed, rendering));
-        assert_eq!(prepared.verdict_for(&body("<p>Other.</p>")), None);
     }
 
     #[test]
@@ -1647,6 +1944,43 @@ mod tests {
             "folding must not need script: {}",
             rendered.html
         );
+    }
+
+    /// Spec 007 T067 (FR-034): a single message's quote folds carry ids, as
+    /// a conversation's do, so the renderer can open one by activation; and
+    /// each says how many lines it hides. The classic single-message reader
+    /// and Focus's open-email dialog both draw this document.
+    #[test]
+    fn a_single_messages_quote_folds_carry_ids_and_line_counts() {
+        let document_of = |body: MessageBody| {
+            let rendered = body_html(&body, RemoteImages::Blocked, Rendering::Original);
+            document_for(
+                &rendered.html,
+                &rendered.styles,
+                RemoteImages::Blocked,
+                Sheet::Theme,
+            )
+        };
+        let html = document_of(MessageBody {
+            text: None,
+            html: Some(
+                "<p>my reply</p><blockquote><p>one</p><p>two</p></blockquote>\
+                 <p>and more</p><blockquote><p>three</p></blockquote>"
+                    .to_owned(),
+            ),
+        });
+        for fold in [
+            r#"<details class="postio-quote" data-postio-fold="q0"><summary>2 quoted lines</summary>"#,
+            r#"<details class="postio-quote" data-postio-fold="q1"><summary>1 quoted line</summary>"#,
+        ] {
+            assert!(html.contains(fold), "{fold} is not in {html}");
+        }
+        let plain = document_of(MessageBody {
+            text: Some("Fine by me.\n> your words\n> and more of them\n".to_owned()),
+            html: None,
+        });
+        let fold = r#"<details class="postio-quote" data-postio-fold="q0"><summary>2 quoted lines</summary>"#;
+        assert!(plain.contains(fold), "{fold} is not in {plain}");
     }
 
     /// `style-src` must never name a host (#1383, spec FR-022).
@@ -2562,10 +2896,6 @@ mod warming_tests {
             "the fixture must read as bulk for this to mean anything"
         );
         assert_eq!(
-            prepare_message(&newsletter, RemoteImages::Blocked).rendering,
-            Rendering::Original
-        );
-        assert_eq!(
             prepare("7", &newsletter, RemoteImages::Blocked).rendering,
             Rendering::Original
         );
@@ -2674,6 +3004,242 @@ mod no_webkit_tests {
             assert!(
                 !css.contains("-webkit-"),
                 "{name} still has a -webkit- rule"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod treatment_tests {
+    //! The document a treated body is drawn from (specs/007-postio-focus
+    //! T210-T212): which wrapper, which stylesheet, and the attribute the
+    //! renderer and `treatment.css` both read.
+
+    use super::*;
+
+    fn html(markup: &str) -> MessageBody {
+        MessageBody {
+            text: None,
+            html: Some(markup.to_owned()),
+        }
+    }
+
+    const NEWSLETTER: &str = "<html><head><style>body { color: #222 } \
+        @media (prefers-color-scheme: dark) { p { color: #eee } }</style></head>\
+        <body bgcolor=\"#f6f1e7\"><table width=\"640\"><tr><td><p>Issue 48</p></td></tr></table></body></html>";
+
+    const LETTER: &str = "<p style=\"color:black;font-family:Calibri\">Hi everyone,</p>";
+
+    fn treated(shown: Treatment, classified: Treatment, trigger: Option<Trigger>) -> Treated {
+        Treated {
+            shown,
+            classified,
+            trigger,
+            html: true,
+        }
+    }
+
+    #[test]
+    fn the_line_names_app_colours_and_offers_the_original() {
+        let words = render_mode_words(
+            treated(Treatment::AppColours, Treatment::AppColours, None),
+            None,
+        )
+        .expect("an HTML body gets a line");
+        assert_eq!(words.title, "App colours");
+        assert_eq!(words.detail, "sender colours and fonts removed");
+        assert_eq!(words.action, "Show original");
+        assert!(!words.offer_always, "nothing was chosen to remember");
+    }
+
+    #[test]
+    fn the_line_says_why_the_rule_chose_paper() {
+        let background = render_mode_words(
+            treated(
+                Treatment::Paper,
+                Treatment::Paper,
+                Some(Trigger::PageBackground),
+            ),
+            None,
+        )
+        .expect("a line");
+        assert_eq!(background.title, "Original layout, on paper");
+        assert_eq!(background.detail, "this message sets its own background");
+        assert_eq!(background.action, "Use app colours");
+        let layout = render_mode_words(
+            treated(Treatment::Paper, Treatment::Paper, Some(Trigger::WideTable)),
+            None,
+        )
+        .expect("a line");
+        assert_eq!(layout.detail, "this message lays out its own page");
+    }
+
+    #[test]
+    fn a_choice_against_the_rule_is_named_and_can_be_remembered() {
+        let chosen =
+            render_mode_words(treated(Treatment::Paper, Treatment::AppColours, None), None)
+                .expect("a line");
+        assert_eq!(chosen.title, "Original colours, on paper");
+        assert_eq!(chosen.detail, "as the sender styled it");
+        assert!(chosen.offer_always);
+        let remembered = render_mode_words(
+            treated(Treatment::Paper, Treatment::AppColours, None),
+            Some(Treatment::Paper),
+        )
+        .expect("a line");
+        assert_eq!(remembered.detail, "always for this sender");
+        assert!(!remembered.offer_always, "already remembered");
+        // Back to the rule's choice, against a remembered one: offered again,
+        // so the sender's mail can be put back.
+        let back = render_mode_words(
+            treated(Treatment::AppColours, Treatment::AppColours, None),
+            Some(Treatment::Paper),
+        )
+        .expect("a line");
+        assert!(back.offer_always);
+    }
+
+    #[test]
+    fn a_page_keeps_the_margins_its_sender_set_or_a_browsers() {
+        let draw =
+            |page: &str| body_html_treated(&html(page), RemoteImages::Blocked, None, None).html;
+        let defaulted = draw("<body style=\"background:#fff4e0\"><p>A sale on now</p></body>");
+        assert!(defaulted.contains(PAGE_MARGIN_CLASS), "{defaulted}");
+        let own = draw("<body style=\"margin:0;background:#fff4e0\"><p>A sale</p></body>");
+        assert!(!own.contains(PAGE_MARGIN_CLASS), "{own}");
+        assert!(!own.contains(LETTER_CLASS), "{own}");
+    }
+
+    #[test]
+    fn plain_text_has_no_line() {
+        assert_eq!(render_mode_words(Treated::TEXT, None), None);
+    }
+
+    /// Prepared ahead, every choice reads back exactly what drawing it now
+    /// would have produced -- the rule's, either of the person's, and the
+    /// two bodies with only one treatment to give (T223).
+    #[test]
+    fn a_prepared_body_answers_every_choice_as_drawing_it_would() {
+        let text = MessageBody {
+            text: Some("Hello.\n".to_owned()),
+            html: None,
+        };
+        for body in [html(NEWSLETTER), html(LETTER), text] {
+            let prepared = prepare_treated(&body, RemoteImages::Blocked);
+            for chosen in [None, Some(Treatment::AppColours), Some(Treatment::Paper)] {
+                assert_eq!(
+                    prepared.treated_for(&body, RemoteImages::Blocked, chosen),
+                    Some(&body_html_treated(
+                        &body,
+                        RemoteImages::Blocked,
+                        chosen,
+                        None
+                    )),
+                    "{chosen:?}"
+                );
+            }
+            assert!(
+                prepared
+                    .treated_for(&body, RemoteImages::Allowed, None)
+                    .is_none(),
+                "served under a policy it was not prepared for"
+            );
+        }
+    }
+
+    #[test]
+    fn plain_text_is_app_colours_with_nothing_to_switch_to() {
+        let body = MessageBody {
+            text: Some("Hello.\n".to_owned()),
+            html: None,
+        };
+        let rendered = body_html_treated(&body, RemoteImages::Blocked, None, None);
+        assert_eq!(rendered.treated, Some(Treated::TEXT));
+        assert!(rendered.html.contains("Hello."));
+    }
+
+    #[test]
+    fn mail_that_paints_its_page_is_drawn_as_sent_on_paper() {
+        let rendered = body_html_treated(&html(NEWSLETTER), RemoteImages::Blocked, None, None);
+        let treated = rendered.treated.expect("treated");
+        assert_eq!(treated.shown, Treatment::Paper);
+        assert_eq!(treated.classified, Treatment::Paper);
+        assert_eq!(treated.trigger, Some(Trigger::PageBackground));
+        assert!(rendered.html.contains(ORIGINAL_CLASS), "{}", rendered.html);
+        assert!(
+            !rendered.html.contains(LETTER_CLASS),
+            "the rule's paper got a letter's margins"
+        );
+        assert!(rendered.html.contains("postio-canvas"), "the page was lost");
+        assert!(rendered.styles.contains("#222"), "{}", rendered.styles);
+        assert!(
+            !rendered.styles.contains("#eee"),
+            "the sender's dark design reached the white sheet: {}",
+            rendered.styles
+        );
+    }
+
+    #[test]
+    fn correspondence_is_drawn_in_app_colours() {
+        let rendered = body_html_treated(&html(LETTER), RemoteImages::Blocked, None, None);
+        let treated = rendered.treated.expect("treated");
+        assert_eq!(treated.shown, Treatment::AppColours);
+        assert!(treated.html);
+        assert!(
+            rendered.html.contains(APP_COLOURS_CLASS),
+            "{}",
+            rendered.html
+        );
+        assert!(!rendered.html.contains("Calibri") && !rendered.html.contains("black"));
+    }
+
+    #[test]
+    fn a_choice_wins_over_the_rule_and_a_chosen_sheet_gives_a_letter_margins() {
+        let paper = body_html_treated(
+            &html(LETTER),
+            RemoteImages::Blocked,
+            Some(Treatment::Paper),
+            None,
+        );
+        let treated = paper.treated.expect("treated");
+        assert_eq!(
+            (treated.shown, treated.classified),
+            (Treatment::Paper, Treatment::AppColours)
+        );
+        assert!(paper.html.contains(LETTER_CLASS), "{}", paper.html);
+        assert!(
+            paper.html.contains("Calibri"),
+            "paper is as sent: {}",
+            paper.html
+        );
+
+        let app = body_html_treated(
+            &html(NEWSLETTER),
+            RemoteImages::Blocked,
+            Some(Treatment::AppColours),
+            None,
+        );
+        assert_eq!(app.treated.map(|t| t.shown), Some(Treatment::AppColours));
+        assert!(!app.html.contains("postio-canvas"), "{}", app.html);
+        assert!(!app.html.contains("f6f1e7"), "{}", app.html);
+    }
+
+    #[test]
+    fn the_container_names_its_treatment_and_the_sheet_styles_it() {
+        for treatment in [Treatment::AppColours, Treatment::Paper] {
+            let document = document_for_treated("<p>x</p>", "", RemoteImages::Blocked, treatment);
+            let stamp = format!(
+                "class=\"{}\" {TREATMENT_ATTRIBUTE}=\"{}\"",
+                sanitize::BODY_CLASS,
+                treatment.attribute_value()
+            );
+            assert!(document.contains(&stamp), "{document}");
+            assert!(
+                document.contains(&format!(
+                    "[{TREATMENT_ATTRIBUTE}=\"{}\"]",
+                    treatment.attribute_value()
+                )),
+                "no rule styles {treatment:?}"
             );
         }
     }

@@ -12,7 +12,7 @@
 //! its two readers: each case's rows are delivered into a real
 //! `ListWindow<RowFfi>` — the model this boundary actually serves Swift
 //! from — and the command that comes out is compared against the table.
-//! `postio-app`'s `aiming.rs` fills the GTK list model from the same table
+//! The classic app's `aiming.rs` filled the GTK list model from the same table
 //! and asserts the same commands. Same rows, same gesture, same command, on
 //! both sides.
 //!

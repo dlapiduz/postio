@@ -26,7 +26,7 @@ the implementing session; the reviewer is someone else.
 
 ```bash
 scripts/storyboards.sh lint
-scripts/storyboards.sh run --app classic          # --app all on the Focus branch
+scripts/storyboards.sh run
 ```
 
 A run that fails here is yours to fix before any reviewer sees it -- the
@@ -36,7 +36,7 @@ are not failures; they are counted and shown.
 ## 2. Film the base
 
 ```bash
-scripts/storyboards.sh base --app classic
+scripts/storyboards.sh base
 ```
 
 (Until `base` exists -- tasks T066/T067 -- skip this; every run is reviewed as
@@ -125,7 +125,7 @@ After any change to `.claude/agents/ux-reviewer.md` or
 pass:
 
 ```bash
-scripts/storyboards.sh run --app classic --calibration
+scripts/storyboards.sh run --calibration
 scripts/storyboards.sh bundle --calibration --acceptance <a note saying "calibration">
 scripts/storyboards.sh tool prompt Design/review/<branch>/calibration/bundle --batch 1
 ```

@@ -57,6 +57,7 @@ use std::thread::LocalKey;
 thread_local! {
     pub(crate) static DOCUMENTS: Cell<u64> = const { Cell::new(0) };
     pub(crate) static BODIES_SANITISED: Cell<u64> = const { Cell::new(0) };
+    pub(crate) static BODIES_TREATED: Cell<u64> = const { Cell::new(0) };
     pub(crate) static BULK_JUDGED: Cell<u64> = const { Cell::new(0) };
     pub(crate) static DOCUMENT_BYTES: Cell<u64> = const { Cell::new(0) };
     pub(crate) static LARGEST_DOCUMENT: Cell<u64> = const { Cell::new(0) };
@@ -64,7 +65,6 @@ thread_local! {
     pub(crate) static SURFACES_CREATED: Cell<u64> = const { Cell::new(0) };
     pub(crate) static SURFACES_RELEASED: Cell<u64> = const { Cell::new(0) };
     pub(crate) static PAGES_REQUESTED: Cell<u64> = const { Cell::new(0) };
-    pub(crate) static WAITED_OUT: Cell<u64> = const { Cell::new(0) };
     pub(crate) static SNAPSHOTS: Cell<u64> = const { Cell::new(0) };
     pub(crate) static STYLE_PASSES: Cell<u64> = const { Cell::new(0) };
     pub(crate) static SNAPSHOT_NODES: Cell<u64> = const { Cell::new(0) };
@@ -151,17 +151,6 @@ pub fn note_surface_created() {
 /// process behind it can go, not whether a Rust value went out of scope.
 pub fn note_surface_released() {
     bump(&SURFACES_RELEASED, 1);
-}
-
-/// A conversation stopped waiting for the rest of itself and drew what it
-/// had, because its deadline passed.
-///
-/// Every one is a pane that showed nothing new for the whole deadline. It is
-/// the right answer when a body really is on its way and slow; it is a
-/// stall when the pane was waiting for something that was never coming --
-/// a body this machine does not have yet.
-pub fn note_waited_out() {
-    bump(&WAITED_OUT, 1);
 }
 
 /// A page of the message list was asked for.
@@ -314,15 +303,10 @@ mod snapshot_tests {
     }
 
     #[test]
-    fn waiting_out_and_page_requests_are_counted_one_each() {
-        let (waited, pages) = (
-            test_support::redraws_waited_out(),
-            test_support::pages_requested(),
-        );
-        note_waited_out();
+    fn page_requests_are_counted_one_each() {
+        let pages = test_support::pages_requested();
         note_page_requested();
         note_page_requested();
-        assert_eq!(test_support::redraws_waited_out() - waited, 1);
         assert_eq!(test_support::pages_requested() - pages, 2);
     }
 }

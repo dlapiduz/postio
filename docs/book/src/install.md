@@ -95,7 +95,7 @@ under `flatpak/` that builds against the GNOME 50 runtime — see
 ## Just try it
 
 ```bash
-cargo run -p postio-app
+cargo run -p postio-gtk
 ```
 
 builds and runs Postio from the checkout without installing anything. It
@@ -134,10 +134,10 @@ mail client for your desktop:
 xdg-mime default dev.postio.Postio.desktop x-scheme-handler/mailto
 ```
 
-From there, drive it from the keyboard: `j`/`k` to move, `Enter` to open,
-`e` to reply, `a` to archive, `u` to undo anything, `/` to search
-(`from:ada is:unread …`), `Ctrl+K` for the command palette, `?` for the
-full cheat sheet. Every binding is rebindable — see the
+From there, drive it from the keyboard: `j`/`k` to move, `Enter` to open
+and `Esc` to close, `e` to reply, `a` to archive, `Ctrl+Z` to undo anything,
+`/` to search (`from:ada is:unread …`), `Ctrl+K` to run any command, `?` for
+the key map. Every binding is rebindable — see the
 [keyboard reference](keyboard.md).
 
 ## Troubleshooting
@@ -157,7 +157,7 @@ them on your `PATH` itself; a plain `cargo build` in a fresh clone needs
 **The window fails to open, or opens with broken rendering**: only Wayland
 is verified. If you're on X11 and hit a rendering issue, try a Wayland
 session first, or force the X11 backend explicitly with
-`GDK_BACKEND=x11 cargo run -p postio-app` before filing an issue.
+`GDK_BACKEND=x11 cargo run -p postio-gtk` before filing an issue.
 
 **Onboarding won't save the account, or every launch reopens onboarding**:
 Postio stores credentials in your OS keyring over the Secret Service D-Bus

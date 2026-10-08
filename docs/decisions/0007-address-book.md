@@ -1,7 +1,7 @@
 # ADR 0007 — The address book: one table, two provenances
 
-- **Status:** Accepted — **GO** (2026-08-24); amended 2026-09-14, see below
-  — the schema, repository and `group:` are built, Q4 and Q7 are not
+- **Status:** Accepted (2026-08-24). The schema, repository, `group:` and
+  completion are built; vCard (Q4) and a management surface (Q7) are not
 - **Date:** 2026-08-24
 - **Issue:** [#4 Address book / contact management](https://github.com/dlapiduz/postio/issues/4)
 - **Related:** `docs/ARCHITECTURE.md` §6 (one matching language),
@@ -25,15 +25,11 @@ The MVP shortcut turns out to be most of the foundation.
 | A user-set `name` overriding header names, never overwritten by a sighting | Built (`repository/contacts.rs:11`) |
 | `record`, `record_message`, `get`, `by_address`, `list`, `search`, `set_name`, `delete` | All built |
 | Sightings written on genuine insert only, never on re-enumeration | Built (`sync/src/contacts.rs`) — and carefully |
-| `@` mode in the finder, ranked, wired | Built (`gtk/src/finder.rs`) |
-| Composer recipient completion | Built |
-| Creating a contact that has never sent mail | Built since, at the repository — `ContactRepository::create` (`crates/postio-storage/src/repository/contacts.rs`); no management surface yet (Q7) |
-| Groups, deletion that stays deleted | Built since — `contact_groups`/`contact_group_members` in `crates/postio-storage/src/schema.rs`, `group:` in `postio-search`, `suppressed` honoured in `contacts.rs` |
-| vCard import/export | **Absent** — see the Q4 amendment |
-
-`finder.rs`'s comment — *"Postio has no address book: contacts accumulate from
-the addresses that have come through the mailbox"* — describes a missing
-feature sitting on a finished data model.
+| `@` mode in the finder, ranked, wired | Built (`postio_ui::finder`) |
+| Composer recipient completion | Built (`postio_ui::recipients::suggest`, Q6) |
+| Creating a contact that has never sent mail | Built at the repository (`ContactRepository::create`); no management surface (Q7) |
+| Groups, deletion that stays deleted | Built: `contact_groups`/`contact_group_members` in `crates/postio-storage/src/schema.rs`, `group:` in `postio-search`, `suppressed` honoured in `contacts.rs` |
+| vCard import/export | Not built (Q4) |
 
 ---
 
@@ -59,10 +55,8 @@ ALTER TABLE contacts ADD COLUMN uid TEXT;      -- vCard UID; also CardDAV's key
 ALTER TABLE contacts ADD COLUMN vcard_extra TEXT;   -- see Q4
 ```
 
-> **Amended 2026-09-14 (specs/004-turso-store):** these four columns are
-> declared on `contacts` in `crates/postio-storage/src/schema.rs` — one `HEAD`
-> schema, no `ALTER TABLE`, because there are no migrations on this engine.
-> The same goes for Q3's two tables.
+The `ALTER TABLE` is illustrative: the four columns, and Q3's two tables,
+are declared in `crates/postio-storage/src/schema.rs`'s `HEAD`.
 
 `source` is *how the row first appeared*, not what it is now. A `mail` row the
 user edits becomes `user`; that is the promotion, and it is one statement.
@@ -91,7 +85,7 @@ nothing to suppress it against. And "unsuppress" is just creating it again,
 which lands on the same row by address.
 
 The test: record a message, delete the contact, record another message from the
-same address, assert autocomplete does not offer it. That test fails today.
+same address, assert autocomplete does not offer it.
 
 ---
 
@@ -126,8 +120,8 @@ makes the recipient list what the user can see, which is also what makes Bcc
 behave.
 
 Where §6 *does* reach: `postio-search` gains a `group:` field, so `group:family`
-means "from or to any member" and works in the search bar, in a pinned sidebar
-filter and in `[filters]` alike. That is one `Field` row and one arm in the
+means "from or to any member" and works in the search bar, in a pinned search
+and in `[saved_searches]` alike. That is one `Field` row and one arm in the
 parser, resolved by `postio-index` to an address set — one language, one
 parser, and dry-run for free.
 
@@ -165,9 +159,8 @@ Both vCard 3.0 and 4.0 are read; 4.0 is written. Most exports in the wild are
 3.0, and refusing them would make import a feature that fails on the first real
 file anyone tries.
 
-> **Amended 2026-09-14:** not built. There is no `postio_model::vcard`, and
-> `contacts.vcard_extra` is a column nothing writes yet. The decision stands
-> as the shape it will take.
+Not built: there is no `postio_model::vcard`, and nothing writes
+`contacts.vcard_extra` yet. This is the shape it takes when it is.
 
 ---
 
@@ -201,23 +194,27 @@ Suppressed rows appear in neither. Match quality (prefix beats substring, name
 beats address) applies within a band, never across one, so a contact the user
 deliberately created is never pushed below a robot they have never replied to.
 
-Recency led frequency after #424: a correspondent written to once yesterday
-belongs above one written to fifty times last year, and the earlier
-`(times_seen DESC, last_seen_at DESC)` ordering said the opposite. Frequency
-still settles a tie on the same day — see
-`frequency_decides_between_addresses_used_equally_recently` in
-`crates/postio-storage/tests/storage_suite/contacts.rs` — which is the whole
-of what it is for now.
+Recency leads frequency (#424): a correspondent written to once yesterday
+belongs above one written to fifty times last year. Frequency settles a tie
+on the same day (`frequency_decides_between_addresses_used_equally_recently`
+in `crates/postio-storage/tests/storage_suite/contacts.rs`).
+
+**Composer completion ranks letters written first.** Above the bands,
+`postio_ui::recipients::suggest` orders by how many messages the user has
+sent to the address (`correspondents.sent_count`, spec 007 research R15),
+because a letter is the user's own act; the bands, then recency, then
+frequency, order what that leaves tied. Every app's completion uses that one
+rule.
 
 ---
 
 ## Q7 — Where the surface lives
 
-- **Finding** stays in the `@` finder mode. It is built, it is ranked, and
-  `finder.rs`'s reasoning about why picking a contact *searches their mail*
+- **Finding** is the `@` finder mode. It is built, it is ranked, and
+  the finder's reasoning about why picking a contact *searches their mail*
   rather than composing to them stands.
-- **Managing** is a surface that takes over the reading pane, like the
-  composer — not a separate window. It gets `Context::Contacts` in
+- **Managing** is a surface over the app, like the composer — not a
+  separate window. It gets `Context::Contacts` in
   `postio-core`, which is what makes its commands reachable from the palette
   and printable in the cheat sheet without either learning about the widget
   (the reasoning `Context::Sidebar`'s doc comment already sets out).
@@ -226,9 +223,7 @@ of what it is for now.
   the commands must still go through the same path — when CardDAV arrives it
   becomes an operation-queue row and nothing above it changes.
 
-> **Amended 2026-09-14:** the management surface is not built — there is no
-> `Context::Contacts` in `postio-core`. Finding (the `@` finder) and composer
-> completion are; the schema and repository work this ADR decided landed.
+Not built: there is no `Context::Contacts` in `postio-core` yet.
 
 ---
 
@@ -263,12 +258,12 @@ properties, which is the property the acceptance criterion actually needs.
 
 ## Consequences
 
-- Four columns on `contacts` and two new tables, all declared in
-  `crates/postio-storage/src/schema.rs`'s `HEAD` (there are no migrations).
-- `ContactRepository::delete` changes behaviour for `mail` rows; the test that
-  proves it is one that fails today.
+- Four columns on `contacts` and two tables, declared in
+  `crates/postio-storage/src/schema.rs`'s `HEAD`.
+- `ContactRepository::delete` suppresses `mail` rows rather than removing
+  them.
 - `postio-search` gains `group:`; the shortcut and config references regenerate
   (`ARCHITECTURE.md` §2).
-- `postio-model` gains `vcard` and no dependencies. *(Not yet — Q4.)*
+- `postio-model` gains `vcard` and no dependencies, when Q4 is built.
 - `postio-core` gains `Context::Contacts` and its commands, which — per §2 — is
-  what makes them exist at all. *(Not yet — Q7.)*
+  what makes them exist at all, when Q7 is built.

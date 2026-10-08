@@ -21,8 +21,8 @@ use crate::ids::AccountId;
 
 /// Which part of Postio opened the connection.
 ///
-/// ADR 0009 Q6 extends this with AI providers when that subsystem lands;
-/// OAuth's token endpoints join when #2's flow does.
+/// ADR 0009 Q6 extends this with the model a person runs on this computer
+/// (spec 007 FR-168); OAuth's token endpoints join when #2's flow does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EgressSubsystem {
     /// The IMAP sync engine.
@@ -31,6 +31,8 @@ pub enum EgressSubsystem {
     Smtp,
     /// Account discovery: autoconfig lookups and server probes.
     Discovery,
+    /// The person's own model runtime, on this computer (`postio-ai`).
+    Model,
 }
 
 impl EgressSubsystem {
@@ -40,6 +42,7 @@ impl EgressSubsystem {
             Self::Imap => "imap",
             Self::Smtp => "smtp",
             Self::Discovery => "discovery",
+            Self::Model => "model",
         }
     }
 
@@ -49,6 +52,7 @@ impl EgressSubsystem {
             "imap" => Some(Self::Imap),
             "smtp" => Some(Self::Smtp),
             "discovery" => Some(Self::Discovery),
+            "model" => Some(Self::Model),
             _ => None,
         }
     }
@@ -123,6 +127,7 @@ mod tests {
             EgressSubsystem::Imap,
             EgressSubsystem::Smtp,
             EgressSubsystem::Discovery,
+            EgressSubsystem::Model,
         ] {
             assert_eq!(EgressSubsystem::parse(subsystem.as_str()), Some(subsystem));
         }

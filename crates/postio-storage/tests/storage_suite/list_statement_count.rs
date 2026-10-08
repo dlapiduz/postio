@@ -234,3 +234,46 @@ async fn an_ordinary_listing_is_one_statement_and_no_more_rows_than_it_returns()
         "a page of a mailbox must be a seek, not a scan"
     );
 }
+
+/// Focus's `g z` and `g *` read every enabled account's snoozed or flagged
+/// mail in one statement, planned as seeks: the account is a membership test
+/// against the enabled accounts, never a scan of the messages.
+#[tokio::test]
+async fn focus_s_snoozed_and_flagged_views_are_one_statement_and_seek() {
+    let database = test_support::memory().await;
+    seed_small(&database, 40).await;
+    let connection = database.connect().await.expect("a connection");
+    install(&connection);
+    let messages = MessageRepository::new(&connection);
+
+    for scope in [
+        ListScope::Focus(postio_model::FocusScope::Snoozed),
+        ListScope::Focus(postio_model::FocusScope::Flagged),
+    ] {
+        let query = ListQuery {
+            scope,
+            limit: 20,
+            after: None,
+        };
+        let _ = messages.page(&query).await.expect("a first read");
+        let counts = counted_async(|| async {
+            messages.page(&query).await.expect("a page");
+        })
+        .await;
+        assert_eq!(counts.statements, 1, "{scope:?} is one statement");
+        let scans =
+            postio_storage::test_support::counting::scans(&connection, &messages.explain(&query))
+                .await;
+        // The accounts table is the user's handful of accounts, read once to
+        // say which are enabled; it is the tables that grow that must seek.
+        let grown: Vec<_> = scans
+            .iter()
+            .filter(|step| {
+                postio_storage::test_support::counting::GROWING_TABLES
+                    .iter()
+                    .any(|table| step.contains(table))
+            })
+            .collect();
+        assert!(grown.is_empty(), "{scope:?} scans {grown:?}; it must seek");
+    }
+}

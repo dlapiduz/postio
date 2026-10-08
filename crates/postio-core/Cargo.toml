@@ -10,6 +10,9 @@ repository.workspace = true
 
 [dependencies]
 async-channel = { workspace = true }
+# A snooze's and a reminder's time, carried by the command (specs/007-postio-focus
+# research R6). Already in the graph under postio-model, with serde.
+chrono = { workspace = true, features = ["serde"] }
 postio-config.workspace = true
 postio-model.workspace = true
 serde = { workspace = true }

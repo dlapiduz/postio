@@ -1,0 +1,319 @@
+Table rows: a child that is not a cell goes in an anonymous cell
+
+Not reported upstream from here (Postio does not contact upstream); as
+of 0.3.0-beta.2 the table builder drops it.
+
+Responsive mail stacks its columns on a narrow screen by making its
+layout-table cells `display: block; width: 100%` under
+`@media (max-width: 600px)`. A `display: block` child of a row is not a
+table-cell, and `collect_table_cells` sent it to the arm for captions,
+which removes its construction damage and leaves it out of the table's
+layout children: never laid out, never painted, text and images gone.
+CSS 2.1 §17.2.1 wraps each run of consecutive non-cell children of a row
+(block or inline level, not captions or other internal table boxes) in
+one anonymous table-cell; the run stacks inside it as blocks, the way
+browsers draw these newsletters. The anonymous cell is the anonymous
+block `construct.rs` already makes (now `create_anonymous_box`), styled
+from the row, placed like a one-column cell, and owned by the table so
+the next construction deallocates it.
+
+Tested by crates/postio-render/tests/engine_patches.rs and, on a
+corpus newsletter in the app-colours column, tests/treatment.rs.
+
+diff -ruN blitz-dom/src/layout/construct.rs blitz-dom/src/layout/construct.rs
+--- blitz-dom/src/layout/construct.rs
++++ blitz-dom/src/layout/construct.rs
+@@ -130,57 +130,65 @@
+     }
+ 
+     fn create_anonymous_block(&mut self, container_node_id: NodeId, doc: &mut BaseDocument) {
+-        use style::selector_parser::PseudoElement;
+-
+-        const NAME: QualName = QualName {
+-            prefix: None,
+-            ns: ns!(html),
+-            local: local_name!("div"),
+-        };
+-        let node_id = doc.create_node(NodeData::AnonymousBlock(Box::new(ElementData::new(
+-            NAME,
+-            Vec::new(),
+-        ))));
+-
+-        // Set style data
+-        let parent_style = doc.nodes[container_node_id].primary_styles().unwrap();
+-        let read_guard = doc.guard.read();
+-        let guards = StylesheetGuards::same(&read_guard);
+-        let style = doc.stylist.style_for_anonymous::<&Node>(
+-            &guards,
+-            &PseudoElement::ServoAnonymousBox,
+-            &parent_style,
+-        );
+-        let mut stylo_element_data = StyloElementData {
+-            damage: ALL_DAMAGE,
+-            ..Default::default()
+-        };
+-        drop(parent_style);
+-
+-        stylo_element_data.styles.primary = Some(style);
+-        stylo_element_data.set_restyled();
+-
+-        *doc.nodes[node_id]
+-            .stylo_element_data_mut()
+-            .ensure_init_mut() = stylo_element_data;
+-
+-        if doc.nodes[container_node_id]
+-            .flags
+-            .contains(NodeFlags::IS_IN_DOCUMENT)
+-        {
+-            doc.nodes[node_id].flags.insert(NodeFlags::IS_IN_DOCUMENT);
+-        }
+-        doc.nodes[node_id].parent = Some(container_node_id);
+-        doc.nodes[node_id]
+-            .layout_parent
+-            .set(Some(container_node_id));
+-
++        let node_id = create_anonymous_box(doc, container_node_id);
+         self.children.push(node_id);
+         self.anonymous_block_id = Some(node_id);
+         self.anonymous_blocks.push(node_id);
+     }
+ }
+ 
++/// A new anonymous block box whose style inherits from `container_node_id`'s,
++/// parented to it but not among its children: the caller decides whose
++/// layout child it is and who deallocates it.
++pub(crate) fn create_anonymous_box(doc: &mut BaseDocument, container_node_id: NodeId) -> NodeId {
++    use style::selector_parser::PseudoElement;
++
++    const NAME: QualName = QualName {
++        prefix: None,
++        ns: ns!(html),
++        local: local_name!("div"),
++    };
++    let node_id = doc.create_node(NodeData::AnonymousBlock(Box::new(ElementData::new(
++        NAME,
++        Vec::new(),
++    ))));
++
++    // Set style data
++    let parent_style = doc.nodes[container_node_id].primary_styles().unwrap();
++    let read_guard = doc.guard.read();
++    let guards = StylesheetGuards::same(&read_guard);
++    let style = doc.stylist.style_for_anonymous::<&Node>(
++        &guards,
++        &PseudoElement::ServoAnonymousBox,
++        &parent_style,
++    );
++    let mut stylo_element_data = StyloElementData {
++        damage: ALL_DAMAGE,
++        ..Default::default()
++    };
++    drop(parent_style);
++
++    stylo_element_data.styles.primary = Some(style);
++    stylo_element_data.set_restyled();
++
++    *doc.nodes[node_id]
++        .stylo_element_data_mut()
++        .ensure_init_mut() = stylo_element_data;
++
++    if doc.nodes[container_node_id]
++        .flags
++        .contains(NodeFlags::IS_IN_DOCUMENT)
++    {
++        doc.nodes[node_id].flags.insert(NodeFlags::IS_IN_DOCUMENT);
++    }
++    doc.nodes[node_id].parent = Some(container_node_id);
++    doc.nodes[node_id]
++        .layout_parent
++        .set(Some(container_node_id));
++
++    node_id
++}
++
+ fn push_children_and_pseudos(layout_children: &mut ThinVec<NodeId>, node: &Node) {
+     if let Some(before) = node.before() {
+         layout_children.push(before);
+@@ -573,7 +581,8 @@
+         }
+ 
+         DisplayInside::Table => {
+-            let (table_context, tlayout_children) = build_table_context(doc, container_node_id);
++            let (table_context, tlayout_children) =
++                build_table_context(doc, container_node_id, &mut out.anonymous_blocks);
+             #[allow(clippy::arc_with_non_send_sync)]
+             let data = SpecialElementData::TableRoot(Arc::new(table_context));
+             doc.nodes[container_node_id]
+diff -ruN blitz-dom/src/layout/table.rs blitz-dom/src/layout/table.rs
+--- blitz-dom/src/layout/table.rs
++++ blitz-dom/src/layout/table.rs
+@@ -1,5 +1,6 @@
+ use blitz_traits::node_id::NodeId;
+ use std::{ops::Range, sync::Arc};
++use thin_vec::ThinVec;
+ 
+ use atomic_refcell::AtomicRefCell;
+ use markup5ever::local_name;
+@@ -16,6 +17,7 @@
+ 
+ use crate::BaseDocument;
+ 
++use super::construct::create_anonymous_box;
+ use super::damage::{CONSTRUCT_BOX, CONSTRUCT_DESCENDENT, CONSTRUCT_FC};
+ use super::resolve_calc_value;
+ 
+@@ -72,6 +74,19 @@
+     style: taffy::Style<Atom>,
+ }
+ 
++/// The anonymous cells a table's rows need (CSS 2.1 §17.2.1): each run of
++/// consecutive children of a row that are not cells -- in mail, a `<td>`
++/// that a responsive stylesheet made `display: block` -- is wrapped in one
++/// anonymous cell, where those children stack as blocks.
++#[derive(Default)]
++struct AnonymousCells {
++    /// The row whose children are being collected.
++    row: Option<NodeId>,
++    /// The anonymous cell still taking children: the last box collected in
++    /// this row was not a cell.
++    open: Option<NodeId>,
++}
++
+ #[derive(Debug, Clone)]
+ pub struct TableRow {
+     // kind: TableItemKind,
+@@ -79,9 +94,12 @@
+     pub height: f32,
+ }
+ 
++/// `anonymous_blocks` collects the anonymous cells made, for the table to
++/// deallocate when it is next constructed.
+ pub(crate) fn build_table_context(
+     doc: &mut BaseDocument,
+     table_root_node_id: NodeId,
++    anonymous_blocks: &mut ThinVec<NodeId>,
+ ) -> (TableContext, Vec<NodeId>) {
+     let mut cells: Vec<TableCell> = Vec::new();
+     let mut rows: Vec<TableRow> = Vec::new();
+@@ -119,6 +137,7 @@
+ 
+     let mut column_sizes: Vec<taffy::TrackSizingFunction> = Vec::new();
+     let mut first_cell_border: Option<ServoArc<Border>> = None;
++    let mut anonymous = AnonymousCells::default();
+     for child_id in children.iter().copied() {
+         collect_table_cells(
+             doc,
+@@ -131,6 +150,8 @@
+             &mut rows,
+             &mut column_sizes,
+             &mut first_cell_border,
++            &mut anonymous,
++            anonymous_blocks,
+         );
+     }
+     column_sizes.resize(col as usize, style_helpers::auto());
+@@ -200,7 +221,7 @@
+ }
+ 
+ #[allow(clippy::too_many_arguments)]
+-pub(crate) fn collect_table_cells(
++fn collect_table_cells(
+     doc: &mut BaseDocument,
+     node_id: NodeId,
+     is_fixed: bool,
+@@ -211,6 +232,8 @@
+     rows: &mut Vec<TableRow>,
+     columns: &mut Vec<TrackSizingFunction>,
+     first_cell_border: &mut Option<ServoArc<Border>>,
++    anonymous: &mut AnonymousCells,
++    anonymous_blocks: &mut ThinVec<NodeId>,
+ ) {
+     let node = &mut doc.nodes[node_id];
+ 
+@@ -229,6 +252,51 @@
+         return;
+     }
+ 
++    // A child of a row that is not a cell goes in an anonymous cell, with
++    // its non-cell siblings on either side (CSS 2.1 §17.2.1). The release
++    // dropped it in the `Flow` arm below, contents and all, and responsive
++    // mail makes its cells `display: block` under a narrow `@media` query to
++    // stack its columns: every stacked column vanished. Captions and the
++    // other internal table boxes keep the arms below.
++    if let Some(row_id) = anonymous.row
++        && matches!(
++            display.outside(),
++            DisplayOutside::Block | DisplayOutside::Inline
++        )
++        && display.inside() != DisplayInside::Contents
++    {
++        let cell_id = match anonymous.open {
++            Some(cell_id) => cell_id,
++            None => {
++                let cell_id = create_anonymous_box(doc, row_id);
++                anonymous_blocks.push(cell_id);
++                anonymous.open = Some(cell_id);
++                let mut style =
++                    stylo_taffy::to_taffy_style(&doc.nodes[cell_id].primary_styles().unwrap());
++                // One column, auto-placed in this row like any cell.
++                if *row == 1 {
++                    columns.push(style_helpers::auto());
++                }
++                style.grid_column = taffy::Line {
++                    start: style_helpers::auto(),
++                    end: style_helpers::span(1),
++                };
++                style.grid_row = taffy::Line {
++                    start: style_helpers::line(*row as i16),
++                    end: style_helpers::span(1),
++                };
++                cells.push(TableCell {
++                    node_id: cell_id,
++                    style,
++                });
++                *col += 1;
++                cell_id
++            }
++        };
++        doc.nodes[cell_id].children.push(node_id);
++        return;
++    }
++
+     match display.inside() {
+         DisplayInside::TableRowGroup
+         | DisplayInside::TableHeaderGroup
+@@ -249,6 +317,8 @@
+                     rows,
+                     columns,
+                     first_cell_border,
++                    anonymous,
++                    anonymous_blocks,
+                 );
+             }
+             doc.nodes[node_id].children = children;
+@@ -262,6 +332,8 @@
+                 node_id,
+                 height: 0.0,
+             });
++            let outer_row = anonymous.row.replace(node_id);
++            anonymous.open = None;
+ 
+             let children = std::mem::take(&mut doc.nodes[node_id].children);
+             for child_id in children.iter().copied() {
+@@ -276,11 +348,16 @@
+                     rows,
+                     columns,
+                     first_cell_border,
++                    anonymous,
++                    anonymous_blocks,
+                 );
+             }
+             doc.nodes[node_id].children = children;
++            anonymous.row = outer_row;
++            anonymous.open = None;
+         }
+         DisplayInside::TableCell => {
++            anonymous.open = None;
+             // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
+             let stylo_style = &node.primary_styles().unwrap();
+             let colspan: u16 = node

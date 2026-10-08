@@ -1,15 +1,14 @@
 # ADR 0041 — One app opens the store at a time; each runs the host inside it
 
-- **Status:** Accepted (2026-09-25); proposed 2026-09-23 and revised
-  2026-09-24 on `feature/tui-frontend`
+- **Status:** Accepted (2026-09-25). Built
 - **Spec:** [`specs/005-tui-frontend`](../../specs/005-tui-frontend/spec.md)
   (FR-040–FR-043, User Story 6, Clarifications 2026-09-24)
 - **Related:** [ADR 0038](0038-the-store-is-turso-not-sqlcipher.md) (the engine
   whose lock this obeys), [ADR 0021](0021-exactly-once-send.md) (which this
   keeps true), [ADR 0010](0010-mcp-surface.md) (which extracted
   `postio-session` so a second consumer would not be a second application)
-- **Decision:** **The desktop app, the terminal app and the macOS app each
-  open the store themselves, one at a time. Each runs `postio-host` in its own
+- **Decision:** **The desktop app (Focus, ADR 0043), the terminal app and
+  the macOS app each open the store themselves, one at a time. Each runs `postio-host` in its own
   process and reaches mail only through `postio-client`. An app that finds the
   store open elsewhere says so and does not open it.**
 
@@ -24,12 +23,8 @@ refuses `VACUUM`, the store's reclaim path, and has open panics upstream. The
 operation queue's claim is correct only because one drainer exists, and
 `LocalStore`'s caches assume one writer.
 
-The first version of this decision, on 2026-09-23, read the request as both
-apps open at once. It put the store in a background process,
-`postio-daemon`, with every frontend a client over a Unix socket. That was
-built and worked, and the maintainer withdrew it on 2026-09-24 as too much
-complexity for what it bought: "Let's set it up so we can only run one app at
-a time but it can be either or."
+The maintainer chose one app at a time over both at once: "Let's set it up
+so we can only run one app at a time but it can be either or."
 
 ## Decision
 
@@ -53,12 +48,18 @@ a time but it can be either or."
 
 - There is nothing to start, find, keep alive, reconnect to or version-match
   across processes: no socket, no handshake, and no grace period.
-- The two apps cannot be open at the same time. Someone who wants the
-  terminal while the desktop app is open has to close the desktop app first.
+- No two apps can be open at the same time. Someone who wants the terminal
+  while the desktop app is open has to close the desktop app first.
 - The host/client split stays. It exists for sharing the implementation, not
-  for crossing a process. If running both at once is ever wanted again, a
-  transport over a socket is the part to add back; the first version of this
-  ADR is its design, in `git log` on this file.
+  for crossing a process. If running both at once is ever wanted, a transport
+  over a socket is the part to add.
+
+## Rejected
+
+- **A background store process** (`postio-daemon`), every frontend a client
+  over a Unix socket. It was built and worked, and it was too much complexity
+  for what it bought: something to start, find, keep alive, reconnect to and
+  version-match. Its design is in `git log` on this file.
 
 ## Revisit when
 

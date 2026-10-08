@@ -13,22 +13,34 @@
 //! asserted on the rendered buffer, which is what a person sees.
 
 pub mod app;
+pub mod ask;
+pub mod bar;
 pub mod caps;
+pub mod capture;
 pub mod clipboard;
 pub mod composer;
 pub mod config_file;
 pub mod conversation;
+pub mod digest;
 pub mod external;
+pub mod filtered;
 pub mod first_run;
+pub mod folders;
 pub mod input;
 pub mod layout;
 pub mod paths;
+pub mod pickers;
+pub mod places;
 pub mod reader;
 pub mod row;
+pub mod rule_dialog;
+pub mod rules;
 pub mod run;
 pub mod settings;
-pub mod sidebar;
-pub mod state;
+pub mod sheet;
+pub mod surface;
 pub mod term;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod theme;
 pub mod view;

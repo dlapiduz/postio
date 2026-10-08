@@ -12,7 +12,7 @@ import Testing
 /// layer, were offered in the palette, and reached **nothing**. The composer
 /// itself was real the whole time: `ComposeModel` could already apply a mark,
 /// attach a file and send. What was missing was anything that turned an id
-/// into a call. `postio-gtk` does it with `connect_command`; this is that.
+/// into a call. The classic app did it with `connect_command`; this is that.
 ///
 /// The decision is here rather than in `Engine` for the usual reason — the
 /// executable target has no tests — and because *which* id does *what* is the

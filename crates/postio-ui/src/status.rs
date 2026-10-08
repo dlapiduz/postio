@@ -76,30 +76,6 @@ impl SyncStatus {
         )
     }
 
-    /// The detail line with the byte clause the column cannot hold, for the
-    /// tooltip and the accessible description.
-    ///
-    /// The sidebar is 212px by canvas 1b and deliberately fixed, which is
-    /// about 25 monospace characters; `mail 12400 of 81744` is already 19.
-    /// So on that line it is counts or bytes, never both, and #411 settled
-    /// which: a count that climbs answers *"is anything happening"*, which
-    /// is what #74 filed this line for, and a byte figure that sits still
-    /// through a large fetch reads as stalled. Bytes are a cost signal, and
-    /// cost is asked once and deliberately.
-    ///
-    /// They still reach this surface, just not 25 columns of it. A screen
-    /// reader and a hover both get the number, and both get it from here, so
-    /// the two cannot drift.
-    pub fn detail_in_full(&self, now: Instant) -> String {
-        let detail = self.detail_line(now);
-        // Only while a backfill is running: anywhere else there is no count
-        // for the bytes to be a second clause of.
-        match self.filling().and(self.bytes_clause()) {
-            Some(bytes) => format!("{detail} · {bytes}"),
-            None => detail,
-        }
-    }
-
     fn state_word(&self) -> String {
         match self.state {
             ConnectionState::Offline => "offline".to_string(),
@@ -142,6 +118,10 @@ impl SyncStatus {
     /// `None` once the queue has drained, so a finished backfill falls back
     /// to the ordinary idle line rather than sticking at `2000 of 2000` —
     /// the same trap `syncing` fell into and the same answer.
+    pub fn backfill_running(&self) -> Option<(u32, u32)> {
+        self.filling()
+    }
+
     fn filling(&self) -> Option<(u32, u32)> {
         match self.backfill {
             // A queue with nothing in it is not a backfill in progress.
@@ -149,35 +129,6 @@ impl SyncStatus {
             Some((done, total)) if done < total => Some((done, total)),
             _ => None,
         }
-    }
-
-    /// `890 MB of 1.4 GB`, when there is a measured size worth claiming.
-    ///
-    /// Feeds [`detail_in_full`](Self::detail_in_full) only — the drawn line
-    /// has no room for it (#411).
-    ///
-    /// `None` in the two cases where a size would be a lie rather than a
-    /// number:
-    ///
-    /// * **nothing measured yet** — no footprint has arrived;
-    /// * **an empty account** — `0 B of 0 B` reads as a bug, not as "no mail".
-    ///   An account with nothing in it owes no size claim at all.
-    ///
-    /// While the header pass is still running every figure is a lower bound,
-    /// so the total is written `over 1.4 GB`. Only the total carries the
-    /// hedge: what is already downloaded is known exactly, and hedging it too
-    /// would say the local figure might grow for a different reason than it
-    /// will.
-    fn bytes_clause(&self) -> Option<String> {
-        let footprint = self.footprint.as_ref()?;
-        if footprint.total_bytes == 0 {
-            return None;
-        }
-        Some(format!(
-            "{} of {}",
-            crate::format::human_size(footprint.local_bytes),
-            crate::format::human_size_bound(footprint.total_bytes, footprint.complete),
-        ))
     }
 
     /// The second line: the reason it is failing, or how long ago it worked.
@@ -216,20 +167,6 @@ impl SyncStatus {
             None => "never synced".to_string(),
         }
     }
-
-    /// How long until the age on the second line would read differently.
-    ///
-    /// `None` when nothing is ticking. The point is to not wake the process up
-    /// once a second forever: seconds only matter while the answer is in
-    /// seconds.
-    pub fn refresh_interval(&self, now: Instant) -> Option<Duration> {
-        let elapsed = now.saturating_duration_since(self.last_sync?);
-        Some(match elapsed.as_secs() {
-            ..60 => Duration::from_secs(1),
-            60..3600 => Duration::from_secs(30),
-            _ => Duration::from_secs(300),
-        })
-    }
 }
 
 /// A duration in the canvas' compact form: `12s`, `4m`, `3h`, `2d`.
@@ -245,7 +182,7 @@ pub fn age(elapsed: Duration) -> String {
 
 // ── Folding events into the line ─────────────────────────────────────────
 //
-// Moved from `postio-gtk::feed` for the terminal frontend, which folds the
+// Moved from the classic app's feed for the terminal frontend, which folds the
 // same events into the same line (specs/005-tui-frontend FR-004): logic two
 // frontends need is written once.
 
@@ -278,10 +215,11 @@ pub struct SyncTracker {
 /// account, which is why it survived — and it is load-bearing for ADR 0005
 /// Q10, whose whole subject is *which* account is not answering.
 ///
-/// [`Event::Error`] is the exception, because it carries no account. It goes
-/// to the account whose line is on screen, which is exactly what the single
-/// tracker did with it; writing it down here makes it a decision rather than
-/// an accident of which arm ran first.
+/// [`Event::Error`] names its account when the sync engine raised it (T260),
+/// and goes there. One that names none -- a command's refusal -- goes to the
+/// account whose line is on screen, which is exactly what the single tracker
+/// did with it; writing it down here makes it a decision rather than an
+/// accident of which arm ran first.
 #[derive(Clone, Debug, Default)]
 pub struct Trackers {
     per_account: std::collections::BTreeMap<AccountId, SyncTracker>,
@@ -296,7 +234,11 @@ impl Trackers {
         let account = match event {
             Event::ConnectionChanged { account, .. }
             | Event::SyncProgress { account, .. }
-            | Event::BackfillProgress { account, .. } => Some(*account),
+            | Event::BackfillProgress { account, .. }
+            | Event::Error {
+                account: Some(account),
+                ..
+            } => Some(*account),
             _ => current,
         };
         let Some(account) = account else {
@@ -307,9 +249,8 @@ impl Trackers {
 
     /// What `account`'s line should say.
     ///
-    /// An account nothing has been heard about is offline — the same default
-    /// [`postio_core::AppState::connection`] gives, and for the same reason:
-    /// silence is not a claim that the server is reachable.
+    /// An account nothing has been heard about is offline: silence is not a
+    /// claim that the server is reachable.
     pub fn status(&self, account: AccountId) -> SyncStatus {
         self.per_account
             .get(&account)
@@ -435,7 +376,7 @@ impl SyncTracker {
                     self.status.progress = None;
                 }
             }
-            Event::Error { message } => {
+            Event::Error { message, .. } => {
                 self.reason = Some(message.clone());
                 if matches!(self.status.state, ConnectionState::Failing { .. }) {
                     self.status.detail = Some(message.clone());
@@ -639,6 +580,7 @@ mod tracker_tests {
         // The reason arrives beside the state change, not inside it.
         tracker.apply(&Event::Error {
             message: "the server rejected the password".to_string(),
+            account: None,
         });
         tracker.apply(&connection(ConnectionState::Failing {
             reason: postio_core::FailureReason::Auth,
@@ -651,6 +593,7 @@ mod tracker_tests {
         // And an error that arrives while already failing replaces it.
         tracker.apply(&Event::Error {
             message: "the certificate expired".to_string(),
+            account: None,
         });
         assert_eq!(
             tracker.status().detail.as_deref(),
@@ -838,6 +781,7 @@ mod trackers_tests {
         trackers.apply(
             &Event::Error {
                 message: "the server refused the password".to_owned(),
+                account: None,
             },
             Some(WORK),
         );
@@ -859,6 +803,34 @@ mod trackers_tests {
             None,
             "an error with no account named must not be attributed to one"
         );
+    }
+
+    #[test]
+    fn an_error_that_names_its_account_lands_there_whatever_is_in_view() {
+        // T260: the sync engine says which account it is talking about, so a
+        // frontend that shows several at once need not guess.
+        let mut trackers = Trackers::default();
+        trackers.apply(
+            &Event::Error {
+                message: "mailbox is over quota".to_owned(),
+                account: Some(HOME),
+            },
+            Some(WORK),
+        );
+        trackers.apply(
+            &Event::ConnectionChanged {
+                account: HOME,
+                state: ConnectionState::Failing {
+                    reason: postio_core::FailureReason::Server,
+                },
+            },
+            Some(WORK),
+        );
+        assert_eq!(
+            trackers.status(HOME).detail.as_deref(),
+            Some("mailbox is over quota")
+        );
+        assert_eq!(trackers.status(WORK).detail, None);
     }
 
     #[test]

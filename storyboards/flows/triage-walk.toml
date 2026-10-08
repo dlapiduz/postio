@@ -1,10 +1,16 @@
-# Triage: j a j a u (ux-architect §4).
+# Triage: j a j a u (ux-architect §4, #1746).
 #
 # Walk down, archive, walk, archive, change your mind. Each archive must
 # say what happened and offer undo; the cursor stays on the row that took
 # the archived one's place; `u` brings the last one back. The thirty-thread
 # seed is long enough that nothing runs out.
-source = { kind = "flow", ref = "ux-architect §4" }
+#
+# Re-expressed for Focus (T265): the cursor opens on index 0, so `j` moves it
+# to index 1. It was red on #1746, where the archived row's cursor was not
+# handed to the row below.
+apps   = ["focus"]
+source = { kind = "issue", ref = "#1746" }
+proof  = "pinned"
 seed   = "thirty-threads"
 
 [[step]]
@@ -16,7 +22,7 @@ check   = { cursor.index = 1, keyboard.region = "list" }
 id      = "a1"
 command = "archive"
 check   = { cursor.index = { same_as = "j1" }, notice.undo = true, rows.count = { changed = true } }
-expect  = "The row goes, the next one is under the cursor, and a toast offers Undo."
+expect  = "The row goes, the next one is under the cursor ring, and a toast offers Undo."
 
 [[step]]
 id      = "j2"
@@ -32,5 +38,5 @@ expect  = "The same again: one row gone, the cursor on its replacement, the toas
 [[step]]
 id      = "undo"
 command = "undo"
-check   = { keyboard.region = "list", rows.count = { changed = true } }
-expect  = "The last archived row comes back in its place, and the keyboard is still on the list."
+check   = { keyboard.region = "list", rows.count = { changed = true }, cursor.index = { same_as = "j2" }, notice.undo = false }
+expect  = "The last archived row comes back in its place under the cursor, whole and under its day heading, and the keyboard is still on the list. The toast says it was undone."

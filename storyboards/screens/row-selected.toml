@@ -1,7 +1,21 @@
-# The screen `row-selected`, carried over from the old screen sweep's table (FR-030).
-source = { kind = "design", ref = "06-mouse-parity-undo" }
-design = "06-mouse-parity-undo"
+# Two rows selected and the bulk bar at the window's foot (screen 01's
+# selection).
+#
+# Focus's design references are never committed
+# (specs/007-postio-focus/screens.md records each one).
+apps   = ["focus"]
+source = { kind = "design", ref = "focus 01" }
+
+[[step]]
+command = "next_message"
+
+[[step]]
+command = "next_message"
+
 [[step]]
 command = "toggle_selection"
+
 [[step]]
 command = "extend_selection_down"
+check   = { selection.count = 2 }
+expect  = "Both rows look selected, a grey ground and a check each, and the cursor's ring on the second does not hide that it is selected."

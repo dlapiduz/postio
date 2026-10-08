@@ -129,21 +129,21 @@ def main() -> int:
     case("the boundary crate", "pull_request", ["crates/postio-ffi/src/session.rs"],
          "yes", "no", "yes")
 
-    # ...and the crates on the far side of it. `postio-ffi`'s dependency
-    # closure is seventeen of the twenty crates; `postio-gtk`, `postio-app`
-    # and `postio-bench` are outside it, so no binding the Swift compiles
-    # against can change because one of them did. They are also the two
-    # most-changed crates in the repository, which is where the saving is.
+    # ...and the crates on the far side of it. The desktop app, the widgets it
+    # draws with and `postio-bench` are outside `postio-ffi`'s dependency
+    # closure, so no binding the Swift compiles against can change because
+    # one of them did. The GTK crates are also the most-changed in the
+    # repository, which is where the saving is.
     case("the GTK frontend", "pull_request", ["crates/postio-gtk/src/window.rs"],
          "yes", "no", "no")
-    case("the composition root", "pull_request", ["crates/postio-app/src/lib.rs"],
+    case("the shared widgets", "pull_request", ["crates/postio-widgets/src/lib.rs"],
          "yes", "no", "no")
     case("the bench crate", "pull_request", ["crates/postio-bench/benches/search.rs"],
          "yes", "no", "no")
     case("an outside crate's own manifest", "pull_request", ["crates/postio-gtk/Cargo.toml"],
          "yes", "no", "no")
     case("two outside crates", "pull_request",
-         ["crates/postio-gtk/src/window.rs", "crates/postio-app/src/lib.rs"],
+         ["crates/postio-gtk/src/window.rs", "crates/postio-widgets/src/lib.rs"],
          "yes", "no", "no")
     # One file inside the closure is enough to oblige the macOS runner, however
     # much of the diff cannot reach it.

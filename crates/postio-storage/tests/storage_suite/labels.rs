@@ -237,3 +237,179 @@ async fn a_resync_does_not_take_a_label_off_a_message() {
          must survive the next sync of its mailbox"
     );
 }
+
+/// Files a message into `mailbox` under `rfc`, threaded, carrying `labels`.
+async fn a_threaded_message(
+    connection: &Connection,
+    account: AccountId,
+    mailbox: postio_model::MailboxId,
+    rfc: &str,
+    references: &[&str],
+    labels: &[LabelId],
+) -> postio_model::ThreadId {
+    let mut message = postio_model::Message::new(account, mailbox, chrono::Utc::now());
+    message.rfc_message_id = Some(postio_model::RfcMessageId::new(rfc));
+    message.references = references
+        .iter()
+        .map(postio_model::RfcMessageId::new)
+        .collect();
+    MessageRepository::new(connection)
+        .create(&mut message)
+        .await
+        .expect("create a message");
+    for label in labels {
+        LabelRepository::new(connection)
+            .attach(message.id, *label)
+            .await
+            .expect("attach");
+    }
+    postio_storage::repository::ThreadingRepository::new(connection, account)
+        .thread(&message)
+        .await
+        .expect("threaded")
+        .thread_id
+}
+
+#[tokio::test]
+async fn a_page_s_labels_are_one_statement_that_reads_them_and_scans_no_table() {
+    // A Focus page draws each conversation's label pills (spec 007 T043),
+    // read for the whole page at once: a conversation's labels are every
+    // label any of its messages carries, each once, in the order they were
+    // made -- and never one statement a row.
+    use postio_storage::test_support::counting::{counted_async, scans};
+
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let labels = LabelRepository::new(&connection);
+    let mut made = Vec::new();
+    for name in ["Atlas", "Harbor", "Home"] {
+        let mut label = Label::new(account.id, name);
+        labels.create(&mut label).await.expect("create");
+        made.push(label);
+    }
+    let (atlas, harbor, home) = (made[0].id, made[1].id, made[2].id);
+    // A conversation of two carrying all three between its messages, one
+    // label on both; another carrying one; a third carrying none.
+    let three = a_threaded_message(
+        &connection,
+        account.id,
+        inbox,
+        "<a@x.test>",
+        &[],
+        &[atlas, harbor],
+    )
+    .await;
+    a_threaded_message(
+        &connection,
+        account.id,
+        inbox,
+        "<b@x.test>",
+        &["<a@x.test>"],
+        &[harbor, home],
+    )
+    .await;
+    let one = a_threaded_message(&connection, account.id, inbox, "<c@x.test>", &[], &[home]).await;
+    let none = a_threaded_message(&connection, account.id, inbox, "<d@x.test>", &[], &[]).await;
+
+    let _ = labels.for_threads(&[three]).await.expect("warm");
+    let mut found = Vec::new();
+    let counts = counted_async(|| async {
+        found = labels
+            .for_threads(&[three, one, none])
+            .await
+            .expect("the page's labels");
+    })
+    .await;
+    let named: Vec<(postio_model::ThreadId, &str)> = found
+        .iter()
+        .map(|(thread, label)| (*thread, label.name.as_str()))
+        .collect();
+    let mut expected = vec![
+        (three, "Atlas"),
+        (three, "Harbor"),
+        (three, "Home"),
+        (one, "Home"),
+    ];
+    expected.sort_by_key(|(thread, _)| *thread);
+    assert_eq!(
+        named, expected,
+        "each conversation's labels once each, in the order they were made"
+    );
+    assert_eq!(
+        counts.statements, 1,
+        "one statement for the page: {counts:?}"
+    );
+    assert_eq!(counts.rows, 4, "every row read is a pill: {counts:?}");
+    assert!(
+        scans(&connection, &LabelRepository::explain_for_threads(3))
+            .await
+            .is_empty(),
+        "a page's labels are sought through the conversations' index, never a walk"
+    );
+}
+
+#[tokio::test]
+async fn each_label_counts_its_conversations_in_one_statement() {
+    // Focus's label picker and folders popover show each label with how
+    // many conversations carry it (screens 10 and 13): every label of the
+    // account at once, a conversation counted once however many of its
+    // messages carry the label, and a label nobody uses counted as none.
+    use postio_storage::test_support::counting::{counted_async, scans};
+
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let labels = LabelRepository::new(&connection);
+    let mut made = Vec::new();
+    for name in ["Atlas", "Harbor", "Home", "Unused"] {
+        let mut label = Label::new(account.id, name);
+        labels.create(&mut label).await.expect("create");
+        made.push(label.id);
+    }
+    let (atlas, harbor, home, unused) = (made[0], made[1], made[2], made[3]);
+    a_threaded_message(
+        &connection,
+        account.id,
+        inbox,
+        "<a@x.test>",
+        &[],
+        &[atlas, harbor],
+    )
+    .await;
+    a_threaded_message(
+        &connection,
+        account.id,
+        inbox,
+        "<b@x.test>",
+        &["<a@x.test>"],
+        &[harbor, home],
+    )
+    .await;
+    a_threaded_message(&connection, account.id, inbox, "<c@x.test>", &[], &[home]).await;
+    let other = another_account(&connection).await;
+    let mut theirs = Label::new(other.id, "Atlas");
+    labels.create(&mut theirs).await.expect("create");
+
+    let _ = labels.counts(account.id).await.expect("warm");
+    let mut found = Vec::new();
+    let counts = counted_async(|| async {
+        found = labels.counts(account.id).await.expect("the counts");
+    })
+    .await;
+    found.sort();
+    let mut expected = vec![(atlas, 1), (harbor, 1), (home, 2)];
+    expected.sort();
+    assert_eq!(
+        found, expected,
+        "conversations per label, the unused one absent"
+    );
+    assert!(!found.iter().any(|(label, _)| *label == unused));
+    assert_eq!(counts.statements, 1, "one statement: {counts:?}");
+    assert!(
+        scans(&connection, LabelRepository::explain_counts())
+            .await
+            .is_empty(),
+        "sought through the account's labels and each label's index"
+    );
+}

@@ -100,7 +100,8 @@ def world(base: Path) -> Path:
     root = base / "repo"
     (root / "crates" / "postio-model").mkdir(parents=True)
     (root / "crates" / "postio-storage").mkdir(parents=True)
-    (root / "crates" / "postio-gtk" / "data").mkdir(parents=True)
+    (root / "crates" / "postio-gtk").mkdir(parents=True)
+    (root / METAINFO_PATH).parent.mkdir(parents=True)
 
     (root / "Cargo.toml").write_text(CARGO_TOML, encoding="utf-8")
     (root / METAINFO_PATH).write_text(METAINFO, encoding="utf-8")

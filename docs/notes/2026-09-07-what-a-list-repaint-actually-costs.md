@@ -5,7 +5,8 @@ not that item is anywhere near the viewport. Everything else here follows from
 that one measured fact, so it is worth stating first and plainly.
 
 Measured per emission, over 20,000 messages, on a list whose viewport holds ten
-rows (`app_suite::navigation_cost` prints these):
+rows (the classic app's `app_suite::navigation_cost` printed these; it went
+with that app in spec 007 T256):
 
 | what the model said | widgets built |
 |---|---|

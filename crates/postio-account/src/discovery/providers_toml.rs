@@ -5,8 +5,8 @@
 //! that validates the shipped table at `cargo build` time is byte for byte
 //! the parser the running application uses for both the shipped table and
 //! the user's own overlay -- there is no second copy to drift. This is the
-//! same idiom `postio-gtk/src/tokens.rs` established first for design
-//! tokens (`docs/ARCHITECTURE.md` §10), and for the same reason this module
+//! same idiom the design tokens established first
+//! (`postio_ui::tokens`) (`docs/ARCHITECTURE.md` §10), and for the same reason this module
 //! names no type from elsewhere in `postio-account`: `build.rs`'s own
 //! compilation has no `crate::discovery` to resolve one against, only the
 //! external crates listed in `[build-dependencies]`. `Security` duplicates

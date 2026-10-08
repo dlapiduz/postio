@@ -1,4 +1,4 @@
-//! Keeping a query: `[filters]`, and the four verbs a sidebar offers over one.
+//! Keeping a query: `[saved_searches]`, and the four verbs a sidebar offers over one.
 //!
 //! Half of what makes Postio's search worth learning is that a query can
 //! become a folder — `docs/PRODUCT.md` puts finding things among the three
@@ -7,8 +7,8 @@
 //! four edits to `config.toml`: save the query that is showing, rename the
 //! row it made, move it among its neighbours, remove it.
 //!
-//! None of those four is a widget. All four lived in `postio-gtk::config`
-//! anyway — read the file fresh, mutate the `[filters]` table, patch it back,
+//! None of those four is a widget. All four lived in the classic app's config
+//! anyway — read the file fresh, mutate the `[saved_searches]` table, patch it back,
 //! repaint the sidebar — which is why the macOS search surface could draw a
 //! *Save search as folder* affordance, leave it enabled, and have it do
 //! nothing (#1574). A frontend that cannot reach a rule re-invents it or goes
@@ -24,7 +24,7 @@
 //! it was typed. Reading immediately before patching keeps the window in
 //! which that can happen down to this function.
 //!
-//! # Why only `[filters]` is rewritten
+//! # Why only `[saved_searches]` is rewritten
 //!
 //! Through [`postio_config::filters::patch_filters`], which is a
 //! `toml_edit` splice of one table, never a reserialize of the whole
@@ -38,7 +38,7 @@
 //! [`edit`] returns the parse error instead of falling back to
 //! [`Config::default`]. The fallback is the tempting reading — a broken file
 //! means we know nothing, so start from nothing — and it is wrong in exactly
-//! this one place: "nothing" includes an empty `[filters]` table, so the very
+//! this one place: "nothing" includes an empty `[saved_searches]` table, so the very
 //! next `patch_filters` writes that emptiness over the searches the user
 //! still has. A file that does not parse is a file to leave alone.
 
@@ -48,7 +48,7 @@ use postio_config::{Config, ConfigError};
 
 pub use postio_config::filters::Reorder;
 
-/// One pinned `[filters]` entry, as a sidebar draws it.
+/// One pinned `[saved_searches]` entry, as a sidebar draws it.
 ///
 /// Not `postio_config::FilterConfig`, whose name is a map key rather than a
 /// field: a frontend takes a flat list of rows to draw, so the key/value
@@ -56,7 +56,7 @@ pub use postio_config::filters::Reorder;
 /// frontend.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedSearch {
-    /// The `[filters.<key>]` key — the stable identity a rename, a reorder or
+    /// The `[saved_searches.<key>]` key — the stable identity a rename, a reorder or
     /// a delete acts on (#292). Never shown; [`SavedSearch::name`] draws.
     pub key: String,
     /// What the row shows: the display name the user chose, or the key when
@@ -169,7 +169,7 @@ pub const RENAME_PROMPT: Prompt = Prompt {
     cancel: "Cancel",
 };
 
-/// The pinned entries of `config`'s `[filters]`, in the order a sidebar shows
+/// The pinned entries of `config`'s `[saved_searches]`, in the order a sidebar shows
 /// them.
 ///
 /// [`Config::ordered_filter_keys`]'s order, which is explicit `order` first
@@ -292,13 +292,13 @@ mod tests {
     use super::*;
 
     /// A file with the things a careless rewrite destroys: a comment, tables
-    /// either side of `[filters]`, and a key nothing in this build reads.
+    /// either side of `[saved_searches]`, and a key nothing in this build reads.
     const SAMPLE: &str = "\
 # hand-written, and it should stay that way
 [sync]
 idle = true
 
-[filters.urgent]
+[saved_searches.urgent]
 query = \"is:unread\"
 pinned = true
 
@@ -315,15 +315,15 @@ some_future_key = 42
     /// asked, so it cannot tell a direction that was read from one that was
     /// thrown away.
     const THREE: &str = "\
-[filters.a]
+[saved_searches.a]
 query = \"from:ada\"
 pinned = true
 
-[filters.b]
+[saved_searches.b]
 query = \"from:grace\"
 pinned = true
 
-[filters.c]
+[saved_searches.c]
 query = \"from:alan\"
 pinned = true
 ";
@@ -353,7 +353,7 @@ pinned = true
             "a search nobody has renamed draws under its key"
         );
         assert!(
-            edit.text.contains("[filters.is-unread-from-team]"),
+            edit.text.contains("[saved_searches.is-unread-from-team]"),
             "the table did not reach the file:\n{}",
             edit.text
         );
@@ -571,7 +571,7 @@ pinned = true
         assert_eq!(gone.changed.as_deref(), Some("urgent"));
         assert!(gone.searches.is_empty());
         assert!(
-            !gone.text.contains("[filters.urgent]"),
+            !gone.text.contains("[saved_searches.urgent]"),
             "the table is still in the file:\n{}",
             gone.text
         );
@@ -596,7 +596,7 @@ pinned = true
         // `pinned` is the whole of what "shows in the sidebar" means, and the
         // settings panel can turn it off without deleting the query.
         let text = "\
-[filters.hidden]
+[saved_searches.hidden]
 query = \"is:unread\"
 pinned = false
 ";
@@ -643,7 +643,7 @@ pinned = false
             saved.text
         );
         assert!(
-            saved.text.contains("[filters.has-attach]"),
+            saved.text.contains("[saved_searches.has-attach]"),
             "and the edit itself still has to land:\n{}",
             saved.text
         );
@@ -654,7 +654,7 @@ pinned = false
         // The dangerous reading is "a broken file tells us nothing, so start
         // from the defaults": the defaults have no filters, and the patch
         // would then write that emptiness over searches the user still has.
-        let broken = "[ui]\ndensity = 42\n\n[filters.keep]\nquery = \"is:unread\"\n";
+        let broken = "[ui]\ndensity = 42\n\n[saved_searches.keep]\nquery = \"is:unread\"\n";
 
         assert!(
             edit(

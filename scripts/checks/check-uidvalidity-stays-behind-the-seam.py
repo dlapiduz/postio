@@ -18,7 +18,7 @@ backend exists, unpicking it means migrating live stores again.
 
 Production sources (``src/``) of the crates above the seam —
 ``postio-sync``, ``postio-runtime``, ``postio-session``, ``postio-core``,
-``postio-app``, ``postio-gtk`` — may not mention ``UidValidity``. The type
+``postio-widgets``, ``postio-gtk`` — may not mention ``UidValidity``. The type
 stays available in ``postio-model`` for the wire-pair columns
 (`ServerIdentifiers`) and for the adapter, and tests anywhere may name it
 to *configure* mocks and fixtures, which is describing a server rather
@@ -41,7 +41,7 @@ ABOVE_THE_SEAM = [
     "postio-runtime",
     "postio-session",
     "postio-core",
-    "postio-app",
+    "postio-widgets",
     "postio-gtk",
 ]
 

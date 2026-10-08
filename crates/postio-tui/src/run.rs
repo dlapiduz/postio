@@ -21,7 +21,6 @@ use postio_client::protocol::ClientKind;
 use postio_host::Host;
 use postio_model::ListScope;
 use postio_model::listing::{MailStore, PageRequest};
-use postio_model::mailbox::MailboxRole;
 use postio_ui::paging::Fetch;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -49,7 +48,55 @@ pub fn open(
     secrets: Arc<dyn postio_account::secret::SecretStore>,
 ) -> Result<Host, String> {
     let say_so = saying(|line: &str| eprintln!("{line}"));
-    Host::open(config_path, secrets, &say_so).map_err(|sentence| format!("postio-tui: {sentence}"))
+    Host::open(config_path, secrets, &say_so).map_err(|refusal| match refusal.remedy {
+        // Trying again meets the same file: name the way forward instead.
+        postio_session::Remedy::StartOver { .. } => format!(
+            "postio-tui: {refusal}\npostio-tui: `postio-store reset` sets it aside and \
+             starts a fresh store, keeping your accounts and config.toml"
+        ),
+        postio_session::Remedy::TryAgain => format!("postio-tui: {refusal}"),
+    })
+}
+
+/// Switch Focus mode on in `host`, as `config`'s `[focus]` says (FR-186).
+///
+/// The terminal is Focus in character cells (C29), so it runs Focus's engine
+/// while it holds the store: after the store opens and before the first
+/// sync, so the filing pass is in every engine before its first pass. The
+/// setup is the one `postio-gtk` builds.
+pub fn engage_focus(
+    host: &Host,
+    config: &postio_config::Config,
+    config_path: Option<&std::path::Path>,
+) -> postio_host::FocusHandle {
+    host.enable_focus(postio_host::FocusSetup::from_config(
+        config.focus.clone(),
+        config_path,
+    ))
+}
+
+/// Apply `[focus]` to `host` again whenever the file at `path` changes it.
+/// `None` when the file cannot be watched: edits then wait for a restart.
+/// Dropping the watcher stops it; it holds the host no longer than it lives.
+pub fn follow_focus_config(
+    host: &Arc<Host>,
+    path: &std::path::Path,
+) -> Option<postio_config::watch::ConfigWatcher> {
+    let mut service = postio_core::ConfigService::load(path);
+    let host = Arc::downgrade(host);
+    postio_config::watch::ConfigWatcher::new(path, move |checked| {
+        let update = service.apply(checked);
+        if update.changed.focus
+            && let Some(host) = host.upgrade()
+        {
+            host.enable_focus(postio_host::FocusSetup::from_config(
+                service.config().focus.clone(),
+                Some(service.path()),
+            ));
+        }
+    })
+    .inspect_err(|error| tracing::warn!(%error, "config will not be watched; edits need a restart"))
+    .ok()
 }
 
 /// Say each wait to `write` as a line, unless it reads the same as the one
@@ -113,6 +160,12 @@ pub fn run() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // Focus's engine before anything could sync (FR-186).
+    let _focus = engage_focus(&host, &config, config_path.as_deref());
+    let host = Arc::new(host);
+    let _focus_follow = config_path
+        .as_deref()
+        .and_then(|path| follow_focus_config(&host, path));
     host.start_syncing();
     host.start_idle_passes_after(IDLE_PASSES_AFTER_OPENING);
     let client = host.connect(ClientKind::Tui).with_state(state.clone());
@@ -145,14 +198,14 @@ pub fn run() -> ExitCode {
     };
     session.publish();
 
-    let saved = crate::config_file::pinned(&config);
+    let read = crate::config_file::Read::of(&config);
     let outcome = runtime.block_on(main_loop(
         &host,
         client,
         keys,
         theme,
         state,
-        saved,
+        read,
         config.tui.preview,
         &mut session,
     ));
@@ -172,17 +225,6 @@ pub fn run() -> ExitCode {
     }
 }
 
-/// The first list: the first enabled account's inbox.
-async fn first_scope(client: &Client) -> Option<ListScope> {
-    let accounts = client.accounts().await.ok()?;
-    let account = accounts.into_iter().find(|account| account.enabled)?;
-    let folders = client.mailboxes(account.id).await.ok()?;
-    let inbox = folders
-        .iter()
-        .find(|folder| folder.role == MailboxRole::Inbox)?;
-    Some(ListScope::Mailbox(inbox.id))
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn main_loop(
     host: &Host,
@@ -190,13 +232,12 @@ async fn main_loop(
     keys: Keys,
     theme: Theme,
     state: postio_core::SharedState,
-    saved: Vec<crate::sidebar::Saved>,
+    config: crate::config_file::Read,
     preview: postio_config::Preview,
     session: &mut Session,
 ) -> io::Result<()> {
     let enhanced_keys = session.has(Mode::KeyboardEnhancement);
-    let backend = CrosstermBackend::new(io::stdout());
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = Terminal::new(backend(io::stdout()))?;
     let size = terminal.size()?;
     let mut app = App::new((size.width, size.height), keys)
         .with_state(state)
@@ -204,7 +245,6 @@ async fn main_loop(
         .with_downloads(downloads())
         .with_preview(preview)
         .with_enhanced_keys(enhanced_keys)
-        .with_layout(crate::state::TerminalState::load())
         .with_mouse(session.has(Mode::Mouse));
 
     let (inputs, arriving) = async_channel::unbounded::<Input>();
@@ -213,7 +253,7 @@ async fn main_loop(
     let senders = Senders {
         inputs,
         drafts,
-        saved,
+        config,
         host,
         attention: std::sync::Mutex::new(postio_ui::notify::Attention::default()),
     };
@@ -267,23 +307,39 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
+/// The most inputs handled before a frame is painted, so a flood of them
+/// cannot keep the screen from moving at all.
+const BATCH: usize = 64;
+
+/// What a terminal event asks of the app; `None` for one it does not use.
+fn terminal_input(event: TerminalEvent, hits: &crate::view::hit::Hits) -> Option<Input> {
+    match event {
+        TerminalEvent::Key(key) => Some(Input::Key(key)),
+        TerminalEvent::Resize(width, height) => Some(Input::Resize(width, height)),
+        TerminalEvent::Paste(pasted) => Some(Input::Paste(pasted)),
+        TerminalEvent::Mouse(mouse) => pointer(&mouse, hits).map(Input::Pointer),
+        _ => None,
+    }
+}
+
+/// An input already waiting -- a host event, or an answer to something
+/// asked -- taken without waiting for one.
+fn next_ready(
+    host: &async_channel::Receiver<postio_core::EventEnvelope>,
+    arriving: &async_channel::Receiver<Input>,
+) -> Option<Input> {
+    host.try_recv()
+        .ok()
+        .map(|envelope| Input::Host(envelope.event))
+        .or_else(|| arriving.try_recv().ok())
+}
+
 /// A mouse event as the app hears it: what it landed on in the last frame.
-fn pointer(
+pub(crate) fn pointer(
     mouse: &crossterm::event::MouseEvent,
     hits: &crate::view::hit::Hits,
 ) -> Option<crate::app::Pointer> {
     use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
-    // A drag and a release are about where the button went down, not about
-    // what is under the pointer now.
-    match mouse.kind {
-        MouseEventKind::Drag(MouseButton::Left) => {
-            return Some(crate::app::Pointer::Drag {
-                column: mouse.column,
-            });
-        }
-        MouseEventKind::Up(MouseButton::Left) => return Some(crate::app::Pointer::Release),
-        _ => {}
-    }
     let hit = hits.at(mouse.column, mouse.row)?;
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => Some(crate::app::Pointer::Click {
@@ -370,8 +426,8 @@ async fn resume(client: &Client, message: postio_model::MessageId) -> Input {
 struct Senders<'a> {
     inputs: async_channel::Sender<Input>,
     drafts: async_channel::Sender<Effect>,
-    /// The pinned saved searches' names, for the sidebar.
-    saved: Vec<crate::sidebar::Saved>,
+    /// What `config.toml` said at startup, for the places.
+    config: crate::config_file::Read,
     /// The store's host, which decides whether new mail is worth saying.
     host: &'a Host,
     /// What the person is looking at, so mail arriving in the folder
@@ -438,40 +494,29 @@ async fn drive(
     let mut terminal_events = EventStream::new();
     let host_events = client.events();
 
-    // What is where on the screen, as last drawn: what a click lands on.
-    let mut hits = crate::view::hit::Hits::default();
-    let contents = sidebar_contents(client, senders.saved.clone()).await;
-    let _ = update(app, Input::Sidebar(contents));
-    if let Some(scope) = first_scope(client).await {
-        let total = client.list_count(scope).await.unwrap_or(0);
-        let effects = update(app, Input::Opened { scope, total });
-        if let Flow::Quit = perform(client, app, terminal, theme, senders, effects, &mut hits)? {
-            return Ok(());
-        }
+    let contents = places_contents(client, senders.config.clone()).await;
+    // The first list is opened by what the places say: Focus's inbox, once
+    // there is an account to show.
+    let effects = update(app, Input::Places(contents));
+    let mut paint = false;
+    if let Flow::Quit = perform(client, senders, effects, &mut paint)? {
+        return Ok(());
     }
-    hits = draw(terminal, app, theme)?;
+    // What is where on the screen, as last drawn: what a click lands on.
+    let mut hits = draw(terminal, app, theme)?;
 
     loop {
-        let input = tokio::select! {
+        let first = tokio::select! {
             event = terminal_events.next() => match event {
-                Some(Ok(TerminalEvent::Key(key))) => Input::Key(key),
-                Some(Ok(TerminalEvent::Resize(width, height))) => Input::Resize(width, height),
-                Some(Ok(TerminalEvent::Paste(pasted))) => Input::Paste(pasted),
-                Some(Ok(TerminalEvent::Mouse(mouse))) => match pointer(&mouse, &hits) {
-                    Some(pointer) => Input::Pointer(pointer),
+                Some(Ok(event)) => match terminal_input(event, &hits) {
+                    Some(input) => input,
                     None => continue,
                 },
-                Some(Ok(_)) => continue,
                 Some(Err(error)) => return Err(error),
                 None => return Ok(()),
             },
             heard = host_events.recv() => match heard {
-                Ok(envelope) => {
-                    if let postio_core::Event::NewMail { mailbox, messages, .. } = &envelope.event {
-                        tell(senders, *mailbox, messages.clone());
-                    }
-                    Input::Host(envelope.event)
-                }
+                Ok(envelope) => Input::Host(envelope.event),
                 // The host stopped: nothing on screen can be trusted to
                 // change any more, so leave rather than show a frozen mailbox.
                 Err(_) => return Err(io::Error::other("Postio's store stopped answering.")),
@@ -481,8 +526,48 @@ async fn drive(
                 Err(_) => return Ok(()),
             },
         };
-        let effects = update(app, input);
-        match perform(client, app, terminal, theme, senders, effects, &mut hits)? {
+        // Everything already waiting is handled before the frame is painted:
+        // a burst of keys, or of a sync's events, is one frame rather than
+        // one each, which over SSH is the difference between a list that
+        // moves and one that flickers on its way.
+        let mut paint = false;
+        let mut flow = Flow::Go;
+        let mut next = Some(first);
+        let mut handled = 0;
+        while let Some(input) = next.take() {
+            if let Input::Host(postio_core::Event::NewMail {
+                mailbox, messages, ..
+            }) = &input
+            {
+                tell(senders, *mailbox, messages.clone());
+            }
+            let effects = update(app, input);
+            flow = perform(client, senders, effects, &mut paint)?;
+            handled += 1;
+            if !matches!(flow, Flow::Go) || handled >= BATCH {
+                break;
+            }
+            // A key already typed, asked inside this task so the stream keeps
+            // this task's waker: polled from anywhere else (`now_or_never`'s
+            // do-nothing waker), the next key would wake nothing and wait
+            // for some other event to be noticed.
+            next = tokio::select! {
+                biased;
+                event = terminal_events.next() => match event {
+                    Some(Ok(event)) => terminal_input(event, &hits),
+                    Some(Err(error)) => return Err(error),
+                    None => return Ok(()),
+                },
+                () = std::future::ready(()) => None,
+            }
+            .or_else(|| next_ready(&host_events, arriving));
+        }
+        // While an open message's reads are on their way, the frame is
+        // painted once they land (or after a frame's wait), not once per read.
+        if paint && !app.holds_paint() {
+            hits = draw(terminal, app, theme)?;
+        }
+        match flow {
             Flow::Go => {}
             Flow::Quit => return Ok(()),
             Flow::EditConfig(section) => {
@@ -578,12 +663,12 @@ async fn drive(
     }
 }
 
-/// What the sidebar holds: every account, its folders, and the counts its
+/// What the places hold: every account, its folders, and the counts its
 /// views draw.
-async fn sidebar_contents(
+async fn places_contents(
     client: &Client,
-    saved: Vec<crate::sidebar::Saved>,
-) -> crate::sidebar::Contents {
+    config: crate::config_file::Read,
+) -> crate::places::Places {
     let accounts = client.accounts().await.unwrap_or_default();
     let mut folders = Vec::new();
     let mut counts = Vec::new();
@@ -602,12 +687,55 @@ async fn sidebar_contents(
         ));
         folders.extend(theirs);
     }
-    crate::sidebar::Contents {
+    crate::places::Places {
         accounts,
         folders,
         counts,
-        saved,
+        saved: config.saved,
+        features: config.features,
     }
+}
+
+/// What Focus's inbox surfaces among its conversations, as the host has it.
+async fn read_surfaced(client: &Client, inputs: &async_channel::Sender<Input>) {
+    match client.surfaced().await {
+        Ok(rows) => {
+            let _ = inputs.send(Input::Surfaced(rows)).await;
+        }
+        Err(error) => {
+            tracing::warn!(%error, "could not read Focus's surfaced rows: {error}");
+        }
+    }
+}
+
+/// One page of a list, as rows: what the store holds for the positions
+/// asked, with the page's labels read in one round trip, and Focus's
+/// surfaced rows put where `placement` says they sit.
+async fn read_page(
+    client: &Client,
+    request: postio_ui::paging::PageRequest,
+    placement: Option<crate::app::Placement>,
+) -> Result<postio_ui::paging::Page<crate::row::Row>, String> {
+    let (offset, limit) = crate::row::store_range(&request, placement.as_ref());
+    let answer = client
+        .list_page(PageRequest {
+            scope: request.scope,
+            offset,
+            limit,
+        })
+        .await
+        .map_err(|error| error.message().to_owned())?;
+    let labelled = match &answer {
+        postio_model::listing::ListPage::Threads(page) => client
+            .thread_labels(postio_ui::focus_list::label_threads(&page.rows))
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "could not read a page's labels: {error}");
+                Vec::new()
+            }),
+        postio_model::listing::ListPage::Messages(_) => Vec::new(),
+    };
+    Ok(crate::row::page_of(&request, answer, labelled, placement))
 }
 
 /// Where saved parts go: `$XDG_DOWNLOAD_DIR`, else `~/Downloads`, else the
@@ -626,22 +754,31 @@ fn downloads() -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
-type Screen = Terminal<CrosstermBackend<io::Stdout>>;
+type Screen = Terminal<CrosstermBackend<io::BufWriter<io::Stdout>>>;
 
-/// Do what `update` asked, and say what the loop does next.
+/// Room for a whole frame: a full screen of styled cells is tens of
+/// kilobytes at most.
+const FRAME_BUFFER: usize = 1 << 16;
+
+/// A backend that sends a frame in one write when it is flushed, not a
+/// kilobyte at a time as standard output's own buffer would. Over SSH every
+/// write is a packet the far terminal may paint before the next arrives.
+fn backend<W: io::Write>(out: W) -> CrosstermBackend<io::BufWriter<W>> {
+    CrosstermBackend::new(io::BufWriter::with_capacity(FRAME_BUFFER, out))
+}
+
+/// Do what `update` asked, note in `paint` whether the screen changed, and
+/// say what the loop does next.
 fn perform(
     client: &Client,
-    app: &mut App,
-    terminal: &mut Screen,
-    theme: &Theme,
     senders: &Senders<'_>,
     effects: Vec<Effect>,
-    hits: &mut crate::view::hit::Hits,
+    paint: &mut bool,
 ) -> io::Result<Flow> {
     let Senders {
         inputs,
         drafts,
-        saved,
+        config,
         attention,
         ..
     } = senders;
@@ -704,11 +841,12 @@ fn perform(
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    // Done needs no word: every sidebar hears of the change.
+                    // Done needs no word: every list of places hears of the change.
                     if let Err(error) = client.account(op).await {
                         let _ = inputs
                             .send(Input::Host(postio_core::Event::Error {
                                 message: error.message().to_owned(),
+                                account: None,
                             }))
                             .await;
                     }
@@ -827,13 +965,6 @@ fn perform(
                     }
                 });
             }
-            Effect::SaveLayout(layout) => {
-                tokio::task::spawn_blocking(move || {
-                    if let Err(error) = layout.save() {
-                        tracing::info!(%error, "could not remember the layout");
-                    }
-                });
-            }
             Effect::OpenLink(target) => {
                 // POSTIO-CONSENT: asked for only by a second click on a link
                 // in the reader, the first having shown where it goes, or by
@@ -853,6 +984,7 @@ fn perform(
                     copy_to_clipboard(&target);
                     let _ = inputs.try_send(Input::Host(postio_core::Event::Error {
                         message: format!("No opener here; {target} is on the clipboard"),
+                        account: None,
                     }));
                 }
             }
@@ -877,6 +1009,55 @@ fn perform(
                 if let Err(error) = list.save() {
                     tracing::warn!(%error, "could not save the remote-image allow list: {error}");
                 }
+            }
+            Effect::SetReading(reading) => {
+                if let Err(error) = crate::config_file::path()
+                    .ok_or_else(|| "There is no config.toml here".to_owned())
+                    .and_then(|path| crate::config_file::set_reading(&path, reading))
+                {
+                    tracing::warn!(%error, "could not write where messages open");
+                }
+            }
+            Effect::ReadSource(message) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let raw = client
+                        .raw_source(message)
+                        .await
+                        .map_err(|error| error.message().to_owned());
+                    let _ = inputs.send(Input::Source { message, raw }).await;
+                });
+            }
+            Effect::Settle { generation, after } => {
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(after).await;
+                    let _ = inputs.send(Input::Settled { generation }).await;
+                });
+            }
+            Effect::ArmDwell {
+                generation,
+                message,
+                after,
+            } => {
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(after).await;
+                    let _ = inputs
+                        .send(Input::DwellDue {
+                            generation,
+                            message,
+                        })
+                        .await;
+                });
+            }
+            Effect::ExpireNotice { generation, after } => {
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(after).await;
+                    let _ = inputs.send(Input::NoticeDue { generation }).await;
+                });
             }
             Effect::Autosave { generation, edit } => {
                 let inputs = inputs.clone();
@@ -914,29 +1095,108 @@ fn perform(
                     let _ = inputs.send(Input::Attached { path, attached }).await;
                 });
             }
-            Effect::Facets {
-                sequence,
-                account,
-                query,
-                scope,
-            } => {
+            Effect::BarSearch(ask) => {
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    let parsed = postio_search::parse(&query, chrono::Local::now().date_naive());
-                    let facets = client.facets(account, parsed, scope).await.ok().flatten();
-                    let _ = inputs.send(Input::Facets { sequence, facets }).await;
+                    let sequence = ask.sequence;
+                    let found = client
+                        .search_hits(
+                            postio_model::AccountScope::Unified,
+                            ask.query,
+                            postio_search::facets::Scope::AllMail,
+                            ask.order,
+                            0,
+                        )
+                        .await
+                        .map(|found| found.map(postio_client::protocol::Hits))
+                        .map_err(|error| error.message().to_owned());
+                    // Held mail says where it waits, not the folder it is
+                    // filed in.
+                    let held = match &found {
+                        Ok(Some(postio_client::protocol::Hits(results))) if ask.digesting => {
+                            let ids = results
+                                .hits
+                                .iter()
+                                .take(postio_ui::command_bar::HITS * 4)
+                                .map(|hit| hit.message_id)
+                                .collect();
+                            client.held(ids).await.unwrap_or_default()
+                        }
+                        _ => Vec::new(),
+                    };
+                    let _ = inputs
+                        .send(Input::BarFound {
+                            sequence,
+                            found,
+                            held,
+                        })
+                        .await;
                 });
             }
-            Effect::Search { sequence, search } => {
+            Effect::BarFolder { sequence, mailbox } => {
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    let found = client
-                        .search(search)
-                        .await
-                        .map_err(|error| error.message().to_owned());
-                    let _ = inputs.send(Input::Found { sequence, found }).await;
+                    let scope = ListScope::Mailbox(mailbox);
+                    let count = client.list_count(scope).await.unwrap_or(0);
+                    let page = client
+                        .list_page(PageRequest {
+                            scope,
+                            offset: 0,
+                            limit: postio_ui::command_bar::FOLDER_ROWS,
+                        })
+                        .await;
+                    let rows = match page {
+                        Ok(postio_model::listing::ListPage::Threads(page)) => page
+                            .rows
+                            .iter()
+                            .map(crate::bar::ResultRow::of_thread)
+                            .collect(),
+                        Ok(postio_model::listing::ListPage::Messages(page)) => page
+                            .rows
+                            .iter()
+                            .map(crate::bar::ResultRow::of_message)
+                            .collect(),
+                        Err(error) => {
+                            tracing::warn!(%error, "the bar could not list a folder: {error}");
+                            Vec::new()
+                        }
+                    };
+                    let _ = inputs
+                        .send(Input::BarFolder {
+                            sequence,
+                            count,
+                            rows,
+                        })
+                        .await;
+                });
+            }
+            Effect::ReadPlaceDetails => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let mut details = crate::places::PlaceDetails::default();
+                    for account in client.accounts().await.unwrap_or_default() {
+                        if !account.enabled {
+                            continue;
+                        }
+                        details
+                            .labels
+                            .extend(client.labels(account.id).await.unwrap_or_default());
+                        details
+                            .label_counts
+                            .extend(client.label_counts(account.id).await.unwrap_or_default());
+                        details
+                            .correspondents
+                            .extend(client.correspondents(account.id).await.unwrap_or_default());
+                        let waiting = client
+                            .list_count(ListScope::Outbox(account.id))
+                            .await
+                            .unwrap_or(0);
+                        details.outbox.push((account.id, waiting));
+                    }
+                    let _ = inputs.send(Input::PlaceDetails(details)).await;
                 });
             }
             // The desktop's own notification service, where the session has
@@ -956,20 +1216,71 @@ fn perform(
             }
             // Nothing to offer is what a store that cannot be read offers:
             // the finder says "no label matches" either way.
-            Effect::ReadLabels(account) => {
+            Effect::ReadLabelPicker {
+                message,
+                account,
+                threads,
+            } => {
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
+                    // The row's own account: a label is an account's, and a
+                    // message can carry only its account's.
+                    let account = client
+                        .account_of(message)
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or(account);
                     let labels = client.labels(account).await.unwrap_or_default();
-                    let _ = inputs.send(Input::Labels(labels)).await;
+                    let counts = client.label_counts(account).await.unwrap_or_default();
+                    let carried = if threads.is_empty() {
+                        Vec::new()
+                    } else {
+                        client
+                            .thread_labels(threads.clone())
+                            .await
+                            .unwrap_or_default()
+                    };
+                    let applied = postio_ui::pickers::applied_labels(carried, &threads)
+                        .into_iter()
+                        .collect();
+                    let _ = inputs
+                        .send(Input::LabelPicker {
+                            account,
+                            labels,
+                            counts,
+                            applied,
+                        })
+                        .await;
                 });
             }
-            Effect::ReadCorrespondents(account) => {
+            Effect::CreateLabel {
+                account,
+                name,
+                close,
+            } => {
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    let found = client.correspondents(account).await.unwrap_or_default();
-                    let _ = inputs.send(Input::Correspondents(found)).await;
+                    let label = client.create_label(account, name).await.ok().flatten();
+                    let _ = inputs.send(Input::LabelMade { label, close }).await;
+                });
+            }
+            Effect::ReadRecentMoves => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let recent = client.move_recent().await.unwrap_or_default();
+                    let _ = inputs.send(Input::RecentMoves(recent)).await;
+                });
+            }
+            Effect::NoteMove(mailbox) => {
+                let client = client.clone();
+                tokio::spawn(async move {
+                    if let Err(error) = client.note_move(mailbox).await {
+                        tracing::warn!(%error, "could not keep a recent move: {error}");
+                    }
                 });
             }
             Effect::Recipients { account, prefix } => {
@@ -988,13 +1299,6 @@ fn perform(
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
                     let _ = inputs.send(resume(&client, message).await).await;
-                });
-            }
-            Effect::Rest(message) => {
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(crate::app::READ_REST).await;
-                    let _ = inputs.send(Input::Rested(message)).await;
                 });
             }
             Effect::ReadConversation(thread) => {
@@ -1022,8 +1326,13 @@ fn perform(
                     let answer = match reading {
                         Ok(Some(reading)) => {
                             if let Some(row) = reading.row {
-                                let to = row.to.into_iter().chain(row.cc).collect();
-                                let _ = inputs.send(Input::Addressed { message, to }).await;
+                                let _ = inputs
+                                    .send(Input::Addressed {
+                                        message,
+                                        to: row.to,
+                                        cc: row.cc,
+                                    })
+                                    .await;
                             }
                             Ok(reading.body)
                         }
@@ -1047,7 +1356,20 @@ fn perform(
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
                     let total = client.list_count(scope).await.unwrap_or(0);
+                    // Read before the list opens, so its first page is placed
+                    // among them.
+                    if scope == ListScope::Focus(postio_model::FocusScope::Inbox) {
+                        read_surfaced(&client, &inputs).await;
+                    }
                     let _ = inputs.send(Input::Opened { scope, total }).await;
+                });
+            }
+            Effect::Ask(ask) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let answer = ask.perform(&client).await;
+                    let _ = inputs.send(Input::Answer(answer)).await;
                 });
             }
             Effect::SaveSearch(query) => {
@@ -1062,9 +1384,9 @@ fn perform(
                     .await
                     .unwrap_or_else(|error| Err(error.to_string()));
                     match saved {
-                        Ok(names) => {
-                            let contents = sidebar_contents(&client, names).await;
-                            let _ = inputs.send(Input::Sidebar(contents)).await;
+                        Ok(read) => {
+                            let contents = places_contents(&client, read).await;
+                            let _ = inputs.send(Input::Places(contents)).await;
                         }
                         Err(reason) => {
                             tracing::warn!(%reason, "could not save the search");
@@ -1088,39 +1410,36 @@ fn perform(
                     }
                 });
             }
-            Effect::EditSearch(edit) => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    let edited = tokio::task::spawn_blocking(move || {
-                        crate::config_file::path()
-                            .ok_or_else(|| "There is no config.toml here".to_owned())
-                            .and_then(|path| crate::config_file::edit_search(&path, &edit))
-                    })
-                    .await
-                    .unwrap_or_else(|error| Err(error.to_string()));
-                    match edited {
-                        Ok(names) => {
-                            let contents = sidebar_contents(&client, names).await;
-                            let _ = inputs.send(Input::Sidebar(contents)).await;
-                        }
-                        Err(reason) => {
-                            tracing::warn!(%reason, "could not change the saved search");
-                        }
-                    }
-                });
-            }
-            Effect::RefreshSidebar => {
+            Effect::RefreshPlaces => {
                 let client = client.clone();
                 let inputs = inputs.clone();
                 // Read again: a search saved since startup is in the file,
                 // not in what was read then.
-                let saved = crate::config_file::path()
-                    .and_then(|path| crate::config_file::pinned_at(&path))
-                    .unwrap_or_else(|| saved.to_vec());
+                let read = crate::config_file::path()
+                    .and_then(|path| crate::config_file::read_at(&path))
+                    .unwrap_or_else(|| config.clone());
                 tokio::spawn(async move {
-                    let contents = sidebar_contents(&client, saved).await;
-                    let _ = inputs.send(Input::Sidebar(contents)).await;
+                    let contents = places_contents(&client, read).await;
+                    let _ = inputs.send(Input::Places(contents)).await;
+                });
+            }
+            Effect::ReadSurfaced => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move { read_surfaced(&client, &inputs).await });
+            }
+            Effect::ReadFocusCounts => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    match client.focus_counts().await {
+                        Ok(counts) => {
+                            let _ = inputs.send(Input::FocusCounts(counts)).await;
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, "could not read Focus's counts: {error}");
+                        }
+                    }
                 });
             }
             Effect::Recount(scope) => {
@@ -1144,20 +1463,13 @@ fn perform(
                 generation,
                 page,
                 fetch,
+                placement,
             } => {
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
                     let rows = match fetch {
-                        Fetch::Scope(request) => client
-                            .list_page(PageRequest {
-                                scope: request.scope,
-                                offset: request.offset,
-                                limit: request.limit,
-                            })
-                            .await
-                            .map(crate::row::page_of)
-                            .map_err(|error| error.message().to_owned()),
+                        Fetch::Scope(request) => read_page(&client, request, placement).await,
                         Fetch::Hits { ids, .. } => client
                             .message_rows(ids)
                             .await
@@ -1178,20 +1490,131 @@ fn perform(
             }
         }
     }
-    if redraw {
-        *hits = draw(terminal, app, theme)?;
-    }
+    *paint |= redraw;
     Ok(flow)
 }
 
-fn draw(terminal: &mut Screen, app: &App, theme: &Theme) -> io::Result<crate::view::hit::Hits> {
+/// Paint a frame inside a synchronized update, so a terminal that keeps
+/// them shows the frame whole rather than half written over the last one;
+/// one that does not ignores the two sequences.
+fn draw<W: io::Write>(
+    terminal: &mut Terminal<CrosstermBackend<W>>,
+    app: &App,
+    theme: &Theme,
+) -> io::Result<crate::view::hit::Hits> {
     let mut hits = crate::view::hit::Hits::default();
+    crossterm::queue!(
+        terminal.backend_mut(),
+        crossterm::terminal::BeginSynchronizedUpdate
+    )?;
     terminal.draw(|frame| hits = crate::view::draw(frame, app, theme, chrono::Local::now()))?;
+    crossterm::execute!(
+        terminal.backend_mut(),
+        crossterm::terminal::EndSynchronizedUpdate
+    )?;
     Ok(hits)
 }
 
 #[cfg(test)]
 mod tests {
+
+    /// The writes the terminal is sent, one entry each, kept to read back.
+    #[derive(Clone, Default)]
+    struct Writes(std::rc::Rc<std::cell::RefCell<Vec<Vec<u8>>>>);
+    impl io::Write for Writes {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.borrow_mut().push(bytes.to_vec());
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_frame_leaves_in_one_write_not_a_kilobyte_at_a_time() {
+        let writes = Writes::default();
+        let mut terminal = ratatui::Terminal::with_options(
+            backend(writes.clone()),
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Fixed(ratatui::layout::Rect::new(0, 0, 120, 36)),
+            },
+        )
+        .expect("a terminal");
+        let (app, _) = crate::test_support::sample::state("list", 120, 36);
+        let theme = crate::test_support::plain_theme();
+        draw(&mut terminal, &app, &theme).expect("drawn");
+        let sent = writes.0.borrow();
+        let frame = sent
+            .iter()
+            .find(|write| write.len() > 1024)
+            .expect("the whole frame in one write");
+        let text = String::from_utf8_lossy(frame);
+        assert!(
+            text.starts_with("\x1b[?2026h") && text.contains("Grace Oyelaran"),
+            "the synchronized update begins it and the mail is in it"
+        );
+        assert!(
+            sent.len() <= 2,
+            "the frame, then its end: {} writes",
+            sent.len()
+        );
+    }
+
+    #[test]
+    fn what_is_waiting_already_is_taken_without_waiting() {
+        let (host_tx, host) = async_channel::unbounded();
+        let (answers, arriving) = async_channel::unbounded();
+        assert!(next_ready(&host, &arriving).is_none(), "nothing waits");
+        host_tx
+            .try_send(postio_core::EventEnvelope::untracked(
+                postio_core::Event::SurfacedChanged,
+            ))
+            .unwrap();
+        answers.try_send(Input::Settled { generation: 1 }).unwrap();
+        let taken: Vec<_> = std::iter::from_fn(|| next_ready(&host, &arriving)).collect();
+        assert_eq!(taken.len(), 2, "both, at once: {taken:?}");
+        assert!(next_ready(&host, &arriving).is_none());
+    }
+
+    #[test]
+    fn a_frame_is_written_whole_inside_a_synchronized_update() {
+        /// What the terminal is sent, kept to read back.
+        #[derive(Clone, Default)]
+        struct Tap(std::rc::Rc<std::cell::RefCell<Vec<u8>>>);
+        impl io::Write for Tap {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.0.borrow_mut().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let tap = Tap::default();
+        let backend = ratatui::backend::CrosstermBackend::new(tap.clone());
+        // A fixed viewport, so the backend is never asked its size: that asks
+        // the controlling terminal, which a CI runner does not have ("a
+        // terminal: No such file or directory").
+        let mut terminal = ratatui::Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Fixed(ratatui::layout::Rect::new(0, 0, 40, 12)),
+            },
+        )
+        .expect("a terminal");
+        let app = crate::test_support::app((40, 12));
+        let theme = crate::test_support::plain_theme();
+        draw(&mut terminal, &app, &theme).expect("drawn");
+        let written = String::from_utf8_lossy(&tap.0.borrow()).into_owned();
+        let begin = written.find("\x1b[?2026h").expect("begun");
+        let end = written.rfind("\x1b[?2026l").expect("ended");
+        assert!(begin == 0 && end > begin, "{written:?}");
+        assert!(
+            written[begin..end].contains("\x1b[1;1H"),
+            "the frame is between the two: {written:?}"
+        );
+    }
     use super::*;
 
     #[test]

@@ -1,4 +1,7 @@
-# The screen `settings-account-weights`, carried over from the old screen sweep's table (FR-030).
-source = { kind = "design", ref = "11-attachments-mime" }
-design = "11-attachments-mime"
+# Settings, Accounts with how much mail each account holds.
+#
+# Focus's design references are never committed
+# (specs/007-postio-focus/screens.md records each one).
+apps   = ["focus"]
+source = { kind = "design", ref = "none" }
 preset = "settings/account-weights"

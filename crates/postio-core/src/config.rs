@@ -53,7 +53,7 @@ pub(crate) static RESOLUTIONS: AtomicU64 = AtomicU64::new(0);
 /// The keymap resolver, the `Ctrl+K` palette, the `?` cheat sheet and the key
 /// hints on the focused row all read this, so a rebind reaches every surface at
 /// once. Bindings stay untyped strings here — parsing `"ctrl+k"` into a GDK
-/// accelerator is `postio-gtk`'s job, and core must not learn about GDK.
+/// accelerator is the frontend's job, and core must not learn about GDK.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Keymap {
     bindings: BTreeMap<ActionId, Vec<String>>,
@@ -400,7 +400,10 @@ impl ConfigService {
                     .first_error()
                     .map(ToString::to_string)
                     .unwrap_or_else(|| "the configuration could not be loaded".to_string());
-                update.events.push(Event::Error { message });
+                update.events.push(Event::Error {
+                    message,
+                    account: None,
+                });
             }
             Reload::Unchanged => {}
             Reload::Applied => {
@@ -410,6 +413,7 @@ impl ConfigService {
                     for problem in self.keymap.problems() {
                         update.events.push(Event::Error {
                             message: problem.clone(),
+                            account: None,
                         });
                     }
                 }

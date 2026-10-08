@@ -79,7 +79,7 @@ where
 /// after the drop, on its own schedule. That is so even through the file
 /// transfer portal, which despite taking file descriptors hands the receiver
 /// back paths and never copies the content (#121, and
-/// `crates/postio-app/tests/drag_out_portal.rs`). So a file reclaimed between
+/// the classic app's drag-out portal test). So a file reclaimed between
 /// the drop and the read is a drop that silently produced nothing, and
 /// nothing anywhere reports an error.
 ///
@@ -92,7 +92,7 @@ where
 /// drop is still using is seconds old.
 ///
 /// **Do not replace that age guard with a plain purge**, and read
-/// `crates/postio-app/tests/app_suite/drag_out_portal.rs` before changing it.
+/// `postio-widgets`' `drag_out` case before changing it.
 /// A purge here would be the same class of bug as pointing this at the blob
 /// store's temporary directory, below.
 ///

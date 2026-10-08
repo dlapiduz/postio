@@ -4,13 +4,13 @@
 //! # Where this ends and the toolkit begins
 //!
 //! [`ListWindow<T>`] owns the bookkeeping **and the resident rows**. What
-//! stays with the toolkit — `postio-gtk`'s `MessageList`, and eventually
+//! stays with the toolkit — the GTK message list, and eventually
 //! macOS's own thin wrapper — is row identity as *its* toolkit understands
 //! it, change notification (`GListModel::items_changed`,
 //! `NSTableView::reloadData(forRowIndexes:)`), and any re-entrancy rule a
 //! toolkit's own contract imposes (GTK's `GListModel::item()` must not be
 //! mutated mid-call; `NSTableView` has no such rule, so that guard is
-//! `postio-gtk`'s alone to keep — see its own module docs).
+//! a GTK frontend's alone to keep — see its own module docs).
 //!
 //! `ListScope` — which mailbox, or which smart folder — deliberately does
 //! **not** move here either. `ListWindow` has no idea what a scope is; it
@@ -39,7 +39,7 @@
 //! invalidate anything holding onto it — and that behaviour must not be
 //! re-derived by a second frontend. [`ListRow::reconcile`] carries it: the
 //! default takes the incoming value, which is right for a plain value type,
-//! and `postio-gtk` overrides it to update the existing object in place and
+//! and the classic app overrode it to update the existing object in place and
 //! hand that back.
 //!
 //! # Every method returns what changed
@@ -56,7 +56,7 @@
 //! **No method on [`ListWindow`] may be fallible, blocking, or async** —
 //! `NSTableView`'s row callback runs on the main thread in microseconds and
 //! must never `await`, and none of the methods here do. The corollary is
-//! `postio-gtk`'s to keep, not this module's: `ListWindow` must never be
+//! a GTK frontend's to keep, not this module's: `ListWindow` must never be
 //! called from inside `GListModel::item()` while that call is still
 //! answering, because a page source is free to answer synchronously and
 //! this module has no way to know it is being asked from inside a read.
@@ -831,6 +831,21 @@ impl<T: ListRow> ListWindow<T> {
             .and_then(T::id)
     }
 
+    /// The row at `position`, if its page is here -- asking for nothing.
+    ///
+    /// [`peek`](Self::peek) for the row itself rather than its id: what a
+    /// caller answering a question about a stretch of positions needs --
+    /// Focus's day headings ask each position's day, around the one GTK
+    /// asked about -- without a lookup by id for every one.
+    pub fn resident_at(&self, position: u32) -> Option<&T> {
+        if position >= self.total {
+            return None;
+        }
+        self.pages
+            .get(&(position / PAGE_SIZE))
+            .and_then(|rows| rows.get((position % PAGE_SIZE) as usize))
+    }
+
     /// Where `message` sits, among the rows currently resident.
     ///
     /// `None` covers both "not in this scope" and "resident scope, but this
@@ -982,6 +997,24 @@ mod tests {
         for page in [1, 2, 4] {
             assert!(!window.is_pending(page), "page {page} was asked for");
         }
+    }
+
+    #[test]
+    fn a_resident_row_is_read_by_position_and_a_missing_one_asks_for_nothing() {
+        let mut window: ListWindow<Fixture> = ListWindow::new();
+        window.reset(10_000);
+        deliver_fresh(&mut window, 2, 10_000);
+        assert_eq!(
+            window.resident_at(PAGE_SIZE * 2 + 7).map(|row| row.id),
+            Some(row(PAGE_SIZE * 2 + 7).id)
+        );
+        assert_eq!(
+            window.resident_at(PAGE_SIZE * 3),
+            None,
+            "page 3 is not here"
+        );
+        assert_eq!(window.resident_at(20_000), None, "past the end");
+        assert!(!window.is_pending(3), "and nothing was asked for");
     }
 
     // ── refreshing a stretch in place ────────────────────────────────────

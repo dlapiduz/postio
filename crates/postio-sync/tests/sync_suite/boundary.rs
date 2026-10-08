@@ -3,7 +3,7 @@
 //! # Why this is a manifest test and not a dependency-graph one
 //!
 //! `scripts/checks/check-crate-boundaries.py` reads `cargo metadata`'s resolved graph,
-//! which is the right tool for `postio-core` and `postio-gtk` — neither may
+//! which is the right tool for `postio-core` and the GTK crates — neither may
 //! reach GTK or SQLite by any route, transitive ones included. It cannot
 //! express *this* invariant, because cargo unifies features across a workspace:
 //! `postio-account` is itself a workspace member and builds with its default

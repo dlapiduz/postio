@@ -25,6 +25,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, DraftId, LabelId, MailboxId, MailboxRole, MessageId, OperationRange, ThreadId,
 };
@@ -93,6 +94,9 @@ command_ids! {
     ToggleReaderView => "toggle_reader_view",
     /// Darken the focused paper message, or show it as sent again (spec 006 FR-013a).
     DarkenMessage => "darken_message",
+    /// Draw the message on screen in the app's colours, or as sent on paper
+    /// (specs/007-postio-focus T213).
+    SwitchTreatment => "switch_treatment",
     /// Find text in the message on screen (spec 006 FR-018).
     FindInMessage => "find_in_message",
     /// Go to the next match of the open find (spec 006 FR-018).
@@ -125,18 +129,40 @@ command_ids! {
     Move => "move",
     /// Toggle the flagged state of the selection.
     Flag => "flag",
-    /// Toggle the unread state of the selection.
-    MarkUnread => "mark_unread",
+    /// Mark the selection read, or unread again.
+    ToggleRead => "toggle_read",
     /// Hide the selection from every ordinary list for a while.
     Snooze => "snooze",
     /// Cancel a snooze immediately.
     Unsnooze => "unsnooze",
+    /// Bring the conversation back if nobody has replied by a time.
+    RemindIfNoReply => "remind_if_no_reply",
     /// Attach a label to the selection.
     AddLabel => "add_label",
+    /// Accept the invitation this message carries.
+    AcceptInvite => "accept_invite",
+    /// Decline the invitation this message carries.
+    DeclineInvite => "decline_invite",
+    /// Make a digest rule for this sender, or edit the digest's own.
+    DigestRule => "digest_rule",
+    /// Stop gathering this sender's mail into a digest.
+    StopDigestingSender => "stop_digesting_sender",
+    /// Show the message as it arrived: the raw RFC 822 text.
+    ViewSource => "view_source",
+    /// Choose one of the message's links or parts, and open it.
+    OpenAttachmentOrLink => "open_attachment_or_link",
+    /// Take a wrong marker off the message, and remember that it was wrong.
+    DismissMarker => "dismiss_marker",
+    /// Show the open message's verbs that do not fit its action row.
+    MoreActions => "more_actions",
+    /// Open messages beside the list, or over it.
+    ToggleReadingPane => "toggle_reading_pane",
     /// Focus the search field.
     Search => "search",
     /// Save the current search as a pinned folder in the sidebar.
     SaveSearch => "save_search",
+    /// Leave a search's chips for the plain words it was typed as.
+    BackToWords => "back_to_words",
     /// Start a new message.
     Compose => "compose",
     /// Send what is in the composer.
@@ -199,8 +225,8 @@ command_ids! {
     Unsubscribe => "unsubscribe",
     /// Show or hide the sidebar.
     ToggleSidebar => "toggle_sidebar",
-    /// Put the keyboard in the folder list.
-    FocusSidebar => "focus_sidebar",
+    /// Go to the folders: the folder list, or a popover of them.
+    GoToFolders => "go_to_folders",
     /// Go to the inbox.
     GoToInbox => "go_to_inbox",
     /// Go to the drafts.
@@ -209,6 +235,30 @@ command_ids! {
     GoToSent => "go_to_sent",
     /// Go to the flagged mail.
     GoToFlagged => "go_to_flagged",
+    /// Go to the archive.
+    GoToArchive => "go_to_archive",
+    /// Go to the snoozed mail.
+    GoToSnoozed => "go_to_snoozed",
+    /// Go to the outbox: the sends under way.
+    GoToOutbox => "go_to_outbox",
+    /// Go to the junk.
+    GoToJunk => "go_to_junk",
+    /// Go to the trash.
+    GoToTrash => "go_to_trash",
+    /// Go to what was filtered out of the inbox.
+    GoToFiltered => "go_to_filtered",
+    /// Go to the digest rules.
+    GoToDigestRules => "go_to_digest_rules",
+    /// Run the first pinned saved search.
+    SavedSearch1 => "saved_search_1",
+    /// Run the second pinned saved search.
+    SavedSearch2 => "saved_search_2",
+    /// Run the third pinned saved search.
+    SavedSearch3 => "saved_search_3",
+    /// Run the fourth pinned saved search.
+    SavedSearch4 => "saved_search_4",
+    /// Show only the mail that asks something of you, or everything again.
+    ToggleHasAction => "toggle_has_action",
     /// Move the keyboard to the next pane: sidebar, list, reader, round.
     CyclePane => "cycle_pane",
     /// Move the keyboard to the previous pane.
@@ -265,6 +315,58 @@ command_ids! {
     /// Scroll the reading pane up by about a screenful, without moving the
     /// keyboard off the message list.
     ScrollReaderUp => "scroll_reader_up",
+    /// Choose a picker's first option.
+    PickerChoose1 => "picker_choose_1",
+    /// Choose a picker's second option.
+    PickerChoose2 => "picker_choose_2",
+    /// Choose a picker's third option.
+    PickerChoose3 => "picker_choose_3",
+    /// Choose a picker's fourth option.
+    PickerChoose4 => "picker_choose_4",
+    /// Type a date into a picker instead of choosing one.
+    PickerTypeDate => "picker_type_date",
+    /// Turn the option under a picker's cursor on or off.
+    PickerToggle => "picker_toggle",
+    /// Confirm a picker's choice.
+    PickerConfirm => "picker_confirm",
+    /// Go to the digest summary's next reference.
+    NextReference => "next_reference",
+    /// Go to the digest summary's previous reference.
+    PrevReference => "prev_reference",
+    /// Switch a digest between its summary and its messages.
+    ToggleDigestSummary => "toggle_digest_summary",
+    /// Put a filtered message back in the inbox, and never filter its sender.
+    RestoreFiltered => "restore_filtered",
+    /// Show Filtered's first reason tab.
+    FilteredTab1 => "filtered_tab_1",
+    /// Show Filtered's second reason tab.
+    FilteredTab2 => "filtered_tab_2",
+    /// Show Filtered's third reason tab.
+    FilteredTab3 => "filtered_tab_3",
+    /// Show Filtered's fourth reason tab.
+    FilteredTab4 => "filtered_tab_4",
+    /// Show Filtered's fifth reason tab.
+    FilteredTab5 => "filtered_tab_5",
+    /// Show Filtered's sixth reason tab.
+    FilteredTab6 => "filtered_tab_6",
+    /// Show Filtered's seventh reason tab.
+    FilteredTab7 => "filtered_tab_7",
+    /// File away what is already in the inbox by Focus's filtering rules.
+    SweepInbox => "sweep_inbox",
+    /// Capture a task from this message into the Obsidian vault.
+    CaptureTask => "capture_task",
+    /// Capture a note from this message into the Obsidian vault.
+    CaptureNote => "capture_note",
+    /// Choose another project for the capture.
+    CaptureChangeProject => "capture_change_project",
+    /// Use the message's subject as the capture's text.
+    CaptureUseSubject => "capture_use_subject",
+    /// Write the capture into the vault.
+    CaptureWrite => "capture_write",
+    /// "Digest mail like this" (spec 007 US14, T155): a rule dialog
+    /// pre-filled from a message, its candidate queries checked by the
+    /// user's local model.
+    DigestLikeThis => "digest_like_this",
 }
 
 impl fmt::Display for CommandId {
@@ -377,6 +479,18 @@ pub enum MessageTarget {
     },
 }
 
+/// A digest rule as it stood, kept by the undo entry of a verb that
+/// changed it, so taking the verb back puts the rule back exactly (spec 007
+/// FR-125): `[[focus.digests]]`'s own TOML for it, and where it stood in the
+/// file, whose order is the order rules match in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptRule {
+    /// Its place among the rules.
+    pub position: u32,
+    /// The rule, as `config.toml` spells it.
+    pub toml: String,
+}
+
 /// One invocation of a command.
 ///
 /// Payload fields that a keystroke cannot supply are `Option`al: `None` means
@@ -447,6 +561,11 @@ pub enum Command {
     ToggleReaderView,
     /// Darken the focused paper message, or show it as sent again (spec 006 FR-013a). No payload: it means the message on screen.
     DarkenMessage,
+    /// Switch the message on screen between app colours and the original on
+    /// paper (specs/007-postio-focus T213). No payload: it means the message
+    /// on screen, and is the message's alone -- "Always for this sender" is
+    /// the reader's to store, beside the other per-sender settings.
+    SwitchTreatment,
     /// Find text in the message on screen (spec 006 FR-018). No payload: it means the message on screen.
     FindInMessage,
     /// Go to the next match of the open find (spec 006 FR-018). No payload: it means the message on screen.
@@ -521,26 +640,44 @@ pub enum Command {
         flagged: Option<bool>,
     },
     /// Set or toggle the unread state.
-    MarkUnread {
+    ToggleRead {
         /// What to mark.
         target: MessageTarget,
         /// The state to set; `None` toggles.
         unread: Option<bool>,
     },
-    /// Hide the selection from every ordinary list for a while.
+    /// Hide the selection from every ordinary list until a time.
     ///
-    /// No duration here: unlike [`Command::Move`]'s destination, "for how
-    /// long" is a UI decision the handler makes, not one this registry-level
-    /// shape carries — the same reason [`Command::ScheduleSend`] opens a
-    /// picker rather than embedding a time.
+    /// The time is the picker's (specs/007-postio-focus research R6): one of
+    /// the shared presets, or a date typed and read by `parse_when`. `None`
+    /// is what a keystroke with no picker behind it sends -- the classic
+    /// app's `s` -- and the handler's own default answers it, as it always
+    /// has.
     Snooze {
         /// What to snooze.
         target: MessageTarget,
+        /// When it comes back; `None` for the handler's default.
+        until: Option<DateTime<Utc>>,
     },
     /// Cancel a snooze immediately.
     Unsnooze {
         /// What to unsnooze.
         target: MessageTarget,
+    },
+    /// Bring the conversation back if nobody has replied by a time, or stop
+    /// waiting for a reply.
+    ///
+    /// The time is the remind picker's, one of the shared presets or a typed
+    /// date (specs/007-postio-focus research R6). `None` clears the
+    /// conversation's reminder: it is the value rather than a toggle, so
+    /// undo can dispatch the inverse, as [`Command::AddLabel`]'s `on` does.
+    /// Focus opens the picker on the key; nothing sends a keystroke's
+    /// `None` meaning "ask".
+    RemindIfNoReply {
+        /// Which conversations: each targeted message's.
+        target: MessageTarget,
+        /// When to bring it back; `None` clears the reminder.
+        at: Option<DateTime<Utc>>,
     },
     /// Mark one message read because the cursor rested on it long enough to
     /// have been read — not because anyone asked.
@@ -548,7 +685,7 @@ pub enum Command {
     /// # Why this is a variant rather than a command of its own
     ///
     /// It is the *same verb*: [`id`](Command::id) answers
-    /// [`CommandId::MarkUnread`], so it routes to the same handler, appears in
+    /// [`CommandId::ToggleRead`], so it routes to the same handler, appears in
     /// the registry once, and does not invent a second spelling of "mark
     /// read" for the palette and the cheat sheet to disagree about. What
     /// differs is only who asked — and that changes exactly one thing, which
@@ -558,12 +695,12 @@ pub enum Command {
     ///
     /// # Why it is not undoable
     ///
-    /// `u` takes back what *you* did. Reading a mailbox produces one of these
-    /// per message rested on, so recording them would bury the archive you
-    /// actually want back under a drift of marks you never asked for, and
-    /// `u` would stop meaning anything predictable. The reversal is `U`
-    /// (mark unread), which is bound, in the palette and on the cheat sheet.
-    /// See #71.
+    /// Undo takes back what *you* did. Reading a mailbox produces one of
+    /// these per message rested on, so recording them would bury the archive
+    /// you actually want back under a drift of marks you never asked for, and
+    /// undo would stop meaning anything predictable. The reversal is `r`
+    /// (mark read or unread), which is bound, in the palette and on the cheat
+    /// sheet. See #71.
     MarkReadOnDwell {
         /// The message the cursor rested on.
         message: MessageId,
@@ -584,6 +721,79 @@ pub enum Command {
         /// `AddLabel` itself was before #766 removed it (#780).
         on: Option<bool>,
     },
+    /// Accept the invitation a message carries, and send the reply.
+    ///
+    /// Undone within a window rather than from the undo stack, the way a send
+    /// is: the reply is on its way once the window closes (research R9).
+    AcceptInvite {
+        /// The invitation; `None` means the focused message.
+        message: Option<MessageId>,
+    },
+    /// Decline the invitation a message carries, and send the reply.
+    DeclineInvite {
+        /// The invitation; `None` means the focused message.
+        message: Option<MessageId>,
+    },
+    /// Open the digest-rule dialog: a new rule for the target's sender, or,
+    /// in a digest, the digest's own rule and cadence.
+    DigestRule {
+        /// Whose sender the rule is for.
+        target: MessageTarget,
+    },
+    /// Stop gathering a sender's mail into a digest, or start again.
+    ///
+    /// A direction rather than a toggle, so undo can dispatch the inverse.
+    StopDigestingSender {
+        /// Whose sender.
+        target: MessageTarget,
+        /// `true` stops the digest; `false` is undo's way back.
+        stopped: bool,
+        /// Undo's memory, `None` from a keystroke: the rule as it stood
+        /// before the sender was taken out of it, so taking that back puts
+        /// the rule back exactly -- a rule left holding nobody is removed,
+        /// and undo has to be able to write it again.
+        kept: Option<KeptRule>,
+    },
+    /// Archive a whole digest, or bring it back (spec 007 FR-125): `⇧A` in
+    /// the digest window. Every message it holds is archived, and its row
+    /// leaves the inbox.
+    ///
+    /// The same verb as `A` everywhere else -- "archive everything this row
+    /// stands for" -- so [`Command::id`] answers
+    /// [`CommandId::ArchiveThread`], as [`Command::MarkReadOnDwell`] answers
+    /// `ToggleRead`'s: one row in the registry, one key.
+    ArchiveDigest {
+        /// Which delivery.
+        delivery: postio_model::DeliveryId,
+        /// `true` archives it; `false` is undo's way back.
+        archived: bool,
+    },
+    /// Show the message as it arrived: its raw RFC 822 text (research R2).
+    ViewSource {
+        /// The message; `None` means the one on screen.
+        message: Option<MessageId>,
+    },
+    /// Choose one of a message's links or parts, and open it.
+    OpenAttachmentOrLink {
+        /// The message; `None` means the one on screen.
+        message: Option<MessageId>,
+    },
+    /// Take a wrong marker off a message, or bring it back (spec 007
+    /// FR-108). A dismissal is a correction: it never returns on that
+    /// message, and dismissing one kind from one sender again and again
+    /// stops that kind for the sender.
+    DismissMarker {
+        /// Whose markers.
+        target: MessageTarget,
+        /// `true` dismisses; `false` is undo's way back.
+        dismissed: bool,
+    },
+    /// Show the verbs a narrow message dialog folds out of its action row:
+    /// Label, Move and Delete (spec 007 T206).
+    MoreActions,
+    /// Open messages in a pane beside the list, or in the dialog over it
+    /// (spec 007 T232): `[focus] reading`.
+    ToggleReadingPane,
 
     // -- Search ----------------------------------------------------------
     /// Search, or focus the search field when `query` is `None`.
@@ -596,6 +806,8 @@ pub enum Command {
     /// No payload: the box being open is what says which query, the same
     /// way `EditConfig` needs no path because there is only one file.
     SaveSearch,
+    /// Leave a search's chips for the plain words it was typed as.
+    BackToWords,
 
     // -- Compose ---------------------------------------------------------
     /// Start a new message, optionally from an existing draft.
@@ -740,8 +952,9 @@ pub enum Command {
     Unsubscribe,
     /// Show or hide the sidebar.
     ToggleSidebar,
-    /// Put the keyboard in the folder list.
-    FocusSidebar,
+    /// Go to the folders: the classic app puts the keyboard in its folder
+    /// list, and Focus opens its folders popover.
+    GoToFolders,
     /// Go to a mailbox by the role it wears, rather than by its name.
     ///
     /// One variant each rather than `GoTo(MailboxRole)`, because [`Self::id`]
@@ -756,6 +969,34 @@ pub enum Command {
     GoToSent,
     /// Go to the flagged mail.
     GoToFlagged,
+    /// Go to the archive.
+    GoToArchive,
+    /// Go to the snoozed mail.
+    GoToSnoozed,
+    /// Go to the outbox: the sends under way.
+    GoToOutbox,
+    /// Go to the junk.
+    GoToJunk,
+    /// Go to the trash.
+    GoToTrash,
+    /// Go to what was filtered out of the inbox.
+    GoToFiltered,
+    /// Go to the digest rules.
+    GoToDigestRules,
+    /// Run the first pinned `[saved_searches]` entry.
+    ///
+    /// One variant for each of the four, for the reason the destinations
+    /// above are: [`Self::id`] is total, and `SavedSearch(9)` would be a
+    /// value with no command id.
+    SavedSearch1,
+    /// Run the second pinned `[saved_searches]` entry.
+    SavedSearch2,
+    /// Run the third pinned `[saved_searches]` entry.
+    SavedSearch3,
+    /// Run the fourth pinned `[saved_searches]` entry.
+    SavedSearch4,
+    /// Show only the mail that asks something of you, or everything again.
+    ToggleHasAction,
     /// Move the keyboard to the next pane: sidebar, list, reader, round.
     ///
     /// The *top-level* meaning of bare Tab, for when a pane itself has the
@@ -852,6 +1093,92 @@ pub enum Command {
     ScrollReaderDown,
     /// Scroll the reading pane up by about a screenful.
     ScrollReaderUp,
+
+    // -- Pickers, digests and Filtered (specs/007-postio-focus) ------------
+    /// Choose a picker's first option. One variant per option, like the
+    /// saved searches.
+    PickerChoose1,
+    /// Choose a picker's second option.
+    PickerChoose2,
+    /// Choose a picker's third option.
+    PickerChoose3,
+    /// Choose a picker's fourth option.
+    PickerChoose4,
+    /// Type a date into a picker instead of choosing one.
+    PickerTypeDate,
+    /// Turn the option under a picker's cursor on or off.
+    PickerToggle,
+    /// Confirm a picker's choice.
+    PickerConfirm,
+    /// Go to the digest summary's next reference.
+    NextReference,
+    /// Go to the digest summary's previous reference.
+    PrevReference,
+    /// Switch a digest between its summary and its messages.
+    ToggleDigestSummary,
+    /// Put a filtered message back in the inbox, and never filter its sender.
+    RestoreFiltered {
+        /// What to restore.
+        target: MessageTarget,
+        /// `true` restores; `false` is undo's way back.
+        restored: bool,
+    },
+    /// Show Filtered's first reason tab.
+    FilteredTab1,
+    /// Show Filtered's second reason tab.
+    FilteredTab2,
+    /// Show Filtered's third reason tab.
+    FilteredTab3,
+    /// Show Filtered's fourth reason tab.
+    FilteredTab4,
+    /// Show Filtered's fifth reason tab.
+    FilteredTab5,
+    /// Show Filtered's sixth reason tab.
+    FilteredTab6,
+    /// Show Filtered's seventh reason tab.
+    FilteredTab7,
+    /// File away what is already in the inbox, by the rules that file
+    /// arrivals away (spec 007 FR-118): the deliberate command that applies
+    /// filtering to mail filed before it was turned on. The frontend shows
+    /// what would move first (`Client::sweep_preview`).
+    SweepInbox,
+
+    // -- Obsidian capture (specs/007-postio-focus milestone 3) -------------
+    /// Open the capture sheet for a task from the message (spec 007 US15),
+    /// or switch the open sheet to a task. Frontend-only: the sheet writes
+    /// through `Client::capture_task`.
+    CaptureTask,
+    /// Open the capture sheet for a note from the message, or switch the
+    /// open sheet to a note.
+    CaptureNote,
+    /// Choose another project for the capture.
+    CaptureChangeProject,
+    /// Use the message's subject as the capture's text.
+    CaptureUseSubject,
+    /// Write the capture into the vault.
+    CaptureWrite,
+    /// Undo's way back from a sweep: the messages return to their inboxes,
+    /// and the decisions that filed them away go with the sweep that made
+    /// them.
+    ///
+    /// The same verb, the other direction, as [`Command::MarkReadOnDwell`]
+    /// is [`CommandId::ToggleRead`]'s other provenance: [`Command::id`]
+    /// answers [`CommandId::SweepInbox`], so it routes to the same handler
+    /// and needs no key or registry row of its own.
+    UnsweepInbox {
+        /// What the sweep moved.
+        target: MessageTarget,
+    },
+    /// "Digest mail like this" (spec 007 US14, T155): open the rule dialog
+    /// pre-filled from `message`, its candidate queries checked by the
+    /// user's local model (`Client::digest_like_this`). Present only when
+    /// `[focus.model]` has `like_this` on (FR-171); a UI-only command, with
+    /// no store write of its own.
+    DigestLikeThis {
+        /// The message to check other mail against, resolved by app state
+        /// the way [`Command::OpenMessage`]'s is.
+        message: Option<MessageId>,
+    },
 }
 
 impl Command {
@@ -868,10 +1195,15 @@ impl Command {
             | Command::Delete { target }
             | Command::Move { target, .. }
             | Command::Flag { target, .. }
-            | Command::MarkUnread { target, .. }
-            | Command::Snooze { target }
+            | Command::ToggleRead { target, .. }
+            | Command::Snooze { target, .. }
             | Command::Unsnooze { target }
-            | Command::AddLabel { target, .. } => Some(target),
+            | Command::RemindIfNoReply { target, .. }
+            | Command::AddLabel { target, .. }
+            | Command::DigestRule { target }
+            | Command::StopDigestingSender { target, .. }
+            | Command::DismissMarker { target, .. }
+            | Command::RestoreFiltered { target, .. } => Some(target),
             _ => None,
         }
     }
@@ -895,10 +1227,23 @@ impl Command {
             Command::Delete { .. } => Command::Delete { target },
             Command::Move { to, .. } => Command::Move { target, to },
             Command::Flag { flagged, .. } => Command::Flag { target, flagged },
-            Command::MarkUnread { unread, .. } => Command::MarkUnread { target, unread },
-            Command::Snooze { .. } => Command::Snooze { target },
+            Command::ToggleRead { unread, .. } => Command::ToggleRead { target, unread },
+            Command::Snooze { until, .. } => Command::Snooze { target, until },
             Command::Unsnooze { .. } => Command::Unsnooze { target },
+            Command::RemindIfNoReply { at, .. } => Command::RemindIfNoReply { target, at },
             Command::AddLabel { label, on, .. } => Command::AddLabel { target, label, on },
+            Command::DigestRule { .. } => Command::DigestRule { target },
+            Command::StopDigestingSender { stopped, kept, .. } => Command::StopDigestingSender {
+                target,
+                stopped,
+                kept,
+            },
+            Command::RestoreFiltered { restored, .. } => {
+                Command::RestoreFiltered { target, restored }
+            }
+            Command::DismissMarker { dismissed, .. } => {
+                Command::DismissMarker { target, dismissed }
+            }
             other => other,
         }
     }
@@ -924,6 +1269,7 @@ impl Command {
             Command::ViewOriginal => CommandId::ViewOriginal,
             Command::ToggleReaderView => CommandId::ToggleReaderView,
             Command::DarkenMessage => CommandId::DarkenMessage,
+            Command::SwitchTreatment => CommandId::SwitchTreatment,
             Command::FindInMessage => CommandId::FindInMessage,
             Command::FindNext => CommandId::FindNext,
             Command::FindPrevious => CommandId::FindPrevious,
@@ -936,18 +1282,31 @@ impl Command {
             Command::ReplyAll { .. } => CommandId::ReplyAll,
             Command::Forward { .. } => CommandId::Forward,
             Command::Archive { .. } => CommandId::Archive,
-            Command::ArchiveThread { .. } => CommandId::ArchiveThread,
+            Command::ArchiveThread { .. } | Command::ArchiveDigest { .. } => {
+                CommandId::ArchiveThread
+            }
             Command::Delete { .. } => CommandId::Delete,
             Command::Move { .. } => CommandId::Move,
             Command::Flag { .. } => CommandId::Flag,
             // The same verb, invoked by the app rather than by the user — see
             // `MarkReadOnDwell`'s own docs.
-            Command::MarkUnread { .. } | Command::MarkReadOnDwell { .. } => CommandId::MarkUnread,
+            Command::ToggleRead { .. } | Command::MarkReadOnDwell { .. } => CommandId::ToggleRead,
             Command::Snooze { .. } => CommandId::Snooze,
             Command::Unsnooze { .. } => CommandId::Unsnooze,
+            Command::RemindIfNoReply { .. } => CommandId::RemindIfNoReply,
             Command::AddLabel { .. } => CommandId::AddLabel,
+            Command::AcceptInvite { .. } => CommandId::AcceptInvite,
+            Command::DeclineInvite { .. } => CommandId::DeclineInvite,
+            Command::DigestRule { .. } => CommandId::DigestRule,
+            Command::StopDigestingSender { .. } => CommandId::StopDigestingSender,
+            Command::ViewSource { .. } => CommandId::ViewSource,
+            Command::OpenAttachmentOrLink { .. } => CommandId::OpenAttachmentOrLink,
+            Command::DismissMarker { .. } => CommandId::DismissMarker,
+            Command::MoreActions => CommandId::MoreActions,
+            Command::ToggleReadingPane => CommandId::ToggleReadingPane,
             Command::Search { .. } => CommandId::Search,
             Command::SaveSearch => CommandId::SaveSearch,
+            Command::BackToWords => CommandId::BackToWords,
             Command::Compose { .. } => CommandId::Compose,
             Command::Send => CommandId::Send,
             Command::ScheduleSend => CommandId::ScheduleSend,
@@ -979,11 +1338,23 @@ impl Command {
             Command::AlwaysShowImages => CommandId::AlwaysShowImages,
             Command::Unsubscribe => CommandId::Unsubscribe,
             Command::ToggleSidebar => CommandId::ToggleSidebar,
-            Command::FocusSidebar => CommandId::FocusSidebar,
+            Command::GoToFolders => CommandId::GoToFolders,
             Command::GoToInbox => CommandId::GoToInbox,
             Command::GoToDrafts => CommandId::GoToDrafts,
             Command::GoToSent => CommandId::GoToSent,
             Command::GoToFlagged => CommandId::GoToFlagged,
+            Command::GoToArchive => CommandId::GoToArchive,
+            Command::GoToSnoozed => CommandId::GoToSnoozed,
+            Command::GoToOutbox => CommandId::GoToOutbox,
+            Command::GoToJunk => CommandId::GoToJunk,
+            Command::GoToTrash => CommandId::GoToTrash,
+            Command::GoToFiltered => CommandId::GoToFiltered,
+            Command::GoToDigestRules => CommandId::GoToDigestRules,
+            Command::SavedSearch1 => CommandId::SavedSearch1,
+            Command::SavedSearch2 => CommandId::SavedSearch2,
+            Command::SavedSearch3 => CommandId::SavedSearch3,
+            Command::SavedSearch4 => CommandId::SavedSearch4,
+            Command::ToggleHasAction => CommandId::ToggleHasAction,
             Command::CyclePane => CommandId::CyclePane,
             Command::CyclePaneBack => CommandId::CyclePaneBack,
             Command::NextFolder => CommandId::NextFolder,
@@ -1011,6 +1382,31 @@ impl Command {
             Command::RenderPartOnce => CommandId::RenderPartOnce,
             Command::ScrollReaderDown => CommandId::ScrollReaderDown,
             Command::ScrollReaderUp => CommandId::ScrollReaderUp,
+            Command::PickerChoose1 => CommandId::PickerChoose1,
+            Command::PickerChoose2 => CommandId::PickerChoose2,
+            Command::PickerChoose3 => CommandId::PickerChoose3,
+            Command::PickerChoose4 => CommandId::PickerChoose4,
+            Command::PickerTypeDate => CommandId::PickerTypeDate,
+            Command::PickerToggle => CommandId::PickerToggle,
+            Command::PickerConfirm => CommandId::PickerConfirm,
+            Command::NextReference => CommandId::NextReference,
+            Command::PrevReference => CommandId::PrevReference,
+            Command::ToggleDigestSummary => CommandId::ToggleDigestSummary,
+            Command::RestoreFiltered { .. } => CommandId::RestoreFiltered,
+            Command::FilteredTab1 => CommandId::FilteredTab1,
+            Command::FilteredTab2 => CommandId::FilteredTab2,
+            Command::FilteredTab3 => CommandId::FilteredTab3,
+            Command::FilteredTab4 => CommandId::FilteredTab4,
+            Command::FilteredTab5 => CommandId::FilteredTab5,
+            Command::FilteredTab6 => CommandId::FilteredTab6,
+            Command::FilteredTab7 => CommandId::FilteredTab7,
+            Command::SweepInbox | Command::UnsweepInbox { .. } => CommandId::SweepInbox,
+            Command::CaptureTask => CommandId::CaptureTask,
+            Command::CaptureNote => CommandId::CaptureNote,
+            Command::CaptureChangeProject => CommandId::CaptureChangeProject,
+            Command::CaptureUseSubject => CommandId::CaptureUseSubject,
+            Command::CaptureWrite => CommandId::CaptureWrite,
+            Command::DigestLikeThis { .. } => CommandId::DigestLikeThis,
         }
     }
 
@@ -1039,6 +1435,7 @@ impl Command {
             CommandId::ViewOriginal => Command::ViewOriginal,
             CommandId::ToggleReaderView => Command::ToggleReaderView,
             CommandId::DarkenMessage => Command::DarkenMessage,
+            CommandId::SwitchTreatment => Command::SwitchTreatment,
             CommandId::FindInMessage => Command::FindInMessage,
             CommandId::FindNext => Command::FindNext,
             CommandId::FindPrevious => Command::FindPrevious,
@@ -1065,23 +1462,47 @@ impl Command {
                 target: MessageTarget::Selection,
                 flagged: None,
             },
-            CommandId::MarkUnread => Command::MarkUnread {
+            CommandId::ToggleRead => Command::ToggleRead {
                 target: MessageTarget::Selection,
                 unread: None,
             },
             CommandId::Snooze => Command::Snooze {
                 target: MessageTarget::Selection,
+                until: None,
             },
             CommandId::Unsnooze => Command::Unsnooze {
                 target: MessageTarget::Selection,
+            },
+            CommandId::RemindIfNoReply => Command::RemindIfNoReply {
+                target: MessageTarget::Selection,
+                at: None,
             },
             CommandId::AddLabel => Command::AddLabel {
                 target: MessageTarget::Selection,
                 label: None,
                 on: None,
             },
+            CommandId::AcceptInvite => Command::AcceptInvite { message: None },
+            CommandId::DeclineInvite => Command::DeclineInvite { message: None },
+            CommandId::DigestRule => Command::DigestRule {
+                target: MessageTarget::Selection,
+            },
+            CommandId::StopDigestingSender => Command::StopDigestingSender {
+                target: MessageTarget::Selection,
+                stopped: true,
+                kept: None,
+            },
+            CommandId::ViewSource => Command::ViewSource { message: None },
+            CommandId::OpenAttachmentOrLink => Command::OpenAttachmentOrLink { message: None },
+            CommandId::DismissMarker => Command::DismissMarker {
+                target: MessageTarget::Selection,
+                dismissed: true,
+            },
+            CommandId::MoreActions => Command::MoreActions,
+            CommandId::ToggleReadingPane => Command::ToggleReadingPane,
             CommandId::Search => Command::Search { query: None },
             CommandId::SaveSearch => Command::SaveSearch,
+            CommandId::BackToWords => Command::BackToWords,
             CommandId::Compose => Command::Compose { draft: None },
             CommandId::Send => Command::Send,
             CommandId::ScheduleSend => Command::ScheduleSend,
@@ -1113,11 +1534,23 @@ impl Command {
             CommandId::AlwaysShowImages => Command::AlwaysShowImages,
             CommandId::Unsubscribe => Command::Unsubscribe,
             CommandId::ToggleSidebar => Command::ToggleSidebar,
-            CommandId::FocusSidebar => Command::FocusSidebar,
+            CommandId::GoToFolders => Command::GoToFolders,
             CommandId::GoToInbox => Command::GoToInbox,
             CommandId::GoToDrafts => Command::GoToDrafts,
             CommandId::GoToSent => Command::GoToSent,
             CommandId::GoToFlagged => Command::GoToFlagged,
+            CommandId::GoToArchive => Command::GoToArchive,
+            CommandId::GoToSnoozed => Command::GoToSnoozed,
+            CommandId::GoToOutbox => Command::GoToOutbox,
+            CommandId::GoToJunk => Command::GoToJunk,
+            CommandId::GoToTrash => Command::GoToTrash,
+            CommandId::GoToFiltered => Command::GoToFiltered,
+            CommandId::GoToDigestRules => Command::GoToDigestRules,
+            CommandId::SavedSearch1 => Command::SavedSearch1,
+            CommandId::SavedSearch2 => Command::SavedSearch2,
+            CommandId::SavedSearch3 => Command::SavedSearch3,
+            CommandId::SavedSearch4 => Command::SavedSearch4,
+            CommandId::ToggleHasAction => Command::ToggleHasAction,
             CommandId::CyclePane => Command::CyclePane,
             CommandId::CyclePaneBack => Command::CyclePaneBack,
             CommandId::NextFolder => Command::NextFolder,
@@ -1149,6 +1582,34 @@ impl Command {
             CommandId::RenderPartOnce => Command::RenderPartOnce,
             CommandId::ScrollReaderDown => Command::ScrollReaderDown,
             CommandId::ScrollReaderUp => Command::ScrollReaderUp,
+            CommandId::PickerChoose1 => Command::PickerChoose1,
+            CommandId::PickerChoose2 => Command::PickerChoose2,
+            CommandId::PickerChoose3 => Command::PickerChoose3,
+            CommandId::PickerChoose4 => Command::PickerChoose4,
+            CommandId::PickerTypeDate => Command::PickerTypeDate,
+            CommandId::PickerToggle => Command::PickerToggle,
+            CommandId::PickerConfirm => Command::PickerConfirm,
+            CommandId::NextReference => Command::NextReference,
+            CommandId::PrevReference => Command::PrevReference,
+            CommandId::ToggleDigestSummary => Command::ToggleDigestSummary,
+            CommandId::RestoreFiltered => Command::RestoreFiltered {
+                target: MessageTarget::Selection,
+                restored: true,
+            },
+            CommandId::FilteredTab1 => Command::FilteredTab1,
+            CommandId::FilteredTab2 => Command::FilteredTab2,
+            CommandId::FilteredTab3 => Command::FilteredTab3,
+            CommandId::FilteredTab4 => Command::FilteredTab4,
+            CommandId::FilteredTab5 => Command::FilteredTab5,
+            CommandId::FilteredTab6 => Command::FilteredTab6,
+            CommandId::FilteredTab7 => Command::FilteredTab7,
+            CommandId::SweepInbox => Command::SweepInbox,
+            CommandId::CaptureTask => Command::CaptureTask,
+            CommandId::CaptureNote => Command::CaptureNote,
+            CommandId::CaptureChangeProject => Command::CaptureChangeProject,
+            CommandId::CaptureUseSubject => Command::CaptureUseSubject,
+            CommandId::CaptureWrite => Command::CaptureWrite,
+            CommandId::DigestLikeThis => Command::DigestLikeThis { message: None },
         }
     }
 

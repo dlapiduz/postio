@@ -52,39 +52,40 @@ pub enum ListScope {
     /// drill-in that filtered the list's own resident rows used to show only
     /// the part of it that happened to be paged in.
     Thread(ThreadId),
+    /// One of Postio Focus's own lists (spec 007).
+    ///
+    /// A view, never a destination, like [`Self::Unified`]. Only Focus reads
+    /// these, and the classic app and the terminal never see one.
+    Focus(FocusScope),
+}
+
+/// Which of Focus's lists a [`ListScope::Focus`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum FocusScope {
+    /// Focus's inbox: every enabled account's inbox, one row per
+    /// conversation, newest first.
+    ///
+    /// Its membership is the unified inbox's. It is a scope of its own
+    /// because it will not stay that: mail held for a digest and a
+    /// conversation whose reminder has surfaced leave it, and every read of
+    /// it asks the store's one Focus membership test so that its rows, its
+    /// count and its seek marks agree about them.
+    Inbox,
+    /// The inbox's rows that draw a marker -- an invitation, a question, a
+    /// to-do, a reminder -- and nothing else: what `!` narrows it to
+    /// (spec 007 FR-017). Read from the markers rather than by walking the
+    /// inbox, since they are few and it is not.
+    HasAction,
+    /// Everything snoozed, in every enabled account, wherever it is filed:
+    /// `g z`. Messages, newest first, as the per-account
+    /// [`ListScope::Snoozed`] lists them, over every account at once.
+    Snoozed,
+    /// Everything flagged, in every enabled account, wherever it is filed:
+    /// `g *`. As [`FocusScope::Snoozed`] is to [`ListScope::Snoozed`].
+    Flagged,
 }
 
 impl ListScope {
-    /// Whether the list is showing something out of `mailboxes`.
-    ///
-    /// The question a frontend asks when a folder tree arrives and it has to
-    /// decide whether to open a default folder: is there already something
-    /// on screen that belongs to *this* tree?
-    ///
-    /// "Something is open" on its own cannot answer it, and #813 is both
-    /// halves of that. A smart folder is open and names no `MailboxId`, so a
-    /// frontend testing for one concluded nothing was showing and opened the
-    /// inbox over the top on every reload. A folder left behind by the
-    /// *previous* account names one perfectly well, so the same test
-    /// concluded something was showing and never opened the new account's
-    /// inbox. Asking which tree the scope comes from separates them.
-    ///
-    /// [`Unified`](Self::Unified) and [`Thread`](Self::Thread) always answer
-    /// yes: neither is a folder in any one tree, and both are somewhere a
-    /// person went deliberately, so a reload has no business replacing them.
-    pub fn is_drawn_from(&self, mailboxes: &[crate::mailbox::Mailbox]) -> bool {
-        let account_present =
-            |account: AccountId| mailboxes.iter().any(|folder| folder.account_id == account);
-        match self {
-            Self::Mailbox(id) => mailboxes.iter().any(|folder| folder.id == *id),
-            Self::Account(account)
-            | Self::Flagged(account)
-            | Self::Snoozed(account)
-            | Self::Outbox(account) => account_present(*account),
-            Self::Unified | Self::Thread(_) => !mailboxes.is_empty(),
-        }
-    }
-
     /// The folder this scope names, when it names one.
     ///
     /// `None` for a smart folder or a thread — load-bearing wherever the
@@ -99,7 +100,8 @@ impl ListScope {
             // Never a destination: being in the Outbox is a consequence of
             // having been sent, not somewhere a message can be put.
             | ListScope::Outbox(_)
-            | ListScope::Thread(_) => None,
+            | ListScope::Thread(_)
+            | ListScope::Focus(_) => None,
         }
     }
 
@@ -107,7 +109,7 @@ impl ListScope {
     /// names `mailbox` — `None` for [`Arrival::MessagesChanged`], which is
     /// account-wide rather than about one mailbox.
     ///
-    /// The rule, in one sentence (`postio_gtk::feed`'s module docs carry
+    /// The rule, in one sentence (the classic app's feed module docs carried
     /// the full table this answers): a list reacts to an event only when
     /// the event can change its own membership or order, and it inserts at
     /// the top only when its own order guarantees the new rows belong
@@ -124,7 +126,7 @@ impl ListScope {
     /// flag or a snooze changing — is [`Reaction::Reload`] rather than
     /// [`Reaction::Refetch`]: the membership moved, and a page refetch
     /// cannot express a row leaving. [`ListScope::Thread`] never reaches a
-    /// [`Feed`](../../postio_gtk/feed/struct.Feed.html) at all, so every
+    /// a feed at all, so every
     /// arrival is [`Reaction::Ignore`].
     ///
     /// `inbox` is whether `mailbox` is an inbox, when the caller knows --
@@ -164,7 +166,18 @@ impl ListScope {
             // would draw the same conversation twice, which is the one thing
             // the grouping exists to prevent. Reloading re-runs the walk,
             // which is the only thing that knows which it was.
-            ListScope::Unified => match arrival {
+            //
+            // Focus's inbox is the same inboxes, and it never inserts either:
+            // Focus may hold an arrival for a digest or file it away before it
+            // is ever a row, and only the store knows which.
+            // Focus's two views over every account are membership questions
+            // like the per-account ones, and so are never inserted into; no
+            // account's change is somebody else's.
+            ListScope::Focus(FocusScope::Snoozed | FocusScope::Flagged) => match arrival {
+                MessagesRemoved | MessageListChanged | MessagesChanged => Reload,
+                NewMail => Ignore,
+            },
+            ListScope::Unified | ListScope::Focus(_) => match arrival {
                 NewMail | MessagesRemoved | MessageListChanged if inbox == Some(false) => Ignore,
                 NewMail | MessagesRemoved | MessageListChanged => Reload,
                 MessagesChanged => Refetch,
@@ -249,6 +262,65 @@ mod reaction_tests {
              somewhere a message can be put"
         );
         assert_eq!(ListScope::Thread(ThreadId::new(3)).mailbox(), None);
+        assert_eq!(
+            ListScope::Focus(FocusScope::Inbox).mailbox(),
+            None,
+            "Focus's inbox is a view over every inbox, not a folder"
+        );
+    }
+
+    #[test]
+    fn the_has_action_filter_reacts_as_focus_s_inbox_does() {
+        // A marker arrives with a message, and a row leaves the filter when
+        // its mail leaves the inbox: the same events, the same reloads.
+        for arrival in [
+            Arrival::NewMail,
+            Arrival::MessagesRemoved,
+            Arrival::MessageListChanged,
+            Arrival::MessagesChanged,
+        ] {
+            for (mailbox, inbox) in [
+                (Some(INBOX), Some(true)),
+                (Some(ARCHIVE), Some(false)),
+                (None, None),
+            ] {
+                assert_eq!(
+                    ListScope::Focus(FocusScope::HasAction).reaction(arrival, HOME, mailbox, inbox),
+                    ListScope::Focus(FocusScope::Inbox).reaction(arrival, HOME, mailbox, inbox),
+                    "{arrival:?} in {mailbox:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn focus_s_inbox_reacts_to_every_arrival_as_the_unified_inbox_does() {
+        // The same inboxes, read as conversations, so the same events move
+        // it -- and like Unified it never inserts a delivery at the top: Focus
+        // may hold an arrival back or file it away before it is ever a row
+        // (spec 007), and only a reload asks the store which it was.
+        let focus = ListScope::Focus(FocusScope::Inbox);
+        for arrival in [
+            Arrival::NewMail,
+            Arrival::MessagesRemoved,
+            Arrival::MessageListChanged,
+            Arrival::MessagesChanged,
+        ] {
+            for (mailbox, inbox) in [
+                (Some(INBOX), Some(true)),
+                (Some(ARCHIVE), Some(false)),
+                (Some(ARCHIVE), None),
+                (None, None),
+            ] {
+                for account in [HOME, AWAY] {
+                    assert_eq!(
+                        focus.reaction(arrival, account, mailbox, inbox),
+                        ListScope::Unified.reaction(arrival, account, mailbox, inbox),
+                        "{arrival:?} in {mailbox:?} (an inbox: {inbox:?}) of {account:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -507,67 +579,6 @@ mod reaction_tests {
                 "{arrival:?}: a drill-in reads its own thread directly and \
                  never routes through here"
             );
-        }
-    }
-
-    /// #813's question: is the list already showing something out of the
-    /// folder tree that just arrived?
-    mod is_drawn_from {
-        use super::*;
-        use crate::mailbox::Mailbox;
-
-        fn folder(account: AccountId, id: i64) -> Mailbox {
-            let mut mailbox = Mailbox::new(account, "INBOX", Some('/'));
-            mailbox.id = MailboxId::new(id);
-            mailbox
-        }
-
-        fn home_tree() -> Vec<Mailbox> {
-            vec![folder(HOME, 1), folder(HOME, 2)]
-        }
-
-        #[test]
-        fn a_folder_in_the_tree_is_drawn_from_it() {
-            assert!(ListScope::Mailbox(MailboxId::new(2)).is_drawn_from(&home_tree()));
-        }
-
-        #[test]
-        fn a_folder_from_another_account_is_not() {
-            // The account switch. The folder the previous account left on
-            // screen is not part of the tree that just replaced it, and
-            // treating it as "something is already open" is what stopped the
-            // new account's inbox from ever opening.
-            assert!(!ListScope::Mailbox(MailboxId::new(9)).is_drawn_from(&home_tree()));
-        }
-
-        #[test]
-        fn a_smart_folder_belongs_to_its_account() {
-            assert!(ListScope::Flagged(HOME).is_drawn_from(&home_tree()));
-            assert!(ListScope::Snoozed(HOME).is_drawn_from(&home_tree()));
-            assert!(ListScope::Account(HOME).is_drawn_from(&home_tree()));
-        }
-
-        #[test]
-        fn a_smart_folder_of_an_absent_account_does_not() {
-            let other = AccountId::new(HOME.get() + 1);
-            assert!(!ListScope::Flagged(other).is_drawn_from(&home_tree()));
-        }
-
-        #[test]
-        fn the_unified_view_and_a_drill_in_are_never_overridden() {
-            // Neither is a folder in the tree, and both are somewhere the
-            // user went deliberately. A reload that replaced them would be
-            // the bug this predicate exists to prevent.
-            assert!(ListScope::Unified.is_drawn_from(&home_tree()));
-            assert!(ListScope::Thread(crate::ids::ThreadId::new(1)).is_drawn_from(&home_tree()));
-        }
-
-        #[test]
-        fn nothing_is_drawn_from_an_empty_tree() {
-            // An account whose first read came back empty has nothing open
-            // and nothing to open, so the caller is still owed a pick.
-            assert!(!ListScope::Mailbox(MailboxId::new(1)).is_drawn_from(&[]));
-            assert!(!ListScope::Flagged(HOME).is_drawn_from(&[]));
         }
     }
 }

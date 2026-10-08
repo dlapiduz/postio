@@ -511,23 +511,43 @@ impl TextIndex {
     /// Every match of `query`, in order, ignoring case and diacritics:
     /// `TOTAL` finds `Total` and `tötal`.
     pub fn find(&self, query: &str) -> Vec<Range<usize>> {
-        let (needle, _) = fold(query);
-        if needle.is_empty() {
-            return Vec::new();
-        }
-        let (haystack, origin) = fold(&self.text);
-        let mut out = Vec::new();
-        let mut from = 0;
-        while let Some(found) = haystack[from..]
-            .windows(needle.len())
-            .position(|window| window == needle.as_slice())
-        {
-            let start = from + found;
-            let end = start + needle.len();
-            out.push(origin[start]..origin[end - 1] + 1);
-            from = end;
-        }
-        out
+        let (needle, _) = fold(query, Spacing::AsWritten);
+        let (haystack, origin) = fold(&self.text, Spacing::AsWritten);
+        matches(&haystack, &origin, &needle)
+    }
+
+    /// Every place `excerpt`'s words are drawn, in order: [`find`](Self::find)
+    /// with whitespace made alike on both sides (spike S5, research R2).
+    ///
+    /// Any run of whitespace matches any other. A sentence a detector read
+    /// from a flattened source has spaces where the index has a tab between
+    /// table cells, a line break between blocks, or one space for a
+    /// hard-wrapped line. Whitespace at either end of the excerpt is not
+    /// part of its words.
+    pub fn find_excerpt(&self, excerpt: &str) -> Vec<Range<usize>> {
+        let (needle, _) = fold(excerpt, Spacing::Collapsed);
+        let (haystack, origin) = fold(&self.text, Spacing::Collapsed);
+        matches(&haystack, &origin, &needle)
+    }
+
+    /// Where the sentence `excerpt` is drawn, or `None` when the reader does
+    /// not draw it: what a marker highlights in the open message (spec 007
+    /// FR-035, research R2).
+    ///
+    /// The words are found with [`find_excerpt`](Self::find_excerpt). When
+    /// they are drawn more than once, the occurrence nearest the excerpt's
+    /// proportional place in the text it was read from is the one: the
+    /// offset cannot address the index itself, but its proportion survives
+    /// the index's reading order well enough to choose. Over every corpus
+    /// body sent twice, it chose the right copy 1,948 times in 1,948
+    /// (`tests/excerpt_locate.rs`).
+    pub fn locate(&self, excerpt: crate::Excerpt<'_>) -> Option<Range<usize>> {
+        let wanted = excerpt.offset as f64 / excerpt.source_len.max(1) as f64;
+        let drawn = self.text.chars().count().max(1) as f64;
+        let distance = |range: &Range<usize>| (range.start as f64 / drawn - wanted).abs();
+        self.find_excerpt(excerpt.text)
+            .into_iter()
+            .min_by(|a, b| distance(a).total_cmp(&distance(b)))
     }
 
     /// The first offset drawn at or below `y`: what a zoom keeps in place.
@@ -548,14 +568,39 @@ impl TextIndex {
     }
 }
 
+/// What a fold does with whitespace.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Spacing {
+    /// Keeps it as written: find in the page matches what was typed.
+    AsWritten,
+    /// Writes every run of it as one space, and drops it at either end.
+    Collapsed,
+}
+
 /// `text` folded for matching, and for each folded char the offset of the
 /// char it came from.
-fn fold(text: &str) -> (Vec<char>, Vec<usize>) {
+fn fold(text: &str, spacing: Spacing) -> (Vec<char>, Vec<usize>) {
     use unicode_normalization::UnicodeNormalization as _;
     use unicode_normalization::char::is_combining_mark;
     let mut folded = Vec::with_capacity(text.len());
     let mut origin = Vec::with_capacity(text.len());
     for (offset, c) in text.chars().enumerate() {
+        if spacing == Spacing::Collapsed && c.is_whitespace() {
+            // The run is one space, mapped to where it starts; none leads.
+            if folded.last().is_some_and(|last| *last != ' ') {
+                folded.push(' ');
+                origin.push(offset);
+            }
+            continue;
+        }
+        if c.is_ascii() {
+            // Its own decomposition, and one lowercase char: most of a mail
+            // body, and the per-char decomposition below is what folding
+            // spends its time on.
+            folded.push(c.to_ascii_lowercase());
+            origin.push(offset);
+            continue;
+        }
         for d in std::iter::once(c).nfd().filter(|d| !is_combining_mark(*d)) {
             for lower in d.to_lowercase() {
                 folded.push(lower);
@@ -563,5 +608,29 @@ fn fold(text: &str) -> (Vec<char>, Vec<usize>) {
             }
         }
     }
+    if spacing == Spacing::Collapsed && folded.last() == Some(&' ') {
+        folded.pop();
+        origin.pop();
+    }
     (folded, origin)
+}
+
+/// Every match of `needle` in `haystack`, in order and not overlapping, as
+/// ranges of the text `origin` maps back to.
+fn matches(haystack: &[char], origin: &[usize], needle: &[char]) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    if needle.is_empty() {
+        return out;
+    }
+    let mut from = 0;
+    while let Some(found) = haystack[from..]
+        .windows(needle.len())
+        .position(|window| window == needle)
+    {
+        let start = from + found;
+        let end = start + needle.len();
+        out.push(origin[start]..origin[end - 1] + 1);
+        from = end;
+    }
+    out
 }

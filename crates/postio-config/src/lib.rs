@@ -52,9 +52,12 @@ pub mod change;
 pub mod compose;
 pub mod error;
 pub mod filters;
+pub mod focus;
+pub mod focus_edit;
 pub mod keys;
 pub mod live;
 pub mod logging;
+pub mod model;
 pub mod paths;
 pub mod reader;
 pub mod save;
@@ -78,10 +81,15 @@ pub use change::ConfigChanged;
 pub use compose::{ComposeConfig, SignaturePlacement, patch_compose};
 pub use error::{ConfigError, Result};
 pub use filters::{FilterConfig, patch_filters};
+pub use focus::{
+    DigestRule, Due, DueError, FocusConfig, FocusFilter, FocusVault, NeverEntry, Reading,
+    StopMarker, never_entry,
+};
 pub use keys::{KeyBindings, patch_keys};
 pub use live::{LiveConfig, Reload};
 pub use logging::{LogLevel, LoggingConfig};
-pub use reader::{ReaderConfig, ZOOM_STEPS, nearest_zoom, patch_reader};
+pub use model::{EndpointRefused, FocusModel, ModelEndpoint, ModelFeature, ModelProblem, Reach};
+pub use reader::{ReaderConfig, ZOOM_STEPS, nearest_zoom, patch_reader, save_zoom};
 pub use storage::StorageConfig;
 pub use sync::{AttachmentFetch, BodyFetch, CheckForMail, SyncConfig, patch_sync};
 pub use tui::{Preview, TuiConfig};
@@ -134,8 +142,8 @@ pub struct Config {
     /// `[sync]` — IDLE, polling, connection budget.
     #[serde(default)]
     pub sync: SyncConfig,
-    /// `[filters]` — named saved queries.
-    #[serde(default)]
+    /// `[saved_searches]` — named saved queries.
+    #[serde(default, rename = "saved_searches")]
     pub filters: BTreeMap<String, FilterConfig>,
     /// `[mailboxes]` — role to the server's own folder path.
     ///
@@ -164,6 +172,10 @@ pub struct Config {
     /// `[reader]` — how the reading pane draws a message: its zoom.
     #[serde(default)]
     pub reader: ReaderConfig,
+    /// `[focus]` — Focus's own settings: filtering, the senders it never
+    /// files away, and its digest rules (spec 007).
+    #[serde(default)]
+    pub focus: FocusConfig,
     /// Top-level keys this version of Postio does not know.
     #[serde(flatten)]
     pub extra: Extras,

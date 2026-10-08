@@ -2,7 +2,7 @@
 //! the policy behind every message list, with no toolkit and no store in it.
 //!
 //! Two frontends page the same [`crate::list::ListWindow`], and each had
-//! its own copy of the policy around it. `postio-gtk`'s feed knew how to
+//! its own copy of the policy around it. The classic app's feed knew how to
 //! turn a page number into a store request or a slice of search hits, what
 //! each scope does with a runtime event (the table below) and how often a
 //! failed page may be asked for again; the macOS boundary re-derived the
@@ -156,6 +156,12 @@ impl Paging {
         self.inboxes = folders.into_iter().collect();
     }
 
+    /// Whether `mailbox` is one of the inboxes [`set_folders`](Self::set_folders)
+    /// named: going there is going to the unified inbox.
+    pub fn is_inbox(&self, mailbox: MailboxId) -> bool {
+        self.inboxes.get(&mailbox).copied().unwrap_or(false)
+    }
+
     /// Show `scope`, leaving any result set: the sidebar is a way out of a
     /// search as much as `Esc` is.
     pub fn open(&mut self, scope: ListScope) {
@@ -302,6 +308,19 @@ impl Paging {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_folder_is_an_inbox_only_when_it_was_named_one() {
+        let mut paging = Paging::default();
+        let (inbox, travel, unknown) = (MailboxId::new(1), MailboxId::new(2), MailboxId::new(3));
+        paging.set_folders([(inbox, true), (travel, false)]);
+        assert!(paging.is_inbox(inbox));
+        assert!(!paging.is_inbox(travel));
+        assert!(
+            !paging.is_inbox(unknown),
+            "an unplaced folder is not assumed an inbox"
+        );
+    }
+
     use super::*;
 
     fn ids(range: std::ops::Range<i64>) -> Vec<MessageId> {
@@ -523,7 +542,8 @@ mod tests {
     fn events_the_list_is_not_about_are_ignored() {
         assert_eq!(
             inbox().plan(&Event::Error {
-                message: "nothing to do with the list".to_owned()
+                message: "nothing to do with the list".to_owned(),
+                account: None,
             }),
             Plan::Ignore
         );

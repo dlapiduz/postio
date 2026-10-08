@@ -37,7 +37,7 @@
 //! It runs when somebody presses a button, which is `ARCHITECTURE.md` §11's
 //! test for anything that leaves the machine. The connectors are arguments
 //! rather than constructed here, so the tests in the default suite reach no
-//! network at all — the same reason `postio_app::onboarding::probe` takes its
+//! network at all — the same reason the classic app's onboarding probe took its
 //! transport (#282).
 
 use std::sync::Arc;
@@ -76,6 +76,62 @@ pub struct Reachabilities {
     pub incoming: Reachability,
     /// The outgoing (SMTP) server.
     pub outgoing: Reachability,
+}
+
+impl Reachabilities {
+    /// Each server's answer as the settings window draws it: `Err` with the
+    /// reason it refused.
+    pub fn into_results(self) -> (Result<(), String>, Result<(), String>) {
+        let result = |reachability| match reachability {
+            Reachability::Reached => Ok(()),
+            Reachability::Refused { reason } => Err(reason),
+        };
+        (result(self.incoming), result(self.outgoing))
+    }
+}
+
+/// [`test_connection`] over the real TLS connectors: what the settings
+/// window's "Test connection" runs, in whichever app shows it.
+///
+/// A connector that will not build is a TLS stack problem, not a server
+/// problem, and both halves say so rather than looking like the account is
+/// misconfigured.
+pub async fn test_over_tls(account: &Account, secrets: &Arc<dyn SecretStore>) -> Reachabilities {
+    match (
+        postio_account::imap::RustlsConnector::new(),
+        postio_smtp::transport::RustlsConnector::new(),
+    ) {
+        (Ok(imap), Ok(smtp)) => test_connection(account, secrets, &imap, &smtp).await,
+        (imap, smtp) => {
+            let reason = imap
+                .err()
+                .map(|error| error.to_string())
+                .or_else(|| smtp.err().map(|error| error.to_string()))
+                .unwrap_or_else(|| "the TLS stack would not start".to_owned());
+            Reachabilities {
+                incoming: Reachability::Refused {
+                    reason: reason.clone(),
+                },
+                outgoing: Reachability::Refused { reason },
+            }
+        }
+    }
+}
+
+/// When each of `accounts` -- an id and its address -- has its stored
+/// sign-in token expire: `None` where nothing was persisted, which is every
+/// password account and any account an external broker signs in (#878).
+pub async fn token_expiries(
+    secrets: &dyn SecretStore,
+    accounts: Vec<(postio_model::ids::AccountId, String)>,
+) -> Vec<(postio_model::ids::AccountId, Option<std::time::SystemTime>)> {
+    let mut expiries = Vec::with_capacity(accounts.len());
+    for (id, address) in accounts {
+        let key = AccountKey::new(address);
+        let expiry = postio_account::oauth::token_source::stored_expiry(secrets, &key).await;
+        expiries.push((id, expiry));
+    }
+    expiries
 }
 
 /// Try `account`'s stored incoming and outgoing settings, and say what

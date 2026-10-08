@@ -1,0 +1,51 @@
+# Escape in More's menu lets go of the menu and leaves the message open
+# (63641d47).
+#
+# More's popover is parented to its button by hand. The commit made it let go
+# of the menu cleanly when the button is destroyed; the catalogue's reading
+# of the behaviour is that Escape closes the menu and the keyboard returns
+# to the More button, with the message still open behind it. That is what
+# every other popover on the page does, and it is what a person who opened
+# More by mistake expects Escape to do.
+#
+# It was red on the branch: the dialog's own Escape handling took the key
+# before the popover did, so one Escape closed the menu and the message
+# together. The open message now closes More's menu first and gives the
+# keyboard back to More; a second Escape closes the message.
+#
+# Narrow, because More only exists when the action row folds (below 760 px).
+source = { kind = "commit", ref = "63641d47" }
+proof  = "pinned"
+apps   = ["focus"]
+seed   = "long-newsletter"
+vary   = { width = ["narrow"] }
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "open_message"
+settle  = { until = { view = "reader" } }
+check   = { view = "reader", reading.id = "90" }
+
+[[step]]
+command = "more_actions"
+check   = { view = "reader", reading.id = "90", app.focus.keyboard.item = "Label" }
+expect  = "More's menu is open under its button: Label, Move, Delete, each with its key. The keyboard is on Label, the first, and it is the one item drawn highlighted."
+
+[[step]]
+key     = "Escape"
+check   = { view = "reader", reading.id = "90", keyboard.region = "reader" }
+expect  = "Escape closes the menu only. The message is still open and the keyboard is back on the More button."
+
+[[step]]
+key     = "Escape"
+check   = { view = "list", keyboard.region = "list", app.focus.keyboard.row = "90" }
+expect  = "A second Escape closes the message. The keyboard is on the row it was opened from, the one the cursor draws, not on the first row."

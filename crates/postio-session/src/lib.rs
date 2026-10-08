@@ -7,7 +7,7 @@
 //!
 //! # Why it is its own crate
 //!
-//! `postio-app` used to be both this and the GTK binary, which meant
+//! The classic app used to be both this and the GTK binary, which meant
 //! `actions.rs` — the whole verb vocabulary, with not one line of toolkit in
 //! it — linked GTK. `ARCHITECTURE.md` listed that under known gaps with the
 //! consequence spelled out: **no headless frontend is possible.**
@@ -29,15 +29,15 @@
 //!
 //! ```text
 //!   postio-session   store, runtime, engines, verbs. No toolkit.
-//!         └── postio-app   the GTK binary. Adds a window and nothing else.
+//!         └── the desktop app   the GTK binary. Adds a window and nothing else.
 //! ```
 //!
 //! # What is *not* here
 //!
 //! The presenters that join the two halves — the composer's storage wiring,
 //! the reading pane's body loads, onboarding, notifications — stay in
-//! `postio-app`, because each of them names a widget. The line is not "does it
-//! touch the store" but "does it touch a toolkit": `postio-app` is what is
+//! the frontends, because each of them names a widget. The line is not "does it
+//! touch the store" but "does it touch a toolkit": the frontend is what is
 //! left once that line is drawn, and it is smaller than it looks.
 
 pub mod actions;
@@ -47,6 +47,7 @@ pub mod checkup;
 pub mod diag;
 pub mod egress;
 pub mod engine;
+pub mod focus;
 pub mod handoff;
 pub mod logging;
 pub mod onboarding;
@@ -57,6 +58,7 @@ pub mod reading;
 pub mod refresh;
 pub mod search;
 pub mod signin;
+pub mod start_over;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -203,7 +205,7 @@ pub use postio_storage::key::STORE_KEY_ENTRY;
 /// can have been encrypted under an empty key, so the store behind it is
 /// either absent or already unopenable. Treating it as a first run is what
 /// gives a half-finished first run a way out, and it is the same tolerance
-/// [`postio_app::startup_route`] extends to an empty password.
+/// the classic app's startup route extended to an empty password.
 ///
 /// # No plaintext fallback
 ///
@@ -214,7 +216,6 @@ pub use postio_storage::key::STORE_KEY_ENTRY;
 /// routed to the surface that asks the user to unlock it rather than to
 /// onboarding, which would ask them to set up an account they already have.
 ///
-/// [`postio_app::startup_route`]: https://github.com/dlapiduz/postio
 /// [`SecretError::Locked`]: postio_account::secret::SecretError::Locked
 pub async fn store_key(
     secrets: &dyn postio_account::secret::SecretStore,
@@ -264,6 +265,23 @@ async fn mint(
     // now encrypted is worth a line; what it is encrypted with is not.
     tracing::info!("this store has a new encryption key");
     Ok(key)
+}
+
+/// The refusal for a keyring that would not give up the store's key, in
+/// words for a person: [`SecretError`]'s own `Display` is for a log, and the
+/// page this lands on is the only thing between someone and their mail.
+///
+/// [`SecretError`]: postio_account::secret::SecretError
+pub fn key_refusal(error: &postio_account::secret::SecretError) -> Refusal {
+    use postio_account::secret::SecretError;
+    Refusal::try_again(match error {
+        SecretError::Locked { .. } => postio_ui::keyring_refusal::locked(),
+        SecretError::Backend { reason, .. } => postio_ui::keyring_refusal::unreadable(reason),
+        SecretError::Timeout { .. } => {
+            postio_ui::keyring_refusal::unreadable("it did not answer in time")
+        }
+        other => postio_ui::keyring_refusal::unreadable(&other.to_string()),
+    })
 }
 
 /// [`store_key`], for a caller that has no runtime yet.
@@ -363,6 +381,17 @@ pub struct Wiring {
     /// application. A part, like `mail`, so a test can answer from the
     /// provider table without dialing.
     pub discovery: Arc<dyn postio_account::discovery::DiscoveryTransport>,
+    /// The filing pass every engine started from this wiring hands its
+    /// incremental passes' arrivals to (spec 007).
+    ///
+    /// Shared, and empty: only a host Postio Focus switches into Focus mode
+    /// fills it, so while the classic app or the terminal holds the store,
+    /// no engine files anything by Focus's rules.
+    pub filing: postio_runtime::FilingSlot,
+    /// What Focus's verbs read of `[focus]`, and where they write the
+    /// person's corrections (spec 007): shared and empty for the same
+    /// reason as `filing`, and filled by the same switch.
+    pub focus: focus::FocusSettings,
 }
 
 /// A mail transport handed to the engine instead of the account's own.
@@ -378,9 +407,9 @@ impl Wiring {
     /// Everything the panes need, over an already-open store.
     ///
     /// `runtime`, `events` and `commands` come from the `Bridge` that
-    /// `postio_app::run` builds at startup; a test supplies its own, which is
+    /// the app's startup builds; a test supplies its own, which is
     /// the whole point of this being constructible from outside. Not a link:
-    /// `postio-app` depends on this crate and not the other way round, which
+    /// the frontend depends on this crate and not the other way round, which
     /// is the split, and rustdoc cannot resolve upward.
     pub fn new(
         database: Store,
@@ -389,9 +418,15 @@ impl Wiring {
         events: EventSink,
         commands: postio_core::bridge::CommandSender,
     ) -> Self {
+        let egress = egress::EgressRecorder::start(database.clone());
         Wiring {
             store: Arc::new(LocalStore::new(&database)),
-            egress: egress::EgressRecorder::start(database.clone()),
+            // A probe opens connections too, and they go in the same log as
+            // the engines' (#151).
+            discovery: Arc::new(
+                postio_account::discovery::PimalayaTransport::new().with_egress(egress.clone()),
+            ),
+            egress,
             database,
             blobs,
             runtime,
@@ -404,7 +439,8 @@ impl Wiring {
             watch: postio_sync::WatchPolicy::default(),
             storage_ceiling: None,
             mail: None,
-            discovery: Arc::new(postio_account::discovery::PimalayaTransport::new()),
+            filing: postio_runtime::FilingSlot::default(),
+            focus: focus::FocusSettings::default(),
         }
     }
 
@@ -486,14 +522,14 @@ impl Wiring {
 /// that will not start — which was right while the store was optional. ADR
 /// 0014 ended that: the store is encrypted, its key is in the keyring, and
 /// there is no degraded mode to fall back to. So the honest answer is a
-/// sentence, and `postio_app::run` puts it on a screen with a retry.
+/// sentence, and the app puts it on a screen with a retry.
 pub async fn open_store(
     store_key: &postio_storage::key::StoreKey,
 ) -> Result<(Store, BlobStore), String> {
     open_store_at(paths::store_path(), store_key).await
 }
 
-/// What [`open_store_reporting`] is doing right now.
+/// What [`open_store_at_reporting`] is doing right now.
 ///
 /// Three waits, because they are three different promises to somebody
 /// watching a window that is already on screen (#1114): reading the store,
@@ -514,18 +550,55 @@ pub enum Opening {
     Indexing,
 }
 
-/// [`open_store`], saying what it is doing as it goes.
+/// Why the store did not open, and what would get past it.
 ///
-/// `report` runs on the calling thread, before the wait it names. Postio
-/// opens its store on a thread of its own now, with a window already on
-/// screen, so these are the sentences that window has to show — see
-/// `postio_gtk::list_state::Waiting`, which is the same four waits minus the
-/// keyring read, which happens before this is called at all.
-pub async fn open_store_reporting(
-    store_key: &postio_storage::key::StoreKey,
-    report: &dyn Fn(Opening),
-) -> Result<(Store, BlobStore), String> {
-    open_store_at_reporting(paths::store_path(), store_key, report).await
+/// The sentence alone was not enough to draw the screen with: "Try again"
+/// is the way forward from a store another Postio has open and a dead end
+/// for a store whose schema no migration reaches, which the same file will
+/// refuse every time. So the refusal says which.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    /// What happened, as a sentence for a person.
+    pub sentence: String,
+    /// What gets past it.
+    pub remedy: Remedy,
+}
+
+/// The way forward from a [`Refusal`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Remedy {
+    /// Something that can pass: another Postio holding the store, a locked
+    /// keyring, a full disk. Trying again is the way forward.
+    TryAgain,
+    /// A store written at a schema this build cannot carry forward. Trying
+    /// again meets the same file; starting the store over
+    /// ([`start_over::start_over_at`] on `store`) is the way forward.
+    StartOver {
+        /// The store to set aside.
+        store: std::path::PathBuf,
+    },
+}
+
+impl Refusal {
+    /// A refusal trying again may get past.
+    pub fn try_again(sentence: impl Into<String>) -> Self {
+        Refusal {
+            sentence: sentence.into(),
+            remedy: Remedy::TryAgain,
+        }
+    }
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.sentence)
+    }
+}
+
+impl From<Refusal> for String {
+    fn from(refusal: Refusal) -> String {
+        refusal.sentence
+    }
 }
 
 /// [`open_store`], over a store at a path the caller chooses.
@@ -543,15 +616,17 @@ pub async fn open_store_at(
     path: impl Into<std::path::PathBuf>,
     store_key: &postio_storage::key::StoreKey,
 ) -> Result<(Store, BlobStore), String> {
-    open_store_at_reporting(path, store_key, &|_| {}).await
+    open_store_at_reporting(path, store_key, &|_| {})
+        .await
+        .map_err(String::from)
 }
 
-/// [`open_store_at`], saying what it is doing — see [`open_store_reporting`].
+/// [`open_store_at`], saying what it is doing ([`Opening`]).
 pub async fn open_store_at_reporting(
     path: impl Into<std::path::PathBuf>,
     store_key: &postio_storage::key::StoreKey,
     report: &dyn Fn(Opening),
-) -> Result<(Store, BlobStore), String> {
+) -> Result<(Store, BlobStore), Refusal> {
     // The database subkey. BLAKE3-derived from the master key, so the
     // database, the blob contents and the blob ids are cryptographically
     // separated without three keyring entries (ADR 0014 Q3). #301 takes the
@@ -559,13 +634,14 @@ pub async fn open_store_at_reporting(
     let database_key = store_key.derive(postio_storage::key::Purpose::Database);
     let path = path.into();
 
-    // There is no migration step before this any more. A plaintext store
-    // could not be opened at all, so ADR 0014 Q4's one-off rewrote it first;
-    // every store this build creates is encrypted from its first page, and a
-    // store the old engine wrote cannot be read at all -- it is rebuilt by
-    // resyncing (`specs/004-turso-store`).
+    // A store an earlier build of this engine wrote is migrated in place
+    // inside `open` (`postio_storage::schema::MIGRATIONS`), saying so first.
+    // One no step reaches is refused with `Remedy::StartOver`; a store the
+    // old engine wrote cannot be read at all (`specs/004-turso-store`).
     report(Opening::Store);
-    let database = match Store::open(&path, &database_key).await {
+    let database = match Store::open_reporting(&path, &database_key, || report(Opening::Migrating))
+        .await
+    {
         Ok(database) => database,
         // A wrong key is its own sentence. `Error::WrongStoreKey` says the
         // store belongs to another installation and is *intact*, where
@@ -576,14 +652,23 @@ pub async fn open_store_at_reporting(
         // screen reading "…its local store. the local store will not open".
         Err(error @ postio_storage::Error::WrongStoreKey) => {
             tracing::error!(path = %path.display(), "the store will not decrypt with this key");
-            return Err(error.to_string());
+            return Err(Refusal::try_again(error.to_string()));
         }
         // Another Postio -- the desktop app or the terminal -- has it open.
         // Its own sentence says what to do, so nothing goes in front of it
         // either.
         Err(error @ postio_storage::Error::InUse) => {
             tracing::warn!(path = %path.display(), "the store is open in another process");
-            return Err(error.to_string());
+            return Err(Refusal::try_again(error.to_string()));
+        }
+        // A schema no migration leads from: the same file is refused every
+        // time, so the way forward is starting over, never a retry.
+        Err(error @ postio_storage::Error::SchemaFromAnotherBuild { found, expected }) => {
+            tracing::error!(path = %path.display(), found, expected, "the store's schema cannot be carried forward");
+            return Err(Refusal {
+                sentence: error.to_string(),
+                remedy: Remedy::StartOver { store: path },
+            });
         }
         Err(error) => {
             tracing::error!(path = %path.display(), %error, "cannot open the store: {error}");
@@ -591,7 +676,9 @@ pub async fn open_store_at_reporting(
             // because the caller is what puts it on screen (#404). A window
             // that will not open and does not say why is the one thing worse
             // than a window that will not open.
-            return Err(format!("Postio could not open its local store: {error}"));
+            return Err(Refusal::try_again(format!(
+                "Postio could not open its local store: {error}"
+            )));
         }
     };
     // Beside the database, not inside it: bodies and attachments are
@@ -603,10 +690,10 @@ pub async fn open_store_at_reporting(
         Ok(blobs) => blobs,
         Err(error) => {
             tracing::error!(%error, "cannot open the blob store: {error}");
-            return Err(format!(
+            return Err(Refusal::try_again(format!(
                 "Postio could not open the store that holds message bodies \
                  and attachments: {error}"
-            ));
+            )));
         }
     };
     report(Opening::Indexing);
@@ -1105,7 +1192,7 @@ const INDEX_BODY_DEBOUNCE: Duration = Duration::from_millis(500);
 /// the event hub does.
 ///
 /// Both composition roots spawn one, with `wiring.events.subscribe(..)`:
-/// `postio-app` on the window's hub, and the macOS boundary on its own --
+/// the desktop app on the window's hub, and the macOS boundary on its own --
 /// which never had a body indexer at all, and relied on the fetch to write
 /// the row. `events` is `None` for a sink with no hub behind it (a test's
 /// plain channel): the catch-up pass still runs, and nothing wakes it after.
@@ -1777,29 +1864,6 @@ pub async fn reindex_account(
         );
     }
     Ok(done)
-}
-
-/// The account a message with no origin comes from: the one marked default,
-/// or the first enabled one when nobody has marked any.
-///
-/// The reader of #960's marker, and the whole of its fence (#1161): this is
-/// consulted for a new message and for a `mailto:` link, and for nothing
-/// else. A reply comes from the account that received the mail, which
-/// `postio_model::reply` already decides; the sidebar opens on
-/// [`first_account`] whatever is marked, because which account is shown
-/// first is not what the marker means. A marked account that has been
-/// disabled is not marked for this purpose either -- `enabled` holds only
-/// the accounts that sync, in creation order -- so the fallback is the same
-/// as no marker at all.
-///
-/// Over a list the caller already holds rather than a read of its own: the
-/// window reads its accounts once, from the host, and answers every question
-/// about them from that one read.
-pub fn composing_account(enabled: &[postio_model::Account]) -> Option<&postio_model::Account> {
-    enabled
-        .iter()
-        .find(|account| account.is_default)
-        .or_else(|| enabled.first())
 }
 
 /// The account to open, if the store holds one.

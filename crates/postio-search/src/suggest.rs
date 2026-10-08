@@ -111,7 +111,7 @@ const SHORTEST_BEGINNING: usize = 3;
 /// `typed~N` reaches terms that *begin* within `N` edits of the word -- the
 /// word mistyped, left unfinished, or both -- and `typed*` only the ones
 /// that begin with it, for a word too short to correct. `N` is
-/// [`tolerance`], so the index widens exactly as far as the ranking will
+/// `tolerance`, so the index widens exactly as far as the ranking will
 /// accept and no further.
 ///
 /// Unquoted, which is the point: the index reads a quoted term exactly and
@@ -134,7 +134,7 @@ pub fn widened(typed: &str) -> Option<String> {
 /// Two ways to be close. A term that **begins** with what was typed is the
 /// word left unfinished -- whole-word matching finds nothing for half a word
 /// -- and it outranks every correction, because nothing was mistyped. Past
-/// that, a term within [`tolerance`] edits is the word mistyped, closest
+/// that, a term within `tolerance` edits is the word mistyped, closest
 /// first.
 ///
 /// Between two equally close terms, the one more of the mailbox holds — a

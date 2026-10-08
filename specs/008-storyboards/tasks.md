@@ -240,7 +240,7 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
   Red: no `deliver` exists.
 - [X] T024 Port focus's `support::deliver_with` into
   `crates/postio-gtk/src/storyboard/deliver.rs`. Read it with
-  `git show origin/feature/postio-focus:crates/postio-focus/tests/focus_suite/support.rs`,
+  `git show origin/feature/postio-focus:crates/postio-gtk/tests/focus_suite/support.rs`,
   lines about 731–950. It should:
   - walk `observe_controllers()` along the focus chain in capture, target,
     then bubble order;
@@ -634,17 +634,17 @@ PR.**
   - `d` gives `notice.undo`;
   - `app.focus.bulk` is present.
 - [X] T074 [US3] ⟨Focus lane⟩ Implement `FocusWindow::observe()` in
-  `crates/postio-focus/src/window.rs` per contracts/observation.md § Focus.
-  Add a bulk-bar getter in `crates/postio-focus/src/bulk.rs`, plus `tone()`
+  `crates/postio-gtk/src/window.rs` per contracts/observation.md § Focus.
+  Add a bulk-bar getter in `crates/postio-gtk/src/bulk.rs`, plus `tone()`
   and `offers_undo()` on its toast path (`postio-widgets` `toast.rs`). T073
   goes green.
 - [X] T075 [US3] ⟨Focus lane⟩ Move Focus's `shot` setup into
-  `crates/postio-focus/src/demo.rs` behind a `demo` feature, mirroring T037.
+  `crates/postio-gtk/src/demo.rs` behind a `demo` feature, mirroring T037.
   Focus's `shot` tests stay green.
 - [X] T076 [US3] ⟨Focus lane⟩ [TEST] Add a `focus_suite` case,
   `storyboards.rs`, plus its `CASES` row, mirroring T039. Then implement
-  `crates/postio-focus/src/demo/storyboard.rs` and
-  `crates/postio-focus/examples/storyboard.rs`, mirroring T040 and T041, over
+  `crates/postio-gtk/src/demo/storyboard.rs` and
+  `crates/postio-gtk/examples/storyboard.rs`, mirroring T040 and T041, over
   `postio-host` and `postio-client` as Focus's `shot` does.
 - [X] T077 [US3] ⟨Focus lane⟩ Add Focus overrides to the shared storyboards
   from T047, wherever Focus legitimately differs. For example, `Return` opens

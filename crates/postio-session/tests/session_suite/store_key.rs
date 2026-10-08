@@ -66,10 +66,14 @@ async fn a_locked_keyring_refuses_and_says_how_to_unlock() {
         "the variant has to survive, because it is what routes to the unlock \
          surface rather than to onboarding: {refused:?}"
     );
-    let said = refused.to_string();
+    let said = postio_session::key_refusal(&refused).sentence;
     assert!(
-        said.contains("locked") && said.contains("unlock"),
+        said.contains("locked") && said.contains("unlock it"),
         "and it has to tell the user what to do: {said}"
+    );
+    assert!(
+        !said.contains("local store encryption key") && !said.contains("cannot read"),
+        "in a person's words, not the error's: {said}"
     );
     assert!(
         keyring.is_empty(),
@@ -146,7 +150,7 @@ fn the_key_can_be_read_with_no_runtime_running() {
 
 #[test]
 fn a_locked_keyring_means_there_is_no_store_to_open() {
-    // What `postio_app::run` branches on. `open_store` is only reached on the
+    // What the app's startup branches on. `open_store` is only reached on the
     // `Ok` arm, so this is the point at which "a locked keyring means the mail
     // does not open" is decided -- before a `Database` exists, rather than by
     // something downstream noticing later.

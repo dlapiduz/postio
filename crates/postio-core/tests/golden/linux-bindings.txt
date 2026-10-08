@@ -2,20 +2,21 @@ next_message	j | Down
 prev_message	k | Up
 first_message	g g
 last_message	G
-open_message	Return | l | Right
+open_message	Return | Right
 toggle_selection	x
 extend_selection_down	J | shift+Down
 extend_selection_up	K | shift+Up
-select_all	ctrl+a
-prev_view	h | Left
+select_all	X | ctrl+a
+prev_view	Left
 back	Escape
-toggle_result_order	o
-next_in_conversation	J | alt+Down
-prev_in_conversation	K | alt+Up
+toggle_result_order	alt+o
+next_in_conversation	] | alt+Down
+prev_in_conversation	[ | alt+Up
 toggle_fold	z
 view_original	ctrl+o
 toggle_reader_view	ctrl+shift+o | alt+o
-darken_message	D
+darken_message	alt+d
+switch_treatment	O
 find_in_message	ctrl+f
 find_next	ctrl+g | F3
 find_previous	ctrl+shift+g | shift+F3
@@ -29,17 +30,28 @@ reply_all	E | ctrl+shift+r
 forward	f | ctrl+shift+f
 archive	a | ctrl+shift+a
 archive_thread	A
-delete	d
+delete	Delete
 move	m
-flag	s
-mark_unread	U
-snooze	b
+flag	*
+toggle_read	r
+snooze	s
 unsnooze	B
-add_label	L
+remind_if_no_reply	h | ctrl+h
+add_label	l
+accept_invite	y
+decline_invite	Y
+digest_rule	d
+stop_digesting_sender	D
+view_source	v
+open_attachment_or_link	o
+dismiss_marker	-
+more_actions	.
+toggle_reading_pane	F8
 search	/ | alt+ctrl+f
 save_search	ctrl+s
+back_to_words	ctrl+BackSpace | alt+BackSpace
 compose	c | ctrl+n
-send	ctrl+shift+d | ctrl+Return | alt+s | alt+Return
+send	ctrl+Return | alt+s | alt+Return
 schedule_send	ctrl+shift+Return | alt+S
 save_draft	ctrl+s
 discard_draft	ctrl+d
@@ -58,22 +70,34 @@ bullet_list	ctrl+shift+8 | alt+8
 numbered_list	ctrl+shift+7 | alt+7
 insert_link	ctrl+shift+k | alt+k
 quote_block	ctrl+shift+9 | alt+9
-undo	u | ctrl+z
+undo	ctrl+z
 command_palette	ctrl+k
 cheat_sheet	?
 settings	ctrl+comma | alt+comma
 add_account	ctrl+shift+n | alt+n
 edit_config	ctrl+e
-quit	ctrl+q
+quit	ctrl+q | ctrl+w
 show_images	i i
 always_show_images	i a
-unsubscribe	X
+unsubscribe	U
 toggle_sidebar	ctrl+b
-focus_sidebar	g f
+go_to_folders	g o
 go_to_inbox	g i
-go_to_drafts	g d
-go_to_sent	g t
-go_to_flagged	g s
+go_to_drafts	g t
+go_to_sent	g s
+go_to_flagged	g *
+go_to_archive	g r
+go_to_snoozed	g z
+go_to_outbox	g b
+go_to_junk	g j
+go_to_trash	g #
+go_to_filtered	g f
+go_to_digest_rules	g d
+saved_search_1	alt+1
+saved_search_2	alt+2
+saved_search_3	alt+3
+saved_search_4	alt+4
+toggle_has_action	!
 cycle_pane	tab
 cycle_pane_back	shift+tab
 next_folder	j | Down
@@ -82,15 +106,15 @@ toggle_folder	space
 rename_saved_search	r
 move_saved_search_up	shift+Up
 move_saved_search_down	shift+Down
-delete_saved_search	d
+delete_saved_search	Delete
 toggle_account_enabled	Return
-remove_account	d
+remove_account	Delete
 update_credential	c
 rebuild_account_index	r
 set_default_account	m
 map_mailbox_role	M
 next_scope	g a
-refresh	F5 | R
+refresh	F5
 open_parts	p
 next_part	j | Down
 prev_part	k | Up
@@ -101,3 +125,28 @@ open_part_externally	x
 render_part_once	H
 scroll_reader_down	Page_Down | space
 scroll_reader_up	Page_Up | shift+space
+picker_choose_1	1
+picker_choose_2	2
+picker_choose_3	3
+picker_choose_4	4
+picker_type_date	tab
+picker_toggle	space
+picker_confirm	Return
+next_reference	]
+prev_reference	[
+toggle_digest_summary	tab
+restore_filtered	R
+filtered_tab_1	1
+filtered_tab_2	2
+filtered_tab_3	3
+filtered_tab_4	4
+filtered_tab_5	5
+filtered_tab_6	6
+filtered_tab_7	7
+sweep_inbox	F
+capture_task	t
+capture_note	n
+capture_change_project	ctrl+p
+capture_use_subject	alt+s
+capture_write	ctrl+Return | alt+Return
+digest_like_this	L

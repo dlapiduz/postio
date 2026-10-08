@@ -11,7 +11,7 @@
 //! Availability is not key routing. A command being available in
 //! [`Context::Search`] says the user can reach it there; whether a bare letter
 //! key reaches it, or is swallowed as typed text by a focused entry, is the
-//! keymap resolver's decision in `postio-gtk`.
+//! keymap resolver's decision in the frontend.
 
 use std::fmt;
 use std::str::FromStr;
@@ -75,6 +75,27 @@ pub enum Context {
     /// escape hatch is a `GtkTextView` over raw TOML, and a bare-letter
     /// binding must not fire while someone is typing there (#881).
     Keys,
+    /// A picker anchored to a row: snooze, remind, label or move
+    /// (specs/007-postio-focus research R6).
+    ///
+    /// Its own context, and not layered over the list, for the reason
+    /// [`Context::Parts`] is not: the picker sits over a row, and a letter
+    /// falling through to the list would act on the mail underneath while
+    /// the person's eyes are on the picker. Its keys are the picker
+    /// commands, the number keys among them.
+    Picker,
+    /// A digest's window: its messages, its summary, its rule (spec 007
+    /// US10). `A` there archives the whole digest.
+    Digest,
+    /// The Filtered view: what Focus archived on arrival, by reason (spec
+    /// 007 US9). `R` there restores.
+    Filtered,
+    /// The capture sheet: a task or a note from a message, written into the
+    /// person's Obsidian vault (spec 007 US15, milestone 3). Its own context,
+    /// for the picker's reason: it sits over the mail, and its keys --
+    /// `mod+p` for the project, `alt+s` for the subject, `mod+Return` to
+    /// write -- mean nothing to the list underneath.
+    Capture,
 }
 
 impl Context {
@@ -92,6 +113,11 @@ impl Context {
         // the ones people have learned (ADR 0005 Q6c).
         Context::Accounts,
         Context::Keys,
+        // Focus's surfaces (spec 007), at the end for the same reason.
+        Context::Picker,
+        Context::Digest,
+        Context::Filtered,
+        Context::Capture,
     ];
 
     /// The stable serialized name, matching the `Deserialize` spelling.
@@ -107,6 +133,10 @@ impl Context {
             Context::Parts => "parts",
             Context::Accounts => "accounts",
             Context::Keys => "keys",
+            Context::Picker => "picker",
+            Context::Digest => "digest",
+            Context::Filtered => "filtered",
+            Context::Capture => "capture",
         }
     }
 

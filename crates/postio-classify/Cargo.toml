@@ -1,0 +1,39 @@
+[package]
+name = "postio-classify"
+description = "Classification for Postio Focus: filter, hold and mark, decided in layers, with no path that sends mail."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Due dates and event times in the fixed schema.
+chrono = { workspace = true, features = ["std"] }
+# The message as filed: its envelope, flags and addresses. The leaf every
+# crate waits on, with nothing in it that sends or connects.
+postio-model = { workspace = true }
+# `parse_when`, which reads a to-do's deadline the way the pickers read a
+# typed date (research R6, R10). A pure leaf: no store, no toolkit.
+postio-search = { workspace = true }
+# The automated-senders table ships as TOML, data rather than code (FR-114).
+serde = { workspace = true }
+toml = { workspace = true }
+
+[build-dependencies]
+# build.rs parses data/senders.toml with the classifier's own parser, so a
+# table that does not load does not build.
+serde = { workspace = true }
+toml = { workspace = true }
+
+[dev-dependencies]
+# The own-text extraction the body stage feeds the detector (T115, T117),
+# which SC-013's gate measures through: a test's own cutter would measure a
+# detector production never runs.
+postio-body = { workspace = true }
+# The corpus: `untrusted-instructions` holds the text ADR 0009 Q4 is about.
+postio-model = { workspace = true, features = ["test-corpus"] }
+
+[lints]
+workspace = true

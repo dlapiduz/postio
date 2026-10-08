@@ -2,7 +2,7 @@
 
 WebKitGTK renders of each `designed` corpus fixture, **unsanitized**, at 800 CSS px,
 scale 1, light, with network and script off and the bundled faces as the default
-families. Written by `cargo run -p postio-gtk --example capture_reference`; compared
+families. Written by the `capture_reference` example; compared
 with `postio_test_support::fidelity` under
 `specs/006-email-rendering/contracts/fidelity-metric.md`. Do not regenerate to make
 a comparison pass: a new capture is a new baseline, and says why in its commit.

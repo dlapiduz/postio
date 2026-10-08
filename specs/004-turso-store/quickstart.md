@@ -1,5 +1,13 @@
 # Quickstart: proving the rebuilt store works
 
+> **The classic app these commands name is gone.** `postio-app`, its
+> `app_suite`, and the classic `postio-gtk` with its `gtk_suite` were removed
+> in `specs/007-postio-focus` T256. The desktop app is now `postio-gtk`, the
+> Focus design: run it with `cargo run -p postio-gtk`, and its suite with
+> `cargo nextest run -p postio-gtk --test focus_suite`. The steps below are
+> this feature's validation as it was done.
+
+
 How to check this feature is real, in the order the work lands. Each section
 is runnable on its own and corresponds to one user story in the spec.
 

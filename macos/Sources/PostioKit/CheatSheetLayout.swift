@@ -2,7 +2,7 @@ import PostioFFI
 
 /// How the keyboard sheet's sections are laid across its columns.
 ///
-/// Across before down, as GTK's sheet reads (`postio-gtk::cheatsheet`): a
+/// Across before down, as GTK's sheet read (the classic app's cheat sheet module): a
 /// sheet is taken in at a glance. The Mac's was one list in a wide sheet,
 /// which put each key a sheet's width from the name it belongs to.
 ///

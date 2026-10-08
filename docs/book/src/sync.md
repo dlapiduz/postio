@@ -39,7 +39,7 @@ see — in that order, and all of it happens before anything touches the
 network. The sync engine drains that queue in the background and
 reconciles with the server afterward.
 
-That's also why undo is instant: pressing `u` reverses the local change
+That's also why undo is instant: pressing `Ctrl+Z` reverses the local change
 right away, without waiting for a round trip. A burst of actions — say,
 archiving twelve messages in a row — counts as one undoable unit, not
 twelve.

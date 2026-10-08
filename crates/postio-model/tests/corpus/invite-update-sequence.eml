@@ -1,0 +1,106 @@
+MIME-Version: 1.0
+Reply-To: Mateo Varga <mateo.varga@example.net>
+Sender: Calendar <calendar-notification@example.net>
+Auto-Submitted: auto-generated
+Message-ID: <calendar-9a2b4c6d-8e1f-4a3b-b5c7-d9e1f3a5b7c9@example.net>
+Date: Mon, 28 Sep 2026 09:15:02 +0000
+Subject: Updated invitation: Onboarding plan sync @ Fri 2 Oct 2026 10am -
+ 10:30am (EDT) (ada.norwood@example.com)
+From: Mateo Varga <mateo.varga@example.net>
+To: ada.norwood@example.com
+Content-Type: multipart/alternative; boundary="000000000000d7f3b4c516a8b9c0"
+
+--000000000000d7f3b4c516a8b9c0
+Content-Type: text/plain; charset="UTF-8"; format=flowed; delsp=yes
+Content-Transfer-Encoding: base64
+
+VGhpcyBldmVudCBoYXMgYmVlbiB1cGRhdGVkLiBDaGFuZ2VkOiB0aW1lDQoNCk9uYm9hcmRpbmcg
+cGxhbiBzeW5jDQpGcmlkYXkgMiBPY3QgMjAyNiAtIDEwYW0gLSAxMDozMGFtIChFYXN0ZXJuIFRp
+bWUgLSBOZXcgWW9yaykNCg0KSm9pbmluZyBpbmZvOiBodHRwczovL21lZXQuZXhhbXBsZS5uZXQv
+cXZrLXp0cmEtbXdlDQoNCk9yZ2FuaXplcg0KTWF0ZW8gVmFyZ2EgLSBtYXRlby52YXJnYUBleGFt
+cGxlLm5ldA0KDQpHdWVzdHMNCk1hdGVvIFZhcmdhIC0gb3JnYW5pemVyDQphZGEubm9yd29vZEBl
+eGFtcGxlLmNvbQ0KDQpSZXBseSBmb3IgYWRhLm5vcndvb2RAZXhhbXBsZS5jb20NClllczogaHR0
+cHM6Ly9jYWxlbmRhci5leGFtcGxlLm5ldC9ldmVudD9hY3Rpb249UkVTUE9ORCZyc3Q9MSZlaWQ9
+YjI1aWIyRnlaR2x1WncNCk5vOiBodHRwczovL2NhbGVuZGFyLmV4YW1wbGUubmV0L2V2ZW50P2Fj
+dGlvbj1SRVNQT05EJnJzdD0yJmVpZD1iMjVpYjJGeVpHbHVadw0KTWF5YmU6IGh0dHBzOi8vY2Fs
+ZW5kYXIuZXhhbXBsZS5uZXQvZXZlbnQ/YWN0aW9uPVJFU1BPTkQmcnN0PTMmZWlkPWIyNWliMkZ5
+WkdsdVp3DQoNCkludml0YXRpb24gZnJvbSBhIGNhbGVuZGFyIHNlcnZpY2UNCllvdSBhcmUgcmVj
+ZWl2aW5nIHRoaXMgZW1haWwgYmVjYXVzZSB5b3UgYXJlIGFuIGF0dGVuZGVlIG9uIHRoZSBldmVu
+dC4NCg==
+--000000000000d7f3b4c516a8b9c0
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+<html><body>
+<p>This event has been updated. Changed: time</p>
+<h2>Onboarding plan sync</h2>
+<p>Friday 2 Oct 2026 - 10am - 10:30am (Eastern Time - New York)</p>
+<p>Joining info: <a href=3D"https://meet.example.net/qvk-ztra-mwe">meet.exa=
+mple.net/qvk-ztra-mwe</a></p>
+<p>Organizer: Mateo Varga (mateo.varga@example.net)</p>
+<p>Guests: Mateo Varga (organizer), ada.norwood@example.com</p>
+<p>Invitation from a calendar service. You are receiving this email because=
+ you are an attendee on the event.</p>
+</body></html>
+--000000000000d7f3b4c516a8b9c0
+Content-Type: text/calendar; charset="UTF-8"; method=REQUEST
+Content-Transfer-Encoding: 7bit
+
+BEGIN:VCALENDAR
+PRODID:-//Google Inc//Google Calendar 70.9054//EN
+VERSION:2.0
+CALSCALE:GREGORIAN
+METHOD:REQUEST
+BEGIN:VTIMEZONE
+TZID:America/New_York
+X-LIC-LOCATION:America/New_York
+BEGIN:DAYLIGHT
+TZOFFSETFROM:-0500
+TZOFFSETTO:-0400
+TZNAME:EDT
+DTSTART:19700308T020000
+RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU
+END:DAYLIGHT
+BEGIN:STANDARD
+TZOFFSETFROM:-0400
+TZOFFSETTO:-0500
+TZNAME:EST
+DTSTART:19701101T020000
+RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU
+END:STANDARD
+END:VTIMEZONE
+BEGIN:VEVENT
+DTSTART;TZID=America/New_York:20261002T100000
+DTEND;TZID=America/New_York:20261002T103000
+DTSTAMP:20260928T091502Z
+ORGANIZER;CN=Mateo Varga:mailto:mateo.varga@example.net
+UID:3q8v1n5k7c2m4p6r8t0w2y4a6c@example.net
+ATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;RSVP=TRUE
+ ;CN=Mateo Varga;X-NUM-GUESTS=0:mailto:mateo.varga@example.net
+ATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=
+ TRUE;CN=ada.norwood@example.com;X-NUM-GUESTS=0:mailto:
+ ada.norwood@example.com
+X-GOOGLE-CONFERENCE:https://meet.example.net/qvk-ztra-mwe
+CREATED:20260927T150911Z
+DESCRIPTION:Moved to Friday morning. Same agenda: the first two weeks of th
+ e onboarding plan.\n\nJoin: https://meet.example.net/qvk-ztra-mwe\n\n-::~:
+ ~::~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~:~::~:
+ ~::-\nInvitation from a calendar service\nYou are receiving this email bec
+ ause you are an attendee on the event.
+LAST-MODIFIED:20260928T091501Z
+LOCATION:
+SEQUENCE:1
+STATUS:CONFIRMED
+SUMMARY:Onboarding plan sync
+TRANSP:OPAQUE
+BEGIN:VALARM
+ACTION:EMAIL
+DESCRIPTION:This is an event reminder
+SUMMARY:Alarm notification
+ATTENDEE:mailto:ada.norwood@example.com
+TRIGGER:-P0DT0H30M0S
+END:VALARM
+END:VEVENT
+END:VCALENDAR
+
+--000000000000d7f3b4c516a8b9c0--

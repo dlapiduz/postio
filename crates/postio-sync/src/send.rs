@@ -74,10 +74,10 @@ use chrono::Utc;
 use postio_account::auth::{TokenSource, with_credential};
 use postio_account::backend::{AppendMessage, MailBackend};
 use postio_account::secret::AccountKey;
-use postio_model::ids::{AccountId, DraftId};
+use postio_model::ids::{AccountId, DraftId, LabelId, MessageId};
 use postio_model::{
-    Attachment, DraftState, Flag, FlagSet, MailboxId, MailboxRole, Message, OutgoingAttachment,
-    mime, outgoing,
+    Attachment, DraftState, Flag, FlagSet, MailboxId, MailboxRole, Message, Operation,
+    OperationTarget, OutgoingAttachment, mime, outgoing,
 };
 use postio_smtp::cancel::CancelToken;
 use postio_smtp::session::SmtpSession;
@@ -86,7 +86,8 @@ use postio_smtp::transport::SmtpConnector;
 use postio_storage::BlobStore;
 use postio_storage::Connection;
 use postio_storage::repository::{
-    AccountRepository, DraftRepository, MailboxRepository, MessageRepository, StoredBody,
+    AccountRepository, CorrespondentRepository, DraftRepository, FlagSource, LabelRepository,
+    MailboxRepository, MessageRepository, OperationQueueRepository, StoredBody, ThreadRepository,
     ThreadingRepository,
 };
 use secrecy::SecretString;
@@ -140,6 +141,14 @@ pub(crate) struct SendJob {
     /// is deleted, and a draft left behind in Drafts is the user's sent
     /// message showing up as still unfinished.
     drafts_copy: Option<(MailboxId, String, postio_model::RemoteId)>,
+    /// The labels chosen for it (spec 007 US3), with their names, which are
+    /// the keywords they reach the server as: resolved here, because the
+    /// draft that names them is deleted by the time they are applied, and
+    /// a label deleted meanwhile is simply not among them.
+    labels: Vec<(LabelId, String)>,
+    /// "Remind if no reply" (spec 007 US3 scenario 5): the time the
+    /// conversation's reminder falls due, set as the sent copy is filed.
+    remind_at: Option<chrono::DateTime<Utc>>,
 }
 
 /// What resolving a `Send` operation against local storage found.
@@ -265,7 +274,22 @@ pub(crate) async fn resolve(
         None => None,
     };
 
-    let built = outgoing::build(&draft, identity, &outgoing_attachments, parent.as_ref());
+    // An answer to an invitation carries its iCalendar reply, which goes
+    // beside the words as the `text/calendar` alternative (spec 007 FR-102).
+    let calendar = draft
+        .calendar_reply
+        .as_deref()
+        .map(|ics| outgoing::CalendarPart {
+            method: outgoing::CalendarMethod::Reply,
+            ics: ics.as_bytes(),
+        });
+    let built = outgoing::build(
+        &draft,
+        identity,
+        &outgoing_attachments,
+        parent.as_ref(),
+        calendar,
+    );
 
     let Some(sent) = MailboxRepository::new(connection)
         .by_role(account.id, MailboxRole::Sent)
@@ -285,6 +309,15 @@ pub(crate) async fn resolve(
             .map(|mailbox| (mailbox.id, mailbox.path, copy)),
         None => None,
     };
+
+    let mut labels = Vec::with_capacity(draft.labels.len());
+    for id in &draft.labels {
+        if let Some(label) = LabelRepository::new(connection).get(*id).await?
+            && label.account_id == account.id
+        {
+            labels.push((label.id, label.name));
+        }
+    }
 
     let recipients = draft
         .all_recipients()
@@ -316,6 +349,8 @@ pub(crate) async fn resolve(
         sent_mailbox: sent.id,
         sent_mailbox_path: sent.path,
         drafts_copy,
+        labels,
+        remind_at: draft.remind_at,
     })))
 }
 
@@ -527,11 +562,9 @@ async fn file_sent_locally(
     smtp: &SmtpContext<'_>,
     job: &SendJob,
 ) -> Option<Message> {
-    let mut flags = FlagSet::new();
-    flags.insert(Flag::Seen);
-
     let mut message = mime::parse(&job.raw).into_message(job.account, job.sent_mailbox, Utc::now());
-    message.flags = flags;
+    message.flags = job.sent_flags();
+    message.labels = job.label_ids();
     message.bcc = job.bcc.clone();
     message.attachments = job.attachments.clone();
     message.raw_blob_id = smtp.blobs.put(&job.raw).ok();
@@ -540,6 +573,11 @@ async fn file_sent_locally(
     if messages.create(&mut message).await.is_err() {
         return None;
     }
+    // Everyone it went to has been written to, now, before the network
+    // (spec 007, T075): Focus's filter never files their mail, and
+    // completion ranks them higher. A send that fails takes it back in
+    // `unfile_sent_copy`. Best-effort like the rest of this path.
+    record_correspondents(connection, job.account, message.id).await;
     // The thread id comes back onto the struct, and that is the whole of
     // #1488. Threading writes it to the row; this function then *returns*
     // `message`, and `confirm_sent_copy` later sets the server's coordinates
@@ -558,6 +596,8 @@ async fn file_sent_locally(
         // because the silence is what let the bug above go unnoticed.
         Err(error) => tracing::warn!(%error, "could not thread the sent copy"),
     }
+    label_the_conversation(connection, job, &message).await;
+    remind_on_the_conversation(connection, job, &message).await;
     // No recount needed: `messages_count_insert` already moved Sent's cached
     // counts when `create` inserted the row.
 
@@ -582,6 +622,122 @@ async fn file_sent_locally(
     Some(message)
 }
 
+impl SendJob {
+    /// The flags the sent copy is filed and appended with: `\Seen`, and
+    /// each chosen label's keyword.
+    fn sent_flags(&self) -> FlagSet {
+        std::iter::once(Flag::Seen)
+            .chain(
+                self.labels
+                    .iter()
+                    .map(|(_, name)| Flag::Keyword(name.clone())),
+            )
+            .collect()
+    }
+
+    /// The chosen labels' ids.
+    fn label_ids(&self) -> Vec<LabelId> {
+        self.labels.iter().map(|(id, _)| *id).collect()
+    }
+}
+
+/// Gives the rest of the sent copy's conversation the labels chosen for it
+/// (spec 007 US3 scenario 4: "its conversation carries them").
+///
+/// What the label verb does to a message, and all of it: the label
+/// locally, its keyword on the row, and a `SetFlags` queued so the server
+/// learns it. The copy itself already carries them, from its own insert and
+/// its append. Best-effort like the rest of this path: a label that could
+/// not be applied is never a reason to fail, or repeat, a send.
+async fn label_the_conversation(connection: &Connection, job: &SendJob, copy: &Message) {
+    if job.labels.is_empty() {
+        return;
+    }
+    let Some(thread) = copy.thread_id else {
+        return;
+    };
+    if let Err(error) = label_members(connection, job, thread, copy.id).await {
+        tracing::warn!(%error, "could not label a sent message's conversation");
+    }
+}
+
+/// Sets the reminder the draft asked for (spec 007 US3 scenario 5,
+/// FR-044): on the sent copy's conversation, waiting on a reply to the copy,
+/// due at the draft's `remind_at`. Local, before the network, like the
+/// labels; Focus's filing pass cancels it when somebody else writes in the
+/// conversation, and its due timer fires it otherwise. Best-effort: a
+/// reminder that could not be set is never a reason to fail, or repeat, a
+/// send.
+async fn remind_on_the_conversation(connection: &Connection, job: &SendJob, copy: &Message) {
+    let (Some(due), Some(thread)) = (job.remind_at, copy.thread_id) else {
+        return;
+    };
+    if let Err(error) = postio_storage::repository::ReminderRepository::new(connection)
+        .set(thread, copy.id, due, Utc::now())
+        .await
+    {
+        tracing::warn!(%error, "could not set a sent message's reminder");
+    }
+}
+
+async fn label_members(
+    connection: &Connection,
+    job: &SendJob,
+    thread: postio_model::ThreadId,
+    copy: MessageId,
+) -> postio_storage::Result<()> {
+    let members = ThreadRepository::new(connection).member_ids(thread).await?;
+    let messages = MessageRepository::new(connection);
+    let labels = LabelRepository::new(connection);
+    let queue = OperationQueueRepository::new(connection);
+    let at = Utc::now();
+    for member in members.into_iter().filter(|member| *member != copy) {
+        let Some(message) = messages.get(member).await? else {
+            continue;
+        };
+        let carried = labels.for_message(member).await?;
+        let mut flags = message.flags.clone();
+        let mut added = FlagSet::new();
+        for (label, name) in &job.labels {
+            if carried.contains(label) {
+                continue;
+            }
+            labels.attach(member, *label).await?;
+            let keyword = Flag::Keyword(name.clone());
+            flags.insert(keyword.clone());
+            added.insert(keyword);
+        }
+        if added.is_empty() {
+            continue;
+        }
+        messages
+            .set_flags(member, &flags, FlagSource::Local)
+            .await?;
+        queue
+            .enqueue(
+                job.account,
+                OperationTarget::Message(member),
+                &Operation::SetFlags { flags: added },
+                at,
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+/// Counts the Sent row just filed as written to everyone it went to.
+///
+/// Logged and not returned: who was written to is worth keeping, and never
+/// worth failing -- or repeating -- a send over.
+async fn record_correspondents(connection: &Connection, account: AccountId, message: MessageId) {
+    if let Err(error) = CorrespondentRepository::new(connection)
+        .record_sent(account, &[message])
+        .await
+    {
+        tracing::warn!(%error, "could not record who a sent message went to");
+    }
+}
+
 /// Takes back the Sent row [`file_sent_locally`] wrote, after a failed send.
 ///
 /// Only for [`Outcome::Failed`], which ADR 0021 defines as the outcomes where
@@ -594,6 +750,17 @@ async fn unfile_sent_copy(connection: &Connection, filed: Option<&Message>) {
     let Some(message) = filed else {
         return;
     };
+    // Nothing was delivered, so nobody was written to: before the row goes,
+    // since its recipients are what say who (T075).
+    if let Err(error) = CorrespondentRepository::new(connection)
+        .unrecord_sent(message.account_id, message.id)
+        .await
+    {
+        tracing::warn!(
+            %error,
+            "could not take back who a failed send was counted as written to"
+        );
+    }
     if let Err(error) = MessageRepository::new(connection)
         .delete(&[message.id])
         .await
@@ -622,8 +789,9 @@ async fn confirm_sent_copy(
     job: &SendJob,
     filed: Option<Message>,
 ) {
-    let mut flags = FlagSet::new();
-    flags.insert(Flag::Seen);
+    // The labels ride on the append as their keywords: the server's copy
+    // carries them from the moment it exists, with no operation of its own.
+    let flags = job.sent_flags();
 
     let append = AppendMessage::new(job.raw.clone()).with_flags(flags.clone());
     let mapping = backend
@@ -660,6 +828,7 @@ async fn confirm_sent_copy(
             let mut message =
                 mime::parse(&job.raw).into_message(job.account, job.sent_mailbox, Utc::now());
             message.flags = flags;
+            message.labels = job.label_ids();
             message.bcc = job.bcc.clone();
             message.attachments = job.attachments.clone();
             message.raw_blob_id = smtp.blobs.put(&job.raw).ok();
@@ -671,9 +840,15 @@ async fn confirm_sent_copy(
             if messages.create(&mut message).await.is_err() {
                 return;
             }
-            let _ = ThreadingRepository::new(connection, job.account)
+            record_correspondents(connection, job.account, message.id).await;
+            if let Ok(threaded) = ThreadingRepository::new(connection, job.account)
                 .thread(&message)
-                .await;
+                .await
+            {
+                message.thread_id = Some(threaded.thread_id);
+            }
+            label_the_conversation(connection, job, &message).await;
+            remind_on_the_conversation(connection, job, &message).await;
             let block = postio_model::headers::block_of(&job.raw);
             let body = StoredBody {
                 text: stored_text(message.body.text.as_deref()),

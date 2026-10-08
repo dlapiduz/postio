@@ -223,7 +223,7 @@ public struct ConversationView: View {
                     // `archive_thread` means and what the other two act on
                     // through the list's own cursor.
                     Button("Archive conversation") { run("archive_thread", nil) }
-                    Button("Mark unread") { run("mark_unread", nil) }
+                    Button("Mark unread") { run("toggle_read", nil) }
                     Button("Flag") { run("flag", nil) }
                 } label: {
                     Image(systemName: "ellipsis")

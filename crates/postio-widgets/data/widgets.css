@@ -1,0 +1,1033 @@
+/* The controls the desktop app draws (ADR 0043), dressed once.
+ *
+ * These rules live here with the widgets that
+ * wear them (specs/007-postio-focus research R1): the key hints, the four
+ * kinds of button, the chips, the action bar and the one-line notice.
+ * `postio_widgets::widgets` is the code.
+ *
+ * Every value is a `--postio-*` role, never a literal colour, and the app
+ * defines the roles: Focus from libadwaita's own colours (research R11;
+ * `postio-gtk/data/focus-colours.css`).
+ *
+ * An app layers its own surfaces over these rules by importing this sheet
+ * at the top of its own, not by loading it beside it: GTK compares
+ * specificity only inside one provider (`postio_widgets::style` says more).
+ *
+ * TYPE IS IN `rem`, NEVER `px`: a font size in px ignores GNOME's
+ * text-scaling setting (GNOME's scaling applies to rem, not px).
+ *
+ * MOTION BUDGET (CLAUDE.md): transitions here are <= 100ms or absent.
+ *
+ * THE METRICS COME FIRST. Spacing, radii, chip and type sizes are generated
+ * from `postio_ui::tokens` by `build.rs` into
+ * `metrics.css` beside this sheet; importing it here means an app that
+ * takes these widgets takes the numbers they are laid out by, and defines
+ * only its colours (research R11).
+ */
+
+@import url("resource:///dev/postio/Widgets/metrics.css");
+
+/* ── Key hints (`widgets::keyhint`) ─────────────────────────────────── */
+/* A key hint riding along inside a control. Quieter than `.postio-key`,
+   which is the standalone cap the focused row draws. */
+.postio-keyhint {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  opacity: 0.75;
+}
+
+/* A hint that is not a control: what it does, then its cap
+   (`widgets::keyhint::chip`). The words are secondary ink, the cap mono. */
+.postio-keyhint-label {
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+/* A footer of hints in one mono line: `j/k walk · Return open · s save`
+   (`widgets::KeyLine`). Canvas 3g's and 2b's foot, at the canvas' 10.5px;
+   each surface adds only its own inset. */
+.postio-keyline {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  line-height: 1.7;
+  color: var(--postio-faint);
+}
+
+/* ── Buttons (`widgets::button`) ─────────────────────────────────────
+   Four kinds and two sizes, from the design system's `.btn-*`: square
+   (`radius-sm`, as every control is), the heading face, a hairline border
+   that a primary fills and a ghost drops. One primary look everywhere --
+   it had been libadwaita's pill in the header, a pale tint in the action
+   bars and a solid square in settings. */
+button.postio-button {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  border: 1px solid transparent;
+  border-radius: var(--postio-radius-sm);
+  background-image: none;
+  background-color: transparent;
+  box-shadow: none;
+  color: var(--postio-ink);
+}
+
+button.postio-button:focus-visible {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: 2px;
+}
+
+button.postio-button-regular {
+  min-height: 30px;
+  padding: 0 13px;
+  font-size: var(--postio-text-ui);
+}
+
+button.postio-button-small {
+  min-height: 26px;
+  padding: 0 10px;
+  font-size: var(--postio-text-small);
+}
+
+button.postio-button-primary {
+  border-color: var(--postio-accent);
+  background-color: var(--postio-accent);
+  color: var(--postio-accent-fg);
+}
+
+button.postio-button-primary:hover {
+  border-color: var(--postio-accent-hover);
+  background-color: var(--postio-accent-hover);
+}
+
+button.postio-button-secondary {
+  border-color: var(--postio-hairline-strong);
+  background-color: var(--postio-surface);
+}
+
+button.postio-button-secondary:hover {
+  border-color: var(--postio-accent);
+  background-color: var(--postio-hover-bg);
+}
+
+/* Chrome, in the canvas' neutral rather than the design system's accent:
+   Postio's ghosts are the header and the bars, not links. */
+button.postio-button-ghost {
+  color: var(--postio-dim);
+}
+
+button.postio-button-ghost:hover {
+  background-color: var(--postio-hover-bg);
+  color: var(--postio-ink);
+}
+
+/* Findable, not inviting: bordered in the destructive colour, never
+   filled. */
+button.postio-button-destructive {
+  border-color: var(--destructive-color);
+  color: var(--destructive-color);
+}
+
+button.postio-button-destructive:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+button.postio-button:disabled {
+  opacity: 0.45;
+}
+
+/* An icon alone (`widgets::icon_button`): the design system's `.btn-icon`,
+   ghost-quiet. */
+button.postio-icon-button {
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0;
+  border-radius: var(--postio-radius-sm);
+  background-image: none;
+  background-color: transparent;
+  box-shadow: none;
+  color: var(--postio-dim);
+}
+
+/* `circular` (libadwaita) promises a round hit target, but a type selector
+   plus a class outweighs a bare class: `button.postio-icon-button` above
+   wins the cascade over libadwaita's own `.circular` rule, at application
+   priority either way, so every icon button that also wears `circular` --
+   Focus's top-bar close among them -- drew as a barely-rounded square
+   instead, most visibly once the hover fill made its edges visible
+   (specs/007-postio-focus T173). This selector is more specific than both:
+   an icon button that says it is circular gets to be one. */
+button.postio-icon-button.circular {
+  border-radius: 999px;
+}
+
+button.postio-icon-button:hover {
+  background-color: var(--postio-hover-bg);
+  color: var(--postio-ink);
+}
+
+/* The same icon button opening a menu (`widgets::icon_menu_button`): the
+   class is on the `menubutton` node, and the button it draws is inside. */
+menubutton.postio-icon-button > button {
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0;
+  border-radius: var(--postio-radius-sm);
+  background-image: none;
+  background-color: transparent;
+  box-shadow: none;
+  color: var(--postio-dim);
+}
+
+menubutton.postio-icon-button > button:hover,
+menubutton.postio-icon-button > button:checked {
+  background-color: var(--postio-hover-bg);
+  color: var(--postio-ink);
+}
+
+/* ── Chips ──────────────────────────────────────────────────────── */
+/* Every text chip's box, in one place. A chip class below carries colour
+   and face only; the metrics live here and in the three --postio-chip-*
+   tokens, so two chips can no longer disagree about their height. */
+.postio-chip-base {
+  min-height: var(--postio-chip-height);
+  padding: var(--postio-chip-pad-y) var(--postio-chip-pad-x);
+  border-radius: var(--postio-radius-sm);
+  font-family: var(--postio-font-mono);
+  font-size: 0.75rem;
+  /* Every chip pays for its border, drawn or not: a bordered chip beside a
+     borderless one is two pixels taller, which is exactly the drift the
+     base class exists to stop. A chip that wants a visible border recolours
+     this one rather than adding its own. */
+  border: 1px solid transparent;
+}
+
+/* An operator, drawn as what it is. IBM Plex Mono, because it is syntax. */
+.postio-chip {
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-selected-accent-text);
+}
+
+/* Still being typed: the keyword landed, the value has not. */
+.postio-chip.partial {
+  background: none;
+  border: 1px dashed var(--postio-hairline);
+  color: var(--postio-faint);
+}
+
+/* `-from:someone` excludes rather than includes, and has to look like it. */
+.postio-chip.negated {
+  background-color: var(--postio-surface);
+  border: 1px solid var(--postio-selected-border);
+  color: var(--postio-faint);
+}
+
+/* ── The shared controls (#1002) ─────────────────────────────────────
+   A button with its key beside it, a row of them, and a one-line notice.
+   Postio had three or four hand-rolled copies of each; these are the
+   classes the single implementation wears, and every surface that draws
+   one of these draws this. */
+
+/* An action bar is a row of real buttons with keycap hints, identical on
+   every screen — the canvas's turn-7 rule. The surfaces that mount one add
+   their own class beside this for the padding and the rule above it. */
+.postio-action-bar {
+  padding: var(--postio-space-2) var(--postio-space-4);
+}
+
+/* ── One-line notices ────────────────────────────────────────────────
+   Icon, ellipsised text, one action, an overflow. It never wraps: a notice
+   that grows vertically pushes the mail down the pane, which is the
+   opposite of what a notice is for. The height is fixed for the same
+   reason — a notice appearing must not reflow the message under it by a
+   variable amount. */
+.postio-notice {
+  min-height: 30px;
+  padding: 0 var(--postio-space-3);
+  border-bottom: 1px solid var(--postio-hairline);
+  background-color: var(--postio-surface);
+}
+
+/* The overflow is a whole button, 34px on its own -- taller than the notice
+   it sits in, and only there when the notice has a menu. So the slot, sized
+   to its tallest page, was 2px taller for a message whose sender could be
+   always-allowed than for one that could not, and the body moved with it
+   (#1671). */
+.postio-notice > menubutton > button {
+  min-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.postio-notice-icon {
+  color: var(--postio-ink-secondary);
+}
+
+.postio-notice-label {
+  color: var(--postio-ink-secondary);
+  font-size: var(--postio-text-ui);
+}
+
+/* ── The account form and what it is built from (T165) ─────────────────
+   Lives here with `postio_widgets::onboarding` and the widgets it draws
+   with: the form opens for first run, a new account and a new password,
+   and from Focus's sign-in banner. */
+
+/* ── The plate (`widgets::plate`) ────────────────────────────────────
+   The surface an overlay is drawn on: the cheat sheet, the parts panel, the
+   unavailable screen, onboarding, and the box's results. A hairline, the
+   control radius, the surface ground, and the token's large lift -- which,
+   unlike the literal it replaced, deepens in the dark scheme. */
+.postio-plate {
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-md);
+  background-color: var(--postio-surface);
+  box-shadow: var(--postio-shadow-lg);
+}
+
+/* The canvas' title bar: 44px over a hairline, one height for every plate
+   (they were 42 and 44). */
+.postio-plate-header {
+  min-height: 44px;
+  padding: 0 18px;
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+/* A plate's name, as the canvas sets it over Parts, Add account and Sync
+   window: 12px Barlow Condensed, 0.16em, capitals. A size up from the
+   section kicker, because it names the whole surface. */
+.postio-plate-title {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: var(--postio-text-label);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--postio-ink-secondary);
+}
+
+/* ── First run (canvas 3e) ───────────────────────────────────────────
+   One screen, on its own plate in the middle of the window. The same plate
+   the palette and the parts panel use, because it is the same kind of thing:
+   a surface the application puts in front of you, not a dialog. */
+.postio-onboarding {
+  min-width: 640px;
+}
+
+/* `step 1 of 1`. Mono, and it is the whole promise of this screen: there is
+   no second page and nothing is being held back for later. */
+.postio-onboarding-step {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  color: var(--postio-dim);
+}
+
+.postio-onboarding-body {
+  padding: 22px 26px 26px;
+}
+
+/* A field's caption (`widgets::field`): onboarding's, the account
+   detail's -- one look, and the control's accessible name. */
+.postio-field-label {
+  font-size: var(--postio-text-body);
+  color: var(--postio-ink-secondary);
+}
+
+/* What the probe found, on its own ground so it reads as an answer rather
+   than as more form. */
+.postio-onboarding-card {
+  padding: 14px 16px;
+  border-radius: var(--postio-radius-sm);
+  background-color: var(--postio-active-bg);
+}
+
+.postio-onboarding-card-icon {
+  color: var(--postio-accent);
+}
+
+.postio-onboarding-card-heading {
+  font-size: var(--postio-text-body);
+  font-weight: 500;
+  color: var(--postio-ink);
+}
+
+/* IMAP / SMTP / Auth. Mono, because they are hostnames and ports — the same
+   face every other identifier in the application wears. */
+.postio-onboarding-line {
+  font-family: var(--postio-font-mono);
+  font-size: 0.75rem;
+  color: var(--postio-ink-secondary);
+}
+
+/* The provider's own sentence. Prose, not mono: it is the one thing on this
+   screen the user has to actually read, and iCloud's is the difference
+   between the password working and not. */
+.postio-onboarding-note {
+  font-size: var(--postio-text-body);
+  line-height: 1.5;
+  color: var(--postio-ink-secondary);
+  margin-top: 4px;
+}
+
+.postio-onboarding-help {
+  padding: 0;
+  font-size: var(--postio-text-ui);
+}
+
+/* The browser sign-in step (#1179, Design/screens/23). Never a login form:
+   what this shows is an account of what is happening in the browser that is
+   now in front of the user, and what the request they are about to approve
+   actually asks for. */
+.postio-onboarding-browser-flow {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-small);
+  padding: 10px 12px;
+  border: 1px solid var(--postio-hairline);
+  background-color: var(--postio-ground);
+  color: var(--postio-ink-secondary);
+}
+
+.postio-onboarding-scope {
+  font-size: var(--postio-text-ui);
+  color: var(--postio-ink);
+}
+
+.postio-onboarding-scope-mark {
+  color: var(--postio-accent);
+}
+
+/* Why something was refused (`widgets::callout`): a sign-in the server
+   declined, a signature name already taken. The accent's warning cousin
+   rather than a red banner -- nothing has gone wrong with Postio, the
+   other side said no. */
+.postio-callout {
+  padding: 10px 12px;
+  border-radius: var(--postio-radius-sm);
+  border: 1px solid var(--postio-selected-border);
+  background-color: var(--postio-selected-bg);
+  font-size: var(--postio-text-body);
+  line-height: 1.5;
+  color: var(--postio-ink);
+}
+
+/* Why a list has nothing in it (`widgets::empty_note`). One quiet line,
+   the look the box's and the refine column's empties already had. */
+.postio-empty-note {
+  font-size: var(--postio-text-ui);
+  color: var(--postio-faint);
+}
+
+/* A closed set of choices with all of them on screen (#1179). Joined,
+   square-cornered, one filled — the drawing's own vocabulary, and the
+   reason it replaced a dropdown: three answers you can read without
+   opening anything. Borders collapse between segments so the group reads
+   as one control rather than as three buttons that happen to touch. */
+.postio-segmented {
+  padding: 0;
+}
+
+.postio-segmented button.postio-segment {
+  min-height: 30px;
+  padding: 0 var(--postio-space-3);
+  margin: 0;
+  border: 1px solid var(--postio-hairline);
+  border-right-width: 0;
+  border-radius: 0;
+  background-image: none;
+  background-color: var(--postio-surface);
+  box-shadow: none;
+  font-family: var(--postio-font-body);
+  font-size: var(--postio-text-ui);
+  font-weight: 400;
+  color: var(--postio-ink-secondary);
+}
+
+.postio-segmented button.postio-segment.postio-segment-last {
+  border-right-width: 1px;
+}
+
+.postio-segmented button.postio-segment:hover {
+  background-color: var(--postio-hover-bg);
+  color: var(--postio-ink);
+}
+
+.postio-segmented button.postio-segment:checked {
+  background-color: var(--postio-accent);
+  border-color: var(--postio-accent);
+  color: var(--postio-accent-fg);
+  font-weight: 500;
+}
+
+.postio-segmented button.postio-segment:checked:hover {
+  background-color: var(--postio-accent-hover);
+}
+
+/* Every control needs a visible ring and none of them may rely on the
+   default one — the drawing's own constraint. The ring sits inside the
+   border so a collapsed edge does not clip it. */
+.postio-segmented button.postio-segment:focus-visible {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -3px;
+}
+
+/* A line of mono facts under a group. Almost entirely number, and numbers
+   that do not line up read as a mistake. */
+.postio-stat-line {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-small);
+  color: var(--postio-dim);
+}
+
+/* ── The pickers (Focus's screens 11-14): a 380 px popover at the row ── */
+.postio-picker {
+  padding: var(--postio-space-2);
+}
+
+.postio-picker-head {
+  padding: var(--postio-space-1) var(--postio-space-2);
+}
+
+.postio-picker-title {
+  font-weight: bold;
+  font-size: var(--postio-text-ui);
+}
+
+.postio-picker-target {
+  color: var(--postio-ink-secondary);
+  font-size: var(--postio-text-label);
+}
+
+.postio-picker-list > row {
+  padding: 0;
+  min-height: 0;
+  border-radius: var(--postio-radius-md);
+}
+
+.postio-picker-row {
+  min-height: 34px;
+  padding: 0 var(--postio-space-2) 0 var(--postio-space-4);
+}
+
+.postio-picker-name {
+  font-weight: bold;
+}
+
+.postio-picker-detail {
+  color: var(--postio-ink-secondary);
+  font-size: var(--postio-text-label);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The cap column keeps its width with or without a cap, so details line
+   up across numbered and unnumbered rows. */
+.postio-picker-key {
+  min-width: 22px;
+}
+
+.postio-picker-section {
+  margin: var(--postio-space-2) var(--postio-space-2) var(--postio-space-1);
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+.postio-picker-date {
+  margin-top: var(--postio-space-2);
+  padding: var(--postio-space-2);
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-hover-bg);
+}
+
+.postio-picker-date > entry {
+  background: none;
+  box-shadow: none;
+  min-height: 0;
+  padding: 0;
+}
+
+.postio-picker-field-hint {
+  color: var(--postio-dim);
+  font-size: var(--postio-text-meta);
+}
+
+.postio-picker-footnote {
+  margin-top: var(--postio-space-2);
+  padding: var(--postio-space-2) var(--postio-space-2) 0;
+  border-top: 1px solid var(--postio-hairline);
+  color: var(--postio-ink-secondary);
+  font-size: var(--postio-text-meta);
+}
+
+/* Recipient chips (specs/007-postio-focus T079; screens 05 and 06): the
+   name, the address in the mono face, and the × that takes it off, in a
+   hairline pill. Only a composer that asks for chips draws these. */
+.postio-recipient-chip {
+  padding: 0 var(--postio-space-1) 0 var(--postio-space-3);
+  border: 1px solid var(--postio-hairline);
+  border-radius: 999px;
+}
+
+.postio-recipient-chip-name {
+  font-weight: bold;
+}
+
+.postio-recipient-chip-address {
+  font-family: var(--postio-font-mono);
+  font-size: 0.85em;
+  color: var(--postio-faint);
+}
+
+/* Smaller than a lone icon button: it sits inside a chip, so it outranks
+   `button.postio-icon-button`. */
+button.postio-icon-button.postio-recipient-chip-remove {
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+}
+
+/* ── The flowing reader's ground (`Reader::flow_in`, specs/007 T203) ── */
+/* A probe, not a surface: the body view reads this widget's `color` as the
+   ground of the column the message flows in, since the renderer has no GTK
+   style context. The column is drawn on `--postio-surface`; a surface that
+   draws its column on another role says so beside its own ground. */
+.postio-flow-ground {
+  color: var(--postio-surface);
+}
+
+/* ── Settings (`settings::SettingsPanel`, canvas 3f) ─────────────────
+   The panel and the file are the same thing: a plate over the raw TOML,
+   the folder list's own selected-row treatment for its section nav, and a
+   validity line where a save button would otherwise go. No transition.
+   Measurements (`NAV_WIDTH`, `BODY_HEIGHT`) are Rust constants in
+   `src/settings.rs`, applied as size requests rather than CSS -- this is
+   colour, spacing and type only. Focus draws it in its dialog,
+   which re-dresses the accent's uses for FR-091 in its own sheet. */
+/* The panel has no frame of its own: the window or the dialog around it
+   draws the border, the shadow and the header. */
+.postio-settings {
+  background-color: var(--postio-surface);
+}
+
+/* Letterspaced, like every other kicker in the application. It names the
+   window rather than the pane; the pane names itself, below. */
+.postio-settings-window-title {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: var(--postio-text-ui);
+  letter-spacing: 0.12em;
+  color: var(--postio-ink);
+}
+
+.postio-settings-search {
+  min-height: 30px;
+  border-radius: var(--postio-radius-sm);
+}
+
+/* The same chip vocabulary the query bar uses for an operator: a small
+   labelled tag, not a bespoke pill. */
+.postio-settings-tag {
+  font-size: var(--postio-text-meta);
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-selected-accent-text);
+}
+
+/* No dedicated error colour exists in the design system (`.postio-status`
+   uses the accent for its failing state too); this follows the same rule
+   rather than inventing a red. */
+.postio-settings-tag.invalid {
+  background: none;
+  border: 1px solid var(--postio-accent);
+  color: var(--postio-accent-text);
+}
+
+/* ── The fixed sidebar ───────────────────────────────────────────────
+   Over a tinted ground, so the pane beside it reads as the surface and
+   this reads as the frame. Its width is fixed in Rust (`NAV_WIDTH`) and
+   never negotiable: the pane starting in the same place on all eight
+   sections is most of what makes the model legible. */
+.postio-settings-nav {
+  padding: 10px 0 12px;
+  background-color: var(--postio-ground);
+  box-shadow: inset -1px 0 var(--postio-hairline);
+}
+
+.postio-settings-nav-list {
+  background: none;
+}
+
+.postio-settings-nav-heading {
+  padding: 14px 16px 6px;
+}
+
+/* The sidebar's own folder-row treatment: one selection idiom across the
+   application, not two. */
+.postio-settings-nav-row {
+  min-height: 34px;
+  padding: 0 14px;
+  border-left: 3px solid transparent;
+}
+
+.postio-settings-nav-row:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+/* A solid accent fill with a darker rule down its left edge — the
+   drawing's own mark for "this is the pane you are looking at", and
+   strong enough to find from across the window. */
+.postio-settings-nav-row:selected {
+  padding-left: 11px;
+  border-left: 3px solid var(--postio-accent-active);
+  background-color: var(--postio-accent);
+}
+
+.postio-settings-nav-row label {
+  font-size: var(--postio-text-ui);
+  color: var(--postio-ink-secondary);
+}
+
+.postio-settings-nav-icon {
+  color: var(--postio-dim);
+}
+
+.postio-settings-nav-row:selected label,
+.postio-settings-nav-row:selected .postio-settings-nav-icon {
+  font-weight: 500;
+  color: var(--postio-accent-fg);
+}
+
+.postio-settings-nav-row:focus-visible {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}
+
+/* ── The pane ────────────────────────────────────────────────────────
+   One at a time, and the header above it repeats the sidebar's name: with
+   a single pane on screen, the title is the only thing that says which of
+   the eight you are in without looking back at the sidebar. */
+.postio-settings-pane {
+  background-color: var(--postio-surface);
+}
+
+.postio-settings-pane-header {
+  padding: 18px 22px 16px;
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+.postio-settings-pane-title {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  font-size: 1.3125rem;
+  color: var(--postio-ink);
+}
+
+.postio-settings-pane-description {
+  font-size: var(--postio-text-ui);
+  color: var(--postio-ink-secondary);
+}
+
+.postio-settings-pane-body {
+  padding: 20px 22px;
+}
+
+/* A sentence under a control: what it does, in a person's words. */
+.postio-settings-note {
+  font-size: var(--postio-text-ui);
+  color: var(--postio-ink-secondary);
+}
+
+/* Filtering's lists are addresses and domains: mono, as every address is
+   (C25). An entry that pins nobody says why, in the secondary ink. */
+.postio-settings-filtering-entry {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-ui);
+  color: var(--postio-ink);
+}
+
+.postio-settings-filtering-entry-inert {
+  color: var(--postio-ink-secondary);
+}
+
+.postio-settings-filtering-today {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-ui);
+  color: var(--postio-ink);
+}
+
+/* The pane's own bottom row of verbs — Reset to defaults, Revert file. */
+.postio-settings-pane-actions {
+  padding-top: 14px;
+}
+
+/* Two columns with a rule between them, and real space either side of it.
+   The space is the point: columns flush against a divider read as a
+   border on two boxes rather than as one pane divided in two. */
+.postio-settings-column {
+  padding: 0 24px;
+}
+
+.postio-settings-columns > separator {
+  background-color: var(--postio-hairline);
+}
+
+/* A bordered block of mono facts, with its actions inside it. */
+.postio-stat-block {
+  padding: 14px 16px;
+  border: 1px solid var(--postio-hairline);
+  background-color: var(--postio-ground);
+}
+
+.postio-settings-view {
+  padding: 14px 18px;
+  background-color: var(--postio-ground);
+}
+
+.postio-settings-view text {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink);
+  background: none;
+}
+
+/* The strip along the foot, present and identical on all eight panes:
+   a state mark, what is being written, and the way out to $EDITOR. There
+   is no save button because there is nothing to save — the file and the
+   window are the same thing — and this line is what says so. */
+.postio-settings-footer-row {
+  min-height: 38px;
+  padding: 6px 16px;
+  background-color: var(--postio-ground);
+  box-shadow: inset 0 1px var(--postio-hairline);
+}
+
+/* The one thing on the strip that is a colour rather than a word. Square,
+   like every other mark in this application. */
+.postio-settings-footer-dot {
+  min-width: 8px;
+  min-height: 8px;
+  background-color: var(--postio-accent);
+}
+
+/* `[ui] in config.toml` — which table this pane writes. */
+.postio-settings-footer-target {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  color: var(--postio-ink-secondary);
+}
+
+.postio-settings-footer {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  color: var(--postio-faint);
+}
+
+/* ── A keybinding's row (Design/screens/22) ──────────────────────────
+   One line: what it does on the left, the key on the right. The cap is the
+   control — pressing it is what starts a rebind — so it is a real button
+   wearing the keycap's own vocabulary rather than a label with a second
+   button beside it. */
+.postio-settings-keys-line {
+  padding: 9px 14px;
+}
+
+button.postio-settings-keys-binding {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-small);
+  min-height: 24px;
+  min-width: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--postio-key-border);
+  border-radius: var(--postio-radius-sm);
+  background-image: none;
+  background-color: var(--postio-surface);
+  box-shadow: none;
+  color: var(--postio-key-fg);
+}
+
+button.postio-settings-keys-binding:hover {
+  border-color: var(--postio-accent);
+  color: var(--postio-accent-text);
+}
+
+button.postio-settings-keys-binding:focus-visible {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: 2px;
+}
+
+/* Waiting for the key. A bordered accent field in place of the cap, so the
+   row that is listening is the one that looks different. */
+button.postio-settings-keys-binding.postio-settings-keys-capturing {
+  border-color: var(--postio-accent);
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-accent-text);
+}
+
+/* ── An account's row (Design/screens/21) ────────────────────────────
+   Initials, address, the `default` tag, and one mono line of facts. It
+   used to be four stacked labels, which read as four rows of one account
+   rather than one row of four facts. */
+.postio-settings-account-line {
+  padding: 10px 14px;
+}
+
+.postio-settings-account-row {
+  border-left: 3px solid transparent;
+}
+
+.postio-settings-account-row:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+/* Selected, not focused: this is the account whose form is open below, and
+   the two states have to look different or bulk actions feel unpredictable.
+   The tint plus the left rule is the selection idiom the sidebar and the
+   message list already use. */
+.postio-settings-account-row:selected {
+  border-left-color: var(--postio-selected-border);
+  background-color: var(--postio-selected-bg);
+}
+
+.postio-settings-account-row:focus-visible {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: -2px;
+}
+
+/* The initials chip, square like every other mark here. */
+.postio-settings-account-avatar {
+  min-width: 34px;
+  min-height: 34px;
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-small);
+  border: 1px solid var(--postio-hairline);
+  background-color: var(--postio-ground);
+  color: var(--postio-ink-secondary);
+}
+
+.postio-settings-account-address {
+  font-size: 0.9659rem;
+  color: var(--postio-ink);
+}
+
+.postio-settings-account-metadata {
+  font-size: var(--postio-text-small);
+}
+
+/* `default`, beside the address. A word, never a colour alone. */
+.postio-settings-account-default {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-meta);
+  padding: 1px 6px;
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-selected-accent-text);
+}
+
+/* The one state on the row that is a problem rather than a fact. No red:
+   the design system has no error colour, and `.postio-status` uses the
+   accent for its failing state too. */
+.postio-settings-account-warning {
+  color: var(--postio-accent-text);
+}
+
+/* The account's signatures (#1086). Rows rather than bare text: each one
+   opens an editor, so it has to look like something you can press. */
+.postio-settings-signature-list {
+  background-color: transparent;
+}
+
+.postio-settings-signature-list row {
+  border-radius: var(--postio-radius-sm);
+}
+
+.postio-settings-signature-list row:hover {
+  background-color: var(--postio-hover-bg);
+}
+
+.postio-settings-signature-row {
+  padding: var(--postio-space-2) var(--postio-space-3);
+}
+
+/* The body. A framed field like the Name entry above it: without this it is
+   text on the ground, and nothing says it can be typed into. */
+.postio-settings-signature-text {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-sm);
+  border: 1px solid var(--postio-hairline);
+  background-color: var(--postio-hover-bg);
+}
+
+.postio-settings-signature-text text {
+  background-color: transparent;
+}
+
+/* What the last connection test found (#980). Under the servers it is about,
+   because the result is something you read, compare against the fields above,
+   and then edit -- a toast would take it away before either. */
+.postio-settings-account-detail-test-status {
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-sm);
+  background-color: var(--postio-hover-bg);
+  color: var(--postio-ink-secondary);
+  font-size: var(--postio-text-body);
+  line-height: 1.5;
+}
+
+/* A refusal, in the accent's warning cousin rather than a red banner: the
+   same call `.postio-onboarding-failed` makes, for the same reason. Nothing
+   has gone wrong with Postio -- the server said no. */
+.postio-settings-account-detail-test-status.postio-settings-account-detail-test-failed {
+  border: 1px solid var(--postio-selected-border);
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-ink);
+}
+
+/* A group heading inside the account detail view (#966).
+
+   The one place that view has a heading, and without a rule it renders
+   identically to the field labels beneath it -- so "Mailbox roles" read as a
+   sixth field rather than as the name of the five that follow. The condensed
+   face is what every other heading in this application uses, and secondary
+   ink keeps it under the account's own name rather than competing with it. */
+.postio-settings-account-detail-group {
+  font-family: var(--postio-font-heading);
+  font-weight: var(--postio-font-heading-weight);
+  color: var(--postio-ink-secondary);
+}
+
+/* ── A check in a form (`widgets::CheckRow`) ───────────────────────── */
+/* A boolean that is a value in a form (#1179). Square, because every
+   indicator in this application is square, and visibly filled when checked
+   rather than relying on a tick a person has to look for. */
+.postio-check {
+  min-height: 26px;
+  color: var(--postio-ink);
+  font-size: var(--postio-text-ui);
+}
+
+.postio-check check {
+  min-width: 15px;
+  min-height: 15px;
+  margin-right: var(--postio-space-2);
+  padding: 0;
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: 0;
+  background-image: none;
+  background-color: var(--postio-surface);
+  box-shadow: none;
+  -gtk-icon-source: none;
+}
+
+.postio-check check:hover {
+  border-color: var(--postio-accent);
+}
+
+.postio-check check:checked {
+  border-color: var(--postio-accent);
+  /* A filled square with a thin gap inside its own border — the drawing's
+     mark, and legible at a glance in a way a tick glyph scaled to 15px is
+     not. The gap is an inset ring in the surface colour over an accent
+     fill, rather than the other way round: an accent ring over a surface
+     fill leaves the middle empty, which reads as a third state. */
+  background-color: var(--postio-accent);
+  box-shadow: inset 0 0 0 2px var(--postio-surface);
+}
+
+.postio-check:focus-visible check {
+  outline: 2px solid var(--postio-accent);
+  outline-offset: 2px;
+}

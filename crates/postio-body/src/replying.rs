@@ -491,6 +491,14 @@ pub fn reply_draft(
 /// `Block::Quoted` is specifically the thing that is not that. Bringing the
 /// two together is #1483.
 pub fn quoted_body(source: &postio_model::Message, forward: bool) -> postio_model::MessageBody {
+    // A source whose body has not arrived has nothing to quote, and an
+    // attribution or a forward header above nothing introduces nothing: sent
+    // as it stands it says "X wrote:" and then does not. The body is left
+    // empty for the person to write, and the composer says the original is
+    // still downloading (`postio_ui::compose::unquoted_note`).
+    if source.body.text.is_none() && source.body.html.is_none() {
+        return postio_model::MessageBody::default();
+    }
     let rich = if forward {
         // The same carried content a reply gets (#1483). The asymmetry was
         // never decided -- a forward flattened its content only because ADR

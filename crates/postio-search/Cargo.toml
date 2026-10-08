@@ -1,6 +1,6 @@
 [package]
 name = "postio-search"
-description = "The query-operator parser, highlighter and result types postio-gtk uses directly."
+description = "The query-operator parser, highlighter and result types the frontends use directly."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

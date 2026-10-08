@@ -1,7 +1,7 @@
 //! Message bodies, in both directions.
 //!
 //! A mail client reads bodies and writes them, and until now only the reading
-//! half existed — inside `postio-gtk`, beside the `WebView` that consumes it.
+//! half existed — inside the classic app, beside the `WebView` that consumes it.
 //! That put the one allowlist Postio has in the frontend, where a second
 //! frontend could not reach it and where the *outgoing* half would have had
 //! to grow a second copy. Two allowlists that must agree forever, with no
@@ -11,6 +11,8 @@
 //!
 //! * [`sanitize`] — incoming markup, hardened before it reaches any view.
 //! * [`quote`] — quoted-text folding, on that sanitized output.
+//! * [`own_text`](mod@own_text) — the newest message's own words, without
+//!   what [`quote`] folds or its signature, for the needs-action detector.
 //!
 //! # Why its own crate and not `postio-model`
 //!
@@ -27,7 +29,7 @@
 //! # What is deliberately *not* here
 //!
 //! The `WebView`, the `postio-cid:` scheme handler and the remote-image
-//! banner stay in `postio-gtk`. They are WebKit, and WebKit is the frontend's
+//! banner stay in the frontend. They are WebKit, and WebKit is the frontend's
 //! business. What crosses the boundary is the string this crate produces.
 //!
 //! [issue #30]: https://github.com/dlapiduz/postio/issues/30
@@ -40,17 +42,20 @@ mod hints;
 pub mod markdown;
 pub mod narrow;
 pub mod outgoing;
+pub mod own_text;
 pub mod parse;
 pub mod quote;
 pub mod reader_view;
 pub mod replying;
 pub mod sanitize;
 pub mod styles;
+pub mod treatment;
 
 pub use document::{Block, ContentId, Document, HeadingLevel, Href, Inline, editor_image_src};
 pub use edit::{EditHistory, EditStep};
 pub use narrow::{Lost, Narrowed, narrow};
 pub use outgoing::{harden, render};
+pub use own_text::own_text;
 pub use parse::parse;
 pub use quote::{fold_html_quotes, text_to_html};
 pub use replying::{

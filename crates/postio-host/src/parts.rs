@@ -1,6 +1,6 @@
 //! One part of a message, fetched if it has to be, for a person who asked.
 //!
-//! Moved from `postio-app` (`specs/005-tui-frontend` T046): what a part's bytes
+//! Moved from the classic app (`specs/005-tui-frontend` T046): what a part's bytes
 //! are, and how they are waited for, is the store's owner's business, and
 //! every frontend saves and opens parts through it. The prose below is the
 //! desktop app's, and still true.
@@ -85,11 +85,16 @@ pub async fn part_bytes(
             // and returns as soon as it is queued -- `true` means "there was
             // something to fetch", not "here it is". The bytes land when the
             // engine's own loop claims the job, so the wait is ours.
-            if engine
+            let queued = engine
                 .request_payloads(message, vec![part_id.clone()])
                 .await
-                .map_err(|error| error.message().to_string())?
-            {
+                .map_err(|error| error.message().to_string())?;
+            tracing::debug!(
+                message = message.get(),
+                queued,
+                "asked the engine for a part"
+            );
+            if queued {
                 wait_for_part(database, message, &part_id).await?
             } else {
                 // "Nothing to fetch" has two readings, and the queue cannot
@@ -206,18 +211,27 @@ pub async fn wait_for_part(
     message: MessageId,
     part_id: &str,
 ) -> Result<PartSource, String> {
-    let deadline = std::time::Instant::now() + BODY_WAIT;
+    let started = std::time::Instant::now();
+    let deadline = started + BODY_WAIT;
     loop {
         // A read that fails here is usually the writer we are waiting for
         // holding the table, so contention is a reason to look again rather
         // than to give up. Only the deadline ends this.
         match locate_part(database, message, part_id).await {
-            Ok(Some(source)) => return Ok(source),
+            Ok(Some(source)) => {
+                tracing::debug!(
+                    message = message.get(),
+                    after_ms = started.elapsed().as_millis() as u64,
+                    "a part asked for arrived"
+                );
+                return Ok(source);
+            }
             Ok(None) => {}
             Err(error) if std::time::Instant::now() >= deadline => return Err(error),
             Err(_) => {}
         }
         if std::time::Instant::now() >= deadline {
+            tracing::debug!(message = message.get(), "a part asked for never arrived");
             return Err("That part did not arrive in time — it is still \
                         downloading, so try again in a moment"
                 .into());
@@ -260,6 +274,45 @@ pub async fn locate_part(
         return Ok(Some(PartSource::Payload(blob)));
     }
     Ok(row.raw_blob_id.map(PartSource::Raw))
+}
+
+/// `message`'s raw RFC 822 source, every byte as the server sent it: from the
+/// blob store when it is here, or fetched now when it is not.
+///
+/// Fetching is justified the way saving a never-downloaded part is: the
+/// person asked for these bytes by name (`view_source`, an export). Every
+/// byte, not the text axis: under ADR 0017 the background lane stores no raw
+/// source, so `request_body` would fetch the words, leave `raw_blob_id`
+/// empty, and the wait would run out its deadline for bytes nothing was
+/// fetching.
+pub async fn raw_source(
+    database: &Store,
+    blobs: &BlobStore,
+    engine: Option<Engine>,
+    message: MessageId,
+) -> Result<Vec<u8>, String> {
+    let raw = match raw_blob(database, message).await? {
+        Some(raw) => raw,
+        None => {
+            let engine =
+                engine.ok_or("This account is not syncing, so that message cannot be fetched")?;
+            if engine
+                .request_whole_message(message)
+                .await
+                .map_err(|error| error.message().to_string())?
+            {
+                wait_for_body(database, message).await?
+            } else {
+                // "Nothing to fetch" may be a fetch that landed between the
+                // look above and the queue's answer (#109's race, as in
+                // `part_bytes`): one re-read settles it.
+                raw_blob(database, message)
+                    .await?
+                    .ok_or("There is nothing to fetch for that message")?
+            }
+        }
+    };
+    blobs.get(&raw).map_err(|error| error.to_string())
 }
 
 /// Just the raw-message blob key. What the wait watches for.

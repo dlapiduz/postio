@@ -1,6 +1,6 @@
 ---
 name: gtk-design
-description: Design and build Postio's GTK4/libadwaita interface so it stays visually consistent and feels right — the token system, the PLATE layout language, motion and interaction rules, the GTK-specific traps that fail silently, and the render-to-PNG loop that lets you actually look at what you built. Load before writing or restyling any widget, CSS, or screen.
+description: Design and build Postio's GTK4/libadwaita interface so it stays visually consistent and feels right — the colour and metric roles, Focus's layout language, motion and interaction rules, the GTK-specific traps that fail silently, and the render-to-PNG loop that lets you actually look at what you built. Load before writing or restyling any widget, CSS, or screen.
 ---
 
 # GTK design for Postio
@@ -16,106 +16,119 @@ GTK, not like "a GTK developer made an email client" (`docs/PRODUCT.md` §19).
 That is a consistency problem more than a taste problem: the identity already
 exists, and the job is to apply it the same way every time.
 
-**Before designing a screen, look at the source of truth.** `Design/Mail
-Client.dc.html` is the approved canvas; the chosen direction is **PLATE
-(option 1b)** — airy native desktop, 40px rows, real breathing room, key hints
-revealed on the focused row only. `docs/PRODUCT.md` §19 defers to the canvas on
-visual detail rather than restating it, so the canvas is where you look.
+**Before designing a screen, look at the source of truth.** Postio's one
+desktop app is the Focus design (ADR 0043). Each screen is specified in
+`specs/007-postio-focus/contracts/focus-surface.md` and held against its
+reference image in `specs/007-postio-focus/screens.md`, which records every
+known difference and its reason and holds the designs that have no image
+(the open message's treatments, the reading pane, sending states, the row
+menu, Settings). The reference images and the message-dialog handoff are
+the maintainer's local `Design/` folder, which is not in the repository;
+the spec's decisions C25 (the system font) and C26 (the system accent)
+override them where they differ.
 
 ---
 
 ## 1. Never hard-code a value
 
-Everything comes from tokens. `crates/postio-gtk/data/tokens.css` is
-**generated** from the Industry design system by `build.rs` — editing it by
-hand is a bug, and your change will vanish on the next build. To change a
-value, change the source design system.
+Every value is a `--postio-*` role, and there are two kinds:
 
-The semantic layer is what you write against:
+- **Colour roles** are defined by the app from libadwaita's own named
+  colours, in `crates/postio-gtk/data/focus-colours.css`, so the system's
+  accent and its light and dark arrive through `AdwStyleManager` with
+  nothing of Postio's in between. No hex and no `rgba()` literal; the one
+  exception is the message dialog's surface, ink and rules, at the end of
+  that file.
+- **Metrics** (spacing, radii, chip and type sizes) are **generated** into
+  `crates/postio-widgets/data/metrics.css` and `data/space.rs` by
+  `postio-widgets`' `build.rs` from the Industry design system. Editing them
+  by hand is a bug: `postio-ui`'s drift tests fail, and a build with the
+  design system present rewrites them. In Rust, spacing comes from `postio_widgets::widgets::space`.
 
-| Role | Tokens |
-|---|---|
-| Ground / surface | `--postio-ground`, `--postio-hover-bg`, `--postio-active-bg` |
-| Text | `--postio-ink`, `--postio-ink-secondary`, `--postio-dim`, `--postio-faint` |
-| Accent | `--postio-accent`, `--postio-accent-hover`, `--postio-accent-active`, `--postio-accent-fg`, `--postio-accent-text` |
-| Selection | `--postio-selected-bg`, `--postio-selected-fg`, `--postio-selected-border`, `--postio-selected-strong-bg` |
-| Rules | `--postio-hairline`, `--postio-hairline-strong` |
-| Type | `--postio-font-heading`, `--postio-font-body`, `--postio-font-mono` |
-| Space | `--postio-space-1` … `--postio-space-8` |
-| Radius / shadow | `--postio-radius-sm/md/lg`, `--postio-shadow-md/lg` |
+**The accent is reserved** (FR-091): action markers, the open message's
+action card, its tag and its links, the keyboard focus ring, and the
+has-action toggle when it is on. Nothing else. A selected row is a neutral
+background and a checked box, never the accent. `postio_gtk::style`'s test
+reads the sheets as GTK would and fails on any other rule that paints with
+it. "Raised" buttons (Send, Create, Archive all) are plain raised buttons
+with bold labels, never `suggested-action`.
 
-Raw ramp steps (`--postio-color-accent-700`, `--postio-color-neutral-300`)
-exist, but reach for a semantic role first. If no role fits, that is usually a
-sign the design needs a new role rather than this widget needing a raw colour.
+**Type is the system's** (C25): Adwaita Sans for the chrome, Adwaita Mono
+for keys, addresses, counts and operators. Barlow appears only in a message
+body drawn in app colours (FR-039). Type is in `rem`, never `px`, so
+GNOME's text scaling moves it.
 
-**Type roles are fixed.** Barlow Condensed for headings, Barlow for body,
-IBM Plex Mono for counts, key hints, timestamps and metadata. The mono face is
-what makes the interface read as instrument-like rather than generic — use it
-for anything numeric or keyboard-related, and nothing else.
+**Keycaps come from the registry** through the shared `keyhint` widgets,
+never from a literal (`check-key-hints-are-derived.py`). A key is taught
+inside the control it runs.
 
-**Keep the identity, drop the wireframe chrome.** The Industry system is a
-wireframe: its blueprint corner registration marks and transparent
-line-drawing cards are drafting notation, not the product. Never port them.
-Real `AdwHeaderBar` and window chrome stay, so it reads as a GNOME app.
-
-CSS lives in three layers: `tokens.css` (generated), `shell.css` (the app
-chrome and panes), `reader.css` (injected into WebKit for message bodies).
-Put a rule in the narrowest layer that can hold it.
+CSS lives in three places: `widgets.css` in `postio-widgets` (the shared
+controls: key hints, the four kinds of button, chips, the action bar, the
+notice), `focus.css` and `focus-colours.css` in `postio-gtk` (the app's own
+surfaces and its colour roles), and the reader's sheets in `postio-ui`'s
+`data/`. Put a rule in the narrowest one that can hold it: a control the
+app's window does not own belongs in `postio-widgets` (ADR 0043).
 
 ---
 
-## 2. Four GTK traps that fail silently
+## 2. GTK traps that fail silently
 
 These were each found the hard way. All of them *look* like they work.
 
-**Media queries do not match.** `@media (prefers-color-scheme: dark)` and
-`(prefers-contrast: more)` parse fine in an application-priority provider and
-then never fire — GTK only evaluates them for the theme provider. Dark and
-high-contrast are driven by classes on the window instead:
-`style::DARK_CLASS` (`postio-dark`) and `style::HIGH_CONTRAST_CLASS`
-(`postio-hc`), kept in step with `AdwStyleManager` by `style::track()`. Write
-`:root.postio-dark { … }`, never a media query.
+**Two providers do not compare specificity.** Across two providers at one
+priority, the one added later wins every property it sets, whatever its
+selectors. So `focus.css` imports the shared sheet at its top
+(`@import url("resource:///dev/postio/Widgets/widgets.css");`), making both
+one provider; `postio_widgets::style::register` has to run before that
+import is parsed. A second provider for "just one rule" breaks this.
 
-**`@define-color` cannot be scoped.** Overriding libadwaita's *CSS variables*
-under a class repaints stock widgets correctly; overriding `@define-color` is
-global and leaks across schemes. `tokens.css` already overrides
-`--accent-bg-color`, `--card-bg-color`, `--headerbar-bg-color` and friends, so
-stock widgets sit on the Industry ground for free — extend that list rather
-than restyling each widget.
+**A media query reads the provider's scheme, not the app's.** GTK 4.20
+evaluates `prefers-color-scheme` against the provider's own setting.
+`postio_gtk::style::install` keeps it in step with `AdwStyleManager`, which
+is what makes `focus-colours.css`'s dark block hold exactly when the app is
+dark. A provider installed any other way sees the system's scheme instead.
 
-**Fonts must be installed before the first widget.** A `PangoContext` caches
-the family it resolved, so `fonts::install()` after any widget exists means the
-fallback font is baked in for the session. `style::install_for_application()`
-does the ordering; anything driving the app directly (a test, a bench, an
-example) has to do it too.
+**The person's own `gtk.css` sits above the app.** A desktop can write its
+palette as `@define-color`s in `~/.config/gtk-4.0/gtk.css` whatever the
+scheme. The suite and `shot` run with a private `XDG_CONFIG_HOME` for that
+reason; a screen that looks wrong only on one desktop may be that file.
 
-**GTK CSS is a subset of web CSS.** No grid, no flex-gap in older versions,
-limited selectors. `GtkCssProvider` logs parse errors rather than failing, so a
-typo silently drops the rule. `crates/postio-gtk/tests/gtk_style.rs` asserts
-zero parse errors — add to it rather than trusting the eye.
+**GTK CSS is a subset of web CSS.** No grid, limited selectors.
+`GtkCssProvider` logs parse errors rather than failing, so a typo silently
+drops the rule. `postio_gtk::style::install` turns one into a `g_critical`,
+and `widgets_suite`'s `widgets_css.rs` asserts the shared sheet parses —
+add to it rather than trusting the eye.
 
 ---
 
 ## 3. The layout language
 
-Three-pane PLATE, collapsing through two-pane to message-focused via
-`AdwBreakpoint`. Sidebar, list, reader.
+**One list, no folder sidebar.** The window is a 46 px top bar (Compose,
+the command bar's field, the sync label, the main menu, the close button),
+a 36 px header strip ("Inbox ▾" `g o`, the counts, the "Has action" toggle
+`!`, the filtered and digest-rule counts), one banner slot, then the list
+under day headings, and a bulk bar while anything is selected. The folders
+popover (`g o`) and `in:` in the command bar are how a person gets anywhere
+but the inbox.
 
-Row anatomy, from canvas 1b: avatar initials chip, sender, time, subject,
-snippet, thread-count badge, unread and attachment indicators. Key hints
-(`e reply`, `a archive`, `t thread`) appear on the **focused row only** — that
-is the PLATE signature and how the app teaches its own keyboard without
-permanent clutter.
+**Rows are one `snapshot()` each, at two heights fixed by kind**: 40 px for
+a conversation with no marker or a digest delivery, 72 px for one with a
+marker or a fired reminder, whose second line carries the marker's chip,
+its date or quoted sentence, and its answering actions with their keycaps.
+There is no density setting in this app.
 
-**Selected and focused are different states.** Focused is where the keyboard
-is; selected is what an action will hit. They need distinct treatments —
-selection uses `--postio-selected-bg` with the 3px `--postio-selected-border`
-left edge. Conflating them makes bulk actions feel unpredictable, and it is the
-usual bug.
+**The open message is a dialog over the dimmed list**, its frame computed
+from the window and never from the message (FR-039), or, after `F8`, a pane
+beside the list (FR-038). Below 980 px it is always the dialog. The composer
+takes the open message's place. `Esc` returns to the same row.
 
-**Density is three row heights**, driven by `[ui].density` and applied as CSS
-classes — never a rebuilt widget tree. Airy for reading, compact for triage.
-Check any new widget at all three.
+**One of each**: one close button (an X at the right end of a header), one
+icon button, one keycap, one dialog pattern for every surface over the
+list, and one picker pattern (`screens.md`, "Interaction rules").
+
+**The cursor and the selection are different states.** The cursor is where
+the keyboard is; the selection is what an action will hit. Conflating them
+makes bulk actions feel unpredictable, and it is the usual bug.
 
 ---
 
@@ -131,7 +144,7 @@ The budget is a functional requirement, not a preference: <500ms to usable UI,
   boxes per row are the usual reason GTK lists feel sluggish, and they would
   break 40px rows at scroll speed.
 - **Never materialise a mailbox.** The list is a windowed `GListModel` over
-  paged SQLite. Any design that needs "all the rows" needs rethinking.
+  the paged store. Any design that needs "all the rows" needs rethinking.
 
 ---
 
@@ -149,27 +162,25 @@ Not a later pass (`docs/PRODUCT.md` §20):
 
 ## 6. Look at what you built
 
-This is the part that actually produces consistency. "Matches the canvas" is
-not checkable by squinting at a running app.
+This is the part that actually produces consistency. "Matches the design"
+is not checkable by squinting at a running app.
 
 ```sh
-cargo run -p postio-app --example shot -- /tmp/plate.png            # light
-cargo run -p postio-app --example shot -- /tmp/plate.png dark
-cargo run -p postio-app --example shot -- /tmp/plate.png dark hc
-cargo run -p postio-app --example shot -- /tmp/narrow.png 900x700
-cargo run -p postio-app --example shot -- /tmp/plate.png demo
+cargo run -p postio-gtk --example shot -- /tmp/01.png 01            # the inbox, light
+cargo run -p postio-gtk --example shot -- /tmp/01-dark.png 01 dark
+cargo run -p postio-gtk --example shot -- /tmp/04.png 04            # a message opened
+cargo run -p postio-gtk --example shot -- /tmp/narrow.png 01 900x700
 ```
 
-It asks GTK for the exact render node it would put on screen and writes a PNG,
-so spacing, weight and colour become something you can look at, diff, and
-attach to a review. `demo` fills the panes from `postio_storage::seed` — a
-migrated in-memory database with a real folder tree and corpus-derived
-messages, read back through the store the running application reads through —
-so what you are looking at is content the store actually produces rather than
-content that was written to match the drawing.
-
-It is `-p postio-app`, not `-p postio-gtk`: reading a store means `rusqlite`,
-which the view layer may not have at any depth, dev-dependencies included.
+The arguments are `<png> <screen> [light|dark] [WxH]`. The screen is a
+reference's number, and the table of them is the doc comment at the top of
+`crates/postio-gtk/examples/shot.rs`. The size defaults to the references'
+1440x900; the headless compositor's monitor is 1280x800, so a full-size
+shot wants `POSTIO_TEST_DISPLAY=focus-shot POSTIO_TEST_GEOMETRY=1920x1200`
+in front of it. The window is built over `postio_storage::seed::seed_small`
+with the day's rows filed on top the way sync files mail, read back through
+the client the running app reads through, so what you see is content the
+store produces rather than content written to match the drawing.
 
 **Read the PNG back.** Rendering it and not looking is the same as not
 rendering it — and check the command succeeded: it exits non-zero and says
@@ -177,33 +188,35 @@ rendering it — and check the command succeeded: it exits non-zero and says
 not check is a claim you cannot make (#809).
 
 It renders on the private headless compositor, not on your session, so a
-locked or blanked screen no longer stops it. If you run the binary directly
-rather than through `cargo run` and it says the compositor was not presenting,
-believe it: the widgets are drawn correctly but the reader's web view will be
-a black rectangle, because another process composites it.
+locked or blanked screen does not stop it.
 
-Then compare against the artboard in `Design/Mail Client.dc.html` and name
-the differences.
+Then compare against the screen's row in `specs/007-postio-focus/screens.md`
+(and the reference image, if you have the maintainer's `Design/` folder),
+and name the differences. A difference you keep is written into
+`screens.md` with its reason (FR-095).
 
 **A sequence, not just a screen.** `shot` is one picture; how a screen
 behaves under the keyboard is a storyboard (`storyboards/`, ADR 0044). Run
 `scripts/storyboards.sh run --only '<surface>/*'` to film one with the
 keyboard's place outlined on every frame, and `scripts/storyboards.sh
-screens` for every screen beside its canvas artboard (the old screen sweep).
-`/ux-review` is the review of both, by an agent that did not build it.
+screens` for every screen beside its design. `/ux-review` is the review of
+both, by an agent that did not build it.
 
-Check every screen in **light, dark, and high contrast**, and at the narrow
-breakpoint. Dark is not an afterthought here: it follows canvas 3c, where steel
-goes light-on-dark and hairlines *lift* rather than darken.
+Check every screen in **light and dark**, and at a laptop's width and
+GNOME's minimum window size: as the window narrows, the first line and then
+the labels give way before the sender, subject and time.
 
 ---
 
 ## Before you call a screen done
 
-- [ ] Every value came from a token; nothing hard-coded
-- [ ] Rendered and **looked at** in light, dark, and high contrast
-- [ ] Checked at all three densities and at the narrow breakpoint
-- [ ] Focused and selected are visually distinct
+- [ ] Every value came from a role; no literal colour, no `px` type size
+- [ ] The accent is on nothing but what FR-091 reserves it for
+- [ ] Rendered with `shot` and **looked at** in light and dark
+- [ ] Checked at a narrow width
+- [ ] The cursor and the selection are visually distinct
 - [ ] No transition over 100ms; none at all on pane switches
 - [ ] Keyboard-only operation works, focus always visible
-- [ ] `cargo test -p postio-gtk` green, including the CSS parse assertions
+- [ ] `cargo nextest run -p postio-gtk --test focus_suite` green for the
+      cases you touched, and `cargo test -p postio-gtk --lib` for the
+      accent and stylesheet checks

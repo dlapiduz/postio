@@ -1,9 +1,11 @@
-//! The Industry design system, read at build time and emitted as GTK CSS.
+//! The Industry design system, read at build time and emitted for each
+//! frontend.
 //!
-//! This module is deliberately dependency-free (`std` only) because `build.rs`
-//! compiles it directly (`#[path = "src/tokens.rs"] mod tokens;`): the build
-//! script and the test suite run *exactly* the same parser and generator, so
-//! `data/tokens.css` can be checked for drift by a test rather than by eye.
+//! This module is deliberately dependency-free (`std` only) because
+//! `postio-widgets`' `build.rs` compiles it directly (`#[path = …] mod
+//! tokens;`): the build script and the test suite run *exactly* the same
+//! parser and generators, so every generated file can be checked for drift by
+//! a test rather than by eye.
 //!
 //! The pipeline is:
 //!
@@ -12,24 +14,19 @@
 //!            |  parse()
 //!            v
 //!        Tokens                      name -> value, source order preserved
-//!            |  generate()
+//!            |  generate_metrics(), generate_space_rs(), generate_reader(),
+//!            |  generate_swift()
 //!            v
-//! crates/postio-gtk/data/tokens.css  :root { … }  :root.postio-dark { … }  …
+//! postio-widgets/data/metrics.css    the spacing, radii, chip and type metrics
+//! postio-widgets/data/space.rs       the spacing ramp, for code
+//! postio-ui/data/reader-tokens.css   the reading pane's palette
+//! macOS's PostioTokens.swift         the same values, for AppKit
 //! ```
 //!
 //! Nothing here retypes a value from the design system: every colour, length,
 //! radius and font stack in the output is either copied from the parsed token
 //! or computed from one (an alpha tint, a ramp step). Retune the source
 //! `styles.css` and the app follows.
-//!
-//! ## Why classes and not `@media (prefers-color-scheme: dark)`
-//!
-//! GTK does support that media query, but only for the *theme* provider, which
-//! it loads with an explicit `dark`/`hc` variant. In an application-priority
-//! provider the query never matches (verified on GTK 4.22.4). libadwaita does
-//! not tag the widget tree either. So the scheme-dependent blocks below are
-//! keyed off `:root.postio-dark` / `:root.postio-hc`, and `crate::style` keeps
-//! those classes in sync with `AdwStyleManager`.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -81,11 +78,6 @@ const REQUIRED_RAMPS: &[&str] = &[
     "color-accent-800",
     "color-accent-900",
 ];
-
-/// The mono face is Postio's own addition: the Industry system has no
-/// monospace role, but the mail canvas puts counts, key hints and metadata in
-/// IBM Plex Mono. Kept here so it travels with the other font tokens.
-const FONT_MONO: &str = "\"IBM Plex Mono\", monospace";
 
 /// A text chip's fixed vertical metrics, Postio's own like the mono face.
 ///
@@ -177,7 +169,7 @@ impl Tokens {
             if !tokens.values.contains_key(*required) {
                 return err(format!(
                     "the design system no longer defines `--{required}`; \
-                     update crates/postio-gtk/src/tokens.rs to match"
+                     update crates/postio-ui/src/tokens.rs to match"
                 ));
             }
         }
@@ -212,12 +204,6 @@ impl Tokens {
         self.values.insert(name.to_string(), value.to_string());
     }
 
-    /// `--postio-<name>`, the generated variable a raw token lands in.
-    fn var(&self, name: &str) -> Result<String, TokenError> {
-        self.need(name)?;
-        Ok(format!("var(--postio-{name})"))
-    }
-
     /// A token tinted to `percent` opacity, folded to a literal `rgba()`.
     fn tint(&self, name: &str, percent: f32) -> Result<String, TokenError> {
         let rgb = parse_hex(self.need(name)?).ok_or_else(|| {
@@ -232,7 +218,7 @@ impl Tokens {
 /// The sizes Postio sets type at, as roles: `--postio-text-<role>`.
 ///
 /// In `rem` against GTK's 11pt default, so text scaling moves them all. The
-/// canvas uses these eight; anything else in `shell.css` is either a
+/// canvas uses these eight; anything else in a stylesheet is either a
 /// one-off with a reason beside it or drift. Named here, beside the other
 /// tokens, so a stylesheet says `var(--postio-text-body)` rather than
 /// retyping 0.8864rem -- which it had done as 0.8863rem five times.
@@ -255,172 +241,9 @@ pub const TYPE_ROLES: &[(&str, &str)] = &[
     ("title", "1.3636rem"),
 ];
 
-/// Generate `data/tokens.css` from the parsed design system.
-pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
-    let mut out = String::with_capacity(8 * 1024);
-
-    writeln!(out, "/* GENERATED FILE — do not edit by hand.").unwrap();
-    writeln!(out, " *").unwrap();
-    writeln!(out, " * Source : {source}").unwrap();
-    writeln!(
-        out,
-        " * Emitted by: crates/postio-gtk/build.rs via crates/postio-gtk/src/tokens.rs"
-    )
-    .unwrap();
-    writeln!(out, " * Regenerate: cargo build -p postio-gtk").unwrap();
-    writeln!(out, " *").unwrap();
-    writeln!(
-        out,
-        " * Retune the design system's :root block and every value below follows."
-    )
-    .unwrap();
-    writeln!(
-        out,
-        " * The Industry identity is kept — Barlow Condensed / Barlow / IBM Plex Mono,"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        " * the steel accent, hairline dividers, airy rows. Its wireframe chrome is not:"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        " * no blueprint corner registration marks, no transparent line-drawing cards."
-    )
-    .unwrap();
-    writeln!(out, " */\n").unwrap();
-
-    // ── 1. the design system's own tokens, carried through verbatim ────────
-    writeln!(
-        out,
-        "/* ── Industry tokens ─────────────────────────────────────────────────\n\
-         \x20  Straight from the source :root, one `--postio-` prefixed variable each.\n\
-         \x20  Scheme-independent: these are the raw material, not the roles. */"
-    )
-    .unwrap();
-    writeln!(out, ":root {{").unwrap();
-    for name in tokens.names() {
-        let value = tokens.get(name).unwrap_or_default();
-        // The spacing ramp in whole pixels: GTK lays out in them, and the
-        // Rust constants in `space.rs` (generated beside this) are `i32`.
-        match whole_pixels(name, value) {
-            Some(px) => writeln!(out, "  --postio-{name}: {px}px;").unwrap(),
-            None => writeln!(out, "  --postio-{name}: {value};").unwrap(),
-        }
-    }
-    writeln!(
-        out,
-        "\n  /* Postio's own: the Industry system has no monospace role, but the mail\n\
-         \x20    canvas sets counts, key hints and metadata in IBM Plex Mono. */"
-    )
-    .unwrap();
-    writeln!(out, "  --postio-font-mono: {FONT_MONO};").unwrap();
-    writeln!(out, "  --postio-chip-height: {CHIP_HEIGHT};").unwrap();
-    writeln!(out, "  --postio-chip-pad-x: {CHIP_PAD_X};").unwrap();
-    writeln!(out, "  --postio-chip-pad-y: {CHIP_PAD_Y};").unwrap();
-    writeln!(out, "}}\n").unwrap();
-
-    // ── 2. semantic roles + Adwaita named colours, light ───────────────────
-    writeln!(
-        out,
-        "/* ── Roles — light ───────────────────────────────────────────────────\n\
-         \x20  Semantic names the widgets use, then the libadwaita named colours so\n\
-         \x20  stock GTK widgets sit on the Industry ground instead of Adwaita's. */"
-    )
-    .unwrap();
-    write_scheme(&mut out, ":root", &light_roles(tokens)?)?;
-
-    // ── 3. dark ────────────────────────────────────────────────────────────
-    writeln!(
-        out,
-        "/* ── Roles — dark ────────────────────────────────────────────────────\n\
-         \x20  Canvas 3c: the board sits on the neutral deep step, the selected row on\n\
-         \x20  the accent's deep step, steel goes light-on-dark (accent-400 fills,\n\
-         \x20  accent-300 text) and the hairlines LIFT to neutral-700 rather than\n\
-         \x20  darkening. `--accent-color` is left to libadwaita, which derives the\n\
-         \x20  standalone step from `--accent-bg-color` per scheme. */"
-    )
-    .unwrap();
-    write_scheme(&mut out, ":root.postio-dark", &dark_roles(tokens)?)?;
-
-    // ── 4. high contrast ───────────────────────────────────────────────────
-    writeln!(
-        out,
-        "/* ── Roles — high contrast ───────────────────────────────────────────\n\
-         \x20  Only the things that carry meaning at low contrast move: hairlines\n\
-         \x20  gain weight, dimmed text comes back up, accent text drops to a deeper\n\
-         \x20  ramp step. The ground and the identity stay put. */"
-    )
-    .unwrap();
-    write_scheme(&mut out, ":root.postio-hc", &light_hc_roles(tokens)?)?;
-    write_scheme(
-        &mut out,
-        ":root.postio-dark.postio-hc",
-        &dark_hc_roles(tokens)?,
-    )?;
-
-    // ── 5. type roles ──────────────────────────────────────────────────────
-    writeln!(
-        out,
-        "/* ── Type roles ──────────────────────────────────────────────────────\n\
-         \x20  Barlow Condensed headings over Barlow body, IBM Plex Mono for counts,\n\
-         \x20  key hints and metadata. The faces ship in the GResource bundle and are\n\
-         \x20  registered at startup (see `crate::fonts`), so none of this depends on\n\
-         \x20  a system font installation. */"
-    )
-    .unwrap();
-    writeln!(out, ":root {{").unwrap();
-    writeln!(out, "  font-family: var(--postio-font-body);").unwrap();
-    for (role, size) in TYPE_ROLES {
-        writeln!(out, "  --postio-text-{role}: {size};").unwrap();
-    }
-    writeln!(out, "}}\n").unwrap();
-    writeln!(
-        out,
-        ".postio-heading,\n\
-         .postio-kicker {{\n\
-         \x20 font-family: var(--postio-font-heading);\n\
-         \x20 font-weight: var(--postio-font-heading-weight);\n\
-         }}\n"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        ".postio-kicker {{\n\
-         \x20 font-size: 0.6818rem;\n\
-         \x20 letter-spacing: 0.18em;\n\
-         \x20 text-transform: uppercase;\n\
-         \x20 color: var(--postio-faint);\n\
-         }}\n"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        ".postio-mono,\n\
-         .postio-key {{\n\
-         \x20 font-family: var(--postio-font-mono);\n\
-         }}\n"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "/* A key hint: the mnemonic shown on the focused row, never a decoration. */\n\
-         .postio-key {{\n\
-         \x20 color: var(--postio-key-fg);\n\
-         \x20 border: 1px solid var(--postio-key-border);\n\
-         \x20 border-radius: var(--postio-radius-sm);\n\
-         \x20 padding: 1px 4px;\n\
-         }}"
-    )
-    .unwrap();
-
-    Ok(out)
-}
-
 /// The same tokens, as Swift the macOS frontend can compile.
 ///
-/// A third emitter beside [`generate`] and [`generate_reader`], from the same
+/// An emitter beside [`generate_metrics`] and [`generate_reader`], from the same
 /// parsed [`Tokens`] and the same required lists — so retuning the design
 /// system moves both frontends or fails the build for both. A Swift file with
 /// `#5980a6` typed into it would be a copy that is right on the day it is
@@ -428,10 +251,8 @@ pub fn generate(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
 /// worst duplication.
 ///
 /// Colours become `NSColor`, lengths `CGFloat`, font families `String`. What
-/// it does **not** yet emit is a dark variant: the GTK side resolves dark
-/// through a `postio-dark` class in `shell.css` rather than through tokens, so
-/// there is one set of values here to emit. A dark ramp is its own work on
-/// both sides.
+/// it does **not** yet emit is a dark variant: there is one set of values
+/// here to emit, and a dark ramp is its own work.
 pub fn generate_swift(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
     // No separate required-token check: `Tokens::parse` already refuses a
     // design system missing one, so anything that got this far has them.
@@ -625,6 +446,93 @@ fn whole_pixels(name: &str, value: &str) -> Option<i32> {
     Some(length(value)?.round() as i32)
 }
 
+/// Whether a design-system token is a metric -- spacing or a radius -- which
+/// both desktop apps share, rather than a colour, a face or a shadow, which
+/// each app defines for itself (specs/007-postio-focus research R11).
+fn is_metric(name: &str) -> bool {
+    name.starts_with("space-") || name.starts_with("radius-")
+}
+
+/// Generate `postio-widgets/data/metrics.css`: the metrics the desktop app
+/// lays the shared widgets out by -- spacing in whole pixels, radii, chip
+/// sizes and type sizes -- and nothing else.
+///
+/// Colours are the app's own (specs/007-postio-focus research R11): Focus
+/// defines them from libadwaita's named colours.
+pub fn generate_metrics(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
+    let metrics: Vec<(&str, String)> = tokens
+        .names()
+        .filter(|name| is_metric(name))
+        .map(|name| {
+            let value = tokens.get(name).unwrap_or_default();
+            // The spacing ramp in whole pixels: GTK lays out in them, and the
+            // Rust constants in `space.rs` (generated beside this) are `i32`.
+            let value = match whole_pixels(name, value) {
+                Some(px) => format!("{px}px"),
+                None => value.to_owned(),
+            };
+            (name, value)
+        })
+        .collect();
+    for family in ["space-", "radius-"] {
+        if !metrics.iter().any(|(name, _)| name.starts_with(family)) {
+            return Err(TokenError(format!(
+                "the design system has no `{family}*` tokens to generate"
+            )));
+        }
+    }
+    let mut out = String::with_capacity(2 * 1024);
+    writeln!(out, "/* GENERATED FILE — do not edit by hand.").unwrap();
+    writeln!(out, " *").unwrap();
+    writeln!(out, " * Source : {source}").unwrap();
+    writeln!(
+        out,
+        " * Emitted by: crates/postio-widgets/build.rs via postio_ui::tokens"
+    )
+    .unwrap();
+    writeln!(out, " * Regenerate: cargo build -p postio-widgets").unwrap();
+    writeln!(out, " *").unwrap();
+    writeln!(
+        out,
+        " * The metrics the desktop app lays the shared widgets out by: spacing,"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        " * radii, chip sizes and type sizes (specs/007-postio-focus research R11)."
+    )
+    .unwrap();
+    writeln!(
+        out,
+        " * No colour is defined here: the app defines its own, from libadwaita's"
+    )
+    .unwrap();
+    writeln!(out, " * named colours.").unwrap();
+    writeln!(out, " */\n").unwrap();
+    writeln!(out, ":root {{").unwrap();
+    for (name, value) in &metrics {
+        writeln!(out, "  --postio-{name}: {value};").unwrap();
+    }
+    writeln!(
+        out,
+        "\n  /* A text chip's fixed vertical metrics: Postio's own. */"
+    )
+    .unwrap();
+    writeln!(out, "  --postio-chip-height: {CHIP_HEIGHT};").unwrap();
+    writeln!(out, "  --postio-chip-pad-x: {CHIP_PAD_X};").unwrap();
+    writeln!(out, "  --postio-chip-pad-y: {CHIP_PAD_Y};").unwrap();
+    writeln!(
+        out,
+        "\n  /* The sizes Postio sets type at, in `rem` so text scaling moves them. */"
+    )
+    .unwrap();
+    for (role, size) in TYPE_ROLES {
+        writeln!(out, "  --postio-text-{role}: {size};").unwrap();
+    }
+    writeln!(out, "}}").unwrap();
+    Ok(out)
+}
+
 /// The spacing ramp, as `(step, whole pixels)`: `(3, 10)` for `space-3`.
 pub fn space_scale(tokens: &Tokens) -> Vec<(u32, i32)> {
     tokens
@@ -636,7 +544,7 @@ pub fn space_scale(tokens: &Tokens) -> Vec<(u32, i32)> {
         .collect()
 }
 
-/// Generate `postio-gtk/data/space.rs`: the spacing ramp as Rust constants,
+/// Generate `postio-widgets/data/space.rs`: the spacing ramp as Rust constants,
 /// `S1` .. `S8`, so a widget's margin and the stylesheet's padding are one
 /// number by construction.
 pub fn generate_space_rs(tokens: &Tokens, source: &str) -> Result<String, TokenError> {
@@ -652,17 +560,17 @@ pub fn generate_space_rs(tokens: &Tokens, source: &str) -> Result<String, TokenE
     writeln!(out, "// Source     : {source}").unwrap();
     writeln!(
         out,
-        "// Emitted by : crates/postio-gtk/build.rs via postio_ui::tokens"
+        "// Emitted by : crates/postio-widgets/build.rs via postio_ui::tokens"
     )
     .unwrap();
-    writeln!(out, "// Regenerate : cargo build -p postio-gtk").unwrap();
+    writeln!(out, "// Regenerate : cargo build -p postio-widgets").unwrap();
     writeln!(out, "//").unwrap();
     writeln!(
         out,
         "// The design system's spacing ramp in whole pixels, the same numbers"
     )
     .unwrap();
-    writeln!(out, "// `--postio-space-N` carries in tokens.css.").unwrap();
+    writeln!(out, "// `--postio-space-N` carries in metrics.css.").unwrap();
     writeln!(out).unwrap();
     for (step, px) in scale {
         writeln!(out, "/// `--postio-space-{step}`: {px}px.").unwrap();
@@ -675,8 +583,7 @@ pub fn generate_space_rs(tokens: &Tokens, source: &str) -> Result<String, TokenE
 /// `--r-*` custom properties `data/reader.css`'s structural rules reference.
 ///
 /// A `WebView` has its own CSS engine with no notion of the GTK style
-/// context `--postio-*` variables live on (see [`generate`]'s module docs),
-/// so this emits literal values — the same parser and the same tint/ramp
+/// context `--postio-*` variables live on, so this emits literal values — the same parser and the same tint/ramp
 /// math, mapped onto the reader's own, smaller role set. Unlike GTK, WebKit
 /// honours `@media (prefers-color-scheme: dark)` directly, so the reader
 /// needs no `postio-dark` class equivalent.
@@ -688,10 +595,10 @@ pub fn generate_reader(tokens: &Tokens, source: &str) -> Result<String, TokenErr
     writeln!(out, " * Source : {source}").unwrap();
     writeln!(
         out,
-        " * Emitted by: crates/postio-gtk/build.rs via crates/postio-gtk/src/tokens.rs"
+        " * Emitted by: crates/postio-widgets/build.rs via postio_ui::tokens"
     )
     .unwrap();
-    writeln!(out, " * Regenerate: cargo build -p postio-gtk").unwrap();
+    writeln!(out, " * Regenerate: cargo build -p postio-widgets").unwrap();
     writeln!(out, " *").unwrap();
     writeln!(
         out,
@@ -724,8 +631,8 @@ fn reader_light_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenEr
         ("--r-ink-secondary", t.tint("color-text", 80.0)?),
         ("--r-dim", t.tint("color-text", 55.0)?),
         ("--r-hairline", t.need("color-divider")?.to_string()),
-        // High-contrast weight for the body container's edge (#323) — same
-        // step tokens.css's own `--postio-hairline-strong` uses in light.
+        // High-contrast weight for the body container's edge (#323): the
+        // neutral ramp's 400 step.
         (
             "--r-hairline-strong",
             t.need("color-neutral-400")?.to_string(),
@@ -800,370 +707,6 @@ fn write_scheme(
 /// that stays distinguishable at the size these are drawn.
 pub const ACCOUNT_HUES: usize = 8;
 
-/// The generated names, in order. `--postio-account-0` is the accent itself,
-/// so a single-account install sees exactly the colour it sees today.
-const ACCOUNT_HUE_NAMES: [&str; ACCOUNT_HUES] = [
-    "--postio-account-0",
-    "--postio-account-1",
-    "--postio-account-2",
-    "--postio-account-3",
-    "--postio-account-4",
-    "--postio-account-5",
-    "--postio-account-6",
-    "--postio-account-7",
-];
-
-/// The floor this puts under the accent's saturation when rotating it.
-///
-/// Industry's accent is a steel — deliberately desaturated — and eight
-/// rotations of a near-grey are eight near-greys. Lifting saturation to a
-/// floor keeps the hues telling *apart* while leaving lightness alone, which
-/// is what keeps every account's contrast against the row identical to every
-/// other's. Below this they stop being distinguishable at a 20px chip; much
-/// above it and the palette stops looking like this design system.
-const ACCOUNT_SATURATION_FLOOR: f64 = 0.38;
-
-/// The palette, derived from `accent` by rotating hue in equal steps.
-///
-/// Nothing here is a typed-in colour (ARCHITECTURE.md §10): retune the design
-/// system's accent and all eight follow it, keeping its lightness and so its
-/// contrast behaviour. Index 0 is the accent unchanged.
-fn account_hues(
-    t: &Tokens,
-    name: &str,
-    reference: &str,
-) -> Result<Vec<(&'static str, String)>, TokenError> {
-    // The literal the design system holds, not `Tokens::var`'s `var(--…)`
-    // reference: hue rotation needs the colour, and GTK cannot compute one.
-    account_palette(t.need(name)?, reference)
-        .map_err(|_| TokenError(format!("`--{name}` is not a plain hex colour")))
-}
-
-/// [`account_hues`] over a literal, so the derivation is testable without a
-/// whole design system behind it.
-fn account_palette(
-    literal: &str,
-    reference: &str,
-) -> Result<Vec<(&'static str, String)>, TokenError> {
-    let Some((r, g, b)) = parse_hex(literal) else {
-        return err(format!(
-            "{literal:?} is not a plain hex colour, so the account palette \
-             cannot be derived from it"
-        ));
-    };
-    let (h, s, l) = rgb_to_hsl(r, g, b);
-    let saturation = s.max(ACCOUNT_SATURATION_FLOOR);
-
-    Ok(ACCOUNT_HUE_NAMES
-        .iter()
-        .enumerate()
-        .map(|(index, name)| {
-            let value = if index == 0 {
-                reference.to_owned()
-            } else {
-                let turn = 360.0 / ACCOUNT_HUES as f64 * index as f64;
-                let (r, g, b) = hsl_to_rgb((h + turn) % 360.0, saturation, l);
-                format!("#{r:02x}{g:02x}{b:02x}")
-            };
-            (*name, value)
-        })
-        .collect())
-}
-
-fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
-    let (r, g, b) = (r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0);
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let l = (max + min) / 2.0;
-    let delta = max - min;
-    if delta.abs() < f64::EPSILON {
-        return (0.0, 0.0, l);
-    }
-    let s = delta / (1.0 - (2.0 * l - 1.0).abs());
-    let h = if (max - r).abs() < f64::EPSILON {
-        60.0 * (((g - b) / delta) % 6.0)
-    } else if (max - g).abs() < f64::EPSILON {
-        60.0 * ((b - r) / delta + 2.0)
-    } else {
-        60.0 * ((r - g) / delta + 4.0)
-    };
-    ((h + 360.0) % 360.0, s, l)
-}
-
-fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
-    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
-    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
-    let m = l - c / 2.0;
-    let (r, g, b) = match h {
-        h if h < 60.0 => (c, x, 0.0),
-        h if h < 120.0 => (x, c, 0.0),
-        h if h < 180.0 => (0.0, c, x),
-        h if h < 240.0 => (0.0, x, c),
-        h if h < 300.0 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    let to_byte = |v: f64| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u8;
-    (to_byte(r), to_byte(g), to_byte(b))
-}
-
-fn light_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenError> {
-    let ground = t.var("color-bg")?;
-    let surface = t.var("color-surface")?;
-    let ink = t.var("color-text")?;
-    let hairline = t.var("color-divider")?;
-    let accent = t.var("color-accent")?;
-
-    let mut roles: Vec<(&'static str, String)> = vec![
-        ("", "Ground and ink".into()),
-        ("--postio-ground", ground.clone()),
-        ("--postio-surface", surface.clone()),
-        ("--postio-ink", ink.clone()),
-        ("--postio-ink-secondary", t.tint("color-text", 80.0)?),
-        // #829: two floors, not "three shades of grey chosen by eye". `dim`
-        // carries content (the list preview line, the timestamp) and must
-        // clear WCAG 2.2's 4.5:1 text floor (SC 1.4.3); `faint` carries an
-        // affordance (the focused row's key hint, also taught by the cheat
-        // sheet and the palette) and only needs the lower 3:1 UI-component
-        // floor (SC 1.4.11). 55%/45% cleared neither (3.76:1 / 2.81:1
-        // against the row's white background); 64%/51% clear both with a
-        // margin — `tests/contrast.rs` is the floor this is not allowed to
-        // drift back under.
-        ("--postio-dim", t.tint("color-text", 64.0)?),
-        ("--postio-faint", t.tint("color-text", 51.0)?),
-        ("", "Hairlines — the only edge this design draws".into()),
-        ("--postio-hairline", hairline.clone()),
-        ("--postio-hairline-strong", t.var("color-neutral-400")?),
-        ("", "Steel".into()),
-        ("--postio-accent", accent.clone()),
-        ("--postio-accent-fg", ground.clone()),
-        ("--postio-accent-hover", t.var("color-accent-600")?),
-        ("--postio-accent-active", t.var("color-accent-700")?),
-        ("--postio-accent-text", t.var("color-accent-700")?),
-        (
-            "",
-            "Row states — airy rows, a 3px steel edge when selected".into(),
-        ),
-        ("--postio-selected-bg", t.tint("color-accent", 12.0)?),
-        ("--postio-selected-strong-bg", t.tint("color-accent", 14.0)?),
-        ("--postio-selected-border", accent.clone()),
-        ("--postio-selected-fg", ink.clone()),
-        ("--postio-selected-accent-text", t.var("color-accent-800")?),
-        ("--postio-hover-bg", t.tint("color-text", 4.0)?),
-        ("--postio-active-bg", t.tint("color-text", 8.0)?),
-        ("", "Key hints".into()),
-        ("--postio-key-fg", t.var("color-neutral-500")?),
-        ("--postio-key-border", t.var("color-neutral-300")?),
-        ("", "libadwaita named colours".into()),
-        ("--window-bg-color", ground.clone()),
-        ("--window-fg-color", ink.clone()),
-        ("--view-bg-color", ground.clone()),
-        ("--view-fg-color", ink.clone()),
-        ("--headerbar-bg-color", ground.clone()),
-        ("--headerbar-fg-color", ink.clone()),
-        ("--headerbar-border-color", hairline.clone()),
-        ("--headerbar-backdrop-color", surface.clone()),
-        ("--headerbar-shade-color", hairline.clone()),
-        ("--headerbar-darker-shade-color", hairline.clone()),
-        ("--sidebar-bg-color", ground.clone()),
-        ("--sidebar-fg-color", ink.clone()),
-        ("--sidebar-backdrop-color", surface.clone()),
-        ("--sidebar-border-color", hairline.clone()),
-        ("--sidebar-shade-color", hairline.clone()),
-        ("--secondary-sidebar-bg-color", surface.clone()),
-        ("--secondary-sidebar-fg-color", ink.clone()),
-        ("--secondary-sidebar-backdrop-color", surface.clone()),
-        ("--secondary-sidebar-border-color", hairline.clone()),
-        ("--secondary-sidebar-shade-color", hairline.clone()),
-        ("--card-bg-color", surface.clone()),
-        ("--card-fg-color", ink.clone()),
-        ("--card-shade-color", hairline.clone()),
-        ("--dialog-bg-color", surface.clone()),
-        ("--dialog-fg-color", ink.clone()),
-        ("--popover-bg-color", surface.clone()),
-        ("--popover-fg-color", ink.clone()),
-        ("--popover-shade-color", hairline.clone()),
-        ("--thumbnail-bg-color", surface.clone()),
-        ("--thumbnail-fg-color", ink.clone()),
-        ("--overview-bg-color", surface.clone()),
-        ("--overview-fg-color", ink.clone()),
-        ("--shade-color", hairline.clone()),
-        ("--scrollbar-outline-color", ground.clone()),
-        ("--accent-bg-color", accent.clone()),
-        ("--accent-fg-color", ground.clone()),
-    ];
-    roles.push((
-        "",
-        "Per-account identity — a fixed ordered palette, rotated from the accent".into(),
-    ));
-    roles.extend(account_hues(t, "color-accent", &accent)?);
-    Ok(roles)
-}
-
-fn dark_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenError> {
-    let ground = t.var("color-neutral-900")?;
-    let surface = t.var("color-neutral-800")?;
-    let ink = t.var("color-neutral-100")?;
-    let hairline = t.var("color-neutral-700")?;
-    let accent = t.var("color-accent-400")?;
-
-    let mut roles: Vec<(&'static str, String)> = vec![
-        ("", "Ground and ink".into()),
-        ("--postio-ground", ground.clone()),
-        ("--postio-surface", surface.clone()),
-        ("--postio-ink", ink.clone()),
-        ("--postio-ink-secondary", t.var("color-neutral-200")?),
-        ("--postio-dim", t.var("color-neutral-400")?),
-        ("--postio-faint", t.var("color-neutral-500")?),
-        ("", "Hairlines lift instead of darkening".into()),
-        ("--postio-hairline", hairline.clone()),
-        ("--postio-hairline-strong", t.var("color-neutral-600")?),
-        ("", "Steel, light-on-dark".into()),
-        ("--postio-accent", accent.clone()),
-        ("--postio-accent-fg", ground.clone()),
-        ("--postio-accent-hover", t.var("color-accent-300")?),
-        ("--postio-accent-active", t.var("color-accent-500")?),
-        ("--postio-accent-text", t.var("color-accent-300")?),
-        (
-            "",
-            "Row states — the selected row takes the accent's deep step".into(),
-        ),
-        ("--postio-selected-bg", t.var("color-accent-900")?),
-        ("--postio-selected-strong-bg", t.var("color-accent-900")?),
-        ("--postio-selected-border", accent.clone()),
-        ("--postio-selected-fg", ink.clone()),
-        ("--postio-selected-accent-text", t.var("color-accent-300")?),
-        ("--postio-hover-bg", t.tint("color-neutral-100", 6.0)?),
-        ("--postio-active-bg", t.tint("color-neutral-100", 10.0)?),
-        ("", "Key hints".into()),
-        ("--postio-key-fg", t.var("color-neutral-400")?),
-        ("--postio-key-border", t.var("color-neutral-600")?),
-        (
-            "",
-            "Elevation on a dark ground is ambient darkness, not ink tint".into(),
-        ),
-        ("--postio-shadow-sm", dark_shadow(t, "shadow-sm")?),
-        ("--postio-shadow-md", dark_shadow(t, "shadow-md")?),
-        ("--postio-shadow-lg", dark_shadow(t, "shadow-lg")?),
-        ("", "libadwaita named colours".into()),
-        ("--window-bg-color", ground.clone()),
-        ("--window-fg-color", ink.clone()),
-        ("--view-bg-color", ground.clone()),
-        ("--view-fg-color", ink.clone()),
-        ("--headerbar-bg-color", ground.clone()),
-        ("--headerbar-fg-color", ink.clone()),
-        ("--headerbar-border-color", hairline.clone()),
-        ("--headerbar-backdrop-color", ground.clone()),
-        ("--headerbar-shade-color", hairline.clone()),
-        ("--headerbar-darker-shade-color", hairline.clone()),
-        ("--sidebar-bg-color", ground.clone()),
-        ("--sidebar-fg-color", ink.clone()),
-        ("--sidebar-backdrop-color", ground.clone()),
-        ("--sidebar-border-color", hairline.clone()),
-        ("--sidebar-shade-color", hairline.clone()),
-        ("--secondary-sidebar-bg-color", surface.clone()),
-        ("--secondary-sidebar-fg-color", ink.clone()),
-        ("--secondary-sidebar-backdrop-color", ground.clone()),
-        ("--secondary-sidebar-border-color", hairline.clone()),
-        ("--secondary-sidebar-shade-color", hairline.clone()),
-        ("--card-bg-color", surface.clone()),
-        ("--card-fg-color", ink.clone()),
-        ("--card-shade-color", hairline.clone()),
-        ("--dialog-bg-color", surface.clone()),
-        ("--dialog-fg-color", ink.clone()),
-        ("--popover-bg-color", surface.clone()),
-        ("--popover-fg-color", ink.clone()),
-        ("--popover-shade-color", hairline.clone()),
-        ("--thumbnail-bg-color", surface.clone()),
-        ("--thumbnail-fg-color", ink.clone()),
-        ("--overview-bg-color", surface.clone()),
-        ("--overview-fg-color", ink.clone()),
-        ("--shade-color", hairline.clone()),
-        ("--scrollbar-outline-color", ground.clone()),
-        ("--accent-bg-color", accent.clone()),
-        ("--accent-fg-color", ground.clone()),
-    ];
-    roles.push((
-        "",
-        "Per-account identity — rotated from the dark scheme's own accent step".into(),
-    ));
-    roles.extend(account_hues(t, "color-accent-400", &accent)?);
-    Ok(roles)
-}
-
-fn light_hc_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenError> {
-    Ok(vec![
-        ("--postio-hairline", t.var("color-neutral-400")?),
-        ("--postio-hairline-strong", t.var("color-neutral-600")?),
-        ("--postio-dim", t.tint("color-text", 90.0)?),
-        ("--postio-faint", t.tint("color-text", 80.0)?),
-        ("--postio-accent-text", t.var("color-accent-800")?),
-        ("--postio-selected-bg", t.tint("color-accent", 20.0)?),
-        ("--postio-selected-strong-bg", t.tint("color-accent", 24.0)?),
-        ("--postio-selected-accent-text", t.var("color-accent-900")?),
-        ("--postio-key-fg", t.var("color-neutral-700")?),
-        ("--postio-key-border", t.var("color-neutral-500")?),
-        ("--headerbar-border-color", t.var("color-neutral-400")?),
-        ("--sidebar-border-color", t.var("color-neutral-400")?),
-        (
-            "--secondary-sidebar-border-color",
-            t.var("color-neutral-400")?,
-        ),
-        ("--card-shade-color", t.var("color-neutral-400")?),
-        ("--shade-color", t.var("color-neutral-400")?),
-        ("--accent-bg-color", t.var("color-accent-700")?),
-    ])
-}
-
-fn dark_hc_roles(t: &Tokens) -> Result<Vec<(&'static str, String)>, TokenError> {
-    Ok(vec![
-        ("--postio-hairline", t.var("color-neutral-500")?),
-        ("--postio-hairline-strong", t.var("color-neutral-400")?),
-        ("--postio-dim", t.var("color-neutral-200")?),
-        ("--postio-faint", t.var("color-neutral-300")?),
-        ("--postio-accent-text", t.var("color-accent-200")?),
-        ("--postio-selected-bg", t.var("color-accent-800")?),
-        ("--postio-selected-strong-bg", t.var("color-accent-800")?),
-        ("--postio-selected-accent-text", t.var("color-accent-200")?),
-        ("--postio-key-fg", t.var("color-neutral-200")?),
-        ("--postio-key-border", t.var("color-neutral-400")?),
-        ("--headerbar-border-color", t.var("color-neutral-500")?),
-        ("--sidebar-border-color", t.var("color-neutral-500")?),
-        (
-            "--secondary-sidebar-border-color",
-            t.var("color-neutral-500")?,
-        ),
-        ("--card-shade-color", t.var("color-neutral-500")?),
-        ("--shade-color", t.var("color-neutral-500")?),
-        ("--accent-bg-color", t.var("color-accent-300")?),
-    ])
-}
-
-/// The source shadows are ink-tinted for a paper ground. On a dark ground the
-/// design system calls for ambient darkness instead, so the same geometry is
-/// re-tinted with the neutral deep step at a heavier alpha.
-fn dark_shadow(t: &Tokens, name: &str) -> Result<String, TokenError> {
-    let value = t.need(name)?.to_string();
-    let deep = parse_hex(t.need("color-neutral-900")?)
-        .ok_or_else(|| TokenError("`--color-neutral-900` is not a hex colour".into()))?;
-    // The normalised token looks like `0 3px 10px rgba(r, g, b, a)`.
-    let Some(open) = value.find("rgba(") else {
-        return err(format!("`--{name}` has no rgba() colour to re-tint"));
-    };
-    let Some(close) = value[open..].find(')') else {
-        return err(format!("`--{name}` has an unterminated rgba()"));
-    };
-    let inner = &value[open + 5..open + close];
-    let alpha: f32 = match inner.rsplit(',').next().map(|a| a.trim().parse()) {
-        Some(Ok(a)) => a,
-        _ => return err(format!("`--{name}` has no readable alpha")),
-    };
-    Ok(format!(
-        "{}{}",
-        &value[..open],
-        rgba(deep, (alpha * 2.2).min(0.75))
-    ))
-}
-
 // ── value normalisation ───────────────────────────────────────────────────
 
 fn strip_comments(css: &str) -> String {
@@ -1226,7 +769,7 @@ fn normalise_value(value: &str) -> Result<String, TokenError> {
 ///
 /// GTK 4.16+ parses `color-mix()` itself, but folding it here keeps the
 /// generated sheet free of anything version-dependent and makes the values
-/// readable when someone opens `tokens.css` to see what a token became.
+/// readable when someone opens a generated sheet to see what a token became.
 fn fold_color_mix(value: &str) -> Result<String, TokenError> {
     let mut out = String::with_capacity(value.len());
     let mut rest = value;
@@ -1416,53 +959,6 @@ mod tests {
     #[test]
     fn expands_three_digit_hex() {
         assert_eq!(parse_hex("#abc"), Some((0xaa, 0xbb, 0xcc)));
-    }
-    #[test]
-    fn the_account_palette_is_derived_rather_than_typed() {
-        // ARCHITECTURE.md §10: no colour is retyped. Every hue but the first
-        // is computed from the accent, so retuning the design system moves
-        // all eight.
-        let accent = "#4f6fb0";
-        let hues = account_palette(accent, "var(--postio-color-accent)").expect("a palette");
-
-        assert_eq!(hues.len(), ACCOUNT_HUES);
-        assert_eq!(
-            hues[0].1, "var(--postio-color-accent)",
-            "account 0 is the accent itself, so one account looks exactly as \
-             it does today"
-        );
-
-        // Uniform lightness is the property that matters: it is what makes
-        // every account's contrast against a row identical, so no account is
-        // harder to read than another.
-        let (_, _, reference) = {
-            let (r, g, b) = parse_hex(accent).unwrap();
-            rgb_to_hsl(r, g, b)
-        };
-        for (name, value) in hues.iter().skip(1) {
-            let (r, g, b) = parse_hex(value).unwrap_or_else(|| panic!("{name} = {value:?}"));
-            let (_, _, lightness) = rgb_to_hsl(r, g, b);
-            assert!(
-                (lightness - reference).abs() < 0.02,
-                "{name} sits at lightness {lightness:.3} against the accent's \
-                 {reference:.3}, so it will not read the same against a row"
-            );
-        }
-
-        // And they are actually different colours.
-        let distinct: std::collections::BTreeSet<&str> =
-            hues.iter().map(|(_, value)| value.as_str()).collect();
-        assert_eq!(distinct.len(), ACCOUNT_HUES, "two accounts share a hue");
-    }
-
-    #[test]
-    fn hsl_round_trips_a_colour() {
-        for hex in ["#4f6fb0", "#1d1f20", "#f2f2f3", "#b04f68"] {
-            let (r, g, b) = parse_hex(hex).unwrap();
-            let (h, s, l) = rgb_to_hsl(r, g, b);
-            let (r2, g2, b2) = hsl_to_rgb(h, s, l);
-            assert_eq!((r, g, b), (r2, g2, b2), "{hex} did not survive HSL");
-        }
     }
 
     #[test]

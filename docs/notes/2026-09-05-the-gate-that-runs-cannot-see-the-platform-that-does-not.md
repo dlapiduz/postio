@@ -90,7 +90,7 @@ Swift tests, because nothing in it constructs an `Engine` -- everything
 assertable was deliberately factored into pure types (`MenuPlan`,
 `Announcements`, `PaletteRow`, `KeyEvent`) so it could be tested without a
 session. That factoring is right and it has a blind spot exactly the size of
-the composition root, which is the same thing `postio-app`'s `app_suite`
+the composition root, which is the same thing the desktop app's `focus_suite`
 exists for and the macOS side does not have yet. Until it does, launching the
 bundle and reading `sample` is the check -- and `sample` is very good at this:
 one command named the blocked call, its caller, and the SwiftUI entry point

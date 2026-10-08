@@ -1,3 +1,7 @@
-# The screen `inbox-narrow`, carried over from the old screen sweep's table (FR-030).
+# The inbox in a narrow window.
+#
+# Focus's design references are never committed
+# (specs/007-postio-focus/screens.md records each one).
+apps   = ["focus"]
 source = { kind = "design", ref = "none" }
-vary = { width = ["narrow"] }
+vary   = { width = ["narrow"] }

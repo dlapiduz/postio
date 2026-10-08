@@ -50,6 +50,10 @@ pub enum FailureReason {
     /// credential is how an account gets locked; `postio-sync`'s blocked
     /// link holds until the user acts.
     Auth,
+    /// The keyring holds no password for the account, so nothing reached the
+    /// server. Like [`Auth`](Self::Auth) the user supplies one; unlike it,
+    /// nothing was refused.
+    NoPassword,
     /// The network path to the server is broken in a way backoff has given
     /// up on. Recovers on its own when the path does; nothing for the user
     /// to fix in Postio. (Ordinary transient trouble stays
@@ -139,6 +143,14 @@ pub enum Event {
         /// The message whose body is now available.
         message: MessageId,
     },
+    /// The rows Focus's inbox surfaces among its conversations changed: a
+    /// digest was delivered or archived, or a reminder fired or stopped
+    /// standing (spec 007). Read them again with `surfaced()`.
+    ///
+    /// It names no account, as [`Event::SearchResults`] names none: Focus's
+    /// inbox is every account's at once, and a digest can hold mail from
+    /// several.
+    SurfacedChanged,
 
     // -- View ------------------------------------------------------------
     /// The selection changed, by keyboard or pointer.
@@ -285,6 +297,13 @@ pub enum Event {
     Error {
         /// The failure, phrased for the user. Never contains a secret.
         message: String,
+        /// The account the failure belongs to, when it belongs to one: a
+        /// sync engine's own words about its account's connection do, a
+        /// command's refusal does not. Frontends that show one status line
+        /// may ignore it; one showing several accounts at once files the
+        /// message under it (T260).
+        #[serde(default)]
+        account: Option<AccountId>,
     },
 
     /// A tracked invocation ended, whichever way it ended.

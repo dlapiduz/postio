@@ -1,8 +1,20 @@
-# The screen `search`, carried over from the old screen sweep's table (FR-030).
-source = { kind = "design", ref = "05-search" }
-design = "05-search"
+# The command bar after a search has run: the hits under the field (screen 07).
+#
+# Focus's design references are never committed
+# (specs/007-postio-focus/screens.md records each one).
+apps   = ["focus"]
+source = { kind = "design", ref = "focus 07" }
+
 [[step]]
 command = "search"
+check   = { app.focus.bar.hints = 3 }
+expect  = "The empty bar is not a blank band: under the saved searches it says what typing does -- search mail, `>` for commands, `@` for people -- in the rows' own style."
+
 [[step]]
-type = "harbour"
-settle = { until = { rows.count = { changed = true } } }
+type    = "harbour"
+settle  = { until = { app.focus.bar.messages = { changed = true } } }
+
+[[step]]
+key     = "Return"
+check   = { app.focus.bar.highlighted = "message" }
+expect  = "Return takes the highlight to the first hit, not to the sort row; each hit shows the message's first line."

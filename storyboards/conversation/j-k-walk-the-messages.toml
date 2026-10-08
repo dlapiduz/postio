@@ -1,39 +1,44 @@
-# J and K walk the messages of an open conversation, and Reply answers the
-# one they stopped on (#1386, #1365).
+# The thread's messages are walked from the keyboard, and Reply answers the
+# one shown (#1386, #1365, #1748).
 #
-# The defect: per-message focus and per-message reply did nothing in the
-# one-document pane. The seven-message long-thread opens on its newest
-# message; K must step back through the thread and `e` must reply to the
-# message focused, not always the newest.
+# The defect: per-message focus and per-message reply did nothing, so a
+# long thread could only be read from its newest message, and `e` always
+# answered that one. In the classic app `J`/`K` never reached the
+# conversation (#1748).
 #
-# Open: in the running app the keyboard never reaches the conversation's
-# own context. `K` is unbound in the list context and dropped from the
-# reader context, so the focus stays on message 7 and the pane never moves.
-source = { kind = "issue", ref = "#1748" }
-proof  = "open"
+# Re-expressed for Focus (T265): Focus shows one message at a time and steps
+# the thread with `[` and `]` (C2, FR-037), so the open message names the
+# message it shows. The seven-message long-thread opens on its newest,
+# message 7; `[` steps back, `]` forward, and `e` replies to the one shown.
+apps   = ["focus"]
+source = { kind = "issue", ref = "#1386" }
+proof  = "pinned"
 seed   = "long-thread"
 
 [[step]]
+command = "next_message"
+
+[[step]]
 id      = "open"
-wait    = { until = { reading.id = "7" } }
-check   = { reading.focused = 6 }
+command = "open_message"
+check   = { view = "reader", keyboard.region = "reader", reading.id = "7" }
 expect  = "The thread opens on its newest message."
 
 [[step]]
 command = "prev_in_conversation"
-check   = { reading.focused = 5 }
-expect  = "The focus steps back one message and the pane scrolls it into view."
+check   = { reading.id = "6" }
+expect  = "The open message steps back one, to the one before it in the thread."
 
 [[step]]
 command = "prev_in_conversation"
-check   = { reading.focused = 4 }
+check   = { reading.id = "5" }
 
 [[step]]
 command = "next_in_conversation"
-check   = { reading.focused = 5 }
-expect  = "J steps forward again."
+check   = { reading.id = "6" }
+expect  = "`]` steps forward again."
 
 [[step]]
 command = "reply"
 check   = { composer.open = true, keyboard.field = "body" }
-expect  = "The composer opens as a reply to the message the focus is on (message 6, from Test User), not the newest, and the caret is in the body."
+expect  = "The composer opens as a reply to the message shown (message 6), not the newest, and the caret is in the body. Message 6 was sent by the person, so the reply is addressed to the people it was written to rather than left empty."

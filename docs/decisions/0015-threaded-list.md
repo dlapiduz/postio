@@ -1,9 +1,10 @@
 # ADR 0015 — One row per thread, and the conversation pane
 
-- **Status:** Accepted — **GO** (2026-08-25), **Q1 implementation and Q4
-  revised 2026-08-26**, **Q4's column superseded 2026-09-03** (see §Q4),
-  **focus and collapsing superseded 2026-09-09 for the one-document pane**
-  (see §Superseded by the conversation reading pane)
+- **Status:** Accepted (2026-08-25). Built: one row per thread, in every
+  frontend. The terminal's and macOS's conversation pane draws a thread as
+  one document (ADR 0032), opening on the newest message with every body
+  shown; the desktop app shows one message at a time instead (spec 007
+  FR-037, ADR 0032). The classic app's pane went with it (ADR 0043)
 - **Date:** 2026-08-25
 - **Issue:** [#134](https://github.com/dlapiduz/postio/issues/134), decided by
   the maintainer: a single row per thread in the list, and the reading pane
@@ -18,8 +19,7 @@
   is store-side — a windowed list over `threads` joined to its
   representative message — never a view-side grouping. A thread row carries
   the thread's newest activity and its aggregate state; every message verb
-  on a thread row acts on the thread. The conversation pane shows all
-  messages with read ones collapsed, and the first unread in focus.
+  on a thread row acts on the thread.
 
 > **Revised, and what changed.** Building Q1 and Q2 (#306, #307) turned up one
 > thing the ADR got wrong, and building Q4 (#308) needed answers it had not

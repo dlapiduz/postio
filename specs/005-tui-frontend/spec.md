@@ -65,11 +65,12 @@ crate, and moving it there is in scope.
 ### User Story 1 - Triage the inbox from a terminal (Priority: P1)
 
 Someone with an account already synced opens Postio in a terminal. Within half
-a second they see the sidebar, the message list for their inbox and a reading
-pane. They move through the list with `j`/`k`, read a conversation, archive it
-with `a`, undo with `u`, flag, mark read or unread, delete, move to a folder,
-and switch folders or accounts — every key the same as the desktop app,
-because both read the same bindings.
+a second they see Focus's inbox (spec 007 C29,
+[terminal.md](../007-postio-focus/terminal.md)). They move through the list
+with `j`/`k`, open a message over it with `Enter`, archive with `a`, undo
+with `ctrl+z`, flag, mark read or unread, delete, move to a folder, and go
+to other folders with `g o` or the command bar — every key the same as the
+desktop app, because both read the same bindings.
 
 **Why this priority**: This is the whole of the daily loop, and the smallest
 thing that is worth opening. Without it nothing else in the frontend matters.
@@ -83,8 +84,8 @@ the store holds the same outcome the desktop app would have written.
 **Acceptance Scenarios**:
 
 1. **Given** a synced store and no network, **When** the terminal frontend
-   starts, **Then** the sidebar, the inbox list and the reader are drawn and
-   navigable without waiting on any server.
+   starts, **Then** the inbox is drawn and navigable without waiting on any
+   server.
 2. **Given** a conversation under the cursor, **When** the user presses the
    archive key, **Then** it leaves the list immediately, a notice offers undo,
    and the remote effect is queued rather than awaited.
@@ -143,7 +144,7 @@ image, structure (lists, quotes, links) preserved, and quoted history folded.
 ### User Story 3 - Write mail in Markdown (Priority: P1)
 
 The user presses `e` to reply (or the compose, reply-all and forward keys),
-and the composer takes over the reading pane, as it does on the desktop. They
+and the composer opens in the frame over the list, as it does on the desktop. They
 write Markdown. Recipients autocomplete from contacts; Cc and Bcc appear on
 demand; the identity is pickable; the draft autosaves. Files arrive the way
 they do in any modern terminal app: dragged from the file manager onto the
@@ -164,7 +165,7 @@ uses, with no remote reference in it.
 **Acceptance Scenarios**:
 
 1. **Given** a message open, **When** the user presses reply, **Then** the
-   composer opens in the reading pane with recipients and subject filled and
+   composer opens in its frame with recipients and subject filled and
    the original quoted, and `Esc` returns to exactly where they were.
 2. **Given** a body using bold, italic, lists, links, quotes and code, **When**
    it is sent, **Then** recipients see that formatting in an HTML client and
@@ -197,21 +198,21 @@ uses, with no remote reference in it.
 
 ---
 
-### User Story 4 - Search, palette and jump (Priority: P2)
+### User Story 4 - Search, commands and jump (Priority: P2)
 
-`/` opens search and results appear while typing, in the same query language
-as everywhere else; saved searches sit in the sidebar. `Ctrl+K` opens the
-command palette listing every command in the registry; `?` shows the cheat
-sheet. Both are generated from the registry, so nothing the desktop app can do
-is missing from them.
+`/` opens the command bar and results appear while typing, in the same query
+language as everywhere else; saved searches are pinned in the bar on
+`alt+1`–`alt+4`. `Ctrl+K` opens it on the commands; `?` shows the key map.
+Both are generated from the registry, so nothing the terminal is offered is
+missing from them.
 
 **Why this priority**: Search is one of the three things Postio must be best
-at, and the palette is how every command stays discoverable. It follows P1
+at, and the command bar is how every command stays discoverable. It follows P1
 because triage and reading are usable without it for a first session.
 
 **Independent Test**: Type queries from the search corpus and assert on the
-list drawn; enumerate the palette and assert it lists every command the
-registry holds, with the same key the desktop app shows.
+list drawn; enumerate the command bar and assert it lists every command the
+terminal is offered, with the same key the desktop app shows.
 
 **Acceptance Scenarios**:
 
@@ -219,21 +220,20 @@ registry holds, with the same key the desktop app shows.
    character by character, **Then** results update on every keystroke, and
    half-typed states like `is:` never show an error.
 2. **Given** a command added to the registry, **When** the terminal frontend
-   is built, **Then** it appears in its palette and cheat sheet with no change
-   to terminal-frontend code.
+   is built, **Then** it appears in its command bar and key map with no
+   change to terminal-frontend code.
 3. **Given** a saved search in `config.toml`, **When** the frontend starts,
-   **Then** it appears in the sidebar and returns the same results as in the
-   desktop app.
+   **Then** it is pinned in the command bar and returns the same results as
+   in the desktop app.
 
 ---
 
 ### User Story 5 - Everything reachable by mouse too (Priority: P2)
 
-Every surface responds to the mouse: click a sidebar row, a list row or a
-button to activate it; scroll the list and the reader with the wheel;
+Every surface responds to the mouse: click a list row, a strip item or a
+button to activate it; scroll the list and the open message with the wheel;
 shift-click and ctrl-click to extend or toggle the selection; click a link to
-see and open it; drag a pane divider to resize; click to place the cursor in
-the composer.
+see and open it; click to place the cursor in the composer.
 
 **Why this priority**: Requested by name, and the constitution says the mouse
 must remain excellent. It is P2 because the keyboard alone already makes every
@@ -323,10 +323,11 @@ first sync.
 
 ### Edge Cases
 
-- **Terminal too small**: below a minimum size the frontend collapses panes
-  the way the desktop layout does by width (ADR 0024) — width decides what is
-  shown, never what the user asked for — and below an absolute minimum it
-  says so rather than drawing garbage.
+- **Terminal too small**: as the terminal narrows, a row's first line and
+  then its labels give way, and the reading pane falls back to the frame over
+  the list (spec 007 terminal.md) — width decides what is shown, never what
+  the user asked for — and below 50×12 it says so rather than drawing
+  garbage.
 - **Resize mid-action**: resizing while composing or with a selection loses
   neither.
 - **Colour**: works on 16-colour, 256-colour and true-colour terminals, and
@@ -357,8 +358,9 @@ first sync.
   carries on the operation queue where it stopped; nothing queued is lost.
 - **SSH with no browser**: every "open" action (link, attachment, OAuth
   consent) degrades to showing the target so the user can act elsewhere.
-- **Suspend and resume** (`Ctrl+Z`, then `fg`), and handing the terminal to
-  `$EDITOR`, restore the screen exactly.
+- **Handing the terminal to `$EDITOR`** restores the screen exactly. There is
+  no suspend: `Ctrl+Z` is undo, as in every Postio app (specs/007-postio-focus).
+  This case used to promise suspend and resume, which was never built.
 
 ## Requirements *(mandatory)*
 
@@ -366,20 +368,21 @@ first sync.
 
 **Parity**
 
-- **FR-001**: The terminal frontend MUST offer every command in the command
-  registry, with the same command ids, the same default keys, and the same
-  `[keys]` overrides as the desktop app. A command reachable in the desktop app
-  and not in the terminal frontend is a defect, and a test MUST enumerate the
-  registry to prove there is none.
+- **FR-001**: The terminal frontend MUST offer every command the registry
+  offers it — Focus's, less those that need pixels (spec 007 FR-187) — with
+  the same command ids, the same default keys, and the same `[keys]`
+  overrides as the desktop app. An offered command with no key or handler is
+  a defect, and a test MUST enumerate the registry to prove there is none.
 - **FR-002**: The terminal frontend MUST cover the v1 surface of
   `docs/PRODUCT.md` §23: multiple accounts and the unified inbox; folders,
-  views (Flagged, Snoozed, Outbox) and saved searches in the sidebar;
+  views (Flagged, Snoozed, Outbox) and saved searches through `g o`, `in:`
+  and the command bar;
   threads; read/unread, archive, delete, flag, move, label, snooze; reading
   with attachments, quote folding, per-sender remote-image permission and
   one-click unsubscribe on request; compose, reply, reply-all, forward,
   attachments, drafts, signatures, identities, scheduled send; recipient
-  autocomplete from contacts; search with operators; the command palette and
-  cheat sheet; background sync; offline use; undo; notifications.
+  autocomplete from contacts; search with operators; the command bar and
+  key map; background sync; offline use; undo; notifications.
 - **FR-003**: Where a desktop capability has no terminal equivalent (a
   pop-out composer window, rendered images), the terminal frontend MUST
   provide the nearest equivalent listed in this spec (a composer tab/split,
@@ -513,7 +516,7 @@ first sync.
 ### Key Entities
 
 - **Terminal session**: one running terminal frontend — its screen size,
-  colour capability, mouse support, and the panes it is showing. Holds no mail
+  colour capability, mouse support, and what is open over the list. Holds no mail
   of its own; everything it shows is read from the shared store.
 - **Rendered message**: a message as terminal text — the Markdown-styled,
   sanitised, escape-neutralised form of what the desktop reader shows, with
@@ -528,9 +531,9 @@ first sync.
 
 ### Measurable Outcomes
 
-- **SC-001**: Every command in the registry is reachable in the terminal
-  frontend by key, palette and (where it has a place on screen) mouse — 100%,
-  proven by enumeration.
+- **SC-001**: Every command the registry offers the terminal is reachable
+  there by key, command bar and (where it has a place on screen) mouse —
+  100%, proven by enumeration.
 - **SC-002**: A user can open Postio in a terminal, read the newest
   conversation, reply to it and archive it in under 15 seconds without leaving
   the keyboard, with the network absent.
