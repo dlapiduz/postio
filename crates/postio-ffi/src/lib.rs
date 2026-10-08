@@ -49,6 +49,7 @@ mod logging;
 mod mailbox;
 mod notify;
 mod palette;
+mod panes;
 mod parts;
 mod provisioning;
 mod rail;
@@ -78,7 +79,7 @@ pub use cost::{
 pub use dwell::{DwellArmFfi, dwell_on_cursor};
 pub use event::{ConnectionStateFfi, FailureReasonFfi, NoticeKindFfi, UiEvent};
 pub use finder::{FinderAnswerFfi, FinderHitFfi};
-pub use focus::next_pane;
+pub use focus::FocusCountsFfi;
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use list::{RowFfi, ScopeFfi};
 pub use logging::start_logging;
@@ -88,6 +89,7 @@ pub use notify::{
     decide_notification,
 };
 pub use palette::{CheatRowFfi, CheatSectionFfi, PaletteEntryFfi};
+pub use panes::next_pane;
 pub use parts::{
     MessagePartsFfi, PartFfi, PartsError, SavedPartsFfi, part_cursor_after, part_held_back_note,
     part_note,

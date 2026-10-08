@@ -401,6 +401,28 @@ fn config_source(_options: &SessionOptions) -> ConfigSource {
     ConfigSource::Installed
 }
 
+/// Switch Focus's engine on in `host`, as `[focus]` says (specs/009-focus-macos
+/// R8): the filing pass, the markers, digests and reminders, which run only
+/// once a frontend asks. The same setup the GTK app and the terminal build
+/// (`postio_tui::run::engage_focus`), at the same moment: after the host
+/// starts and before the first sync, so the filing pass is in every engine
+/// before its first pass. The Mac app's syncing starts later, on
+/// `start_syncing`.
+fn engage_focus(
+    host: &Host,
+    focus: &postio_config::FocusConfig,
+    source: &ConfigSource,
+) -> postio_host::FocusHandle {
+    let path = match source {
+        ConfigSource::Installed => postio_config::paths::config_path().ok(),
+        ConfigSource::Document(_) => None,
+    };
+    host.enable_focus(postio_host::FocusSetup::from_config(
+        focus.clone(),
+        path.as_deref(),
+    ))
+}
+
 /// The resolver these bindings make, for the running platform.
 ///
 /// One place, called from both construction paths, because an in-memory
@@ -833,6 +855,10 @@ pub struct Session {
     /// runtime -- unless the caller supplied its own, which is not ours to
     /// stop.
     _host: Host,
+    /// Focus's engine -- filing, markers, digests, reminders -- switched on
+    /// for this host (specs/009-focus-macos R8). Held for as long as the
+    /// session is, as the GTK app and the terminal hold theirs.
+    _focus: postio_host::FocusHandle,
     /// The in-memory blob directory, removed when the session is dropped.
     #[cfg(feature = "testing")]
     _scratch: Option<tempfile::TempDir>,
@@ -2258,6 +2284,7 @@ impl Session {
                 events,
                 link: Mutex::new(Some(link)),
                 wired: host.wired(),
+                _focus: engage_focus(&host, &config.focus, &source),
                 _host: host,
                 _scratch: Some(scratch),
             }));
@@ -2297,6 +2324,7 @@ impl Session {
         let keys = config.keys;
         let sync_config = config.sync;
         let ui_config = config.ui;
+        let focus_config = config.focus;
 
         let host = serve(database, blobs, caller, |wiring| {
             with_onboarding(wiring, seams)
@@ -2352,6 +2380,7 @@ impl Session {
             events,
             link: Mutex::new(Some(link)),
             wired: host.wired(),
+            _focus: engage_focus(&host, &focus_config, &source),
             _host: host,
             #[cfg(feature = "testing")]
             _scratch: None,
@@ -4353,6 +4382,15 @@ impl Session {
 
     /// What this session can currently do, as the registry evaluates it.
     ///
+    /// The host's client, while this session is open.
+    pub(crate) fn client(&self) -> Option<postio_client::Client> {
+        self.link
+            .lock()
+            .expect("link lock")
+            .as_ref()
+            .map(|link| link.client.clone())
+    }
+
     /// `store_open` is unconditionally true here, and that is a fact about
     /// this type rather than an assumption: a `Session` is constructed *over*
     /// an open store, so there is no interval in which one does not exist.
@@ -6360,6 +6398,6 @@ async fn unsubscribe_offer_for(
     Some((message.account_id, offer))
 }
 
-fn blocking<T>(future: impl std::future::Future<Output = T>) -> T {
+pub(crate) fn blocking<T>(future: impl std::future::Future<Output = T>) -> T {
     postio_session::blocking::now(future)
 }

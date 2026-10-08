@@ -27,6 +27,7 @@ mod dwell;
 mod facts;
 mod finder;
 mod first_run;
+mod focus;
 mod host;
 mod keys;
 mod landing;
