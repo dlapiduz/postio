@@ -149,10 +149,9 @@ pub(crate) fn render_unless(
     Some(document)
 }
 
-/// The least a paper body is scaled to fit its column (the handoff's
-/// SPEC.md section 3): below it, text would be too small to read, so the
-/// sheet stays at this scale and the view scrolls it sideways instead.
-pub const PAPER_FIT_FLOOR: f64 = 0.85;
+/// The least a paper body is scaled to fit its column: postio-body's, so
+/// the Mac's web view fits paper to the same floor.
+pub const PAPER_FIT_FLOOR: f64 = postio_body::treatment::PAPER_FIT_FLOOR;
 
 /// The scale that fits every paper body in the document into its own box,
 /// at least [`PAPER_FIT_FLOOR`]; 1.0 when each already fits, or when nothing

@@ -45,6 +45,7 @@ mod event;
 mod finder;
 mod focus;
 mod focus_list;
+mod focus_reader;
 mod keys;
 mod list;
 mod logging;
@@ -83,6 +84,7 @@ pub use focus_list::{
     FocusRowActionFfi, FocusRowFfi, FocusRowKindFfi, FocusScopeFfi, LabelPillFfi, MarkerLineFfi,
     ReaderVerbFfi, SurfaceKindFfi,
 };
+pub use focus_reader::{FocusReaderDocumentFfi, RenderModeWordsFfi, TreatmentFfi};
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use list::{RowFfi, ScopeFfi};
 pub use logging::start_logging;

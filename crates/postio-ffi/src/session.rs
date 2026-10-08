@@ -2302,7 +2302,7 @@ impl Session {
     /// Not cached: the file is small, this is asked once per message drawn,
     /// and a cached copy is a copy that can disagree with the settings pane
     /// that revokes a grant.
-    fn allow_list(&self) -> postio_ui::allowlist::AllowList {
+    pub(crate) fn allow_list(&self) -> postio_ui::allowlist::AllowList {
         postio_ui::allowlist::AllowList::load_from(&self.allow_list_path())
     }
 
@@ -2335,8 +2335,10 @@ impl Session {
     /// is one the user will be asked about again, which is the safe failure.
     fn amend_allow_list(&self, change: impl FnOnce(&mut postio_ui::allowlist::AllowList)) {
         let path = self.allow_list_path();
-        let mut list = postio_ui::allowlist::AllowList::load_from(&path);
-        change(&mut list);
+        // Through the shell, which writes the senders' treatments back
+        // beside the grants; `AllowList` alone would drop them.
+        let mut list = postio_ui::allowlist::RemoteImageAllowList::load_from(&path);
+        change(list.grants_mut());
         if let Err(error) = list.save_to(&path) {
             tracing::error!(%error, "the remote-image allow list could not be saved: {error}");
         }
@@ -2347,7 +2349,7 @@ impl Session {
     /// Beside the store rather than in `config.toml`: it is state the
     /// application writes, not configuration a person edits, and mixing the
     /// two would mean Postio rewriting a file the user owns.
-    fn allow_list_path(&self) -> std::path::PathBuf {
+    pub(crate) fn allow_list_path(&self) -> std::path::PathBuf {
         self.allow_list_at.clone()
     }
 
@@ -4257,43 +4259,9 @@ impl Session {
                 // out of the sanitize pass, which runs before reader view's
                 // reduce, so Reader and Original renders agree on them (a
                 // test pins that).
-                let held_back = drawn.held_back;
-                let notice = if remote == postio_body::RemoteImages::Blocked {
-                    let summary = held_back.summary();
-                    if summary.is_empty() {
-                        None
-                    } else {
-                        // The sender, for the grant the notice offers. A row
-                        // read, not a body load — and only on the messages
-                        // that actually held something back.
-                        let sender =
-                            postio_storage::repository::MessageRepository::new(&connection)
-                                .get(postio_model::ids::MessageId::new(message))
-                                .await
-                                .ok()
-                                .flatten()
-                                .and_then(|row| {
-                                    row.from
-                                        .first()
-                                        .map(|address| address.address.to_lowercase())
-                                })
-                                .unwrap_or_default();
-                        let domain = sender
-                            .rsplit_once('@')
-                            .map(|(_, domain)| domain.to_owned())
-                            .unwrap_or_default();
-                        Some(crate::ReaderNoticeFfi {
-                            summary: format!("{summary} blocked"),
-                            allowed: self.allow_list().is_allowed(&sender),
-                            sender,
-                            domain,
-                            remote_images: held_back.remote_images,
-                            trackers: held_back.trackers,
-                        })
-                    }
-                } else {
-                    None
-                };
+                let notice = self
+                    .held_back_notice(&connection, message, drawn.held_back, remote)
+                    .await;
                 crate::ReaderDocumentFfi {
                     html: document_for(
                         &drawn.html,
@@ -4314,6 +4282,53 @@ impl Session {
                 postio_body::RemoteImages::Blocked,
                 Sheet::Theme,
             )),
+        }
+    }
+
+    /// What a blocked render held back, as the notice above the body says
+    /// it, with the sender the notice's grant would name: `None` for an
+    /// allowed render, which holds nothing back, or one that held nothing.
+    pub(crate) async fn held_back_notice(
+        &self,
+        connection: &postio_storage::store::Connection,
+        message: i64,
+        held_back: postio_ui::reader::document::HeldBack,
+        remote: postio_body::RemoteImages,
+    ) -> Option<crate::ReaderNoticeFfi> {
+        if remote == postio_body::RemoteImages::Blocked {
+            let summary = held_back.summary();
+            if summary.is_empty() {
+                None
+            } else {
+                // The sender, for the grant the notice offers. A row
+                // read, not a body load — and only on the messages
+                // that actually held something back.
+                let sender = postio_storage::repository::MessageRepository::new(connection)
+                    .get(postio_model::ids::MessageId::new(message))
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|row| {
+                        row.from
+                            .first()
+                            .map(|address| address.address.to_lowercase())
+                    })
+                    .unwrap_or_default();
+                let domain = sender
+                    .rsplit_once('@')
+                    .map(|(_, domain)| domain.to_owned())
+                    .unwrap_or_default();
+                Some(crate::ReaderNoticeFfi {
+                    summary: format!("{summary} blocked"),
+                    allowed: self.allow_list().is_allowed(&sender),
+                    sender,
+                    domain,
+                    remote_images: held_back.remote_images,
+                    trackers: held_back.trackers,
+                })
+            }
+        } else {
+            None
         }
     }
 
@@ -4756,7 +4771,9 @@ impl Session {
     }
 
     /// The database and blob store, while the session is open.
-    fn store_and_blobs(&self) -> Option<(postio_storage::Store, postio_storage::BlobStore)> {
+    pub(crate) fn store_and_blobs(
+        &self,
+    ) -> Option<(postio_storage::Store, postio_storage::BlobStore)> {
         let guard = self.wiring.lock().expect("wiring lock");
         let wiring = guard.as_ref()?;
         Some((wiring.database.clone(), wiring.blobs.clone()))

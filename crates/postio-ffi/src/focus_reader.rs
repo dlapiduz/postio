@@ -1,0 +1,228 @@
+//! Focus's reader document on the Mac (specs/009-focus-macos T062, T063).
+//!
+//! The same treated document GTK's Focus reader draws -- sanitised,
+//! classified, drawn in app colours or on paper -- with the two things a
+//! WKWebView cannot do for itself done here: the contrast guard on kept
+//! colours (`postio_body::treatment::guard_kept_colours`), and the
+//! geometry of the Mac's message window (M1). Swift hands the HTML to a
+//! hardened web view and draws the render-mode line from the words.
+
+use postio_body::treatment::Treatment;
+use postio_ui::reader::document::{
+    Absent, Sheet, absent_html, body_html_treated, decode_caveat, document_for_treated,
+    render_mode_words, wrap_document,
+};
+
+use crate::Session;
+
+/// A body's treatment (specs/007-postio-focus T210).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum TreatmentFfi {
+    /// The app's colours and fonts; the sender's taken away.
+    AppColours,
+    /// The sender's own layout, on a sheet of paper.
+    Paper,
+}
+
+impl From<TreatmentFfi> for Treatment {
+    fn from(treatment: TreatmentFfi) -> Self {
+        match treatment {
+            TreatmentFfi::AppColours => Treatment::AppColours,
+            TreatmentFfi::Paper => Treatment::Paper,
+        }
+    }
+}
+
+impl From<Treatment> for TreatmentFfi {
+    fn from(treatment: Treatment) -> Self {
+        match treatment {
+            Treatment::AppColours => TreatmentFfi::AppColours,
+            Treatment::Paper => TreatmentFfi::Paper,
+        }
+    }
+}
+
+/// The render-mode line's words: "App colours · sender colours and fonts
+/// removed · Show original O".
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RenderModeWordsFfi {
+    /// The treatment, named.
+    pub title: String,
+    /// Why, quietly.
+    pub detail: String,
+    /// The switch to the other treatment, beside its key.
+    pub action: String,
+    /// Whether to offer "Always for this sender".
+    pub offer_always: bool,
+}
+
+/// One message as Focus's message window draws it.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct FocusReaderDocumentFfi {
+    /// The whole document, for a hardened web view. Never empty: a missing
+    /// body is a state plate.
+    pub html: String,
+    /// What a blocked render held back, or `None`.
+    pub notice: Option<crate::ReaderNoticeFfi>,
+    /// What to say about a body that lost something in decoding.
+    pub caveat: Option<String>,
+    /// The treatment it is drawn in.
+    pub treatment_shown: TreatmentFfi,
+    /// What the rule chose, before any choice the person made.
+    pub treatment_classified: TreatmentFfi,
+    /// The render-mode line, for an HTML body; `None` for plain text, which
+    /// has no other treatment.
+    pub render_mode: Option<RenderModeWordsFfi>,
+    /// The sender, as "Always for this sender" names them.
+    pub sender: Option<String>,
+    /// The treatment remembered for the sender, if any.
+    pub sender_choice: Option<TreatmentFfi>,
+    /// The message window's width beside the main window (M1).
+    pub window_width: i32,
+    /// The content column in it, for the treatment shown.
+    pub column_width: i32,
+    /// Whether Label, Move and Delete fold into More at that width.
+    pub folds_into_more: bool,
+    /// The least a paper body is scaled to fit its column.
+    pub paper_floor: f64,
+}
+
+#[uniffi::export]
+impl Session {
+    /// `message` as Focus's message window draws it, beside a main window
+    /// `main_width` points wide: in `chosen` when the person switched it
+    /// (`O`), else as the sender's remembered choice or the rule says.
+    pub fn focus_reader_document(
+        &self,
+        message: i64,
+        remote: crate::RemoteImagesFfi,
+        chosen: Option<TreatmentFfi>,
+        main_width: i32,
+    ) -> FocusReaderDocumentFfi {
+        crate::session::blocking(self.focus_reader_answers(message, remote, chosen, main_width))
+    }
+
+    /// Always draw `sender`'s mail in `treatment`, or forget the choice with
+    /// `None`: "Always for this sender". Saved beside the remote-image
+    /// grants, where GTK's reader keeps it.
+    pub fn always_treatment(&self, sender: String, treatment: Option<TreatmentFfi>) {
+        let path = self.allow_list_path();
+        let mut list = postio_ui::allowlist::RemoteImageAllowList::load_from(&path);
+        list.set_treatment(&sender, treatment.map(Into::into));
+        if let Err(error) = list.save_to(&path) {
+            tracing::error!(%error, "a sender's treatment could not be saved");
+        }
+    }
+}
+
+impl Session {
+    async fn focus_reader_answers(
+        &self,
+        message: i64,
+        remote: crate::RemoteImagesFfi,
+        chosen: Option<TreatmentFfi>,
+        main_width: i32,
+    ) -> FocusReaderDocumentFfi {
+        let geometry =
+            postio_ui::focus_dialog::Geometry::for_platform(postio_config::paths::Platform::Apple);
+        let window_width = geometry.dialog_width(main_width);
+        let answer = |html: String, treated: Option<postio_ui::reader::document::Treated>| {
+            let shown = treated.map_or(Treatment::AppColours, |treated| treated.shown);
+            FocusReaderDocumentFfi {
+                html,
+                notice: None,
+                caveat: None,
+                treatment_shown: shown.into(),
+                treatment_classified: treated
+                    .map_or(Treatment::AppColours, |treated| treated.classified)
+                    .into(),
+                render_mode: None,
+                sender: None,
+                sender_choice: None,
+                window_width,
+                column_width: geometry.column_width(window_width, shown),
+                folds_into_more: geometry.folds_into_more(window_width),
+                paper_floor: postio_body::treatment::PAPER_FIT_FLOOR,
+            }
+        };
+        let plate = |absent: Absent| {
+            answer(
+                wrap_document(
+                    &absent_html(absent),
+                    postio_body::RemoteImages::Blocked,
+                    Sheet::Theme,
+                ),
+                None,
+            )
+        };
+        let remote = postio_body::RemoteImages::from(remote);
+        let Some((database, _blobs)) = self.store_and_blobs() else {
+            return plate(Absent::Missing);
+        };
+        let Ok(connection) = database.connect().await else {
+            return plate(Absent::Missing);
+        };
+        let offline = self.is_offline();
+        let (body, encoding_problems) = match postio_session::reading::load_body_or_reason(
+            &connection,
+            message.into(),
+            offline,
+        )
+        .await
+        {
+            postio_session::reading::Body::Ready {
+                body,
+                encoding_problems,
+            } => (body, encoding_problems),
+            postio_session::reading::Body::Absent(state) => return plate(state),
+        };
+        let sender = postio_storage::repository::MessageRepository::new(&connection)
+            .get(postio_model::ids::MessageId::new(message))
+            .await
+            .ok()
+            .flatten()
+            .and_then(|row| {
+                row.from
+                    .first()
+                    .map(|address| address.address.to_lowercase())
+            });
+        let remembered = sender.as_deref().and_then(|sender| {
+            postio_ui::allowlist::RemoteImageAllowList::load_from(&self.allow_list_path())
+                .treatment_for(sender)
+        });
+        let rendered =
+            body_html_treated(&body, remote, chosen.map(Into::into).or(remembered), None);
+        let treated = rendered.treated;
+        let shown = treated.map_or(Treatment::AppColours, |treated| treated.shown);
+        // The guard the renderer runs on Linux, run on the markup: the Mac's
+        // web view keeps a sender's colour only where it reads.
+        let html = match shown {
+            Treatment::AppColours => postio_body::treatment::guard_kept_colours(
+                &rendered.html,
+                &postio_body::treatment::SURFACES,
+            ),
+            Treatment::Paper => rendered.html.clone(),
+        };
+        let notice = self
+            .held_back_notice(&connection, message, rendered.held_back, remote)
+            .await;
+        FocusReaderDocumentFfi {
+            notice,
+            caveat: decode_caveat(encoding_problems).map(str::to_owned),
+            render_mode: treated
+                .and_then(|treated| render_mode_words(treated, remembered))
+                .map(|words| RenderModeWordsFfi {
+                    title: words.title.to_owned(),
+                    detail: words.detail.to_owned(),
+                    action: words.action.to_owned(),
+                    offer_always: words.offer_always,
+                }),
+            sender_choice: remembered.map(Into::into),
+            sender,
+            ..answer(
+                document_for_treated(&html, &rendered.styles, remote, shown),
+                treated,
+            )
+        }
+    }
+}

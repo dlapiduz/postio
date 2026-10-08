@@ -17,6 +17,11 @@ use postio_ui::reader::document as shared;
 
 /// A session over a store holding one message whose HTML body is `html`.
 async fn with_body(html: &str) -> (std::sync::Arc<Session>, i64) {
+    with_body_sent_by(html, None).await
+}
+
+/// [`with_body`], from `sender` when there is one.
+async fn with_body_sent_by(html: &str, sender: Option<&str>) -> (std::sync::Arc<Session>, i64) {
     let database = test_support::memory().await;
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let blobs =
@@ -28,6 +33,10 @@ async fn with_body(html: &str) -> (std::sync::Arc<Session>, i64) {
         let (account, inbox) = test_support::account_with_inbox(&connection).await;
         let repository = MessageRepository::new(&connection);
         let mut message = Message::new(account.id, inbox, Utc::now());
+        message.from = sender
+            .map(|sender| postio_model::EmailAddress::new(None::<&str>, sender))
+            .into_iter()
+            .collect();
         let id = repository.create(&mut message).await.expect("a message");
 
         repository
@@ -448,4 +457,87 @@ fn revoking_a_domain_does_not_need_to_be_told_it_is_one() {
     session.revoke_remote_images("example.org".to_owned());
 
     assert!(session.remote_image_grants().is_empty());
+}
+
+/// A newsletter, as the shared treatment tests have it: its own background
+/// and a fixed-width table, so the rule puts it on paper.
+const NEWSLETTER: &str = "<html><head><style>body { color: #222 }</style></head>\
+    <body bgcolor=\"#f6f1e7\"><table width=\"640\"><tr><td><p>Issue 48</p></td></tr></table></body></html>";
+
+/// [`with_body`], from `sender`.
+async fn with_body_from(html: &str, sender: &str) -> (std::sync::Arc<Session>, i64) {
+    with_body_sent_by(html, Some(sender)).await
+}
+
+/// Focus's reader on the Mac draws the same treated document as GTK's
+/// (T062): classified, named on the render-mode line, switched by `O`,
+/// remembered for a sender, and sized by the Mac's geometry (M1).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_newsletter_opens_on_paper_and_can_be_switched_and_remembered() {
+    use postio_ffi::TreatmentFfi;
+    let (session, id) = with_body_from(NEWSLETTER, "news@example.com").await;
+
+    let document = session.focus_reader_document(id, RemoteImagesFfi::Blocked, None, 1440);
+    assert_eq!(document.treatment_shown, TreatmentFfi::Paper);
+    assert_eq!(document.treatment_classified, TreatmentFfi::Paper);
+    let words = document
+        .render_mode
+        .expect("an HTML body names its treatment");
+    assert_eq!(words.title, "Original layout, on paper");
+    assert_eq!(document.sender_choice, None);
+    // A 1440-wide main window: the message window is 720 wide, and paper's
+    // column is 640 of it.
+    assert_eq!(document.window_width, 720);
+    assert_eq!(document.column_width, 640);
+    assert!(document.paper_floor > 0.0 && document.paper_floor < 1.0);
+
+    let switched = session.focus_reader_document(
+        id,
+        RemoteImagesFfi::Blocked,
+        Some(TreatmentFfi::AppColours),
+        1440,
+    );
+    assert_eq!(switched.treatment_shown, TreatmentFfi::AppColours);
+    assert_eq!(switched.treatment_classified, TreatmentFfi::Paper);
+    assert_eq!(switched.column_width, 560, "app colours' column");
+
+    session.always_treatment("news@example.com".into(), Some(TreatmentFfi::AppColours));
+    let remembered = session.focus_reader_document(id, RemoteImagesFfi::Blocked, None, 1440);
+    assert_eq!(remembered.treatment_shown, TreatmentFfi::AppColours);
+    assert_eq!(remembered.sender_choice, Some(TreatmentFfi::AppColours));
+
+    // A 1024-wide main window: the window narrows (655, the formula
+    // rounded; the pack draws 656) and Label, Move and Delete fold into
+    // More; app colours' column still fits whole.
+    let narrow = session.focus_reader_document(id, RemoteImagesFfi::Blocked, None, 1024);
+    assert_eq!(narrow.window_width, 655);
+    assert_eq!(narrow.column_width, 560);
+    assert!(narrow.folds_into_more);
+    session.shutdown();
+}
+
+/// A colour the sender set on purpose is kept only where it reads, in the
+/// document itself: the Mac's web view runs no guard of its own (T061).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_kept_colour_is_guarded_in_the_document() {
+    let (session, id) = with_body_from(
+        "<p>Status: <span style=\"color:#990000\">URGENT</span></p>",
+        "ada@example.com",
+    )
+    .await;
+    let document = session.focus_reader_document(
+        id,
+        RemoteImagesFfi::Blocked,
+        Some(postio_ffi::TreatmentFfi::AppColours),
+        1440,
+    );
+    assert!(
+        document.html.contains("postio-kept-0"),
+        "the kept colour is a guarded class"
+    );
+    assert!(
+        document.html.contains("prefers-color-scheme: light"),
+        "scoped to where it reads"
+    );
+    session.shutdown();
 }
