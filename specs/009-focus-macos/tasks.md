@@ -193,7 +193,7 @@ differences listed. A 10k-conversation store scrolls without dropped frames.
 
   Wire `PostioApp.swift`'s main scene to `MainWindow`. Keep `scripts/macos-test.sh` green
 - [ ] T035 [US1] Write a performance check in `macos/Tests/PostioAppKitTests/FocusListScrollTests.swift`: over a 10k-conversation seeded store, row views per scroll page stay bounded and `row(at:)` FFI calls per frame stay ≤ the visible rows plus the prefetch page (counted, not timed; constitution V)
-- [ ] T036 [US1] Compare screens 01 and 02 (FR-061): `scripts/macos-shot.sh 01 --both`, against `Design/focus-macos-design/screens/01-inbox-light.png` and `02-inbox-dark.png`. Record the differences in `docs/notes/<date>-focus-macos-phase-1.md`, then fix or explain each one
+- [x] T036 [US1] Compare screens 01 and 02 (FR-061): `scripts/macos-shot.sh 01 --both`, against `Design/focus-macos-design/screens/01-inbox-light.png` and `02-inbox-dark.png`. Record the differences in `docs/notes/<date>-focus-macos-phase-1.md`, then fix or explain each one
 
 **Checkpoint**: the Mac launches into the Focus inbox. This is the MVP.
 
