@@ -241,6 +241,14 @@ impl Cursor {
         steps
     }
 
+    /// The list is leaving for another place: the selection goes and `!`
+    /// is off, since neither means anything there.
+    pub(crate) fn leave(&mut self, total: u32) -> Vec<Step> {
+        self.has_action = false;
+        self.keep = None;
+        self.clear(total)
+    }
+
     /// Back's last rung: drop the selection; the cursor stays.
     pub(crate) fn clear(&mut self, total: u32) -> Vec<Step> {
         self.reach.clear();

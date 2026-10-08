@@ -18,15 +18,17 @@ use postio_config::paths::Platform;
 use postio_core::state::Selection;
 use postio_core::{Command, CommandId, Event, MessageTarget};
 use postio_model::listing::{PageRequest, Surfaced};
-use postio_model::{AccountId, ListScope, MailboxId, MessageId};
+use postio_model::{AccountId, ListScope, MailboxId, MailboxRole, MessageId};
 use postio_ui::focus_list::FocusRow;
 
+mod bar;
 mod cursor;
 mod feed;
 mod perform;
 mod surfaces;
 mod verbs;
 
+pub use bar::{BarLine, BarLineKind, BarMode, BarView, Found, FoundRow, PlacesRead};
 pub use cursor::{NoRows, RowFacts, Rows};
 pub use feed::{Opened, PageAnswer};
 pub use perform::{perform, perform_now};
@@ -116,6 +118,28 @@ pub enum Input {
         /// Find is up.
         finding: bool,
     },
+    /// The bar's words, as they are now.
+    Typed {
+        /// The field's text.
+        text: String,
+    },
+    /// Run the bar's line with this token: Return on it, or a click.
+    BarRun(u64),
+    /// `Tab` in the bar: into the chips, and on from chip to chip. Nothing
+    /// comes back when there is no chip to step into.
+    BarTab,
+    /// Go to the folders popover's place with this token
+    /// ([`FocusController::places`]).
+    OpenPlace(u64),
+    /// The pinned saved searches, in order: each name and its query.
+    SavedSearches(Vec<(String, String)>),
+    /// What became of an [`Intent::SaveSearch`]: the saved searches now, or
+    /// the sentence saying why it was not saved.
+    SearchSaved(Result<Vec<(String, String)>, String>),
+    /// The bindings in force: what the bar's keycaps say.
+    Keymap(postio_core::Keymap),
+    /// Whether Focus files mail away: the places list Filtered while it does.
+    Filtering(bool),
 }
 
 /// What the frontend does next.
@@ -244,6 +268,40 @@ pub enum Intent {
     KeyboardHome,
     /// Leave the app.
     Quit,
+    /// Show the bar, opened `mode`'s way, its field holding `text` -- with
+    /// `select` (a range of characters) selected, or the caret at the end.
+    /// Said again while it is up, it is only new words for the field.
+    OpenBar {
+        /// How it was opened.
+        mode: BarMode,
+        /// The field's words.
+        text: String,
+        /// What of them is selected: the chip being edited.
+        select: Option<(u32, u32)>,
+    },
+    /// Draw the bar's lines, whole.
+    BarLines(BarView),
+    /// The list shows this place now: what the header strip names.
+    Place {
+        /// "Inbox", "Receipts".
+        name: String,
+    },
+    /// Show the folders popover; [`FocusController::places`] is what it
+    /// lists.
+    OpenPlaces,
+    /// The places were read again: the popover lists them anew.
+    PlacesChanged,
+    /// Show Filtered, the view of what Focus filed away.
+    ShowFiltered,
+    /// Keep `query` as a saved search, and say how that went with
+    /// [`Input::SearchSaved`].
+    SaveSearch {
+        /// The bar's query.
+        query: String,
+    },
+    /// Run this command as the frontend's own: a line of the bar that is
+    /// not the controller's to answer.
+    Run(CommandId),
 }
 
 /// What the controller needs from the engine. [`perform()`] is the one place
@@ -295,6 +353,27 @@ pub enum Request {
         /// What left.
         messages: Vec<MessageId>,
     },
+    /// Every place there is to go: one read, however many accounts.
+    Places,
+    /// Search this machine's index, for the bar.
+    Search {
+        /// The words, lowered.
+        query: postio_search::ParsedQuery,
+        /// Which order the hits come in.
+        order: postio_search::ResultOrder,
+        /// The bar's words' stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// A folder's newest conversations, for `in:`.
+    Folder {
+        /// The folder.
+        mailbox: MailboxId,
+        /// The bar's words' stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// The folder of `role` in the account Focus writes from: the first
+    /// enabled account with one.
+    RoleFolder(MailboxRole),
 }
 
 /// The engine's answer to a [`Request`]. A failure is carried as its
@@ -325,6 +404,26 @@ pub enum Reply {
     Noted,
     /// A command was sent, or why it could not be.
     Sent(Result<(), String>),
+    /// The answer to [`Request::Places`].
+    Places(Result<PlacesRead, String>),
+    /// The answer to [`Request::Search`].
+    Search {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// What it found.
+        answer: Result<Found, String>,
+    },
+    /// The answer to [`Request::Folder`].
+    Folder {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// How many conversations the folder holds.
+        count: Result<u32, String>,
+        /// Its newest conversations.
+        rows: Result<Vec<FoundRow>, String>,
+    },
+    /// The answer to [`Request::RoleFolder`]: the folder and its name.
+    RoleFolder(Option<(MailboxId, String)>),
 }
 
 /// Focus's behaviour for one window. `Send`, and plain data: no toolkit
@@ -338,6 +437,7 @@ pub struct FocusController {
     cursor: cursor::Cursor,
     verbs: verbs::Verbs,
     surfaces: surfaces::Surfaces,
+    bar: bar::Bar,
     /// The strip's counts, as the host last said.
     counts: Option<FocusCounts>,
 }
@@ -353,6 +453,7 @@ impl FocusController {
             cursor: cursor::Cursor::default(),
             verbs: verbs::Verbs::default(),
             surfaces: surfaces::Surfaces::default(),
+            bar: bar::Bar::new(policy.platform),
             counts: None,
         }
     }
@@ -371,6 +472,18 @@ impl FocusController {
     /// Tell the controller what happened, over the list as the frontend
     /// holds it; get back what to do.
     pub fn handle_on(&mut self, input: Input, rows: &dyn Rows) -> Vec<Effect> {
+        // A message a hit opened, closed however it was: the bar comes back
+        // on its words.
+        let reading = self.surfaces.has(SurfaceKind::Message);
+        let mut effects = self.handle_input(input, rows);
+        if reading && !self.surfaces.has(SurfaceKind::Message) {
+            let steps = self.hit_closed(rows);
+            effects.extend(self.effects(steps));
+        }
+        effects
+    }
+
+    fn handle_input(&mut self, input: Input, rows: &dyn Rows) -> Vec<Effect> {
         match input {
             Input::Command(CommandId::Quit) => vec![Effect::Show(Intent::Quit)],
             Input::Command(id) if self.surfaces.top().is_some() => {
@@ -391,6 +504,9 @@ impl FocusController {
                 self.effects(steps)
             }
             Input::SurfaceClosed(kind) => {
+                if kind == SurfaceKind::Bar {
+                    self.bar.close();
+                }
                 let steps = self.surfaces.closed(kind);
                 self.effects(steps)
             }
@@ -453,12 +569,40 @@ impl FocusController {
                 }
                 Vec::new()
             }
+            Input::Reply(
+                _,
+                reply @ (Reply::Places(_)
+                | Reply::Search { .. }
+                | Reply::Folder { .. }
+                | Reply::RoleFolder(_)),
+            ) => {
+                let steps = self.bar_reply(reply, rows);
+                self.effects(steps)
+            }
             Input::Event(event) => {
                 let mut steps = self.verbs.event(&event);
                 steps.extend(self.feed.event(&event));
                 self.effects(steps)
             }
+            input @ (Input::Typed { .. }
+            | Input::BarRun(_)
+            | Input::BarTab
+            | Input::OpenPlace(_)
+            | Input::SavedSearches(_)
+            | Input::SearchSaved(_)
+            | Input::Keymap(_)
+            | Input::Filtering(_)) => {
+                let steps = self.bar_input(input, rows);
+                self.effects(steps)
+            }
         }
+    }
+
+    /// The folders popover's places whose names hold `filter`, case aside,
+    /// in the order it lists them, each with the token [`Input::OpenPlace`]
+    /// goes to it by.
+    pub fn places(&self, filter: &str) -> Vec<(u64, postio_ui::places::Entry)> {
+        self.listed_places(filter)
     }
 
     /// The list has landed or moved (the frontend's "filled"), `opened` when
@@ -501,21 +645,29 @@ impl FocusController {
 
     /// A command on the list, by the cursor's and the verbs' rules.
     fn list_command(&mut self, id: CommandId, rows: &dyn Rows) -> Vec<Effect> {
+        let steps = self.list_steps(id, rows);
+        self.effects(steps)
+    }
+
+    /// What a command on the list does: the bar's and the places', the
+    /// cursor's, then the verbs'.
+    fn list_steps(&mut self, id: CommandId, rows: &dyn Rows) -> Vec<feed::Step> {
         if id == CommandId::OpenMessage {
-            let steps = self
+            return self
                 .cursor
                 .position()
                 .map(|position| self.open_at(position, rows))
                 .unwrap_or_default();
-            return self.effects(steps);
+        }
+        if let Some(steps) = self.going(id, rows) {
+            return steps;
         }
         let has_action = self.counts.map(|counts| counts.has_action);
         let total = self.feed.total();
-        let steps = self
-            .cursor
+        self.cursor
             .command(id, rows, self.feed.scope(), total, has_action)
-            .or_else(|| self.verbs.command(id, &mut self.cursor, rows, total));
-        steps.map(|steps| self.effects(steps)).unwrap_or_default()
+            .or_else(|| self.verbs.command(id, &mut self.cursor, rows, total))
+            .unwrap_or_default()
     }
 
     /// Open the row at `position`: a message to read, a draft to write, a
@@ -544,6 +696,13 @@ impl FocusController {
         let reading = self.surfaces.reading()?;
         let position = rows.position_of(reading);
         match id {
+            // A message the bar opened walks the bar's hits.
+            CommandId::NextMessage | CommandId::PrevMessage
+                if self.hit_facts(reading).is_some() =>
+            {
+                let by = if id == CommandId::NextMessage { 1 } else { -1 };
+                self.step_hit(reading, by)
+            }
             // `j`/`k` step the list behind the message, and the message
             // follows the cursor; nothing closes.
             CommandId::NextMessage | CommandId::PrevMessage => {
@@ -557,7 +716,9 @@ impl FocusController {
             // `Return` on the message on screen: it is open.
             CommandId::OpenMessage => Some(Vec::new()),
             _ => {
-                let row = position.and_then(|at| rows.facts(at))?;
+                let row = position
+                    .and_then(|at| rows.facts(at))
+                    .or_else(|| self.hit_facts(reading))?;
                 let steps = self.verbs.command_on(id, &row)?;
                 if matches!(id, CommandId::Archive | CommandId::Delete)
                     && let Some(at) = position
@@ -573,6 +734,9 @@ impl FocusController {
     /// the selection's, `!`, and the verbs on the list. A frontend sends the
     /// rest -- a surface's commands, the composer's -- where it always did.
     pub fn answers(&self, id: CommandId) -> bool {
+        if self.surfaces.top() == Some(SurfaceKind::Bar) && bar::bar_key(id) {
+            return true;
+        }
         if let Some(answer) = self.surfaces.answers(id) {
             return answer;
         }
@@ -592,7 +756,8 @@ impl FocusController {
                 | CommandId::DeclineInvite
                 | CommandId::DismissMarker
                 | CommandId::OpenMessage
-        ) || postio_ui::focus_target::dispatch(id).is_some()
+        ) || bar::goes(id)
+            || postio_ui::focus_target::dispatch(id).is_some()
     }
 
     /// The cursor's row, if it has one.

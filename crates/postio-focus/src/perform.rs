@@ -6,13 +6,14 @@
 //! reply are decided here once (research R1).
 
 use postio_client::Client;
-use postio_model::listing::{ListPage, MailStore};
+use postio_model::listing::{ListPage, MailStore, PageRequest};
 use postio_model::mailbox::MailboxRole;
+use postio_model::{FocusScope, ListScope, MailboxId};
 
 use postio_core::state::{SharedState, ViewScope};
 use postio_core::{Command, MessageTarget};
 
-use crate::{Opened, PageAnswer, Reply, Request};
+use crate::{Found, FoundRow, Opened, PageAnswer, PlacesRead, Reply, Request};
 
 /// Answer `request` now, when it needs no await: a post, said before
 /// anything that follows it is asked. `Err` hands the request back for
@@ -131,7 +132,178 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .map_err(|error| error.to_string()),
         ),
+        Request::Places => Reply::Places(places(client).await),
+        Request::Search {
+            query,
+            order,
+            stamp,
+        } => Reply::Search {
+            stamp,
+            answer: search(client, query, order).await,
+        },
+        Request::Folder { mailbox, stamp } => {
+            let scope = ListScope::Mailbox(mailbox);
+            let count = client
+                .list_count(scope)
+                .await
+                .map_err(|error| error.to_string());
+            let rows = client
+                .list_page(PageRequest {
+                    scope,
+                    offset: 0,
+                    limit: postio_ui::command_bar::FOLDER_ROWS,
+                })
+                .await
+                .map(folder_rows)
+                .map_err(|error| error.to_string());
+            Reply::Folder { stamp, count, rows }
+        }
+        Request::RoleFolder(role) => Reply::RoleFolder(role_folder(client, role).await),
     }
+}
+
+/// Every place there is to go, in one round: each enabled account's
+/// mailboxes and folders with their conversations counted, its Outbox while
+/// anything waits in it, its labels with how many carry each, and its
+/// correspondents; then Snoozed and Flagged, which span every account.
+/// GTK's popover and bar each read these themselves, one call at a time.
+async fn places(client: &Client) -> Result<PlacesRead, String> {
+    use postio_ui::places as rules;
+    let accounts = client.accounts().await.map_err(|error| error.to_string())?;
+    let enabled: Vec<_> = accounts.iter().filter(|account| account.enabled).collect();
+    let mut read = PlacesRead::default();
+    let mut owners = Vec::new();
+    for account in &enabled {
+        for mailbox in client.mailboxes(account.id).await.unwrap_or_default() {
+            owners.push((mailbox.id, account.address.address.clone()));
+            read.folders.push((mailbox.id, rules::place_name(&mailbox)));
+            read.places.push(rules::mailbox_place(&mailbox));
+            let mut entry = rules::mailbox_entry(&mailbox);
+            // Conversations, as the strip counts them: the inbox's is
+            // Focus's, which is what the strip reads.
+            let scope = if mailbox.role == MailboxRole::Inbox {
+                ListScope::Focus(FocusScope::Inbox)
+            } else {
+                ListScope::Mailbox(mailbox.id)
+            };
+            if let Ok(conversations) = client.list_count(scope).await {
+                entry.count = Some(conversations.to_string());
+            }
+            read.entries.push(entry);
+        }
+        // The Outbox, a view over Drafts, has no mailbox row of its own.
+        let waiting = client
+            .list_count(ListScope::Outbox(account.id))
+            .await
+            .unwrap_or(0);
+        if waiting > 0 {
+            read.entries.push(rules::outbox_entry(account.id, waiting));
+        }
+        let counted = client.label_counts(account.id).await.unwrap_or_default();
+        for label in client.labels(account.id).await.unwrap_or_default() {
+            // A label nothing carries is left out of the counts: it holds none.
+            let held = counted
+                .iter()
+                .find(|(id, _)| *id == label.id)
+                .map_or(0, |(_, held)| *held);
+            read.entries.push(rules::label_entry(&label, Some(held)));
+            read.places.push(rules::label_place(&label));
+        }
+        read.contacts
+            .extend(client.correspondents(account.id).await.unwrap_or_default());
+    }
+    for (role, scope) in [
+        (MailboxRole::Snoozed, FocusScope::Snoozed),
+        (MailboxRole::Flagged, FocusScope::Flagged),
+    ] {
+        let held = client.list_count(ListScope::Focus(scope)).await.ok();
+        let view = rules::view_entry(role, held);
+        // A mailbox the server calls Flagged is this view's row.
+        read.entries.retain(|entry| entry.go != view.go);
+        read.entries.push(view);
+    }
+    // Which account a hit is from is said only where there are several.
+    if enabled.len() > 1 {
+        read.owners = owners;
+    }
+    Ok(read)
+}
+
+/// Search this machine's index for the bar: one row per conversation, and
+/// where a digest holds any of them.
+async fn search(
+    client: &Client,
+    query: postio_search::ParsedQuery,
+    order: postio_search::ResultOrder,
+) -> Result<Found, String> {
+    let results = client
+        .search_hits(
+            postio_model::AccountScope::Unified,
+            query,
+            postio_search::facets::Scope::AllMail,
+            order,
+            0,
+        )
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "nothing to search for".to_owned())?;
+    let hits = postio_ui::command_bar::conversations(results.hits);
+    let held = if hits.is_empty() {
+        Vec::new()
+    } else {
+        let ids = hits.iter().map(|hit| hit.message_id).collect();
+        client.held(ids).await.unwrap_or_default()
+    };
+    Ok(Found {
+        hits,
+        instead: results.instead,
+        held,
+    })
+}
+
+/// A folder's first page, as the bar lists it.
+fn folder_rows(page: ListPage) -> Vec<FoundRow> {
+    use postio_ui::command_bar::said_of;
+    match page {
+        ListPage::Threads(page) => page
+            .rows
+            .into_iter()
+            .map(|thread| FoundRow {
+                message: thread.representative.id,
+                from: thread.representative.from.as_ref().map(said_of),
+                subject: thread.subject.clone().unwrap_or_default(),
+                preview: thread.representative.preview.clone(),
+                at: thread.last_at,
+            })
+            .collect(),
+        ListPage::Messages(page) => page
+            .rows
+            .into_iter()
+            .map(|message| FoundRow {
+                message: message.id,
+                from: message.from.as_ref().map(said_of),
+                subject: message.subject.clone().unwrap_or_default(),
+                preview: message.preview.clone(),
+                at: message.received_at,
+            })
+            .collect(),
+    }
+}
+
+/// The folder of `role` in the account Focus writes from: the first enabled
+/// account with one. A role, not a name: what a provider calls its sent
+/// mail does not matter.
+async fn role_folder(client: &Client, role: MailboxRole) -> Option<(MailboxId, String)> {
+    let accounts = client.accounts().await.ok()?;
+    for account in accounts.iter().filter(|account| account.enabled) {
+        let Ok(folders) = client.mailboxes(account.id).await else {
+            continue;
+        };
+        if let Some(folder) = folders.iter().find(|folder| folder.role == role) {
+            return Some((folder.id, postio_ui::places::place_name(folder)));
+        }
+    }
+    None
 }
 
 /// A verb, to each aim in turn; or, for a whole-view selection, once at the

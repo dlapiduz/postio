@@ -77,12 +77,13 @@ impl SurfaceKind {
     }
 
     /// Whether Back closes it from the controller. The composer's Back is
-    /// its own (it keeps the draft), the bar's clears its words first, and a
-    /// picker's or menu's is its field's.
+    /// its own (it keeps the draft), and a picker's or menu's is its
+    /// field's. The bar's closes it, as GTK's window did.
     fn back_closes(self) -> bool {
         matches!(
             self,
-            SurfaceKind::Digest
+            SurfaceKind::Bar
+                | SurfaceKind::Digest
                 | SurfaceKind::Capture
                 | SurfaceKind::Settings
                 | SurfaceKind::KeyMap
@@ -147,6 +148,17 @@ pub(crate) struct Surfaces {
 impl Surfaces {
     pub(crate) fn top(&self) -> Option<SurfaceKind> {
         self.stack.last().copied()
+    }
+
+    /// Whether `kind` is open, anywhere in the stack.
+    pub(crate) fn has(&self, kind: SurfaceKind) -> bool {
+        self.stack.contains(&kind)
+    }
+
+    /// Take `kind` off the stack now, as the controller closes it; whether
+    /// it was there. The frontend's `SurfaceClosed` for it is then nothing.
+    pub(crate) fn dismiss(&mut self, kind: SurfaceKind) -> bool {
+        self.remove(kind)
     }
 
     pub(crate) fn key_context(&self) -> KeyContext {
