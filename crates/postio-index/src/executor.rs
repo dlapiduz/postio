@@ -168,6 +168,52 @@ const RECENCY_HALF_LIFE_DAYS: f64 = 730.0;
 /// recent one, which is the intent, rather than being excluded outright.
 const POOL_AGE_WEIGHT_PER_YEAR: f64 = 0.25;
 
+/// How far below a better text match a candidate may score and still count
+/// as just as good a match: 10%.
+///
+/// The text score separates near-identical mail by noise. Three invoices
+/// from one template scored -18.2, -17.6 and -17.2 for "Hannah invoice" on
+/// a real store: a few percent, from a longer greeting or a name said
+/// twice, and it outweighed nine days of recency, so the oldest came first.
+/// Within this tolerance the matches are one band, and recency and the
+/// sender decide; a match clearly better than another still wins outright.
+const TEXT_TIE: f64 = 0.10;
+
+/// Each score in `bm25` (lower is better) replaced by the best of its band:
+/// the candidates within [`TEXT_TIE`] of a better one. A band is measured
+/// from its best, never from its last member, so a run of small steps
+/// cannot drift a weak match into a strong one's band.
+pub fn text_bands(bm25: &[f64]) -> Vec<f64> {
+    let mut order: Vec<usize> = (0..bm25.len()).collect();
+    order.sort_by(|a, b| bm25[*a].total_cmp(&bm25[*b]));
+    let mut banded = bm25.to_vec();
+    let mut best: Option<f64> = None;
+    for index in order {
+        let score = bm25[index];
+        let lead = match best {
+            // Scores are negative, larger in magnitude when better: within
+            // the tolerance means at least (1 - TEXT_TIE) of the best's size.
+            Some(lead) if lead < 0.0 && score <= lead * (1.0 - TEXT_TIE) => lead,
+            _ => score,
+        };
+        best = Some(lead);
+        banded[index] = lead;
+    }
+    banded
+}
+
+/// How old a message is, to the ranking: its own `Date`, when that is
+/// earlier than the server's arrival date, else the arrival date.
+///
+/// `received_at` is when the message arrived *in its folder*. A move, an
+/// archive or a resync files it again and the server dates it again, so
+/// last month's invoice archived this morning was ranked as this morning's
+/// mail and beat this week's. The `Date` header is the sender's claim, and
+/// taken only when it is the earlier: a claim of a future date can never
+/// lift a message, and arrival still bounds anything with no header.
+const AGED_FROM: &str = "CASE WHEN m.date IS NOT NULL AND m.date < m.received_at \
+     THEN m.date ELSE m.received_at END";
+
 /// Milliseconds in a year, for the pool ordering's age term.
 const MILLIS_PER_YEAR: f64 = 31_557_600_000.0;
 /// Sender affinity's weight in [`rank_score`].
@@ -260,15 +306,30 @@ pub async fn search(
 
     match request.order {
         postio_search::ResultOrder::Relevance => {
-            for candidate in &mut candidates {
-                candidate.score = rank_score(
-                    candidate.bm25,
-                    candidate.received_at,
-                    now,
-                    candidate.sender_times_seen,
-                );
+            let bands = text_bands(
+                &candidates
+                    .iter()
+                    .map(|candidate| candidate.bm25)
+                    .collect::<Vec<_>>(),
+            );
+            for (candidate, text) in candidates.iter_mut().zip(bands) {
+                candidate.score =
+                    rank_score(text, candidate.aged_from, now, candidate.sender_times_seen);
             }
             candidates.sort_by(|a, b| a.score.total_cmp(&b.score));
+            // Why the order is what it is, in numbers and ids only: the
+            // text match, the age, how often the sender was seen, and what
+            // they came to.
+            for candidate in candidates.iter().take(request.limit as usize) {
+                tracing::trace!(
+                    id = candidate.message_id.get(),
+                    text = candidate.bm25,
+                    age_days = (now - candidate.aged_from).num_hours() as f64 / 24.0,
+                    sender_seen = candidate.sender_times_seen,
+                    score = candidate.score,
+                    "ranked"
+                );
+            }
         }
         // Asked for date order, given date order: the fetch already came
         // back `received_at DESC`, and running the ranker over it — even
@@ -775,6 +836,8 @@ struct Candidate {
     from_name: Option<String>,
     from_address: Option<String>,
     received_at: DateTime<Utc>,
+    /// What the ranking ages it from: see [`AGED_FROM`].
+    aged_from: DateTime<Utc>,
     preview: Option<String>,
     snippet: String,
     bm25: f64,
@@ -1223,7 +1286,7 @@ impl Plan {
         let order_by = if rank_by_relevance {
             &format!(
                 "-coalesce(hits.meta, 0.0) - coalesce(hits.body, 0.0) \
-                 + {POOL_AGE_WEIGHT_PER_YEAR} * (? - m.received_at) / {MILLIS_PER_YEAR}"
+                 + {POOL_AGE_WEIGHT_PER_YEAR} * (? - {AGED_FROM}) / {MILLIS_PER_YEAR}"
             )
         } else {
             "m.received_at DESC"
@@ -1356,9 +1419,10 @@ impl Plan {
                  (SELECT max(c.times_seen) FROM contacts c
                     WHERE c.address_normalized = a.address_normalized
                       {affinity}) AS sender_times_seen,
-                 sub.preview
+                 sub.preview, sub.aged_from
              FROM (SELECT
                      m.id, m.thread_id, m.mailbox_id, m.subject, m.received_at, m.preview,
+                     {AGED_FROM} AS aged_from,
                      (SELECT r.id FROM recipients r
                         WHERE r.message_id = m.id AND r.kind = 'from'
                         ORDER BY r.position LIMIT 1) AS from_recipient
@@ -1414,6 +1478,7 @@ impl Plan {
                         from_address: row.col(6)?,
                         sender_times_seen: row.col::<Option<i64>>(7)?.unwrap_or(0),
                         preview: row.col(8)?,
+                        aged_from: postio_storage::repository::from_millis(row.col(9)?),
                         // Filled in below, from the pool.
                         bm25: 0.0,
                         // Filled by whoever can read the body — see
@@ -1734,6 +1799,39 @@ mod tests {
             match_param: Some(turso::Value::Text("invoice".to_owned())),
             body_match_param: Some(turso::Value::Text("invoice".to_owned())),
         }
+    }
+
+    #[test]
+    fn near_equal_text_matches_are_one_band_led_by_the_best() {
+        // Three invoices from one template: the text differs by a few
+        // percent, which is noise to a reader, so they are one band and
+        // carry the best one's score.
+        assert_eq!(
+            text_bands(&[-18.19, -17.61, -17.19, -6.9, -6.5, -2.0]),
+            vec![-18.19, -18.19, -18.19, -6.9, -6.9, -2.0]
+        );
+    }
+
+    #[test]
+    fn a_band_is_measured_from_its_best_so_it_cannot_drift() {
+        // Each a little worse than the one before, but the fourth is more
+        // than the tolerance below the first: a new band, not a chain.
+        let bands = text_bands(&[-10.0, -9.5, -9.1, -8.6]);
+        assert_eq!(bands, vec![-10.0, -10.0, -10.0, -8.6]);
+    }
+
+    #[test]
+    fn in_one_band_the_newer_message_ranks_first() {
+        let now = Utc::now();
+        let at = |days: i64| now - chrono::TimeDelta::days(days);
+        let bands = text_bands(&[-18.19, -17.61, -17.19]);
+        let older = rank_score(bands[0], at(21), now, 5);
+        let newer = rank_score(bands[1], at(12), now, 5);
+        let newest = rank_score(bands[2], at(6), now, 5);
+        assert!(
+            newest < newer && newer < older,
+            "lower is better: {newest} {newer} {older}"
+        );
     }
 
     #[test]

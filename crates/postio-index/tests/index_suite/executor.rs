@@ -1813,3 +1813,71 @@ async fn whether_the_corpus_is_complete_is_read_off_the_folders_not_the_messages
         plan.join("\n")
     );
 }
+
+#[tokio::test]
+async fn a_message_moved_today_is_as_old_as_its_own_date() {
+    // A message archived or resynced today arrives in its folder today: the
+    // server's arrival date is the move, not the mail. Ranked by that, last
+    // month's invoice -- archived this morning -- beat this week's, which
+    // was still where it landed. Age is the earlier of the two dates.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    let now = Utc.with_ymd_and_hms(2026, 10, 8, 18, 0, 0).unwrap();
+    let days = |n: i64| now - chrono::TimeDelta::days(n);
+
+    for i in 0..20 {
+        message(
+            &connection,
+            &account,
+            mailbox,
+            "carol",
+            &format!("Entirely unrelated subject {i}"),
+            days(40),
+        )
+        .await;
+    }
+    let store = |date: chrono::DateTime<Utc>, received: chrono::DateTime<Utc>, subject: &str| {
+        let mut message = Message::new(account.id, mailbox, received);
+        message.from = vec![EmailAddress::new(
+            Some("Music Studio"),
+            "studio@example.com",
+        )];
+        message.subject = Some(subject.to_string());
+        message.date = Some(date);
+        message
+    };
+    let mut older = store(
+        days(21),
+        now - chrono::TimeDelta::hours(5),
+        "Lapiduz 9/17/2026 Invoice",
+    );
+    let mut newer = store(days(13), days(13), "Lapiduz 9/26/2026 Invoice");
+    let repository = MessageRepository::new(&connection);
+    repository.create(&mut older).await.expect("older");
+    repository.create(&mut newer).await.expect("newer");
+
+    let query = parse("invoice", now.date_naive());
+    let ranked = search(
+        &connection,
+        &SearchRequest {
+            account: AccountScope::Account(account.id),
+            query: &query,
+            scope: Scope::AllMail,
+            limit: 10,
+            order: postio_search::ResultOrder::Relevance,
+        },
+        now,
+    )
+    .await
+    .expect("search");
+    let order: Vec<_> = ranked.hits.iter().map(|hit| hit.message_id).collect();
+    assert_eq!(
+        order,
+        vec![newer.id, older.id],
+        "the newer invoice first, though the older one arrived in its folder today"
+    );
+}
