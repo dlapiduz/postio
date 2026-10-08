@@ -102,6 +102,9 @@ pub struct FocusRowFfi {
     pub id: i64,
     /// The conversation, for a conversation or reminder row.
     pub thread: Option<i64>,
+    /// Every conversation the row stands for, each copy of a conversation
+    /// folded from several accounts (spec 007 T161): what a verb reaches.
+    pub threads: Vec<i64>,
     /// The sender column: names, or "Digest" words for a digest.
     pub sender: String,
     /// The subject column.
@@ -149,6 +152,7 @@ impl FocusRowFfi {
                     kind: FocusRowKindFfi::Digest,
                     id: digest.delivery.get(),
                     thread: None,
+                    threads: Vec::new(),
                     sender: focus_row::digest_title(digest.cadence),
                     subject: focus_row::digest_subject(&digest.rule, digest.count),
                     preview: Some(focus_row::digest_line(
@@ -199,6 +203,12 @@ fn conversation_row(
         kind,
         id: message.id.get(),
         thread: summary.id.map(|thread| thread.get()),
+        threads: summary
+            .id
+            .into_iter()
+            .chain(summary.copies.iter().copied())
+            .map(|thread| thread.get())
+            .collect(),
         sender: focus_row::row_names(message),
         subject: message.subject.clone().unwrap_or_default(),
         preview: message.preview.clone(),
@@ -226,6 +236,39 @@ fn conversation_row(
             })
             .collect(),
         marker,
+    }
+}
+
+/// The Mac's rows, as the controller asks about them.
+struct RowsView<'a>(&'a ListWindow<FocusRowFfi>);
+
+impl RowsView<'_> {
+    /// The id the controller knows a row by: a digest's is its delivery,
+    /// negated, as GTK's rows have it (`FocusRow::id`).
+    fn facts_of(row: &FocusRowFfi) -> postio_focus::RowFacts {
+        let digest = row.kind == FocusRowKindFfi::Digest;
+        postio_focus::RowFacts {
+            id: postio_model::MessageId::new(if digest { -row.id } else { row.id }),
+            digest,
+            threads: row
+                .threads
+                .iter()
+                .copied()
+                .map(postio_model::ThreadId::new)
+                .collect(),
+        }
+    }
+}
+
+impl postio_focus::Rows for RowsView<'_> {
+    fn len(&self) -> u32 {
+        self.0.total()
+    }
+    fn facts(&self, position: u32) -> Option<postio_focus::RowFacts> {
+        self.0.resident_at(position).map(Self::facts_of)
+    }
+    fn position_of(&self, message: postio_model::MessageId) -> Option<u32> {
+        self.0.position_of(message)
     }
 }
 
@@ -264,6 +307,36 @@ impl FocusDriver {
         *self.scope.lock().expect("scope lock") = Some(scope);
         let effects = self.focus.lock().expect("focus lock").open(scope);
         self.apply(effects);
+    }
+
+    /// Run `id` through the controller when it is one of its own -- the
+    /// cursor's, the selection's, `!`, a verb on the list -- and say whether
+    /// it was. The rest go where they always did.
+    pub(crate) fn command(self: &Arc<Self>, id: postio_core::CommandId) -> bool {
+        if !self.focus.lock().expect("focus lock").answers(id) {
+            return false;
+        }
+        let effects = {
+            let list = self.list.lock().expect("list lock");
+            self.focus
+                .lock()
+                .expect("focus lock")
+                .handle_on(Input::Command(id), &RowsView(&list))
+        };
+        self.apply(effects);
+        true
+    }
+
+    /// The message under the cursor, once its page has landed: what a verb
+    /// that is not the list's own aims at.
+    pub(crate) fn cursor_message(&self) -> Option<postio_model::MessageId> {
+        // The list, then the controller: the one order every path takes
+        // both in, so two threads can never hold one each.
+        let list = self.list.lock().expect("list lock");
+        let position = self.focus.lock().expect("focus lock").cursor()?;
+        list.resident_at(position)
+            .filter(|row| row.kind != FocusRowKindFfi::Digest)
+            .map(|row| postio_model::MessageId::new(row.id))
     }
 
     /// The place the list is showing, once one has been opened.
@@ -382,6 +455,54 @@ impl FocusDriver {
                     list.total()
                 };
                 self.say(UiEvent::FocusListChanged { total });
+            }
+            Intent::Filled => {
+                // The list landed: the cursor goes to its first row, back to
+                // what `!` kept, or to what an undo brought back.
+                let effects = {
+                    let list = self.list.lock().expect("list lock");
+                    let mut focus = self.focus.lock().expect("focus lock");
+                    let opened = focus.take_opened();
+                    focus.landed(&RowsView(&list), opened)
+                };
+                self.apply(effects);
+            }
+            Intent::Cursor { position, to_top } => {
+                self.say(UiEvent::FocusCursor { position, to_top });
+            }
+            Intent::Selection { selection, summary } => {
+                let (selected, everything) = match selection {
+                    postio_core::state::Selection::These(ids) => {
+                        (ids.iter().map(|id| id.get()).collect(), false)
+                    }
+                    postio_core::state::Selection::Everything { .. } => (Vec::new(), true),
+                };
+                self.say(UiEvent::FocusSelection {
+                    selected,
+                    everything,
+                    summary,
+                });
+            }
+            Intent::SingleHeading(text) => self.say(UiEvent::FocusHeading { text }),
+            Intent::ListToTop => self.say(UiEvent::FocusListToTop),
+            Intent::Toast { text, kind } => {
+                let (kind, undoable, seconds) = match kind {
+                    postio_focus::ToastKind::Completed { undoable, seconds } => {
+                        (crate::event::ToastKindFfi::Completed, undoable, seconds)
+                    }
+                    postio_focus::ToastKind::Undone => {
+                        (crate::event::ToastKindFfi::Undone, false, None)
+                    }
+                    postio_focus::ToastKind::Notice => {
+                        (crate::event::ToastKindFfi::Notice, false, None)
+                    }
+                };
+                self.say(UiEvent::FocusToast {
+                    text,
+                    kind,
+                    undoable,
+                    seconds,
+                });
             }
             _ => {}
         }

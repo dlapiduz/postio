@@ -136,7 +136,8 @@ async fn a_picked_label_goes_on_the_message_under_the_cursor() {
     let found = world.session.finder_labels("tax".to_owned()).await;
     assert_eq!(found.hits.first().map(|hit| hit.id), Some(world.label));
 
-    world.session.set_cursor(Some(world.message));
+    // The message is the inbox's one row, and the cursor opens on it.
+    crate::focus::cursor_on_the_first_row(&world.session).await;
     world.session.apply_label(world.label);
 
     let labelled = settle_until(async || {

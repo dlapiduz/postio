@@ -271,3 +271,24 @@ fn an_undo_puts_the_cursor_on_the_row_it_brought_back() {
     let effects = focus.landed(&before, false);
     assert_eq!(cursor_of(&effects), Some(1), "on the row it brought back");
 }
+
+#[test]
+fn the_controller_says_which_commands_are_its_own() {
+    let focus = FocusController::new(Policy::for_platform(Platform::Apple));
+    for id in [
+        CommandId::NextMessage,
+        CommandId::ToggleSelection,
+        CommandId::SelectAll,
+        CommandId::ToggleHasAction,
+        CommandId::Archive,
+        CommandId::Delete,
+        CommandId::Undo,
+        CommandId::AcceptInvite,
+        CommandId::DismissMarker,
+    ] {
+        assert!(focus.answers(id), "{id} is the controller's");
+    }
+    for id in [CommandId::Reply, CommandId::Compose, CommandId::Settings] {
+        assert!(!focus.answers(id), "{id} is a surface's, not the list's");
+    }
+}

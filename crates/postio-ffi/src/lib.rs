@@ -76,7 +76,7 @@ pub use cost::{
     reader_renders_issued, reader_surfaces_created, reader_surfaces_held,
 };
 pub use dwell::{DwellArmFfi, dwell_on_cursor};
-pub use event::{ConnectionStateFfi, FailureReasonFfi, NoticeKindFfi, UiEvent};
+pub use event::{ConnectionStateFfi, FailureReasonFfi, NoticeKindFfi, ToastKindFfi, UiEvent};
 pub use finder::{FinderAnswerFfi, FinderHitFfi};
 pub use focus::{FocusCountsFfi, FocusStripFfi};
 pub use focus_list::{

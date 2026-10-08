@@ -47,6 +47,7 @@ fn shown(effects: &[Effect]) -> Vec<Intent> {
 fn opened(scope: ListScope, total: u32) -> Opened {
     Opened {
         scope,
+        accounts: vec![postio_model::AccountId::new(1)],
         folders: vec![(MailboxId::new(1), true), (MailboxId::new(2), false)],
         total: Ok(total),
         surfaced: (scope == INBOX).then(|| Ok(Vec::new())),

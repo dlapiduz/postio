@@ -351,6 +351,7 @@ impl FocusController {
                 Vec::new()
             }
             Input::Reply(_, Reply::Opened(opened)) => {
+                self.cursor.set_accounts(opened.accounts.clone());
                 let steps = self.feed.opened(opened);
                 self.effects(steps)
             }
@@ -396,6 +397,28 @@ impl FocusController {
         let mut effects = self.effects(steps);
         effects.push(self.refresh_counts());
         effects
+    }
+
+    /// Whether `id` is one of the controller's own commands: the cursor's,
+    /// the selection's, `!`, and the verbs on the list. A frontend sends the
+    /// rest -- a surface's commands, the composer's -- where it always did.
+    pub fn answers(&self, id: CommandId) -> bool {
+        matches!(
+            id,
+            CommandId::NextMessage
+                | CommandId::PrevMessage
+                | CommandId::FirstMessage
+                | CommandId::LastMessage
+                | CommandId::ToggleSelection
+                | CommandId::ExtendSelectionDown
+                | CommandId::ExtendSelectionUp
+                | CommandId::SelectAll
+                | CommandId::ToggleHasAction
+                | CommandId::Back
+                | CommandId::AcceptInvite
+                | CommandId::DeclineInvite
+                | CommandId::DismissMarker
+        ) || postio_ui::focus_target::dispatch(id).is_some()
     }
 
     /// The cursor's row, if it has one.

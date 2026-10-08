@@ -84,7 +84,7 @@ async fn a_question_in_the_inbox_is_counted_as_needing_action() {
 }
 
 /// Wait for `wanted` on the session's event stream, up to `secs`.
-async fn heard(
+pub(crate) async fn heard(
     session: &Session,
     secs: u64,
     wanted: impl Fn(&postio_ffi::UiEvent) -> bool,
@@ -196,4 +196,94 @@ fn the_strip_says_what_gtk_s_strip_says() {
         "no rules, no count (C10)"
     );
     session.shutdown();
+}
+
+/// A session whose inbox holds one conversation per subject, newest first.
+async fn inbox_of(subjects: &[&str]) -> std::sync::Arc<Session> {
+    let database = test_support::memory().await;
+    {
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let repository = MessageRepository::new(&connection);
+        let threads = postio_storage::repository::ThreadRepository::new(&connection);
+        for (age, subject) in subjects.iter().enumerate() {
+            let at = Utc::now() - chrono::TimeDelta::minutes(age as i64 + 1);
+            let mut message = Message::new(account.id, inbox, at);
+            message.subject = Some((*subject).to_owned());
+            message.date = Some(at);
+            message.from = vec![postio_model::EmailAddress::new(
+                Some("Ada"),
+                "ada@example.com",
+            )];
+            let id = repository.create(&mut message).await.expect("a message");
+            let mut thread = postio_model::Thread::new(account.id);
+            thread.subject = message.subject.clone();
+            threads.create(&mut thread).await.expect("a thread");
+            threads.add_message(thread.id, id).await.expect("threaded");
+        }
+    }
+    Session::open(SessionOptions::in_memory_with(database)).expect("a session")
+}
+
+/// The Mac's list keys run through the controller (spec 009 T045): `x`
+/// selects without moving the cursor, `j` moves it, and `r` marks what is
+/// selected read -- and the host's own words come back as the toast. (Mark
+/// read rather than archive: the fixture account has no archive folder, and
+/// the host would only say so.)
+#[tokio::test(flavor = "multi_thread")]
+async fn list_keys_run_through_the_controller() {
+    use postio_ffi::UiEvent;
+    let session = inbox_of(&["First", "Second", "Third"]).await;
+    session.open_focus(postio_ffi::FocusScopeFfi::Inbox);
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusCursor { position: 0, .. }
+        ))
+        .await,
+        "the list opens with the cursor on its first row (C30)"
+    );
+
+    session.invoke("toggle_selection");
+    assert!(
+        heard(&session, 5, |event| matches!(
+            event,
+            UiEvent::FocusSelection { selected, .. } if selected.len() == 1
+        ))
+        .await,
+        "x selects the cursor's row"
+    );
+    session.invoke("next_message");
+    assert!(
+        heard(&session, 5, |event| matches!(
+            event,
+            UiEvent::FocusCursor { position: 1, .. }
+        ))
+        .await,
+        "j moves the cursor"
+    );
+    session.invoke("toggle_read");
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusToast { text, undoable: true, .. } if !text.is_empty()
+        ))
+        .await,
+        "the host's words are the toast, and Undo can take it back"
+    );
+    session.shutdown();
+}
+
+/// Open Focus's inbox and wait until the cursor is on its first row: where
+/// a verb with nothing selected acts, as a person would find it.
+pub(crate) async fn cursor_on_the_first_row(session: &Session) {
+    session.open_focus(postio_ffi::FocusScopeFfi::Inbox);
+    assert!(
+        heard(session, 10, |event| matches!(
+            event,
+            postio_ffi::UiEvent::FocusCursor { position: 0, .. }
+        ))
+        .await,
+        "the inbox opened with the cursor on its first row"
+    );
 }

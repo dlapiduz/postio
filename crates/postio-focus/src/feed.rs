@@ -61,6 +61,9 @@ pub enum PageAnswer {
 pub struct Opened {
     /// The place that was opened.
     pub scope: ListScope,
+    /// The enabled accounts: what Focus's inbox is made of, and what
+    /// "select everything" reaches.
+    pub accounts: Vec<postio_model::AccountId>,
     /// Every enabled account's folders, and whether each is an inbox.
     pub folders: Vec<(MailboxId, bool)>,
     /// How many conversations the place holds.

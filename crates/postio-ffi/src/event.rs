@@ -219,6 +219,53 @@ pub enum UiEvent {
         /// Which page.
         page: u32,
     },
+    /// The cursor is on `position`: draw its ring there and bring it into
+    /// view (specs/009-focus-macos T046).
+    FocusCursor {
+        /// The row.
+        position: u32,
+        /// Whether the list scrolls back to its very top.
+        to_top: bool,
+    },
+    /// The selection changed: redraw the rows' boxes and the bar's words.
+    FocusSelection {
+        /// The selected messages, when the selection names them.
+        selected: Vec<i64>,
+        /// Whether everything the view shows is selected (a predicate).
+        everything: bool,
+        /// "3 selected", or nothing with nothing selected.
+        summary: Option<String>,
+    },
+    /// The list's one heading while `!` narrows it, or back to the day
+    /// headings with none.
+    FocusHeading {
+        /// "Has action · 7".
+        text: Option<String>,
+    },
+    /// Scroll the list back to its very top.
+    FocusListToTop,
+    /// Say something in the toast: the host's words.
+    FocusToast {
+        /// What to say.
+        text: String,
+        /// How to draw it.
+        kind: ToastKindFfi,
+        /// Whether Undo can take it back.
+        undoable: bool,
+        /// How long it stays, when not the usual (an answer's window).
+        seconds: Option<u32>,
+    },
+}
+
+/// How a Focus toast is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ToastKindFfi {
+    /// A verb ran.
+    Completed,
+    /// An undo was applied.
+    Undone,
+    /// A command could not run: a quiet hint.
+    Notice,
 }
 
 /// What an outcome was.

@@ -48,7 +48,7 @@ struct FocusListScrollTests {
 
         private static func row(_ id: Int64, marked: Bool) -> FocusRowFfi {
             FocusRowFfi(
-                kind: .conversation, id: id, thread: id, sender: "Ada Moreno",
+                kind: .conversation, id: id, thread: id, threads: [id], sender: "Ada Moreno",
                 subject: "Atlas headcount numbers", preview: "Quick one.", time: "12:20",
                 dayHeading: "Today · Saturday 26 September", unread: id % 3 == 0,
                 countBadge: nil, hasAttachments: false, sendState: nil, pills: [],

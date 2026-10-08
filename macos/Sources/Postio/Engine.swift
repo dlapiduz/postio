@@ -215,7 +215,6 @@ final class Engine {
             // An answer on a row is about that row: the cursor goes there
             // first, so the verb lands where the click did.
             table?.cursor = row
-            self?.focusCursorMoved()
             self?.run(command, on: self?.focusCursorMessage)
         }
         return table
@@ -268,15 +267,6 @@ final class Engine {
     var focusCursorMessage: Int64? {
         guard let table = focusTable, let row = table.cursor else { return nil }
         return table.model.row(at: row)?.id
-    }
-
-    /// Tell the engine which message the cursor is on, so a verb with
-    /// nothing marked acts on it (`PRODUCT.md` §9: the cursor, not the
-    /// selection). Until the controller drives the cursor (T040), this is
-    /// how `a` and the menu's verbs find their message.
-    func focusCursorMoved() {
-        guard let message = focusCursorMessage else { return }
-        session?.setCursor(message)
     }
 
     // MARK: the toolbar
@@ -495,12 +485,9 @@ final class Engine {
             focusCount = total
             focusListed = true
             focusTable?.listChanged(total: total)
-            focusCursorMoved()
             refreshCounts()
         case let .focusPageReady(page):
             focusTable?.pageArrived(page)
-            // The cursor's row may be the one that just arrived.
-            focusCursorMoved()
         case .keymapChanged:
             keymapVersion += 1
             focusTable?.keymapChanged()

@@ -629,10 +629,6 @@ pub struct Session {
     /// action over accounts nobody vouched for — the behaviour this boundary
     /// had before the scope could carry them at all.
     reachable: Mutex<Vec<postio_model::ids::AccountId>>,
-    /// The message the keyboard is on, as the frontend last reported it
-    /// (`set_cursor`): what a verb with nothing marked acts on, until the
-    /// controller drives the cursor (specs/009-focus-macos T040).
-    cursor: Mutex<Option<postio_model::ids::MessageId>>,
     /// The correspondents and labels the search box's `@` and `+` match
     /// against, with when they were read (`finder_contacts`).
     finder_sources: Mutex<Option<(std::time::Instant, FinderSources)>>,
@@ -1340,12 +1336,6 @@ impl Session {
         self.apply_label(label);
     }
 
-    /// Report which row the keyboard is on, or `None` for no row.
-    #[uniffi::method(name = "setCursor")]
-    pub fn set_cursor_ffi(&self, message: Option<i64>) {
-        self.set_cursor(message);
-    }
-
     /// Report which accounts the aggregate view can currently vouch for.
     ///
     /// Call it whenever a connection changes, from the same states the
@@ -1863,7 +1853,6 @@ impl Session {
                 ui: config.ui,
                 keys: Mutex::new(keys),
                 reachable: Mutex::new(Vec::new()),
-                cursor: Mutex::new(None),
                 finder_sources: Mutex::new(None),
                 conversation: Arc::default(),
                 sign_in: Mutex::new(None),
@@ -1963,7 +1952,6 @@ impl Session {
             keys: Mutex::new(keys),
             engines: Mutex::new(Vec::new()),
             reachable: Mutex::new(Vec::new()),
-            cursor: Mutex::new(None),
             finder_sources: Mutex::new(None),
             conversation: Arc::default(),
             sign_in: Mutex::new(None),
@@ -3653,6 +3641,12 @@ impl Session {
             tracing::debug!(id, "not a command this build knows; ignored");
             return;
         };
+        // The list's own commands are Focus's controller's, as on Linux
+        // (specs/009-focus-macos T046): it moves the cursor, keeps the
+        // selection and aims the verbs.
+        if self.focus_list.command(id) {
+            return;
+        }
         let Some(outbox) = self.outbox() else {
             return;
         };
@@ -4062,6 +4056,9 @@ impl Session {
     /// verb acts on the cursor's row, which is `PRODUCT.md` section 9's rule
     /// for nothing marked.
     fn with_aim<R>(&self, f: impl FnOnce(&postio_core::aim::Aim<'_>) -> R) -> R {
+        // Before the rows are held: reading the cursor takes the list's lock
+        // too, and a thread that already holds it would wait on itself.
+        let cursor = self.focus_list.cursor_message();
         let rows = self.focus_list.rows();
         let selection = postio_core::state::Selection::default();
         let aim = postio_core::aim::Aim {
@@ -4071,7 +4068,8 @@ impl Session {
                 postio_core::aim::view_scope(scope, &self.reachable.lock().expect("reachable lock"))
             }),
             selection: &selection,
-            cursor: *self.cursor.lock().expect("cursor lock"),
+            // The controller's cursor, not one the frontend reports.
+            cursor,
             rows: &*rows,
         };
         f(&aim)
@@ -4104,12 +4102,6 @@ impl Session {
         if outbox.try_send((command, aimed)).is_err() {
             tracing::debug!("the runtime has stopped and did not mark that read");
         }
-    }
-
-    /// Report where the keyboard is, so a verb with nothing marked knows
-    /// which row it is about.
-    pub fn set_cursor(&self, message: Option<i64>) {
-        *self.cursor.lock().expect("cursor lock") = message.map(postio_model::ids::MessageId::new);
     }
 
     /// Say which accounts the aggregate view can currently vouch for.

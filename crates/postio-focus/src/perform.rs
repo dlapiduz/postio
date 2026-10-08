@@ -48,8 +48,10 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
             // Which folders are inboxes: what lets Focus's inbox ignore mail
             // moving anywhere else rather than re-read on every arrival.
             let mut folders = Vec::new();
+            let mut enabled = Vec::new();
             if let Ok(accounts) = client.accounts().await {
                 for account in accounts.iter().filter(|account| account.enabled) {
+                    enabled.push(account.id);
                     if let Ok(mailboxes) = client.mailboxes(account.id).await {
                         folders.extend(
                             mailboxes
@@ -69,6 +71,7 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
             };
             Reply::Opened(Opened {
                 scope,
+                accounts: enabled,
                 folders,
                 total,
                 surfaced,

@@ -47,7 +47,8 @@ async fn archiving_through_the_boundary_moves_the_message() {
     // which is what `Session::open_at` -- the Swift constructor -- gets.
     let session =
         Session::open(SessionOptions::in_memory_with(database.clone())).expect("a session");
-    session.set_cursor(Some(message));
+    // The message is the inbox's one row, and the cursor opens on it.
+    crate::focus::cursor_on_the_first_row(&session).await;
     session.invoke("archive");
 
     let deadline =

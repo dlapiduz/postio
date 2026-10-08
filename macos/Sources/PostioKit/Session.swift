@@ -274,13 +274,6 @@ public final class PostioSession {
     /// happened arrives on `nextEvent`. The UI never awaits the network.
     public func invoke(_ id: String) { inner.invoke(id: id) }
 
-    /// Report where the keyboard is, so a verb with nothing marked knows
-    /// which row it is about.
-    ///
-    /// The *cursor*, not the selection: `docs/PRODUCT.md` §9 keeps them
-    /// separate, and moving down the list must not build a selection.
-    public func setCursor(_ message: Int64?) { inner.setCursor(message: message) }
-
     /// Throw a draft away — the row and the server copy.
     ///
     /// Discarding one that is already gone is not an error: a retried

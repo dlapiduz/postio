@@ -243,9 +243,9 @@ mod through_the_boundary {
              this test is not about aiming at one"
         );
 
-        // The cursor on the row, nothing marked: the gesture is about the
-        // row, and the row stands for a conversation (ADR 0015 Q3).
-        session.set_cursor(Some(row.id));
+        // The cursor on the row -- the list opens with it there (C30) --
+        // and nothing marked: the gesture is about the row, and the row
+        // stands for a conversation (ADR 0015 Q3).
         session.invoke("flag");
 
         let flagged = settle_until(async || {
@@ -349,7 +349,6 @@ mod through_the_boundary {
 
         // The reported verb, and it carries its own target: the dwell names
         // the message it timed, so this tests the *bus* rather than the aim.
-        session.set_cursor(Some(row.id));
         session.mark_read_on_dwell(row.id);
 
         let read = settle_until(async || is_seen(&database, message).await).await;
