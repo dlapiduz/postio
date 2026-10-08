@@ -222,6 +222,26 @@ public struct MessageVerbButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(verb.cap.map { "\(verb.label), key \($0)" } ?? verb.label)
+        // Where it is, for a picker to hang from (T092).
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: MessageVerbFrames.self,
+                    value: [verb.command: proxy.frame(in: .named(MessageVerbFrames.space))])
+            })
+    }
+}
+
+/// Where each of the action row's buttons is, by its command, in the
+/// message window's content (top-left origin): what a picker opened from
+/// the open message hangs from (specs/009-focus-macos T092).
+public struct MessageVerbFrames: PreferenceKey {
+    /// The coordinate space the frames are in: the window's content.
+    public static let space = "postio.message.content"
+    public static let defaultValue: [String: CGRect] = [:]
+
+    public static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { $1 }
     }
 }
 
@@ -233,19 +253,24 @@ public struct MessageWindowView<BodyView: View>: View {
     let binding: (String) -> String?
     let run: (String) -> Void
     let alwaysForSender: () -> Void
+    let verbFrames: ([String: CGRect]) -> Void
     let bodyView: (FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
 
+    /// `verbFrames` hears where the action row's buttons are, by command,
+    /// whenever they move.
     public init(
         model: MessageWindowModel,
         binding: @escaping (String) -> String?,
         run: @escaping (String) -> Void,
         alwaysForSender: @escaping () -> Void,
+        verbFrames: @escaping ([String: CGRect]) -> Void = { _ in },
         @ViewBuilder body: @escaping (FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
     ) {
         self.model = model
         self.binding = binding
         self.run = run
         self.alwaysForSender = alwaysForSender
+        self.verbFrames = verbFrames
         bodyView = body
     }
 
@@ -279,6 +304,8 @@ public struct MessageWindowView<BodyView: View>: View {
         // focus ring on the first button would claim a focus nobody moved
         // there, and the accent is for the list's cursor (FR-017).
         .focusEffectDisabled()
+        .coordinateSpace(name: MessageVerbFrames.space)
+        .onPreferenceChange(MessageVerbFrames.self) { frames in verbFrames(frames) }
     }
 
     @ViewBuilder

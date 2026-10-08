@@ -34,6 +34,20 @@ public enum PickerCommand {
     public static let confirm = "picker_confirm"
     /// Escape: the picker closes through the controller's Back.
     public static let back = "back"
+    /// More, in the message window's action row: where a picker hangs
+    /// when its own verb has folded into it.
+    public static let more = "more_actions"
+
+    /// The registry command that opens a picker of `kind`: its button in
+    /// the message window's action row is what it hangs from there.
+    public static func opening(_ kind: PickerKindFfi) -> String {
+        switch kind {
+        case .snooze: return "snooze"
+        case .remind: return "remind_if_no_reply"
+        case .label: return "add_label"
+        case .move: return "move"
+        }
+    }
 }
 
 /// A picker at the row -- snooze, remind, label or move -- as the

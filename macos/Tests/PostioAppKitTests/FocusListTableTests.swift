@@ -79,4 +79,19 @@ struct FocusListTableTests {
         let cell = table.tableView(table.tableView, viewFor: nil, row: 0) as? FocusRowCell
         #expect(cell?.shown?.marker?.actions.first?.cap == "e")
     }
+
+    @Test func aPickerHangsUnderItsRowAtTheSubjectColumn() {
+        // Screen 11: the picker's left edge on the subject column, its top
+        // under the row's own lines -- not under its day heading's band.
+        let table = Self.table([Self.row(1), Self.row(2)])
+        table.pageArrived(0)
+        table.tableView.layoutSubtreeIfNeeded()
+        let width = table.tableView.bounds.width
+        let subject = CGFloat(FocusRowMetrics.columns(width: Double(width)).subjectX)
+        let first = table.pickerAnchor(row: 0, width: 380)
+        #expect(first == NSRect(x: subject, y: 32, width: 380, height: 40))
+        let second = table.pickerAnchor(row: 1, width: 380)
+        #expect(second == NSRect(x: subject, y: 72, width: 380, height: 40))
+        #expect(table.pickerAnchor(row: 5, width: 380) == nil)
+    }
 }

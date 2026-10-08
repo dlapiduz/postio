@@ -96,6 +96,7 @@ final class Engine {
                 session?.focusReaderState(moreOpen: more, finding: finding)
             }
             makeBar(session)
+            makePicker(session)
             // The toolbar was built before there were bindings to spell.
             keycapsChanged?()
             state = .open
@@ -425,7 +426,8 @@ final class Engine {
             model: model, binding: binding, run: run,
             alwaysForSender: { [weak session, weak model] in
                 model?.keepForSender { session?.alwaysTreatment(sender: $0, treatment: $1) }
-            }
+            },
+            verbFrames: { [weak self] in self?.verbFrames = $0 }
         ) { [weak session, weak model] document, card in
             MessageBodyView(
                 message: model?.shown ?? 0,
@@ -441,6 +443,7 @@ final class Engine {
         // The window's size is the geometry's (M1), never the content's: a
         // hosting view left to size its window grows it to the column.
         hosting.sizingOptions = []
+        messageContent = hosting
         secondary.show(
             .message, content: hosting,
             width: CGFloat(document.windowWidth), title: model.view?.subject ?? "", over: main,
@@ -503,6 +506,66 @@ final class Engine {
     @ObservationIgnored weak var searchField: BarSearchField?
     /// The strip's Inbox ▾, which the popover hangs from.
     @ObservationIgnored weak var placesAnchor: NSView?
+
+    // MARK: the pickers at the row (T092)
+
+    /// The picker up, as the controller's intents leave it.
+    private(set) var picker: PickerModel?
+    /// The popover it is drawn in, under its row or its button.
+    @ObservationIgnored private var pickerPopover: PickerPopover?
+    /// The message window's content, and where its action row's buttons
+    /// are in it: what a picker from the open message hangs from.
+    @ObservationIgnored private weak var messageContent: NSView?
+    @ObservationIgnored private var verbFrames: [String: CGRect] = [:]
+
+    private func makePicker(_ session: PostioSession) {
+        let picker = PickerModel(engine: session)
+        self.picker = picker
+        // A click outside, or the popover giving up on its own: the
+        // controller is told, and sends the keyboard home.
+        pickerPopover = PickerPopover(model: picker) { [weak session] in
+            session?.focusSurfaceClosed(.picker)
+        }
+    }
+
+    /// What the controller said about the picker.
+    private func apply(_ change: PickerModel.Change) {
+        switch change {
+        case let .open(anchor):
+            showPicker(at: anchor)
+        case .rows:
+            pickerPopover?.reload()
+        case .field:
+            pickerPopover?.focusField()
+        case .close:
+            pickerPopover?.close()
+        }
+    }
+
+    /// Hang the picker from what the controller named: under the cursor's
+    /// row at the subject column, or under the open message's button for
+    /// the verb (More's, when it has folded away).
+    private func showPicker(at anchor: PickerAnchorFfi) {
+        guard let picker, let popover = pickerPopover else { return }
+        switch anchor {
+        case let .row(position):
+            guard let table = focusTable else { return }
+            table.tableView.scrollRowToVisible(Int(position))
+            guard let rect = table.pickerAnchor(row: Int(position), width: PickerMetrics.width)
+            else { return }
+            popover.show(relativeTo: rect, of: table.tableView)
+        case .openMessage:
+            guard let content = messageContent, content.window != nil else { return }
+            let frame = verbFrames[PickerCommand.opening(picker.kind)]
+                ?? verbFrames[PickerCommand.more]
+                ?? CGRect(x: 12, y: 0, width: PickerMetrics.width, height: MessageActionRow.height)
+            // The frames are SwiftUI's, from the content's top left.
+            let rect = content.isFlipped
+                ? frame
+                : CGRect(x: frame.minX, y: content.bounds.height - frame.maxY, width: frame.width, height: frame.height)
+            popover.show(relativeTo: rect, of: content)
+        }
+    }
 
     private func makeBar(_ session: PostioSession) {
         let bar = CommandBarModel(engine: session)
@@ -703,6 +766,12 @@ final class Engine {
             apply(change)
             return
         }
+        // The pickers at the row (T092), before the surfaces: its close is
+        // `FocusCloseSurface(.picker)`.
+        if let change = picker?.apply(event) {
+            apply(change)
+            return
+        }
         // The controller's intents: the cursor, the selection, `!`'s heading,
         // the toast (T049). The table draws what changed.
         if let change = focus.apply(event) {
@@ -804,6 +873,25 @@ final class Engine {
     private func replayIntoField(_ key: KeyEvent.Reduced) -> Bool {
         let plain = !key.modifiers.command && !key.modifiers.control && !key.modifiers.option
         guard plain else { return false }
+        if let picker, picker.isOpen, let popover = pickerPopover {
+            switch key.name {
+            case "down": picker.move(by: 1)
+            case "up": picker.move(by: -1)
+            case nil:
+                // Typing, where a press would type: into the date field once
+                // it has the keyboard, or into the filter -- except a bare
+                // digit or space while the filter is empty, which is the
+                // picker's, as the resolver has it.
+                let text = key.character ?? ""
+                let picks = text == " " || (text.count == 1 && text.allSatisfy(\.isNumber))
+                let typing = picker.inField || (picker.filters && !(picker.typed.isEmpty && picks))
+                guard typing else { return false }
+                popover.type(text)
+            // Return, Tab and Escape resolve as a press does.
+            default: return false
+            }
+            return true
+        }
         if let popover = placesPopover, popover.isShown {
             switch key.name {
             case "return": popover.openHighlighted()
@@ -901,6 +989,16 @@ final class Engine {
     /// owns; everything else goes to `invoke`, where the boundary decides.
     @discardableResult
     func run(_ id: String, on target: Int64? = nil) -> Bool {
+        // Space and Return in a picker are about the highlighted row, which
+        // only the popover knows; Escape is its Back, before any surface of
+        // the Mac's own is asked.
+        if let picker, picker.isOpen {
+            if picker.run(id) { return true }
+            if id == Intercepted.back {
+                picker.back()
+                return true
+            }
+        }
         switch id {
         case Intercepted.cheatSheet:
             showingCheatSheet = true

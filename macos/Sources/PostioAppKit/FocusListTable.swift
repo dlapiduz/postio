@@ -148,6 +148,19 @@ public final class FocusListTable: NSObject {
     /// `FocusCursor` said (`FocusIntents`).
     public var cursor: Int? { model.cursor }
 
+    /// Where a picker at the row hangs from (specs/009-focus-macos T092,
+    /// screen 11): the row's own lines, without its day heading's band,
+    /// from the subject column across `width` -- the picker's -- so a
+    /// popover centred on it starts at the subject. In the table's
+    /// coordinates; `nil` for a row the list does not have.
+    public func pickerAnchor(row: Int, width: CGFloat) -> NSRect? {
+        guard row >= 0, row < tableView.numberOfRows else { return nil }
+        let frame = tableView.rect(ofRow: row)
+        let band = model.row(at: row)?.heading == nil ? 0 : CGFloat(FocusRowMetrics.heading)
+        let subject = CGFloat(FocusRowMetrics.columns(width: Double(frame.width)).subjectX)
+        return NSRect(x: frame.minX + subject, y: frame.minY + band, width: width, height: frame.height - band)
+    }
+
     /// The conversations marked, drawn as the checked box.
     public var selected: Set<Int64> { model.selected }
 
