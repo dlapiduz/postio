@@ -182,6 +182,17 @@ final class Engine {
     /// `update_credential` is a command, and a command cannot reach a view.
     let accountRepair = AccountRepair()
 
+    /// The same, for the sign-in banner's "Update password…" (screen 19):
+    /// a sheet on the main window rather than the settings window's alert.
+    /// Its own, because both windows present whenever theirs is asking.
+    let bannerRepair = AccountRepair()
+
+    /// The account the banner's password sheet is for, while it is up.
+    var bannerRepairAccount: AccountFfi? {
+        guard let id = bannerRepair.asking else { return nil }
+        return accounts.first { $0.id == id }
+    }
+
     /// Edit › Undo: the engine's stack in the main window (T051).
     @ObservationIgnored
     private lazy var undoRouter = UndoRouter(
@@ -220,15 +231,6 @@ final class Engine {
 
     /// Focus's list, once a session has opened (specs/009-focus-macos US1).
     private(set) var focusTable: FocusListTable?
-
-    /// How many rows Focus's list draws, observed: SwiftUI decides between
-    /// the list and the empty inbox on it, and the table's own count is
-    /// behind the FFI where nothing can observe it.
-    private(set) var focusCount: UInt32 = 0
-
-    /// Whether the list has said how long it is yet. Until it has, an empty
-    /// count is "not counted", not "empty".
-    private(set) var focusListed = false
 
     /// Which of Focus's lists is open.
     private(set) var focusScope: FocusScopeFfi = .inbox
@@ -300,7 +302,6 @@ final class Engine {
     func openFocus(_ scope: FocusScopeFfi) {
         guard let session else { return }
         focusScope = scope
-        focusListed = false
         session.openFocus(scope)
         refreshCounts()
     }
@@ -462,31 +463,16 @@ final class Engine {
         messageReported = false
     }
 
-    // MARK: the toolbar
+    // MARK: the app's own state (T099)
 
-    /// Whether a sync pass is running now, from `SyncProgress`: the presence
-    /// of progress is the answer to "is anything happening".
-    private(set) var syncing = false
-
-    /// How far the sync pass in flight has come.
-    private(set) var syncProgress: (done: UInt32, total: UInt32)?
-
-    /// Why an account cannot sign in, or `nil` while every one can. Not the
-    /// machine's reachability, which is `isOffline`.
-    private(set) var failure: FailureReasonFfi?
+    /// The banner, the toolbar's sync label and the empty page, as the
+    /// controller last said them (`FocusBanner`, `FocusSyncLabel`,
+    /// `FocusEmpty`). The words are `postio_ui::focus_state`'s; nothing
+    /// here composes them.
+    let states = FocusStates()
 
     /// Whether the platform has told the engine there is no connection.
     var isOffline: Bool { session?.isOffline ?? false }
-
-    /// The toolbar's sync label.
-    var syncLabel: SyncLabel {
-        SyncLabel(
-            offline: isOffline,
-            failing: failure != nil,
-            syncing: syncing ? syncProgress : nil,
-            lastSynced: mailboxes.compactMap(\.lastSyncedAt).max()
-        )
-    }
 
     /// The keycap in the toolbar's search field, spelled again when the
     /// bindings change. The toolbar hands this over when it is installed.
@@ -781,14 +767,15 @@ final class Engine {
             if change == .toast { refreshUndo() }
             return
         }
+        // The banner, the sync label and the empty page (T099): the
+        // controller's words, held for the strip, the toolbar and the list.
+        if states.apply(event) != nil { return }
         if let surface = FocusIntents.surface(event) {
             apply(surface)
             return
         }
         switch event {
         case let .focusListChanged(total):
-            focusCount = total
-            focusListed = true
             focusTable?.listChanged(total: total)
             refreshCounts()
         case let .focusPageReady(page):
@@ -815,9 +802,6 @@ final class Engine {
             // The settings window asked for this, and it is the only thing
             // that draws it.
             settingsActions.reindexProgressed(done: done, total: total)
-        case let .syncProgress(_, done, total):
-            syncing = done < total
-            syncProgress = syncing ? (done, total) : nil
         case let .focusRun(command):
             // A line of the bar the controller hands back: Compose,
             // Settings, a host verb -- run as a menu item would run it.
@@ -827,18 +811,6 @@ final class Engine {
             Self.log.info("the Filtered view was asked for; not built on the Mac yet")
             notice = Notice(kind: .refused, message: "Filtered is not built on the Mac yet.", undoable: false)
             noticeToken += 1
-        case let .connectionChanged(_, state):
-            // A connection that has gone means nothing is in flight.
-            if isOffline { syncing = false }
-            // And the reason is kept: an expired password must not read as
-            // "synced" for as long as you leave it.
-            switch state {
-            case let .failing(reason):
-                failure = reason
-                syncing = false
-            case .online, .connecting, .offline:
-                failure = nil
-            }
         default:
             break
         }
@@ -1008,6 +980,10 @@ final class Engine {
     /// owns; everything else goes to `invoke`, where the boundary decides.
     @discardableResult
     func run(_ id: String, on target: Int64? = nil) -> Bool {
+        // The banner's password sheet has the keyboard: every key reaches
+        // its field and its buttons -- Return saves, Escape cancels --
+        // rather than the list behind it.
+        if bannerRepair.asking != nil { return false }
         // Space and Return in a picker are about the highlighted row, which
         // only the popover knows; Escape is its Back, before any surface of
         // the Mac's own is asked.
@@ -1055,6 +1031,15 @@ final class Engine {
             settingsAccounts.ask(.add)
         case Intercepted.editConfig:
             openConfigFile()
+        case Intercepted.updateCredential where keyWindow.current == .main && states.banner?.account != nil:
+            // The sign-in banner's button (screen 19): the account it names,
+            // by the route the account calls for -- a password sheet, or
+            // the browser for an OAuth grant.
+            guard let id = states.banner?.account,
+                  let account = (session?.accounts() ?? accounts).first(where: { $0.id == id })
+            else { return false }
+            let session = session
+            Task { await bannerRepair.begin(account, through: session) }
         case Intercepted.updateCredential:
             guard let account = settingsAccounts.focused(in: accounts) else { return false }
             settingsAccounts.ask(.updateCredential(account.id))

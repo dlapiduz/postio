@@ -67,36 +67,3 @@ import Testing
         #expect(words.hasAction == "Has action")
     }
 }
-
-/// The toolbar's sync label (`postio_ui::focus_state::sync_label`'s words).
-@Suite struct SyncLabelTests {
-    static let zone = TimeZone(identifier: "Europe/Lisbon")!
-
-    @Test func aFailureOutranksEverything() {
-        let label = SyncLabel(offline: true, failing: true, syncing: (1, 2), lastSynced: 0, zone: Self.zone)
-        #expect(label.text == "Sync failed")
-    }
-
-    @Test func offlineOutranksASyncThatCannotBeRunning() {
-        let label = SyncLabel(offline: true, failing: false, syncing: (1, 2), lastSynced: 0, zone: Self.zone)
-        #expect(label.text == "Offline")
-    }
-
-    @Test func aPassInFlightSaysHowFarItHasCome() {
-        let label = SyncLabel(
-            offline: false, failing: false, syncing: (1_200, 8_400), lastSynced: nil, zone: Self.zone)
-        #expect(label.text == "Syncing 1,200 of 8,400")
-    }
-
-    @Test func aSettledStoreSaysWhenItLastSyncedAsAClockTime() {
-        // 2026-09-26 15:09 UTC is 16:09 in Lisbon.
-        let label = SyncLabel(
-            offline: false, failing: false, syncing: nil, lastSynced: 1_790_435_340, zone: Self.zone)
-        #expect(label.text == "Synced 16:09")
-    }
-
-    @Test func aStoreThatNeverSyncedSaysSo() {
-        let label = SyncLabel(offline: false, failing: false, syncing: nil, lastSynced: nil, zone: Self.zone)
-        #expect(label.text == "Not synced yet")
-    }
-}

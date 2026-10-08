@@ -59,6 +59,13 @@ struct MainWindow: View {
                 words: engine.stripWords,
                 placeAnchor: PlacesAnchor { engine.placesAnchor = $0 }
             ) { engine.run($0) }
+            // First sync, offline, a refused password (screens 17 to 19):
+            // one full-width strip under the header strip, as the
+            // controller words it. Never in the way: the list stays live.
+            if let banner = engine.states.banner {
+                BannerStrip(words: BannerStripWords(banner)) { engine.run($0) }
+                    .transition(.opacity)
+            }
             list
             // While anything is selected (screen 01): the count, the verbs
             // with their keys, and the selection's own keys.
@@ -70,6 +77,15 @@ struct MainWindow: View {
         // The command bar is a panel dropping from the toolbar's field
         // (`CommandBarPanel`, T085), a child window rather than an overlay.
         .background(MainToolbarInstaller(engine: engine))
+        // "Update password…" from the sign-in banner (screen 19).
+        .sheet(isPresented: Binding(
+            get: { engine.bannerRepairAccount != nil },
+            set: { if !$0 { engine.bannerRepair.cancel() } }
+        )) {
+            if let account = engine.bannerRepairAccount {
+                PasswordSheet(account: account, repair: engine.bannerRepair, session: engine.session)
+            }
+        }
         .sheet(isPresented: Binding(
             get: { engine.showingCheatSheet },
             set: { engine.showingCheatSheet = $0 }
@@ -82,6 +98,7 @@ struct MainWindow: View {
         .animation(.easeOut(duration: Motion.current), value: engine.pendingChord)
         .animation(.easeOut(duration: Motion.current), value: engine.noticeToken)
         .animation(.easeOut(duration: Motion.current), value: engine.actionBarWords != nil)
+        .animation(.easeOut(duration: Motion.current), value: engine.states.banner)
         .animation(.easeOut(duration: Motion.current), value: engine.focus.toastToken)
         .animation(.easeOut(duration: Motion.current), value: engine.focus.toast == nil)
         .overlay(alignment: .bottomLeading) { NoticeBanner(engine: engine) }
@@ -125,12 +142,14 @@ struct MainWindow: View {
                 Text("Postio is asking the Keychain for this store's key.")
             }
         case .open:
-            if let table = engine.focusTable, !(engine.focusListed && engine.focusCount == 0) {
+            if let page = engine.states.empty {
+                // Empty is a state, not a blank (screen 16): the controller's
+                // page, with its next digest and the shortcuts that lead
+                // somewhere, in the list's place until it says the list is
+                // back.
+                EmptyInbox(words: EmptyInboxWords(page)) { engine.run($0) }
+            } else if let table = engine.focusTable {
                 FocusListView(table: table)
-            } else {
-                // Empty is a state, not a blank. Screen 16's empty inbox, with
-                // its next digest and shortcuts, comes with the app states.
-                ContentUnavailableView("Inbox is empty", systemImage: "tray")
             }
         case let .unavailable(reason):
             ContentUnavailableView {
@@ -355,18 +374,21 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
     }
 }
 
-/// The sync label: a symbol and "Synced 16:09", redrawn as it ages.
+/// The sync label: a symbol and the controller's words ("Synced 16:09",
+/// "Syncing 12,408 of 18,204", "Offline", "Sync failed"), as
+/// `FocusSyncLabel` last said them. Nothing until it has said anything: the
+/// words are `postio_ui::focus_state::sync_label`'s, and a Swift copy of
+/// them is the drift the FFI event exists to end.
 private struct SyncLabelView: View {
     let engine: Engine
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 30)) { _ in
-            let label = engine.syncLabel
+        if let label = engine.states.syncLabel {
             HStack(spacing: 5) {
                 Image(systemName: label.symbol).font(.system(size: 11))
                 Text(label.text).font(.system(size: 12).monospacedDigit())
             }
-            .foregroundStyle(engine.failure == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
+            .foregroundStyle(label.isAlarming ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
             .fixedSize()
             .accessibilityElement(children: .combine)
         }
