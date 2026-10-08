@@ -131,7 +131,7 @@ search with the chips that teach the query language, the palette, the cheat
 sheet, a menu bar built from the command registry, compose with rich text
 and attachments, notifications, and a settings window. Compose was deferred
 in the original scope and is not deferred any more. Focus on macOS is
-outlined in [`specs/007-postio-focus/macos.md`](../specs/007-postio-focus/macos.md).
+specified in [`specs/009-focus-macos`](../specs/009-focus-macos/spec.md).
 
 **Every command reaches something, and that is a test rather than a
 claim.** On the Mac, `crates/postio-ffi/tests/ffi_suite/command_coverage.rs`

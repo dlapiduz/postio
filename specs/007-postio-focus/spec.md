@@ -2130,7 +2130,7 @@ screen, not on what a layer was handed, that each surface shows what
   the binary `postio`, the app id `dev.postio.Postio`, the launcher, the
   icon and the `mailto:` and `postio:` handlers.
 - **Platforms.** This spec covers Linux and GTK. Focus's design on macOS is
-  outlined in [macos.md](./macos.md); its logic lives in the toolkit-free
+  specified in [spec 009](../009-focus-macos/spec.md); its logic lives in the toolkit-free
   layers (FR-006), so it is not designed out.
 - **The design folders** stay out of the repository until they are
   re-rendered and scrubbed (see *The inputs, and which one wins*).

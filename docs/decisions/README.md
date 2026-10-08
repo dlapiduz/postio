@@ -27,7 +27,7 @@ decision stands.
 | [0016](0016-full-mailbox-backfill-by-default.md) | Full-mailbox backfill by default, folders optionally excluded | Built |
 | [0017](0017-backfill-cost-attachments-memory-disk-encryption.md) | What "download everything" costs, and the four axes that pay for it | Built, on the Turso engine (ADR 0038) |
 | [0018](0018-jmap-and-gmail-backends.md) | JMAP and Gmail REST backends, on Pimalaya crates | Built |
-| [0019](0019-macos-frontend.md) | A native macOS frontend over `postio-session` | Built as a read-only slice; not released |
+| [0019](0019-macos-frontend.md) | A native macOS frontend over `postio-session` | Built; rebuilt as Focus by `specs/009-focus-macos` |
 | [0020](0020-where-message-bodies-live.md) | Message bodies live in the store; the blob store keeps attachments | Built; per-row zstd, no dictionary (see 0038) |
 | [0021](0021-exactly-once-send.md) | Sending is at-most-once | Built |
 | [0022](0022-extensions-contribute-rows-not-pixels.md) | Extensions contribute table rows, not pixels | Decided for the part that is forced; nothing registers yet |
@@ -53,6 +53,7 @@ decision stands.
 | [0042](0042-the-reading-renderer-is-disconnected-and-memory-safe.md) | The reading renderer is disconnected and memory-safe | Built |
 | [0043](0043-focus-is-the-one-desktop-app.md) | Focus is the one desktop app, and the GTK it draws lives in `postio-widgets` | Built; the classic app was removed (T256; `specs/007-postio-focus/classic-parity.md`) |
 | [0044](0044-every-frontend-is-observable-and-storyboarded.md) | Every frontend is observable and storyboarded | Accepted, with `specs/008-storyboards` |
+| [0045](0045-focus-behaviour-lives-in-postio-focus.md) | Focus's behaviour lives in `postio-focus`; frontends draw its intents | Accepted, with `specs/009-focus-macos` |
 
 ## Writing one
 

@@ -42,9 +42,9 @@ built (FR-063).
 
 ## Phase 1: Setup (documents and tooling)
 
-- [ ] T001 Write ADR 0045 "Focus's behaviour lives in `postio-focus`; frontends draw its intents" in `docs/decisions/0045-focus-behaviour-lives-in-postio-focus.md`: the rule, the crate boundary from contracts/focus-controller.md, and "no Focus rule in a window" (plan.md, ADR). Add its row to `docs/decisions/README.md`
-- [ ] T002 [P] Amend `docs/decisions/0019-macos-frontend.md`: set the status to "partly superseded by spec 009". Its boundary, SwiftPM, packaging and Linux-stays-green rules hold; its three-pane surface and read-only framing go
-- [ ] T003 [P] Fold `specs/007-postio-focus/macos.md` into spec 009: anything still true and not already in spec.md or research.md goes into spec.md's Context. Delete the file, and update every link to it (`grep -rn "007-postio-focus/macos.md"`), including `crates/postio-ffi/tests/ffi_suite/command_coverage.rs` KNOWN_ORPHANS comments
+- [x] T001 Write ADR 0045 "Focus's behaviour lives in `postio-focus`; frontends draw its intents" in `docs/decisions/0045-focus-behaviour-lives-in-postio-focus.md`: the rule, the crate boundary from contracts/focus-controller.md, and "no Focus rule in a window" (plan.md, ADR). Add its row to `docs/decisions/README.md`
+- [x] T002 [P] Amend `docs/decisions/0019-macos-frontend.md`: set the status to "partly superseded by spec 009". Its boundary, SwiftPM, packaging and Linux-stays-green rules hold; its three-pane surface and read-only framing go
+- [x] T003 [P] Fold `specs/007-postio-focus/macos.md` into spec 009: anything still true and not already in spec.md or research.md goes into spec.md's Context. Delete the file, and update every link to it (`grep -rn "007-postio-focus/macos.md"`), including `crates/postio-ffi/tests/ffi_suite/command_coverage.rs` KNOWN_ORPHANS comments
 - [ ] T004 [P] Add `scripts/macos-shot.sh <screen> [--dark|--light|--both] [--width W]`:
   - copy the seeded demo store (`postio_storage::seed`) to a scratch directory;
   - launch `macos/build/Postio.app/Contents/MacOS/Postio` with `POSTIO_STORE`/`POSTIO_CONFIG`, with `-AppleInterfaceStyle Dark` for dark;

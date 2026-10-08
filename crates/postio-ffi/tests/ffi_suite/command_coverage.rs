@@ -49,12 +49,12 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     // The one keymap's go-to keys and pinned searches (spec 007, offered by
     // every app), which arrived with the merge of the macOS frontend and
     // which no Mac surface answers yet.
-    (CommandId::GoToArchive, "specs/007-postio-focus/macos.md"),
-    (CommandId::GoToSnoozed, "specs/007-postio-focus/macos.md"),
-    (CommandId::SavedSearch1, "specs/007-postio-focus/macos.md"),
-    (CommandId::SavedSearch2, "specs/007-postio-focus/macos.md"),
-    (CommandId::SavedSearch3, "specs/007-postio-focus/macos.md"),
-    (CommandId::SavedSearch4, "specs/007-postio-focus/macos.md"),
+    (CommandId::GoToArchive, "specs/009-focus-macos"),
+    (CommandId::GoToSnoozed, "specs/009-focus-macos"),
+    (CommandId::SavedSearch1, "specs/009-focus-macos"),
+    (CommandId::SavedSearch2, "specs/009-focus-macos"),
+    (CommandId::SavedSearch3, "specs/009-focus-macos"),
+    (CommandId::SavedSearch4, "specs/009-focus-macos"),
 ];
 
 /// Whether the Mac offers `id` at all. See the module note.
@@ -68,7 +68,7 @@ fn offered_on_the_mac(id: CommandId) -> bool {
     let requires = postio_core::registry::get(id).requires;
     // Not the terminal's own commands, nor Focus's (spec 007): this
     // boundary is the three-pane frontend's until the Mac builds Focus's
-    // design (specs/007-postio-focus/macos.md).
+    // design (specs/009-focus-macos).
     postio_core::registry::offered_on(id.into(), postio_config::paths::Platform::Apple)
         && !requires.contains(Requirement::Terminal)
         && !requires.contains(Requirement::Focus)
