@@ -605,6 +605,30 @@ fn undo_takes_back_only_what_this_frontend_did() {
 }
 
 #[test]
+fn each_frontend_reads_the_undo_it_would_take_back() {
+    // What Edit > Undo names on the Mac (specs/009-focus-macos T044): this
+    // frontend's own top, read without taking it back.
+    let world = World::new();
+    let (terminal, terminal_events) = world.frontend(ClientKind::Tui);
+    let (desktop, _desktop_events) = world.frontend(ClientKind::Focus);
+    let top = |client: &Client| world.rt.block_on(client.undo_top()).expect("the undo top");
+
+    assert_eq!(top(&terminal), None, "nothing done, nothing to name");
+    world.send(&terminal, archive());
+    world.hear(&terminal_events, |event| {
+        matches!(event, Event::ActionCompleted { .. })
+    });
+    assert_eq!(top(&terminal).as_deref(), Some("Archived 1 message"));
+    assert_eq!(top(&desktop), None, "the desktop did nothing");
+
+    world.send(&terminal, Command::Undo);
+    world.hear(&terminal_events, |event| {
+        matches!(event, Event::UndoPerformed { .. })
+    });
+    assert_eq!(top(&terminal), None, "taken back, so nothing left");
+}
+
+#[test]
 fn two_commands_sent_back_to_back_run_in_the_order_they_were_sent() {
     // Archive, then undo, without waiting between them. In order, the
     // message ends where it started; reversed, the undo finds nothing to

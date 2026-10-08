@@ -98,6 +98,7 @@ impl Req {
             Req::CreateLabel { .. } => "CreateLabel",
             Req::ThreadLabels(_) => "ThreadLabels",
             Req::FocusCounts => "FocusCounts",
+            Req::UndoTop => "UndoTop",
             Req::ReplySource(_) => "ReplySource",
             Req::DraftBehind(_) => "DraftBehind",
             Req::CancelSend(_) => "CancelSend",
@@ -573,6 +574,16 @@ impl Client {
     pub async fn focus_counts(&self) -> Result<crate::protocol::FocusCounts, StoreError> {
         self.read(Req::FocusCounts, "Focus's counts", |answer| match answer {
             Resp::FocusCounts(counts) => Some(counts),
+            _ => None,
+        })
+        .await
+    }
+
+    /// What this client's Undo would take back now, in the toast's words,
+    /// or `None` when there is nothing it can. Read, not taken.
+    pub async fn undo_top(&self) -> Result<Option<String>, StoreError> {
+        self.read(Req::UndoTop, "the undo top", |answer| match answer {
+            Resp::UndoTop(top) => Some(top),
             _ => None,
         })
         .await
@@ -1619,6 +1630,17 @@ mod tests {
         assert_eq!(client.focus_counts().await, Ok(counts));
         assert_eq!(*fake.asked.lock().unwrap(), vec![Req::FocusCounts]);
         assert_eq!(client.counts().of("FocusCounts"), 1);
+    }
+
+    #[tokio::test]
+    async fn the_undo_top_is_one_request() {
+        let (client, fake) = client(vec![Ok(Resp::UndoTop(Some("Archived 3 messages".into())))]);
+        assert_eq!(
+            client.undo_top().await,
+            Ok(Some("Archived 3 messages".to_owned()))
+        );
+        assert_eq!(*fake.asked.lock().unwrap(), vec![Req::UndoTop]);
+        assert_eq!(client.counts().of("UndoTop"), 1);
     }
 
     #[tokio::test]
