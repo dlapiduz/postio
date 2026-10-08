@@ -132,4 +132,19 @@ struct SecondaryWindowTests {
         #expect(frame?.width == 640)
         #expect((frame?.height ?? 0) >= SecondaryWindowController.minimumHeight)
     }
+
+    @Test func aToolbarTheContentPutsOnDoesNotGrowTheWindow() {
+        // The message window's title area is a unified toolbar, and AppKit
+        // keeps the content's size when one is added -- so the window grew
+        // past the main window by the toolbar's height.
+        let (controller, _) = Self.controller()
+        let main = Self.main()
+        controller.show(
+            .message, content: NSView(), width: 720, title: "", over: main,
+            configure: { window in
+                window.toolbarStyle = .unified
+                window.toolbar = NSToolbar(identifier: "test")
+            })
+        #expect(controller.window?.frame == NSRect(x: 460, y: 140, width: 720, height: 820))
+    }
 }

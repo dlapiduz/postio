@@ -109,6 +109,10 @@ public final class SecondaryWindowController: NSObject, NSWindowDelegate {
         window.collectionBehavior.insert(.fullScreenAuxiliary)
         if kind == .message { KeyWindowTracker.tag(window, as: .message) }
         configure?(window)
+        // Again: a toolbar `configure` added keeps the content's size and
+        // grows the window by its own height (the message window's title
+        // area is one), and the frame is the geometry's, not the content's.
+        window.setFrame(Self.placed(width: width, over: parent.frame), display: false)
 
         self.window = window
         self.kind = kind
