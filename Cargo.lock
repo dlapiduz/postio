@@ -4799,6 +4799,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "postio-focus"
+version = "0.4.2"
+dependencies = [
+ "async-channel",
+ "chrono",
+ "postio-client",
+ "postio-config",
+ "postio-core",
+ "postio-model",
+ "postio-search",
+ "postio-ui",
+ "tracing",
+]
+
+[[package]]
 name = "postio-gmail"
 version = "0.4.2"
 dependencies = [

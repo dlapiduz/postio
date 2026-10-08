@@ -356,6 +356,45 @@ RULES: dict[str, dict[str, object]] = {
             "assumptions, or a second store owner, into all of them."
         ),
     },
+    # Focus's controller decides what Focus does for every frontend (ADR
+    # 0045). It does no I/O, so it may name no executor: the GTK app drives it
+    # from glib's loop and the FFI from tokio, and either executor here would
+    # make the other frontend's driver a second-class one. tokio reaching it
+    # through postio-core is fine; naming it directly is not.
+    "postio-focus": {
+        "banned": [
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "libadwaita",
+            "libadwaita-sys",
+            "gdk4",
+            "gdk4-sys",
+            "gsk4-sys",
+            "webkit6",
+            "webkit6-sys",
+            "rusqlite",
+            "libsqlite3-sys",
+            "turso",
+            "turso_core",
+            "io-imap",
+            "postio-host",
+            "postio-session",
+            "postio-storage",
+            "postio-runtime",
+            "postio-widgets",
+            "postio-gtk",
+            "uniffi",
+            *INFERENCE_ENGINES,
+        ],
+        "direct": ["tokio", "glib", "async-std"],
+        "why": (
+            "postio-focus is Focus's behaviour, decided once and drawn by "
+            "every frontend (ADR 0045, specs/009-focus-macos). A toolkit, the "
+            "store, the host or the FFI here would make it one frontend's "
+            "again; an executor named here would tie it to one main loop."
+        ),
+    },
     "postio-storyboard": {
         "banned": [
             "gtk4",
