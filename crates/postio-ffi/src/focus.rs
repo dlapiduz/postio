@@ -34,6 +34,23 @@ impl From<postio_client::protocol::FocusCounts> for FocusCountsFfi {
 
 #[uniffi::export]
 impl Session {
+    /// Show one of Focus's lists: counted first, then `FocusListChanged`.
+    pub fn open_focus(&self, scope: crate::FocusScopeFfi) {
+        self.focus_driver().open(scope.into());
+    }
+
+    /// How many rows Focus's list draws.
+    pub fn focus_row_count(&self) -> u32 {
+        self.focus_driver().row_count()
+    }
+
+    /// The row at `position`, or `None` while its page is on its way
+    /// (`FocusPageReady` says when). Synchronous and does no I/O: what the
+    /// table calls for every visible row.
+    pub fn focus_row_at(&self, position: u32) -> Option<crate::FocusRowFfi> {
+        self.focus_driver().row_at(position)
+    }
+
     /// The header strip's counts, read now.
     pub fn focus_counts(&self) -> Result<FocusCountsFfi, SessionError> {
         let client = self

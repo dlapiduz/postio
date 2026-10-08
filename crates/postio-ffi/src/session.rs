@@ -885,6 +885,8 @@ pub struct Session {
     /// the GTK app (`follow_config`). `None` for a session given a document
     /// rather than a file, or when the file cannot be watched.
     config_watch: Mutex<Option<postio_config::watch::ConfigWatcher>>,
+    /// Focus's list, driven by the controller (specs/009-focus-macos T027).
+    focus_list: Arc<crate::focus_list::FocusDriver>,
     /// The in-memory blob directory, removed when the session is dropped.
     #[cfg(feature = "testing")]
     _scratch: Option<tempfile::TempDir>,
@@ -2256,6 +2258,8 @@ impl Session {
                 }
             })?;
             let (wiring, events, link) = connect(&host);
+            let local = async_channel::unbounded();
+            let (focus_client, focus_runtime) = (link.client.clone(), wiring.runtime.clone());
             let keys = config.keys;
             postio_session::spawn_body_indexer(
                 wiring.database.clone(),
@@ -2306,13 +2310,18 @@ impl Session {
                 offline: Arc::default(),
                 engines: Mutex::new(Vec::new()),
                 reads: Arc::default(),
-                local: async_channel::unbounded(),
+                local: local.clone(),
                 events,
                 link: Mutex::new(Some(link)),
                 wired: host.wired(),
                 _focus: engage_focus(&host, &config.focus, &source),
                 _host: host,
                 config_watch: Mutex::new(None),
+                focus_list: crate::focus_list::FocusDriver::new(
+                    focus_client.clone(),
+                    focus_runtime.clone(),
+                    local.0.clone(),
+                ),
                 _scratch: Some(scratch),
             });
             session.follow_config(&source);
@@ -2362,6 +2371,8 @@ impl Session {
                 .with_watch(postio_session::watch_policy(&sync_config))
         })?;
         let (wiring, events, link) = connect(&host);
+        let local = async_channel::unbounded();
+        let (focus_client, focus_runtime) = (link.client.clone(), wiring.runtime.clone());
         postio_session::spawn_body_indexer(
             wiring.database.clone(),
             wiring.events.subscribe("indexer"),
@@ -2405,7 +2416,7 @@ impl Session {
             reads: Arc::default(),
             reconnects: Arc::default(),
             offline: Arc::default(),
-            local: async_channel::unbounded(),
+            local: local.clone(),
             events,
             link: Mutex::new(Some(link)),
             wired: host.wired(),
@@ -2414,6 +2425,11 @@ impl Session {
             #[cfg(feature = "testing")]
             _scratch: None,
             config_watch: Mutex::new(None),
+            focus_list: crate::focus_list::FocusDriver::new(
+                focus_client.clone(),
+                focus_runtime.clone(),
+                local.0.clone(),
+            ),
         });
         session.follow_config(&source);
         Ok(session)
@@ -4452,6 +4468,11 @@ impl Session {
         }
     }
 
+    /// Focus's list.
+    pub(crate) fn focus_driver(&self) -> &Arc<crate::focus_list::FocusDriver> {
+        &self.focus_list
+    }
+
     /// The host's client, while this session is open.
     pub(crate) fn client(&self) -> Option<postio_client::Client> {
         self.link
@@ -6264,7 +6285,10 @@ impl Session {
         // shuts down, and that is what must end the frontend's loop -- so a
         // closed engine stream wins even if the local one is merely idle.
         tokio::select! {
-            engine = self.events.next() => engine.map(|event| self.cross(event)),
+            engine = self.events.next() => engine.map(|event| {
+                self.focus_list.event(&event);
+                self.cross(event)
+            }),
             local = self.local.1.recv() => local.ok(),
         }
     }

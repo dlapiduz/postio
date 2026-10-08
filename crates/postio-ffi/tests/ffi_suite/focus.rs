@@ -35,6 +35,13 @@ async fn asked(question: &str) -> std::sync::Arc<Session> {
         message.to = vec![account.address.clone()];
         message.promoted = Some(postio_model::promoted::PromotedHeaders::default());
         let id = repository.create(&mut message).await.expect("a message");
+        // Threaded, as sync would leave it: a list row is a conversation,
+        // and its unread state and marker are the conversation's.
+        let threads = postio_storage::repository::ThreadRepository::new(&connection);
+        let mut thread = postio_model::Thread::new(account.id);
+        thread.subject = message.subject.clone();
+        threads.create(&mut thread).await.expect("a thread");
+        threads.add_message(thread.id, id).await.expect("threaded");
         repository
             .set_body(
                 id,
@@ -72,6 +79,90 @@ async fn a_question_in_the_inbox_is_counted_as_needing_action() {
     assert_eq!(
         counts.has_action, 1,
         "the question is marked, so Has action counts it: {counts:?}"
+    );
+    session.shutdown();
+}
+
+/// Wait for `wanted` on the session's event stream, up to `secs`.
+async fn heard(
+    session: &Session,
+    secs: u64,
+    wanted: impl Fn(&postio_ffi::UiEvent) -> bool,
+) -> bool {
+    tokio::time::timeout(Duration::from_secs(secs), async {
+        while let Some(event) = session.next_event().await {
+            if wanted(&event) {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false)
+}
+
+/// The Mac's Focus list, filled by the controller's feed (spec 009 T026):
+/// the inbox opens, is counted, changes over, and its rows carry the words
+/// a row draws -- the marker's chip and the sentence quoted verbatim.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_inbox_fills_with_focus_rows_that_carry_their_marker() {
+    let session = asked(
+        "Hi,\n\nCan you approve these by Friday so finance can close the quarter?\n\nThanks,\nAda",
+    )
+    .await;
+    // The marker is the body stage's; wait for it before the list is read.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while session.focus_counts().expect("counts").has_action == 0 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    session.open_focus(postio_ffi::FocusScopeFfi::Inbox);
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            postio_ffi::UiEvent::FocusListChanged { total: 1 }
+        ))
+        .await,
+        "the list changes over to the inbox, one conversation long"
+    );
+    assert_eq!(session.focus_row_count(), 1);
+    // The first ask is a miss that fetches; the page then lands.
+    let first = session.focus_row_at(0);
+    if first.is_none() {
+        assert!(
+            heard(&session, 10, |event| matches!(
+                event,
+                postio_ffi::UiEvent::FocusPageReady { page: 0 }
+            ))
+            .await,
+            "the first page lands"
+        );
+    }
+    let row = session
+        .focus_row_at(0)
+        .expect("the row, once its page landed");
+    assert_eq!(row.subject, "Atlas Q3 budget");
+    assert_eq!(row.sender, "Ada");
+    assert!(row.unread, "unread is bold");
+    assert!(
+        row.day_heading.starts_with("Today \u{b7} "),
+        "{}",
+        row.day_heading
+    );
+    let marker = row.marker.expect("the question's marker line");
+    assert_eq!(marker.chip, "Question");
+    assert_eq!(
+        marker.quote.as_deref(),
+        Some("Can you approve these by Friday so finance can close the quarter?"),
+        "quoted verbatim"
+    );
+    assert!(
+        marker
+            .actions
+            .iter()
+            .any(|action| action.command == "reply"),
+        "a question is answered by Reply: {:?}",
+        marker.actions
     );
     session.shutdown();
 }

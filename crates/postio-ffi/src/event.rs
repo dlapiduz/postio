@@ -250,6 +250,17 @@ pub enum UiEvent {
     /// The rows Focus surfaces in the inbox -- digests, reminders -- changed,
     /// so the list re-reads them (spec 007's `SurfacedChanged`).
     SurfacedChanged,
+    /// Focus's list changed over, was re-read, or changed length: redraw it
+    /// whole, `total` rows long (specs/009-focus-macos T027).
+    FocusListChanged {
+        /// How many rows the list draws now.
+        total: u32,
+    },
+    /// A page of Focus's list landed: redraw its rows.
+    FocusPageReady {
+        /// Which page.
+        page: u32,
+    },
 }
 
 /// What an outcome was.

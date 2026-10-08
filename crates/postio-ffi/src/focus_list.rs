@@ -1,0 +1,400 @@
+//! Focus's list at the boundary (specs/009-focus-macos T027).
+//!
+//! The rules are the controller's (`postio_focus`, ADR 0045), exactly as GTK
+//! drives them: opening a place counts it and changes the list over, a page
+//! is read with its pills and the surfaced rows spliced in, an engine event
+//! re-reads what it moved. [`FocusDriver`] is the Mac's driver: it runs each
+//! request the controller asks for on the session's runtime, keeps the rows
+//! in a `ListWindow` the table reads synchronously, and tells Swift what to
+//! redraw through the session's own events.
+//!
+//! A row crosses with the words a row draws, made by the same presenters the
+//! GTK row uses, so the two cannot word a row differently.
+
+use std::sync::{Arc, Mutex};
+
+use postio_client::Client;
+use postio_config::paths::Platform;
+use postio_core::Event;
+use postio_focus::{Effect, FocusController, Input, Intent, Policy, Request, Ticket};
+use postio_model::listing::ThreadSummary;
+use postio_model::{FocusScope, ListScope};
+use postio_ui::focus_list::{Conversation, FocusRow};
+use postio_ui::focus_row;
+use postio_ui::list::{ListWindow, Lookup};
+
+use crate::event::UiEvent;
+
+/// Which of Focus's lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FocusScopeFfi {
+    /// Focus's inbox, with what it surfaces spliced in.
+    Inbox,
+    /// Only the conversations that need an action (`!`).
+    HasAction,
+    /// Snoozed mail (`g z`).
+    Snoozed,
+    /// Flagged mail (`g *`).
+    Flagged,
+}
+
+impl From<FocusScopeFfi> for ListScope {
+    fn from(scope: FocusScopeFfi) -> Self {
+        ListScope::Focus(match scope {
+            FocusScopeFfi::Inbox => FocusScope::Inbox,
+            FocusScopeFfi::HasAction => FocusScope::HasAction,
+            FocusScopeFfi::Snoozed => FocusScope::Snoozed,
+            FocusScopeFfi::Flagged => FocusScope::Flagged,
+        })
+    }
+}
+
+/// What kind of row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FocusRowKindFfi {
+    /// A conversation.
+    Conversation,
+    /// A reminder that found no reply, drawn as its conversation.
+    Reminder,
+    /// A digest delivery: one row for everything it holds.
+    Digest,
+}
+
+/// A label pill: its name, and its stored colour if it has one.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct LabelPillFfi {
+    /// The label's name.
+    pub name: String,
+    /// The colour the label was given, as `#rrggbb`, if any.
+    pub color: Option<String>,
+}
+
+/// One action a marked row offers, with its button's words.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FocusRowActionFfi {
+    /// The registry command it runs.
+    pub command: String,
+    /// The button's words: "Reply", "Accept".
+    pub label: String,
+}
+
+/// A marked row's second line.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MarkerLineFfi {
+    /// The kind chip: "Invite", "Question", "To-do" or "No reply".
+    pub chip: String,
+    /// The date: "Tue 29 Sep · 10:00–10:45".
+    pub date: Option<String>,
+    /// The sentence the marker is about, verbatim.
+    pub quote: Option<String>,
+    /// What stands where the actions would: "Accepted", "Past".
+    pub status: Option<String>,
+    /// The actions that answer it, in order.
+    pub actions: Vec<FocusRowActionFfi>,
+}
+
+/// One row of Focus's list, with the words it draws.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FocusRowFfi {
+    /// What kind of row.
+    pub kind: FocusRowKindFfi,
+    /// The message the row opens, or the digest delivery for a digest row.
+    pub id: i64,
+    /// The conversation, for a conversation or reminder row.
+    pub thread: Option<i64>,
+    /// The sender column: names, or "Digest" words for a digest.
+    pub sender: String,
+    /// The subject column.
+    pub subject: String,
+    /// The first line, as sent.
+    pub preview: Option<String>,
+    /// The time column: "16:02", "Tue", "12 Sep".
+    pub time: String,
+    /// The day heading this row sits under: "Today · Saturday 26 September".
+    pub day_heading: String,
+    /// Unread is bold.
+    pub unread: bool,
+    /// How many messages, when more than one.
+    pub count_badge: Option<String>,
+    /// Whether a paperclip is drawn.
+    pub has_attachments: bool,
+    /// A draft on its way or stopped says which.
+    pub send_state: Option<String>,
+    /// The label pills, at most two.
+    pub pills: Vec<LabelPillFfi>,
+    /// The marker's line, for a marked row.
+    pub marker: Option<MarkerLineFfi>,
+}
+
+impl FocusRowFfi {
+    /// `row` in words, as of now, in the local zone.
+    pub(crate) fn of(row: &FocusRow) -> Self {
+        let now = postio_ui::clock::now();
+        let today = now.date_naive();
+        let day_heading = focus_row::day_heading(postio_ui::focus_list::day_of(row), today);
+        match row {
+            FocusRow::Conversation(conversation) => {
+                conversation_row(FocusRowKindFfi::Conversation, conversation, day_heading)
+            }
+            FocusRow::Reminder { row, .. } => {
+                conversation_row(FocusRowKindFfi::Reminder, row, day_heading)
+            }
+            FocusRow::Digest(digest) => {
+                let senders: Vec<String> = digest
+                    .senders
+                    .iter()
+                    .map(|sender| sender.display().to_owned())
+                    .collect();
+                FocusRowFfi {
+                    kind: FocusRowKindFfi::Digest,
+                    id: digest.delivery.get(),
+                    thread: None,
+                    sender: focus_row::digest_title(digest.cadence),
+                    subject: focus_row::digest_subject(&digest.rule, digest.count),
+                    preview: Some(focus_row::digest_line(
+                        digest.summary_line.as_deref(),
+                        &senders,
+                    ))
+                    .filter(|line| !line.is_empty()),
+                    time: postio_ui::row::timestamp(digest.at, now),
+                    day_heading,
+                    unread: false,
+                    count_badge: focus_row::count_badge(digest.count),
+                    has_attachments: false,
+                    send_state: None,
+                    pills: Vec::new(),
+                    marker: None,
+                }
+            }
+        }
+    }
+}
+
+fn conversation_row(
+    kind: FocusRowKindFfi,
+    conversation: &Conversation,
+    day_heading: String,
+) -> FocusRowFfi {
+    let summary: &ThreadSummary = &conversation.summary;
+    let now = postio_ui::clock::now();
+    let message = &summary.representative;
+    let marker = summary.marker.as_ref().map(|marker| {
+        let line = focus_row::marker_line(marker, now.to_utc(), &chrono::Local);
+        MarkerLineFfi {
+            chip: line.chip.to_owned(),
+            date: line.date,
+            quote: line.quote,
+            status: line.status.map(str::to_owned),
+            actions: line
+                .actions
+                .iter()
+                .map(|(command, label)| FocusRowActionFfi {
+                    command: command.to_string(),
+                    label: (*label).to_owned(),
+                })
+                .collect(),
+        }
+    });
+    FocusRowFfi {
+        kind,
+        id: message.id.get(),
+        thread: summary.id.map(|thread| thread.get()),
+        sender: focus_row::row_names(message),
+        subject: message.subject.clone().unwrap_or_default(),
+        preview: message.preview.clone(),
+        time: postio_ui::row::timestamp(summary.last_at, now),
+        day_heading,
+        unread: summary.has_unread(),
+        count_badge: focus_row::count_badge(summary.message_count),
+        has_attachments: summary.has_attachments,
+        send_state: message
+            .send_state
+            .filter(|state| {
+                !matches!(
+                    state,
+                    postio_model::DraftState::Editing | postio_model::DraftState::Sent
+                )
+            })
+            .map(|state| postio_ui::row::send_state_word(state).to_owned()),
+        pills: conversation
+            .labels
+            .iter()
+            .take(focus_row::MAX_PILLS)
+            .map(|label| LabelPillFfi {
+                name: label.name.clone(),
+                color: label.color.clone(),
+            })
+            .collect(),
+        marker,
+    }
+}
+
+/// Focus's list for the Mac: the controller, and the rows it delivered.
+pub(crate) struct FocusDriver {
+    focus: Mutex<FocusController>,
+    list: Mutex<ListWindow<FocusRowFfi>>,
+    client: Client,
+    runtime: tokio::runtime::Handle,
+    local: async_channel::Sender<UiEvent>,
+}
+
+impl FocusDriver {
+    pub(crate) fn new(
+        client: Client,
+        runtime: tokio::runtime::Handle,
+        local: async_channel::Sender<UiEvent>,
+    ) -> Arc<Self> {
+        Arc::new(FocusDriver {
+            focus: Mutex::new(FocusController::new(Policy::for_platform(Platform::Apple))),
+            list: Mutex::new(ListWindow::new()),
+            client,
+            runtime,
+            local,
+        })
+    }
+
+    /// Show `scope`: counted first, then the list changes over.
+    pub(crate) fn open(self: &Arc<Self>, scope: ListScope) {
+        let effects = self.focus.lock().expect("focus lock").open(scope);
+        self.apply(effects);
+    }
+
+    /// How many rows the list draws.
+    pub(crate) fn row_count(&self) -> u32 {
+        self.list.lock().expect("list lock").total()
+    }
+
+    /// The row at `position`, or `None` while its page is on its way: a miss
+    /// asks for the page behind the caller, and `FocusPageReady` says when to
+    /// draw it. Synchronous; what the table calls for every visible row.
+    pub(crate) fn row_at(self: &Arc<Self>, position: u32) -> Option<FocusRowFfi> {
+        let (wanted, stamp) = {
+            let mut list = self.list.lock().expect("list lock");
+            let stamp = list.generation();
+            match list.row_at(position)? {
+                Lookup::Resident(row) => return Some(row.clone()),
+                Lookup::Missing { request } => (request, stamp),
+            }
+        };
+        for page in wanted {
+            let effects = self
+                .focus
+                .lock()
+                .expect("focus lock")
+                .page_wanted(page, stamp);
+            self.apply(effects);
+        }
+        None
+    }
+
+    /// An engine event, by the controller's rules.
+    pub(crate) fn event(self: &Arc<Self>, event: &Event) {
+        let effects = self
+            .focus
+            .lock()
+            .expect("focus lock")
+            .handle(Input::Event(event.clone()));
+        self.apply(effects);
+    }
+
+    /// Do what the controller said, in order. Never called with a lock held.
+    fn apply(self: &Arc<Self>, effects: Vec<Effect>) {
+        for effect in effects {
+            match effect {
+                Effect::Show(intent) => self.show(intent),
+                Effect::Ask(ticket, request) => self.ask(ticket, request),
+                _ => {}
+            }
+        }
+    }
+
+    fn show(self: &Arc<Self>, intent: Intent) {
+        match intent {
+            Intent::ReplaceSource { total } => {
+                let stamp = self.list.lock().expect("list lock").reset(total);
+                self.say(UiEvent::FocusListChanged { total });
+                let effects = self.focus.lock().expect("focus lock").page_wanted(0, stamp);
+                self.apply(effects);
+            }
+            Intent::PagePending { page, .. } => {
+                self.list.lock().expect("list lock").note_pending(page);
+            }
+            Intent::DeliverPage {
+                stamp,
+                page,
+                total,
+                rows,
+            } => {
+                let rows = rows.iter().map(FocusRowFfi::of).collect();
+                let (delivered, resized) = {
+                    let mut list = self.list.lock().expect("list lock");
+                    let resized = (list.generation() == stamp)
+                        .then(|| list.set_total(total))
+                        .flatten()
+                        .is_some();
+                    (list.deliver(stamp, page, rows), resized)
+                };
+                if resized {
+                    self.say(UiEvent::FocusListChanged { total });
+                }
+                if !delivered.stale {
+                    self.say(UiEvent::FocusPageReady { page });
+                }
+            }
+            Intent::AbandonPage { stamp, page } | Intent::GiveUp { stamp, page } => {
+                self.list.lock().expect("list lock").abandon(stamp, page);
+            }
+            Intent::RefreshList => {
+                let total = {
+                    let mut list = self.list.lock().expect("list lock");
+                    list.invalidate();
+                    list.total()
+                };
+                self.say(UiEvent::FocusListChanged { total });
+            }
+            _ => {}
+        }
+    }
+
+    fn ask(self: &Arc<Self>, ticket: Ticket, request: Request) {
+        // A post is said now, before anything after it is asked.
+        let request = match postio_focus::perform_now(&self.client, request) {
+            Ok(reply) => {
+                let effects = self
+                    .focus
+                    .lock()
+                    .expect("focus lock")
+                    .handle(Input::Reply(ticket, reply));
+                self.apply(effects);
+                return;
+            }
+            Err(request) => request,
+        };
+        let driver = Arc::clone(self);
+        self.runtime.spawn(async move {
+            let reply = postio_focus::perform(&driver.client, request).await;
+            let effects = driver
+                .focus
+                .lock()
+                .expect("focus lock")
+                .handle(Input::Reply(ticket, reply));
+            driver.apply(effects);
+        });
+    }
+
+    fn say(&self, event: UiEvent) {
+        let _ = self.local.try_send(event);
+    }
+}
+
+impl postio_ui::list::ListRow for FocusRowFfi {
+    /// A conversation or reminder row stands for its message; a digest row
+    /// stands for a delivery, which is no message.
+    fn id(&self) -> Option<postio_model::MessageId> {
+        (self.kind != FocusRowKindFfi::Digest).then(|| postio_model::MessageId::new(self.id))
+    }
+
+    fn thread(&self) -> Option<postio_model::ThreadId> {
+        self.thread.map(postio_model::ThreadId::new)
+    }
+}

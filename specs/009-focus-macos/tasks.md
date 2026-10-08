@@ -145,13 +145,13 @@ differences listed. A 10k-conversation store scrolls without dropped frames.
 
 ### FFI: Focus rows and the controller driver
 
-- [ ] T026 [US1] Write failing ffi_suite tests:
+- [x] T026 [US1] Write failing ffi_suite tests:
   - `open(FocusScope::Inbox)` over the seed yields `FocusRowFfi`s with `day_heading` on the first row of each day;
   - a marked row carries `MarkerLineFfi{kind, date, quote, action_id, action_label}`;
   - a digest row carries `DigestRowFfi`;
   - `row_count` equals the inbox count;
   - controller intents arrive as `UiEvent::Intents`.
-- [ ] T027 [US1] Create `crates/postio-ffi/src/focus.rs`:
+- [x] T027 [US1] Create `crates/postio-ffi/src/focus.rs`:
   - `FocusRowFfi`, `MarkerLineFfi`, `LabelPillFfi`, `DigestRowFfi`, `IntentFfi`, `OriginFfi`, `FactFfi`, `FocusCountsFfi`;
   - conversions from `postio_ui::focus_row` and `focus_list::FocusRow`;
   - a `Focus` arm in `ScopeFfi` (`crates/postio-ffi/src/list.rs`).
@@ -163,7 +163,7 @@ differences listed. A 10k-conversation store scrolls without dropped frames.
   - export `command(id, origin)` and `ui_fact(fact)`.
 
   Never call Swift while holding a lock. Make T026 green
-- [ ] T028 [US1] Delete the classic list, cursor and selection machinery from `crates/postio-ffi/src/session.rs`: `HANDLED_HERE` (:133), the `selection`/`cursor`/`cursor_row`/`anchor` fields (:624-646), `handle_locally` (:4236), `RailFfi` and `rail_presentation` (`crates/postio-ffi/src/rail.rs`), `next_pane`, and the sidebar and parts exports. Delete their ffi_suite tests; keep `cargo nextest run -p postio-ffi` green
+- [ ] T028 [US1] (After T034, when the Swift Focus list has replaced the classic one.) Delete the classic list, cursor and selection machinery from `crates/postio-ffi/src/session.rs`: `HANDLED_HERE` (:133), the `selection`/`cursor`/`cursor_row`/`anchor` fields (:624-646), `handle_locally` (:4236), `RailFfi` and `rail_presentation` (`crates/postio-ffi/src/rail.rs`), `next_pane`, and the sidebar and parts exports. Delete their ffi_suite tests; keep `cargo nextest run -p postio-ffi` green
 
 ### Mac: the inbox
 

@@ -43,6 +43,7 @@ mod dwell;
 mod event;
 mod finder;
 mod focus;
+mod focus_list;
 mod keys;
 mod list;
 mod logging;
@@ -80,6 +81,9 @@ pub use dwell::{DwellArmFfi, dwell_on_cursor};
 pub use event::{ConnectionStateFfi, FailureReasonFfi, NoticeKindFfi, UiEvent};
 pub use finder::{FinderAnswerFfi, FinderHitFfi};
 pub use focus::FocusCountsFfi;
+pub use focus_list::{
+    FocusRowActionFfi, FocusRowFfi, FocusRowKindFfi, FocusScopeFfi, LabelPillFfi, MarkerLineFfi,
+};
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
 pub use list::{RowFfi, ScopeFfi};
 pub use logging::start_logging;

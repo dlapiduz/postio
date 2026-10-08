@@ -47,7 +47,7 @@ public enum SidebarCounts {
             // change, not only their numbers.
             return true
         case .conversationReady, .pageReady, .cursorMoved, .selectionChanged, .connectionChanged,
-             .reindexProgress, .syncProgress, .notice, .other, .keymapChanged, .surfacedChanged:
+             .reindexProgress, .syncProgress, .notice, .other, .keymapChanged, .surfacedChanged, .focusListChanged, .focusPageReady:
             // A notice is a sentence about something that already happened.
             // Whatever moved the counts emitted its own event for it.
             return false
