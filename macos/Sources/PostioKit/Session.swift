@@ -116,6 +116,15 @@ public final class PostioSession {
     /// `UiEvent.pageReady` says when to ask again.
     public func row(at position: UInt32) -> RowFfi? { inner.rowAt(position: position) }
 
+    // MARK: Focus's list
+
+    /// Show one of Focus's lists. Counted first, then `FocusListChanged`
+    /// says how long it is; pages follow as `FocusPageReady`.
+    public func openFocus(_ scope: FocusScopeFfi) { inner.openFocus(scope: scope) }
+
+    /// The header strip's counts, read now.
+    public func focusCounts() throws -> FocusCountsFfi { try inner.focusCounts() }
+
     /// Tell the engine whether the machine currently has a connection.
     ///
     /// Reachability is a platform question, asked in the platform's own
@@ -912,4 +921,15 @@ public final class PostioSession {
     /// actor: the same drain the GTK window runs on its main context, so no
     /// backend work reaches the UI thread on either platform.
     public func nextEvent() async -> UiEvent? { await inner.nextEvent() }
+}
+
+extension PostioSession: FocusRowSource {
+    /// How many rows Focus's list draws.
+    public var focusRowCount: UInt32 { inner.focusRowCount() }
+
+    /// The row at `position`, or `nil` while its page is on its way.
+    /// Synchronous and no I/O: what the table asks for every visible row.
+    public func focusRow(at position: UInt32) -> FocusRowFfi? {
+        inner.focusRowAt(position: position)
+    }
 }
