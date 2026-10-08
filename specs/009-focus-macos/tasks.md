@@ -233,17 +233,18 @@ action, and undo through ⌘Z and Edit › Undo.
 
 ### Engine: the undo top (**main·fix**)
 
-- [ ] T043 [US2] Write a failing test in `crates/postio-session` that `Actions::peek_description()` returns "Archived 3 messages" after archiving three, `None` after undo, and `None` once the entry's window has closed
-- [ ] T044 [US2] Add `Actions::peek_description` (`crates/postio-session/src/actions.rs`, over `UndoStack::peek`, `crates/postio-core/src/undo.rs:397`), `Req::UndoTop`/`Resp::UndoTop(Option<String>)` (`crates/postio-client/src/protocol.rs`), its host handler, and `Client::undo_top()` (`crates/postio-client/src/api.rs`). Make T043 green; land it as its own PR
+- [x] T043 [US2] Write a failing test in `crates/postio-session` that `Actions::peek_description()` returns "Archived 3 messages" after archiving three, `None` after undo, and `None` once the entry's window has closed
+- [x] T044 [US2] Add `Actions::peek_description` (`crates/postio-session/src/actions.rs`, over `UndoStack::peek`, `crates/postio-core/src/undo.rs:397`), `Req::UndoTop`/`Resp::UndoTop(Option<String>)` (`crates/postio-client/src/protocol.rs`), its host handler, and `Client::undo_top()` (`crates/postio-client/src/api.rs`). Make T043 green; land it as its own PR
 
 ### FFI and Mac: keys, selection, the action bar, undo
 
-- [ ] T045 [US2] Write failing ffi_suite tests:
-  - `key("x", …)` returns `handled` with a `Selection` intent;
-  - `key("a", …)` with a selection returns a `Toast` intent through `UiEvent::Intents`;
-  - `undo_description()` returns the toast's words;
-  - `key("j", …, in_text_entry: true)` is not handled.
-- [ ] T046 [US2] Replace `Session::key -> KeyOutcomeFfi` with `key(char, name, ModifiersFfi, in_text_entry) -> KeyPressFfi{handled, pending, intents}` driven by the controller's `press`. Export `undo_description()` in `crates/postio-ffi/src/session.rs`. Make T045 green
+- [x] T045 [US2] Write failing ffi_suite tests (`crates/postio-ffi/tests/ffi_suite/focus.rs`):
+  - `invoke("toggle_selection")` is answered by the controller with `UiEvent::FocusSelection`, and `invoke("next_message")` with `FocusCursor`;
+  - a verb's `FocusToast` carries the host's words, and `undo_description()` returns them;
+  - `focus_point`, `focus_pick(…, range)` move the cursor and select as a click would.
+- [x] T046 [US2] Route the controller's commands through `Session::invoke` (`FocusDriver::command`), and emit its intents as UiEvents: `FocusCursor`, `FocusSelection`, `FocusHeading`, `FocusListToTop`, `FocusToast`. Remove `set_cursor`: a verb that is not the list's own aims at the controller's cursor. Export `focus_point`, `focus_pick`, `focus_at_top` and `undo_description()`. Make T045 green
+
+  *As built:* the plan had `key(…) -> KeyPressFfi{handled, pending, intents}` returning intents from the key call. Keys stay as they were (`key` resolves a chord to a command, `invoke` runs it), and the intents arrive on `nextEvent` like every other event. That avoids a second path for the same intents (keys, menus, the bar and buttons all go through `invoke`), and keeps `key` free of side effects as its doc requires. `in_text_entry` is still the caller's, through `key`.
 - [ ] T047 [P] [US2] Write storyboards `storyboards/list/x-selects-without-moving.toml`, `storyboards/list/has-action-keeps-the-cursor.toml` and `storyboards/list/undo-after-the-pill-is-gone.toml` (`apps = ["focus"]`). Run them on Linux
 - [ ] T048 [US2] Write failing Swift tests:
   - `macos/Tests/PostioKitTests/IntentApplierTests.swift`: applying `Cursor`, `Selection`, `Toast` and `KeyboardHome` to a fake main-window model changes exactly what the intent says;
