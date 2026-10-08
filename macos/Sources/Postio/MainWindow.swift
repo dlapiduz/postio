@@ -83,12 +83,14 @@ struct MainWindow: View {
         .animation(.easeOut(duration: Motion.current), value: engine.noticeToken)
         .animation(.easeOut(duration: Motion.current), value: engine.actionBarWords != nil)
         .animation(.easeOut(duration: Motion.current), value: engine.focus.toastToken)
+        .animation(.easeOut(duration: Motion.current), value: engine.focus.toast == nil)
         .overlay(alignment: .bottomLeading) { NoticeBanner(engine: engine) }
         // What a verb did, with Undo while the stack can take it back: the
-        // controller's toast. Above the action bar when there is one.
+        // controller's toast, as the pill at the bottom centre (T093,
+        // screen 15). Above the action bar when there is one.
         .overlay(alignment: .bottom) {
             if let toast = engine.focus.toast {
-                UndoNoticeLine(
+                UndoPill(
                     toast: toast, token: engine.focus.toastToken, undoCap: engine.undoCap,
                     undo: { engine.run(Notice.undoCommand) },
                     dismiss: { engine.focus.dismissToast(token: $0) }
@@ -142,7 +144,7 @@ struct MainWindow: View {
 
 /// A failure Postio has to report: a sentence where the eye already is,
 /// gone on its own. `Notice` decides; this draws. Completions, undos and
-/// refusals are the controller's toast in this window (`UndoNoticeLine`),
+/// refusals are the controller's toast in this window (`UndoPill`),
 /// so only `Notice.shownBesideFocusToast` reaches here.
 private struct NoticeBanner: View {
     let engine: Engine

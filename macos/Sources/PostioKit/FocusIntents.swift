@@ -53,17 +53,11 @@ public final class FocusIntents {
         /// and a refusal changed nothing to return to.
         public var offersUndo: Bool { kind == .completed && undoable }
 
-        /// How long a toast stays when the controller does not say: the
-        /// numbers `Notice` has used since #1146, so the two never disagree
-        /// while both are drawn. A completion with Undo outlasts the reach
-        /// for the mouse; a refusal is a hint and goes soonest.
-        public static func defaultSeconds(kind: ToastKindFfi, undoable: Bool) -> Double {
-            switch kind {
-            case .completed: return undoable ? 6 : 4
-            case .undone: return 4
-            case .notice: return 2
-            }
-        }
+        /// How long a toast stays when the controller does not say: its
+        /// own usual (`postio_focus`'s `TOAST_SECONDS`). Every `FocusToast`
+        /// says now (T089), so this is reached only by an engine older
+        /// than the slice, and is never a number of the Mac's own.
+        public static let usualSeconds: Double = 8
     }
 
     /// Everything held, as one value: what a test compares before and
@@ -133,8 +127,7 @@ public final class FocusIntents {
         case let .focusToast(text, kind, undoable, seconds):
             toast = Toast(
                 text: text, kind: kind, undoable: undoable,
-                seconds: seconds.map(Double.init)
-                    ?? Toast.defaultSeconds(kind: kind, undoable: undoable))
+                seconds: seconds.map(Double.init) ?? Toast.usualSeconds)
             toastToken += 1
             return .toast
         default:

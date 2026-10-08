@@ -94,7 +94,7 @@ struct FocusIntentsTests {
             .focusToast(text: "Undone: Archived 3", kind: .undone, undoable: false, seconds: nil))
         expected.toast = FocusIntents.Toast(
             text: "Undone: Archived 3", kind: .undone, undoable: false,
-            seconds: FocusIntents.Toast.defaultSeconds(kind: .undone, undoable: false))
+            seconds: FocusIntents.Toast.usualSeconds)
         #expect(focus.snapshot == expected)
         #expect(change == .toast)
     }
