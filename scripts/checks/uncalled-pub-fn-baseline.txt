@@ -61,7 +61,6 @@ latest_message_id                 # crates/postio-model/src/thread.rs:91
 lookup_binding                    # crates/postio-core/src/registry.rs:1067
 mark_in_flight                    # crates/postio-storage/src/repository/operations.rs:465
 message_page                      # crates/postio-runtime/src/store/local.rs -- the flat window under MailStore::list_page; for postio-bench store_reads and runtime_suite, which measure one window on purpose
-message_uri                       # crates/postio-ui/src/links.rs:18 -- the link postio-vault's Tasks line (T157, milestone 3) writes; parsed by links::message today
 needing_backfill                  # crates/postio-storage/src/repository/messages.rs:1384
 normalized_subject                # crates/postio-model/src/message.rs:313
 on_data_body                      # crates/postio-smtp/src/transport.rs:436
