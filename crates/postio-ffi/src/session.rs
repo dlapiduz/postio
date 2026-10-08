@@ -288,6 +288,14 @@ impl SessionOptions {
         self
     }
 
+    /// Read, and watch, the `config.toml` at `path` rather than the
+    /// installed one: how a test edits the file a running session reads.
+    #[cfg(feature = "testing")]
+    pub fn with_config_file_for_test(mut self, path: &std::path::Path) -> Self {
+        self.config = ConfigSource::File(path.to_owned());
+        self
+    }
+
     /// An in-memory session on a runtime and command bus the caller owns.
     ///
     /// The classic app built its own [`Bridge`] and handed the parts to
@@ -356,6 +364,21 @@ enum ConfigSource {
     /// is none. What a shipping application wants, and what a test gets only
     /// by asking for it by name.
     Installed,
+    /// The `config.toml` at this path, watched like the installed one. Only
+    /// a test asks for one: it is how a test edits the file a session reads.
+    #[cfg_attr(not(feature = "testing"), allow(dead_code))]
+    File(std::path::PathBuf),
+}
+
+impl ConfigSource {
+    /// The file this source reads and the session watches, if it is one.
+    fn path(&self) -> Option<std::path::PathBuf> {
+        match self {
+            ConfigSource::Installed => postio_config::paths::config_path().ok(),
+            ConfigSource::File(path) => Some(path.clone()),
+            ConfigSource::Document(_) => None,
+        }
+    }
 }
 
 /// This session's configuration, whole.
@@ -373,13 +396,14 @@ fn load_config(source: &ConfigSource) -> postio_config::Config {
     let parsed = match source {
         ConfigSource::Document(text) => postio_config::Config::from_toml_str(text).ok(),
         ConfigSource::Installed => postio_config::Config::load().ok(),
+        ConfigSource::File(path) => postio_config::Config::load_from_path(path).ok(),
     };
     parsed.unwrap_or_else(|| {
         match source {
             ConfigSource::Installed => tracing::warn!(
                 "using the built-in configuration: config.toml is absent or unreadable"
             ),
-            ConfigSource::Document(_) => tracing::warn!(
+            ConfigSource::Document(_) | ConfigSource::File(_) => tracing::warn!(
                 "using the built-in configuration: the given document will not parse"
             ),
         }
@@ -413,10 +437,7 @@ fn engage_focus(
     focus: &postio_config::FocusConfig,
     source: &ConfigSource,
 ) -> postio_host::FocusHandle {
-    let path = match source {
-        ConfigSource::Installed => postio_config::paths::config_path().ok(),
-        ConfigSource::Document(_) => None,
-    };
+    let path = source.path();
     host.enable_focus(postio_host::FocusSetup::from_config(
         focus.clone(),
         path.as_deref(),
@@ -811,7 +832,7 @@ pub struct Session {
     /// Read once at open. A menu accelerator has to reflect what the user
     /// actually bound, and re-reading `config.toml` on every menu draw would
     /// be a file read per repaint.
-    keys: postio_config::keys::KeyBindings,
+    keys: Mutex<postio_config::keys::KeyBindings>,
     /// The `[ui]` table this session was opened with — row density, theme and
     /// what the message list draws. Read once here so the list and the
     /// settings pane cannot disagree about what the file says.
@@ -859,6 +880,11 @@ pub struct Session {
     /// for this host (specs/009-focus-macos R8). Held for as long as the
     /// session is, as the GTK app and the terminal hold theirs.
     _focus: postio_host::FocusHandle,
+    /// `config.toml`, watched while the session lives: a change to `[keys]`
+    /// rebinds at once and a change to `[focus]` reaches the engine, as in
+    /// the GTK app (`follow_config`). `None` for a session given a document
+    /// rather than a file, or when the file cannot be watched.
+    config_watch: Mutex<Option<postio_config::watch::ConfigWatcher>>,
     /// The in-memory blob directory, removed when the session is dropped.
     #[cfg(feature = "testing")]
     _scratch: Option<tempfile::TempDir>,
@@ -2236,12 +2262,12 @@ impl Session {
                 wiring.events.subscribe("indexer"),
                 &wiring.runtime,
             );
-            return Ok(Arc::new(Session {
+            let session = Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
                 resolver: Mutex::new(build_resolver(&keys)),
                 keymap: Mutex::new(None),
                 ui: config.ui,
-                keys,
+                keys: Mutex::new(keys),
                 list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
                 selection: Mutex::new(postio_core::state::Selection::default()),
                 reachable: Mutex::new(Vec::new()),
@@ -2286,8 +2312,11 @@ impl Session {
                 wired: host.wired(),
                 _focus: engage_focus(&host, &config.focus, &source),
                 _host: host,
+                config_watch: Mutex::new(None),
                 _scratch: Some(scratch),
-            }));
+            });
+            session.follow_config(&source);
+            return Ok(session);
         }
 
         // The keyring first, and only then the store. ADR 0014: the store is
@@ -2338,12 +2367,12 @@ impl Session {
             wiring.events.subscribe("indexer"),
             &wiring.runtime,
         );
-        Ok(Arc::new(Session {
+        let session = Arc::new(Session {
             wiring: Mutex::new(Some(wiring)),
             resolver: Mutex::new(build_resolver(&keys)),
             keymap: Mutex::new(None),
             ui: ui_config,
-            keys,
+            keys: Mutex::new(keys),
             engines: Mutex::new(Vec::new()),
             list: Arc::new(Mutex::new(postio_ui::list::ListWindow::new())),
             selection: Mutex::new(postio_core::state::Selection::default()),
@@ -2384,7 +2413,10 @@ impl Session {
             _host: host,
             #[cfg(feature = "testing")]
             _scratch: None,
-        }))
+            config_watch: Mutex::new(None),
+        });
+        session.follow_config(&source);
+        Ok(session)
     }
 
     /// Show `scope`, and answer the generation the window is now on.
@@ -4382,6 +4414,44 @@ impl Session {
 
     /// What this session can currently do, as the registry evaluates it.
     ///
+    /// Watch `source`'s file, if it has one, and follow it: `[keys]` rebuilds
+    /// the resolver and says [`UiEvent::KeymapChanged`], so the menu bar and
+    /// every keycap re-read their keys; `[focus]` reaches the engine
+    /// (specs/009-focus-macos R6, R8). Mirrors the GTK app's `follow_config`
+    /// and the terminal's `follow_focus_config`.
+    fn follow_config(self: &Arc<Self>, source: &ConfigSource) {
+        let Some(path) = source.path() else { return };
+        let mut service = postio_core::ConfigService::load(&path);
+        let session = Arc::downgrade(self);
+        let watcher = postio_config::watch::ConfigWatcher::new(&path, move |checked| {
+            let update = service.apply(checked);
+            let Some(session) = session.upgrade() else {
+                return;
+            };
+            if update.changed.keys {
+                let keys = service.config().keys.clone();
+                *session.resolver.lock().expect("resolver lock") = build_resolver(&keys);
+                *session.keys.lock().expect("keys lock") = keys;
+                *session.keymap.lock().expect("keymap lock") = None;
+                let _ = session.local.0.try_send(UiEvent::KeymapChanged);
+            }
+            if update.changed.focus {
+                session
+                    ._host
+                    .enable_focus(postio_host::FocusSetup::from_config(
+                        service.config().focus.clone(),
+                        Some(service.path()),
+                    ));
+            }
+        });
+        match watcher {
+            Ok(watcher) => *self.config_watch.lock().expect("watch lock") = Some(watcher),
+            Err(error) => {
+                tracing::warn!(%error, "config.toml will not be watched; edits need a restart")
+            }
+        }
+    }
+
     /// The host's client, while this session is open.
     pub(crate) fn client(&self) -> Option<postio_client::Client> {
         self.link
@@ -4480,7 +4550,7 @@ impl Session {
         match &*cached {
             Some((size, keymap)) if *size == commands => keymap.clone(),
             _ => {
-                let keymap = postio_core::Keymap::resolve(&self.keys);
+                let keymap = postio_core::Keymap::resolve(&self.keys.lock().expect("keys lock"));
                 *cached = Some((commands, keymap.clone()));
                 keymap
             }

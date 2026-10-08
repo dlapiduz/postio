@@ -97,13 +97,13 @@ frontend with the engine's Focus pass on, and the Swift package split.
 - [ ] T013 Point the FFI at `Frontend::Focus` in `crates/postio-ffi/src/session.rs:422,4365` and `crates/postio-ffi/src/settings.rs:316`. Update `INTERCEPTED` (`crates/postio-ffi/src/registry.rs:275-345`) and its Swift mirror `Intercepted` (`macos/Sources/PostioKit/Accessibility.swift`) to drop the three-pane entries. Make T010 green
 - [x] T014 Write a failing ffi_suite test: a session opened with `[focus]` enabled files a seeded promotion and marks a seeded question (the markers appear in `focus_counts().has_action`)
 - [x] T015 (`feature/focus-macos` only: on `main` it would start filing the three-pane Mac app's mail away) Call `Host::enable_focus(FocusSetup::from_config(config.focus, Some(config_path)))` in `crates/postio-ffi/src/session.rs` after the host starts and before `start_syncing`, as `crates/postio-gtk/src/startup.rs:116,174` does (R8). Make T014 green
-- [ ] T016 Write a failing ffi_suite test: rewriting `[keys]` in the session's `config.toml` changes what `key()` resolves within 1 s, and emits `UiEvent::KeymapChanged`
-- [ ] T017 Start `ConfigService::watch` in `crates/postio-ffi/src/session.rs`:
+- [x] T016 Write a failing ffi_suite test: rewriting `[keys]` in the session's `config.toml` changes what `key()` resolves within 1 s, and emits `UiEvent::KeymapChanged`
+- [x] T017 Start `ConfigService::watch` in `crates/postio-ffi/src/session.rs`:
   - on `ConfigChanged.keys`, rebuild the resolver and emit `UiEvent::KeymapChanged`;
   - on `.focus`, re-run `enable_focus`;
   - on `.filters`, refresh saved searches.
 
-  Mirror GTK's `follow_config` (`crates/postio-gtk/src/startup.rs:95-150`). Append `KeymapChanged`, `SurfacedChanged` and `BackfillProgress{account,done,total}` at the end of `UiEvent` in `crates/postio-ffi/src/event.rs`. Make T016 green
+  Mirror GTK's `follow_config` (`crates/postio-gtk/src/startup.rs:95-150`). Append `KeymapChanged` and `SurfacedChanged` at the end of `UiEvent` (the typed `BackfillProgress` comes with its banner, T099) in `crates/postio-ffi/src/event.rs`. Make T016 green
 - [ ] T018 [P] Write a failing test in `crates/postio-core` that Delete resolves from `BackSpace` on `Platform::Apple` in the List and Reader contexts, without colliding with the bar's `mod+BackSpace`. Then add `"BackSpace"` to Delete's `alternate_bindings` (`crates/postio-core/src/registry.rs:903-913`) if it is free in those contexts (M6, R6). **main·fix**
 
 ### The Swift package split
@@ -447,7 +447,7 @@ to a folder, and undo each with the pill and ⌘Z.
 
 - [ ] T097 [US7] Write a failing ffi_suite test: `start_over(store_path)` on a store marked from another build leaves a fresh store that `Session::open_at` opens
 - [ ] T098 [US7] Export `start_over(store_path)` over `postio_session::start_over_at` in `crates/postio-ffi/src/lib.rs`, with the store key from the keyring. Make T097 green
-- [ ] T099 [US7] Implement the banner strip and the empty state in `macos/Sources/PostioKit/BannerStrip.swift` and `EmptyInbox.swift`:
+- [ ] T099 [US7] Append a typed `UiEvent::BackfillProgress{account, done, total}` (`crates/postio-ffi/src/event.rs`), then implement the banner strip and the empty state in `macos/Sources/PostioKit/BannerStrip.swift` and `EmptyInbox.swift`:
   - full width under the header strip; the error strip in `systemRed` at low opacity;
   - Retry, and "Update password…" opening a sheet that stores through the engine's credential store (Keychain), reusing `AccountRepair.swift`.
 - [ ] T100 [US7] Show the store refusal on launch with "Start over" calling `start_over`, in `macos/Sources/Postio/StoreRefusal.swift`

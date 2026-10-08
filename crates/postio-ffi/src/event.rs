@@ -244,6 +244,12 @@ pub enum UiEvent {
         /// The core variant's name, for a log line on the far side.
         kind: String,
     },
+    /// `[keys]` changed while the app ran: every key, menu item and keycap
+    /// may mean something else now (specs/009-focus-macos FR-031).
+    KeymapChanged,
+    /// The rows Focus surfaces in the inbox -- digests, reminders -- changed,
+    /// so the list re-reads them (spec 007's `SurfacedChanged`).
+    SurfacedChanged,
 }
 
 /// What an outcome was.
@@ -362,6 +368,7 @@ impl From<postio_core::Event> for UiEvent {
             // Rule 2 in practice: everything the boundary has not modelled yet
             // still arrives, named. `{:?}` would carry the payload, and rule 3
             // forbids that, so only the variant name crosses.
+            Event::SurfacedChanged => UiEvent::SurfacedChanged,
             other => UiEvent::Other {
                 kind: variant_name(&other).to_string(),
             },

@@ -275,3 +275,41 @@ fn focus_s_keymap_resolves_on_both_platforms() {
         assert!(problems.is_empty(), "{platform:?}: {problems:?}");
     }
 }
+
+/// `[keys]` edited while the app runs rebinds at once (FR-031): the Mac
+/// watches `config.toml`, rebuilds the resolver, and tells the frontend so
+/// its menus and keycaps follow.
+#[tokio::test(flavor = "multi_thread")]
+async fn editing_keys_rebinds_while_the_app_runs() {
+    let directory = tempfile::tempdir().expect("a directory");
+    let path = directory.path().join("config.toml");
+    std::fs::write(&path, "[keys]\narchive = \"w\"\n").expect("written");
+    let session = Session::open(SessionOptions::in_memory().with_config_file_for_test(&path))
+        .expect("a session");
+    let archive = KeyOutcomeFfi::Command {
+        id: "archive".to_string(),
+    };
+    assert_eq!(typed(&session, "w", UiContext::List, false), archive);
+
+    std::fs::write(&path, "[keys]\narchive = \"a\"\n").expect("rewritten");
+
+    let heard = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match session.next_event().await {
+                Some(postio_ffi::UiEvent::KeymapChanged) => return true,
+                Some(_) => continue,
+                None => return false,
+            }
+        }
+    })
+    .await
+    .unwrap_or(false);
+    assert!(heard, "the frontend is told the keymap changed");
+    assert_eq!(typed(&session, "a", UiContext::List, false), archive);
+    assert_eq!(
+        typed(&session, "w", UiContext::List, false),
+        KeyOutcomeFfi::Unhandled,
+        "the old key is free again"
+    );
+    session.shutdown();
+}
