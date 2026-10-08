@@ -580,16 +580,9 @@ public struct SettingsPaneView: View {
                         .pickerStyle(.segmented)
                         .labelsHidden()
                         .fixedSize()
-                        // What the choice above actually costs, in the unit a
-                        // person is choosing between. Measured off the real
-                        // cell rather than tabulated, so it cannot drift from
-                        // what the list draws -- GTK says the same sentence
-                        // from the same kind of measurement.
-                        Text(
-                            "\(Int(MessageRowCell.preferredHeight(for: current.density)))px rows"
-                        )
-                            .font(.system(.footnote, design: .monospaced))
-                            .foregroundStyle(.secondary)
+                        // No "Npx rows" beside it: that was measured off the
+                        // classic list's cell, and Focus's rows have one
+                        // height per shape whatever the density (T034).
                     }
                 }
                 Divider().frame(height: 120)

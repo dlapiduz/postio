@@ -3,12 +3,10 @@ import PostioAppKit
 import PostioKit
 import SwiftUI
 
-/// The application.
+/// The application: Postio Focus on the Mac (specs/009-focus-macos).
 ///
-/// Useless on purpose, for now. It shows what came back through the boundary,
-/// which is the only thing worth asserting at this stage: every other link in
-/// the chain — cargo, the bindings generator, the module map, the linker, the
-/// bundle — fails in its own way and none of them is covered by anything else.
+/// The main window is Focus's inbox (`MainWindow`); settings and compose
+/// are windows of their own.
 @main
 struct PostioApp: App {
     @State private var engine = Engine()
@@ -23,7 +21,7 @@ struct PostioApp: App {
 
     var body: some Scene {
         WindowGroup("Postio") {
-            Shell(engine: engine)
+            MainWindow(engine: engine)
                 .background(WindowConfigurator())
                 // `[ui].theme`, not the system's, when the file says so.
                 .preferredColorScheme(engine.colorScheme)
@@ -52,15 +50,12 @@ struct PostioApp: App {
             // `SessionLifetime` is the rule, and carries the rest of it.
             if SessionLifetime.shouldEnd(on: SessionPhase(now)) { engine.shutdown() }
         }
-        // Canvas 25's proportions. At 1100pt the sidebar and the list left the
-        // reader about 310pt, the conversation rail took 118 of them, and a
-        // body read three words to a line.
+        // Screen 01's size: the Mac pack draws the inbox at 1440 × 900.
         .defaultSize(width: 1440, height: 900)
         .windowToolbarStyle(.unified)
-        // Size and position across launches. `SceneStorage` handles the split
-        // widths; the frame is `NSWindow`'s own autosave, which is the only
-        // thing that survives a window being closed and reopened rather than
-        // the app being quit.
+        // Size and position across launches: the frame is `NSWindow`'s own
+        // autosave, which is the only thing that survives a window being
+        // closed and reopened rather than the app being quit.
         .windowResizability(.contentSize)
 
         // A real window, not an overlay on the main one: `⌘,` has opened one

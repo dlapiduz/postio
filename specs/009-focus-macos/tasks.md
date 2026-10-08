@@ -168,13 +168,13 @@ differences listed. A 10k-conversation store scrolls without dropped frames.
 ### Mac: the inbox
 
 - [ ] T029 [P] [US1] Write a storyboard `storyboards/list/inbox-opens-on-the-first-row.toml` (`apps = ["focus"]`): launch, the cursor on index 0, and the keyboard region the list (C30). Run it on Linux with `scripts/storyboards.sh run` to see it pass there
-- [ ] T030 [US1] Write failing Swift tests in `macos/Tests/PostioKitTests/FocusRowModelTests.swift` for the row view model built from `FocusRowFfi`:
+- [x] T030 [US1] Write failing Swift tests in `macos/Tests/PostioKitTests/FocusRowModelTests.swift` for the row view model built from `FocusRowFfi`:
   - the row kind is header, one-line or two-line;
   - at most two pills;
   - the marker's action keycap text comes from the FFI's spelling, not a literal;
   - unread is bold.
-- [ ] T031 [US1] Implement `FocusRowModel` and `FocusListModel` (the row count, `row(at:)` via the FFI, applying `DeliverPage`/`RefreshList`/`Cursor`/`Selection` intents) in `macos/Sources/PostioKit/FocusList.swift`. Make T030 green
-- [ ] T032 [US1] Implement `FocusListTable` (`NSTableView`, view-based) in `macos/Sources/PostioAppKit/FocusListTable.swift`:
+- [x] T031 [US1] Implement `FocusRowModel` and `FocusListModel` (the row count, `row(at:)` via the FFI, applying `DeliverPage`/`RefreshList`/`Cursor`/`Selection` intents) in `macos/Sources/PostioKit/FocusList.swift`. Make T030 green
+- [x] T032 [US1] Implement `FocusListTable` (`NSTableView`, view-based) in `macos/Sources/PostioAppKit/FocusListTable.swift`:
   - three row views (day header, one-line, two-line) with fixed heights per kind;
   - table selection disabled;
   - the accent focus ring on the cursor row only;
@@ -182,11 +182,11 @@ differences listed. A 10k-conversation store scrolls without dropped frames.
   - semantic colours only.
 
   Reuse what fits from `MessageTable.swift`/`MessageRowView.swift`, then delete those files
-- [ ] T033 [US1] Implement the main window in `macos/Sources/Postio/MainWindow.swift`:
+- [x] T033 [US1] Implement the main window in `macos/Sources/Postio/MainWindow.swift`:
   - an `NSToolbar` (unified): compose button, flexible space, sync label, `NSSearchToolbarItem` with a ⌘K keycap;
   - the SwiftUI header strip in `macos/Sources/PostioKit/HeaderStrip.swift`: Inbox ▾ `g o` with its count, Has action `!` with its count, and the filtered and digest counts only while in use (C10);
   - `FocusListTable` below.
-- [ ] T034 [US1] Delete the three-pane shell:
+- [x] T034 [US1] Delete the three-pane shell:
   - **in `macos/Sources/Postio/`:** `Shell.swift`, `FolderRow.swift`, and the three-pane parts of `Engine.swift` (`collapsedFolders`, `sidebar*`, `folderCursor`, `pick(SidebarRowId)`, `stepSidebar`, `children(of:)`, `specialFolders`, `folderRoots`, `open(mailbox:)`, `pane`/`focus(_:)`, `conversation`, `railHidden`, `showingThread`, `parts`, `readerPages`, `bodyHeights`);
   - **in `macos/Sources/PostioKit/`:** `Sidebar*.swift`, `SavedSearchRows.swift`, `ConversationRail.swift`, `ConversationView.swift`, `ConversationModel.swift`, `ThreadDocumentView.swift`, `ToolbarPlan.swift`, `ReaderActionPlan.swift`, `SearchScopeRail.swift`, `SearchRefineBar.swift`, `PartsPanel.swift`, `PartPreview.swift`, `BodyHeight*.swift`;
   - **their tests.**

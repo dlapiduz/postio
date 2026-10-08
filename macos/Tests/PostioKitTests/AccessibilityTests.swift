@@ -11,56 +11,6 @@ import Testing
 /// be testing AppKit's property storage — the same trap
 /// `docs/archive/engineering-notes.md` records on the GTK side.
 @Suite struct AccessibilityTests {
-    private func presentation(
-        sender: String = "ada@example.com",
-        subject: String = "Quarterly figures",
-        preview: String = "…the numbers we discussed on",
-        unread: Bool = false,
-        flagged: Bool = false,
-        threadBadge: String? = nil,
-        selected: Bool = false
-    ) -> RowPresentation {
-        RowPresentation(
-            sender: sender,
-            subject: subject,
-            preview: preview,
-            unread: unread,
-            flagged: flagged,
-            threadBadge: threadBadge,
-            isPlaceholder: false,
-            selected: selected
-        )
-    }
-
-    @Test func aRowIsOneUtteranceAndNotFour() {
-        let spoken = Announcements.row(presentation())
-        #expect(spoken == "ada@example.com, Quarterly figures")
-    }
-
-    @Test func thePreviewIsNotRead() {
-        // It is a fragment of the body, often mid-sentence, and reading it for
-        // every row makes arrowing through a mailbox a wall of text. The
-        // reading pane is what the body is for.
-        let spoken = Announcements.row(presentation(preview: "…the numbers we discussed on"))
-        #expect(!spoken.contains("numbers"))
-    }
-
-    @Test func theStatesThatChangeWhatYouWouldDoAreSpoken() {
-        let spoken = Announcements.row(
-            presentation(unread: true, flagged: true, threadBadge: "3", selected: true)
-        )
-        #expect(spoken.contains("unread"))
-        #expect(spoken.contains("flagged"))
-        #expect(spoken.contains("selected"))
-        #expect(spoken.contains("3 messages"))
-    }
-
-    @Test func aRowThatHasNotArrivedSaysSoRatherThanNothing() {
-        // An unlabelled row reads as "row", which sounds like a bug rather
-        // than like a page still loading.
-        #expect(Announcements.row(.placeholder) == "Loading")
-    }
-
     @Test func theFocusOrderIsTheVisualOrder() {
         // A focus order that disagrees with the layout is the classic way a
         // keyboard-first application becomes unusable without a mouse.

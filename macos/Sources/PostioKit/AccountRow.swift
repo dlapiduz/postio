@@ -89,3 +89,11 @@ public enum AccountRow {
         account.id > 0
     }
 }
+
+extension MailboxFfi {
+    /// Whether this row is a query rather than a real folder.
+    ///
+    /// A view has nothing to `SELECT`, nothing to sync, and no name of its
+    /// own — and counting one counts its mail twice.
+    public var isView: Bool { id == 0 }
+}

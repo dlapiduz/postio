@@ -1,51 +1,8 @@
 import PostioFFI
 
-/// What Postio says to a screen reader, and how much it moves.
-///
-/// `docs/PRODUCT.md` §20 makes accessibility first-class, and the GTK side
-/// paid for that with real work — the reader's web view declares an article
-/// role, and the custom-drawn rows expose properties that exist only because
-/// somebody added them. A second frontend that skipped this would be shipping
-/// a mail client a blind person cannot use, on the platform whose screen
-/// reader is built in.
-///
-/// The decisions are here, as pure functions, for the reason
-/// `docs/archive/engineering-notes.md` records about the GTK side: **GTK records no
-/// accessible properties without a live backend**, which cost a whole
-/// debugging session to learn. AppKit has the same shape of problem —
-/// `accessibilityLabel` reads back as whatever was last set, whether or not
-/// anything would ever speak it. So what is asserted is the *sentence*, which
-/// is the part that can be wrong.
-public enum Announcements {
-    /// One row of the list, as one useful utterance.
-    ///
-    /// **One sentence, not four labels.** A row that exposes sender, subject,
-    /// preview and unread state as separate elements makes VoiceOver read four
-    /// things and makes arrowing through a mailbox four times as slow; a row
-    /// that exposes the whole cell's text reads a wall including the preview.
-    /// This is the middle: who it is from, what it is about, and the states
-    /// that change what you would do about it.
-    ///
-    /// The preview is deliberately left out. It is a fragment of the body,
-    /// often mid-sentence, and it is what the reading pane is for.
-    public static func row(_ presentation: RowPresentation) -> String {
-        if presentation.isPlaceholder {
-            // Not silence: an unlabelled row reads as "row" and sounds like a
-            // bug. "Loading" is what is actually happening.
-            return "Loading"
-        }
-        var parts = [presentation.sender, presentation.subject]
-        // States first among the trailing detail, because they are what
-        // decides whether you stop here.
-        if presentation.unread { parts.append("unread") }
-        if presentation.flagged { parts.append("flagged") }
-        if presentation.selected { parts.append("selected") }
-        if let badge = presentation.threadBadge {
-            parts.append("\(badge) messages")
-        }
-        return parts.joined(separator: ", ")
-    }
-}
+// What a Focus row says to VoiceOver is `FocusRowModel.accessibilityLabel`,
+// next to the row it describes; the classic list's `Announcements` went with
+// that list (specs/009-focus-macos T034).
 
 /// The three panes, in the order the keyboard walks them.
 ///
@@ -156,10 +113,10 @@ public enum Intercepted {
     /// and the store has not seen most of it, which is why these stop here —
     /// `ComposeCommands` is the route from the id to the model.
     public static let composeVerbs = ComposeCommands.handled
-    /// The sidebar's own keyboard. The folder tree, which rows are collapsed
-    /// and where the keyboard is inside it are all this frontend's state, so
-    /// a session has nothing to answer these with — `SidebarWalk` is the
-    /// rule and `Engine` holds the two pieces of state it needs.
+    /// The classic sidebar's keyboard. The sidebar went with the three-pane
+    /// shell (specs/009-focus-macos T034); these stay listed until the
+    /// registry drops the commands (T012), and nothing on the Mac answers
+    /// them meanwhile.
     public static let nextFolder = "next_folder"
     public static let prevFolder = "prev_folder"
     public static let toggleFolder = "toggle_folder"
@@ -184,11 +141,8 @@ public enum Intercepted {
     public static let findInMessage = "find_in_message"
     public static let findNext = "find_next"
     public static let findPrevious = "find_previous"
-    /// The parts panel. Opening it is a surface, walking it moves a cursor
-    /// this side holds, and every verb on it needs a dialog or a launcher —
-    /// so all eight stop here. `PartsPanel` is the surface and `PartsModel`
-    /// the cursor; the tree, the labels and the safe filename are all the
-    /// boundary's.
+    /// The classic parts panel, gone with the three-pane shell (T034) and
+    /// listed until the registry drops its commands (T012).
     /// Re-ask the query the other way round. Intercepted rather than sent,
     /// because it is the *list* that has to be told to redraw afterwards.
     public static let toggleResultOrder = "toggle_result_order"
