@@ -71,13 +71,14 @@ filling its silences:
 | M2 | Pack vs spec 007 | **Spec 007's recorded decisions win** wherever the Mac pack contradicts them. In particular: C3, bindings under `[keys]` in `config.toml`, not `keys.toml`; C4, Filtered never deletes; C6, C8, C9, gating on a model, the detector and a vault; C10, header counts only while in use; C12, Delete is undoable; C19, `X` selects every conversation in the view; C24, ⌘K opens the bar with `>` typed; C26, the action card is the accent at 8% light and 12% dark; C7, no Markdown toggle; C25, a body drawn in app colours is set in Barlow, the chrome in the system font; C30, every list opens with the cursor on its first row |
 | M3 | Features Linux lacks | Task after sending (⌘T), a separate Bcc key (⌘⇧B), show quoted text (⌘⇧Q), the row's "Task in <project> · due <day>" line (spec 007 FR-181), a digest reference's email shown under its paragraph, and the action row on an email opened from a digest are built **after the Mac reaches parity, in the shared layers, so both apps get them** |
 | M4 | Secondary windows | **One secondary window at a time** on the Mac (email, digest, compose, capture). Raw source and a message opened from a digest's list replace the window's content in place rather than stacking. The reading pane beside the list (`F8`, spec 007 FR-038) comes after parity |
+| M5 | Message bodies | The Mac keeps its web view for message bodies and loads **the same treated document Linux composes**: the treatment decision, app colours, paper and the per-sender choice all come from the shared layers. The contrast guard for colours kept in app colours runs in the shared layers, against the app's own surface, so both apps keep the same colours. Drawing Mac bodies with Linux's renderer (ADR 0042) stays a later option; spec 006 left the Mac on its web view, and this keeps it there |
 
 Mac platform conventions this spec takes without a decision, because the Mac
 pack's "standard macOS keys" require them and they change nothing on Linux:
 
 | # | Convention |
 |---|---|
-| M5 | ⌘W closes the focused window (on Linux `ctrl+w` stays Quit); ⌘Q quits; ⌘N composes, as `c` does; ⌘, opens Settings; ⌘F searches from the main window and finds in the message window; Delete is ⌫ on the Mac, where most keyboards have no forward-delete key. Each is a per-platform default of the one registry, not a second keymap |
+| M6 | ⌘W closes the focused window (on Linux `ctrl+w` stays Quit); ⌘Q quits; ⌘N composes, as `c` does; ⌘, opens Settings; ⌘F searches from the main window and finds in the message window; Delete is ⌫ on the Mac, where most keyboards have no forward-delete key. Each is a per-platform default of the one registry, not a second keymap |
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -459,7 +460,7 @@ is visible in both apps.
 - **FR-033**: The menu bar MUST list every command offered on the Mac with
   its key, generated from the one command table, so that it doubles as
   discovery.
-- **FR-034**: The conventions of M5 MUST be per-platform defaults in the one
+- **FR-034**: The conventions of M6 MUST be per-platform defaults in the one
   command table, and a test MUST assert the whole keymap resolves on both
   platforms.
 
