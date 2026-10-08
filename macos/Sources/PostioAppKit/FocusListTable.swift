@@ -31,6 +31,11 @@ public final class FocusListTable: NSObject {
     /// asserted rather than eyeballed (T035).
     public private(set) var cellsCreated = 0
 
+    /// Likewise the row views (the backgrounds, the heading band and the
+    /// ring): a 10k-row inbox scrolled end to end makes a screenful of
+    /// them, not ten thousand.
+    public private(set) var rowViewsCreated = 0
+
     static let cellIdentifier = NSUserInterfaceItemIdentifier("postio.focus.row")
     static let rowIdentifier = NSUserInterfaceItemIdentifier("postio.focus.rowview")
 
@@ -185,6 +190,7 @@ extension FocusListTable: NSTableViewDelegate {
             as? FocusRowView) ?? {
                 let made = FocusRowView()
                 made.identifier = Self.rowIdentifier
+                rowViewsCreated += 1
                 return made
             }()
         return view

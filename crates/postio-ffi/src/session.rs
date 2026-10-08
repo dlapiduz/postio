@@ -4139,6 +4139,19 @@ impl Session {
         Some((wiring.store.clone(), wiring.runtime.clone()))
     }
 
+    /// How many pages of Focus's list have been read from the store.
+    /// Test-only.
+    #[cfg(feature = "testing")]
+    pub fn focus_page_reads_for_test(&self) -> usize {
+        self.focus_list.page_reads()
+    }
+
+    /// How many rows Focus's list is holding. Test-only.
+    #[cfg(feature = "testing")]
+    pub fn focus_resident_rows_for_test(&self) -> usize {
+        self.focus_list.resident_rows()
+    }
+
     /// Wait until no conversation read is in flight.
     ///
     /// Test-only. A production frontend never waits for this -- it redraws

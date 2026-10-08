@@ -85,7 +85,7 @@ frontend with the engine's Focus pass on, and the Swift package split.
 
 - [x] T010 Write a failing test in `crates/postio-ffi/tests/ffi_suite/command_coverage.rs`: `offered_on_the_mac` means `Frontend::Focus` on `Platform::Apple`; Focus commands are owed and no `ThreePane` command is offered
 - [x] T011 Write a failing test in `crates/postio-core/tests/core_suite/one_keymap.rs` that resolves the whole Focus keymap for both `Platform::Freedesktop` and `Platform::Apple`, with no unparseable binding. Delete Macos from `APPS`
-- [ ] T012 (Done with T028 and T034 in US1, not here: while the three-pane Swift shell still exists, removing its commands leaves it drawing keys that do nothing.) Remove `Frontend::Macos` and `Requirement::ThreePane` from `crates/postio-core/src/registry.rs` (lines ~242-299, ~375-377), with the 19 ThreePane-only commands (ToggleRail, ToggleSidebar, CyclePane, CyclePaneBack, NextFolder, PrevFolder, ToggleFolder, RenameSavedSearch, MoveSavedSearchUp/Down, DeleteSavedSearch, OpenParts, NextPart, PrevPart, OpenPart, SavePart, SaveAllParts, OpenPartExternally, RenderPartOnce) and their `CommandId` variants. Fix:
+- [x] T012 (Done with T028 and T034 in US1, not here: while the three-pane Swift shell still exists, removing its commands leaves it drawing keys that do nothing.) Remove `Frontend::Macos` and `Requirement::ThreePane` from `crates/postio-core/src/registry.rs` (lines ~242-299, ~375-377), with the 19 ThreePane-only commands (ToggleRail, ToggleSidebar, CyclePane, CyclePaneBack, NextFolder, PrevFolder, ToggleFolder, RenameSavedSearch, MoveSavedSearchUp/Down, DeleteSavedSearch, OpenParts, NextPart, PrevPart, OpenPart, SavePart, SaveAllParts, OpenPartExternally, RenderPartOnce) and their `CommandId` variants. Fix:
   - `postio-ui/src/{keymap_sheet.rs,settings.rs:214,palette.rs:370}`;
   - `postio-core/tests/core_suite/command_registry.rs`;
   - `postio-ui/tests/ui_suite/{keymap_api.rs,keybindings_doc.rs}`;
@@ -163,7 +163,7 @@ differences listed. A 10k-conversation store scrolls without dropped frames.
   - export `command(id, origin)` and `ui_fact(fact)`.
 
   Never call Swift while holding a lock. Make T026 green
-- [ ] T028 [US1] (After T034, when the Swift Focus list has replaced the classic one.) Delete the classic list, cursor and selection machinery from `crates/postio-ffi/src/session.rs`: `HANDLED_HERE` (:133), the `selection`/`cursor`/`cursor_row`/`anchor` fields (:624-646), `handle_locally` (:4236), `RailFfi` and `rail_presentation` (`crates/postio-ffi/src/rail.rs`), `next_pane`, and the sidebar and parts exports. Delete their ffi_suite tests; keep `cargo nextest run -p postio-ffi` green
+- [x] T028 [US1] (After T034, when the Swift Focus list has replaced the classic one.) Delete the classic list, cursor and selection machinery from `crates/postio-ffi/src/session.rs`: `HANDLED_HERE` (:133), the `selection`/`cursor`/`cursor_row`/`anchor` fields (:624-646), `handle_locally` (:4236), `RailFfi` and `rail_presentation` (`crates/postio-ffi/src/rail.rs`), `next_pane`, and the sidebar and parts exports. Delete their ffi_suite tests; keep `cargo nextest run -p postio-ffi` green
 
 ### Mac: the inbox
 
@@ -192,7 +192,7 @@ differences listed. A 10k-conversation store scrolls without dropped frames.
   - **their tests.**
 
   Wire `PostioApp.swift`'s main scene to `MainWindow`. Keep `scripts/macos-test.sh` green
-- [ ] T035 [US1] Write a performance check in `macos/Tests/PostioAppKitTests/FocusListScrollTests.swift`: over a 10k-conversation seeded store, row views per scroll page stay bounded and `row(at:)` FFI calls per frame stay ≤ the visible rows plus the prefetch page (counted, not timed; constitution V)
+- [x] T035 [US1] Write a performance check in `macos/Tests/PostioAppKitTests/FocusListScrollTests.swift`: over a 10k-conversation seeded store, row views per scroll page stay bounded and `row(at:)` FFI calls per frame stay ≤ the visible rows plus the prefetch page (counted, not timed; constitution V)
 - [x] T036 [US1] Compare screens 01 and 02 (FR-061): `scripts/macos-shot.sh 01 --both`, against `Design/focus-macos-design/screens/01-inbox-light.png` and `02-inbox-dark.png`. Record the differences in `docs/notes/<date>-focus-macos-phase-1.md`, then fix or explain each one
 
 **Checkpoint**: the Mac launches into the Focus inbox. This is the MVP.

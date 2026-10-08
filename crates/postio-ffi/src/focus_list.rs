@@ -238,6 +238,8 @@ pub(crate) struct FocusDriver {
     client: Client,
     runtime: tokio::runtime::Handle,
     local: async_channel::Sender<UiEvent>,
+    /// Pages read from the store, so a test can count what scrolling cost.
+    page_reads: std::sync::atomic::AtomicUsize,
 }
 
 impl FocusDriver {
@@ -253,6 +255,7 @@ impl FocusDriver {
             client,
             runtime,
             local,
+            page_reads: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -273,6 +276,18 @@ impl FocusDriver {
     /// aimed.
     pub(crate) fn rows(&self) -> std::sync::MutexGuard<'_, ListWindow<FocusRowFfi>> {
         self.list.lock().expect("list lock")
+    }
+
+    /// How many pages have been read from the store since the session opened.
+    #[cfg(feature = "testing")]
+    pub(crate) fn page_reads(&self) -> usize {
+        self.page_reads.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// How many rows the window is holding.
+    #[cfg(feature = "testing")]
+    pub(crate) fn resident_rows(&self) -> usize {
+        self.list.lock().expect("list lock").resident_rows()
     }
 
     /// How many rows the list draws.
@@ -386,6 +401,10 @@ impl FocusDriver {
             }
             Err(request) => request,
         };
+        if matches!(request, Request::Page { .. }) {
+            self.page_reads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         let driver = Arc::clone(self);
         self.runtime.spawn(async move {
             let reply = postio_focus::perform(&driver.client, request).await;
