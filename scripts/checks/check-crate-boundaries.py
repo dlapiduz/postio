@@ -395,6 +395,39 @@ RULES: dict[str, dict[str, object]] = {
             "again; an executor named here would tie it to one main loop."
         ),
     },
+    # The demo stores every app photographs and drives (specs/008-storyboards
+    # R11, specs/009-focus-macos T004). Shared by the GTK app and the Mac's
+    # FFI, so a toolkit here would keep one of them from building it.
+    "postio-demo": {
+        "banned": [
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "libadwaita",
+            "libadwaita-sys",
+            "gdk4",
+            "gdk4-sys",
+            "gsk4-sys",
+            "webkit6",
+            "webkit6-sys",
+            "uniffi",
+            # The clients that dial out; tokio's own sockets come with the
+            # store's runtime and are not a way out.
+            "reqwest",
+            "hyper",
+            "ureq",
+            "rustls",
+            "native-tls",
+            "openssl",
+            "io-http",
+            "io-imap",
+        ],
+        "why": (
+            "postio-demo builds the seeded stores the GTK app and the Mac "
+            "both photograph; a toolkit or the network here would keep the "
+            "other app from using it, and a demo must never dial out."
+        ),
+    },
     "postio-storyboard": {
         "banned": [
             "gtk4",

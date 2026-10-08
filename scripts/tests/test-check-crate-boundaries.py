@@ -106,6 +106,7 @@ def build_fixture(
     # target these, so a dependency-free crate that trivially passes every
     # rule is all they need to be.
     for bystander in (
+        "postio-demo",
         "postio-ffi",
         "postio-gmail",
         "postio-jmap",
