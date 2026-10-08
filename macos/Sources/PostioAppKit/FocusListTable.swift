@@ -338,7 +338,11 @@ final class FocusRowView: NSTableRowView {
         }
         if isPicked {
             // A neutral ground, never the accent, which is the cursor's.
-            NSColor.quaternaryLabelColor.withAlphaComponent(0.5).setFill()
+            // `withAlphaComponent` replaces the label colour's own alpha
+            // rather than scaling it, so this is the label ink at 6%:
+            // screen 01's faint grey, which the marker's accent words stay
+            // readable on in both appearances.
+            NSColor.labelColor.withAlphaComponent(0.06).setFill()
             body.fill()
         }
         NSColor.separatorColor.setFill()
