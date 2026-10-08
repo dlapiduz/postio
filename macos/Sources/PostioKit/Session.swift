@@ -171,6 +171,18 @@ public final class PostioSession {
     /// What the popover's filter says before anything is typed.
     public func focusPlacesPlaceholder() -> String { inner.focusPlacesPlaceholder() }
 
+    // MARK: the pickers at the row (T091, T092)
+
+    /// The picker's field holds `text` now: said on every change.
+    public func focusPickerTyped(_ text: String) { inner.focusPickerTyped(text: text) }
+
+    /// The picker's row `token` chosen: a click, or Return on the highlight.
+    /// A preset or a folder acts and closes; a label goes on or off.
+    public func focusPickerChoose(_ token: UInt64) { inner.focusPickerChoose(token: token) }
+
+    /// Space on the picker's highlighted row `token`: a label on or off.
+    public func focusPickerToggle(_ token: UInt64) { inner.focusPickerToggle(token: token) }
+
     /// The open message's More menu and find, as they are now: what Back
     /// closes first.
     public func focusReaderState(moreOpen: Bool, finding: Bool) {
