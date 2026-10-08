@@ -133,10 +133,19 @@ private struct SettingsWindow: View {
             accountCursor: engine.settingsAccounts,
             repair: engine.accountRepair,
             reloadAccounts: { engine.refreshAccounts() },
-            session: engine.session
+            session: engine.session,
+            run: engine.session == nil ? nil : { command in engine.runFromSettings(command) }
         )
         .preferredColorScheme(engine.colorScheme)
         .background(WindowConfigurator(role: .settings))
+        // Filtering's "186 filtered today": the count the header strip says,
+        // read when the window opens. `nil` until it lands, so the pane says
+        // nothing rather than a zero.
+        .task {
+            guard let session = engine.session else { return }
+            let today = await Task.detached { try? session.focusCounts().filteredToday }.value
+            settings.filteredToday = today
+        }
     }
 }
 

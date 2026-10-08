@@ -49,6 +49,9 @@ public struct SettingsPaneView: View {
     /// application, which owns the list: a pane that edited its own copy
     /// would draw what it believes rather than what was written.
     private let reloadAccounts: (() -> Void)?
+    /// Run a registry command in the main window: Filtering's Open Filtered
+    /// is `go_to_filtered`. `nil` with no session, which disables it.
+    private let run: ((String) -> Void)?
     /// The add-account sheet, while it is up.
     @State private var adding: AddAccountModel?
     /// The account being signed in again, if one is.
@@ -77,7 +80,8 @@ public struct SettingsPaneView: View {
         accountCursor: SettingsAccounts = SettingsAccounts(),
         repair: AccountRepair = AccountRepair(),
         reloadAccounts: (() -> Void)? = nil,
-        session: PostioSession? = nil
+        session: PostioSession? = nil,
+        run: ((String) -> Void)? = nil
     ) {
         self.store = store
         self.accounts = accounts
@@ -87,6 +91,7 @@ public struct SettingsPaneView: View {
         self.repair = repair
         self.reloadAccounts = reloadAccounts
         self.session = session
+        self.run = run
     }
 
     public var body: some View {
@@ -216,7 +221,7 @@ public struct SettingsPaneView: View {
         case "accounts": return "person.crop.circle"
         case "saved_searches": return "line.3.horizontal.decrease.circle"
         case "compose": return "square.and.pencil"
-        case "ui": return "paintbrush"
+        case "focus": return "tray.and.arrow.down"
         case "keys": return "keyboard"
         case "sync": return "arrow.triangle.2.circlepath"
         case "privacy": return "lock.shield"
@@ -245,7 +250,7 @@ public struct SettingsPaneView: View {
 
     @ViewBuilder private var pane: some View {
         switch store.selected {
-        case "ui": appearance
+        case "focus": filteringPane
         case "compose": composing
         case "accounts": accountsPane
         case "sync": syncing
@@ -553,50 +558,115 @@ public struct SettingsPaneView: View {
         .padding(.bottom, 14)
     }
 
-    @ViewBuilder private var appearance: some View {
-        if let current = store.appearance {
-            HStack(alignment: .top, spacing: 32) {
+    // -- Filtering (specs/009-focus-macos T131) -----------------------------
+
+    /// Focus's Filtering pane, as GTK's draws it: the switch and what it
+    /// does now, today's count with Open Filtered, the keys Filtered
+    /// answers, and the two `[focus.filter]` lists, each line with the
+    /// control that takes it back. Every word is `postio_ui::filtering`'s,
+    /// through `settings_filtering`; the switch and the take-backs write
+    /// through `focus_edit`, so the rest of the file stays as it was.
+    @ViewBuilder private var filteringPane: some View {
+        if let page = store.filtering {
+            ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    field("THEME") {
-                        Picker("", selection: binding(current, \.theme)) {
-                            Text("System").tag(ThemeFfi.system)
-                            Text("Light").tag(ThemeFfi.light)
-                            Text("Dark").tag(ThemeFfi.dark)
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .fixedSize()
+                    VStack(alignment: .leading, spacing: PostioTokens.space1) {
+                        // A switch, because it acts when flipped (ADR 0029).
+                        Toggle(
+                            page.switch,
+                            isOn: Binding(
+                                get: { page.on },
+                                set: { store.applyFiltering(on: $0) }
+                            )
+                        )
+                        .toggleStyle(.switch)
+                        Text(page.state)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    field("ROW DENSITY") {
-                        // "Snug" is what the middle setting is called on
-                        // screen; `comfortable` is what it is called in the
-                        // file. GTK says the same two things, and changing
-                        // either alone would make one of them a lie.
-                        Picker("", selection: binding(current, \.density)) {
-                            Text("Airy").tag(DensityFfi.airy)
-                            Text("Snug").tag(DensityFfi.comfortable)
-                            Text("Compact").tag(DensityFfi.compact)
+                    Divider()
+                    field(page.filtered.uppercased()) {
+                        VStack(alignment: .leading, spacing: PostioTokens.space2) {
+                            HStack(spacing: PostioTokens.space3) {
+                                if let today = page.today {
+                                    Text(today).font(.body.weight(.medium))
+                                }
+                                Button {
+                                    run?("go_to_filtered")
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Text(page.open)
+                                        if let cap = KeyCapSpelling.cap(page.openKey) {
+                                            KeyCap(cap)
+                                        }
+                                    }
+                                }
+                                .disabled(run == nil)
+                            }
+                            Text(page.kept)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if !page.keys.isEmpty {
+                                HStack(spacing: PostioTokens.space3) {
+                                    ForEach(page.keys, id: \.label) { hint in
+                                        HStack(spacing: 4) {
+                                            KeyCap(KeyCapSpelling.cap(hint.key) ?? hint.key)
+                                            Text(hint.label)
+                                                .font(.callout)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .fixedSize()
-                        // No "Npx rows" beside it: that was measured off the
-                        // classic list's cell, and Focus's rows have one
-                        // height per shape whatever the density (T034).
+                    }
+                    Divider()
+                    field(page.neverHeading.uppercased()) {
+                        VStack(alignment: .leading, spacing: PostioTokens.space2) {
+                            Text(page.guards)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            filteringList(page.never, empty: page.neverEmpty, name: page.neverHeading)
+                        }
+                    }
+                    Divider()
+                    field(page.stoppedHeading.uppercased()) {
+                        filteringList(page.stopped, empty: page.stoppedEmpty, name: page.stoppedHeading)
                     }
                 }
-                Divider().frame(height: 120)
-                field("MESSAGE LIST") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Toggle("Hover action icons", isOn: binding(current, \.showHoverActions))
-                        Toggle("Sender avatars", isOn: binding(current, \.senderAvatars))
-                    }
-                    .toggleStyle(.checkbox)
-                }
-                Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
             unreadable
+        }
+    }
+
+    /// One `[focus.filter]` list: a line per entry with its take-back, or
+    /// the list's empty sentence. An entry that does not act is drawn in
+    /// the tertiary colour; its line already says why.
+    @ViewBuilder private func filteringList(
+        _ entries: [FilteringEntryFfi], empty: String, name: String
+    ) -> some View {
+        if entries.isEmpty {
+            Text(empty).font(.callout).foregroundStyle(.tertiary)
+        } else {
+            VStack(alignment: .leading, spacing: PostioTokens.space1) {
+                ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
+                    HStack(spacing: PostioTokens.space3) {
+                        Text(entry.says)
+                            .foregroundStyle(entry.acts ? Color.primary : Color.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button(entry.undoLabel) { store.takeBack(entry.undo) }
+                            .buttonStyle(.link)
+                    }
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(name)
         }
     }
 
@@ -1110,23 +1180,12 @@ public struct SettingsPaneView: View {
         .padding(.vertical, 10)
     }
 
-    /// A binding that patches the file on change.
+    /// A binding that patches `[compose]` on change.
     ///
     /// There is no Save in this window because canvas 3f decided there is no
     /// second store to save *from* — which is exactly what the footer says.
-    private func binding<T>(
-        _ current: AppearanceFfi,
-        _ field: WritableKeyPath<AppearanceFfi, T>
-    ) -> Binding<T> {
-        Binding(
-            get: { current[keyPath: field] },
-            // One field, applied to whatever the file says at the moment of
-            // the click -- never to the copy this view was drawn from.
-            set: { value in store.apply { $0[keyPath: field] = value } }
-        )
-    }
-
-    /// The same binding, over the `[compose]` table.
+    /// One field, applied to whatever the file says at the moment of the
+    /// click -- never to the copy this view was drawn from.
     private func composeBinding<T>(
         _ current: ComposingFfi,
         _ field: WritableKeyPath<ComposingFfi, T>

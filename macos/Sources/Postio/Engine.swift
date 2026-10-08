@@ -397,6 +397,14 @@ final class Engine {
         focusTable?.tableView.window ?? NSApp.windows.first { KeyWindowTracker.isMain($0) }
     }
 
+    /// Run `command` from the settings window, with the main window in
+    /// front: Filtering's Open Filtered draws Filtered in the list's place,
+    /// which the settings window would otherwise hide.
+    func runFromSettings(_ command: String) {
+        mainWindow?.makeKeyAndOrderFront(nil)
+        run(command)
+    }
+
     /// The message the open message window shows, while it has the
     /// keyboard: what Reply, Reply all and Forward answer from it.
     private var messageInFront: Int64? {

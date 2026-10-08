@@ -7,7 +7,8 @@ import SwiftUI
 ///
 /// **It parses no TOML and writes no TOML** (ADR 0031). Every value it shows
 /// came from `postio_config` through the boundary, and every change goes back
-/// the same way — `settingsPatchAppearance` rewrites one table with
+/// the same way — `settingsPatchFiltering` and the other `patch_*` edits
+/// rewrite what they own with
 /// `toml_edit`'s document model and leaves the rest of the file byte for
 /// byte. A form here that serialized its own table would be a second writer
 /// of a file people edit by hand, with its own idea of key order and comment
@@ -45,33 +46,52 @@ public final class SettingsStore {
     public init(path: String) {
         self.path = path
         self.sections = settingsSections()
-        // Appearance, because it is the only pane built here yet. The nav
-        // starts at Accounts, and this opens further down it on purpose
-        // rather than landing on a section that has nothing to show.
-        self.selected = "ui"
+        // The nav's first pane, Accounts: every section has a pane now, so
+        // there is no longer an unbuilt one to steer around.
+        self.selected = self.sections.first?.key ?? "accounts"
         let loaded = settingsLoad(path: path)
         self.text = loaded
         self.status = settingsStatus(text: loaded)
     }
 
-    /// The Appearance pane's values, or `nil` when the file will not parse.
+    /// How many messages filtering has filed away today
+    /// (`focus_counts().filtered_today`), or `nil` until it is known. The
+    /// application sets it; the pane says it only while filtering is on.
+    public var filteredToday: UInt32?
+
+    /// The Filtering pane, as GTK's draws it (`postio_ui::filtering::page`),
+    /// or `nil` when the file will not parse.
     ///
     /// `nil` disables the pane. Showing defaults instead would draw a form of
     /// plausible settings that are not the user's, and saving it would erase
     /// the file they had opened the window to fix.
-    public var appearance: AppearanceFfi? {
-        settingsAppearance(text: text)
+    public var filtering: FilteringPageFfi? {
+        settingsFiltering(text: text, filteredToday: filteredToday)
+    }
+
+    /// Turn `[focus] filtering` on or off and save: the pane's switch.
+    /// Read, change one key, write, as every other change here.
+    public func applyFiltering(on: Bool) {
+        reload()
+        write { try settingsPatchFiltering(text: $0, on: on) }
+    }
+
+    /// Take one `[focus.filter]` entry back and save: the control beside
+    /// each line of the pane's two lists ("Filter again", "Turn back on").
+    public func takeBack(_ undo: FilteringUndoFfi) {
+        reload()
+        write { try settingsTakeBackFilter(text: $0, undo: undo) }
     }
 
     /// The Composing pane's values, or `nil` when the file will not parse.
     ///
-    /// Disabled for the same reason as `appearance`, and it is the same file.
+    /// Disabled for the same reason as `filtering`, and it is the same file.
     public var composing: ComposingFfi? {
         settingsComposing(text: text)
     }
 
     /// The Sync & storage pane's values, or `nil` when the file will not
-    /// parse. Disabled for the same reason as `appearance`.
+    /// parse. Disabled for the same reason as `filtering`.
     public var syncing: SyncingFfi? {
         settingsSyncing(text: text)
     }
@@ -117,9 +137,9 @@ public final class SettingsStore {
         status = settingsStatus(text: text)
     }
 
-    /// Apply one change to `[ui]` and save.
+    /// Apply one change to `[compose]` and save.
     ///
-    /// Takes a mutation rather than a whole `AppearanceFfi`, and re-reads the
+    /// Takes a mutation rather than a whole `ComposingFfi`, and re-reads the
     /// file before applying it. Both halves matter, and a real edit found out
     /// why: `config.toml` is a file people edit by hand, so anything this
     /// window remembers about it is already possibly wrong. Patching a
@@ -129,21 +149,7 @@ public final class SettingsStore {
     ///
     /// So the file is read, one field is changed, and the result is written:
     /// nothing this window has been holding can overwrite anything it did not
-    /// know about. Reading it back afterwards is the same argument once more
-    /// -- the footer describes the file as it is, not as this believes it
-    /// left it.
-    public func apply(_ change: (inout AppearanceFfi) -> Void) {
-        reload()
-        guard var next = appearance else { return }
-        change(&next)
-        write { try settingsPatchAppearance(text: $0, appearance: next) }
-    }
-
-    /// Apply one change to `[compose]` and save.
-    ///
-    /// The same bargain `apply` makes, over the other table this window
-    /// writes: read the file, change one field, write the result. See
-    /// `apply` for why nothing this window remembers may be written back.
+    /// know about.
     public func applyComposing(_ change: (inout ComposingFfi) -> Void) {
         reload()
         guard var next = composing else { return }
@@ -174,7 +180,7 @@ public final class SettingsStore {
         }
     }
 
-    /// Apply one change to `[sync]` and save. See `apply`.
+    /// Apply one change to `[sync]` and save. See `applyComposing`.
     public func applySyncing(_ change: (inout SyncingFfi) -> Void) {
         reload()
         guard var next = syncing else { return }
@@ -182,7 +188,7 @@ public final class SettingsStore {
         write { try settingsPatchSyncing(text: $0, syncing: next) }
     }
 
-    /// Change one filter and save. See `apply`.
+    /// Change one filter and save. See `applyComposing`.
     public func applyFilter(_ filter: FilterFfi) {
         reload()
         write { try settingsPatchFilter(text: $0, filter: filter) }
