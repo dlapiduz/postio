@@ -663,11 +663,27 @@ to a folder, and undo each with the pill and ⌘Z.
   - **`BannerFfi`:** `heading` (bold), `sentence`, `button: Option<BannerButtonFfi{label, command, key}>`, `progress: Option<BannerProgressFfi{done, total}>` (a first sync's bar), `error` (draw in `systemRed` at a low opacity), `account: Option<i64>`. A click runs `button.command` as a menu item would: `refresh` is the host's, through `invoke`; `update_credential` is in `Intercepted`, so Swift opens `AccountRepair` for `banner.account`.
   - **`EmptyPageFfi`:** `heading`, `detail`, `next_digest`, `shortcuts: Vec<EmptyShortcutFfi{key, words, command}>`. A shortcut's click is `invoke(command)`; draw `key` as a keycap before `words`.
   - **Session:** `[focus]` reaches the controller whole (`Input::Config`) at open and on every change of the file.
-- [ ] T099 [US7] Append a typed `UiEvent::BackfillProgress{account, done, total}` (`crates/postio-ffi/src/event.rs`), then implement the banner strip and the empty state in `macos/Sources/PostioKit/BannerStrip.swift` and `EmptyInbox.swift`:
+- [x] T099 [US7] Append a typed `UiEvent::BackfillProgress{account, done, total}` (`crates/postio-ffi/src/event.rs`), then implement the banner strip and the empty state in `macos/Sources/PostioKit/BannerStrip.swift` and `EmptyInbox.swift`:
   - full width under the header strip; the error strip in `systemRed` at low opacity;
   - Retry, and "Update password…" opening a sheet that stores through the engine's credential store (Keychain), reusing `AccountRepair.swift`.
-- [ ] T100 [US7] Show the store refusal on launch with "Start over" calling `start_over`, in `macos/Sources/Postio/StoreRefusal.swift`
-- [ ] T101 [US7] Compare screens 16 to 19 (FR-061), recorded in `docs/notes/<date>-focus-macos-phase-7.md`
+
+  *As built:* `BackfillProgress` was already typed by the FFI half; the controller folds it into the label, so Swift does nothing with it.
+  - **`FocusStates`** (`macos/Sources/PostioKit/FocusStates.swift`) holds the three events as last said, beside `FocusIntents`, and decides nothing. `FocusStatesTests` (13) were seen red against stubs.
+  - **`BannerStrip`**: `BannerStripWords` lays out `BannerFfi` -- the button's cap through `KeyCapSpelling`, progress as a fraction (none over a zero total, never past 1), error as `Color.red` at 10%, plain as `.quinary` at half opacity. It sits under the header strip and above the list.
+  - **"Update password…"**: `update_credential` stays intercepted. With the banner naming an account, `Engine.run` takes the account's route through a second `AccountRepair` (`bannerRepair`), because the settings window presents whenever its own is asking: a password goes to `PasswordSheet` (PostioKit), a sheet on the main window, and OAuth goes to the browser. While the sheet is up, `run` returns `false` for every key, so Return saves and Escape cancels in the sheet, not in the list behind it.
+  - **`EmptyInbox`** replaces the list while `FocusEmpty` holds a page. The Swift empty check (`focusListed && focusCount == 0`) and its `ContentUnavailableView` are gone.
+  - **`SyncLabel`** no longer mirrors `sync_label` in Swift. It draws `FocusSyncLabel`'s words and maps the mark to an SF Symbol; only `.failed` is red. Until the controller speaks the toolbar shows nothing. Engine's `syncing`, `syncProgress` and `failure` went with it.
+  - **Found in T101, fixed in `postio-focus`:** a banner button now names its key only when the command is available in the list's context. `update_credential`'s `c` belongs to the settings window, and over the list `c` composes.
+- [x] T100 [US7] Show the store refusal on launch with "Start over" calling `start_over`, in `macos/Sources/Postio/StoreRefusal.swift`
+
+  *As built:* the model is `StoreRefusal`/`StoreRefusalModel` in `macos/Sources/PostioKit/StoreRefusal.swift`; the view is `StoreRefusalPage` in `macos/Sources/Postio/StoreRefusal.swift`, drawn in place of the whole inbox. `Engine.State.unavailable(String)` became `.refused(StoreRefusalModel)`, and opening is `openStore(after:)` so the page can open again.
+  - **The remedy is the boundary's case.** `StoreFromAnotherBuild` offers "Start a fresh store", which runs `startOver(storePath: nil)` off the main actor, then opens the fresh store and says `started_over_words` ("Started a fresh store. The old one is in …") as a notice. Every other case offers "Try again" with the store layer's own sentence. A start over that fails says why and offers Try again; Try again offers the start over again if the store is still the old one. This is GTK's page, step for step.
+  - **The words were GTK literals.** They moved to `postio_ui::focus_state` (`CANT_OPEN_MAIL`, `TRY_AGAIN`, `STORE_FROM_ANOTHER_VERSION`, `START_OVER`, `START_A_FRESH_STORE`, `STARTING_A_FRESH_STORE`, `started_over`). GTK's window and startup read them there; that is a const swap this Mac cannot build, and CI proves it. The FFI exports `store_refusal_words()` and `started_over_words(set_aside)` as free functions, since there is no session.
+  - **Tests:** `StoreRefusalTests` (8) were seen red against a stub. The Rust word tests were written first, but the refusal's words had already moved by the time they first compiled, so they were never seen red. They compare whole strings.
+  - **Not exercised live:** making a store from another build on this Mac is the ffi_suite's job. `p7-refusal` photographs the Try-again page over a demo that does not exist.
+- [x] T101 [US7] Compare screens 16 to 19 (FR-061), recorded in `docs/notes/<date>-focus-macos-phase-7.md`
+
+  *As built:* `docs/notes/2026-10-08-focus-macos-phase-7.md`. A demo never syncs, so a demo build takes `POSTIO_DEMO_STATE` (`offline`, `auth`, `first-sync`, `synced`). The new `Session.demo_state` export emits the engine events sync would have emitted for the demo's account, through the `emit_for_test` that the `demo` feature already carries. A build without demos answers `false`. Both halves were seen red first. The comparison found the stray `c` cap described under T099.
 
 ---
 
@@ -700,10 +716,31 @@ show the new key without a restart.
 
 ### Mac: the key map and the menu bar
 
-- [ ] T104 [US8] Write failing Swift tests in `macos/Tests/PostioKitTests/MenuPlanTests.swift`: every command offered on Apple for Focus has a menu item with the key `bindingsFor` returns; after `KeymapChanged` the plan is rebuilt with the new key
-- [ ] T105 [US8] Rebuild `macos/Sources/PostioKit/MenuPlan.swift` and `macos/Sources/PostioAppKit/MenuBar.swift` for Focus's menus (`menus()` for Focus on Apple). Add the standard App/File/Edit/Window items (Settings ⌘,, Quit ⌘Q, New Message ⌘N, Close ⌘W); Edit › Undo backed by `PostioUndoManager`; rebuild on `KeymapChanged`. Fix the stale `ctrl+…` comment at `MenuBar.swift:97`. Make T104 green
-- [ ] T106 [US8] Implement the key map sheet in `macos/Sources/PostioKit/KeyMapSheet.swift`: groups from `postio_ui::keymap_sheet` via the FFI's `cheat_sheet_sections`, and a footer naming `~/Library/Application Support/Postio/config.toml`, `[keys]` (C3). Delete `macos/Sources/Postio/Palette.swift`'s `CheatSheet` once replaced
-- [ ] T107 [US8] Compare screen 20 (FR-061), recorded in `docs/notes/<date>-focus-macos-phase-8.md`
+- [x] T104 [US8] Write failing Swift tests in `macos/Tests/PostioKitTests/MenuPlanTests.swift`: every command offered on Apple for Focus has a menu item with the key `bindingsFor` returns; after `KeymapChanged` the plan is rebuilt with the new key
+- [x] T105 [US8] Rebuild `macos/Sources/PostioKit/MenuPlan.swift` and `macos/Sources/PostioAppKit/MenuBar.swift` for Focus's menus (`menus()` for Focus on Apple). Add the standard App/File/Edit/Window items (Settings ⌘,, Quit ⌘Q, New Message ⌘N, Close ⌘W); Edit › Undo backed by `PostioUndoManager`; rebuild on `KeymapChanged`. Fix the stale `ctrl+…` comment at `MenuBar.swift:97`. Make T104 green
+
+  *As built (T104-T105):* `FocusMenuBarTests` (7) were seen red against a stubbed `MenuPlan.bar` and `MenuBarPlan`. `MenuPlan.bar` plans the whole bar, and `MenuBar` only turns planned items (`Item.role`) into `NSMenuItem`s. `MenuPlan.build` stays the registry-only plan that the settings window's Keyboard pane lists.
+  - **App:** About, then the registry's Settings, Add account and Edit configuration, then Hide, then the registry's Quit ⌘Q once. AppKit's Quit used to be drawn beside it.
+  - **File:** the registry's items, with Compose titled "New Message" (⌘N, the same command as `c`), then Close ⌘W. Close moved here from Window because the HIG puts it under File.
+  - **Edit:** Undo is the registry's `undo` (it used to be on the bar twice), aimed at `UndoRouter`. Then Redo, Cut, Copy, Paste, Select All, then the rest of the registry's Edit items.
+  - **Window:** Minimize and Zoom, then AppKit's window list, before Help.
+  - **Rebuilding:** `MenuBarPlan` rebuilds on `KeymapChanged`, and Engine remounts the bar.
+  - **The stale comment** is rewritten. `mod` is ⌘ here: `undo` is ⌘Z and `select_all` is ⌘A. The key monitor runs them in the list, and `KeyDisposition.belongsToText` hands them to a field through these items. The test that compared registry strings with `cmd+` (which never matched `mod+`) now asserts exactly that.
+  - **Found on the way, fixed in `postio-core`:** `quit`'s GTK alternate `mod+w` made ⌘W quit the Mac app from any window, the message window included, because the key monitor runs before Window › Close. `registry::alternate_offered_on` keeps that alternate off Apple, and `Keymap::resolve_on` skips it. The two one-keymap tests name it as the one difference besides the modifier, and the Linux table is unchanged.
+  - **Known:** Undo's key equivalent stays ⌘Z, which text fields need, even if `[keys]` rebinds `undo`.
+- [x] T106 [US8] Implement the key map sheet in `macos/Sources/PostioKit/KeyMapSheet.swift`: groups from `postio_ui::keymap_sheet` via the FFI's `cheat_sheet_sections`, and a footer naming `~/Library/Application Support/Postio/config.toml`, `[keys]` (C3). Delete `macos/Sources/Postio/Palette.swift`'s `CheatSheet` once replaced
+
+  *As built:* the sheet is `focus_key_map`'s `KeyMapSheetFfi`, not `cheat_sheet_sections`. `cheat_sheet` left both intercepted lists, so `?` reaches the controller. `KeyMapSheetTests` (8) were seen red against stubs, and the parity test went red when only the Swift list had changed.
+  - **`KeyMapSheetWords`:** the groups go in the sheet's `columns`, and an index past the groups is skipped. Each row's bindings share one cap, spelled by `KeyCapSpelling`. The close keys are caps.
+  - **`KeyMapModel`:** it opens on `FocusOpenKeyMap` and closes on `FocusCloseSurface(.keyMap)`. After `KeymapChanged`, an open key map is redrawn from `focus_key_map()`. A click on the dim reports `focusSurfaceClosed(.keyMap)` once; the controller's own opens and closes are not echoed back.
+  - **`KeyMapPanel`** is a SwiftUI overlay centred over the dimmed content, as screen 20 draws it, not an AppKit sheet, which would drop from the toolbar and dim nothing. The columns scroll inside a 1100 × 760 panel: the real sheet holds every command Focus offers here, many more than the pack shows.
+  - **Retired:** `Palette.swift`, `CheatSheetList`, `CheatSheetLayout`, `CheatSheetKeys` and `KeyCaps`, with their tests; the `cheatSheet` and `cheatSheetSections` wrappers; and Engine's `showingCheatSheet` and `dismissOverlays`. The classic Rust exports stay for their ffi_suite tests.
+- [x] T107 [US8] Compare screen 20 (FR-061), recorded in `docs/notes/<date>-focus-macos-phase-8.md`
+
+  *As built:* `docs/notes/2026-10-08-focus-macos-phase-8.md`, reached with `POSTIO_DEMO_KEYS='?'`.
+  - **Fixed:** keypad alternates leaked GDK names (`⌘KP_ADD`); `MenuPlan.accelerator` now draws the character the key types. The panel overflowed the window; its columns now scroll.
+  - **Also fixed:** photographing a build without demos showed the store refusal page drawn under a header strip floating mid-window. The page now replaces the whole inbox.
+  - **Left:** the shared sheet is longer than the pack's curated one, keys are spelled per C22, chords are shown beside letters, and the toolbar is not dimmed.
 
 ---
 
