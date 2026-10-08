@@ -5024,6 +5024,43 @@ async fn unsubscribe_offer_for(
     Some((message.account_id, offer))
 }
 
+/// Where a store that was started over went, and what came across.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct StartedOverFfi {
+    /// The directory the old database, its sidecars and its blobs were set
+    /// aside in: moved, not deleted, so a build of their schema opens them
+    /// again from there.
+    pub set_aside: String,
+    /// How many accounts the fresh store carried over from it.
+    pub accounts: u32,
+}
+
+/// Set aside the store `options` names and start a fresh one in its place,
+/// carrying its accounts across: the way past
+/// [`SessionError::StoreFromAnotherBuild`] (`postio_session::start_over::start_over_at`).
+///
+/// The store key comes from `options`' secret store, or the OS keyring: the
+/// one the old store was written under, which stays where it is, so the
+/// store set aside opens again under a build of its schema. Blocks; refused
+/// while another Postio has the store open.
+pub fn start_over_with(options: SessionOptions) -> Result<StartedOverFfi, SessionError> {
+    let secrets: Arc<dyn postio_account::secret::SecretStore> = match options.secrets {
+        Some(secrets) => secrets,
+        None => postio_account::secret::platform_keyring(),
+    };
+    let key = postio_session::store_key_blocking(secrets.as_ref())
+        .map_err(SessionError::from_secret_error)?;
+    let path = options
+        .store_path
+        .unwrap_or_else(postio_session::paths::store_path);
+    let started = blocking(postio_session::start_over::start_over_at(&path, &key))
+        .map_err(|message| SessionError::StoreUnavailable { message })?;
+    Ok(StartedOverFfi {
+        set_aside: started.set_aside.display().to_string(),
+        accounts: u32::try_from(started.accounts).unwrap_or(u32::MAX),
+    })
+}
+
 pub(crate) fn blocking<T>(future: impl std::future::Future<Output = T>) -> T {
     postio_session::blocking::now(future)
 }

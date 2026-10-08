@@ -230,3 +230,37 @@ fn a_store_from_another_build_says_start_over_not_try_again() {
         other => panic!("expected StoreFromAnotherBuild, got {other:?}"),
     }
 }
+
+#[test]
+fn starting_over_a_store_from_another_build_leaves_one_that_opens() {
+    // The Mac's "Start over" (specs/009-focus-macos T097): the refusal above
+    // is a dead end unless something gets past it. The store is set aside,
+    // not deleted, under the key it was written with, and a fresh one takes
+    // its place that the next launch opens.
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let path = scratch.path().join("postio.db");
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let key = postio_session::store_key_blocking(secrets.as_ref()).expect("a store key");
+    postio_session::blocking::now(postio_storage::Store::create_at_schema(
+        &path,
+        &key.derive(postio_storage::key::Purpose::Database),
+        "CREATE TABLE written_by_a_stranger (id INTEGER PRIMARY KEY);",
+        "",
+    ))
+    .expect("a store at a schema no step leads from");
+
+    let started =
+        postio_ffi::start_over_with(SessionOptions::at(&path).with_secrets(secrets.clone()))
+            .unwrap_or_else(|error| panic!("the store was not started over: {error}"));
+    assert!(
+        std::path::Path::new(&started.set_aside).is_dir(),
+        "the old store was not set aside where it said: {}",
+        started.set_aside
+    );
+    assert_eq!(started.accounts, 0, "the stranger's store held no accounts");
+
+    let session = Session::open(SessionOptions::at(&path).with_secrets(secrets))
+        .unwrap_or_else(|error| panic!("the fresh store did not open: {error}"));
+    assert!(session.is_open());
+    session.shutdown();
+}

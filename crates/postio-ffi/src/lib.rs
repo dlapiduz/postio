@@ -127,7 +127,7 @@ pub use reader::{
 pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
 pub use saved_search::{SavedSearchEditFfi, SavedSearchFfi, save_search, saved_searches};
 pub use search::{ChipFfi, MatchRangeFfi, SnippetFfi, query_chips};
-pub use session::{Session, SessionError, SessionOptions};
+pub use session::{Session, SessionError, SessionOptions, StartedOverFfi, start_over_with};
 pub use settings::{
     AppearanceFfi, AttachmentFetchFfi, BodyFetchFfi, CheckForMailFfi, ComposingFfi, DensityFfi,
     FilterFfi, FoundEditorFfi, GroupFfi, HandoffTargetFfi, KeyHintFfi, RowActionFfi, RowMetricsFfi,
@@ -176,6 +176,19 @@ pub fn intercepted_commands() -> Vec<String> {
 pub const FRONTEND: postio_core::Frontend = postio_core::Frontend::Focus;
 
 uniffi::setup_scaffolding!();
+
+/// Set aside the store at `store_path` (or the usual path) and start a fresh
+/// one there, carrying its accounts across: what "Start over" does when
+/// [`Session::open_at`] answers [`SessionError::StoreFromAnotherBuild`]
+/// (specs/009-focus-macos T098). The store key is the keyring's. Blocks, as
+/// opening a session does: call it off the main actor, then open again.
+#[uniffi::export]
+pub fn start_over(store_path: Option<String>) -> Result<StartedOverFfi, SessionError> {
+    start_over_with(match store_path {
+        Some(path) => SessionOptions::at(path),
+        None => SessionOptions::at_default_path(),
+    })
+}
 
 /// Answers with the name of this application.
 ///
