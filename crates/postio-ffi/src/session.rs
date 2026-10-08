@@ -416,10 +416,11 @@ fn config_source(_options: &SessionOptions) -> ConfigSource {
 /// preferences file, which is the same call `load_key_bindings` makes above.
 fn build_resolver(keys: &postio_config::keys::KeyBindings) -> postio_ui::keymap::Resolver {
     let keymap = postio_core::Keymap::resolve(keys);
-    // The macOS app's commands only: a key the one keymap keeps for another
-    // app is bound to nothing here (specs/007-postio-focus R4).
+    // Focus's commands only: the Mac app is Focus (specs/009-focus-macos
+    // FR-001), so a key the one keymap keeps for the terminal alone is bound
+    // to nothing here (specs/007-postio-focus R4).
     let (resolver, problems) =
-        postio_ui::keymap::Resolver::from_commands_for(&keymap, postio_core::Frontend::Macos);
+        postio_ui::keymap::Resolver::from_commands_for(&keymap, crate::FRONTEND);
     for problem in &problems {
         tracing::warn!(%problem, "a key binding could not be used");
     }
@@ -4362,7 +4363,7 @@ impl Session {
     /// [`Requirement::StoreOpen`]: postio_core::Requirement::StoreOpen
     fn availability(&self) -> postio_core::Availability {
         postio_core::Availability {
-            frontend: postio_core::Frontend::Macos,
+            frontend: crate::FRONTEND,
             ..postio_core::Availability::open(
                 *self.account_scope.lock().expect("account scope lock"),
             )

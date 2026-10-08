@@ -156,6 +156,12 @@ pub fn intercepted_commands() -> Vec<String> {
         .collect()
 }
 
+/// Which of Postio's interfaces the Mac app is, to the registry: Focus
+/// (specs/009-focus-macos FR-001, ADR 0043). What it is offered -- keys,
+/// palette rows, menu items, settings sections -- is Focus's, less what
+/// `postio_core::registry::offered_on` keeps off the Mac.
+pub const FRONTEND: postio_core::Frontend = postio_core::Frontend::Focus;
+
 uniffi::setup_scaffolding!();
 
 /// Answers with the name of this application.

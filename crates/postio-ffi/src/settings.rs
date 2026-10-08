@@ -313,7 +313,7 @@ pub struct FilterFfi {
 pub fn settings_sections() -> Vec<SettingsSectionFfi> {
     Section::ALL
         .into_iter()
-        .filter(|section| section.shown_in(postio_core::Frontend::Macos))
+        .filter(|section| section.shown_in(crate::FRONTEND))
         .map(|section| SettingsSectionFfi {
             key: section.key().to_string(),
             label: section.label().to_string(),

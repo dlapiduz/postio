@@ -235,3 +235,43 @@ fn asking_for_a_buttons_key_does_not_resolve_the_keymap_again() {
         "the keymap is resolved once per session, not once per question"
     );
 }
+
+/// The Mac app is Focus (specs/009-focus-macos FR-001): it answers Focus's
+/// keys and none of the three-pane app's.
+#[test]
+fn the_mac_answers_focus_keys_and_not_the_three_pane_apps() {
+    let session = session();
+    assert_eq!(
+        typed(&session, "y", UiContext::List, false),
+        KeyOutcomeFfi::Command {
+            id: "accept_invite".to_string()
+        },
+        "`y` accepts an invitation in Focus"
+    );
+    assert_eq!(
+        session.key(Some("b"), None, PRIMARY, UiContext::List, false),
+        KeyOutcomeFfi::Unhandled,
+        "Focus has no sidebar to toggle"
+    );
+    session.shutdown();
+}
+
+/// Focus's whole keymap resolves, as the Mac's frontend, on both platforms:
+/// asserted for each from either host, because a gate that runs one platform
+/// cannot see the other's answer (31 bindings once died that way, the note
+/// `docs/notes/2026-09-05-the-gate-that-runs-cannot-see-the-platform-that-does-not.md`).
+#[test]
+fn focus_s_keymap_resolves_on_both_platforms() {
+    use postio_config::paths::Platform;
+    for platform in [Platform::Freedesktop, Platform::Apple] {
+        let keymap = postio_core::Keymap::resolve_on(&Default::default(), platform);
+        assert!(
+            keymap.problems().is_empty(),
+            "{platform:?}: {:?}",
+            keymap.problems()
+        );
+        let (_, problems) =
+            postio_ui::keymap::Resolver::from_commands_for(&keymap, postio_ffi::FRONTEND);
+        assert!(problems.is_empty(), "{platform:?}: {problems:?}");
+    }
+}

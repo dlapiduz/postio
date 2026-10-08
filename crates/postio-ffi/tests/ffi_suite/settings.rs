@@ -112,19 +112,19 @@ fn appearance_is_unreadable_from_a_file_that_will_not_parse() {
 }
 
 #[test]
-fn the_nav_lists_the_macs_eight_sections_by_human_name_under_two_headings() {
-    // Filtering is not among them: Focus's rules act only while Focus runs,
-    // on the desktop or in the terminal (spec 007 US11, scenario 4), so the
-    // Mac has nothing for its switch to turn.
+fn the_nav_lists_focus_s_eight_sections_by_human_name_under_two_headings() {
+    // The Mac is Focus (specs/009-focus-macos), so its nav is Focus's: Focus
+    // files mail away as it arrives, so Filtering is here, and it follows the
+    // system's look, so Appearance is not.
     let sections = settings_sections();
     let labels: Vec<&str> = sections.iter().map(|s| s.label.as_str()).collect();
     assert_eq!(
         labels,
         [
             "Accounts",
+            "Filtering",
             "Saved searches",
             "Composing",
-            "Appearance",
             "Keyboard",
             "Sync & storage",
             "Privacy",
@@ -140,21 +140,24 @@ fn the_nav_lists_the_macs_eight_sections_by_human_name_under_two_headings() {
         .filter(|s| s.group == GroupFfi::Mail)
         .map(|s| s.label.as_str())
         .collect();
-    assert_eq!(mail, ["Accounts", "Saved searches", "Composing"]);
+    assert_eq!(
+        mail,
+        ["Accounts", "Filtering", "Saved searches", "Composing"]
+    );
     assert_eq!(settings_group_label(GroupFfi::Application), "APPLICATION");
 }
 
 #[test]
 fn a_pane_names_the_table_it_writes_and_the_two_that_own_none_say_so() {
-    // The footer under every structured pane reads `[ui] in config.toml`, so
-    // the table is the pane's, not a string the frontend keeps beside it.
+    // The footer under every structured pane reads `[focus] in config.toml`,
+    // so the table is the pane's, not a string the frontend keeps beside it.
     let by_key = |key: &str| {
         settings_sections()
             .into_iter()
             .find(|s| s.key == key)
             .expect("the section exists")
     };
-    assert_eq!(by_key("ui").table.as_deref(), Some("[ui]"));
+    assert_eq!(by_key("focus").table.as_deref(), Some("[focus]"));
     assert_eq!(by_key("sync").table.as_deref(), Some("[sync]"));
     // Privacy is not a `config.toml` table at all (#871), and Config file is
     // every table there is rather than one.
