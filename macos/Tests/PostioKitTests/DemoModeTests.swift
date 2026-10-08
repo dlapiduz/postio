@@ -26,4 +26,20 @@ struct DemoModeTests {
         #expect(DemoMode.appearance(in: ["POSTIO_APPEARANCE": "sepia"]) == nil)
         #expect(DemoMode.appearance(in: [:]) == nil)
     }
+
+    @Test func keysAreReplayedOnlyInADemo() {
+        // A picture of `!` with three rows marked needs the keys pressed;
+        // a real store never replays anything.
+        let keys = ["POSTIO_DEMO_KEYS": "! x j x"]
+        #expect(DemoMode.keys(in: keys).isEmpty)
+        #expect(DemoMode.keys(in: keys.merging(["POSTIO_DEMO": "small"]) { $1 }).map(\.character)
+            == ["!", "x", "j", "x"])
+        #expect(DemoMode.keys(in: ["POSTIO_DEMO": "small"]).isEmpty)
+    }
+
+    @Test func aReplayedKeyIsTheKeyAsTyped() {
+        let keys = DemoMode.keys(in: ["POSTIO_DEMO": "small", "POSTIO_DEMO_KEYS": "J x !"])
+        #expect(keys.map(\.modifiers.shift) == [true, false, true])
+        #expect(keys.allSatisfy { !$0.modifiers.command && !$0.modifiers.control && $0.name == nil })
+    }
 }

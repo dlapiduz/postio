@@ -59,6 +59,14 @@ public struct Notice: Equatable, Sendable {
     /// says so: *"Not an error: the UI usually answers with a quiet hint."*
     public var isAlarming: Bool { kind == .failed }
 
+    /// Whether the Focus window draws this as a notice too.
+    ///
+    /// Only a failure. Focus's controller hears every completion, undo and
+    /// refusal and says it as `FocusToast` (specs/009-focus-macos T052), so
+    /// drawing those as notices as well would announce one archive twice.
+    /// A failure is not the controller's to say, and stays here.
+    public var shownBesideFocusToast: Bool { kind == .failed }
+
     /// How long it stays on screen.
     ///
     /// A completion that offers Undo has to outlast the reach for the mouse:

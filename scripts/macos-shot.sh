@@ -11,6 +11,10 @@
 # `Design/review/focus-macos/<name>-<appearance>.png` -- untracked, beside the
 # design they are compared with (FR-061).
 #
+# A screen that needs a state is reached by pressing keys on the list once it
+# has landed, in the demo only: `POSTIO_DEMO_KEYS='! x j x' scripts/macos-shot.sh
+# 03-selected` (the environment reaches the app).
+#
 # Needs Screen Recording for the terminal, once. Never touches the store on
 # disk or the network: the demo is in memory, and its mail is invented.
 set -euo pipefail
@@ -33,7 +37,7 @@ while [ $# -gt 0 ]; do
         --size) size="$2"; shift 2 ;;
         --wait) wait_for="$2"; shift 2 ;;
         --no-build) build=0; shift ;;
-        -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) echo "unknown option: $1" >&2; exit 2 ;;
         *) name="$1"; shift ;;
     esac

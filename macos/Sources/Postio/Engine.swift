@@ -258,6 +258,23 @@ final class Engine {
         return table
     }
 
+    /// The action bar's words, while anything is selected.
+    var actionBarWords: ActionBarWords? {
+        _ = keymapVersion
+        // `vault: false`: the boundary does not say yet whether capture has
+        // a vault to write to (C9), and a Task button that can only fail is
+        // worse than none.
+        return ActionBarWords(
+            summary: focus.summary, hasSelection: focus.hasSelection, vault: false
+        ) { [weak self] command in self?.session?.binding(for: command) }
+    }
+
+    /// The keycap the toast line's Undo shows.
+    var undoCap: String? {
+        _ = keymapVersion
+        return KeyCapSpelling.cap(session?.binding(for: Notice.undoCommand))
+    }
+
     /// The header strip's words, from the counts and the bindings in force.
     var stripWords: HeaderStripWords {
         _ = keymapVersion
@@ -515,8 +532,9 @@ final class Engine {
     private func handle(_ event: UiEvent) {
         guard case .open = state else { return }
         // Before the switch: what the application says back is not one
-        // arm's business.
-        if let arriving = Notice(event) {
+        // arm's business. Completions, undos and refusals are the
+        // controller's toast in this window; only a failure is a notice.
+        if let arriving = Notice(event), arriving.shownBesideFocusToast {
             notice = Notice.winner(showing: notice, arriving: arriving)
             noticeToken += 1
         }
@@ -537,6 +555,7 @@ final class Engine {
             refreshCounts()
         case let .focusPageReady(page):
             focusTable?.pageArrived(page)
+            replayDemoKeys()
         case .keymapChanged:
             keymapVersion += 1
             focusTable?.keymapChanged()
@@ -574,6 +593,29 @@ final class Engine {
             }
         default:
             break
+        }
+    }
+
+    /// The keys a demo was asked to press (`DemoMode.keys`), until they
+    /// have been: a screen that needs a state is photographed in it.
+    @ObservationIgnored
+    private var demoKeys = DemoMode.keys
+
+    /// Press the demo's keys on the list, once, after its first page has
+    /// landed, each through the resolver and `run` as a real press would
+    /// go, with a pause for what it opened to land.
+    private func replayDemoKeys() {
+        guard !demoKeys.isEmpty else { return }
+        let keys = demoKeys
+        demoKeys = []
+        Task { @MainActor [weak self] in
+            for key in keys {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                guard let self, let session = self.session else { return }
+                if case let .command(id) = session.key(key, in: .list, typing: false) {
+                    self.run(id)
+                }
+            }
         }
     }
 

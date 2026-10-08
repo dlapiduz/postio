@@ -56,6 +56,12 @@ struct MainWindow: View {
         VStack(spacing: 0) {
             HeaderStrip(words: engine.stripWords) { engine.run($0) }
             list
+            // While anything is selected (screen 01): the count, the verbs
+            // with their keys, and the selection's own keys.
+            if let words = engine.actionBarWords {
+                ActionBar(words: words) { engine.run($0) }
+                    .transition(.opacity)
+            }
         }
         .background(MainToolbarInstaller(engine: engine))
         // The commands the search field offers while it holds `>`, just
@@ -85,7 +91,21 @@ struct MainWindow: View {
         .animation(.easeOut(duration: Motion.current), value: engine.pendingChord)
         .animation(.easeOut(duration: Motion.current), value: engine.finding != nil)
         .animation(.easeOut(duration: Motion.current), value: engine.noticeToken)
+        .animation(.easeOut(duration: Motion.current), value: engine.actionBarWords != nil)
+        .animation(.easeOut(duration: Motion.current), value: engine.focus.toastToken)
         .overlay(alignment: .bottomLeading) { NoticeBanner(engine: engine) }
+        // What a verb did, with Undo while the stack can take it back: the
+        // controller's toast. Above the action bar when there is one.
+        .overlay(alignment: .bottom) {
+            if let toast = engine.focus.toast {
+                UndoNoticeLine(
+                    toast: toast, token: engine.focus.toastToken, undoCap: engine.undoCap,
+                    undo: { engine.run(Notice.undoCommand) },
+                    dismiss: { engine.focus.dismissToast(token: $0) }
+                )
+                .padding(.bottom, engine.actionBarWords == nil ? 0 : ActionBar.height)
+            }
+        }
         .overlay(alignment: .bottomTrailing) {
             // A half-typed sequence, shown while it waits: `g` on its own is
             // otherwise a second of the application ignoring a key.
@@ -130,10 +150,10 @@ struct MainWindow: View {
     }
 }
 
-/// What Postio last said back about something you asked it to do: a
-/// sentence where the eye already is, gone on its own, with an Undo when
-/// there is something to take back. `Notice` decides; this draws. (The
-/// bottom-centre undo pill of screen 15 replaces it.)
+/// A failure Postio has to report: a sentence where the eye already is,
+/// gone on its own. `Notice` decides; this draws. Completions, undos and
+/// refusals are the controller's toast in this window (`UndoNoticeLine`),
+/// so only `Notice.shownBesideFocusToast` reaches here.
 private struct NoticeBanner: View {
     let engine: Engine
 
