@@ -492,7 +492,7 @@ fn a_command_has_the_same_key_in_every_app_that_offers_it() {
                 .bindings(spec.id)
                 .iter()
                 .map(|binding| match binding.as_str() {
-                    "BackSpace" if platform_of(app) == Platform::Apple => "Delete".to_owned(),
+                    "BackSpace" if platform == Platform::Apple => "Delete".to_owned(),
                     other => other.replace("cmd+", "ctrl+"),
                 })
                 .filter(|binding| !reserved.contains(binding))
