@@ -33,6 +33,13 @@ pub(crate) enum Step {
     Ask(Request),
     /// Open this place through the feed, as `FocusController::open` does.
     Open(ListScope),
+    /// Call back with `Input::Timer(token)` once `after` has passed.
+    Timer {
+        /// Handed back when it fires.
+        token: u64,
+        /// How long to wait.
+        after: std::time::Duration,
+    },
 }
 
 /// A page's rows as the store answered them, before the feed shapes them.

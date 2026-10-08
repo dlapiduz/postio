@@ -729,7 +729,10 @@ impl FocusDriver {
                 index,
                 total,
             }),
-            Intent::OpenDraft { message } => self.say(UiEvent::FocusOpenDraft {
+            Intent::Composer {
+                kind: postio_focus::ComposerKind::Draft,
+                message: Some(message),
+            } => self.say(UiEvent::FocusOpenDraft {
                 message: message.get(),
             }),
             Intent::OpenDigest { row } => self.say(UiEvent::FocusOpenDigest {
@@ -755,7 +758,9 @@ impl FocusDriver {
                         (crate::event::ToastKindFfi::Completed, undoable)
                     }
                     postio_focus::ToastKind::Undone => (crate::event::ToastKindFfi::Undone, false),
-                    postio_focus::ToastKind::Notice => (crate::event::ToastKindFfi::Notice, false),
+                    postio_focus::ToastKind::Notice | postio_focus::ToastKind::Offer { .. } => {
+                        (crate::event::ToastKindFfi::Notice, false)
+                    }
                 };
                 self.say(UiEvent::FocusToast {
                     text,

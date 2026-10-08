@@ -133,11 +133,17 @@ fn a_draft_opens_to_be_written_not_read() {
     let effects = reading(&mut focus, &rows);
     assert_eq!(
         shown(&effects),
-        vec![Intent::OpenDraft {
-            message: MessageId::new(100)
+        vec![Intent::Composer {
+            kind: postio_focus::ComposerKind::Draft,
+            message: Some(MessageId::new(100))
         }]
     );
-    assert_eq!(focus.key_context(), KeyContext::List, "no reader opened");
+    // The composer is the controller's surface now (slice 7).
+    assert_eq!(
+        focus.key_context(),
+        KeyContext::Composer,
+        "no reader opened"
+    );
 }
 
 #[test]
@@ -418,8 +424,15 @@ fn back_closes_a_dialog_and_the_key_map_closes_on_its_own_key() {
         shown(&run(&mut focus, CommandId::Back, &rows)),
         vec![Intent::CloseSurface(SurfaceKind::Capture)]
     );
-    // The composer's Back is its own (it keeps the draft): not the
-    // controller's to close.
+    // The composer's Back is the controller's since slice 7: it closes the
+    // composer, keeping the draft.
     let _ = focus.handle_on(Input::SurfaceOpened(SurfaceKind::Composer), &rows);
-    assert!(!focus.answers(CommandId::Back));
+    assert!(focus.answers(CommandId::Back));
+    assert_eq!(
+        shown(&run(&mut focus, CommandId::Back, &rows)),
+        vec![
+            Intent::CloseSurface(SurfaceKind::Composer),
+            Intent::KeyboardHome
+        ]
+    );
 }

@@ -23,6 +23,7 @@ use postio_ui::focus_list::FocusRow;
 
 mod bar;
 mod capture;
+mod compose;
 mod confirm;
 mod cursor;
 mod digest;
@@ -37,6 +38,7 @@ mod verbs;
 
 pub use bar::{BarLine, BarLineKind, BarMode, BarView, Found, FoundRow, PlacesRead};
 pub use capture::{CaptureProject, CaptureView};
+pub use compose::{AUTOSAVE, ComposerKind};
 pub use confirm::Confirm;
 pub use cursor::{NoRows, RowFacts, Rows};
 pub use digest::{
@@ -226,6 +228,20 @@ pub enum Input {
     CaptureProject(u64),
     /// Open the message a `postio://` link names, or say why not.
     OpenLink(String),
+    /// Something was written in the open composer: a recipient, the
+    /// subject, a word of the body. What its autosave waits out.
+    ComposerEdited,
+    /// What became of an [`Intent::SaveDraft`]: the draft was kept
+    /// (`Ok(true)`), there was nothing in it worth keeping (`Ok(false)`),
+    /// or the sentence saying why it could not be saved.
+    DraftSaved {
+        /// The composition the save was asked for.
+        composition: u64,
+        /// What became of it.
+        saved: Result<bool, String>,
+    },
+    /// A timer the controller set ([`Effect::Timer`]) has run out.
+    Timer(u64),
 }
 
 /// What the frontend does next.
@@ -237,8 +253,8 @@ pub enum Effect {
     /// Run this through [`perform()`] and hand the answer back as
     /// [`Input::Reply`] with the same ticket.
     Ask(Ticket, Request),
-    /// Call back with [`Input`] once `after` has passed. (Arrives with the
-    /// first slice that needs one.)
+    /// Call back with [`Input::Timer`]`(token)` once `after` has passed:
+    /// the composer's autosave (slice 7).
     Timer {
         /// Handed back when the timer fires.
         token: u64,
@@ -341,10 +357,23 @@ pub enum Intent {
         /// The row.
         row: MessageId,
     },
-    /// A draft not yet on its way opens in the composer, to be written.
-    OpenDraft {
-        /// The draft's message.
-        message: MessageId,
+    /// Open the composer -- or, while it is open, put this composition in
+    /// it in place of the one it held -- writing `kind`, answering
+    /// `message`: a new message (no message), a reply, a reply to all, a
+    /// forward, or the draft behind a row, to go on writing. The controller
+    /// has put the composer on the stack.
+    Composer {
+        /// What is being written.
+        kind: ComposerKind,
+        /// The message it answers, or the draft's own message.
+        message: Option<MessageId>,
+    },
+    /// Save what the composer holds for `composition` now, and say how it
+    /// went with [`Input::DraftSaved`]: its autosave's quiet period has
+    /// passed, or the composition is ending.
+    SaveDraft {
+        /// The composition: the one open, or the one just closed.
+        composition: u64,
     },
     /// Close this surface; the frontend says [`Input::SurfaceClosed`] when
     /// it has.
@@ -606,6 +635,13 @@ pub enum Request {
     },
     /// Whether this store holds `message`, and its row: what a link opens.
     FindMessage(MessageId),
+    /// The draft behind `message`, for the send verb `command` to settle.
+    DraftBehind {
+        /// The message aimed at.
+        message: MessageId,
+        /// Cancel, retry or mark sent.
+        command: CommandId,
+    },
 }
 
 /// The engine's answer to a [`Request`]. A failure is carried as its
@@ -746,6 +782,15 @@ pub enum Reply {
         /// Its row, or `None` when the store does not hold it.
         row: Option<postio_model::listing::MessageSummary>,
     },
+    /// The answer to [`Request::DraftBehind`].
+    DraftBehind {
+        /// The message asked about.
+        message: MessageId,
+        /// The send verb that asked.
+        command: CommandId,
+        /// The draft behind it, or `None` when it is no draft.
+        draft: Option<postio_model::DraftId>,
+    },
 }
 
 /// Focus's behaviour for one window. `Send`, and plain data: no toolkit
@@ -773,6 +818,8 @@ pub struct FocusController {
     rule: Option<digest::RuleDialog>,
     capture: Option<capture::Capture>,
     confirm: Option<confirm::Asked>,
+    /// The composer, and the composition in it.
+    compose: compose::Compose,
     /// Stamps the surfaces' reads, so an answer for one since moved on is
     /// dropped.
     stamps: u64,
@@ -800,6 +847,7 @@ impl FocusController {
             rule: None,
             capture: None,
             confirm: None,
+            compose: compose::Compose::default(),
             stamps: 0,
         }
     }
@@ -826,6 +874,10 @@ impl FocusController {
             let steps = self.hit_closed(rows);
             effects.extend(self.effects(steps));
         }
+        // The composer gone however it went -- its window's close button,
+        // another window in its place (M4) -- ends its composition, saved.
+        let steps = self.composer_gone();
+        effects.extend(self.effects(steps));
         effects
     }
 
@@ -852,7 +904,11 @@ impl FocusController {
             }
             Input::Command(id) => self.list_command(id, rows),
             Input::SurfaceOpened(kind) => {
-                let steps = self.surfaces.opened(kind, self.policy.caps.stacking);
+                let mut steps = Vec::new();
+                if kind == SurfaceKind::Composer {
+                    steps.extend(self.composer_opened());
+                }
+                steps.extend(self.surfaces.opened(kind, self.policy.caps.stacking));
                 self.forget_closed();
                 self.effects(steps)
             }
@@ -873,6 +929,7 @@ impl FocusController {
                 Vec::new()
             }
             Input::Accounts(accounts) => {
+                self.compose.set_no_account(accounts.is_empty());
                 self.cursor.set_accounts(accounts);
                 Vec::new()
             }
@@ -909,7 +966,8 @@ impl FocusController {
                 | Reply::RuleSaved { .. }
                 | Reply::Vault { .. }
                 | Reply::Captured { .. }
-                | Reply::FoundMessage { .. }),
+                | Reply::FoundMessage { .. }
+                | Reply::DraftBehind { .. }),
             ) => {
                 let steps = self.surface_reply(reply, rows);
                 self.effects(steps)
@@ -926,6 +984,7 @@ impl FocusController {
                 Vec::new()
             }
             Input::Reply(_, Reply::Opened(opened)) => {
+                self.compose.set_no_account(opened.accounts.is_empty());
                 self.cursor.set_accounts(opened.accounts.clone());
                 let steps = self.feed.opened(opened);
                 self.effects(steps)
@@ -1058,6 +1117,18 @@ impl FocusController {
                 let steps = self.open_link(&uri);
                 self.effects(steps)
             }
+            Input::ComposerEdited => {
+                let steps = self.composer_edited();
+                self.effects(steps)
+            }
+            Input::DraftSaved { composition, saved } => {
+                let steps = self.draft_saved(composition, saved);
+                self.effects(steps)
+            }
+            Input::Timer(token) => {
+                let steps = self.timer(token);
+                self.effects(steps)
+            }
             input @ (Input::Typed { .. }
             | Input::BarRun(_)
             | Input::BarTab
@@ -1138,6 +1209,9 @@ impl FocusController {
         if id == CommandId::CheatSheet {
             return self.open_key_map();
         }
+        if let Some(steps) = self.compose_verb(id, rows) {
+            return steps;
+        }
         match id {
             CommandId::CaptureTask => {
                 return self.open_capture(postio_ui::capture::Mode::Task, rows);
@@ -1178,6 +1252,10 @@ impl FocusController {
         if row.digest {
             return self.open_digest(row.id, position, rows);
         }
+        // A draft not yet on its way opens to be written (spec 007 US11).
+        if row.writes {
+            return self.write(ComposerKind::Draft, Some(row.id));
+        }
         let (index, total) = self.feed.message_place(position, rows.len());
         self.surfaces
             .open(&row, index, total, self.policy.caps.stacking)
@@ -1191,6 +1269,14 @@ impl FocusController {
         // controller puts the bar up and takes it down itself (slice 8).
         if self.surfaces.top() == Some(SurfaceKind::Bar) && id == CommandId::Back {
             return Some(self.dismiss_bar(false));
+        }
+        // The composer takes its own keys; Esc and the writing verbs are
+        // the controller's.
+        if self.surfaces.top() == Some(SurfaceKind::Composer) {
+            return Some(self.composer_command(id, rows));
+        }
+        if let Some(steps) = self.compose_verb(id, rows) {
+            return Some(steps);
         }
         // The controller's own surfaces; one a frontend opened itself, with
         // nothing held for it here, closes by the general rule below.
@@ -1239,8 +1325,9 @@ impl FocusController {
                 }
                 Some(steps)
             }
-            // `Return` on the message on screen: it is open.
-            CommandId::OpenMessage => Some(Vec::new()),
+            // `Return` on the message on screen: Edit, on a draft on its
+            // way or stopped; else it is open already.
+            CommandId::OpenMessage => Some(self.edit_open_draft(rows).unwrap_or_default()),
             // A picker hangs from the message, aimed at it alone.
             _ if pickers::opens_picker(id) => self.picker_on_message(id, reading, rows),
             _ => {
@@ -1267,6 +1354,9 @@ impl FocusController {
         }
         if pickers::picker_key(id) {
             return true;
+        }
+        if self.surfaces.top() == Some(SurfaceKind::Composer) {
+            return Self::composer_answers(id);
         }
         let own = match self.surfaces.top() {
             Some(SurfaceKind::Filtered) => Self::filtered_answers(id),
@@ -1301,6 +1391,7 @@ impl FocusController {
                 | CommandId::CaptureNote
                 | CommandId::DigestRule
         ) || bar::goes(id)
+            || compose::compose_key(id)
             || pickers::opens_picker(id)
             || postio_ui::focus_target::dispatch(id).is_some()
     }
@@ -1400,6 +1491,7 @@ impl FocusController {
                     let request = self.feed.open(scope);
                     Effect::Ask(self.ticket(), request)
                 }
+                feed::Step::Timer { token, after } => Effect::Timer { token, after },
             })
             .collect()
     }
@@ -1445,6 +1537,7 @@ impl FocusController {
             | Reply::RuleSaved { .. }) => self.rule_reply(reply),
             reply @ (Reply::Vault { .. } | Reply::Captured { .. }) => self.capture_reply(reply),
             Reply::FoundMessage { message, row } => self.link_found(message, row, rows),
+            Reply::DraftBehind { command, draft, .. } => self.draft_behind(command, draft),
             _ => Vec::new(),
         }
     }

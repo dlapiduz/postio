@@ -360,6 +360,33 @@ fn a_command_the_controller_does_not_answer_is_handed_back_to_run() {
     let rows = List::of(1);
     let mut focus = mac();
     let _ = bar_open(&mut focus, CommandId::CommandPalette, &rows);
+    let lines = view(&typed(&mut focus, ">settings", &rows));
+    let settings = lines
+        .lines
+        .iter()
+        .find(|line| line.command == Some(CommandId::Settings))
+        .unwrap_or_else(|| panic!("no Settings row in {lines:?}"))
+        .clone();
+    let effects = focus.handle_on(Input::BarRun(settings.token), &rows);
+    // The keyboard goes home first: a command the frontend runs may open
+    // nothing of its own (Refresh), and one that does takes it from there.
+    assert_eq!(
+        shown(&effects),
+        vec![
+            Intent::CloseSurface(SurfaceKind::Bar),
+            Intent::KeyboardHome,
+            Intent::Run(CommandId::Settings)
+        ]
+    );
+}
+
+#[test]
+fn compose_from_the_bar_opens_the_composer_itself() {
+    // Compose was handed back to `Run` until the composer was the
+    // controller's (slice 7).
+    let rows = List::of(1);
+    let mut focus = mac();
+    let _ = bar_open(&mut focus, CommandId::CommandPalette, &rows);
     let lines = view(&typed(&mut focus, ">compose", &rows));
     let compose = lines
         .lines
@@ -368,16 +395,18 @@ fn a_command_the_controller_does_not_answer_is_handed_back_to_run() {
         .unwrap_or_else(|| panic!("no Compose row in {lines:?}"))
         .clone();
     let effects = focus.handle_on(Input::BarRun(compose.token), &rows);
-    // The keyboard goes home first: a command the frontend runs may open
-    // nothing of its own (Refresh), and one that does takes it from there.
     assert_eq!(
         shown(&effects),
         vec![
             Intent::CloseSurface(SurfaceKind::Bar),
             Intent::KeyboardHome,
-            Intent::Run(CommandId::Compose)
+            Intent::Composer {
+                kind: postio_focus::ComposerKind::New,
+                message: None,
+            }
         ]
     );
+    assert_eq!(focus.key_context(), KeyContext::Composer);
 }
 
 #[test]

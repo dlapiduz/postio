@@ -375,6 +375,11 @@ impl FocusController {
         )
     }
 
+    /// The email open in the digest's window, on its email page.
+    pub(crate) fn digest_email(&self) -> Option<MessageId> {
+        self.digest.as_ref()?.email.map(|(message, _)| message)
+    }
+
     /// A command while the digest is on top, or `None` when the app's rules
     /// apply to it (Undo, the key map, the bar).
     pub(crate) fn digest_command(&mut self, id: CommandId, rows: &dyn Rows) -> Option<Vec<Step>> {

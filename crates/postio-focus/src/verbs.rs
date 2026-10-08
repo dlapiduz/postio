@@ -42,6 +42,14 @@ pub enum ToastKind {
     Undone,
     /// A command could not run: a quiet hint, not an alarm.
     Notice,
+    /// What is missing, with the one way to put it right: a button
+    /// labelled `label` that runs `command` ("Add account").
+    Offer {
+        /// The button's words.
+        label: String,
+        /// What the button runs.
+        command: CommandId,
+    },
 }
 
 impl ToastKind {

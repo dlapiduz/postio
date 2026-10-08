@@ -286,10 +286,13 @@ fn the_controller_says_which_commands_are_its_own() {
         CommandId::Undo,
         CommandId::AcceptInvite,
         CommandId::DismissMarker,
+        // The writing verbs, since slice 7.
+        CommandId::Reply,
+        CommandId::Compose,
     ] {
         assert!(focus.answers(id), "{id} is the controller's");
     }
-    for id in [CommandId::Reply, CommandId::Compose, CommandId::Settings] {
+    for id in [CommandId::Settings, CommandId::Send] {
         assert!(!focus.answers(id), "{id} is a surface's, not the list's");
     }
 }

@@ -307,6 +307,18 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .ok()
                 .and_then(|rows| rows.into_iter().find(|row| row.id == message)),
         },
+        // A message that is no draft, or one the store cannot say, is
+        // answered alike: there is nothing to settle.
+        Request::DraftBehind { message, command } => Reply::DraftBehind {
+            message,
+            command,
+            draft: client
+                .draft_behind(message)
+                .await
+                .ok()
+                .flatten()
+                .map(|draft| draft.id),
+        },
     }
 }
 

@@ -76,13 +76,14 @@ impl SurfaceKind {
         }
     }
 
-    /// Whether Back closes it from the controller. The composer's Back is
-    /// its own (it keeps the draft), and a menu's is its own. The bar's
+    /// Whether Back closes it from the controller. The composer's closes it
+    /// keeping the draft (slice 7); a menu's is its own. The bar's
     /// closes it, as GTK's window did, and a picker's, as GTK's picker did.
     fn back_closes(self) -> bool {
         matches!(
             self,
             SurfaceKind::Bar
+                | SurfaceKind::Composer
                 | SurfaceKind::Picker
                 | SurfaceKind::Digest
                 | SurfaceKind::Capture
@@ -311,8 +312,8 @@ impl Surfaces {
         Some(vec![Step::Show(Intent::CloseSurface(top))])
     }
 
-    /// Open `row`, at `index` of `total`: to be read, or -- a draft not yet
-    /// on its way -- to be written.
+    /// Open `row`, at `index` of `total`, to be read. (A draft not yet on
+    /// its way is written instead: `FocusController::write`.)
     pub(crate) fn open(
         &mut self,
         row: &RowFacts,
@@ -320,14 +321,6 @@ impl Surfaces {
         total: u32,
         stacking: bool,
     ) -> Vec<Step> {
-        if row.writes {
-            let mut steps = Vec::new();
-            if self.remove(SurfaceKind::Message) {
-                steps.push(Step::Show(Intent::CloseSurface(SurfaceKind::Message)));
-            }
-            steps.push(Step::Show(Intent::OpenDraft { message: row.id }));
-            return steps;
-        }
         let mut steps = self.opened(SurfaceKind::Message, stacking);
         self.reading = Some(row.id);
         self.origin = Origin::List;

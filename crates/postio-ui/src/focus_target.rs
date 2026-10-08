@@ -26,6 +26,13 @@ pub const NOT_BEING_SENT: &str = "That message is not one being sent";
 /// has no other party yet, and answering it would be replying to oneself.
 pub const NO_REPLY_TO_OUTGOING: &str = "An outgoing message cannot be replied to";
 
+/// What `c` says while there is no account to write from (spec 007 T172):
+/// what is missing, beside the button that adds one ([`ADD_ACCOUNT`]).
+pub const NO_ACCOUNT_TO_WRITE_FROM: &str = "There's no account to write from yet.";
+
+/// The button beside [`NO_ACCOUNT_TO_WRITE_FROM`]: the add-account form.
+pub const ADD_ACCOUNT: &str = "Add account";
+
 /// Whether a reply to a message in `state` is refused: a draft being written
 /// or on its way, or stopped. A message that was sent is mail like any other
 /// -- replying to your own sent message answers its recipients.
