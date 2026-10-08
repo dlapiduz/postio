@@ -818,7 +818,8 @@ final class Engine {
             keymapVersion += 1
             focusTable?.keymapChanged()
             keycapsChanged?()
-            installMenuBar()
+            // The menus show the new keys (T105).
+            if menuPlan.apply(event) { mountMenuBar() }
         case .surfacedChanged:
             // The list re-reads what it surfaces and says so itself; the
             // strip's counts may have moved with it.
@@ -972,13 +973,26 @@ final class Engine {
 
     // MARK: keys and the menu bar
 
-    /// Build the menu bar from the registry and hang it off `NSApp`
-    /// (#657). Accelerators come from the bindings in force where there is
-    /// a session to ask and from the built-in defaults before there is one;
-    /// dispatch is the key monitor's.
+    /// Focus's menu bar, planned from the registry and the bindings in
+    /// force (T105): asked of the session once there is one, and planned
+    /// again on `KeymapChanged`, by which time `bindingsFor` answers the
+    /// new keys.
+    @ObservationIgnored
+    private lazy var menuPlan = MenuBarPlan { [weak self] command in
+        self?.session?.bindings(for: command) ?? []
+    }
+
+    /// Plan the menu bar from the bindings in force and hang it off `NSApp`
+    /// (#657). Accelerators come from the session's keymap where there is a
+    /// session to ask, and are absent before; dispatch is the key monitor's.
     private func installMenuBar() {
+        menuPlan.rebuild()
+        mountMenuBar()
+    }
+
+    private func mountMenuBar() {
         MenuBar.install(
-            bindings: { [weak self] command in self?.session?.bindings(for: command) ?? [] },
+            menus: { [weak self] in self?.menuPlan.menus ?? [] },
             available: { [weak self] id in
                 guard let self else { return false }
                 guard let session else {

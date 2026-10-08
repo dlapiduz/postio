@@ -830,7 +830,7 @@ public struct SettingsPaneView: View {
                             .font(.system(size: 10, weight: .semibold))
                             .kerning(0.6)
                             .foregroundStyle(.secondary)
-                        ForEach(menu.items, id: \.command) { item in
+                        ForEach(menu.items, id: \.title) { item in
                             HStack(alignment: .firstTextBaseline) {
                                 Text(item.title)
                                 Spacer(minLength: PostioTokens.space4)

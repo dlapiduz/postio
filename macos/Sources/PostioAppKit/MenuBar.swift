@@ -41,14 +41,28 @@ import PostioKit
 @MainActor
 public enum MenuBar {
     /// Build the bar and install it, routing every choice through `run`.
+    ///
+    /// `menus` is asked each time the bar is built -- at install, and again
+    /// whenever SwiftUI has edited it -- so it answers the plan as it stands
+    /// (`MenuBarPlan`, rebuilt on `KeymapChanged`).
+    public static func install(
+        menus: @escaping () -> [MenuPlan.Menu],
+        available: @escaping (String) -> Bool,
+        run: @escaping (String) -> Void,
+        undo: UndoRouter? = nil
+    ) {
+        recipe = Recipe(menus: menus, available: available, run: run, undo: undo)
+        mount()
+    }
+
+    /// The bar `MenuPlan.bar` plans over `bindings`.
     public static func install(
         bindings: @escaping (String) -> [String],
         available: @escaping (String) -> Bool,
         run: @escaping (String) -> Void,
         undo: UndoRouter? = nil
     ) {
-        recipe = Recipe(bindings: bindings, available: available, run: run, undo: undo)
-        mount()
+        install(menus: { MenuPlan.bar(bindings: bindings) }, available: available, run: run, undo: undo)
     }
 
     /// What `install` was asked for, kept so the bar can be built again.
@@ -57,7 +71,7 @@ public enum MenuBar {
     /// edits the menu in place, so what is on screen after it has had its
     /// turn is our object with its submenus removed.
     private struct Recipe {
-        let bindings: (String) -> [String]
+        let menus: () -> [MenuPlan.Menu]
         let available: (String) -> Bool
         let run: (String) -> Void
         /// Where Edit › Undo goes: the engine's stack in the main window
@@ -68,77 +82,39 @@ public enum MenuBar {
     private static var recipe: Recipe?
 
     /// Build the bar from the recipe and hang it off the application.
+    ///
+    /// Every menu, item and shortcut is `MenuPlan.bar`'s (T105); this turns
+    /// each planned item into an `NSMenuItem` by its role. A registry
+    /// command's item has no key equivalent and draws its accelerator (see
+    /// above). AppKit's own items -- Undo, Redo, Cut, Copy, Paste, Select
+    /// All, Hide, Close, Minimize -- carry their real key equivalents,
+    /// because **on this platform those keys reach a text field or a window
+    /// only through a menu item**: replacing SwiftUI's bar (#1262) once took
+    /// ⌘V, ⌘C, ⌘X, ⌘A and ⌘Z from every field (#1298) and ⌘W from every
+    /// window.
+    ///
+    /// No race with Postio's own keys: `KeyMonitor` is a local event
+    /// monitor and runs before menu key equivalents are considered. Postio's
+    /// `mod+…` defaults are ⌘ here, and two of them are these chords --
+    /// `undo` is ⌘Z and `select_all` ⌘A. In the list the monitor runs them;
+    /// in a text field `KeyDisposition.belongsToText` hands ⌘A, ⌘C, ⌘V, ⌘X
+    /// and ⌘Z to the field, through these items. ⌘W is no binding of
+    /// Postio's on the Mac (`registry::alternate_offered_on`), so it always
+    /// reaches Close.
     private static func mount() {
         guard let recipe else { return }
         let target = CommandTarget(run: recipe.run, available: recipe.available)
         Self.target = target
-        let bindings = recipe.bindings
 
         let bar = NSMenu()
-        // The application menu, which is AppKit's and not the registry's:
-        // About, Hide, Quit are AppKit's and not the registry's. The registry
-        // does own three of this menu's items -- Settings, the config file and
-        // Add account -- and they are merged in rather than drawn as a second
-        // "Postio" menu beside it (#1207).
-        let planned = MenuPlan.build(bindings: bindings)
-        let appItem = NSMenuItem()
-        appItem.submenu = applicationMenu(
-            items: planned.first { $0.section == .app }?.items ?? [],
-            target: target
-        )
-        bar.addItem(appItem)
-
-        for menu in planned where menu.section != .app {
+        var windows: NSMenu?
+        for menu in recipe.menus() {
             let item = NSMenuItem()
-            let submenu = NSMenu(title: menu.title)
-            // Edit gets AppKit's own editing items first. **This is what makes
-            // paste work at all**: ⌘V reaches a text field only because a menu
-            // item carries it as a key equivalent and sends `paste:` down the
-            // responder chain. Replacing SwiftUI's bar (#1262) took its Edit
-            // menu with it, and with it ⌘V, ⌘C, ⌘X, ⌘A and ⌘Z everywhere in
-            // the application (#1298) -- found by a password that could not be pasted
-            // into the add-account sheet.
-            //
-            // No conflict with the registry: Postio's modified defaults are
-            // `ctrl+…`, which on this platform is ⌃ and not ⌘, so every one of
-            // these chords is unclaimed. And `KeyMonitor` is a local event
-            // monitor, which runs before menu key equivalents are considered
-            // -- so a future ⌘-binding of Postio's own would still win, and
-            // these stay the fallback rather than becoming a race.
-            if menu.section == .edit {
-                appendStandardEditing(to: submenu, undo: recipe.undo)
-                if !menu.items.isEmpty { submenu.addItem(.separator()) }
-            }
-            for planned in menu.items {
-                submenu.addItem(menuItem(for: planned, target: target))
-            }
+            let submenu = Self.menu(for: menu, target: target, undo: recipe.undo)
             item.submenu = submenu
             bar.addItem(item)
+            if menu.section == nil, menu.title == "Window" { windows = submenu }
         }
-
-        // Window, also AppKit's: minimise, zoom, and the window list it keeps
-        // itself. Naming it is what makes `NSApp.windowsMenu` work.
-        let windowItem = NSMenuItem()
-        let windows = NSMenu(title: "Window")
-        // **Close comes first, and ⌘W only works because it is here.** A
-        // window closes on that chord through a menu item and nowhere else,
-        // exactly as ⌘V pastes through one — so replacing SwiftUI's bar
-        // (#1262) took both away together, and neither is recoverable by any
-        // amount of correct work elsewhere.
-        //
-        // Convention puts Close under File; this bar's File menu is the
-        // registry's, and mixing an AppKit window verb into it would make the
-        // registry's own list a half-truth. Window is where the other two
-        // window verbs already are, and is where it can sit beside them
-        // without either menu lying about what it owns.
-        windows.addItem(
-            withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-        windows.addItem(.separator())
-        windows.addItem(
-            withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-        windows.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
-        windowItem.submenu = windows
-        bar.addItem(windowItem)
 
         installed = bar
         expected = bar.items.compactMap { $0.submenu?.title }
@@ -148,8 +124,60 @@ public enum MenuBar {
         // implicitly-unwrapped nil is a crash on the program's first line.
         let app = NSApplication.shared
         app.mainMenu = bar
-        app.windowsMenu = windows
+        // Naming it is what makes AppKit keep the window list in it.
+        if let windows { app.windowsMenu = windows }
         watch()
+    }
+
+    /// One planned menu as an `NSMenu`, a separator wherever the items turn
+    /// from AppKit's to the registry's or back, and after Redo.
+    static func menu(for planned: MenuPlan.Menu, target: CommandTarget?, undo router: UndoRouter?) -> NSMenu {
+        let menu = NSMenu(title: planned.title)
+        var previous: MenuPlan.Item.Role?
+        for item in planned.items {
+            if let previous,
+               (previous == .command) != (item.role == .command) || previous == .redo
+            {
+                menu.addItem(.separator())
+            }
+            menu.addItem(menuItem(for: item, target: target, undo: router))
+            previous = item.role
+        }
+        return menu
+    }
+
+    /// One planned item, by its role.
+    static func menuItem(
+        for planned: MenuPlan.Item, target: CommandTarget?, undo router: UndoRouter?
+    ) -> NSMenuItem {
+        func standard(_ action: Selector, _ key: String, _ modifiers: NSEvent.ModifierFlags = .command)
+            -> NSMenuItem
+        {
+            let item = NSMenuItem(title: planned.title, action: action, keyEquivalent: key)
+            item.keyEquivalentModifierMask = modifiers
+            return item
+        }
+        switch planned.role {
+        case .command:
+            return commandItem(for: planned, target: target)
+        case .undo:
+            let item = standard(UndoRouter.undoAction, "z")
+            item.target = router
+            return item
+        case .redo:
+            let item = standard(UndoRouter.redoAction, "z", [.command, .shift])
+            item.target = router
+            return item
+        case .cut: return standard(#selector(NSText.cut(_:)), "x")
+        case .copy: return standard(#selector(NSText.copy(_:)), "c")
+        case .paste: return standard(#selector(NSText.paste(_:)), "v")
+        case .selectAll: return standard(#selector(NSText.selectAll(_:)), "a")
+        case .about: return standard(#selector(NSApplication.orderFrontStandardAboutPanel(_:)), "")
+        case .hide: return standard(#selector(NSApplication.hide(_:)), "h")
+        case .close: return standard(#selector(NSWindow.performClose(_:)), "w")
+        case .minimize: return standard(#selector(NSWindow.performMiniaturize(_:)), "m")
+        case .zoom: return standard(#selector(NSWindow.performZoom(_:)), "")
+        }
     }
 
     /// The bar this application built, or `nil` before one was installed.
@@ -249,63 +277,8 @@ public enum MenuBar {
     /// and a deallocated one makes every item stop working with no error.
     private static var target: CommandTarget?
 
-    /// AppKit's application menu, with the registry's three items in it.
-    ///
-    /// Where macOS puts them, and the only place `⌘,` is discoverable here.
-    /// Until this existed the menu was About/Hide/Quit and Settings fell back
-    /// to Edit, so the shortcut was announced nowhere once the mail loaded.
-    /// AppKit's editing items, with the key equivalents that make them work.
-    ///
-    /// The selectors are sent down the responder chain, so each item enables
-    /// itself only when something focused can perform it -- which is why
-    /// `Paste` is grey with no text field in front and live with one, without
-    /// this file knowing anything about which surfaces take text.
-    ///
-    /// `undo:` and `redo:` have no formal declaration to take a `#selector`
-    /// of; they are `NSResponder`'s by convention, and the string is the
-    /// spelling every application on this platform uses.
-    ///
-    /// With an `undo` router the two are aimed at it rather than at the
-    /// responder chain: in the main window they are the engine's stack
-    /// (T051), and the router hands everything else on down the chain.
-    static func appendStandardEditing(to menu: NSMenu, undo router: UndoRouter? = nil) {
-        let undo = menu.addItem(withTitle: "Undo", action: UndoRouter.undoAction, keyEquivalent: "z")
-        undo.target = router
-        let redo = menu.addItem(
-            withTitle: "Redo", action: UndoRouter.redoAction, keyEquivalent: "z")
-        redo.keyEquivalentModifierMask = [.command, .shift]
-        redo.target = router
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        menu.addItem(
-            withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
-    }
-
-    private static func applicationMenu(items: [MenuPlan.Item], target: CommandTarget) -> NSMenu {
-        let menu = NSMenu()
-        menu.addItem(
-            withTitle: "About Postio",
-            action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
-            keyEquivalent: "")
-        if !items.isEmpty {
-            menu.addItem(.separator())
-            for planned in items {
-                menu.addItem(menuItem(for: planned, target: target))
-            }
-        }
-        menu.addItem(.separator())
-        menu.addItem(
-            withTitle: "Hide Postio", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        menu.addItem(.separator())
-        menu.addItem(
-            withTitle: "Quit Postio", action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q")
-        return menu
-    }
-
-    private static func menuItem(for planned: MenuPlan.Item, target: CommandTarget) -> NSMenuItem {
+    /// A registry command's item: no key equivalent, the accelerator drawn.
+    private static func commandItem(for planned: MenuPlan.Item, target: CommandTarget?) -> NSMenuItem {
         let item = NSMenuItem(
             title: planned.title,
             action: #selector(CommandTarget.run(_:)),
@@ -359,7 +332,7 @@ public enum MenuBar {
 /// from the boundary, so the menu and the palette ask the same question and a
 /// command added in Rust is filtered with no Swift change (#1158).
 @MainActor
-private final class CommandTarget: NSObject, NSMenuItemValidation {
+final class CommandTarget: NSObject, NSMenuItemValidation {
     private let runner: (String) -> Void
     private let available: (String) -> Bool
 

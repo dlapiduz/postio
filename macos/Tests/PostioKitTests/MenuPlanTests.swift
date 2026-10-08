@@ -30,7 +30,8 @@ import Testing
         let known = Set(PostioRegistry.commands.map(\.id))
         for menu in bar {
             for item in menu.items {
-                #expect(known.contains(item.command), "\(item.command) is not in the registry")
+                let command = item.command ?? "nothing"
+                #expect(known.contains(command), "\(command) is not in the registry")
             }
         }
     }
@@ -159,8 +160,109 @@ import Testing
         // The failure this guards is a fold that adds rather than moves,
         // leaving Settings in two menus at once.
         let plan = MenuPlan.build(bindings: { _ in [] })
-        let app = Set(plan.first { $0.section == .app }?.items.map(\.command) ?? [])
-        let edit = Set(plan.first { $0.section == .edit }?.items.map(\.command) ?? [])
+        let app = Set(plan.first { $0.section == .app }?.items.compactMap(\.command) ?? [])
+        let edit = Set(plan.first { $0.section == .edit }?.items.compactMap(\.command) ?? [])
         #expect(app.isDisjoint(with: edit), "\(app.intersection(edit)) is in both menus")
+    }
+}
+
+/// Focus's menu bar on the Mac (specs/009-focus-macos T104): the registry's
+/// menus for what Focus offers here, each item showing the key in force, and
+/// the standard items every Mac application has around them.
+@MainActor
+@Suite struct FocusMenuBarTests {
+    /// What `bindingsFor` answers: the registry's defaults as this platform
+    /// expands them, with `[keys]`' overrides on top.
+    final class Keys {
+        var overrides: [String: [String]] = [:]
+        func bindings(_ command: String) -> [String] {
+            if let rebound = overrides[command] { return rebound }
+            guard let spec = PostioRegistry.commands.first(where: { $0.id == command }) else {
+                return []
+            }
+            return ([spec.defaultBinding] + spec.alternateBindings)
+                .map { $0.replacingOccurrences(of: "mod+", with: "cmd+") }
+        }
+    }
+
+    private func items(_ bar: [MenuPlan.Menu]) -> [MenuPlan.Item] { bar.flatMap(\.items) }
+
+    @Test func everyCommandFocusOffersHereHasAnItemWithTheKeyInForce() {
+        let keys = Keys()
+        keys.overrides["archive"] = ["ctrl+shift+e"]
+        let bar = MenuPlan.bar(bindings: keys.bindings)
+        let offered = PostioRegistry.commands.filter { $0.menu != nil }
+        #expect(!offered.isEmpty)
+        for spec in offered {
+            let found = items(bar).filter { $0.command == spec.id }
+            #expect(found.count == 1, "`\(spec.id)` is on the bar \(found.count) times")
+            #expect(
+                found.first?.shortcut == MenuPlan.accelerator(among: keys.bindings(spec.id)),
+                "`\(spec.id)` shows \(found.first?.shortcut ?? "nothing")")
+        }
+        #expect(items(bar).first { $0.command == "archive" }?.shortcut == "⌃⇧E")
+    }
+
+    @Test func nothingIsOnTheBarThatFocusDoesNotOfferHere() {
+        let offered = Set(PostioRegistry.commands.filter { $0.menu != nil }.map(\.id))
+        for item in items(MenuPlan.bar(bindings: Keys().bindings)) {
+            guard let command = item.command else { continue }
+            #expect(offered.contains(command), "`\(command)` is on the bar and not offered here")
+        }
+    }
+
+    @Test func theApplicationMenuHasSettingsAndQuitOnce() {
+        let bar = MenuPlan.bar(bindings: Keys().bindings)
+        let app = bar.first { $0.section == .app }
+        let titles = app?.items.map(\.title) ?? []
+        #expect(titles.first == "About Postio")
+        #expect(app?.items.first { $0.command == "settings" }?.shortcut == "⌘,")
+        #expect(titles.contains("Hide Postio"))
+        let quits = app?.items.filter { $0.title.hasPrefix("Quit") } ?? []
+        #expect(quits.count == 1, "one Quit, not AppKit's and the registry's: \(titles)")
+        #expect(quits.first?.command == "quit")
+        #expect(quits.first?.shortcut == "⌘Q")
+        #expect(titles.last == quits.first?.title, "Quit ends the menu")
+    }
+
+    @Test func fileHasNewMessageAndClose() {
+        let file = MenuPlan.bar(bindings: Keys().bindings).first { $0.section == .file }
+        let new = file?.items.first { $0.command == "compose" }
+        #expect(new?.title == "New Message")
+        #expect(new?.shortcut == "⌘N")
+        let close = file?.items.last
+        #expect(close?.role == .close)
+        #expect(close?.title == "Close")
+        #expect(close?.shortcut == "⌘W")
+    }
+
+    @Test func editStartsWithTheEnginesUndoAndTheTextItems() {
+        let edit = MenuPlan.bar(bindings: Keys().bindings).first { $0.section == .edit }
+        let roles = edit?.items.prefix(6).map(\.role)
+        #expect(roles == [.undo, .redo, .cut, .copy, .paste, .selectAll])
+        let undo = edit?.items.first
+        #expect(undo?.command == "undo", "Edit › Undo is the registry's undo")
+        #expect(undo?.shortcut == "⌘Z")
+        #expect(edit?.items.filter { $0.role == .undo }.count == 1, "one Undo")
+    }
+
+    @Test func windowHasMinimiseAndZoom() {
+        let bar = MenuPlan.bar(bindings: Keys().bindings)
+        let window = bar.first { $0.title == "Window" }
+        #expect(window?.section == nil, "Window is AppKit's, not a registry section")
+        #expect(window?.items.map(\.role) == [.minimize, .zoom])
+        #expect(bar.last?.title == "Help", "Help stays last, after Window")
+    }
+
+    @Test func afterKeymapChangedThePlanIsRebuiltWithTheNewKey() {
+        let keys = Keys()
+        let plan = MenuBarPlan(bindings: keys.bindings)
+        let archive = { plan.menus.flatMap(\.items).first { $0.command == "archive" }?.shortcut }
+        let before = archive()
+        keys.overrides["archive"] = ["cmd+e"]
+        #expect(!plan.apply(.focusListToTop), "another event rebuilds nothing")
+        #expect(archive() == before)
+        #expect(plan.apply(.keymapChanged))
+        #expect(archive() == "⌘E")
     }
 }

@@ -1,4 +1,5 @@
 import AppKit
+import PostioFFI
 import Testing
 
 @testable import PostioAppKit
@@ -122,10 +123,16 @@ import Testing
 /// passed ⌘V through correctly and there was nothing underneath to catch it.
 @MainActor
 @Suite struct StandardEditingItemsTests {
+    /// The Edit menu as the mounted bar builds it from the plan.
     private func editMenu() -> NSMenu {
-        let menu = NSMenu()
-        MenuBar.appendStandardEditing(to: menu)
-        return menu
+        let plan = MenuPlan.bar(bindings: { _ in [] })
+        let edit = plan.first { $0.section == .edit }!
+        return MenuBar.menu(for: edit, target: nil, undo: nil)
+    }
+
+    /// AppKit's items in it: the registry's carry their command id.
+    private func standardItems() -> [NSMenuItem] {
+        editMenu().items.filter { !$0.isSeparatorItem && $0.representedObject == nil }
     }
 
     @Test func pasteCarriesCommandV() {
@@ -138,7 +145,7 @@ import Testing
     }
 
     @Test func everyStandardEditingItemIsThereWithItsUsualKey() {
-        let items = editMenu().items.filter { !$0.isSeparatorItem }
+        let items = standardItems()
         let byTitle = Dictionary(uniqueKeysWithValues: items.map { ($0.title, $0) })
 
         #expect(byTitle["Cut"]?.keyEquivalent == "x")
@@ -156,23 +163,29 @@ import Testing
         // `target == nil` is what makes an item enable itself only when
         // something focused can perform it. An item wired to a fixed target
         // would be live with no text field in front and paste into nothing.
-        for item in editMenu().items where !item.isSeparatorItem {
+        for item in standardItems() {
             #expect(item.target == nil, "\(item.title) is aimed at a fixed target")
         }
     }
 
-    @Test func noneOfThemCollidesWithAPostioBinding() {
-        // Postio's modified defaults are `ctrl+…`, which is ⌃ on this platform
-        // and not ⌘, so these five chords are unclaimed. If a future binding
-        // takes one, the monitor still wins — it runs before menu key
-        // equivalents — but the menu would then draw a key that never fires,
-        // which is the lie this catches.
+    @Test func aChordPostioAlsoBindsIsHandedToAField() {
+        // Postio's `mod+…` defaults are ⌘ on this platform, and some are
+        // these chords: `undo` is ⌘Z, `select_all` ⌘A. The key monitor runs
+        // before menu key equivalents, so in a text field such a chord
+        // reaches the field only if `KeyDisposition.belongsToText` lets it
+        // through to this item -- otherwise Select All in a search field
+        // would select the list's rows.
         let taken = Set(
             PostioRegistry.commands.flatMap { [$0.defaultBinding] + $0.alternateBindings }
         )
-        for item in editMenu().items where !item.isSeparatorItem {
-            let chord = "cmd+\(item.keyEquivalent)"
-            #expect(!taken.contains(chord), "\(item.title) collides with \(chord)")
+        for item in standardItems() where item.keyEquivalentModifierMask == .command {
+            guard taken.contains("mod+\(item.keyEquivalent)") else { continue }
+            let key = KeyEvent.Reduced(
+                character: item.keyEquivalent, name: nil,
+                modifiers: ModifiersFfi(control: false, option: false, shift: false, command: true))
+            #expect(
+                KeyDisposition.belongsToText(key, typing: true),
+                "\(item.title) is Postio's too, and a field never gets it")
         }
     }
 }

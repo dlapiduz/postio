@@ -2,6 +2,7 @@ import AppKit
 import Testing
 
 @testable import PostioAppKit
+import PostioKit
 
 /// Edit › Undo over the engine's stack (specs/009-focus-macos T048, T051,
 /// R7).
@@ -121,8 +122,8 @@ struct UndoManagerTests {
         // ⌘Z in a field reaches the field through this item, and in the
         // list the engine's stack; ⇧⌘Z likewise.
         let router = UndoRouter(manager: Self.manager())
-        let menu = NSMenu(title: "Edit")
-        MenuBar.appendStandardEditing(to: menu, undo: router)
+        let edit = MenuPlan.bar(bindings: { _ in [] }).first { $0.section == .edit }!
+        let menu = MenuBar.menu(for: edit, target: nil, undo: router)
         let undo = menu.items.first { $0.action == UndoRouter.undoAction }
         let redo = menu.items.first { $0.action == UndoRouter.redoAction }
         #expect(undo?.target === router)
