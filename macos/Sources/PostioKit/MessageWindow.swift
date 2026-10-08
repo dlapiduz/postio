@@ -162,6 +162,16 @@ public final class MessageWindowModel {
         }
     }
 
+    /// "Always for this sender": hand the sender and the treatment shown
+    /// to `keep` (`always_treatment`), then read the document again as the
+    /// sender's own choice.
+    public func keepForSender(_ keep: (String, TreatmentFfi) -> Void) {
+        guard let document, let sender = document.sender else { return }
+        keep(sender, document.treatmentShown)
+        chosen = nil
+        loadDocument(keepingScroll: true)
+    }
+
     /// Back from the source to the message (`v` again, or Esc).
     public func closeSource() {
         showingSource = false

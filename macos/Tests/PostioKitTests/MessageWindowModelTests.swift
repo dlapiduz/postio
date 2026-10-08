@@ -226,4 +226,22 @@ struct MessageWindowModelTests {
         #expect(reports.said.last.map { [$0.0, $0.1] } == [false, false])
         #expect(model.open(message: 7, index: 2, total: 9, mainWidth: 1440), "a fresh open again")
     }
+
+    @Test func alwaysForThisSenderKeepsWhatIsShownAndAsksAgain() async {
+        // The choice is the engine's to store (`always_treatment`); once
+        // stored, the message is the sender's remembered choice, not `O`'s.
+        let source = Source()
+        let (model, _) = Self.model(source)
+        model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
+        await model.settled()
+        model.apply(.switchTreatment)
+        await model.settled()
+        var kept: [(String, TreatmentFfi)] = []
+        model.keepForSender { kept.append(($0, $1)) }
+        await model.settled()
+        #expect(kept.map(\.0) == ["news@example.com"])
+        #expect(kept.map(\.1) == [.appColours], "what was shown when it was pressed")
+        #expect(model.chosen == nil)
+        #expect(source.documents.last?.1 == nil, "asked again as the sender's own")
+    }
 }

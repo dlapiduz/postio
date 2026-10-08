@@ -289,6 +289,8 @@ public struct MessageWindowView<BodyView: View>: View {
                 run: run,
                 alwaysForSender: alwaysForSender,
                 body: bodyView)
+                // A new message is read from its top; `O` keeps the place.
+                .id(model.shown)
         } else {
             Color.clear
         }
@@ -336,5 +338,45 @@ public enum MessageSurface {
         #else
             Color(uiColor: .secondarySystemBackground)
         #endif
+    }
+}
+
+/// The title area's centre, reading the open message as it changes.
+public struct MessageWindowTitle: View {
+    let model: MessageWindowModel
+    let binding: (String) -> String?
+
+    public init(model: MessageWindowModel, binding: @escaping (String) -> String?) {
+        self.model = model
+        self.binding = binding
+    }
+
+    public var body: some View {
+        if let view = model.view {
+            MessageTitleView(words: MessageChromeWords(view: view, folds: false, binding: binding))
+        }
+    }
+}
+
+/// The title area's right, reading the open message as it changes.
+public struct MessageWindowStepper: View {
+    let model: MessageWindowModel
+    let binding: (String) -> String?
+    let run: (String) -> Void
+
+    public init(
+        model: MessageWindowModel, binding: @escaping (String) -> String?,
+        run: @escaping (String) -> Void
+    ) {
+        self.model = model
+        self.binding = binding
+        self.run = run
+    }
+
+    public var body: some View {
+        if let view = model.view {
+            MessageStepperView(
+                words: MessageChromeWords(view: view, folds: false, binding: binding), run: run)
+        }
     }
 }

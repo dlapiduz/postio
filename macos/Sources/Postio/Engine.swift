@@ -3,6 +3,7 @@ import PostioFFI
 import PostioAppKit
 import PostioKit
 import SwiftUI
+import os
 
 /// The engine, and what to show when it will not start.
 ///
@@ -91,6 +92,9 @@ final class Engine {
             if accounts.isEmpty { firstRun = FirstRunModel(session: session) }
             vouch()
             focusTable = makeFocusTable(session)
+            messageWindow = MessageWindowModel(source: session) { [weak session] more, finding in
+                session?.focusReaderState(moreOpen: more, finding: finding)
+            }
             // The toolbar was built before there were bindings to spell.
             keycapsChanged?()
             state = .open
@@ -326,6 +330,130 @@ final class Engine {
         return table.model.row(at: row)?.id
     }
 
+    // MARK: the message window
+
+    /// The message window's state (specs/009-focus-macos US3), once a
+    /// session has opened.
+    private(set) var messageWindow: MessageWindowModel?
+
+    /// The one secondary window over the list (M4).
+    @ObservationIgnored
+    private lazy var secondary = SecondaryWindowController { [weak self] kind in
+        self?.secondaryClosed(kind)
+    }
+
+    /// The message window's title area, while it is open.
+    @ObservationIgnored
+    private var messageChrome: MessageWindowChrome?
+
+    /// Whether the engine has been told the message window is open, so a
+    /// close is reported only for an open that was.
+    @ObservationIgnored
+    private var messageReported = false
+
+    private static let log = Logger(subsystem: "dev.postio.Postio", category: "focus")
+
+    /// The main window: the one the list is in.
+    private var mainWindow: NSWindow? {
+        focusTable?.tableView.window ?? NSApp.windows.first { KeyWindowTracker.isMain($0) }
+    }
+
+    /// The message the open message window shows, while it has the
+    /// keyboard: what Reply, Reply all and Forward answer from it.
+    private var messageInFront: Int64? {
+        keyWindow.current == .message ? messageWindow?.shown : nil
+    }
+
+    /// Do what the controller said about the windows over the list (T070).
+    private func apply(_ surface: FocusIntents.Surface) {
+        switch surface {
+        case let .openMessage(message, index, total):
+            openMessage(message, index: index, total: total)
+        case let .close(kind):
+            if kind == .message, secondary.kind != .message {
+                // Asked before its window was up: nothing on screen to close.
+                messageWindow?.closed()
+                if messageReported { session?.focusSurfaceClosed(.message) }
+                messageReported = false
+            } else {
+                secondary.close(kind)
+            }
+        case let .reader(verb):
+            messageWindow?.apply(verb)
+        case .keyboardHome:
+            guard let table = focusTable?.tableView, let window = table.window else { return }
+            window.makeKeyAndOrderFront(nil)
+            window.makeFirstResponder(table)
+        case let .openDraft(message):
+            write(session?.draftForMessage(message))
+        case .openDigest:
+            // The digest's window is a later phase (spec 009 US9). The kind
+            // only: a log never carries which delivery, let alone what it holds.
+            Self.log.info("a digest window was asked for; not built on the Mac yet")
+        }
+    }
+
+    /// Show `message` in the message window: in the open one, or in a new
+    /// one once its document says how wide (M1).
+    private func openMessage(_ message: Int64, index: UInt32, total: UInt32) {
+        guard let model = messageWindow, let session, let main = mainWindow else { return }
+        let fresh = model.open(
+            message: message, index: index, total: total, mainWidth: Int32(main.frame.width))
+        Task { @MainActor [weak self, weak model] in
+            await model?.settled()
+            guard let self, let model, model.place?.message == message else { return }
+            if fresh {
+                self.showMessageWindow(model, session: session, over: main)
+            } else {
+                self.secondary.window?.title = model.view?.subject ?? ""
+            }
+        }
+    }
+
+    private func showMessageWindow(_ model: MessageWindowModel, session: PostioSession, over main: NSWindow) {
+        guard let document = model.document else { return }
+        let binding: (String) -> String? = { [weak session] in session?.binding(for: $0) }
+        let run: (String) -> Void = { [weak self] in self?.run($0) }
+        let chrome = MessageWindowChrome(model: model, binding: binding, run: run)
+        messageChrome = chrome
+        let content = MessageWindowView(
+            model: model, binding: binding, run: run,
+            alwaysForSender: { [weak session, weak model] in
+                model?.keepForSender { session?.alwaysTreatment(sender: $0, treatment: $1) }
+            }
+        ) { [weak session, weak model] document, card in
+            MessageBodyView(
+                message: model?.shown ?? 0,
+                document: document,
+                sentence: card?.sentence,
+                find: model?.find.request,
+                onFound: { model?.found($0) },
+                resolveCid: { session?.resolveCid(message: $0, contentId: $1) },
+                resolveFont: { session?.readerFont($0) })
+        }
+        .preferredColorScheme(colorScheme)
+        let hosting = NSHostingView(rootView: content)
+        // The window's size is the geometry's (M1), never the content's: a
+        // hosting view left to size its window grows it to the column.
+        hosting.sizingOptions = []
+        secondary.show(
+            .message, content: hosting,
+            width: CGFloat(document.windowWidth), title: model.view?.subject ?? "", over: main,
+            configure: { chrome.install(on: $0) })
+        messageReported = true
+        session.focusSurfaceOpened(.message)
+    }
+
+    /// A secondary window closed, however it did: tell the engine, which
+    /// sends the keyboard home.
+    private func secondaryClosed(_ kind: SurfaceKindFfi) {
+        guard kind == .message else { return }
+        messageChrome = nil
+        messageWindow?.closed()
+        if messageReported { session?.focusSurfaceClosed(.message) }
+        messageReported = false
+    }
+
     // MARK: the toolbar
 
     /// Whether a sync pass is running now, from `SyncProgress`: the presence
@@ -547,6 +675,10 @@ final class Engine {
             if change == .toast { refreshUndo() }
             return
         }
+        if let surface = FocusIntents.surface(event) {
+            apply(surface)
+            return
+        }
         switch event {
         case let .focusListChanged(total):
             focusCount = total
@@ -695,14 +827,18 @@ final class Engine {
         case Intercepted.search:
             showingSearch = true
             focusField?()
-        case Intercepted.back where finding != nil:
+        case Intercepted.back where keyWindow.current == .message && messageWindow?.showingSource == true:
+            // Esc from the raw source returns to the message (M4); the
+            // controller does not know the source is up.
+            messageWindow?.closeSource()
+        case Intercepted.back where keyWindow.current == .main && finding != nil:
             // Out of command mode and out of the field: `>` was a question,
             // and Escape is "never mind".
             leaveFinder()
             dismissOverlays()
-        case Intercepted.back where showingCheatSheet:
+        case Intercepted.back where keyWindow.current == .main && showingCheatSheet:
             showingCheatSheet = false
-        case Intercepted.back where showingSearch:
+        case Intercepted.back where keyWindow.current == .main && showingSearch:
             dismissOverlays()
         case Intercepted.settings:
             // A request the main window turns into `openWindow(id:)`,
@@ -711,11 +847,12 @@ final class Engine {
         case Intercepted.compose:
             write(session?.newDraft())
         case Intercepted.reply:
-            write(replyDraft(all: false, to: target))
+            write(replyDraft(all: false, to: target ?? messageInFront))
         case Intercepted.replyAll:
-            write(replyDraft(all: true, to: target))
+            write(replyDraft(all: true, to: target ?? messageInFront))
         case Intercepted.forward:
-            guard let session, let message = target ?? focusCursorMessage else { return false }
+            guard let session, let message = target ?? messageInFront ?? focusCursorMessage
+            else { return false }
             write(session.forwardDraft(message))
         // -- the settings window's accounts pane ------------------------
         //
@@ -773,6 +910,10 @@ final class Engine {
             NSSound.beep()
             return
         }
+        // One secondary window at a time (M4): the composer replaces the
+        // message it answers. The composer is not yet a surface the
+        // controller is told of (phase 4), so it is closed here.
+        secondary.close(.message)
         compose.open(draft)
     }
 
