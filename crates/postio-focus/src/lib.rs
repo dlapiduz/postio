@@ -3,7 +3,7 @@
 //! A frontend turns what happens to it — a key, an engine event, a client's
 //! reply, a fact about its own window — into an [`Input`], hands it to the
 //! [`FocusController`], and does what the returned [`Effect`]s say: draw an
-//! [`Intent`], run a [`Request`] through [`perform`] and feed the [`Reply`]
+//! [`Intent`], run a [`Request`] through [`perform()`] and feed the [`Reply`]
 //! back, or set a timer. The controller does no I/O and never awaits, so the
 //! GTK app can drive it from glib's main loop and the FFI from tokio, and
 //! every rule in it is a unit test that runs on either host (research R1).
@@ -82,7 +82,7 @@ pub enum Input {
 pub enum Effect {
     /// Draw this.
     Show(Intent),
-    /// Run this through [`perform`] and hand the answer back as
+    /// Run this through [`perform()`] and hand the answer back as
     /// [`Input::Reply`] with the same ticket.
     Ask(Ticket, Request),
     /// Call back with [`Input`] once `after` has passed. (Arrives with the
@@ -106,7 +106,7 @@ pub enum Intent {
     Quit,
 }
 
-/// What the controller needs from the engine. [`perform`] is the one place
+/// What the controller needs from the engine. [`perform()`] is the one place
 /// each becomes a client call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
