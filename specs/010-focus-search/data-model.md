@@ -24,6 +24,36 @@ meaning. No new `Term` type is added.
 `matcher::Matcher::new` returns `Unsupported::Token` for `label:` and
 `has:action` (D12).
 
+### Either of several values (`query.rs`, `parser.rs`, D26)
+
+```rust
+pub enum Filter { /* … every variant above … */ AnyOf(AnyOf) }
+
+/// Two or more filters of one name-valued field, none itself a set.
+pub struct AnyOf { members: Vec<Filter> }      // private: built only by `new`
+impl AnyOf {
+    pub fn new(members: Vec<Filter>) -> Option<AnyOf>; // None: < 2, mixed fields, a set inside, a field that takes none
+    pub fn members(&self) -> &[Filter];
+    pub fn field(&self) -> Field;
+}
+impl Filter {
+    pub fn alternatives(&self) -> &[Filter];     // a set's members, or the filter itself
+    pub fn any_of(members: Vec<Filter>) -> Option<Filter>; // one member: that filter; two or more: a set
+}
+impl Field { pub fn takes_set(&self) -> bool } // from to subject in filename list account group label
+```
+
+| Text | Parses to |
+|---|---|
+| `from:{ada tomas}` | `Filter(Clause { negated: false, filter: AnyOf([From("ada"), From("tomas")]) })` |
+| `-label:{"Q3 close" atlas}` | negated `AnyOf([Label("Q3 close"), Label("atlas")])` |
+| `from:{ada}` | `From("ada")`: one value is the plain clause |
+| `from:{ada`, `from:{}`, `from:{ada}x`, `is:{unread flagged}` | `Partial`, value as typed after the colon |
+
+`spell` writes `from:ada` for one value and `from:{ada tomas}` for two or
+more, quoting a member with whitespace or a brace. `Filter::field()` of a
+set is its members' field.
+
 ### Term edits (`edit.rs`, new)
 
 ```rust
@@ -34,13 +64,21 @@ pub enum Edit {
     Toggle(Filter),              // add if absent, remove every positive clause of it if present
     SetDates { after: Option<NaiveDate>, before: Option<NaiveDate> }, // replaces every after:/before:
     ClearFilters,                // keep free text, drop every clause and partial (D24)
+    Exclude(Filter),             // ⌥-click (D26): the mirror of Toggle over the negated clause
 }
 pub fn apply(query: &str, edit: Edit, today: NaiveDate) -> String;
 ```
 
 Rules: tokens keep their order and raw text except the one edited; a token
 the user typed is edited in place, never duplicated; the result is
-whitespace-normalised. `facets::append` stays for GTK.
+whitespace-normalised. `facets::append` stays for GTK. For a field that takes a set (D26),
+`Toggle` of a value the query does not hold extends the field's positive
+clause in place (`from:ada` → `from:{ada tomas}`), and of a value it holds
+removes that member (a set of two becomes the plain clause of the other);
+`Exclude` does the same over the negated clause, and moves a value held
+positively across. `Add` still appends, and only looks inside a set to
+avoid adding a value it already holds. `join` closes a set left open, as
+it closes a phrase.
 
 ### Plain English with origins (`natural.rs`)
 
@@ -216,6 +254,10 @@ pub async fn index::attachments_missing_text(&Connection, limit: u32) -> Result<
 
 `filter_condition` gains `Filter::Label` and `Filter::HasAction`, used by
 both `search` (GTK) and `search_conversations` (S2).
+`Filter::AnyOf` (D26) is the OR of its members' conditions in
+`filter_condition`, and in `id_set` the union of its members' sets when
+every member is a set (`SELECT message_id FROM (…) UNION …`), else a
+condition. A positive `in:{…}` names a folder for `scope_role`.
 
 ```rust
 pub struct FileHit {

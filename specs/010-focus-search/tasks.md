@@ -340,13 +340,36 @@ it understood.
 
 ---
 
+## Phase 12: Either of several values (D26, FR-006)
+
+**Goal**: checking two people (folders, labels) in one popover finds mail
+from either, through new syntax in the one language: `from:{ada tomas}`.
+
+**Independent test**: From screen 06, open From, check Ada Moreno and
+Tomás Reyes: the field holds one chip "from: Ada Moreno, Tomás Reyes", both
+rows are checked, the list is either's mail; Esc restores the query.
+
+- [ ] T141 [P] [US3] Write failing tests in `crates/postio-search/tests/parse.rs` and `src/query.rs`: `from:{ada tomas}` is one token, a `Filter::AnyOf` of two `From`; quoted members (`label:{"Q3 close" atlas}`); `-from:{…}` negates the set; `from:{ada}` is the plain clause; `from:{ada`, `from:{}`, `from:{ada}x`, `is:{unread flagged}` are `Partial`s; `{` not after an operator's colon is ordinary text; `AnyOf::new` refuses fewer than two, mixed fields, nested sets; `spell` writes a plain clause for one value and a set for two or more, and every set round-trips. Red: no syntax
+- [ ] T142 [US3] Implement `query::AnyOf`, `Filter::AnyOf`, `Filter::alternatives`, `Field::takes_set`, the parser's braces and `spell`. Readers that match `Filter` exhaustively (`executor::filter_condition`) get an arm that **matches nothing** until T148, so the workspace builds. Make T141 green
+- [ ] T143 [P] [US3] Write failing tests in `crates/postio-search/src/edit.rs`: `Toggle` of a second value of a held field extends that clause in place; `Toggle` of a member removes it (two leave the plain clause); `Exclude` mirrors over the negated clause and moves a positively held value across; `Add` appends a second clause but adds nothing a set already holds; `join` closes an open set. Red: no extension, no `Exclude`
+- [ ] T144 [US3] Implement them in `edit.rs` (and `edit::same` for sets). Make T143 green
+- [ ] T145 [P] [US3] Write failing tests in `natural.rs` ("from ada or tomas" → `from:{ada tomas}`, one origin "from ada or tomas"; "or" with an unknown name stays as it was), `relax.rs` (a set is dropped as one term; `label:{a b}` offers `in:{a b}`; no per-member drop) and `highlight.rs` (each positive member is a term). Red
+- [ ] T146 [US3] Implement them. Make T145 green
+- [ ] T147 [P] [US3] Write failing tests: `matcher.rs` unit tests (`from:{a b}` holds for either, negated for neither; a set of `label:` is refused) and set queries added to `DIVIDING`/`NOTHING` in `crates/postio-index/tests/index_suite/digest_matcher.rs`; a new `index_suite/value_sets.rs`: `executor::search` (GTK's path) answers `from:{a b}` as the union of `from:a` and `from:b`, `-from:{a b}` as neither, `label:{…}` and `in:{…}` likewise; `search_conversations` (the sets path) and `relaxation_counts` agree with it; a positive `in:{trash …}` lifts All mail's exclusion. Red: the T142 arm matches nothing, the matcher refuses sets
+- [ ] T148 [US3] Implement `Filter::AnyOf` in `matcher` (OR of the members' conditions), `executor::filter_condition` (OR), `id_set` (union), `names_a_folder`, `conversations::Terms` and `postio_session::search`'s subject/filename picks. Make T147 green; `gtk_search_path_is_pinned` stays green
+- [ ] T149 [P] [US3] Write failing tests in `crates/postio-ui/src/search_view.rs` (`FilterKind::holds` a set; the button says "From: Ada Moreno +1"; `relaxation_line` names every member; `save_name` says each person) and `crates/postio-focus/tests/results.rs`: checking a second person asks `… from:{ada@example.com tomas@example.com}`, both rows checked, one chip "from: Ada Moreno, Tomás Reyes"; unchecking one leaves the plain clause; ⌥-click on a second excluded person extends `-from:{…}`; Esc restores the query it opened on. Red
+- [ ] T150 [US3] Implement them in `postio-ui` and `crates/postio-focus/src/results.rs` (`holding` sees into a set; ⌥-click is `Edit::Exclude`; a set's chip names its members). Check the Swift popover and chip need nothing (they draw what Rust composes); render the From popover with two people checked through the demo snapshot and record it in the step-4 note
+
+---
+
 ## Dependencies
 
 - Phase 1 blocks everything. Phases 2 → 3 → 4 are in order (the dropdown,
   then the view it opens, then its filters). Phases 5, 6, 7 each need only
   Phase 3 and may run in any order. Phase 8 needs Phase 2. Phase 9 needs
   Phase 3 (the Files tab) and Phase 1 (the search arm). Phase 10 needs
-  Phase 3. Phase 11 last.
+  Phase 3. Phase 12 needs Phase 4 (the popovers) and Phase 7 (relaxations).
+  Phase 11 last.
 - Within a phase, a test task precedes its implementation; `[P]` test tasks
   in one phase can be written together.
 - The brief's order is kept for building and screenshots (FR-060); the
