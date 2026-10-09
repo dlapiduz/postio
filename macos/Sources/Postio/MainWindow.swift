@@ -74,6 +74,8 @@ struct MainWindow: View {
         }
         .animation(nil, value: engine.filtered?.isOpen)
         .animation(nil, value: engine.results?.isOpen)
+        // ⌘[ and ⌘] by trackpad: the swipe is reported as the command.
+        .background(HistorySwipeInstaller(engine: engine))
         // The command bar is a panel dropping from the toolbar's field
         // (`CommandBarPanel`, T085), a child window rather than an overlay.
         .background(MainToolbarInstaller(engine: engine))
@@ -250,6 +252,33 @@ private struct NoticeBanner: View {
             }
         }
     }
+}
+
+/// Reports the trackpad's back and forward on the window this view is in
+/// as ⌘[ and ⌘] would (specs/010-focus-search T073, `HistorySwipe`).
+private struct HistorySwipeInstaller: NSViewRepresentable {
+    let engine: Engine
+
+    final class Coordinator {
+        var swipe: HistorySwipe?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        let coordinator = context.coordinator
+        let engine = engine
+        DispatchQueue.main.async {
+            guard let window = view.window, coordinator.swipe == nil else { return }
+            let swipe = HistorySwipe(window: window) { command in engine.run(command) }
+            swipe.start()
+            coordinator.swipe = swipe
+        }
+        return view
+    }
+
+    func updateNSView(_: NSView, context _: Context) {}
 }
 
 // MARK: - the toolbar
