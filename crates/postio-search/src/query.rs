@@ -546,6 +546,31 @@ mod tests {
     }
 
     #[test]
+    fn forgiving_is_how_a_query_is_asked_not_what_it_says() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 8).unwrap();
+        let typed = crate::parse("tickt", today);
+        assert!(
+            !typed.is_forgiving(),
+            "a parsed string is exact: a rule's is"
+        );
+        let asked = typed.clone().forgiving();
+        assert!(asked.is_forgiving());
+        assert_eq!(
+            asked.fts_match(),
+            typed.fts_match(),
+            "the words are the same words; only the asking differs"
+        );
+    }
+
+    #[test]
+    fn a_letter_alone_is_not_a_search_but_a_filter_is() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 8).unwrap();
+        assert!(!crate::parse("s", today).is_searchable());
+        assert!(crate::parse("so", today).is_searchable());
+        assert!(crate::parse("s is:unread", today).is_searchable());
+    }
+
+    #[test]
     fn fts_literal_doubles_quotes() {
         assert_eq!(fts_literal(r#"say "hi""#), r#""say ""hi""""#);
     }
