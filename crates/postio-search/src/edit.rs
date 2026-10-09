@@ -186,7 +186,7 @@ fn same(a: &Filter, b: &Filter) -> bool {
 /// The words, one space apart. A phrase left open (the person was still
 /// typing it) is closed when anything follows it, or the parser would read
 /// what follows as part of the phrase.
-fn join(words: impl Iterator<Item = String>) -> String {
+pub(crate) fn join(words: impl Iterator<Item = String>) -> String {
     let words: Vec<String> = words.collect();
     let last = words.len().saturating_sub(1);
     let mut out = String::new();
