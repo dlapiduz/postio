@@ -1,0 +1,50 @@
+# ⌘↩ in the dropdown turns the main window into the results view, a mode
+# of the main window and not a window of its own (specs/010-focus-search
+# US2, FR-020, D17, design §3 and screens 06 and 07): ‹ Inbox with its Esc
+# keycap, the query as chips and words, the filter bar with the three
+# tabs and their counts, the timeline, then Top hits and the month groups.
+# Esc with nothing open and nothing selected leaves it, and the inbox is
+# back on the row and the selection it had (US2 scenario 4).
+#
+# The Mac's own: `apps = ["macos"]`, because GTK keeps spec 009's bar
+# until Linux adopts the results view (S2, D17), and the Mac runner is out
+# of scope (009 FR-063). Written before the results view was built, so it
+# is the acceptance its review is held to.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/010-focus-search US2" }
+seed   = "search"
+design = "06-results"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "next_message"
+
+[[step]]
+id      = "row"
+command = "toggle_selection"
+check   = { cursor.index = 1 }
+
+[[step]]
+command = "search"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+
+[[step]]
+type    = "atlas budget"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+
+[[step]]
+command = "show_all_results"
+check   = { overlay.kind = "none", keyboard.region = "results" }
+expect  = "The dropdown is gone and the main window is the results view: ‹ Inbox with an Esc keycap, the field holding “atlas budget” with “/ to edit” on its right, and Save search ⌘S. The filter bar has Conversations, Files and People with their counts, Conversations selected, the filter buttons in outline, and Sort “Best match”. The timeline says “48 conversations” over “12 files · 6 people · last 12 months” beside twelve bars. Top hits come first, each with its reason under the sender (“you replied · 3 matches”, “you flagged · 2 matches”), then “September 2026 · 9” and the other months, newest first. Every row has a source tag and a passage with “atlas” and “budget” in the find yellow. The footer reads “48 conversations · local index · N ms”. The first row has the focus ring."
+
+[[step]]
+command = "next_message"
+check   = { keyboard.region = "results" }
+expect  = "j moves the focus ring to the second result; the inbox behind is not touched."
+
+[[step]]
+command = "back"
+check   = { overlay.kind = "none", keyboard.region = "list", cursor.index = { same_as = "row" }, selection.count = { same_as = "row" } }
+expect  = "Esc leaves the results: the inbox is back with the keyboard on the row it had and that row still selected."

@@ -1,0 +1,48 @@
+# Esc in the results view climbs down one rung per press (D18): an open
+# dropdown closes first, then a selection is cleared, then the results
+# give way to the inbox. Nothing is skipped and nothing is lost on the way
+# (specs/010-focus-search US2, FR-020, design §3).
+#
+# The Mac's own: see results-enter-and-leave.toml.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/010-focus-search US2" }
+seed   = "search"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+id      = "inbox"
+command = "search"
+
+[[step]]
+type    = "atlas"
+
+[[step]]
+command = "show_all_results"
+check   = { keyboard.region = "results" }
+
+[[step]]
+command = "toggle_selection"
+check   = { keyboard.region = "results" }
+expect  = "x checks the focused result: its gutter shows a filled box and the row a selection tint. The footer has become the bulk bar, “1 selected” with the list's verbs and their keys."
+
+[[step]]
+command = "search"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+expect  = "/ opens the dropdown anchored to the results' field, over the results."
+
+[[step]]
+command = "back"
+check   = { overlay.kind = "none", keyboard.region = "results" }
+expect  = "The first Esc closes the dropdown only: the results are there with the checked row still checked."
+
+[[step]]
+command = "back"
+check   = { overlay.kind = "none", keyboard.region = "results" }
+expect  = "The second Esc clears the selection: no row is checked and the footer has its key hints again. The results stay."
+
+[[step]]
+command = "back"
+check   = { overlay.kind = "none", keyboard.region = "list", cursor.index = { same_as = "inbox" } }
+expect  = "The third Esc leaves the results for the inbox, on the row it had."
