@@ -74,7 +74,7 @@ fn next_word_start(input: &str, from: usize) -> Option<usize> {
 /// Whitespace ends a word, unless it sits inside quotes or inside a set's
 /// braces (D26). An unclosed quote or set swallows the rest of the input,
 /// which is exactly what a user mid-phrase expects to see highlighted.
-fn word_end(input: &str, start: usize) -> usize {
+pub(crate) fn word_end(input: &str, start: usize) -> usize {
     scan(&input[start..])
         .0
         .map_or(input.len(), |end| start + end)
