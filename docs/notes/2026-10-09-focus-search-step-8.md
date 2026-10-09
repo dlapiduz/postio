@@ -98,3 +98,84 @@ are the maintainer's, and none was taken (stop rule):
 - **The common word and `typed at`** are 55 ms at p95 under this load
   against step 1's 44: over the 50 ms budget by the load's share. Rerun
   quiet before reading anything into it (T138).
+
+## The captures
+
+```bash
+POSTIO_FFI_FEATURES=demo scripts/macos-build.sh && scripts/macos-bundle.sh
+POSTIO_DEMO=search POSTIO_WINDOW_SIZE=1440x900 POSTIO_APPEARANCE=light \
+  POSTIO_DEMO_KEYS='/ at' POSTIO_DEMO_SNAPSHOT=/tmp/02.png \
+  macos/build/Postio.app/Contents/MacOS/Postio
+# 04: POSTIO_DEMO_KEYS='/ from:ad'
+# 05: POSTIO_DEMO_KEYS='/ invoices ␣ from ␣ ada ␣ last ␣ month'
+#     and, to see results, '/ invoice ␣ from ␣ priya ␣ last ␣ month'
+```
+
+The first captures found two defects that were fixed (below); the lists
+are against the captures after them.
+
+### What none of the three screens can match yet: the field is 327 wide
+
+The design's field grows leftward to 860 and the panel hangs from it at
+the same width. Here both stay at the toolbar's resting width: the
+search item reports 327 points before and a second after
+`preferredWidthForSearchField = 860` (the app's own log, a debug build
+of `MainToolbar.grow`). Holding the width with a constraint on the field,
+and setting the item's `minSize`/`maxSize`, changed nothing either, so
+the `NSSearchToolbarItem` keeps its own width whatever it is told. Every
+row is therefore cut: titles end in "…", the folder and count columns
+keep their 100 and 110 and squeeze the words, the footer's hints lose
+their words. **Not fixed**: it is step 2's (T054 marked it "fixed" from
+the code; no capture had been taken then) and it wants the field to be a
+toolbar item of Postio's own -- the chip field the plan already names --
+rather than the system's search item. Owed before T137's sweep; noted
+here so the sweep does not rediscover it.
+
+### Screen 02, "at"
+
+| # | Design | Built | Decision |
+|---|---|---|---|
+| 1 | Ghost "las" in tertiary after the caret | Drawn after the typed text in tertiary; a few points too far right, so it reads "at las" | **Not fixed**: the offset is the field editor's text origin, which the system search field does not publish; worth a pixel pass once the field is Postio's own (above) |
+| 2 | "Tab completes" on the field's right, with the Esc cap | The system field's clear button | **Not fixed**, with the field (above) |
+| 3 | Suggestions: "atlas as a word 62 Tab" focused | "atlas … 49 ⇥", focused and ringed, "at" in the find yellow | Same, cut by the width; 49 is the seed's count of conversations a search for `atlas` finds |
+| 4 | "label:Atlas label 30" | "label:… 44", mono, the label dot in orange | Same, cut; the dot is the system orange, not the label's own colour |
+| 5 | "Atlas planning · mailing list · atlas-planning@example.org 14" | Absent | **Explained**: the search seed has no mailing-list mail; the row's words are `list_detail`'s test and its count `completions`' |
+| 6 | "Files named “at…” Atlas-Q3-budget.xlsx, Atlas-Sep-actuals.pdf and 16 more 18" | "Files n… 5" | Same row, the seed's five names, cut |
+| 7 | Top hits so far: Ada Moreno · Re: Atlas Q3…, Tomás Reyes · Atlas staffing…, Northfield Elementary · Field-trip… | Three of "You · Re: …" | **Explained**: the top hits are the conversation search for the word `at` as typed (step 1's "typed at"), and in the seed that word is most often in your own replies. The design's hits match *atlas* by prefix; prefix matching in conversation search is not built (step 1 note: `atl*` finds what `atl` finds) |
+| 8 | "Show all 214 results for “at”" ⌘↩ | "Show all 106 results f…" ⌘↩ | Same words, cut; the seed's count |
+| 9 | Footer "Tab complete · ↑↓ move · ↩ open · ⌘↩ all results", "214 matches · 12 ms" | The same four keys and the count, words cut | Same, cut |
+
+### Screen 04, "from:ad"
+
+| # | Design | Built | Decision |
+|---|---|---|---|
+| 10 | The field's text in SF Mono 14 | SF Mono 14 | Same |
+| 11 | "People matching “ad”", note "by how often you write to each other" | The same, the note cut | Same |
+| 12 | Four people, 48 tall: initials avatar, bold name, mono "address · N messages · last X"; "Admin team (list)" without a last | Two: Ada Moreno and Ben Adeyemi (his surname begins "ad"), avatars in the popovers' colours, the lines cut | **Explained**: the seed's address book; `person_detail`'s test holds the line's words. Ranked two-way, but the seed records no sent mail, so it is one way here |
+| 13 | "↩ adds" on the focused person's right | Absent | **Not fixed**: the focused row moves in Swift without a redraw from the controller; the words belong on whichever row the ring is on, which `DropdownView` would draw from the highlight. Small, and the footer says the same |
+| 14 | "Latest from Ada Moreno", "preview of the focused person", two rows with times | The same title and note, two of Ada's, `in:INBOX` / `in:Receipts`, dates | Same; dated rows ("9 Oct") where the design has times for today's: `hit_date` is the dropdown's one date rule |
+| 15 | Footer "↩ add as chip · ⌥↩ exclude (-from:) · ↑↓ choose · ⌫ back to words", right "Contacts and everyone you have mail with" | The same keys and words, cut | Same |
+
+### Screen 05, "invoices from ada last month"
+
+| # | Design | Built | Decision |
+|---|---|---|---|
+| 16 | "Understood as" band in the window colour, tiles: `invoice*` from "invoices", `from:Ada Moreno` from "from ada", `after:2026-08-01` and `before:2026-09-01` from "last month"; "each part is a chip you can edit" | The band and tiles: `invoices` from ‘invoices’, `from:ada` from ‘from ada’, then the two dates from ‘last month’ off the right edge (the tiles scroll); the note gives way | **Explained**: the lowering keeps the plural and writes no `*` (step 2 note, #16); `from:ada` because the seed's address book does not resolve "ada" to an address, so there is no name to show; the dates are the month before the demo's today (September), and the band is narrower than four tiles |
+| 17 | The origin in curly double quotes: from “invoices” | Curly single quotes: from ‘invoices’ | **Explained**: SPEC §1-2 writes from ‘last month’; the picture's double quotes disagree with its own spec, and the spec is kept |
+| 18 | Results: three of Ada's invoices, "August 2026 · newest first", the first ringed; "Show all 3 results" | No results: the seed's Ada sent no invoice in September, so the section and Show all are absent | **Explained**: the data. `invoice from priya last month` (`05c.png`) shows the state with a hit: "Results", "September 2026 · newest first", Priya's invoice ringed with `in:INBOX` and "19 Sep", "Show 1 result" ⌘↩ |
+| 19 | Matched words in the find yellow ("Invoice") | First capture lit the sender's name too | **Fixed**: plain English marks the free words only (`fix(focus)`), as screen 05 does |
+| 20 | Footer "↑↓ move · ↩ open · Tab edit as chips · ⌘⌫ keep as words", "parsed on this Mac · 3 matches · 21 ms" | The same keys, cut; "parsed on this Mac · 0 matches · N ms", cut | Same, the seed's count |
+| 21 | — | First capture: four tiles at their own width pushed the panel's layout out, the results and footer under the band | **Fixed**: the tiles scroll inside the band (`fix(macos)`) |
+
+## Left as it is
+
+- **⌘⌫ then ⌘↩** opens the results on the sentence lowered again: the
+  words kept as words are the dropdown's, and `show_all_results` lowers
+  what is typed. Keeping them would need the results to carry "literal",
+  which the one-query rule (D1) has no place for.
+- **The operator states never ask a conversation search** while the value
+  is typed: `from:ad` lists people, not mail from "ad". Return or ⌥↩
+  makes the chip and the panel searches it.
+- **Text the controller writes is settled** (`Bar::settled`): a saved
+  search `from:juno` or Tab's "Narrow to" ending in an operator is a chip
+  made, not an operator being typed.
