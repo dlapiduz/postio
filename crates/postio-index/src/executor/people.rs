@@ -14,6 +14,12 @@ use postio_storage::sql::{self, RowExt as _};
 
 use crate::error::Result;
 
+/// The person's own addresses, folded as `addresses.address_normalized`
+/// is: every account's and every identity's. Who "you" are wherever a
+/// list of people leaves you out (the People tab here, the facets' names).
+pub const OWN_ADDRESSES: &str =
+    "SELECT lower(address) FROM accounts UNION SELECT lower(address) FROM identities";
+
 /// How many people one answer carries: the walk is capped as a
 /// conversation search's is, and this caps what one answer holds.
 pub const PEOPLE_CAP: u32 = 1_000;
@@ -45,14 +51,14 @@ pub async fn people(
     // identity's, folded as `address_normalized` is.
     let named: Vec<(i64, String, Option<String>)> = sql::all_unbounded(
         connection,
-        "SELECT a.id, a.address,
-                (SELECT r.name FROM recipients r
-                  WHERE r.address_id = a.id AND r.name IS NOT NULL AND r.name <> ''
-                  LIMIT 1)
-           FROM json_each(?1) j JOIN addresses a ON a.id = j.value
-          WHERE a.address_normalized NOT IN
-                (SELECT lower(address) FROM accounts
-                 UNION SELECT lower(address) FROM identities)",
+        &format!(
+            "SELECT a.id, a.address,
+                    (SELECT r.name FROM recipients r
+                      WHERE r.address_id = a.id AND r.name IS NOT NULL AND r.name <> ''
+                      LIMIT 1)
+               FROM json_each(?1) j JOIN addresses a ON a.id = j.value
+              WHERE a.address_normalized NOT IN ({OWN_ADDRESSES})"
+        ),
         [ids.as_str()],
         |row| Ok((row.int(0)?, row.text(1)?, row.opt_text(2)?)),
     )

@@ -223,6 +223,11 @@ pub fn tomas() -> EmailAddress {
     EmailAddress::new(Some("Tom\u{e1}s Reyes"), "tomas@example.com")
 }
 
+/// The person searching: an address of their own account.
+pub fn you() -> EmailAddress {
+    EmailAddress::new(Some("You"), "you@example.com")
+}
+
 /// Who most of the conversations were written to.
 pub fn ben() -> EmailAddress {
     EmailAddress::new(Some("Ben Adeyemi"), "ben@example.com")
@@ -359,7 +364,9 @@ pub fn page(
             _ => None,
         })
         .collect();
-    let senders: Vec<Count<AddressId>> = [(1, "ada"), (2, "tomas")]
+    // You sent the most of it, as you do of most threads you are in; the
+    // facets count you, and what lists people leaves you out.
+    let senders: Vec<Count<AddressId>> = [(9, "you"), (1, "ada"), (2, "tomas")]
         .into_iter()
         .filter(|(_, who)| named.is_empty() || named.iter().any(|name| name.contains(who)))
         .map(|(id, _)| Count {
@@ -424,7 +431,9 @@ pub fn page(
                 (AddressId::new(1), ada()),
                 (AddressId::new(2), tomas()),
                 (AddressId::new(4), ben()),
+                (AddressId::new(9), you()),
             ],
+            own: vec![AddressId::new(9)],
             labels: vec![(LabelId::new(3), "Atlas".to_owned())],
             label_colors: vec![(LabelId::new(3), "#c08a2e".to_owned())],
             folders: vec![

@@ -421,13 +421,19 @@ async fn names(
     );
     let folders = json(facets.folders.iter().map(|count| count.id.get()));
 
-    let people = sql::all(
+    // Whether each is you is a column of the same read: the facets count
+    // you, and what offers someone to narrow to leaves you out.
+    let named = sql::all(
         connection,
-        "SELECT a.id, a.address,
-                (SELECT r.name FROM recipients r
-                  WHERE r.address_id = a.id AND r.name IS NOT NULL AND r.name <> ''
-                  LIMIT 1)
-           FROM json_each(?1) j JOIN addresses a ON a.id = j.value",
+        &format!(
+            "SELECT a.id, a.address,
+                    (SELECT r.name FROM recipients r
+                      WHERE r.address_id = a.id AND r.name IS NOT NULL AND r.name <> ''
+                      LIMIT 1),
+                    a.address_normalized IN ({})
+               FROM json_each(?1) j JOIN addresses a ON a.id = j.value",
+            postio_index::executor::OWN_ADDRESSES
+        ),
         [people.as_str()],
         |row| {
             Ok((
@@ -436,10 +442,20 @@ async fn names(
                     name: row.opt_text(2)?,
                     address: row.text(1)?,
                 },
+                row.int(3)? != 0,
             ))
         },
     )
     .await?;
+    let own = named
+        .iter()
+        .filter(|(_, _, own)| *own)
+        .map(|(id, _, _)| *id)
+        .collect();
+    let people = named
+        .into_iter()
+        .map(|(id, address, _)| (id, address))
+        .collect();
     let labelled = sql::all(
         connection,
         "SELECT l.id, l.name, l.color FROM json_each(?1) j JOIN labels l ON l.id = j.value",
@@ -464,6 +480,7 @@ async fn names(
     .await?;
     Ok(FacetNames {
         people,
+        own,
         labels,
         label_colors,
         folders,

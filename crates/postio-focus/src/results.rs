@@ -1941,11 +1941,19 @@ impl Results {
             })
         };
         match popover.kind {
+            // You are in every message you sent: not someone to narrow
+            // to (screen 08), as the People tab leaves you out, unless the
+            // query already asks for you and there is a check to take off.
+            // To keeps you, since mail to you is a real narrowing.
             FilterKind::From => base
                 .facets
                 .senders
                 .iter()
-                .filter_map(|count| person(count, "from"))
+                .filter_map(|count| {
+                    let offer = person(count, "from")?;
+                    let own = names.own.contains(&count.id);
+                    (!own || self.holding(&offer.filter).is_some()).then_some(offer)
+                })
                 .collect(),
             FilterKind::To => base
                 .facets

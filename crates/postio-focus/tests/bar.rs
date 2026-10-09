@@ -1348,6 +1348,7 @@ mod dropdown {
             people: 6,
             names: FacetNames {
                 people: vec![(AddressId::new(1), ada()), (AddressId::new(2), tomas())],
+                own: Vec::new(),
                 labels: vec![(LabelId::new(3), "Atlas".to_owned())],
                 label_colors: Vec::new(),
                 folders: vec![(MailboxId::new(1), "Inbox".to_owned())],
@@ -1693,6 +1694,48 @@ mod dropdown {
             "Show all is focused by default"
         );
         assert_eq!(view.count.as_deref(), Some("48 matches \u{b7} 38 ms"));
+    }
+
+    /// You are in every message you sent, so you are often the top sender;
+    /// a pill to narrow to yourself is not one screen 03 offers. The
+    /// People tab leaves you out the same way.
+    #[test]
+    fn narrow_to_offers_no_pill_for_your_own_address() {
+        let rows = List::of(3);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let mut results = atlas_budget();
+        let you = AddressId::new(9);
+        results.facets.senders.insert(
+            0,
+            Count {
+                id: you,
+                conversations: 30,
+            },
+        );
+        results
+            .names
+            .people
+            .push((you, EmailAddress::new(Some("You"), "you@example.com")));
+        results.names.own.push(you);
+
+        let effects = searched(&mut focus, "atlas budget", results, &rows);
+        let view = dropdown(&effects);
+        let pills: Vec<String> = view.sections[1]
+            .pills
+            .iter()
+            .map(|pill| format!("{} {}", pill.op.as_deref().unwrap_or_default(), pill.label))
+            .collect();
+        assert_eq!(
+            pills,
+            [
+                "from: Ada Moreno",
+                "from: Tom\u{e1}s Reyes",
+                "has: attachment",
+                "label: Atlas",
+            ],
+            "the top senders after you"
+        );
     }
 
     #[test]

@@ -542,6 +542,37 @@ fn from_lists_the_people_in_the_results_with_their_counts() {
 }
 
 #[test]
+fn from_lists_you_only_when_the_query_already_asks_for_you() {
+    // Not someone to narrow to (screen 08), but a `from:` you typed is
+    // there to uncheck.
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget from:you@example.com", &rows);
+    let effects = focus.handle_on(Input::SearchPopover(FilterKind::From), &rows);
+    let request = asked(&effects)
+        .into_iter()
+        .find(|request| matches!(request, Request::Facets { .. }))
+        .expect("the applied field's facets are read");
+    let ticket = facets_asked(&effects)[0].0;
+    let reply = reply_to(&request).expect("answered");
+    let effects = focus.handle_on(Input::Reply(ticket, reply), &rows);
+    let view = popover_view(&effects).flatten().expect("redrawn");
+    let listed: Vec<(String, bool)> = view
+        .rows
+        .iter()
+        .map(|row| (row.title.clone(), row.checked))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("You".to_owned(), true),
+            ("Ada Moreno".to_owned(), false),
+            ("Tom\u{e1}s Reyes".to_owned(), false)
+        ]
+    );
+}
+
+#[test]
 fn checking_a_person_previews_live_and_esc_restores_the_query_exactly() {
     let rows = List::of(3);
     let mut focus = mac();
