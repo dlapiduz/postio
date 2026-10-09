@@ -11,7 +11,7 @@
 //! person's back. The rest of the query keeps its raw text.
 
 use crate::ParsedQuery;
-use crate::query::{Clause, Filter, Token, TokenKind, spell};
+use crate::query::{Clause, Field, Filter, Token, TokenKind, spell};
 
 /// The most relaxations offered: the screen has room for a short list, and
 /// a longer one is a sign the query should be cleared instead (D24).
@@ -49,8 +49,10 @@ pub struct Relaxation {
 /// The looser searches `query` offers, in token order, at most
 /// [`MAX_RELAXATIONS`].
 ///
-/// Every complete filter can be dropped. A positive `subject:` can also be
-/// looked for anywhere, and a positive `label:` can also be a folder; an
+/// Every complete filter can be dropped, a set as one term (D26: dropping
+/// one of its values narrows, so it is no way out). A positive `subject:`
+/// can also be looked for anywhere, and a positive `label:` (or a set of
+/// them) can also be a folder; an
 /// exclusion is never turned into something else, because `-subject:x` as
 /// `-x` would exclude more, not less. A free word is dropped only when
 /// there are two or more -- with one, it is the search itself. Half-typed
@@ -81,17 +83,32 @@ pub fn relax(query: &ParsedQuery) -> Vec<Relaxation> {
                 loosen: Loosen::Anywhere { token: index },
                 query: rebuilt(tokens, index, Some(words_for(value))),
             }),
-            Filter::Label(value) => out.push(Relaxation {
-                loosen: Loosen::FolderNotLabel { token: index },
-                query: rebuilt(
-                    tokens,
-                    index,
-                    Some(spell(&Clause {
-                        negated: false,
-                        filter: Filter::In(value.clone()),
-                    })),
-                ),
-            }),
+            // A set of labels is a set of folders just as well (D26).
+            filter if filter.field() == Field::Label => {
+                let folders = Filter::any_of(
+                    filter
+                        .alternatives()
+                        .iter()
+                        .filter_map(|label| match label {
+                            Filter::Label(name) => Some(Filter::In(name.clone())),
+                            _ => None,
+                        })
+                        .collect(),
+                );
+                if let Some(folders) = folders {
+                    out.push(Relaxation {
+                        loosen: Loosen::FolderNotLabel { token: index },
+                        query: rebuilt(
+                            tokens,
+                            index,
+                            Some(spell(&Clause {
+                                negated: false,
+                                filter: folders,
+                            })),
+                        ),
+                    });
+                }
+            }
             _ => {}
         }
     }
@@ -202,6 +219,44 @@ mod tests {
                     query: "in:Receipts invoice".into(),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn a_set_is_dropped_as_one_term_and_never_a_member_at_a_time() {
+        // D26: a member dropped from `from:{ada tomas}` narrows the search,
+        // so it is no way out of one that found nothing.
+        assert_eq!(
+            relaxed("from:{ada tomas} has:attach budget"),
+            vec![
+                Relaxation {
+                    loosen: Loosen::Drop { token: 0 },
+                    query: "has:attach budget".into(),
+                },
+                Relaxation {
+                    loosen: Loosen::Drop { token: 1 },
+                    query: "from:{ada tomas} budget".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_set_of_labels_can_also_be_a_set_of_folders() {
+        assert_eq!(
+            relaxed(r#"label:{Receipts "Q3 close"} invoice"#)[1],
+            Relaxation {
+                loosen: Loosen::FolderNotLabel { token: 0 },
+                query: r#"in:{Receipts "Q3 close"} invoice"#.into(),
+            }
+        );
+        assert_eq!(
+            relaxed("subject:{budget plan} x")
+                .iter()
+                .map(|r| r.loosen)
+                .collect::<Vec<_>>(),
+            vec![Loosen::Drop { token: 0 }],
+            "either subject is not something free words can say"
         );
     }
 
