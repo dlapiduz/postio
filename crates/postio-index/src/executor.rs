@@ -2056,9 +2056,28 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
         // `messages.list_id` stores, indexed here the same way `subject` is.
         Filter::List(value) => fts_column_condition("list_id", value),
         Filter::HasAttachment => ("m.has_attachments = 1".to_string(), Vec::new()),
-        // Not answered yet (spec 010 T010): matches nothing, never
-        // everything, as an unresolvable `account:` does.
-        Filter::Label(_) | Filter::HasAction => ("0".to_string(), Vec::new()),
+        // Spec 010 (S2): a label by name, in whichever account owns the
+        // message -- the join through `message_labels` already keeps it to
+        // the message's own account, so the scope needs no clause of its
+        // own. Case-insensitive the way the name is unique
+        // (`idx_labels_account_name`). A name no label has is an empty
+        // `EXISTS` and matches nothing, never everything, as `account:` and
+        // `in:` above.
+        Filter::Label(value) => (
+            "EXISTS (SELECT 1 FROM message_labels ml \
+              JOIN labels l ON l.id = ml.label_id \
+              WHERE ml.message_id = m.id AND lower(l.name) = lower(?))"
+                .to_string(),
+            vec![turso::Value::Text(value.clone())],
+        ),
+        // An open marker: one the person has not dismissed. `markers` is
+        // keyed on the message, so this is one primary-key probe a row.
+        Filter::HasAction => (
+            "EXISTS (SELECT 1 FROM markers k \
+              WHERE k.message_id = m.id AND k.dismissed_at IS NULL)"
+                .to_string(),
+            Vec::new(),
+        ),
         Filter::Is(state) => {
             use postio_search::query::State;
             match state {
