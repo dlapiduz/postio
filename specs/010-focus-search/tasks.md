@@ -265,7 +265,7 @@ GTK's bar is unchanged.
 
 **Independent test**: US6's.
 
-- [ ] T102 [US6] Write storyboard `storyboards/search/no-results-relaxations.toml`
+- [x] T102 [US6] Write storyboard `storyboards/search/no-results-relaxations.toml`
 - [ ] T103 [P] [US6] Write failing tests: `PickRelaxation1`–`4` (`1`–`4`, Results) in `crates/postio-core/tests/core_suite/`; in `crates/postio-focus/tests/results.rs`: a zero-hit answer asks `Relaxations` and shows them ordered by count, none zero, at most four; a number key runs that query; `BackToWords` in this state clears filters and keeps the words (D24); the hint becomes "⌘⌫ clears filters"; the chip the focused relaxation loosens is marked focused. Red: missing
 - [ ] T104 [US6] Implement the no-results state in `crates/postio-focus/src/results.rs` and the commands. Make T103 green
 - [ ] T105 [P] [US6] Write failing tests in `crates/postio-ui/src/search_view.rs`: `nothing_matches(4)` ("Nothing matches all four filters"), `relaxation_line` for each `Loosen` ("Remove “before March”", "Look for “budget v4” anywhere, not just the subject", "Anyone, not just Ada Moreno"), `searched(18204, contents)` with and without "including attachment contents" (US6 scenario 2), never the server line (S4). Red: missing
