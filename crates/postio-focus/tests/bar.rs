@@ -845,18 +845,23 @@ fn mod_s_saves_the_bars_query() {
     let effects = run(&mut focus, CommandId::SaveSearch, &rows);
     assert_eq!(
         shown(&effects),
-        vec![Intent::SaveSearch {
-            query: "from:ada invoice".to_owned()
-        }]
+        vec![Intent::SaveSearch(postio_focus::SaveSearch {
+            query: "from:ada invoice".to_owned(),
+            name: None,
+            pin: true,
+            notify: false,
+            dates: postio_ui::saved_search::Dates::AsTyped,
+        })]
     );
-    let effects = focus.handle(Input::SearchSaved(Ok(vec![
-        postio_ui::saved_search::SavedSearch {
+    let effects = focus.handle(Input::SearchSaved(Ok(postio_focus::SearchesSaved {
+        searches: vec![postio_ui::saved_search::SavedSearch {
             key: "from-ada-invoice".to_owned(),
             name: "from-ada-invoice".to_owned(),
             query: "from:ada invoice".to_owned(),
             notify: false,
-        },
-    ])));
+        }],
+        key: Some("from-ada-invoice".to_owned()),
+    })));
     let intents = shown(&effects);
     assert!(intents.contains(&Intent::Toast {
         text: postio_ui::focus_target::search_saved("from:ada invoice"),

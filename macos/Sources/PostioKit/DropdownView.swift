@@ -238,6 +238,16 @@ public struct DropdownView: View {
                 if let count = pill.count {
                     Text(count).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
                 }
+                // A quiet badge, never a banner (D15): the accent's tint,
+                // small, after the count.
+                if let fresh = pill.fresh {
+                    Text(fresh)
+                        .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(.tint)
+                        .padding(.horizontal, 5)
+                        .frame(height: 16)
+                        .background(Capsule().fill(.tint.opacity(0.12)))
+                }
                 if let cap = pill.cap { KeyCap(cap) }
             }
             .lineLimit(1)

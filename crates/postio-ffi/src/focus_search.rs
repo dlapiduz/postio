@@ -754,6 +754,71 @@ impl From<postio_focus::PopoverView> for PopoverViewFfi {
     }
 }
 
+/// The Save popover (design §3.9, screen 12): every word it draws and the
+/// switches as they start. 364 wide, from the toolbar's Save search.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SaveViewFfi {
+    /// "Save as a saved search".
+    pub title: String,
+    /// "Name", over the field.
+    pub name_label: String,
+    /// The name offered, prefilled: "Atlas budget from Ada".
+    pub name: String,
+    /// The terms as small read-only chips: "from:Ada Moreno".
+    pub chips: Vec<String>,
+    /// Pin to saved searches, as it starts.
+    pub pin: bool,
+    /// "Pin to saved searches".
+    pub pin_label: String,
+    /// "Appears at the top of search as", before `pin_key`.
+    pub pin_note: String,
+    /// The key it will run on (`alt+3`); `None` past the fourth.
+    pub pin_key: Option<String>,
+    /// Notify when new mail matches, as it starts.
+    pub notify: bool,
+    /// "Notify when new mail matches".
+    pub notify_label: String,
+    /// "A quiet badge, not a banner".
+    pub notify_note: String,
+    /// Keep the date rolling, as it starts.
+    pub rolling: bool,
+    /// "Keep the date rolling".
+    pub rolling_label: String,
+    /// What each way means; `None` when the query has no date and the
+    /// switch is not drawn.
+    pub rolling_note: Option<String>,
+    /// "Cancel".
+    pub cancel: String,
+    /// "Save".
+    pub save: String,
+    /// Save's keycap (`Return`).
+    pub save_key: Option<String>,
+}
+
+impl From<postio_focus::SaveView> for SaveViewFfi {
+    fn from(view: postio_focus::SaveView) -> Self {
+        SaveViewFfi {
+            title: view.title,
+            name_label: view.name_label,
+            name: view.name,
+            chips: view.chips,
+            pin: view.pin,
+            pin_label: view.pin_label,
+            pin_note: view.pin_note,
+            pin_key: view.pin_key,
+            notify: view.notify,
+            notify_label: view.notify_label,
+            notify_note: view.notify_note,
+            rolling: view.rolling,
+            rolling_label: view.rolling_label,
+            rolling_note: view.rolling_note,
+            cancel: view.cancel,
+            save: view.save,
+            save_key: view.save_key,
+        }
+    }
+}
+
 /// One match card in Quick Look (design §3.7).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MatchCardFfi {
@@ -1032,6 +1097,19 @@ impl Session {
     pub fn focus_search_point(&self, position: u64) {
         self.focus_driver()
             .input(postio_focus::Input::ResultsPoint(position));
+    }
+
+    /// Save ↩ in the Save popover: the results' query is kept in
+    /// `config.toml` under `name`, pinned, notifying and with its dates
+    /// rolling as the switches say; the popover goes.
+    pub fn focus_search_save(&self, name: String, pin: bool, notify: bool, rolling: bool) {
+        self.focus_driver()
+            .input(postio_focus::Input::SaveSearchAs {
+                name,
+                pin,
+                notify,
+                rolling,
+            });
     }
 
     /// How many rows the results table has.

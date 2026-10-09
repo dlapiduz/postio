@@ -856,6 +856,9 @@ impl FocusDriver {
             Intent::QuickLook(view) => self.say(UiEvent::FocusQuickLook {
                 view: view.map(|view| (*view).into()),
             }),
+            Intent::SavePopover(view) => self.say(UiEvent::FocusSavePopover {
+                view: view.map(|view| (*view).into()),
+            }),
             Intent::Place { name } => self.say(UiEvent::FocusPlace { name }),
             Intent::OpenPlaces => self.say(UiEvent::FocusOpenPlaces),
             Intent::PlacesChanged => self.say(UiEvent::FocusPlacesChanged),
@@ -919,8 +922,8 @@ impl FocusDriver {
             Intent::SaveDraft { composition } => {
                 self.say(UiEvent::FocusSaveDraft { composition });
             }
-            Intent::SaveSearch { query } => {
-                let saved = self.save_search(&query);
+            Intent::SaveSearch(save) => {
+                let saved = self.save_search(&save);
                 self.input(Input::SearchSaved(saved));
             }
             _ => {}
@@ -933,14 +936,27 @@ impl FocusDriver {
     /// or the sentence the toast says instead.
     fn save_search(
         &self,
-        query: &str,
-    ) -> Result<Vec<postio_ui::saved_search::SavedSearch>, String> {
+        save: &postio_focus::SaveSearch,
+    ) -> Result<postio_focus::SearchesSaved, String> {
         let Some(path) = self.config_path.lock().expect("config path lock").clone() else {
             return Err(postio_ui::focus_target::NO_CONFIG_TO_SAVE.to_owned());
         };
-        postio_ui::saved_search::apply(&path, postio_ui::saved_search::Verb::save(query))
-            .and_then(|_| postio_config::Config::load_from_path(&path))
-            .map(|config| postio_ui::saved_search::pinned(&config))
+        let verb = postio_ui::saved_search::Verb::Save {
+            query: &save.query,
+            name: save.name.as_deref(),
+            pin: save.pin,
+            notify: save.notify,
+            dates: save.dates,
+        };
+        postio_ui::saved_search::apply(&path, verb)
+            .and_then(|edit| {
+                postio_config::Config::load_from_path(&path).map(|config| {
+                    postio_focus::SearchesSaved {
+                        searches: postio_ui::saved_search::pinned(&config),
+                        key: edit.changed,
+                    }
+                })
+            })
             .map_err(|error| {
                 tracing::warn!(%error, "Focus could not save the search");
                 postio_ui::focus_target::SEARCH_NOT_WRITTEN.to_owned()

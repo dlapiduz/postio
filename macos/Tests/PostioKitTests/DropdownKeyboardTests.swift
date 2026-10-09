@@ -63,7 +63,7 @@ struct DropdownKeyboardTests {
                     section("Recent", recents.map { row($0, .recent, "recent \($0)") }),
                     DropdownSectionFfi(
                         title: "Saved searches", note: nil, noteKey: nil, rows: [],
-                        pills: [PillFfi(token: 20, op: nil, label: "Atlas", count: "38", key: "alt+2")]),
+                        pills: [PillFfi(token: 20, op: nil, label: "Atlas", count: "38", fresh: nil, key: "alt+2")]),
                     section(
                         "Search by",
                         [row(30, .cheatSheet, "from:", selectable: false),

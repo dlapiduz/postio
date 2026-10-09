@@ -239,6 +239,12 @@ public final class PostioSession {
     /// A click on the result at `position`: the focus ring goes there.
     public func focusSearchPoint(_ position: UInt64) { inner.focusSearchPoint(position: position) }
 
+    /// Save ↩ in the Save popover: the results' query kept under `name`,
+    /// as the three switches say.
+    public func focusSearchSave(_ name: String, pin: Bool, notify: Bool, rolling: Bool) {
+        inner.focusSearchSave(name: name, pin: pin, notify: notify, rolling: rolling)
+    }
+
     /// How many rows the results table has.
     public func focusSearchRowCount() -> UInt64 { inner.focusSearchRowCount() }
 

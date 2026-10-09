@@ -62,7 +62,8 @@ pub use postio_ui::capture::{Mode as CaptureMode, Pick as CapturePick};
 pub use postio_ui::digest::{Page as DigestPage, Schedule as RuleSchedule};
 pub use results::{
     Chip, DatePresetView, FilterButton, LabelPill, MatchCard, MonthBar, PopoverRow, PopoverView,
-    QueryView, QuickLookView, ResultGroup, ResultRow, ResultsTabView, ResultsView, TermEdit,
+    QueryView, QuickLookView, ResultGroup, ResultRow, ResultsTabView, ResultsView, SaveView,
+    TermEdit,
 };
 pub use states::{AccountsRead, BannerButton, BannerView};
 pub use surfaces::{Host, ReaderVerb, SurfaceKind};
@@ -209,9 +210,21 @@ pub enum Input {
     OpenPlace(u64),
     /// The pinned saved searches, in order.
     SavedSearches(Vec<postio_ui::saved_search::SavedSearch>),
-    /// What became of an [`Intent::SaveSearch`]: the saved searches now, or
-    /// the sentence saying why it was not saved.
-    SearchSaved(Result<Vec<postio_ui::saved_search::SavedSearch>, String>),
+    /// What became of an [`Intent::SaveSearch`]: the saved searches now and
+    /// the key of the one saved, or the sentence saying why it was not.
+    SearchSaved(Result<SearchesSaved, String>),
+    /// Save ↩ in the Save popover (spec 010 FR-029): the results' query,
+    /// under this name, pinned, notifying and its dates rolling or not.
+    SaveSearchAs {
+        /// The Name field.
+        name: String,
+        /// Pin to saved searches.
+        pin: bool,
+        /// Notify when new mail matches.
+        notify: bool,
+        /// Keep the date rolling.
+        rolling: bool,
+    },
     /// The bindings in force: what the bar's keycaps say.
     Keymap(postio_core::Keymap),
     /// Whether Focus files mail away: the places list Filtered while it does.
@@ -315,6 +328,31 @@ pub enum Effect {
         /// How long to wait.
         after: Duration,
     },
+}
+
+/// A save the frontend writes to `config.toml` (`postio_ui::saved_search`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaveSearch {
+    /// The query, as the field holds it.
+    pub query: String,
+    /// The name it shows under; `None` shows its key.
+    pub name: Option<String>,
+    /// Pin to saved searches: the next free place and ⌥ number.
+    pub pin: bool,
+    /// A quiet badge with new matches (D15).
+    pub notify: bool,
+    /// How its dates keep (D14).
+    pub dates: postio_ui::saved_search::Dates,
+}
+
+/// What a save left: every pinned saved search, and the key of the one
+/// saved (`None` when nothing was).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchesSaved {
+    /// The pinned saved searches now, in order.
+    pub searches: Vec<postio_ui::saved_search::SavedSearch>,
+    /// The key the save was written under.
+    pub key: Option<String>,
 }
 
 /// What the frontend draws. Each one is drawable without asking the
@@ -490,12 +528,12 @@ pub enum Intent {
     PlacesChanged,
     /// Show Filtered, the view of what Focus filed away.
     ShowFiltered,
-    /// Keep `query` as a saved search, and say how that went with
-    /// [`Input::SearchSaved`].
-    SaveSearch {
-        /// The bar's query.
-        query: String,
-    },
+    /// Keep a query as a saved search, as [`SaveSearch`] says, and say how
+    /// that went with [`Input::SearchSaved`].
+    SaveSearch(SaveSearch),
+    /// Show the Save popover from the toolbar's Save search button (spec
+    /// 010 §3.9), or take it down with `None`.
+    SavePopover(Option<Box<SaveView>>),
     /// Run this command as the frontend's own: a line of the bar that is
     /// not the controller's to answer.
     Run(CommandId),
@@ -1392,7 +1430,8 @@ impl FocusController {
             | Input::DatePreset(_)
             | Input::ResultsTab(_)
             | Input::ResultsOrder(_)
-            | Input::ResultsPoint(_)) => {
+            | Input::ResultsPoint(_)
+            | Input::SaveSearchAs { .. }) => {
                 let steps = self.results_input(input);
                 self.effects(steps)
             }

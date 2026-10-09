@@ -226,8 +226,8 @@ pub(crate) struct Bar {
     walked: Vec<Hit>,
     /// The pinned saved searches, in order.
     saved: Vec<SavedSearch>,
-    /// The query an `Intent::SaveSearch` is saving.
-    saving: Option<String>,
+    /// What an `Intent::SaveSearch` is saving.
+    saving: Option<crate::SaveSearch>,
     keymap: Keymap,
     /// The places, as last read.
     places: PlacesRead,
@@ -326,6 +326,12 @@ impl Bar {
     }
 
     /// The bindings in force, as the bar's keycaps say them.
+    /// How many saved searches are pinned: the next one's ⌥ number is one
+    /// more.
+    pub(crate) fn saved_len(&self) -> usize {
+        self.saved.len()
+    }
+
     pub(crate) fn keymap(&self) -> &Keymap {
         &self.keymap
     }
@@ -356,9 +362,9 @@ impl Bar {
         (self.mode == Some(BarMode::Search) && !words.is_empty()).then_some(words)
     }
 
-    /// The query an `Intent::SaveSearch` is saving.
-    pub(crate) fn set_saving(&mut self, query: String) {
-        self.saving = Some(query);
+    /// What an `Intent::SaveSearch` is saving.
+    pub(crate) fn set_saving(&mut self, saving: crate::SaveSearch) {
+        self.saving = Some(saving);
     }
 
     /// Walk `hits` from a message one of them opened, as a hit opened from
@@ -1080,8 +1086,15 @@ impl FocusController {
                 if query.is_empty() {
                     return Some(Vec::new());
                 }
-                self.bar.saving = Some(query.clone());
-                vec![Step::Show(Intent::SaveSearch { query })]
+                let save = crate::SaveSearch {
+                    query,
+                    name: None,
+                    pin: true,
+                    notify: false,
+                    dates: postio_ui::saved_search::Dates::AsTyped,
+                };
+                self.bar.saving = Some(save.clone());
+                vec![Step::Show(Intent::SaveSearch(save))]
             }
             CommandId::BackToWords => self.bar.back_to_words(),
             CommandId::ShowAllResults if self.bar.results_view => self.show_all_results(),
@@ -1425,13 +1438,22 @@ impl FocusController {
                 let saving = self.bar.saving.take();
                 match result {
                     Ok(saved) => {
-                        self.bar.set_saved(saved);
+                        self.bar.set_saved(saved.searches);
+                        let said = saving
+                            .as_ref()
+                            .map(|save| save.name.as_deref().unwrap_or(&save.query))
+                            .unwrap_or_default();
                         let mut steps = vec![Step::Show(Intent::Toast {
-                            text: postio_ui::focus_target::search_saved(
-                                saving.as_deref().unwrap_or_default(),
-                            ),
+                            text: postio_ui::focus_target::search_saved(said),
                             kind: crate::ToastKind::Notice,
                         })];
+                        // A search that notifies starts seen: its badge
+                        // counts what arrives after it was saved (D15).
+                        if let (Some(key), true) =
+                            (saved.key, saving.as_ref().is_some_and(|save| save.notify))
+                        {
+                            steps.push(Step::Ask(Request::MarkSeen { key }));
+                        }
                         steps.extend(self.redraw_bar());
                         steps
                     }

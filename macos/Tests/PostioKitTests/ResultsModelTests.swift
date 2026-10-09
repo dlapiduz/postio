@@ -59,7 +59,7 @@ struct ResultsModelTests {
                     group("August 2026", first: 12, rows: 14),
                 ],
                 rows: 26, cursor: cursor, footerHints: [], footerRight: "26 conversations · local index · 41 ms",
-                selected: 0, bulk: []))
+                selected: 0, bulk: [], selectAll: nil))
     }
 
     @Test func groupHeadersPrecedeTheirRows() {

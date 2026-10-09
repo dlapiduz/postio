@@ -506,6 +506,13 @@ pub enum UiEvent {
         /// What it draws.
         view: Option<crate::focus_search::QuickLookViewFfi>,
     },
+    /// Hang the Save popover from the toolbar's Save search button (⌘S,
+    /// spec 010 §3.9, FR-029); `None` takes it down. Save ↩ is
+    /// `focus_search_save`.
+    FocusSavePopover {
+        /// What it draws.
+        view: Option<crate::focus_search::SaveViewFfi>,
+    },
 }
 
 /// How a Focus toast is drawn.

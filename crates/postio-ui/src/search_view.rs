@@ -669,6 +669,39 @@ pub fn save_name(
     }
 }
 
+/// The Save popover's title (§3.9).
+pub const SAVE_TITLE: &str = "Save as a saved search";
+/// Over its name field.
+pub const SAVE_NAME: &str = "Name";
+/// Its first switch.
+pub const SAVE_PIN: &str = "Pin to saved searches";
+/// Under it, before the key the search will run on.
+pub const SAVE_PIN_NOTE: &str = "Appears at the top of search as";
+/// Under it past the fourth pinned search, which has no ⌥ number.
+pub const SAVE_PIN_NOTE_NO_KEY: &str = "Appears at the top of search";
+/// Its second switch.
+pub const SAVE_NOTIFY: &str = "Notify when new mail matches";
+/// Under it (D15).
+pub const SAVE_NOTIFY_NOTE: &str = "A quiet badge, not a banner";
+/// Its third switch.
+pub const SAVE_ROLLING: &str = "Keep the date rolling";
+/// Its buttons.
+pub const SAVE_CANCEL: &str = "Cancel";
+/// Its buttons.
+pub const SAVE: &str = "Save";
+
+/// Under Keep the date rolling (§3.9, D14): what each way means for a
+/// query since `after`, read on `today` -- "Off: always since 1 July. On:
+/// always the last 90 days".
+pub fn rolling_note(after: chrono::NaiveDate, today: chrono::NaiveDate) -> String {
+    let days = (today - after).num_days().max(0);
+    format!(
+        "Off: always since {}. On: always the last {} days",
+        after.format("%-d %B"),
+        grouped(days as u64)
+    )
+}
+
 /// A saved search's quiet badge (§3.9, D15): "3 new". Never a banner.
 pub fn new_badge(n: u64) -> String {
     format!("{} new", grouped(n))

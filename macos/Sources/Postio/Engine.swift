@@ -853,6 +853,18 @@ final class Engine {
             guard let rect = table.pickerAnchor(row: Int(position), width: PickerMetrics.width)
             else { return }
             popover.show(relativeTo: rect, of: table.tableView)
+        case let .result(position):
+            // Under the focused result, at its content column (spec 010
+            // US5): the rows checked, or that one.
+            guard let table = resultsTable, let row = results?.tableRow(of: position) else { return }
+            table.tableView.scrollRowToVisible(row)
+            let frame = table.tableView.rect(ofRow: row)
+            let content = ResultRowView.Columns.leading + ResultRowView.Columns.gutter
+                + ResultRowView.Columns.sender + 2 * ResultRowView.Columns.gap
+            popover.show(
+                relativeTo: NSRect(
+                    x: frame.minX + content, y: frame.minY, width: PickerMetrics.width, height: frame.height),
+                of: table.tableView)
         case .openMessage:
             guard let content = messageContent, content.window != nil else { return }
             let frame = verbFrames[PickerCommand.opening(picker.kind)]
@@ -928,6 +940,10 @@ final class Engine {
     @ObservationIgnored private(set) var quickLook: QuickLookModel?
     @ObservationIgnored private(set) var quickLookPanel: QuickLookPanel?
 
+    /// The Save popover (step 6), and what hangs it from Save search.
+    @ObservationIgnored private(set) var savePopover: SavePopoverModel?
+    @ObservationIgnored private(set) var savePresenter: SavePopover?
+
     /// The results' chrome words, `postio-ui`'s.
     let searchWords = focusSearchWords()
 
@@ -951,6 +967,9 @@ final class Engine {
         let look = QuickLookModel(engine: session)
         quickLook = look
         quickLookPanel = QuickLookPanel(model: look)
+        let save = SavePopoverModel(engine: session)
+        savePopover = save
+        savePresenter = SavePopover(model: save)
     }
 
     /// "5 selected", while results are checked.
@@ -1234,6 +1253,12 @@ final class Engine {
         // taken down when the controller says.
         if let change = filterPopover?.apply(event) {
             filterPopoverPresenter?.apply(change)
+            return
+        }
+        // The Save popover (step 6): hung from Save search on ⌘S, taken
+        // down when its Save went to the controller.
+        if let change = savePopover?.apply(event) {
+            savePresenter?.apply(change)
             return
         }
         // Quick Look (step 5): a panel over the results, drawn whole each
@@ -1580,6 +1605,16 @@ final class Engine {
         if bannerRepair.asking != nil { return false }
         // A question's alert is up: Return and Escape are its buttons'.
         if asking != nil { return false }
+        // The Save popover has the keyboard: Return saves, Escape cancels,
+        // every other key is its field's and its switches'.
+        if let save = savePopover, save.isOpen {
+            switch id {
+            case Intercepted.back: save.cancel()
+            case "open_message", "picker_confirm": save.save()
+            default: return false
+            }
+            return true
+        }
         // The rule sheet holds the keyboard (a dialog takes every key in
         // the controller, which answers only Back): Escape is Back, which
         // closes it; Return is Create; every other key is the sheet's
