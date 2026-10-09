@@ -703,6 +703,140 @@ fn alt_click_excludes_and_again_takes_it_out() {
     );
 }
 
+fn chips(query: &postio_focus::QueryView) -> Vec<(String, String, bool)> {
+    query
+        .chips
+        .iter()
+        .map(|chip| (chip.operator.clone(), chip.value.clone(), chip.excluded))
+        .collect()
+}
+
+#[test]
+fn checking_a_second_person_is_either_of_them() {
+    // D26: two people checked in one popover is mail from either, written
+    // as one set in the query and drawn as one chip.
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let view = open_popover(&mut focus, FilterKind::From, &rows);
+    let (ada, tomas) = (view.rows[0].token, view.rows[1].token);
+    let check = |focus: &mut FocusController, token| {
+        focus.handle_on(
+            Input::PopoverToggle {
+                token,
+                exclude: false,
+            },
+            &rows,
+        )
+    };
+
+    let effects = check(&mut focus, ada);
+    let _ = settle(&mut focus, effects, &rows);
+    let effects = check(&mut focus, tomas);
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget from:{ada@example.com tomas@example.com}"),
+        "either, not both"
+    );
+    let query = query_view(&effects).expect("the field follows the check");
+    assert_eq!(
+        chips(&query),
+        [(
+            "from:".to_owned(),
+            "Ada Moreno, Tom\u{e1}s Reyes".to_owned(),
+            false
+        )],
+        "one chip naming both"
+    );
+    assert_eq!(
+        button(&query, FilterKind::From).label,
+        "From: Ada Moreno +1"
+    );
+    let effects = settle(&mut focus, effects, &rows);
+    let popover = popover_view(&effects).flatten().expect("redrawn");
+    assert!(
+        popover.rows[0].checked && popover.rows[1].checked,
+        "both are checked"
+    );
+
+    // Unchecking one leaves the other, as a plain clause.
+    let effects = check(&mut focus, ada);
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget from:tomas@example.com")
+    );
+    let effects = settle(&mut focus, effects, &rows);
+    let popover = popover_view(&effects).flatten().expect("redrawn");
+    assert!(!popover.rows[0].checked && popover.rows[1].checked);
+
+    // Esc: the query it opened on, exactly.
+    let effects = focus.handle_on(Input::PopoverDone { apply: false }, &rows);
+    assert_eq!(popover_view(&effects), Some(None));
+    assert!(
+        queries_asked(&effects)
+            .iter()
+            .all(|query| query == "atlas budget")
+    );
+    assert!(query_view(&effects).expect("restored").chips.is_empty());
+}
+
+#[test]
+fn a_set_applied_opens_with_every_member_checked() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(
+        &mut focus,
+        "atlas budget from:{ada@example.com tomas@example.com}",
+        &rows,
+    );
+    let view = open_popover(&mut focus, FilterKind::From, &rows);
+    assert!(view.rows.iter().all(|row| row.checked && !row.excluded));
+}
+
+#[test]
+fn alt_click_on_a_second_person_excludes_both() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let view = open_popover(&mut focus, FilterKind::From, &rows);
+    let (ada, tomas) = (view.rows[0].token, view.rows[1].token);
+    let exclude = |focus: &mut FocusController, token| {
+        focus.handle_on(
+            Input::PopoverToggle {
+                token,
+                exclude: true,
+            },
+            &rows,
+        )
+    };
+    let effects = exclude(&mut focus, ada);
+    let _ = settle(&mut focus, effects, &rows);
+    let effects = exclude(&mut focus, tomas);
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget -from:{ada@example.com tomas@example.com}"),
+        "neither"
+    );
+    let query = query_view(&effects).expect("the field");
+    assert_eq!(
+        chips(&query),
+        [(
+            "from:".to_owned(),
+            "Ada Moreno, Tom\u{e1}s Reyes".to_owned(),
+            true
+        )]
+    );
+    let effects = settle(&mut focus, effects, &rows);
+    let popover = popover_view(&effects).flatten().expect("redrawn");
+    assert!(popover.rows.iter().all(|row| row.excluded && !row.checked));
+    // ⌥-click again takes one back out.
+    let effects = exclude(&mut focus, ada);
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget -from:tomas@example.com")
+    );
+}
+
 #[test]
 fn the_popovers_own_filter_narrows_its_rows_without_asking() {
     let rows = List::of(3);

@@ -1329,13 +1329,33 @@ impl Results {
                     // A person reads as who they are ("from: Ada Moreno",
                     // screen 10); the query keeps the address, and a value
                     // nobody is named by is drawn as typed.
+                    let person = |who: &str| {
+                        name_of(who)
+                            .filter(|name| !name.is_empty())
+                            .unwrap_or_else(|| who.to_owned())
+                    };
                     let value = match &clause.filter {
-                        Filter::From(_) | Filter::To(_) => {
-                            name_of(value).filter(|name| !name.is_empty())
-                        }
-                        _ => None,
-                    }
-                    .unwrap_or_else(|| value.to_owned());
+                        Filter::From(_) | Filter::To(_) => person(value),
+                        // Either of several (D26): every value, by name
+                        // when it is a person -- "Ada Moreno, Tomás Reyes".
+                        Filter::AnyOf(set) => set
+                            .members()
+                            .iter()
+                            .filter_map(|member| match member {
+                                Filter::From(who) | Filter::To(who) => Some(person(who)),
+                                Filter::Subject(text)
+                                | Filter::In(text)
+                                | Filter::Filename(text)
+                                | Filter::List(text)
+                                | Filter::Account(text)
+                                | Filter::Group(text)
+                                | Filter::Label(text) => Some(text.clone()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        _ => value.to_owned(),
+                    };
                     chips.push(Chip {
                         token: index as u32,
                         operator: format!("{operator}:"),
@@ -1572,15 +1592,21 @@ impl Results {
         }
     }
 
-    /// Where the query holds `filter`: its token, and whether it is
-    /// excluded there.
+    /// Where the query holds `filter`, as a clause of its own or one value
+    /// of a set (D26): its token, and whether it is excluded there.
     fn holding(&self, filter: &Filter) -> Option<(usize, bool)> {
         self.parsed
             .tokens()
             .iter()
             .enumerate()
             .find_map(|(index, token)| match &token.kind {
-                TokenKind::Filter(clause) if postio_search::edit::same(&clause.filter, filter) => {
+                TokenKind::Filter(clause)
+                    if clause
+                        .filter
+                        .alternatives()
+                        .iter()
+                        .any(|held| postio_search::edit::same(held, filter)) =>
+                {
                     Some((index, clause.negated))
                 }
                 _ => None,
@@ -1681,7 +1707,9 @@ impl Results {
     }
 
     /// The edit a check on the popover's row `token` makes: Space toggles
-    /// it, ⌥-click excludes it, or takes its exclusion out.
+    /// it, ⌥-click excludes it, or takes its exclusion out. A second value
+    /// of the field joins the first as either of them (D26); the rules are
+    /// `postio_search::edit`'s.
     fn popover_toggle(
         &self,
         token: u64,
@@ -1693,20 +1721,10 @@ impl Results {
             .offers(today)
             .into_iter()
             .nth(usize::try_from(token).ok()?)?;
-        if !exclude {
-            return Some(Edit::Toggle(offer.filter));
-        }
-        let excluded = Clause {
-            negated: true,
-            filter: offer.filter.clone(),
-        };
-        Some(match self.holding(&offer.filter) {
-            Some((token, true)) => Edit::Remove { token },
-            Some((token, false)) => Edit::Replace {
-                token,
-                with: excluded,
-            },
-            None => Edit::Add(excluded),
+        Some(if exclude {
+            Edit::Exclude(offer.filter)
+        } else {
+            Edit::Toggle(offer.filter)
         })
     }
 
