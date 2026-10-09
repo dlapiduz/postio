@@ -924,6 +924,10 @@ final class Engine {
     @ObservationIgnored private(set) var filterPopover: FilterPopoverModel?
     @ObservationIgnored private(set) var filterPopoverPresenter: FilterPopover?
 
+    /// Quick Look over the results (step 5), and the panel it is drawn in.
+    @ObservationIgnored private(set) var quickLook: QuickLookModel?
+    @ObservationIgnored private(set) var quickLookPanel: QuickLookPanel?
+
     /// The results' chrome words, `postio-ui`'s.
     let searchWords = focusSearchWords()
 
@@ -944,6 +948,9 @@ final class Engine {
         let popover = FilterPopoverModel(engine: session)
         filterPopover = popover
         filterPopoverPresenter = FilterPopover(model: popover)
+        let look = QuickLookModel(engine: session)
+        quickLook = look
+        quickLookPanel = QuickLookPanel(model: look)
     }
 
     /// "5 selected", while results are checked.
@@ -1227,6 +1234,12 @@ final class Engine {
         // taken down when the controller says.
         if let change = filterPopover?.apply(event) {
             filterPopoverPresenter?.apply(change)
+            return
+        }
+        // Quick Look (step 5): a panel over the results, drawn whole each
+        // time and closed when the controller says.
+        if let change = quickLook?.apply(event) {
+            quickLookPanel?.apply(change, over: mainWindow)
             return
         }
         if let change = results?.apply(event) {
