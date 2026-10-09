@@ -1130,6 +1130,19 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
     },
+    // Spec 010 step 8 (US7): ↩ on a person, label or folder makes its
+    // chip, ⌥↩ the excluded chip. Where `alt+Return` sends in a terminal's
+    // composer and writes a capture: contexts do not overlap.
+    CommandSpec {
+        id: CommandId::ExcludeSuggestion,
+        title: "Exclude suggestion",
+        default_binding: "alt+Return",
+        alternate_bindings: &[],
+        contexts: Context::Search.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
     // Spec 010 step 3: the Mac's results view (R10), a mode of the main
     // window with its own context. History moves between it and the inbox
     // the way a browser's back and forward do -- from either, so the inbox
@@ -2787,6 +2800,7 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             // (spec 010 D23, D25).
             | (ActionId::Builtin(C::ShowAllResults), Platform::Freedesktop)
             | (ActionId::Builtin(C::ForgetRecent), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ExcludeSuggestion), Platform::Freedesktop)
             // And so is the results view (spec 010 D17, D25).
             | (ActionId::Builtin(C::HistoryBack), Platform::Freedesktop)
             | (ActionId::Builtin(C::HistoryForward), Platform::Freedesktop)
@@ -2878,9 +2892,10 @@ mod tests {
 
     /// What only the Mac's search dropdown and results view draw, until
     /// Linux adopts them (spec 010 D23, D25).
-    const NOT_ON_LINUX_YET: [CommandId; 16] = [
+    const NOT_ON_LINUX_YET: [CommandId; 17] = [
         CommandId::ShowAllResults,
         CommandId::ForgetRecent,
+        CommandId::ExcludeSuggestion,
         CommandId::HistoryBack,
         CommandId::HistoryForward,
         CommandId::ResultsConversations,

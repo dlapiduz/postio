@@ -999,3 +999,17 @@ fn relaxations_are_the_results_views_alone() {
     assert!(registry::get(CommandId::BackToWords).available_in(Context::Results));
     assert!(registry::get(CommandId::BackToWords).available_in(Context::Search));
 }
+
+/// Spec 010 step 8 (US7, D25): ⌥↩ in the dropdown excludes the focused
+/// person, label or folder, the Mac's until Linux adopts the dropdown.
+#[test]
+fn exclude_suggestion_is_the_dropdowns_alone() {
+    use postio_config::paths::Platform;
+    use postio_core::ActionId;
+    let id = CommandId::ExcludeSuggestion;
+    let action = ActionId::Builtin(id);
+    assert!(registry::offered_on(action, Platform::Apple));
+    assert!(!registry::offered_on(action, Platform::Freedesktop));
+    assert_eq!(registry::get(id).contexts, Context::Search.as_set());
+    assert_eq!(id.as_str(), "exclude_suggestion");
+}

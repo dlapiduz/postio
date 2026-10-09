@@ -227,6 +227,7 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::BackToWords
         | C::ShowAllResults
         | C::ForgetRecent
+        | C::ExcludeSuggestion
         | C::HistoryBack
         | C::HistoryForward
         | C::ResultsConversations

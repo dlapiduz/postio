@@ -233,6 +233,14 @@ const CONTRACT: &[Row] = &[
         Graphical,
         &[Context::Search],
     ),
+    // Spec 010 step 8: the dropdown's exclusion (US7).
+    with(
+        "exclude_suggestion",
+        "alt+Return",
+        &[],
+        Graphical,
+        &[Context::Search],
+    ),
     with(
         "forget_recent",
         "alt+BackSpace",
@@ -762,4 +770,19 @@ fn relaxations_are_numbers_and_back_to_words_reaches_the_results_on_the_mac() {
         Some(postio_core::ActionId::Builtin(CommandId::BackToWords)),
         "D24: ⌘⌫ in the results"
     );
+}
+
+/// Spec 010 step 8 (US7, D25): ⌥↩ excludes the dropdown's focused person,
+/// label or folder on the Mac; Linux has no dropdown yet.
+#[test]
+fn exclude_suggestion_is_option_return_on_the_mac() {
+    let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
+    let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+    assert_eq!(mac.bindings(CommandId::ExcludeSuggestion), ["alt+Return"]);
+    assert_eq!(
+        mac.command_for(Context::Search, "alt+Return"),
+        Some(postio_core::ActionId::Builtin(CommandId::ExcludeSuggestion))
+    );
+    assert!(linux.bindings(CommandId::ExcludeSuggestion).is_empty());
+    assert!(!linux.offers(CommandId::ExcludeSuggestion));
 }
