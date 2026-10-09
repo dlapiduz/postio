@@ -396,6 +396,27 @@ the completion: `a` under 20 ms at p95.
 
 ---
 
+## Phase 15: The walk's columns, and its cap (D30)
+
+**Goal**: the common word under 50 ms at p95. The walk reads a matched
+message's people, labels and attachment count as columns of its row
+rather than three correlated lookups, and stops at 5,000 matches.
+
+**Independent test**: the full `search_focus` bench, every shape under its
+budget (50 ms a search, 20 ms a completion); a search past the cap reads
+"5,000+" in its count line, footer, tabs, popovers and timeline.
+
+- [x] T159 [P] [US3] Write failing tests in a new `crates/postio-storage/tests/storage_suite/walk_columns.rs`: after every kind of write (a message with every kind of person, labels and files; a bare one; an update that rewrites its child rows; a label attached, attached again, detached, and deleted from every message; recipient and attachment rows moved between messages; a download; a second occurrence of one payload given its parts by the content projection; deletes) `messages.people_ids`, `label_ids` and `attachment_count` say what the walk's three lookups say; a store at `3235e866` migrates with the columns filled from the rows it held, and its triggers then keep them. Red: no such column
+- [x] T160 [US3] Add the three columns to `messages`, the triggers in `crates/postio-storage/src/schema/walk-columns.sql` (an insert appends, a delete or move recounts by key), and the migration from `3235e866` that adds and fills them. Make T159 green; the storage suite's `migrations` case stays green
+- [ ] T161 [P] [US3] Write a failing test in `crates/postio-index/tests/index_suite/driven_join_plan.rs`: no statement a conversation search issues reads `recipients`, `message_labels` or `attachments` per walked row. Red: the walk's three lookups
+- [ ] T162 [US3] Make the walk (`executor::conversations::projection_sql`) read the columns. Make T161 green; every conversation, facet, People and Files test stays green
+- [ ] T163 Measure the sync path's write cost with and without the walk's triggers (`postio-sync`'s `insert_cost_curve`) and record it in D30
+- [ ] T164 [P] [US3] Write failing tests: in `crates/postio-index/tests/index_suite/facets_one_pass.rs`, a match past `CONVERSATION_WALK_CAP` stops at 5,000, flagged `capped`, while `search_hits` still counts to `TOTAL_HITS_CAP`; in `crates/postio-ui/src/search_view.rs`, a capped popover row, month bar and Files and People tab read "5,000+"; in `crates/postio-focus/tests/results.rs`, a capped answer's count line, footer, tabs, popover rows and month bars say "5,000+". Red: the walk read 10,000, the rows were numbers
+- [ ] T165 [US3] Add `postio_search::results::CONVERSATION_WALK_CAP` (5,000) and walk to it; draw popover rows' and month bars' counts as words, floors when capped, and the Files and People tabs' as floors. Make T164 green
+- [ ] T166 Re-run the full `search_focus` bench and record it in the final note's Bench section
+
+---
+
 ## Dependencies
 
 - Phase 1 blocks everything. Phases 2 → 3 → 4 are in order (the dropdown,
@@ -404,7 +425,8 @@ the completion: `a` under 20 ms at p95.
   Phase 3 (the Files tab) and Phase 1 (the search arm). Phase 10 needs
   Phase 3. Phase 12 needs Phase 4 (the popovers) and Phase 7 (relaxations).
   Phase 13 needs Phase 9 (the extractor and its indexer). Phase 14 needs
-  Phase 8. Phase 11 last.
+  Phase 8. Phase 15 needs Phases 3, 9 and 10 (the walk and its tabs).
+  Phase 11 last.
 - Within a phase, a test task precedes its implementation; `[P]` test tasks
   in one phase can be written together.
 - The brief's order is kept for building and screenshots (FR-060); the

@@ -200,6 +200,36 @@ CREATE TABLE IF NOT EXISTS saved_search_seen (
 );
 ",
     },
+    // Spec 010 D30: the search walk's people, labels and attachment count
+    // as columns on `messages`, kept by triggers, so a broad search reads
+    // three columns where it ran three lookups per matched message. Filled
+    // here from the rows the store already holds, once, in the step's
+    // transaction.
+    Migration {
+        from: stamp(0x3235_e866),
+        to: stamp(0x72d3_2a05),
+        statements: concat!(
+            "
+ALTER TABLE messages ADD COLUMN people_ids TEXT;
+
+ALTER TABLE messages ADD COLUMN label_ids TEXT;
+
+ALTER TABLE messages ADD COLUMN attachment_count INTEGER NOT NULL DEFAULT 0;
+
+UPDATE messages SET
+    people_ids = (SELECT group_concat(CASE r.kind WHEN 'from' THEN -r.address_id
+                                                  ELSE r.address_id END)
+                    FROM recipients r
+                   WHERE r.message_id = messages.id
+                     AND r.kind IN ('from', 'to', 'cc', 'bcc')),
+    label_ids = (SELECT group_concat(ml.label_id) FROM message_labels ml
+                  WHERE ml.message_id = messages.id),
+    attachment_count = (SELECT count(*) FROM attachments f
+                         WHERE f.message_id = messages.id);
+",
+            include_str!("schema/walk-columns.sql"),
+        ),
+    },
 ];
 
 /// The steps that carry a store stamped `found` to [`FINGERPRINT`], in the
@@ -819,7 +849,18 @@ CREATE TABLE messages (
     content_key             TEXT,
     -- Whether the content holds a header block, kept here so the header
     -- backfill can find what still needs one without reading contents.
-    body_has_headers        INTEGER NOT NULL DEFAULT 0
+    body_has_headers        INTEGER NOT NULL DEFAULT 0,
+    -- What a search walk reads of each matched message besides its own
+    -- columns (spec 010 D30), kept by the triggers in `walk-columns.sql`
+    -- so the walk reads three columns instead of three lookups a row.
+    -- `people_ids`: the address ids of its From, To, Cc and Bcc rows,
+    -- comma-separated, a From negated -- exactly the `group_concat` the
+    -- lookup made, so the reader parses what it always parsed; NULL with
+    -- nobody. `label_ids`: its labels' ids, the same way. Neither has an
+    -- order. `attachment_count`: its `attachments` rows.
+    people_ids              TEXT,
+    label_ids               TEXT,
+    attachment_count        INTEGER NOT NULL DEFAULT 0
 );
 
 -- The body folded for the full-text index, one row per indexed message.
@@ -1326,7 +1367,8 @@ BEGIN
      WHERE id = NEW.mailbox_id;
 END;;"#,
     include_str!("schema/content-locations.sql"),
-    include_str!("schema/content-projection.sql")
+    include_str!("schema/content-projection.sql"),
+    include_str!("schema/walk-columns.sql")
 );
 
 /// What the schema declares, as names, without an engine.
