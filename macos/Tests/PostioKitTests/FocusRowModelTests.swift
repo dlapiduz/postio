@@ -161,6 +161,10 @@ import Testing
         // A sequence is one cap, as the strip's `g o` is on screen 01.
         #expect(KeyCapSpelling.cap("g o") == "g o")
         #expect(KeyCapSpelling.cap("cmd+k") == "⌘K")
+        // A pair, as `hints::pair` spells it (the results' "j/k move"):
+        // each key its own spelling, never a chord's capital.
+        #expect(KeyCapSpelling.cap("j/k") == "j/k")
+        #expect(KeyCapSpelling.cap("/") == "/")
         #expect(KeyCapSpelling.cap(nil) == nil)
     }
 

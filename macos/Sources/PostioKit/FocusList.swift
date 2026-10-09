@@ -63,6 +63,12 @@ public enum KeyCapSpelling {
         return binding.split(separator: " ").map { press in
             let press = String(press)
             if press.count == 1 { return press }
+            // A pair (`hints::pair`'s "j/k"): each key spelled on its own.
+            if press.contains("/"), !press.contains("+") {
+                return press.split(separator: "/").map { key in
+                    key.count == 1 ? String(key) : (MenuPlan.accelerator(from: String(key)) ?? String(key))
+                }.joined(separator: "/")
+            }
             return MenuPlan.accelerator(from: press) ?? press
         }.joined(separator: " ")
     }
