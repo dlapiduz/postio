@@ -306,3 +306,135 @@ async fn the_facets_walk_the_match_once_per_scope() {
         counts.statements
     );
 }
+
+/// A corpus of `size` messages for the conversation search's budget: every
+/// one says "update" (the common word), one in five "budget", four senders
+/// take turns, three messages make a thread, and one in four carries the
+/// Atlas label. Loaded with the metadata index deferred and written once,
+/// which is what keeps two thousand messages to a second or two.
+async fn conversation_corpus(size: usize) -> (postio_storage::Store, postio_storage::Checkout) {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let mut atlas = postio_model::Label::new(account.id, "Atlas");
+    let atlas = postio_storage::repository::LabelRepository::new(&connection)
+        .create(&mut atlas)
+        .await
+        .expect("a label");
+
+    connection.execute("BEGIN", ()).await.expect("begin");
+    postio_index::index::defer_documents(&connection)
+        .await
+        .expect("defer the index");
+    let messages = MessageRepository::new(&connection);
+    let threads = postio_storage::repository::ThreadRepository::new(&connection);
+    let mut ids = Vec::with_capacity(size);
+    let mut thread = None;
+    for nth in 0..size {
+        let received = Utc.with_ymd_and_hms(2026, 8, 20, 9, 0, 0).unwrap()
+            - chrono::Duration::hours(nth as i64);
+        let mut message = Message::new(account.id, inbox, received);
+        let sender = format!("sender{}", nth % 4);
+        message.from = vec![EmailAddress::new(
+            Some(sender.as_str()),
+            format!("{sender}@example.com"),
+        )];
+        message.to = vec![EmailAddress::new(Some("Me"), "me@example.com")];
+        message.subject = Some(format!("Weekly report {nth}"));
+        messages.create(&mut message).await.expect("create message");
+        if nth % 3 == 0 {
+            let mut created = postio_model::Thread::new(account.id);
+            thread = Some(threads.create(&mut created).await.expect("a thread"));
+        }
+        threads
+            .add_message(thread.expect("a thread"), message.id)
+            .await
+            .expect("join it");
+        if nth % 4 == 0 {
+            postio_storage::repository::LabelRepository::new(&connection)
+                .attach(message.id, atlas)
+                .await
+                .expect("label it");
+        }
+        let body = if nth % 5 == 0 {
+            format!("an update on the budget, number {nth}")
+        } else {
+            format!("an update, number {nth}")
+        };
+        postio_index::index::index_body(&connection, message.id.get(), Some(&body))
+            .await
+            .expect("index body");
+        ids.push(message.id);
+    }
+    postio_index::index::write_documents(&connection, &ids)
+        .await
+        .expect("index the documents");
+    connection.execute("COMMIT", ()).await.expect("commit");
+    (database, connection)
+}
+
+#[tokio::test]
+async fn a_conversation_search_costs_the_same_statements_whatever_the_corpus() {
+    use postio_index::executor::{ConversationRequest, search_conversations};
+    use postio_search::results::ConversationOrder;
+
+    const SHAPES: [&str; 6] = [
+        "budget",
+        "from:sender1",
+        "from:sender1 budget",
+        "update",
+        "label:atlas budget",
+        "budget -sender2",
+    ];
+    let now = Utc.with_ymd_and_hms(2026, 8, 21, 12, 0, 0).unwrap();
+    let mut costs: Vec<Vec<usize>> = Vec::new();
+    for size in [100, 2_000] {
+        let (_database, connection) = conversation_corpus(size).await;
+        install(&connection);
+        let mut row = Vec::new();
+        for shape in SHAPES {
+            for (order, limit) in [
+                (ConversationOrder::BestMatch, 4),
+                (ConversationOrder::BestMatch, 50),
+                (ConversationOrder::Newest, 50),
+            ] {
+                let query = parse(shape, today().await);
+                let request = ConversationRequest {
+                    account: AccountScope::Unified,
+                    query: &query,
+                    order,
+                    offset: 0,
+                    limit,
+                    today: today().await,
+                };
+                let mut total = 0;
+                let counts: Counts = counted_async(async || {
+                    total = search_conversations(&connection, &request, now)
+                        .await
+                        .expect("a conversation search")
+                        .total;
+                })
+                .await;
+                assert!(total > 0, "{shape:?} matched nothing in {size}");
+                assert!(
+                    counts.statements <= 5,
+                    "{shape:?} ({order:?}, {limit}) took {} statements over {size} \
+                     messages; research R2's budget is five: the walk, the attachment \
+                     text, the page's checks, the hydrate, the folders",
+                    counts.statements
+                );
+                row.push(counts.statements);
+            }
+        }
+        costs.push(row);
+    }
+    assert_eq!(
+        costs[0], costs[1],
+        "statements per shape over 100 messages, then over 2,000 ({SHAPES:?}, three \
+         orders and pages each): a conversation search that reads more often the more \
+         mail there is cannot keep its 50 ms"
+    );
+}
