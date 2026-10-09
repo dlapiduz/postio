@@ -83,5 +83,16 @@ postio-extract = { workspace = true }
 # as clients actually quote it (spec 010 T028).
 postio-model = { workspace = true, features = ["test-corpus"] }
 
+# Platform sections at the foot, after every plain table
+# (`check-target-sections-last.py`).
+#
+# The extraction helper's request goes in over a socket that cannot raise
+# SIGPIPE (spec 010 D28): `SO_NOSIGPIPE` on Apple, `MSG_NOSIGNAL` elsewhere,
+# through rustix's safe calls so `forbid(unsafe_code)` holds. The Mac app's
+# `main` is Swift's, which does not ignore the signal as Rust's does. The
+# version already in the graph; `net` is the only feature it needs.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.5", default-features = false, features = ["std", "net"] }
+
 [lints]
 workspace = true
