@@ -962,6 +962,169 @@ pub fn thread_size(messages: u32) -> Option<String> {
     (messages > 1).then(|| format!("thread of {messages}"))
 }
 
+// ---------------------------------------------------------------------------
+// No results (spec 010 step 7, design §3.10, screen 13)
+// ---------------------------------------------------------------------------
+
+/// The sentence under the no-results title.
+pub const NO_RESULTS_BODY: &str = "Each line below loosens one filter and shows how many \
+                                   conversations you would get. Pick one, or press its number.";
+
+/// The sentence under the title when no single change finds anything.
+pub const NO_RELAXATIONS_BODY: &str =
+    "Loosening any one of them still finds nothing. Clear the filters to start from the words.";
+
+/// Where the looser searches go while they are counted.
+pub const COUNTING_RELAXATIONS: &str = "Counting looser searches\u{2026}";
+
+/// The field's hint while nothing matches, after its key: "⌘⌫ clears
+/// filters" (D24).
+pub const CLEARS_FILTERS: &str = "clears filters";
+
+/// The no-results title (§3.10): "Nothing matches all four filters", for
+/// the `terms` the query holds -- its filters and its words.
+pub fn nothing_matches(terms: usize) -> String {
+    match terms {
+        0 | 1 => "Nothing matches this search".to_owned(),
+        2 => "Nothing matches both filters".to_owned(),
+        n => format!("Nothing matches all {} filters", small_number(n)),
+    }
+}
+
+/// `n` in words up to ten, the way a sentence says it: "four".
+fn small_number(n: usize) -> String {
+    const WORDS: [&str; 11] = [
+        "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+    ];
+    WORDS
+        .get(n)
+        .map_or_else(|| n.to_string(), |word| (*word).to_owned())
+}
+
+/// What one looser search changes, in words (§3.10): "Remove “before
+/// March”", "Anyone, not just Ada Moreno", "Look for “budget v4”
+/// anywhere, not just the subject". `query` is the search that found
+/// nothing, whose token the relaxation names; `name_of` gives a person's
+/// name for an address.
+pub fn relaxation_line(
+    relaxation: &postio_search::relax::Relaxation,
+    query: &postio_search::ParsedQuery,
+    name_of: &dyn Fn(&str) -> Option<String>,
+    today: chrono::NaiveDate,
+) -> String {
+    use postio_search::query::TokenKind;
+    use postio_search::relax::Loosen;
+    let quoted = |what: &str| format!("\u{201c}{what}\u{201d}");
+    let remove = |what: &str| format!("Remove {}", quoted(what));
+    let (Loosen::Drop { token } | Loosen::Anywhere { token } | Loosen::FolderNotLabel { token }) =
+        relaxation.loosen;
+    let Some(token) = query.tokens().get(token) else {
+        return relaxation.query.clone();
+    };
+    let clause = match &token.kind {
+        TokenKind::Filter(clause) => clause,
+        _ => return remove(&token.raw),
+    };
+    let filter = &clause.filter;
+    match relaxation.loosen {
+        Loosen::Anywhere { .. } => match filter {
+            Filter::Subject(words) => {
+                format!("Look for {} anywhere, not just the subject", quoted(words))
+            }
+            _ => remove(&token.raw),
+        },
+        Loosen::FolderNotLabel { .. } => match filter {
+            Filter::Label(name) => {
+                format!("Look for a folder called {}, not a label", quoted(name))
+            }
+            _ => remove(&token.raw),
+        },
+        Loosen::Drop { .. } if clause.negated => remove(&token.raw),
+        Loosen::Drop { .. } => match filter {
+            Filter::From(who) => format!(
+                "Anyone, not just {}",
+                name_of(who)
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| who.clone())
+            ),
+            Filter::To(who) => format!(
+                "To anyone, not just {}",
+                name_of(who)
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| who.clone())
+            ),
+            Filter::Subject(words) => format!("Any subject, not just {}", quoted(words)),
+            Filter::Label(name) => format!("Any label, not just {}", quoted(name)),
+            Filter::In(name) => format!("Any folder, not just {}", quoted(name)),
+            Filter::After(_) | Filter::Before(_) => {
+                let label = filter_button_label(
+                    FilterKind::Date,
+                    std::slice::from_ref(filter),
+                    name_of,
+                    today,
+                );
+                let mut chars = label.chars();
+                let label = match chars.next() {
+                    Some(first) => first.to_lowercase().chain(chars).collect(),
+                    None => label,
+                };
+                remove(&label)
+            }
+            Filter::HasAttachment => remove("has attachment"),
+            Filter::HasAction => remove("has action"),
+            Filter::Is(state) => remove(match state {
+                State::Unread => "unread",
+                State::Read => "read",
+                State::Flagged => "flagged",
+                State::Bulk => "bulk",
+                State::Automated => "automated",
+            }),
+            _ => remove(&token.raw),
+        },
+    }
+}
+
+/// A looser search's count, on its row's right: "4 conversations".
+pub fn relaxation_count(n: u64) -> String {
+    conversations(n, false)
+}
+
+/// The line under the looser searches (§3.10): how much was searched.
+/// "all" only when every message's body is indexed, and "including
+/// attachment contents" only when every attachment on this Mac has been
+/// read (US6 scenario 2) -- never a claim the index cannot back. Searching
+/// the server is not offered (S4).
+pub fn searched(messages: u64, corpus_complete: bool, contents_complete: bool) -> String {
+    let what = match (messages, corpus_complete) {
+        (1, true) => "the 1 message".to_owned(),
+        (1, false) => "1 message".to_owned(),
+        (n, true) => format!("all {} messages", grouped(n)),
+        (n, false) => format!("{} messages", grouped(n)),
+    };
+    let contents = if contents_complete {
+        ", including attachment contents"
+    } else {
+        ""
+    };
+    let rest = if corpus_complete {
+        ""
+    } else {
+        " Some are still being indexed."
+    };
+    format!("Searched {what} on this Mac{contents}.{rest}")
+}
+
+/// The footer's right while nothing matches (screen 13): "Searched
+/// 18,204 messages · 41 ms".
+pub fn searched_footer(messages: u64, elapsed: Duration) -> String {
+    let noun = if messages == 1 { "message" } else { "messages" };
+    let took = match elapsed.as_millis() {
+        0 => "<1 ms".to_owned(),
+        ms => format!("{ms} ms"),
+    };
+    format!("Searched {} {noun} \u{b7} {took}", grouped(messages))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1637,6 +1800,106 @@ mod tests {
             named("has:attachment"),
             "has:attachment",
             "nothing to say it better"
+        );
+    }
+
+    // Screen 13 (§3.10): the no-results page's words.
+    #[test]
+    fn nothing_matches_says_how_many_filters_found_nothing_together() {
+        assert_eq!(nothing_matches(4), "Nothing matches all four filters");
+        assert_eq!(nothing_matches(2), "Nothing matches both filters");
+        assert_eq!(nothing_matches(12), "Nothing matches all 12 filters");
+        assert_eq!(nothing_matches(1), "Nothing matches this search");
+        assert_eq!(nothing_matches(0), "Nothing matches this search");
+    }
+
+    #[test]
+    fn a_relaxation_says_the_one_thing_it_changes() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 9, 26).unwrap();
+        let ada = |address: &str| address.starts_with("ada").then(|| "Ada Moreno".to_owned());
+        let query = postio_search::parse(
+            "from:ada has:attachment before:2026-03-01 subject:\"budget v4\"",
+            today,
+        );
+        let lines: Vec<String> = postio_search::relax::relax(&query)
+            .iter()
+            .map(|relaxation| relaxation_line(relaxation, &query, &ada, today))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "Anyone, not just Ada Moreno",
+                "Remove \u{201c}has attachment\u{201d}",
+                "Remove \u{201c}before March\u{201d}",
+                "Any subject, not just \u{201c}budget v4\u{201d}",
+                "Look for \u{201c}budget v4\u{201d} anywhere, not just the subject",
+            ],
+            "screen 13's, in the query's order"
+        );
+
+        let other = postio_search::parse(
+            "label:Atlas after:2026-07-01 -from:ben@example.org is:unread atlas budget",
+            today,
+        );
+        let lines: Vec<String> = postio_search::relax::relax(&other)
+            .iter()
+            .map(|relaxation| relaxation_line(relaxation, &other, &ada, today))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "Any label, not just \u{201c}Atlas\u{201d}",
+                "Look for a folder called \u{201c}Atlas\u{201d}, not a label",
+                "Remove \u{201c}since July\u{201d}",
+                "Remove \u{201c}-from:ben@example.org\u{201d}",
+                "Remove \u{201c}unread\u{201d}",
+                "Remove \u{201c}atlas\u{201d}",
+                "Remove \u{201c}budget\u{201d}",
+            ]
+        );
+        assert_eq!(relaxation_count(4), "4 conversations");
+        assert_eq!(relaxation_count(1), "1 conversation");
+        assert_eq!(relaxation_count(18_204), "18,204 conversations");
+    }
+
+    #[test]
+    fn searched_claims_attachment_contents_only_once_they_are_read() {
+        assert_eq!(
+            searched(18_204, true, true),
+            "Searched all 18,204 messages on this Mac, including attachment contents."
+        );
+        assert_eq!(
+            searched(18_204, true, false),
+            "Searched all 18,204 messages on this Mac.",
+            "US6 scenario 2: contents not yet extracted"
+        );
+        assert_eq!(
+            searched(18_204, false, false),
+            "Searched 18,204 messages on this Mac. Some are still being indexed.",
+            "bodies still backfilling: not \u{201c}all\u{201d}"
+        );
+        assert_eq!(
+            searched(1, true, false),
+            "Searched the 1 message on this Mac."
+        );
+        for each in [
+            searched(18_204, true, true),
+            searched(18_204, false, true),
+            searched_footer(18_204, Duration::from_millis(41)),
+        ] {
+            assert!(
+                !each.contains("server") && !each.contains('\u{2325}'),
+                "never the server line (S4): {each}"
+            );
+        }
+        assert_eq!(
+            searched_footer(18_204, Duration::from_millis(41)),
+            "Searched 18,204 messages \u{b7} 41 ms"
+        );
+        assert_eq!(
+            NO_RESULTS_BODY,
+            "Each line below loosens one filter and shows how many conversations you would \
+             get. Pick one, or press its number."
         );
     }
 }
