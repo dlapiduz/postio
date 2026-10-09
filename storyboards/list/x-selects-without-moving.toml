@@ -7,6 +7,9 @@
 # reading. The rule is the shared controller's (postio-focus), so the Mac
 # and Linux apps cannot disagree on it.
 apps   = ["focus"]
+# Red on the GTK app until it drives this flow through postio-focus (#1807):
+# the catalogue expects it to fail there and says when it starts passing.
+proof  = "open"
 source = { kind = "flow", ref = "x selects without moving" }
 
 [[step]]

@@ -6,6 +6,9 @@
 # press -- the selection. Closing the message must not move the cursor,
 # scroll the list, or drop the rows a person had selected before reading.
 apps   = ["focus"]
+# Red on the GTK app until it drives this flow through postio-focus (#1807):
+# the catalogue expects it to fail there and says when it starts passing.
+proof  = "open"
 source = { kind = "flow", ref = "Esc returns to the same row" }
 
 [[step]]
