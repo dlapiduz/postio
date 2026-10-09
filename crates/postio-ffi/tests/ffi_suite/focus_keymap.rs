@@ -125,6 +125,9 @@ async fn a_rebound_key_is_in_the_key_map_and_the_menu_at_once() {
     session.shutdown();
 }
 
+// A Mac's bindings, so asked of a Mac's session: elsewhere the session
+// resolves Freedesktop's keys, where ⌘ is not the primary modifier.
+#[cfg(target_os = "macos")]
 #[test]
 fn command_w_does_not_quit_on_the_mac() {
     // `quit`'s alternate `mod+w` is GTK's (spec 007 T216: one window, so
