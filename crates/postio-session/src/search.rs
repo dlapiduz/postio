@@ -18,7 +18,10 @@ use postio_index::{SearchRequest, search};
 use postio_model::{AccountScope, AddressId, EmailAddress, LabelId, MailboxId, MessageId};
 use postio_search::facets::Scope;
 use postio_search::passage::FirstLine;
-use postio_search::results::{ConversationOrder, ConversationResults, FacetNames, Match, Source};
+use postio_search::results::{
+    ConversationKey, ConversationMatch, ConversationOrder, ConversationResults, FacetNames, Match,
+    Source,
+};
 use postio_search::{ParsedQuery, ResultOrder, SearchResults};
 use postio_storage::Checkout;
 
@@ -424,69 +427,99 @@ pub async fn passages(
     answered
 }
 
+/// A body told apart into the person's own words and the history they
+/// quoted (D6), and whether the text opens with either.
+struct Told {
+    own: String,
+    quoted: String,
+    opens_own: bool,
+    opens_quoted: bool,
+}
+
+impl Told {
+    fn of(text: &str) -> Self {
+        use postio_body::quote::{Stretch, text_stretches};
+
+        let stretches = text_stretches(text);
+        let mut own = String::new();
+        let mut quoted = String::new();
+        let mut opens_own = false;
+        for (at, stretch) in stretches.iter().enumerate() {
+            match *stretch {
+                Stretch::Own(words) => {
+                    // "On Fri, Ada wrote:" says who wrote the quote under it:
+                    // neither the person's words nor the history (the line
+                    // the reader sets apart as the attribution).
+                    let words = match stretches.get(at + 1) {
+                        Some(Stretch::Quoted(_)) => postio_body::quote::without_attribution(words),
+                        _ => words,
+                    };
+                    opens_own |= at == 0 && !words.trim().is_empty();
+                    own.push_str(words);
+                }
+                Stretch::Quoted(lines) => quoted.push_str(&unquoted(lines)),
+            }
+        }
+        Told {
+            own,
+            quoted,
+            opens_own,
+            opens_quoted: matches!(stretches.first(), Some(Stretch::Quoted(_))),
+        }
+    }
+
+    /// The person's own words matched, with their passage.
+    fn own_match(&self, terms: &[String], first_line: FirstLine) -> Option<Match> {
+        found(&self.own, terms).then(|| Match {
+            source: Source::Body,
+            passage: postio_search::passage::cut(
+                &self.own,
+                terms,
+                if self.opens_own {
+                    first_line
+                } else {
+                    FirstLine::Any
+                },
+            ),
+            when: None,
+        })
+    }
+
+    /// The quoted history matched, with its passage.
+    fn quoted_match(&self, terms: &[String], first_line: FirstLine) -> Option<Match> {
+        found(&self.quoted, terms).then(|| Match {
+            source: Source::Quoted,
+            passage: postio_search::passage::cut(
+                &self.quoted,
+                terms,
+                if self.opens_quoted {
+                    first_line
+                } else {
+                    FirstLine::Any
+                },
+            ),
+            when: None,
+        })
+    }
+}
+
+/// Whether `terms` match anywhere in `words`, as the highlighter finds them.
+fn found(words: &str, terms: &[String]) -> bool {
+    !postio_search::highlight::find(words, terms).is_empty()
+}
+
 /// A body's matches: where in the person's own words, and where in what
 /// they quoted, each with its passage.
 fn body_matches(text: &str, terms: &[String], first_line: FirstLine) -> Vec<Match> {
-    use postio_body::quote::{Stretch, text_stretches};
-    use postio_search::passage::cut;
-
-    let stretches = text_stretches(text);
-    let mut own = String::new();
-    let mut quoted = String::new();
     // The message's first line is the row's preview (D7): never the
     // passage, in whichever kind of stretch it falls -- unless it was an
     // attribution, which neither kind keeps.
-    let mut opens_own = false;
-    for (at, stretch) in stretches.iter().enumerate() {
-        match *stretch {
-            Stretch::Own(words) => {
-                // "On Fri, Ada wrote:" says who wrote the quote under it:
-                // neither the person's words nor the history (the line
-                // the reader sets apart as the attribution).
-                let words = match stretches.get(at + 1) {
-                    Some(Stretch::Quoted(_)) => postio_body::quote::without_attribution(words),
-                    _ => words,
-                };
-                opens_own |= at == 0 && !words.trim().is_empty();
-                own.push_str(words);
-            }
-            Stretch::Quoted(lines) => quoted.push_str(&unquoted(lines)),
-        }
-    }
-    let opens_quoted = matches!(stretches.first(), Some(Stretch::Quoted(_)));
-
-    let found = |words: &str| !postio_search::highlight::find(words, terms).is_empty();
-    let mut matches = Vec::new();
-    if found(&own) {
-        matches.push(Match {
-            source: Source::Body,
-            passage: cut(
-                &own,
-                terms,
-                if opens_own {
-                    first_line
-                } else {
-                    FirstLine::Any
-                },
-            ),
-            when: None,
-        });
-    }
-    if found(&quoted) {
-        matches.push(Match {
-            source: Source::Quoted,
-            passage: cut(
-                &quoted,
-                terms,
-                if opens_quoted {
-                    first_line
-                } else {
-                    FirstLine::Any
-                },
-            ),
-            when: None,
-        });
-    }
+    let told = Told::of(text);
+    let mut matches: Vec<Match> = told
+        .own_match(terms, first_line)
+        .into_iter()
+        .chain(told.quoted_match(terms, first_line))
+        .collect();
     if matches.is_empty() {
         // The index matched what the highlighter cannot point at -- a
         // stem, a fold. Still the body; nothing to cut.
@@ -497,6 +530,237 @@ fn body_matches(text: &str, terms: &[String], first_line: FirstLine) -> Vec<Matc
         });
     }
     matches
+}
+
+/// How many of a conversation's messages Quick Look reads, newest kept: a
+/// body read each, and a conversation of hundreds is read in its window.
+const MATCHED_MESSAGES: usize = 50;
+
+/// Every match in one conversation, for Quick Look (spec 010 US4,
+/// FR-028): each message's own words, oldest first, with who wrote them
+/// and when; its quoted history when the conversation does not hold what
+/// it quotes; the file names that match; and the subject, once, last.
+///
+/// # A quote is said once
+///
+/// A reply quotes the message before it, and that message is in the
+/// conversation with its own card: the quote would be the same words a
+/// second time. A quoted passage found in another message's own words is
+/// left out, and one that is not -- the conversation never held the mail
+/// it quotes -- is the only place those words are, and stays.
+///
+/// # Where, not whether
+///
+/// The words are found where the highlighter finds them, as the rows'
+/// passages are, over every message of the conversation the query found;
+/// the query's other terms (`from:`, dates) chose the conversation, not
+/// which of its messages are shown. The passages are cut as the results'
+/// rows cut theirs ([`FirstLine::Avoided`]): around a match, never the
+/// line that introduces a quote.
+///
+/// Empty when the conversation could not be read: Quick Look keeps what
+/// the row already knew.
+pub async fn conversation_matches(
+    connection: &Checkout,
+    query: &ParsedQuery,
+    key: ConversationKey,
+) -> Vec<ConversationMatch> {
+    match read_matches(connection, query, key).await {
+        Ok(found) => found,
+        Err(error) => {
+            tracing::warn!(%error, "a conversation's matches could not be read");
+            Vec::new()
+        }
+    }
+}
+
+async fn read_matches(
+    connection: &Checkout,
+    query: &ParsedQuery,
+    key: ConversationKey,
+) -> postio_storage::Result<Vec<ConversationMatch>> {
+    use postio_search::query::Filter;
+    use postio_storage::repository::{MessageRepository, ThreadOrder, ThreadRepository};
+
+    let mut members = match key {
+        ConversationKey::Thread(thread) => {
+            ThreadRepository::new(connection)
+                .messages(thread, ThreadOrder::Oldest)
+                .await?
+        }
+        ConversationKey::Lone(message) => {
+            MessageRepository::new(connection)
+                .rows_for(&[message])
+                .await?
+        }
+    };
+    if members.len() > MATCHED_MESSAGES {
+        members.drain(..members.len() - MATCHED_MESSAGES);
+    }
+
+    // The words, as the index matched a body by; a subject and a file name
+    // also by their own operators, as the executor tags them.
+    let words: Vec<String> = query
+        .searchable_terms()
+        .filter(|term| !term.negated)
+        .map(|term| term.value.clone())
+        .filter(|value| !value.is_empty())
+        .collect();
+    let with = |pick: fn(&Filter) -> Option<&String>| {
+        let mut terms = words.clone();
+        terms.extend(
+            query
+                .filters()
+                .filter(|clause| !clause.negated)
+                .filter_map(|clause| pick(&clause.filter).cloned()),
+        );
+        terms
+    };
+    let subject_terms = with(|filter| match filter {
+        Filter::Subject(value) => Some(value),
+        _ => None,
+    });
+    let file_terms = with(|filter| match filter {
+        Filter::Filename(value) => Some(value),
+        _ => None,
+    });
+
+    let mut told = Vec::with_capacity(members.len());
+    for member in &members {
+        let text = if words.is_empty() {
+            None
+        } else {
+            let body = crate::reading::load_body(connection, member.id).await;
+            postio_index::index::indexable_text(&body)
+        };
+        told.push(text.as_deref().map(Told::of));
+    }
+    let files = if file_terms.is_empty() {
+        Vec::new()
+    } else {
+        file_names(connection, members.iter().map(|member| member.id)).await?
+    };
+
+    let mut found = Vec::new();
+    for (at, member) in members.iter().enumerate() {
+        let when = Some(member.received_at);
+        if let Some(body) = &told[at] {
+            if let Some(mut own) = body.own_match(&words, FirstLine::Avoided) {
+                own.when = when;
+                found.push(ConversationMatch {
+                    message: Some(member.id),
+                    from: member.from.clone(),
+                    found: own,
+                });
+            }
+            let quoted = body
+                .quoted_match(&words, FirstLine::Avoided)
+                .filter(|quoted| {
+                    !told.iter().enumerate().any(|(other, body)| {
+                        other != at && body.as_ref().is_some_and(|body| said_in(quoted, &body.own))
+                    })
+                });
+            if let Some(quoted) = quoted {
+                found.push(ConversationMatch {
+                    message: Some(member.id),
+                    from: None,
+                    found: quoted,
+                });
+            }
+        }
+        for (_, attachment, name) in files.iter().filter(|(of, _, _)| *of == member.id) {
+            let marks = postio_search::highlight::find(name, &file_terms);
+            if marks.is_empty() {
+                continue;
+            }
+            found.push(ConversationMatch {
+                message: Some(member.id),
+                from: member.from.clone(),
+                found: Match {
+                    source: Source::FileName {
+                        attachment: *attachment,
+                        name: name.clone(),
+                    },
+                    passage: Some(whole(name, marks)),
+                    when,
+                },
+            });
+        }
+    }
+    let subject = members.iter().find_map(|member| {
+        let subject = member.subject.as_deref()?;
+        let marks = postio_search::highlight::find(subject, &subject_terms);
+        (!marks.is_empty()).then(|| whole(subject, marks))
+    });
+    if let Some(subject) = subject {
+        found.push(ConversationMatch {
+            message: None,
+            from: None,
+            found: Match {
+                source: Source::Subject,
+                passage: Some(subject),
+                when: None,
+            },
+        });
+    }
+    Ok(found)
+}
+
+/// Whether a quoted match's words are among `own`, a message's own words:
+/// the quote is of that message. Compared with case and spacing folded,
+/// because a quote rewraps the lines it quotes.
+fn said_in(quoted: &Match, own: &str) -> bool {
+    let fold = |text: &str| {
+        text.split_whitespace()
+            .map(str::to_lowercase)
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    quoted
+        .passage
+        .as_ref()
+        .is_some_and(|passage| fold(own).contains(&fold(&passage.text)))
+}
+
+/// `text` whole as a passage, `marks` highlighted: a subject, a file name.
+fn whole(text: &str, marks: Vec<std::ops::Range<usize>>) -> postio_search::results::Passage {
+    postio_search::results::Passage {
+        text: text.to_owned(),
+        ranges: marks,
+        elided_start: false,
+        elided_end: false,
+    }
+}
+
+/// The named attachments of `messages`: each one's message, id and name.
+async fn file_names(
+    connection: &Checkout,
+    messages: impl Iterator<Item = MessageId>,
+) -> postio_storage::Result<Vec<(MessageId, postio_model::AttachmentId, String)>> {
+    use postio_storage::sql::{self, RowExt as _};
+    let ids = format!(
+        "[{}]",
+        messages
+            .map(|id| id.get().to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    sql::all(
+        connection,
+        "SELECT f.message_id, f.id, f.filename
+           FROM json_each(?1) j JOIN attachments f ON f.message_id = j.value
+          WHERE f.filename IS NOT NULL
+          ORDER BY f.message_id, f.id",
+        [ids.as_str()],
+        |row| {
+            Ok((
+                MessageId::new(row.int(0)?),
+                postio_model::AttachmentId::new(row.int(1)?),
+                row.text(2)?,
+            ))
+        },
+    )
+    .await
 }
 
 /// Quoted lines without their `>` markers: what was said, not how it was

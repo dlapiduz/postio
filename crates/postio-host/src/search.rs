@@ -106,6 +106,22 @@ pub async fn passages(
     }
 }
 
+/// Every match in the conversation `key`, for Quick Look, on one reader
+/// turn. Empty when the store could not be read.
+pub async fn conversation_matches(
+    database: &Store,
+    query: &ParsedQuery,
+    key: postio_search::results::ConversationKey,
+) -> Vec<postio_search::results::ConversationMatch> {
+    match database.read().await {
+        Ok(reader) => postio_session::search::conversation_matches(&reader, query, key).await,
+        Err(error) => {
+            tracing::warn!(%error, "no connection to read a conversation's matches with");
+            Vec::new()
+        }
+    }
+}
+
 /// The ways out of a search that found nothing, counted on one reader turn.
 /// Empty when none would find anything, or when they could not be counted:
 /// an offer that cannot be made is not made.

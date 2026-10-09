@@ -339,3 +339,179 @@ async fn a_passage_is_never_the_line_that_introduces_a_quote() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Every match in one conversation, for Quick Look (spec 010 US4, T087)
+// ---------------------------------------------------------------------------
+
+/// The mailing-list thread's `fixtures`, stored with their bodies, indexed
+/// and threaded as sync files them: one conversation.
+async fn thread_of(fixtures: &[&str]) -> (World, postio_model::ThreadId, Vec<MessageId>) {
+    let world = world().await;
+    let mut ids = Vec::new();
+    let mut thread = None;
+    for fixture in fixtures {
+        let id = store_fixture(&world.connection, world.account, world.inbox, fixture).await;
+        let message = MessageRepository::new(&world.connection)
+            .get(id)
+            .await
+            .expect("read back")
+            .expect("stored");
+        let threaded =
+            postio_storage::repository::ThreadingRepository::new(&world.connection, world.account)
+                .thread(&message)
+                .await
+                .expect("threaded");
+        assert!(
+            thread.is_none_or(|thread| thread == threaded.thread_id),
+            "{fixture} joins the conversation"
+        );
+        thread = Some(threaded.thread_id);
+        ids.push(id);
+    }
+    (world, thread.expect("a thread"), ids)
+}
+
+async fn conversation_matches(
+    world: &World,
+    text: &str,
+    key: postio_search::results::ConversationKey,
+) -> Vec<postio_search::results::ConversationMatch> {
+    postio_session::search::conversation_matches(&world.connection, &parse(text), key).await
+}
+
+/// What each match is, in order: its message, where, and who wrote it.
+fn places(
+    found: &[postio_search::results::ConversationMatch],
+) -> Vec<(Option<MessageId>, Source, Option<String>)> {
+    found
+        .iter()
+        .map(|each| {
+            (
+                each.message,
+                each.found.source.clone(),
+                each.from.as_ref().and_then(|who| who.name.clone()),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_conversations_matches_come_oldest_first_each_with_its_passage() {
+    let (world, thread, ids) = thread_of(&[
+        "list-thread-01-root",
+        "list-thread-02-reply",
+        "list-thread-04-reply-deep",
+    ])
+    .await;
+    let found = conversation_matches(
+        &world,
+        "subscriber",
+        postio_search::results::ConversationKey::Thread(thread),
+    )
+    .await;
+    // Ada proposed it, Quinn answered it. Each reply also quotes the one
+    // before; a quote of a message the conversation holds is that message's
+    // card already, not a second one.
+    assert_eq!(
+        places(&found),
+        [
+            (Some(ids[0]), Source::Body, Some("Ada Norwood".to_owned())),
+            (Some(ids[1]), Source::Body, Some("Quinn Abara".to_owned())),
+        ]
+    );
+    for each in &found {
+        assert_eq!(highlighted(&each.found), ["subscriber"]);
+        assert!(each.found.when.is_some(), "when it was said");
+    }
+    let quinn = &found[1].found.passage.as_ref().expect("a passage").text;
+    assert!(
+        quinn.contains("Pure subscriber means we need"),
+        "Quinn's own words, not the quote of Ada's: {quinn:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_quote_of_mail_the_conversation_does_not_hold_is_an_earlier_reply() {
+    // Ada's proposal never arrived here: Quinn's quote of it is the only
+    // place her words are.
+    let (world, thread, ids) =
+        thread_of(&["list-thread-02-reply", "list-thread-04-reply-deep"]).await;
+    let found = conversation_matches(
+        &world,
+        "subscriber",
+        postio_search::results::ConversationKey::Thread(thread),
+    )
+    .await;
+    assert_eq!(
+        places(&found),
+        [
+            (Some(ids[0]), Source::Body, Some("Quinn Abara".to_owned())),
+            (Some(ids[0]), Source::Quoted, None),
+        ],
+        "who wrote a quote is not known: not the person quoting it"
+    );
+    let quoted = &found[1].found;
+    assert_eq!(quoted.when, None);
+    let text = &quoted.passage.as_ref().expect("a passage").text;
+    assert!(
+        text.contains("signage controller a pure subscriber"),
+        "{text:?}"
+    );
+    assert!(!text.contains('>'), "{text:?}");
+    assert!(!text.contains("wrote:"), "never the attribution: {text:?}");
+}
+
+#[tokio::test]
+async fn the_subject_is_one_match_for_the_whole_conversation_and_comes_last() {
+    let (world, thread, ids) = thread_of(&[
+        "list-thread-01-root",
+        "list-thread-02-reply",
+        "list-thread-04-reply-deep",
+    ])
+    .await;
+    let found = conversation_matches(
+        &world,
+        "interlock",
+        postio_search::results::ConversationKey::Thread(thread),
+    )
+    .await;
+    assert_eq!(
+        places(&found),
+        [
+            (Some(ids[0]), Source::Body, Some("Ada Norwood".to_owned())),
+            (Some(ids[1]), Source::Body, Some("Quinn Abara".to_owned())),
+            (None, Source::Subject, None),
+        ]
+    );
+    let subject = found[2]
+        .found
+        .passage
+        .as_ref()
+        .expect("the subject, marked");
+    assert!(subject.text.contains("Tide gate interlock"), "{subject:?}");
+    assert_eq!(highlighted(&found[2].found), ["interlock"]);
+}
+
+#[tokio::test]
+async fn a_message_on_its_own_is_a_conversation_of_one() {
+    // "lease": the subject, Quinn's own reply and Ada's quoted message.
+    let world = world().await;
+    let found = conversation_matches(
+        &world,
+        "lease",
+        postio_search::results::ConversationKey::Lone(world.reply),
+    )
+    .await;
+    assert_eq!(
+        found
+            .iter()
+            .map(|each| each.found.source.clone())
+            .collect::<Vec<_>>(),
+        [Source::Body, Source::Quoted, Source::Subject]
+    );
+    assert!(
+        found.iter().all(|each| each.found.passage.is_some()),
+        "{found:?}"
+    );
+}

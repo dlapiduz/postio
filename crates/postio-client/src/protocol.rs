@@ -312,6 +312,15 @@ pub enum Req {
         /// What the asking row does with a message's first line.
         first_line: postio_search::passage::FirstLine,
     },
+    /// Every match in one conversation, oldest first, each with its
+    /// passage and who wrote it: Quick Look's cards (spec 010 US4).
+    /// Cancellable.
+    ConversationMatches {
+        /// The query the conversation was found by.
+        query: postio_search::ParsedQuery,
+        /// Which conversation.
+        key: postio_search::results::ConversationKey,
+    },
     /// The ways out of a search that found nothing, each with what it would
     /// find. Cancellable.
     Relaxations {
@@ -695,6 +704,9 @@ pub enum Resp {
     Conversations(Option<Box<Conversations>>),
     /// Each hit's matches with their passages, in the order asked.
     Passages(Vec<(MessageId, Vec<postio_search::results::Match>)>),
+    /// One conversation's matches, oldest first; empty when it could not be
+    /// read.
+    Matches(Vec<postio_search::results::ConversationMatch>),
     /// The ways out that would find something, most first; empty when none
     /// would, or when they could not be counted.
     Relaxed(Vec<(postio_search::relax::Relaxation, u64)>),
