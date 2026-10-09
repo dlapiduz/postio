@@ -17,6 +17,7 @@ use postio_storage::Connection;
 use postio_storage::repository::{LabelRepository, Marker, MarkerRepository, MarkerSource};
 use postio_storage::sql::{self, RowExt as _};
 use postio_storage::test_support;
+use postio_storage::test_support::counting;
 
 use crate::conversations::{Mail, conversations, file, now, store, thread, today};
 
@@ -316,12 +317,15 @@ async fn the_date_presets_count_what_their_after_would_find() {
     }
 }
 
+/// The walk stops at `CONVERSATION_WALK_CAP` (D30), half of
+/// `TOTAL_HITS_CAP`, and says so: every count is then a floor. GTK's
+/// `search` keeps counting to its own cap over the same mailbox.
 #[tokio::test]
 async fn a_match_past_the_cap_makes_every_count_a_floor() {
     let (_database, connection, account, inbox) = store().await;
     // Past the cap in one statement: an operator-only query walks
     // `messages` alone, so no body or metadata index is needed for it.
-    let cap = postio_search::TOTAL_HITS_CAP as i64;
+    let cap = postio_search::results::CONVERSATION_WALK_CAP as i64;
     let ids = format!(
         "[{}]",
         (0..=cap)
@@ -350,10 +354,37 @@ async fn a_match_past_the_cap_makes_every_count_a_floor() {
         .expect("end the deferral");
     connection.execute("COMMIT", ()).await.expect("commit");
 
+    let walk_cap = postio_search::results::CONVERSATION_WALK_CAP;
+    assert_eq!(walk_cap, 5_000);
+    counting::record();
     let results = conversations(&connection, "is:unread", ConversationOrder::Newest, 0, 4).await;
     assert!(results.capped);
     assert!(results.facets.capped, "the facets say they are floors too");
-    assert_eq!(results.total, postio_search::TOTAL_HITS_CAP);
-    assert_eq!(results.facets.unread, postio_search::TOTAL_HITS_CAP);
+    assert_eq!(results.total, walk_cap);
+    assert_eq!(results.facets.unread, walk_cap);
     assert_eq!(results.hits.len(), 4);
+    let walked = counting::here();
+    assert!(
+        walked.rows as u64 <= 2 * walk_cap + 1_000,
+        "the walk stops at the cap: {} rows read",
+        walked.rows
+    );
+
+    // GTK's search counts the same mailbox to its own, larger cap.
+    let query = postio_search::parse("is:unread", today());
+    let gtk = postio_index::search(
+        &connection,
+        &postio_index::SearchRequest {
+            account: postio_model::AccountScope::Account(account.id),
+            query: &query,
+            scope: postio_search::facets::Scope::AllMail,
+            limit: 4,
+            order: postio_search::ResultOrder::Newest,
+        },
+        now(),
+    )
+    .await
+    .expect("GTK's search");
+    assert_eq!(gtk.total_hits, walk_cap + 1);
+    assert!(!gtk.total_hits_capped);
 }

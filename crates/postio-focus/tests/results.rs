@@ -2683,3 +2683,92 @@ fn a_new_query_reads_the_people_again() {
     );
     assert_eq!(people_asked(&effects).len(), 1, "the tab shown reads again");
 }
+
+/// Every results read among `effects` answered as `settle` answers it, but
+/// past the walk's cap (D30): 5,000 conversations and more, every count a
+/// floor.
+fn settle_capped(focus: &mut FocusController, effects: Vec<Effect>, rows: &List) -> Vec<Effect> {
+    use postio_focus::Reply;
+    let cap = postio_search::results::CONVERSATION_WALK_CAP;
+    let capped = |results: &mut postio_search::results::ConversationResults| {
+        results.total = cap;
+        results.capped = true;
+        results.facets.capped = true;
+    };
+    let mut all = effects.clone();
+    let mut waiting = effects;
+    loop {
+        let mut next = Vec::new();
+        for (ticket, request) in asks(&waiting) {
+            let Some(mut reply) = reply_to(&request) else {
+                continue;
+            };
+            match &mut reply {
+                Reply::ResultsPage {
+                    answer: Ok(results),
+                    ..
+                }
+                | Reply::Facets {
+                    answer: Ok(results),
+                    ..
+                } => capped(results),
+                _ => {}
+            }
+            next.extend(focus.handle_on(Input::Reply(ticket, reply), rows));
+        }
+        if next.is_empty() {
+            return all;
+        }
+        all.extend(next.clone());
+        waiting = next;
+    }
+}
+
+#[test]
+fn a_capped_answer_says_every_count_is_a_floor() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let effects = show_all(&mut focus, "atlas budget", &rows);
+    let effects = settle_capped(&mut focus, effects, &rows);
+    let view = results_view(&effects).expect("the results");
+
+    assert_eq!(view.count_line, "5,000+ conversations");
+    assert_eq!(view.footer, "5,000+ conversations · local index · 41 ms");
+    assert_eq!(
+        view.tabs
+            .iter()
+            .map(|tab| tab.count.as_str())
+            .collect::<Vec<_>>(),
+        ["5,000+", "12+", "6+"],
+        "the Files and People tabs count the same capped walk"
+    );
+    assert_eq!(view.sub_line, "12+ files · 6+ people · last 12 months");
+    assert!(
+        view.months
+            .iter()
+            .all(|month| month.count == format!("{}+", month.conversations)),
+        "every month is a floor: {:?}",
+        view.months
+    );
+    let months: Vec<&str> = view
+        .groups
+        .iter()
+        .filter(|group| !group.top_hits)
+        .map(|group| group.count.as_str())
+        .collect();
+    assert!(
+        !months.is_empty() && months.iter().all(|count| count.ends_with('+')),
+        "every month group's count is a floor: {months:?}"
+    );
+
+    let effects = focus.handle_on(Input::SearchPopover(FilterKind::From), &rows);
+    let effects = settle_capped(&mut focus, effects, &rows);
+    let from = popover_view(&effects).flatten().expect("the From popover");
+    assert_eq!(
+        from.rows
+            .iter()
+            .map(|row| (row.title.as_str(), row.count, row.count_label.as_str()))
+            .collect::<Vec<_>>(),
+        [("Ada Moreno", 24, "24+"), ("Tom\u{e1}s Reyes", 24, "24+")]
+    );
+}

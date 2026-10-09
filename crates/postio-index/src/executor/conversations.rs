@@ -16,9 +16,9 @@
 //! marker). [`Fold`] takes the rows as they
 //! stream and builds the conversations; the facets are counted from those.
 //!
-//! The walk stops as soon as it holds [`TOTAL_HITS_CAP`] messages, so a word
-//! in every message of a large store reads the cap's worth of rows and no
-//! more.
+//! The walk stops as soon as it holds [`CONVERSATION_WALK_CAP`] messages
+//! (D30), so a word in every message of a large store reads the cap's worth
+//! of rows and no more.
 //!
 //! A filter that is a *set* of messages -- `from:`, `to:`, `subject:`,
 //! `filename:`, `list:`, `group:`, `label:`, `has:action`, a negated word --
@@ -60,8 +60,8 @@ use postio_search::ParsedQuery;
 use postio_search::facets::{Count, MonthCount, Scope, SearchFacets, months_ending, preset_starts};
 use postio_search::query::Filter;
 use postio_search::results::{
-    ConversationHit, ConversationKey, ConversationOrder, ConversationResults, FacetNames, Match,
-    RankReason, Source, TOTAL_HITS_CAP,
+    CONVERSATION_WALK_CAP, ConversationHit, ConversationKey, ConversationOrder,
+    ConversationResults, FacetNames, Match, RankReason, Source,
 };
 use postio_storage::Connection;
 use postio_storage::repository::from_millis;
@@ -634,7 +634,7 @@ impl Fold {
 
     /// Whether the match reached the cap: every count is then a floor.
     fn capped(&self) -> bool {
-        self.found.len() as u64 >= TOTAL_HITS_CAP
+        self.found.len() as u64 >= CONVERSATION_WALK_CAP
     }
 
     /// The matched messages grouped into conversations, in the order each
@@ -726,9 +726,9 @@ enum Walk {
 /// The metadata index's five columns, as every `fts_match` on it names them.
 const META: &str = "sender, recipients, subject, filenames, list_id";
 
-/// [`TOTAL_HITS_CAP`], as SQL binds it.
+/// [`CONVERSATION_WALK_CAP`], as SQL binds it.
 fn cap() -> i64 {
-    i64::try_from(TOTAL_HITS_CAP).unwrap_or(i64::MAX)
+    i64::try_from(CONVERSATION_WALK_CAP).unwrap_or(i64::MAX)
 }
 
 /// A `group_concat` of integers, read back.

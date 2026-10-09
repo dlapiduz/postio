@@ -165,6 +165,21 @@ pub struct Instead {
 /// FTS5 offers no cheap count, which is what makes that hard.
 pub const TOTAL_HITS_CAP: u64 = 10_000;
 
+/// How many matched messages a conversation search walks (spec 010 D30):
+/// its total, its facets, its months, and the Files and People tabs are
+/// counted over at most this many, and past it every one is a floor
+/// ("5,000+").
+///
+/// Half of [`TOTAL_HITS_CAP`], and its own constant rather than that one
+/// lowered, because the two bound different work. The conversation walk
+/// reads every matched row whole -- its conversation, folder, dates,
+/// flags, people, labels and files -- and is linear in rows: at 10,000 the
+/// common word took 56 ms of its 50 ms budget, and at 5,000 it is about
+/// half. `TOTAL_HITS_CAP` is also what GTK's `search` reads to choose a
+/// plan (see above), and what the relaxations' cheaper count walks to;
+/// neither is this walk, and lowering it would move both.
+pub const CONVERSATION_WALK_CAP: u64 = 5_000;
+
 // ---------------------------------------------------------------------------
 // Conversation search (spec 010)
 // ---------------------------------------------------------------------------
@@ -314,9 +329,11 @@ pub struct ConversationHit {
 pub struct ConversationResults {
     /// This page.
     pub hits: Vec<ConversationHit>,
-    /// Conversations that match, up to the cap.
+    /// Conversations that match, among the first
+    /// [`CONVERSATION_WALK_CAP`] matched messages.
     pub total: u64,
-    /// Whether `total` is a floor.
+    /// Whether the walk stopped at its cap: `total`, the facets, `files`
+    /// and `people` are then floors.
     pub capped: bool,
     /// Messages the search looked through: "Searched all 18,204 messages".
     pub messages_searched: u64,

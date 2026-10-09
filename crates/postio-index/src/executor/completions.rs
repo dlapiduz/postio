@@ -59,7 +59,8 @@ const FILES: usize = 20;
 const PEOPLE: usize = 4;
 
 /// Where a suggestion's count stops (D29, maintainer 2026-10-09): the
-/// matches walked, as [`TOTAL_HITS_CAP`](postio_search::results::TOTAL_HITS_CAP)
+/// matches walked, as
+/// [`CONVERSATION_WALK_CAP`](postio_search::results::CONVERSATION_WALK_CAP)
 /// is the conversation search's. Past it the count is a floor -- the
 /// conversations among the matches walked -- and the row says "N+".
 ///
