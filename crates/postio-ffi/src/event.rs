@@ -458,6 +458,13 @@ pub enum UiEvent {
         /// The registry command the button runs.
         command: String,
     },
+    /// Draw the search dropdown, whole, in place of the bar's lines
+    /// (specs/010-focus-search step 2). A `FocusBarLines` after it puts the
+    /// lines back: `>`, `in:` and `@` are still spec 009's.
+    FocusDropdown {
+        /// What it draws.
+        view: crate::focus_search::DropdownViewFfi,
+    },
 }
 
 /// How a Focus toast is drawn.
