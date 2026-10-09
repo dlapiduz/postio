@@ -270,7 +270,7 @@ GTK's bar is unchanged.
 - [x] T104 [US6] Implement the no-results state in `crates/postio-focus/src/results.rs` and the commands. Make T103 green
 - [x] T105 [P] [US6] Write failing tests in `crates/postio-ui/src/search_view.rs`: `nothing_matches(4)` ("Nothing matches all four filters"), `relaxation_line` for each `Loosen` ("Remove “before March”", "Look for “budget v4” anywhere, not just the subject", "Anyone, not just Ada Moreno"), `searched(18204, contents)` with and without "including attachment contents" (US6 scenario 2), never the server line (S4). Red: missing
 - [x] T106 [US6] Implement those words; add `NoResultsViewFfi` and `UiEvent::FocusRelaxations` (`crates/postio-ffi`), and `macos/Sources/PostioKit/NoResultsView.swift` (560 wide, numbered rows in SF Mono). Make T105 green
-- [ ] T107 [US6] Capture screen 13 (the server line is absent by S4: list it as an explained difference), write the step-7 note; commit the phase
+- [x] T107 [US6] Capture screen 13 (the server line is absent by S4: list it as an explained difference), write the step-7 note; commit the phase
 
 ---
 
