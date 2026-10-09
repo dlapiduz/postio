@@ -2072,9 +2072,10 @@ fn scope_role(scope: Scope, names_a_folder: bool) -> Option<&'static str> {
 /// Only an affirmative one: `-in:trash` is a person keeping the default
 /// exclusion and adding to it, not asking to see the trash.
 fn names_a_folder(query: &ParsedQuery) -> bool {
+    // A set of folders names them too (D26).
     query
         .filters()
-        .any(|clause| !clause.negated && matches!(clause.filter, Filter::In(_)))
+        .any(|clause| !clause.negated && clause.filter.field() == postio_search::query::Field::In)
 }
 
 /// Translates one structured filter into a SQL condition (unnegated) plus its
@@ -2222,9 +2223,19 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
             "m.size <= ?".to_string(),
             vec![turso::Value::Integer(*bytes as i64)],
         ),
-        // Spec 010 D26, until T148 answers it: a set matches nothing, never
-        // everything, as an unresolvable name does above.
-        Filter::AnyOf(_) => ("0".to_string(), Vec::new()),
+        // Either of several values (spec 010, D26): each member's own
+        // condition, ORed. The parameters follow the placeholders, member
+        // by member, left to right.
+        Filter::AnyOf(set) => {
+            let mut sql = Vec::with_capacity(set.members().len());
+            let mut params = Vec::new();
+            for member in set.members() {
+                let (condition, mut values) = filter_condition(member);
+                sql.push(format!("({condition})"));
+                params.append(&mut values);
+            }
+            (format!("({})", sql.join(" OR ")), params)
+        }
     }
 }
 
@@ -2315,6 +2326,19 @@ const GROUP_SET: &str = "SELECT r.message_id FROM recipients r \
 /// keep when nothing else narrows it.
 fn id_set(filter: &Filter) -> Option<(String, Vec<turso::Value>)> {
     Some(match filter {
+        // A set (D26) is the union of its members' sets, when each is one;
+        // `UNION` rather than `UNION ALL`, because a set may also drive the
+        // walk (`relaxations`), which must see each message once.
+        Filter::AnyOf(set) => {
+            let mut arms = Vec::with_capacity(set.members().len());
+            let mut params = Vec::new();
+            for member in set.members() {
+                let (sql, mut values) = id_set(member)?;
+                arms.push(format!("SELECT message_id FROM ({sql})"));
+                params.append(&mut values);
+            }
+            (arms.join(" UNION "), params)
+        }
         Filter::From(value) => fts_column_set("sender", value),
         Filter::To(value) => fts_column_set("recipients", value),
         Filter::Subject(value) => fts_column_set("subject", value),
