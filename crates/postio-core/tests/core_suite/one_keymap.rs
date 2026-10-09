@@ -276,6 +276,21 @@ const CONTRACT: &[Row] = &[
         Graphical,
         &[Context::Results],
     ),
+    // Spec 010 step 4: ⌥←/⌥→ step the timeline's range a month (FR-023).
+    with(
+        "step_range_back",
+        "alt+Left",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
+    with(
+        "step_range_forward",
+        "alt+Right",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
     // -- Pickers --------------------------------------------------------
     with("picker_choose_1", "1", &[], Focus, &[Context::Picker]),
     with("picker_choose_2", "2", &[], Focus, &[Context::Picker]),
@@ -641,5 +656,22 @@ fn the_results_views_keys_resolve_on_the_mac_and_not_on_linux() {
             "`{id}` is not on `{key}` on the Mac: {:?}",
             mac.bindings(id)
         );
+    }
+}
+
+/// Spec 010 step 4 (FR-023, D25): ⌥←/⌥→ step the timeline's range by a
+/// month in the results, on the Mac, and are not offered on Linux yet.
+#[test]
+fn the_timeline_steps_on_alt_arrows_on_the_mac_and_not_on_linux() {
+    let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
+    let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+    for (id, key) in [
+        (CommandId::StepRangeBack, "alt+Left"),
+        (CommandId::StepRangeForward, "alt+Right"),
+    ] {
+        assert_eq!(mac.bindings(id), [key], "{id} on the Mac");
+        assert!(registry::get(id).available_in(Context::Results), "{id}");
+        assert!(linux.bindings(id).is_empty(), "{id} has a key on Linux");
+        assert!(!linux.offers(id), "{id} is offered on Linux");
     }
 }

@@ -105,6 +105,11 @@ pub struct ResultsView {
     pub sub_line: String,
     /// The timeline, oldest first.
     pub months: Vec<MonthBar>,
+    /// The timeline's hint on its right: "Matches by month · drag across
+    /// months to narrow", or "Jul – Sep selected · drag to change".
+    pub timeline_hint: String,
+    /// "steps a month", with ⌥←/⌥→, while a range is selected.
+    pub timeline_step: Option<Hint>,
     /// The groups, top to bottom.
     pub groups: Vec<ResultGroup>,
     /// How many rows there are.
@@ -252,6 +257,35 @@ pub struct PopoverView {
     pub rows: Vec<PopoverRow>,
     /// Its footer's keys.
     pub hints: Vec<Hint>,
+    /// The Date popover's presets, Custom… last.
+    pub presets: Vec<DatePresetView>,
+    /// The Date popover's plain words, as typed.
+    pub words: String,
+    /// What they became: "→ after:2026-07-01"; `None` when they are no
+    /// date.
+    pub parsed: Option<String>,
+    /// The line under the words.
+    pub words_hint: String,
+    /// The Date popover's month chart: the timeline's bars.
+    pub months: Vec<MonthBar>,
+    /// "12 of 21": what its dates keep of what it opened on.
+    pub result: Option<String>,
+    /// "Jul – Sep 2026".
+    pub range: Option<String>,
+}
+
+/// One of the Date popover's presets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DatePresetView {
+    /// What [`Input::DatePreset`](crate::Input::DatePreset) names it by.
+    pub token: u64,
+    /// "Last 30 days", "Custom…".
+    pub label: String,
+    /// How many conversations it keeps of those the popover opened on;
+    /// none for Custom….
+    pub count: Option<String>,
+    /// The query's dates are its own: ringed.
+    pub selected: bool,
 }
 
 /// A change to the query from a control rather than the keyboard, as
@@ -379,6 +413,8 @@ pub(crate) struct Popover {
     base: Option<Base>,
     /// Its own search field.
     filter: String,
+    /// The Date popover's plain words.
+    words: String,
 }
 
 /// One thing a list popover offers: the filter it is, and how it is drawn.
@@ -416,6 +452,10 @@ pub(crate) struct Results {
     pub(crate) remembered: bool,
     /// The filter popover that is open.
     pub(crate) popover: Option<Popover>,
+    /// The timeline of the query without its dates, and that query: what
+    /// the bars outside a range are drawn from, so a range can be dragged
+    /// wider than the one the results were narrowed to.
+    undated: Option<(String, [postio_search::facets::MonthCount; 12])>,
 }
 
 impl Results {
@@ -442,6 +482,7 @@ impl Results {
             checked: Vec::new(),
             remembered: false,
             popover: None,
+            undated: None,
         }
     }
 
@@ -695,6 +736,9 @@ impl Results {
         let was_ready = self.ready();
         if self.frame.is_none() {
             self.frame = Some(Frame::of(&results));
+        }
+        if self.dates() == (None, None) {
+            self.undated = Some((self.query.clone(), results.facets.months));
         }
         if let Some(popover) = self.popover.as_mut()
             && popover.base.is_none()
@@ -966,37 +1010,9 @@ impl Results {
                 CommandId::ResultsPeople,
             ),
         ];
-        let (after, before) = self.dates();
-        let months = frame
-            .map(|frame| {
-                let tallest = frame
-                    .facets
-                    .months
-                    .iter()
-                    .map(|month| month.conversations)
-                    .max()
-                    .unwrap_or(0)
-                    .max(1);
-                frame
-                    .facets
-                    .months
-                    .iter()
-                    .map(|month| MonthBar {
-                        label: month.month.format("%b").to_string(),
-                        conversations: month.conversations,
-                        height: month.conversations as f64 / tallest as f64,
-                        selected: (after.is_some() || before.is_some())
-                            && after.is_none_or(|after| {
-                                month
-                                    .month
-                                    .checked_add_months(chrono::Months::new(1))
-                                    .is_some_and(|end| end > after)
-                            })
-                            && before.is_none_or(|before| month.month < before),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let months = self.month_bars();
+        let today = with.now.date_naive();
+        let range = self.range(today, false);
         let groups = self
             .spans()
             .into_iter()
@@ -1025,6 +1041,12 @@ impl Results {
                     .unwrap_or_else(|| words::sub_line(frame.files, frame.people))
             }),
             months,
+            timeline_hint: range
+                .as_deref()
+                .map_or_else(|| words::TIMELINE_HINT.to_owned(), words::range_selected),
+            timeline_step: range
+                .as_ref()
+                .and_then(|_| words::timeline_step(with.keymap)),
             groups,
             rows: self.rows(),
             cursor: self.cursor.filter(|_| self.ready()),
@@ -1047,6 +1069,13 @@ impl Results {
         let popover = self.popover.as_ref()?;
         if popover.before == self.query {
             return None;
+        }
+        if popover.kind == FilterKind::Date {
+            let today = with.now.date_naive();
+            let what = self
+                .range(today, false)
+                .unwrap_or_else(|| words::date_presets(today)[0].label.to_lowercase());
+            return Some(words::previewing(&what));
         }
         let filters = self.filters();
         let name_of = |address: &str| self.name_of(address);
@@ -1186,12 +1215,59 @@ impl Results {
                 }
             })
             .collect();
+        let date = popover.kind == FilterKind::Date;
+        let base = popover.base.as_ref();
+        let (after, before) = self.dates();
+        let presets = if date {
+            let capped = base.is_some_and(|base| base.facets.capped);
+            let mut presets: Vec<DatePresetView> = words::date_presets(today)
+                .iter()
+                .enumerate()
+                .map(|(token, preset)| DatePresetView {
+                    token: token as u64,
+                    label: preset.label.to_owned(),
+                    count: base
+                        .map(|base| words::tab_count(base.facets.presets[preset.count_at], capped)),
+                    selected: before.is_none() && after == preset.start,
+                })
+                .collect();
+            presets.push(DatePresetView {
+                token: presets.len() as u64,
+                label: words::CUSTOM_DATE.to_owned(),
+                count: None,
+                selected: false,
+            });
+            presets
+        } else {
+            Vec::new()
+        };
+        let frame = self.frame.as_ref().filter(|_| self.ready());
         Some(PopoverView {
             kind: popover.kind,
             placeholder: words::popover_placeholder(popover.kind).to_owned(),
             filter: popover.filter.clone(),
             rows,
             hints: words::popover_hints(popover.kind),
+            presets,
+            words: popover.words.clone(),
+            parsed: date
+                .then(|| date_terms(&popover.words, today))
+                .flatten()
+                .map(|(_, _, terms)| words::date_parsed(&terms)),
+            words_hint: if date {
+                words::DATE_WORDS_HINT.to_owned()
+            } else {
+                String::new()
+            },
+            months: if date { self.month_bars() } else { Vec::new() },
+            result: date
+                .then(|| {
+                    let frame = frame?;
+                    let of = base?.facets.presets[4];
+                    Some(words::date_result(frame.total, of, frame.capped))
+                })
+                .flatten(),
+            range: date.then(|| self.range(today, true)).flatten(),
         })
     }
 
@@ -1225,18 +1301,104 @@ impl Results {
         })
     }
 
+    /// The timeline's bars: the months of the query without its dates,
+    /// when they are known, each marked when the query's dates take it in.
+    fn month_bars(&self) -> Vec<MonthBar> {
+        let Some(frame) = self.frame.as_ref() else {
+            return Vec::new();
+        };
+        let (after, before) = self.dates();
+        let undated = self
+            .undated
+            .as_ref()
+            .filter(|(query, _)| *query == undated_query(&self.parsed));
+        let months = undated.map_or(&frame.facets.months, |(_, months)| months);
+        let tallest = months
+            .iter()
+            .map(|month| month.conversations)
+            .max()
+            .unwrap_or(0)
+            .max(1);
+        months
+            .iter()
+            .map(|month| MonthBar {
+                label: month.month.format("%b").to_string(),
+                conversations: month.conversations,
+                height: month.conversations as f64 / tallest as f64,
+                selected: (after.is_some() || before.is_some())
+                    && after.is_none_or(|after| {
+                        month
+                            .month
+                            .checked_add_months(chrono::Months::new(1))
+                            .is_some_and(|end| end > after)
+                    })
+                    && before.is_none_or(|before| month.month < before),
+            })
+            .collect()
+    }
+
+    /// The months the query's dates take in, as the timeline says them:
+    /// "Jul – Sep"; an open end runs to this month.
+    fn range(&self, today: NaiveDate, year: bool) -> Option<String> {
+        let (first, last) = self.range_months(today)?;
+        Some(words::month_range(first, last, year))
+    }
+
+    /// The first and last month the dates take in (any day of each).
+    fn range_months(&self, today: NaiveDate) -> Option<(NaiveDate, NaiveDate)> {
+        let (after, before) = self.dates();
+        if after.is_none() && before.is_none() {
+            return None;
+        }
+        let last = before.and_then(|before| before.pred_opt()).unwrap_or(today);
+        let first = after.unwrap_or_else(|| {
+            self.frame
+                .as_ref()
+                .map_or(last, |frame| frame.facets.months[0].month)
+        });
+        Some((first, last))
+    }
+
+    /// The dates ⌥← (`back`) or ⌥→ step the range to: both bounds a month,
+    /// an open end closed at this month first; no range is this month,
+    /// and nothing steps past it.
+    fn stepped(
+        &self,
+        back: bool,
+        today: NaiveDate,
+    ) -> Option<(Option<NaiveDate>, Option<NaiveDate>)> {
+        use chrono::{Datelike, Months};
+        let this = today.with_day(1)?;
+        let next = this.checked_add_months(Months::new(1))?;
+        let (after, before) = self.dates();
+        if after.is_none() && before.is_none() {
+            return back.then_some((Some(this), Some(next)));
+        }
+        let before = before.or(after.map(|_| next));
+        let shift = |day: NaiveDate| {
+            if back {
+                day.checked_sub_months(Months::new(1))
+            } else {
+                day.checked_add_months(Months::new(1))
+            }
+        };
+        let after = match after {
+            Some(day) => Some(shift(day)?),
+            None => None,
+        };
+        let before = match before {
+            Some(day) => Some(shift(day)?),
+            None => None,
+        };
+        if !back && (after.is_some_and(|day| day > this) || before.is_some_and(|day| day > next)) {
+            return None;
+        }
+        Some((after, before))
+    }
+
     /// The query's dates: `after:` and `before:`.
     fn dates(&self) -> (Option<NaiveDate>, Option<NaiveDate>) {
-        let mut after = None;
-        let mut before = None;
-        for filter in self.filters() {
-            match filter {
-                Filter::After(date) => after = Some(date),
-                Filter::Before(date) => before = Some(date),
-                _ => {}
-            }
-        }
-        (after, before)
+        dates_of(&self.parsed)
     }
 
     /// The months `first..=last` of the timeline, as `after:` and
@@ -1393,7 +1555,7 @@ pub(crate) fn show(view: ResultsView) -> Step {
 }
 
 /// The commands the results answer while nothing is over them.
-const RESULTS_KEYS: [CommandId; 16] = [
+const RESULTS_KEYS: [CommandId; 18] = [
     CommandId::NextMessage,
     CommandId::PrevMessage,
     CommandId::FirstMessage,
@@ -1410,6 +1572,8 @@ const RESULTS_KEYS: [CommandId; 16] = [
     CommandId::ToggleResultOrder,
     CommandId::ToggleHasAction,
     CommandId::SaveSearch,
+    CommandId::StepRangeBack,
+    CommandId::StepRangeForward,
 ];
 
 /// Whether the results, up, answer `id` themselves: their own keys, and
@@ -1644,6 +1808,16 @@ impl FocusController {
                 self.bar.set_saving(query.clone());
                 vec![Step::Show(Intent::SaveSearch { query })]
             }
+            CommandId::StepRangeBack | CommandId::StepRangeForward => {
+                let today = self.bar.now().date_naive();
+                let back = id == CommandId::StepRangeBack;
+                match results.stepped(back, today) {
+                    Some((after, before)) => {
+                        self.results_edit(postio_search::edit::Edit::SetDates { after, before })
+                    }
+                    None => Vec::new(),
+                }
+            }
             CommandId::OpenMessage => self.open_result(),
             CommandId::Reply | CommandId::ReplyAll | CommandId::Forward => {
                 let kind = match id {
@@ -1782,10 +1956,58 @@ impl FocusController {
             before: results.query.clone(),
             base,
             filter: String::new(),
+            words: String::new(),
         });
         steps.push(Step::Show(Intent::Query(self.query_view())));
         steps.extend(self.draw_popover());
         steps
+    }
+
+    /// The Date popover's plain words: the dates they name, previewed; no
+    /// words put back the dates it opened on, and words that are no date
+    /// change nothing but what it says they became.
+    fn date_words(&mut self, text: String) -> Vec<Step> {
+        let today = self.bar.now().date_naive();
+        let Some(results) = self.results.as_mut() else {
+            return Vec::new();
+        };
+        let Some(popover) = results.popover.as_mut() else {
+            return Vec::new();
+        };
+        popover.words = text;
+        let dates = if popover.words.trim().is_empty() {
+            Some(dates_of(&postio_search::parse(&popover.before, today)))
+        } else {
+            date_terms(&popover.words, today).map(|(after, before, _)| (after, before))
+        };
+        match dates {
+            Some((after, before)) if (after, before) != results.dates() => {
+                self.results_edit(postio_search::edit::Edit::SetDates { after, before })
+            }
+            _ => self.draw_popover().into_iter().collect(),
+        }
+    }
+
+    /// A Date preset: its `after:`, or no dates for Any time; Custom…
+    /// writes nothing (the words are where a custom date goes).
+    fn date_preset(&mut self, token: u64) -> Vec<Step> {
+        let today = self.bar.now().date_naive();
+        let presets = words::date_presets(today);
+        let Some(preset) = usize::try_from(token).ok().and_then(|at| presets.get(at)) else {
+            return Vec::new();
+        };
+        let Some(popover) = self
+            .results
+            .as_mut()
+            .and_then(|results| results.popover.as_mut())
+        else {
+            return Vec::new();
+        };
+        popover.words.clear();
+        self.results_edit(postio_search::edit::Edit::SetDates {
+            after: preset.start,
+            before: None,
+        })
     }
 
     /// ↩ keeps what the popover previewed; Esc, or a click away, puts back
@@ -1881,6 +2103,8 @@ impl FocusController {
                 self.draw_popover().into_iter().collect()
             }
             Input::PopoverDone { apply } => self.popover_done(apply),
+            Input::DateWords(text) => self.date_words(text),
+            Input::DatePreset(token) => self.date_preset(token),
             _ => Vec::new(),
         }
     }
@@ -1939,4 +2163,68 @@ fn spelled(parsed: &ParsedQuery) -> String {
         .map(|token| token.raw.as_str())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// `parsed` without its `after:` and `before:`: what the timeline's bars
+/// outside a range count.
+fn undated_query(parsed: &ParsedQuery) -> String {
+    use postio_search::query::Field;
+    parsed
+        .tokens()
+        .iter()
+        .filter(|token| !matches!(token.field(), Some(Field::After | Field::Before)))
+        .map(|token| token.raw.as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The dates plain `words` lower to, and the terms they are written as:
+/// "since july" is `after:2026-07-01`. `None` when they name no date.
+fn date_terms(
+    words: &str,
+    today: NaiveDate,
+) -> Option<(Option<NaiveDate>, Option<NaiveDate>, String)> {
+    if words.trim().is_empty() {
+        return None;
+    }
+    let lowered = postio_search::natural::lower(words, today, &|_| None);
+    let mut after = None;
+    let mut before = None;
+    for clause in lowered.filters().filter(|clause| !clause.negated) {
+        match clause.filter {
+            Filter::After(day) => after = Some(day),
+            Filter::Before(day) => before = Some(day),
+            _ => {}
+        }
+    }
+    if after.is_none() && before.is_none() {
+        return None;
+    }
+    let spell = |filter| {
+        postio_search::query::spell(&Clause {
+            negated: false,
+            filter,
+        })
+    };
+    let terms = after
+        .map(|day| spell(Filter::After(day)))
+        .into_iter()
+        .chain(before.map(|day| spell(Filter::Before(day))))
+        .collect::<Vec<_>>()
+        .join(" ");
+    Some((after, before, terms))
+}
+
+/// A query's dates: its `after:` and `before:`.
+fn dates_of(parsed: &ParsedQuery) -> (Option<NaiveDate>, Option<NaiveDate>) {
+    let mut after = None;
+    let mut before = None;
+    for clause in parsed.filters().filter(|clause| !clause.negated) {
+        match clause.filter {
+            Filter::After(day) => after = Some(day),
+            Filter::Before(day) => before = Some(day),
+            _ => {}
+        }
+    }
+    (after, before)
 }

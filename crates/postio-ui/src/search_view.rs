@@ -678,6 +678,103 @@ pub fn previewing(what: &str) -> String {
     format!("previewing {what} \u{b7} \u{21a9} applies")
 }
 
+/// One of the Date popover's presets (§3.6, screen 09): what it says, and
+/// the `after:` it writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DatePreset {
+    /// "Last 30 days".
+    pub label: &'static str,
+    /// The `after:` it writes; `None` for Any time, which takes the dates
+    /// out.
+    pub start: Option<chrono::NaiveDate>,
+    /// Where its count is in `SearchFacets::presets`.
+    pub count_at: usize,
+}
+
+/// The Date popover's presets, top to bottom: Any time, Last 7 days, Last
+/// 30 days, This quarter, This year. Custom… ([`CUSTOM_DATE`]) follows
+/// them and writes nothing itself.
+pub fn date_presets(today: chrono::NaiveDate) -> [DatePreset; 5] {
+    let starts = postio_search::facets::preset_starts(today);
+    let preset = |label, count_at: usize| DatePreset {
+        label,
+        start: starts[count_at],
+        count_at,
+    };
+    [
+        preset("Any time", 4),
+        preset("Last 7 days", 0),
+        preset("Last 30 days", 1),
+        preset("This quarter", 2),
+        preset("This year", 3),
+    ]
+}
+
+/// The Date popover's last preset: its field is where a custom date goes.
+pub const CUSTOM_DATE: &str = "Custom\u{2026}";
+
+/// The Date popover's line under its field (screen 09).
+pub const DATE_WORDS_HINT: &str = "Type a date in plain words, or drag across the months.";
+
+/// What the Date popover's plain words became (screen 09): "→
+/// after:2026-07-01".
+pub fn date_parsed(terms: &str) -> String {
+    format!("\u{2192} {terms}")
+}
+
+/// The months `first` to `last` (any day in each), as the timeline and
+/// the Date popover say a range: "Jul – Sep", "Sep", or with `year`
+/// "Jul – Sep 2026", and both years when they differ: "Dec 2025 – Feb
+/// 2026".
+pub fn month_range(first: chrono::NaiveDate, last: chrono::NaiveDate, year: bool) -> String {
+    let (first, last) = (first.min(last), first.max(last));
+    let same_month = (first.year(), first.month()) == (last.year(), last.month());
+    if first.year() != last.year() {
+        return format!(
+            "{} \u{2013} {}",
+            first.format("%b %Y"),
+            last.format("%b %Y")
+        );
+    }
+    let tail = if year {
+        format!(" {}", last.year())
+    } else {
+        String::new()
+    };
+    if same_month {
+        format!("{}{tail}", first.format("%b"))
+    } else {
+        format!(
+            "{} \u{2013} {}{tail}",
+            first.format("%b"),
+            last.format("%b")
+        )
+    }
+}
+
+/// The timeline's hint while a range is selected (screen 09): "Jul – Sep
+/// selected · drag to change". The keys that step it follow as a
+/// [`timeline_step`] hint.
+pub fn range_selected(range: &str) -> String {
+    format!("{range} selected \u{b7} drag to change")
+}
+
+/// ⌥←/⌥→ "steps a month", while a range is selected.
+pub fn timeline_step(keymap: &Keymap) -> Option<Hint> {
+    hints::pair(
+        keymap,
+        CommandId::StepRangeBack,
+        CommandId::StepRangeForward,
+        "steps a month",
+    )
+}
+
+/// The Date popover's result line (screen 09): "12 of 21", the
+/// conversations its dates keep of those it opened on.
+pub fn date_result(kept: u64, of: u64, capped: bool) -> String {
+    format!("{} of {}", count(kept, capped), count(of, capped))
+}
+
 /// The bulk bar's count while results are checked (§3.5): "5 selected".
 pub fn checked_line(n: u64) -> String {
     format!("{} selected", grouped(n))
@@ -708,6 +805,46 @@ mod tests {
                 ("-word", "exclude"),
             ]
         );
+    }
+
+    #[test]
+    fn a_range_of_months_reads_as_the_timeline_and_the_date_popover_say_it() {
+        let day = |y, m, d| chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        assert_eq!(
+            month_range(day(2026, 7, 1), day(2026, 9, 30), false),
+            "Jul \u{2013} Sep"
+        );
+        assert_eq!(
+            month_range(day(2026, 9, 30), day(2026, 7, 1), true),
+            "Jul \u{2013} Sep 2026"
+        );
+        assert_eq!(
+            month_range(day(2026, 9, 1), day(2026, 9, 26), true),
+            "Sep 2026"
+        );
+        assert_eq!(
+            month_range(day(2025, 12, 1), day(2026, 2, 28), false),
+            "Dec 2025 \u{2013} Feb 2026"
+        );
+        assert_eq!(date_result(12, 21, false), "12 of 21");
+        assert_eq!(date_parsed("after:2026-07-01"), "\u{2192} after:2026-07-01");
+    }
+
+    #[test]
+    fn the_date_presets_are_the_designs_with_the_dates_their_words_lower_to() {
+        let day = |y, m, d| chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        let presets = date_presets(day(2026, 9, 26));
+        assert_eq!(
+            presets.map(|preset| (preset.label, preset.start)),
+            [
+                ("Any time", None),
+                ("Last 7 days", Some(day(2026, 9, 19))),
+                ("Last 30 days", Some(day(2026, 8, 27))),
+                ("This quarter", Some(day(2026, 7, 1))),
+                ("This year", Some(day(2026, 1, 1))),
+            ]
+        );
+        assert_eq!(presets.map(|preset| preset.count_at), [4, 0, 1, 2, 3]);
     }
 
     #[test]

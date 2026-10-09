@@ -927,3 +927,23 @@ fn the_results_views_commands_are_the_macs_until_linux_adopts_them() {
         );
     }
 }
+
+/// Spec 010 step 4 (FR-023, D25): the timeline's month steps are the
+/// results view's alone, and the Mac's until Linux adopts it.
+#[test]
+fn the_timeline_steps_are_the_results_views_alone() {
+    use postio_config::paths::Platform;
+    use postio_core::ActionId;
+    for id in [CommandId::StepRangeBack, CommandId::StepRangeForward] {
+        let action = ActionId::Builtin(id);
+        assert!(registry::offered_on(action, Platform::Apple), "{id}");
+        assert!(!registry::offered_on(action, Platform::Freedesktop), "{id}");
+        assert_eq!(
+            registry::get(id).contexts,
+            Context::Results.as_set(),
+            "{id} is the results view's alone"
+        );
+    }
+    assert_eq!(CommandId::StepRangeBack.as_str(), "step_range_back");
+    assert_eq!(CommandId::StepRangeForward.as_str(), "step_range_forward");
+}

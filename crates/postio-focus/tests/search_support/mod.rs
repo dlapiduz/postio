@@ -232,9 +232,20 @@ pub fn matching(query: &postio_search::ParsedQuery) -> Vec<i64> {
         })
     };
     let (only, never) = (ada(false), ada(true));
+    // `after:` and `before:` keep the days they name, by the newest match.
+    let (mut after, mut before) = (None, None);
+    for clause in query.filters().filter(|clause| !clause.negated) {
+        match clause.filter {
+            postio_search::query::Filter::After(day) => after = Some(day),
+            postio_search::query::Filter::Before(day) => before = Some(day),
+            _ => {}
+        }
+    }
     (0..CONVERSATIONS)
         .filter(|n| !only || n % 2 == 0)
         .filter(|n| !never || n % 2 == 1)
+        .filter(|n| after.is_none_or(|day| when(*n).date_naive() >= day))
+        .filter(|n| before.is_none_or(|day| when(*n).date_naive() < day))
         .collect()
 }
 

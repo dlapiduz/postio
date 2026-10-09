@@ -208,7 +208,9 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::HistoryForward
         | C::ResultsConversations
         | C::ResultsFiles
-        | C::ResultsPeople => Some(G::InSearch),
+        | C::ResultsPeople
+        | C::StepRangeBack
+        | C::StepRangeForward => Some(G::InSearch),
 
         // ── Digests and filtering ───────────────────────────────────────
         C::DigestRule

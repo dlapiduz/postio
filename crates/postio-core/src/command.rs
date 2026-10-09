@@ -184,6 +184,10 @@ command_ids! {
     ResultsFiles => "results_files",
     /// The results' People tab.
     ResultsPeople => "results_people",
+    /// The timeline's range, a month earlier.
+    StepRangeBack => "step_range_back",
+    /// The timeline's range, a month later.
+    StepRangeForward => "step_range_forward",
     /// Start a new message.
     Compose => "compose",
     /// Send what is in the composer.
@@ -797,6 +801,11 @@ pub enum Command {
     ResultsFiles,
     /// The results' People tab.
     ResultsPeople,
+    /// Step the timeline's range a month earlier (`after:` and `before:`
+    /// both).
+    StepRangeBack,
+    /// Step the timeline's range a month later.
+    StepRangeForward,
 
     // -- Compose ---------------------------------------------------------
     /// Start a new message, optionally from an existing draft.
@@ -1260,6 +1269,8 @@ impl Command {
             Command::ResultsConversations => CommandId::ResultsConversations,
             Command::ResultsFiles => CommandId::ResultsFiles,
             Command::ResultsPeople => CommandId::ResultsPeople,
+            Command::StepRangeBack => CommandId::StepRangeBack,
+            Command::StepRangeForward => CommandId::StepRangeForward,
             Command::Compose { .. } => CommandId::Compose,
             Command::Send => CommandId::Send,
             Command::ScheduleSend => CommandId::ScheduleSend,
@@ -1444,6 +1455,8 @@ impl Command {
             CommandId::ResultsConversations => Command::ResultsConversations,
             CommandId::ResultsFiles => Command::ResultsFiles,
             CommandId::ResultsPeople => Command::ResultsPeople,
+            CommandId::StepRangeBack => Command::StepRangeBack,
+            CommandId::StepRangeForward => Command::StepRangeForward,
             CommandId::Compose => Command::Compose { draft: None },
             CommandId::Send => Command::Send,
             CommandId::ScheduleSend => Command::ScheduleSend,
