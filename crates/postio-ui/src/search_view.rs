@@ -473,8 +473,12 @@ impl FilterKind {
         )
     }
 
-    /// Whether `filter` is one this button applies.
+    /// Whether `filter` is one this button applies: a set of values
+    /// (`from:{ada tomas}`, spec 010 D26) is its field's, as one value is.
     pub fn holds(self, filter: &Filter) -> bool {
+        let Some(filter) = filter.alternatives().first() else {
+            return false;
+        };
         match self {
             FilterKind::From => matches!(filter, Filter::From(_)),
             FilterKind::To => matches!(filter, Filter::To(_)),
@@ -518,7 +522,12 @@ pub fn filter_button_label(
     name_of: &dyn Fn(&str) -> Option<String>,
     today: chrono::NaiveDate,
 ) -> String {
-    let held: Vec<&Filter> = filters.iter().filter(|filter| kind.holds(filter)).collect();
+    // A set's values each count, so two people read "Ada Moreno +1".
+    let held: Vec<&Filter> = filters
+        .iter()
+        .flat_map(Filter::alternatives)
+        .filter(|filter| kind.holds(filter))
+        .collect();
     if held.is_empty() || !kind.has_popover() {
         return kind.title().to_owned();
     }
@@ -655,10 +664,26 @@ pub fn save_name(
             .unwrap_or_else(|| address.to_owned())
     };
     for clause in query.filters().filter(|clause| !clause.negated) {
-        match &clause.filter {
-            Filter::From(who) => said.push(format!("from {}", first_name(who))),
-            Filter::To(who) => said.push(format!("to {}", first_name(who))),
-            _ => {}
+        // Either of a set's people (D26): "from Ada or Tomás".
+        let people = |pick: fn(&Filter) -> Option<&String>| {
+            let who: Vec<String> = clause
+                .filter
+                .alternatives()
+                .iter()
+                .filter_map(|filter| pick(filter).map(|who| first_name(who)))
+                .collect();
+            (!who.is_empty()).then(|| who.join(" or "))
+        };
+        if let Some(who) = people(|filter| match filter {
+            Filter::From(who) => Some(who),
+            _ => None,
+        }) {
+            said.push(format!("from {who}"));
+        } else if let Some(who) = people(|filter| match filter {
+            Filter::To(who) => Some(who),
+            _ => None,
+        }) {
+            said.push(format!("to {who}"));
         }
     }
     let name = said.join(" ");
@@ -1025,37 +1050,50 @@ pub fn relaxation_line(
         TokenKind::Filter(clause) => clause,
         _ => return remove(&token.raw),
     };
-    let filter = &clause.filter;
+    // A set (D26) is named by every value, "Ada Moreno or Tomás Reyes";
+    // what follows reads its first value for which kind it is.
+    let values = clause.filter.alternatives();
+    let Some(filter) = values.first() else {
+        return remove(&token.raw);
+    };
+    let person = |who: &String| {
+        name_of(who)
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| who.clone())
+    };
+    let either = |say: &dyn Fn(&Filter) -> Option<String>| {
+        values
+            .iter()
+            .filter_map(say)
+            .collect::<Vec<_>>()
+            .join(" or ")
+    };
+    let people = either(&|filter| match filter {
+        Filter::From(who) | Filter::To(who) => Some(person(who)),
+        _ => None,
+    });
+    let named = either(&|filter| match filter {
+        Filter::Subject(value) | Filter::Label(value) | Filter::In(value) => Some(quoted(value)),
+        _ => None,
+    });
     match relaxation.loosen {
         Loosen::Anywhere { .. } => match filter {
-            Filter::Subject(words) => {
-                format!("Look for {} anywhere, not just the subject", quoted(words))
+            Filter::Subject(_) => {
+                format!("Look for {named} anywhere, not just the subject")
             }
             _ => remove(&token.raw),
         },
         Loosen::FolderNotLabel { .. } => match filter {
-            Filter::Label(name) => {
-                format!("Look for a folder called {}, not a label", quoted(name))
-            }
+            Filter::Label(_) => format!("Look for a folder called {named}, not a label"),
             _ => remove(&token.raw),
         },
         Loosen::Drop { .. } if clause.negated => remove(&token.raw),
         Loosen::Drop { .. } => match filter {
-            Filter::From(who) => format!(
-                "Anyone, not just {}",
-                name_of(who)
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or_else(|| who.clone())
-            ),
-            Filter::To(who) => format!(
-                "To anyone, not just {}",
-                name_of(who)
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or_else(|| who.clone())
-            ),
-            Filter::Subject(words) => format!("Any subject, not just {}", quoted(words)),
-            Filter::Label(name) => format!("Any label, not just {}", quoted(name)),
-            Filter::In(name) => format!("Any folder, not just {}", quoted(name)),
+            Filter::From(_) => format!("Anyone, not just {people}"),
+            Filter::To(_) => format!("To anyone, not just {people}"),
+            Filter::Subject(_) => format!("Any subject, not just {named}"),
+            Filter::Label(_) => format!("Any label, not just {named}"),
+            Filter::In(_) => format!("Any folder, not just {named}"),
             Filter::After(_) | Filter::Before(_) => {
                 let label = filter_button_label(
                     FilterKind::Date,
@@ -1827,6 +1865,40 @@ mod tests {
     }
 
     #[test]
+    fn a_set_is_held_by_its_fields_button_and_reads_as_its_first_value() {
+        // D26: two people checked in the From popover are one set.
+        use postio_search::query::Filter;
+        let names = |address: &str| (address == "ada@example.com").then(|| "Ada Moreno".to_owned());
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 9, 30).unwrap();
+        let set = |members| Filter::any_of(members).expect("a set");
+        let people = set(vec![
+            Filter::From("ada@example.com".into()),
+            Filter::From("tomas@example.com".into()),
+        ]);
+        assert!(FilterKind::From.holds(&people));
+        assert!(!FilterKind::To.holds(&people));
+        assert_eq!(
+            filter_button_label(
+                FilterKind::From,
+                std::slice::from_ref(&people),
+                &names,
+                today
+            ),
+            "From: Ada Moreno +1"
+        );
+        let folders = set(vec![
+            Filter::In("Inbox".into()),
+            Filter::In("Archive".into()),
+            Filter::In("Receipts".into()),
+        ]);
+        assert!(FilterKind::Anywhere.holds(&folders));
+        assert_eq!(
+            filter_button_label(FilterKind::Anywhere, &[folders], &names, today),
+            "In: Inbox +2"
+        );
+    }
+
+    #[test]
     fn the_filter_bar_has_the_designs_buttons_in_its_order() {
         let labels: Vec<&str> = FilterKind::ALL.iter().map(|kind| kind.title()).collect();
         assert_eq!(
@@ -2026,6 +2098,11 @@ mod tests {
         );
         assert_eq!(named("from:ada@example.com"), "From Ada");
         assert_eq!(
+            named("budget from:{ada@example.com tomas@example.com}"),
+            "Budget from Ada or tomas@example.com",
+            "either of them (D26)"
+        );
+        assert_eq!(
             named("invoices to:ben@example.org"),
             "Invoices to ben@example.org"
         );
@@ -2044,6 +2121,37 @@ mod tests {
         assert_eq!(nothing_matches(12), "Nothing matches all 12 filters");
         assert_eq!(nothing_matches(1), "Nothing matches this search");
         assert_eq!(nothing_matches(0), "Nothing matches this search");
+    }
+
+    #[test]
+    fn a_relaxation_of_a_set_names_every_value() {
+        // D26: a set is dropped as one term, and says each of its values.
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 9, 26).unwrap();
+        let names = |address: &str| match address {
+            "ada@example.com" => Some("Ada Moreno".to_owned()),
+            "tomas@example.com" => Some("Tom\u{e1}s Reyes".to_owned()),
+            _ => None,
+        };
+        let query = postio_search::parse(
+            "from:{ada@example.com tomas@example.com} to:{ada@example.com bo} \
+             label:{Atlas Harbor} in:{Inbox Archive} subject:{budget plan}",
+            today,
+        );
+        let lines: Vec<String> = postio_search::relax::relax(&query)
+            .iter()
+            .map(|relaxation| relaxation_line(relaxation, &query, &names, today))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "Anyone, not just Ada Moreno or Tom\u{e1}s Reyes",
+                "To anyone, not just Ada Moreno or bo",
+                "Any label, not just \u{201c}Atlas\u{201d} or \u{201c}Harbor\u{201d}",
+                "Look for a folder called \u{201c}Atlas\u{201d} or \u{201c}Harbor\u{201d}, not a label",
+                "Any folder, not just \u{201c}Inbox\u{201d} or \u{201c}Archive\u{201d}",
+                "Any subject, not just \u{201c}budget\u{201d} or \u{201c}plan\u{201d}",
+            ]
+        );
     }
 
     #[test]
