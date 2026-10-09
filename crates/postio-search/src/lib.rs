@@ -66,6 +66,7 @@ pub mod highlight;
 pub mod matcher;
 pub mod natural;
 mod parser;
+pub mod passage;
 pub mod query;
 pub mod relax;
 pub mod results;

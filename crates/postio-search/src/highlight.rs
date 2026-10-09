@@ -291,7 +291,7 @@ pub fn snippet(text: &str, terms: &[String]) -> String {
 }
 
 /// Every run of whitespace as one space, and no leading or trailing space.
-fn collapse_whitespace(text: &str) -> String {
+pub(crate) fn collapse_whitespace(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut in_space = false;
     for character in text.chars() {
