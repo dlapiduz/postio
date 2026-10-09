@@ -1027,10 +1027,7 @@ impl FocusController {
             }
             CommandId::BackToWords => self.bar.back_to_words(),
             CommandId::ShowAllResults if self.bar.results_view => self.bar.show_all(),
-            CommandId::ForgetRecent if self.bar.results_view => match self.bar.highlighted {
-                Some(token) => self.bar.forget(token),
-                None => Vec::new(),
-            },
+            CommandId::ForgetRecent if self.bar.results_view => self.bar.forget_highlighted(),
             CommandId::ToggleResultOrder => self.bar.toggle_order(),
             CommandId::GoToInbox => self.go_inbox(),
             CommandId::GoToDrafts => vec![Step::Ask(Request::RoleFolder(MailboxRole::Drafts))],
@@ -1764,6 +1761,22 @@ impl Bar {
             query: recent.query,
         }));
         steps
+    }
+
+    /// The key: forget the recent search the arrows rest on, or the one
+    /// focused by default when they have not moved.
+    fn forget_highlighted(&mut self) -> Vec<Step> {
+        if !matches!(&self.drop, Some(drop) if drop.state == DropdownState::Empty) {
+            return Vec::new();
+        }
+        let token = self
+            .highlighted
+            .filter(|token| self.recents.iter().any(|(at, _)| at == token))
+            .or_else(|| self.recents.first().map(|(token, _)| *token));
+        match token {
+            Some(token) => self.forget(token),
+            None => Vec::new(),
+        }
     }
 
     /// The query, as it is kept among the recent searches.
