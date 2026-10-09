@@ -88,6 +88,12 @@ closes the issue, and arms auto-merge. PRs land **squashed**. `--full` (the
 integration suites locally) needs a specific reason; run the suites your diff
 touches yourself instead.
 
+**Opening a PR by hand** -- from a host that cannot build a crate the branch
+touches, so `issue-land.sh` refuses -- skips its gates, so run the ones this
+host can: `scripts/check.sh`, the suites you touched, and
+`scripts/doc-check.sh` (rustdoc under CI's flags). Then
+`gh pr merge <n> --auto --squash`.
+
 A red PR is still yours: the next claim and `/steward` both report it, and
 `scripts/issue-claim.sh --resume <n>` takes you back to fix it on the same
 PR. A gate failure in code you did not touch is probably someone else's —

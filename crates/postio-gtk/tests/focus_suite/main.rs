@@ -132,6 +132,9 @@ const IGNORED: &[&str] = &[
     // GTK code, once on the retry too). Back in `CASES`' default run when
     // #1793 finds what the popover waits on; run by name until then.
     "row_menu::a_right_click_outside_the_selection_is_for_that_row_inside_it_for_the_selection",
+    // Failed on CI in two places that do not touch this crate; held out
+    // by scripts/quarantine-flakes.py until #1787 finds the race.
+    "settings_wiring::the_account_verbs_have_keys_on_the_focused_row",
 ];
 
 const CASES: &[(&str, fn())] = &[

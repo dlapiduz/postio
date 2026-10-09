@@ -1478,7 +1478,9 @@ mod tests {
             "HEAD now hashes to {:08x}, and no migration leads there. Copy the \
              HEAD you replaced to tests/schemas/{:08x}.sql and append a \
              Migration from {:08x} to {:08x} whose statements make a store at \
-             the old schema one at the new",
+             the old schema one at the new. If you changed only a comment or \
+             spacing inside HEAD (a search-and-replace reaches them too), put \
+             it back instead: the stamp hashes the text, comments included",
             FINGERPRINT as i32 as u32,
             last.to as i32 as u32,
             last.to as i32 as u32,

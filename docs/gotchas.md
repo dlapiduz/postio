@@ -68,6 +68,8 @@ The store is Turso (ADR 0038). Its planner and defaults are not SQLite's, and mo
 
 **A body fetch replaces the message's attachment rows.** An `AttachmentId` does not survive the fetch it triggers, so resolve it to the MIME part path first. Blob ids hash the decoded payload, not the base64.
 
+**The schema stamp hashes `HEAD`'s text, SQL comments and spacing included.** A search-and-replace across the tree that touches a comment inside `HEAD` moves the stamp exactly as a new column would, and `a_schema_change_comes_with_the_migration_that_reaches_it` fails. Leave `HEAD`'s comments out of mechanical rewrites, or put them back.
+
 **A schema change edits `schema::HEAD` and adds a `schema::MIGRATIONS` step.** Keep the replaced `HEAD` in `crates/postio-storage/tests/schemas/`. A store that no migration reaches is refused with `Remedy::StartOver` (`notes/2026-10-01-store-migrations-and-starting-over.md`). The engine has no read-only open, so point any diagnostic at a copy of the store.
 
 **Only a keyring answer of `NotFound` mints a store key.** `Locked`, `Timeout` and `Backend` mean the keyring did not answer, and treating them as a first run destroys the store. Never `#[derive(Debug)]` on anything that holds key material.

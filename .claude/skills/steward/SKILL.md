@@ -32,16 +32,19 @@ issue's timeline before touching it. Releasing live work is far worse than
 leaving a label a day too long. `scripts/issue-release.sh --stale` applies
 that rule: it will not release a claim younger than a day unless told to.
 
-**Red pull requests are yours to chase.** Landings arm auto-merge and move
-on (#1107), so a failing check has nobody in front of it. List them:
+**Stuck pull requests are yours to chase.** Landings arm auto-merge and
+move on (#1107), so a failing check, a conflict with main or a green PR
+nobody armed has nobody in front of it. List them, with the reason each is
+stuck:
 
 ```bash
-gh pr list --state open --json number,headRefName,url,statusCheckRollup \
-  --jq '.[] | select([.statusCheckRollup[]?.conclusion] | index("FAILURE")) | "\(.number) \(.headRefName) \(.url)"'
+scripts/stale-prs.py
 ```
 
-For each: read the failing job. A flake (a known intermittent, a runner
-that died) gets a re-run (`gh run rerun <id> --failed`). A real failure
+For each red one: read the failing job. A flake (a known intermittent, a runner
+that died) gets a re-run (`gh run rerun <id> --failed`); a case that keeps
+flaking across unrelated PRs is held out by `scripts/quarantine-flakes.py`
+(report first, then `--apply` and land the edit). A real failure
 gets `scripts/issue-claim.sh --resume <n>`, a fix on that branch, and a new
 landing onto the same PR — yours if it is small, otherwise a comment on the
 issue and the session that owns it. A PR whose author's claim has gone
