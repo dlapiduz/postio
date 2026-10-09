@@ -4181,6 +4181,13 @@ impl Session {
         self.focus_list.page_reads()
     }
 
+    /// How many of Focus's conversation searches ran to the end.
+    /// Test-only.
+    #[cfg(feature = "testing")]
+    pub fn focus_search_reads_for_test(&self) -> usize {
+        self.focus_list.search_reads()
+    }
+
     /// How many rows Focus's list is holding. Test-only.
     #[cfg(feature = "testing")]
     pub fn focus_resident_rows_for_test(&self) -> usize {

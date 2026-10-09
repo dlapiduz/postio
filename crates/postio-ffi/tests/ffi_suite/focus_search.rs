@@ -147,3 +147,48 @@ async fn show_all_keeps_the_query_among_the_recent_searches() {
     assert_eq!(runs(&view.sections[0].rows[0].detail), "0 results");
     session.shutdown();
 }
+
+/// Typing `atlas budget` a letter at a time, faster than a search answers
+/// (D8): the driver aborts a lane's superseded task, so at most two
+/// conversation searches run to the end -- the last, and one that won the
+/// race -- not one a keystroke, and the panel is drawn for the words typed
+/// last only. (Spec 010's `a`, `at`, `atl`, `atla` alone: "at" is plain
+/// English's, and two words that find nothing are too quick to race.)
+#[tokio::test(flavor = "multi_thread")]
+async fn typing_quickly_completes_only_the_searches_still_wanted() {
+    let (database, _) = postio_demo::seeded(postio_demo::Seed::Search).await;
+    let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");
+    session.invoke("search");
+    let _ = dropdown(&session, 10, |view| view.state == DropdownStateFfi::Empty).await;
+    let before = session.focus_search_reads_for_test();
+
+    let typed = "atlas budget";
+    for end in 1..=typed.len() {
+        session.focus_bar_typed(typed[..end].to_owned());
+    }
+    let mut counts = Vec::new();
+    let _ = heard(&session, 3, |event| {
+        if let UiEvent::FocusDropdown { view } = event
+            && let Some(count) = &view.footer_count
+        {
+            counts.push(count.clone());
+        }
+        false
+    })
+    .await;
+    assert!(!counts.is_empty(), "the last words were answered");
+    assert!(
+        counts[0] != "0 matches \u{b7} <1 ms",
+        "and found: {counts:?}"
+    );
+    assert!(
+        counts.windows(2).all(|pair| pair[0] == pair[1]),
+        "one answer drawn, then only its passages: {counts:?}"
+    );
+    let completed = session.focus_search_reads_for_test() - before;
+    assert!(
+        (1..=2).contains(&completed),
+        "{completed} conversation searches ran to the end for twelve keystrokes"
+    );
+    session.shutdown();
+}
