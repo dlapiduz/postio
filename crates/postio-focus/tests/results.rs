@@ -1725,3 +1725,304 @@ fn saving_from_the_popover_writes_what_it_says_and_a_notify_search_starts_seen()
         "its badge counts from the moment it was saved"
     );
 }
+
+// ---------------------------------------------------------------------------
+// No results (spec 010 step 7, US6, FR-030, D24, design §3.10, screen 13)
+// ---------------------------------------------------------------------------
+
+/// Screen 13's search: four filters, and nothing is called "v4".
+const NOTHING: &str = "from:ada@example.com has:attachment before:2026-03-01 subject:\"budget v4\"";
+
+/// The ways-out read among `effects`: its ticket, query and stamp.
+fn ways_out_asked(effects: &[Effect]) -> Option<(postio_focus::Ticket, String, u64)> {
+    asks(effects)
+        .into_iter()
+        .find_map(|(ticket, request)| match request {
+            Request::Relaxations { query, stamp, .. } => {
+                let raw: Vec<String> = query
+                    .tokens()
+                    .iter()
+                    .map(|token| token.raw.clone())
+                    .collect();
+                Some((ticket, raw.join(" "), stamp))
+            }
+            _ => None,
+        })
+}
+
+/// The engine's answer to the ways out of `query`: each relaxation it
+/// offers, in its order, with the count given, zeros and all.
+fn ways_out(query: &str, counts: &[u64]) -> Vec<(postio_search::relax::Relaxation, u64)> {
+    let parsed = postio_search::parse(query, today().date_naive());
+    let offered = postio_search::relax::relax(&parsed);
+    assert_eq!(offered.len(), counts.len(), "{offered:?}");
+    offered.into_iter().zip(counts.iter().copied()).collect()
+}
+
+/// `query` searched, every results read answered, and its ways out
+/// answered with `counts`.
+fn nothing_found(
+    focus: &mut FocusController,
+    query: &str,
+    counts: &[u64],
+    rows: &List,
+) -> Vec<Effect> {
+    let effects = search(focus, query, rows);
+    let (ticket, _, stamp) = ways_out_asked(&effects).expect("the ways out are asked for");
+    focus.handle_on(
+        Input::Reply(
+            ticket,
+            postio_focus::Reply::Relaxations {
+                stamp,
+                answer: Ok(ways_out(query, counts)),
+            },
+        ),
+        rows,
+    )
+}
+
+#[test]
+fn nothing_found_shows_the_page_at_once_and_asks_for_the_ways_out() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let effects = search(&mut focus, NOTHING, &rows);
+
+    let view = results_view(&effects).expect("the results");
+    assert_eq!(view.rows, 0);
+    assert_eq!(view.footer, "Searched 18,204 messages · 41 ms");
+    assert_eq!(
+        labels(&view.hints),
+        ["clear filters"],
+        "nothing to loosen by number until the counts land"
+    );
+    let page = no_results_view(&effects)
+        .expect("the page")
+        .expect("drawn, not taken away");
+    assert_eq!(page.title, "Nothing matches all four filters");
+    assert!(page.body.starts_with("Each line below loosens one filter"));
+    assert!(page.relaxations.is_empty());
+    assert_eq!(page.counting.as_deref(), Some("Counting looser searches…"));
+    assert_eq!(
+        page.searched,
+        "Searched all 18,204 messages on this Mac, including attachment contents."
+    );
+    let (_, query, _) = ways_out_asked(&effects).expect("the ways out are asked for");
+    assert_eq!(query, NOTHING);
+    let field = query_view(&effects).expect("the field");
+    assert_eq!(field.hint, "clears filters", "D24");
+    assert_eq!(field.hint_key.as_deref(), Some("cmd+BackSpace"));
+    assert!(focus.answers(CommandId::BackToWords));
+}
+
+#[test]
+fn the_ways_out_are_most_first_none_empty_and_at_most_four() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let query =
+        "from:ada@example.com has:attachment before:2026-03-01 subject:\"budget v4\" atlas plan";
+    // from, has, before, subject (dropped), subject (anywhere), atlas, plan.
+    let effects = nothing_found(&mut focus, query, &[4, 1, 6, 0, 2, 3, 5], &rows);
+
+    let page = no_results_view(&effects).expect("drawn").expect("up");
+    assert_eq!(page.title, "Nothing matches all six filters");
+    assert_eq!(page.counting, None);
+    let shown: Vec<(u32, &str, &str, &str, bool)> = page
+        .relaxations
+        .iter()
+        .map(|way| {
+            (
+                way.number,
+                way.label.as_str(),
+                way.query.as_str(),
+                way.count.as_str(),
+                way.focused,
+            )
+        })
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            (
+                1,
+                "Remove “before March”",
+                "from:ada@example.com has:attachment subject:\"budget v4\" atlas plan",
+                "6 conversations",
+                true
+            ),
+            (
+                2,
+                "Remove “plan”",
+                "from:ada@example.com has:attachment before:2026-03-01 subject:\"budget v4\" atlas",
+                "5 conversations",
+                false
+            ),
+            (
+                3,
+                "Anyone, not just Ada Moreno",
+                "has:attachment before:2026-03-01 subject:\"budget v4\" atlas plan",
+                "4 conversations",
+                false
+            ),
+            (
+                4,
+                "Remove “atlas”",
+                "from:ada@example.com has:attachment before:2026-03-01 subject:\"budget v4\" plan",
+                "3 conversations",
+                false
+            ),
+        ],
+        "most first, none of 0, four at most"
+    );
+    assert_eq!(page.relaxations[0].key.as_deref(), Some("1"));
+    let view = results_view(&effects).expect("the footer, again");
+    assert_eq!(labels(&view.hints), ["loosen a filter", "clear filters"]);
+    assert_eq!(view.hints[0].key, "1\u{2013}4");
+
+    // The chip the focused way out drops is ringed.
+    let field = query_view(&effects).expect("the field");
+    let ringed: Vec<&str> = field
+        .chips
+        .iter()
+        .filter(|chip| chip.focused)
+        .map(|chip| chip.operator.as_str())
+        .collect();
+    assert_eq!(ringed, ["before:"]);
+
+    // j moves the focus down the list; a word has no chip to ring.
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    let page = no_results_view(&effects).expect("drawn").expect("up");
+    assert!(page.relaxations[1].focused && !page.relaxations[0].focused);
+    let field = query_view(&effects).expect("the field");
+    assert!(field.chips.iter().all(|chip| !chip.focused));
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    let field = query_view(&effects).expect("the field");
+    let ringed: Vec<&str> = field
+        .chips
+        .iter()
+        .filter(|chip| chip.focused)
+        .map(|chip| chip.operator.as_str())
+        .collect();
+    assert_eq!(ringed, ["from:"]);
+}
+
+#[test]
+fn a_number_runs_its_way_out_and_return_runs_the_focused_one() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    // from, has, before, subject (dropped), subject (anywhere).
+    nothing_found(&mut focus, NOTHING, &[0, 0, 0, 7, 3], &rows);
+
+    assert!(
+        run(&mut focus, CommandId::PickRelaxation3, &rows).is_empty(),
+        "no third way out"
+    );
+    let effects = run(&mut focus, CommandId::PickRelaxation2, &rows);
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("from:ada@example.com has:attachment before:2026-03-01 \"budget v4\""),
+        "the second way out, run"
+    );
+    assert_eq!(no_results_view(&effects), Some(None), "the page goes");
+    let field = query_view(&effects).expect("the field");
+    assert_eq!(field.hint, "/ to edit");
+    assert_eq!(field.hint_key, None);
+
+    let mut focus = mac();
+    nothing_found(&mut focus, NOTHING, &[0, 0, 0, 7, 3], &rows);
+    let effects = run(&mut focus, CommandId::OpenMessage, &rows);
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("from:ada@example.com has:attachment before:2026-03-01"),
+        "Return runs the focused one, the first"
+    );
+}
+
+#[test]
+fn cmd_backspace_with_nothing_found_clears_the_filters_and_keeps_the_words() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let query = "notes from:ada@example.com subject:v4";
+    let effects = search(&mut focus, query, &rows);
+    assert!(no_results_view(&effects).flatten().is_some());
+
+    let effects = run(&mut focus, CommandId::BackToWords, &rows);
+    let field = query_view(&effects).expect("the field");
+    assert!(field.chips.is_empty(), "{field:?}");
+    assert_eq!(field.words, "notes");
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("notes")
+    );
+    assert_eq!(no_results_view(&effects), Some(None));
+
+    // With results, the key is not the results' to answer.
+    let effects = settle(&mut focus, effects, &rows);
+    assert!(results_view(&effects).is_some_and(|view| view.rows > 0));
+    assert!(!focus.answers(CommandId::BackToWords));
+}
+
+#[test]
+fn ways_out_for_a_search_since_changed_are_dropped() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let effects = search(&mut focus, NOTHING, &rows);
+    let (ticket, _, stamp) = ways_out_asked(&effects).expect("asked");
+    // The query changes before the counts land.
+    let cleared = focus.handle_on(Input::SearchEdit(TermEdit::ClearFilters), &rows);
+    let _ = settle(&mut focus, cleared, &rows);
+    let effects = focus.handle_on(
+        Input::Reply(
+            ticket,
+            postio_focus::Reply::Relaxations {
+                stamp,
+                answer: Ok(ways_out(NOTHING, &[1, 2, 3, 4, 5])),
+            },
+        ),
+        &rows,
+    );
+    assert_eq!(no_results_view(&effects), None, "{:?}", shown(&effects));
+    assert!(run(&mut focus, CommandId::PickRelaxation1, &rows).is_empty());
+}
+
+#[test]
+fn no_way_out_says_so_rather_than_counting_forever() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let effects = nothing_found(&mut focus, NOTHING, &[0, 0, 0, 0, 0], &rows);
+    let page = no_results_view(&effects).expect("drawn").expect("up");
+    assert!(page.relaxations.is_empty());
+    assert_eq!(page.counting, None);
+    assert!(
+        page.body
+            .starts_with("Loosening any one of them still finds nothing")
+    );
+
+    let mut focus = mac();
+    let effects = search(&mut focus, NOTHING, &rows);
+    let (ticket, _, stamp) = ways_out_asked(&effects).expect("asked");
+    let effects = focus.handle_on(
+        Input::Reply(
+            ticket,
+            postio_focus::Reply::Relaxations {
+                stamp,
+                answer: Err("the index is closed".to_owned()),
+            },
+        ),
+        &rows,
+    );
+    let page = no_results_view(&effects).expect("drawn").expect("up");
+    assert_eq!(page.counting, None, "a failed count stops counting");
+}
+
+#[test]
+fn the_ways_out_are_a_lane_of_their_own() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let effects = search(&mut focus, NOTHING, &rows);
+    let request = asks(&effects)
+        .into_iter()
+        .map(|(_, request)| request)
+        .find(|request| matches!(request, Request::Relaxations { .. }))
+        .expect("asked");
+    assert_eq!(request.lane(), Some(postio_focus::Lane::Relaxations));
+}

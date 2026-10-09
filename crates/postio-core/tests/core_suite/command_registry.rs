@@ -972,3 +972,30 @@ fn quick_look_is_the_results_views_alone() {
     assert_eq!(CommandId::NextMatch.as_str(), "next_match");
     assert_eq!(CommandId::PrevMatch.as_str(), "prev_match");
 }
+
+/// Spec 010 step 7 (FR-030, D25): the looser searches are picked by number
+/// in the results view alone, and only on the Mac until Linux adopts them;
+/// `BackToWords` reaches the results, where it clears the filters (D24).
+#[test]
+fn relaxations_are_the_results_views_alone() {
+    use postio_config::paths::Platform;
+    use postio_core::ActionId;
+    for (id, name) in [
+        (CommandId::PickRelaxation1, "pick_relaxation_1"),
+        (CommandId::PickRelaxation2, "pick_relaxation_2"),
+        (CommandId::PickRelaxation3, "pick_relaxation_3"),
+        (CommandId::PickRelaxation4, "pick_relaxation_4"),
+    ] {
+        let action = ActionId::Builtin(id);
+        assert!(registry::offered_on(action, Platform::Apple), "{id}");
+        assert!(!registry::offered_on(action, Platform::Freedesktop), "{id}");
+        assert_eq!(
+            registry::get(id).contexts,
+            Context::Results.as_set(),
+            "{id} is the results view's alone"
+        );
+        assert_eq!(id.as_str(), name);
+    }
+    assert!(registry::get(CommandId::BackToWords).available_in(Context::Results));
+    assert!(registry::get(CommandId::BackToWords).available_in(Context::Search));
+}

@@ -180,6 +180,9 @@ pub enum Lane {
     Passages,
     /// The matches of the conversation Quick Look shows: j supersedes them.
     Matches,
+    /// The counts of a search that found nothing's ways out: slow, and
+    /// waste once the query changes.
+    Relaxations,
 }
 
 /// The dropdown's top hits.

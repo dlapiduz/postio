@@ -24,6 +24,7 @@ use postio_model::{MailboxId, MessageId, ThreadId};
 use postio_search::ParsedQuery;
 use postio_search::facets::SearchFacets;
 use postio_search::query::{Clause, Filter, TokenKind};
+use postio_search::relax::{Loosen, Relaxation};
 use postio_search::results::{
     ConversationHit, ConversationKey, ConversationMatch, ConversationOrder, ConversationResults,
     FacetNames, Match, ResultsTab, Source,
@@ -216,10 +217,47 @@ pub struct QueryView {
     pub chips: Vec<Chip>,
     /// The plain words, after the chips.
     pub words: String,
-    /// The quiet hint on the right: "/ to edit".
+    /// The quiet hint on the right: "/ to edit", or "clears filters"
+    /// after its key while nothing matches (D24).
     pub hint: String,
+    /// The hint's key, as the registry spells it, drawn before it as a
+    /// cap: `cmd+BackSpace`. `None` when the hint names its own key.
+    pub hint_key: Option<String>,
     /// The filter bar's buttons.
     pub buttons: Vec<FilterButton>,
+}
+
+/// One looser search on the no-results page (§3.10, screen 13).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelaxationView {
+    /// Its number, from 1: the key that runs it.
+    pub number: u32,
+    /// That key, as the registry spells it (`1`); `None` when unbound.
+    pub key: Option<String>,
+    /// What it changes: "Remove “before March”".
+    pub label: String,
+    /// The query it runs, in the query language: drawn monospaced.
+    pub query: String,
+    /// "4 conversations".
+    pub count: String,
+    /// Ringed: Return runs it, and its chip is ringed in the field.
+    pub focused: bool,
+}
+
+/// The page a search that found nothing shows in the rows' place (design
+/// §3.10, screen 13): never a dead end.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoResultsView {
+    /// "Nothing matches all four filters".
+    pub title: String,
+    /// The sentence under it.
+    pub body: String,
+    /// The looser searches that find something, most first, at most four.
+    pub relaxations: Vec<RelaxationView>,
+    /// "Counting looser searches…" while their counts are on their way.
+    pub counting: Option<String>,
+    /// "Searched all 18,204 messages on this Mac."
+    pub searched: String,
 }
 
 /// One row of a list popover (§3.6, screen 08): a person, a folder or a
@@ -463,11 +501,18 @@ struct Frame {
     people: u64,
     names: FacetNames,
     elapsed: Duration,
+    /// What the search looked through: the no-results page says so.
+    messages_searched: u64,
+    corpus_complete: bool,
+    contents_complete: bool,
 }
 
 impl Frame {
     fn of(results: &ConversationResults) -> Self {
         Frame {
+            messages_searched: results.messages_searched,
+            corpus_complete: results.corpus_complete,
+            contents_complete: results.contents_complete,
             total: results.total,
             capped: results.capped,
             facets: results.facets.clone(),
@@ -530,6 +575,19 @@ struct Offer {
     count: u64,
 }
 
+/// A search that found nothing: its ways out, once counted.
+#[derive(Debug, Default)]
+pub(crate) struct NoResults {
+    /// Every looser search with its count, as the engine answered; `None`
+    /// while they are counted.
+    found: Option<Vec<(Relaxation, u64)>>,
+    /// The one Return runs, among those shown.
+    focus: usize,
+}
+
+/// The looser searches a page shows (FR-030).
+const RELAXATIONS_SHOWN: usize = 4;
+
 /// The results mode.
 #[derive(Debug)]
 pub(crate) struct Results {
@@ -569,6 +627,8 @@ pub(crate) struct Results {
     /// button names its person while the next answer is on its way,
     /// rather than falling back to the address and back again.
     people: Vec<postio_model::EmailAddress>,
+    /// The search found nothing: its ways out (US6).
+    none: Option<NoResults>,
 }
 
 impl Results {
@@ -599,6 +659,7 @@ impl Results {
             undated: None,
             quick_look: None,
             people: Vec::new(),
+            none: None,
         }
     }
 
@@ -651,7 +712,130 @@ impl Results {
         self.top = None;
         self.pages.clear();
         self.asked.clear();
-        self.asks()
+        let mut steps = Vec::new();
+        if self.none.take().is_some() {
+            steps.push(Step::Show(Intent::Relaxations(None)));
+        }
+        steps.extend(self.asks());
+        steps
+    }
+
+    /// Whether the search found nothing, and the no-results page is up.
+    pub(crate) fn found_nothing(&self) -> bool {
+        self.none.is_some()
+    }
+
+    /// The looser searches shown: those that find something, most first,
+    /// at most four. Empty while they are counted.
+    fn ways_out(&self) -> Vec<&(Relaxation, u64)> {
+        let Some(found) = self.none.as_ref().and_then(|none| none.found.as_ref()) else {
+            return Vec::new();
+        };
+        let mut shown: Vec<&(Relaxation, u64)> = found.iter().filter(|(_, n)| *n > 0).collect();
+        shown.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+        shown.truncate(RELAXATIONS_SHOWN);
+        shown
+    }
+
+    /// The token the focused way out loosens: its chip is ringed.
+    fn loosened_token(&self) -> Option<usize> {
+        let focus = self.none.as_ref()?.focus;
+        let (relaxation, _) = self.ways_out().get(focus).copied()?;
+        let (Loosen::Drop { token }
+        | Loosen::Anywhere { token }
+        | Loosen::FolderNotLabel { token }) = relaxation.loosen;
+        Some(token)
+    }
+
+    /// The query way out `at` (from 0) runs, if there is one.
+    pub(crate) fn way_out(&self, at: usize) -> Option<String> {
+        self.ways_out()
+            .get(at)
+            .map(|(relaxation, _)| relaxation.query.clone())
+    }
+
+    /// Move the focus among the ways out by `by`; whether it moved.
+    pub(crate) fn step_way_out(&mut self, by: i64) -> bool {
+        let len = self.ways_out().len();
+        let Some(none) = self.none.as_mut() else {
+            return false;
+        };
+        if len == 0 {
+            return false;
+        }
+        let next = (none.focus as i64)
+            .saturating_add(by)
+            .clamp(0, len as i64 - 1) as usize;
+        let moved = next != none.focus;
+        none.focus = next;
+        moved
+    }
+
+    /// The ways out landed, asked under `stamp`: whether the page changes.
+    pub(crate) fn ways_out_landed(
+        &mut self,
+        stamp: u64,
+        answer: Result<Vec<(Relaxation, u64)>, String>,
+    ) -> bool {
+        if stamp != self.stamp {
+            return false;
+        }
+        let Some(none) = self.none.as_mut() else {
+            return false;
+        };
+        none.found = Some(match answer {
+            Ok(found) => found,
+            Err(error) => {
+                tracing::debug!(%error, "the ways out of a search could not be counted");
+                Vec::new()
+            }
+        });
+        none.focus = 0;
+        true
+    }
+
+    /// The no-results page (§3.10), while the search found nothing.
+    pub(crate) fn no_results_view(
+        &self,
+        keymap: &Keymap,
+        today: NaiveDate,
+        names: &QueryNames<'_>,
+    ) -> Option<NoResultsView> {
+        let none = self.none.as_ref()?;
+        let frame = self.frame.as_ref()?;
+        let name_of = |address: &str| self.name_of(address).or_else(|| (names.lookup)(address));
+        let ways = self.ways_out();
+        let relaxations: Vec<RelaxationView> = ways
+            .iter()
+            .enumerate()
+            .map(|(at, (relaxation, n))| RelaxationView {
+                number: at as u32 + 1,
+                key: words::PICK_RELAXATION
+                    .get(at)
+                    .and_then(|id| postio_ui::hints::key(keymap, *id)),
+                label: words::relaxation_line(relaxation, &self.parsed, &name_of, today),
+                query: relaxation.query.clone(),
+                count: words::relaxation_count(*n),
+                focused: at == none.focus,
+            })
+            .collect();
+        let counted = none.found.is_some();
+        let terms = self.parsed.filters().count() + self.parsed.text_terms().count();
+        Some(NoResultsView {
+            title: words::nothing_matches(terms),
+            body: if counted && relaxations.is_empty() {
+                words::NO_RELAXATIONS_BODY.to_owned()
+            } else {
+                words::NO_RESULTS_BODY.to_owned()
+            },
+            relaxations,
+            counting: (!counted).then(|| words::COUNTING_RELAXATIONS.to_owned()),
+            searched: words::searched(
+                frame.messages_searched,
+                frame.corpus_complete,
+                frame.contents_complete,
+            ),
+        })
     }
 
     /// Take `query`, lowered as `parsed`: the checked rows go with the
@@ -898,6 +1082,10 @@ impl Results {
                 self.remembered = true;
                 landed.remember = self.frame.as_ref().map(|frame| frame.total);
             }
+            if self.frame.as_ref().is_some_and(|frame| frame.total == 0) {
+                self.none = Some(NoResults::default());
+                landed.nothing = true;
+            }
             let rows = self.rows();
             self.cursor = match self.cursor {
                 Some(cursor) if rows > 0 => Some(cursor.min(rows - 1)),
@@ -1129,6 +1317,7 @@ impl Results {
     /// The field's chips and words, and the filter bar's buttons.
     pub(crate) fn query_view(&self, today: NaiveDate, names: &QueryNames<'_>) -> QueryView {
         let name_of = |address: &str| self.name_of(address).or_else(|| (names.lookup)(address));
+        let ringed = self.loosened_token();
         let mut chips = Vec::new();
         let mut plain = Vec::new();
         for (index, token) in self.parsed.tokens().iter().enumerate() {
@@ -1152,7 +1341,7 @@ impl Results {
                         operator: format!("{operator}:"),
                         value,
                         excluded: clause.negated,
-                        focused: false,
+                        focused: ringed == Some(index),
                     });
                 }
                 TokenKind::Text(_) => plain.push(token.raw.clone()),
@@ -1176,6 +1365,7 @@ impl Results {
             chips,
             words: plain.join(" "),
             hint: words::TO_EDIT.to_owned(),
+            hint_key: None,
             buttons,
         }
     }
@@ -1254,9 +1444,17 @@ impl Results {
             groups,
             rows: self.rows(),
             cursor: self.cursor.filter(|_| self.ready()),
-            hints: words::results_hints(with.keymap),
+            hints: if self.found_nothing() {
+                words::no_results_hints(with.keymap, self.ways_out().len())
+            } else {
+                words::results_hints(with.keymap)
+            },
             footer: frame.map_or_else(String::new, |frame| {
-                words::results_footer(total, capped, frame.elapsed)
+                if self.found_nothing() {
+                    words::searched_footer(frame.messages_searched, frame.elapsed)
+                } else {
+                    words::results_footer(total, capped, frame.elapsed)
+                }
             }),
             selected: self.selected(),
             bulk: if self.any_checked() {
@@ -1913,6 +2111,8 @@ pub(crate) struct Landed {
     pub(crate) passages: Option<Request>,
     /// Keep the query among the recent searches, with this many found.
     pub(crate) remember: Option<u64>,
+    /// It found nothing: draw the no-results page and count its ways out.
+    pub(crate) nothing: bool,
 }
 
 fn thread_of(hit: &ConversationHit) -> Option<ThreadId> {
@@ -2010,7 +2210,7 @@ pub(crate) fn show(view: ResultsView) -> Step {
 }
 
 /// The commands the results answer while nothing is over them.
-const RESULTS_KEYS: [CommandId; 21] = [
+const RESULTS_KEYS: [CommandId; 25] = [
     CommandId::NextMessage,
     CommandId::PrevMessage,
     CommandId::FirstMessage,
@@ -2032,6 +2232,10 @@ const RESULTS_KEYS: [CommandId; 21] = [
     CommandId::QuickLook,
     CommandId::NextMatch,
     CommandId::PrevMatch,
+    CommandId::PickRelaxation1,
+    CommandId::PickRelaxation2,
+    CommandId::PickRelaxation3,
+    CommandId::PickRelaxation4,
 ];
 
 /// Whether the results, up, answer `id` themselves: their own keys, and
@@ -2103,15 +2307,77 @@ impl FocusController {
     fn query_view(&self) -> QueryView {
         let lookup = |address: &str| self.bar.name_for(address);
         let names = QueryNames { lookup: &lookup };
-        self.results
-            .as_ref()
-            .map(|results| results.query_view(self.bar.now().date_naive(), &names))
-            .unwrap_or(QueryView {
+        let Some(results) = self.results.as_ref() else {
+            return QueryView {
                 chips: Vec::new(),
                 words: String::new(),
                 hint: String::new(),
+                hint_key: None,
                 buttons: Vec::new(),
+            };
+        };
+        let mut view = results.query_view(self.bar.now().date_naive(), &names);
+        // D24: with nothing found, ⌘⌫ clears the filters, and the field
+        // says so where it says "/ to edit".
+        if results.found_nothing()
+            && let Some(key) = postio_ui::hints::key(self.bar.keymap(), CommandId::BackToWords)
+        {
+            view.hint = words::CLEARS_FILTERS.to_owned();
+            view.hint_key = Some(key);
+        }
+        view
+    }
+
+    /// The no-results page, drawn; `None` while the search found
+    /// something.
+    fn draw_no_results(&self) -> Vec<Step> {
+        let lookup = |address: &str| self.bar.name_for(address);
+        let names = QueryNames { lookup: &lookup };
+        self.results
+            .as_ref()
+            .and_then(|results| {
+                results.no_results_view(self.bar.keymap(), self.bar.now().date_naive(), &names)
             })
+            .map(|view| Step::Show(Intent::Relaxations(Some(Box::new(view)))))
+            .into_iter()
+            .collect()
+    }
+
+    /// Run the way out at `at` (from 0), when there is one: the query is
+    /// edited in place, as a chip's ✕ edits it.
+    fn pick_way_out(&mut self, at: usize) -> Vec<Step> {
+        let Some(query) = self
+            .results
+            .as_ref()
+            .and_then(|results| results.way_out(at))
+        else {
+            return Vec::new();
+        };
+        let stamp = self.stamp();
+        let parsed = self.bar.lower(&query);
+        let Some(results) = self.results.as_mut() else {
+            return Vec::new();
+        };
+        results.set_query(query, parsed);
+        let asks = results.again(stamp);
+        let mut steps = self.close_quick_look();
+        steps.push(Step::Show(Intent::Query(self.query_view())));
+        steps.extend(asks);
+        steps
+    }
+
+    /// The focus moved among the ways out: the page and the field's ring.
+    fn way_out_moved(&mut self, by: i64) -> Vec<Step> {
+        if !self
+            .results
+            .as_mut()
+            .is_some_and(|results| results.step_way_out(by))
+        {
+            return Vec::new();
+        }
+        let mut steps = self.draw_no_results();
+        steps.push(Step::Show(Intent::Query(self.query_view())));
+        steps
     }
 
     /// The current place, as history keeps it.
@@ -2159,6 +2425,10 @@ impl FocusController {
 
     /// Show `snapshot`'s results, asking for them again.
     fn open_results(&mut self, snapshot: Snapshot) -> Vec<Step> {
+        let mut steps = Vec::new();
+        if self.results.as_ref().is_some_and(Results::found_nothing) {
+            steps.push(Step::Show(Intent::Relaxations(None)));
+        }
         let parsed = self.bar.lower(&snapshot.query);
         let stamp = self.stamp();
         let mut results = Results::new(snapshot.query, parsed, snapshot.tab, snapshot.order, stamp);
@@ -2167,7 +2437,7 @@ impl FocusController {
         results.all = snapshot.all;
         let asks = results.asks();
         self.results = Some(results);
-        let mut steps = self.draw_results();
+        steps.extend(self.draw_results());
         steps.extend(asks);
         steps
     }
@@ -2221,7 +2491,33 @@ impl FocusController {
             return Some(steps);
         }
         let results = self.results.as_mut()?;
+        // Nothing found: the keys walk and run its ways out (US6, D24).
+        if results.found_nothing() {
+            let steps = match id {
+                CommandId::NextMessage | CommandId::PrevMessage => {
+                    Some(self.way_out_moved(if id == CommandId::NextMessage { 1 } else { -1 }))
+                }
+                CommandId::FirstMessage => Some(self.way_out_moved(i64::MIN / 2)),
+                CommandId::LastMessage => Some(self.way_out_moved(i64::MAX / 2)),
+                CommandId::OpenMessage => {
+                    let at = results.none.as_ref().map_or(0, |none| none.focus);
+                    Some(self.pick_way_out(at))
+                }
+                CommandId::BackToWords => {
+                    Some(self.results_edit(postio_search::edit::Edit::ClearFilters))
+                }
+                _ => None,
+            };
+            if steps.is_some() {
+                return steps;
+            }
+        }
+        let results = self.results.as_mut()?;
         let steps = match id {
+            CommandId::PickRelaxation1 => self.pick_way_out(0),
+            CommandId::PickRelaxation2 => self.pick_way_out(1),
+            CommandId::PickRelaxation3 => self.pick_way_out(2),
+            CommandId::PickRelaxation4 => self.pick_way_out(3),
             CommandId::NextMessage | CommandId::PrevMessage => {
                 let by = if id == CommandId::NextMessage { 1 } else { -1 };
                 cursor_moved(results.step(by))
@@ -2877,10 +3173,22 @@ impl FocusController {
             } => {
                 let landed = results.landed(stamp, order, offset, answer);
                 let query = results.query.clone();
+                let ways_out = landed.nothing.then(|| Request::Relaxations {
+                    query: results.parsed.clone(),
+                    today: self.bar.now().date_naive(),
+                    stamp: results.stamp,
+                });
                 let mut steps = Vec::new();
                 if landed.frame {
                     steps.extend(self.draw_results());
                     steps.extend(self.draw_popover());
+                }
+                // Nothing found: the page now, its ways out when they are
+                // counted -- slowly, on a lane of their own, never in the
+                // way of the next keystroke.
+                if let Some(request) = ways_out {
+                    steps.extend(self.draw_no_results());
+                    steps.push(Step::Ask(request));
                 }
                 if let Some((first, count)) = landed.rows {
                     steps.push(Step::Show(Intent::ResultsPage { first, count }));
@@ -2902,6 +3210,14 @@ impl FocusController {
                 } else {
                     Vec::new()
                 }
+            }
+            Reply::Relaxations { stamp, answer } => {
+                if !results.ways_out_landed(stamp, answer) {
+                    return Vec::new();
+                }
+                let mut steps = self.draw_results();
+                steps.extend(self.draw_no_results());
+                steps
             }
             _ => Vec::new(),
         }

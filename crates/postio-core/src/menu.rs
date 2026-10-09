@@ -237,6 +237,10 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::QuickLook
         | C::NextMatch
         | C::PrevMatch
+        | C::PickRelaxation1
+        | C::PickRelaxation2
+        | C::PickRelaxation3
+        | C::PickRelaxation4
         | C::GoToFiltered
         | C::GoToDigestRules
         | C::ToggleHasAction

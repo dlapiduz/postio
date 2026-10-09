@@ -214,12 +214,14 @@ const CONTRACT: &[Row] = &[
     row("toggle_has_action", "!", Focus),
     // -- Search ---------------------------------------------------------
     with("save_search", "mod+s", &[], All, &[Context::Search]),
+    // Spec 010 D24: in the results' no-results state the same key clears
+    // the filters.
     with(
         "back_to_words",
         "mod+BackSpace",
         &["alt+BackSpace"],
         Focus,
-        &[Context::Search],
+        &[Context::Search, Context::Results],
     ),
     with("toggle_result_order", "alt+o", &[], All, &[Context::Search]),
     // Spec 010: the Mac's search bar. `mod+Return` sends in the composer;
@@ -281,6 +283,36 @@ const CONTRACT: &[Row] = &[
     with("quick_look", "space", &[], Graphical, &[Context::Results]),
     with("next_match", "]", &[], Graphical, &[Context::Results]),
     with("prev_match", "[", &[], Graphical, &[Context::Results]),
+    // Spec 010 step 7: a search that found nothing offers looser ones,
+    // numbered (FR-030).
+    with(
+        "pick_relaxation_1",
+        "1",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
+    with(
+        "pick_relaxation_2",
+        "2",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
+    with(
+        "pick_relaxation_3",
+        "3",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
+    with(
+        "pick_relaxation_4",
+        "4",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
     // Spec 010 step 4: ⌥←/⌥→ step the timeline's range a month (FR-023).
     with(
         "step_range_back",
@@ -701,4 +733,33 @@ fn quick_look_is_space_and_its_matches_are_brackets_on_the_mac() {
         assert!(linux.bindings(id).is_empty(), "{id} has a key on Linux");
         assert!(!linux.offers(id), "{id} is offered on Linux");
     }
+}
+
+/// Spec 010 step 7 (FR-030, D24, D25): 1-4 pick a looser search and ⌘⌫
+/// clears the filters, in the results, on the Mac; the numbers are not
+/// Linux's yet.
+#[test]
+fn relaxations_are_numbers_and_back_to_words_reaches_the_results_on_the_mac() {
+    let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
+    let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+    for (id, key) in [
+        (CommandId::PickRelaxation1, "1"),
+        (CommandId::PickRelaxation2, "2"),
+        (CommandId::PickRelaxation3, "3"),
+        (CommandId::PickRelaxation4, "4"),
+    ] {
+        assert_eq!(mac.bindings(id), [key], "{id} on the Mac");
+        assert_eq!(
+            mac.command_for(Context::Results, key),
+            Some(postio_core::ActionId::Builtin(id)),
+            "{key}"
+        );
+        assert!(linux.bindings(id).is_empty(), "{id} has a key on Linux");
+        assert!(!linux.offers(id), "{id} is offered on Linux");
+    }
+    assert_eq!(
+        mac.command_for(Context::Results, "cmd+BackSpace"),
+        Some(postio_core::ActionId::Builtin(CommandId::BackToWords)),
+        "D24: ⌘⌫ in the results"
+    );
 }
