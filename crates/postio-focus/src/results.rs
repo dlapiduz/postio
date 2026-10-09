@@ -1081,7 +1081,11 @@ impl Results {
         let name_of = |address: &str| self.name_of(address);
         let what =
             words::filter_button_label(popover.kind, &filters, &name_of, with.now.date_naive());
-        Some(words::previewing(&what))
+        // The value alone ("Ada Moreno"): the line is 210 points wide.
+        let what = what
+            .split_once(": ")
+            .map_or(what.as_str(), |(_, value)| value);
+        Some(words::previewing(what))
     }
 
     /// What the open list popover offers, in its base's order.
@@ -1515,7 +1519,11 @@ impl Results {
     /// The results as history keeps them.
     pub(crate) fn snapshot(&self) -> crate::history::Snapshot {
         crate::history::Snapshot {
-            query: self.query.clone(),
+            // A popover's preview is not kept: what it opened on is.
+            query: self
+                .popover
+                .as_ref()
+                .map_or_else(|| self.query.clone(), |popover| popover.before.clone()),
             tab: self.tab,
             order: self.order,
             cursor: self.cursor,
@@ -1720,12 +1728,22 @@ impl FocusController {
         steps
     }
 
-    /// Show `entry`, from history.
+    /// Show `entry`, from history. A popover open over what it leaves
+    /// goes with it, unapplied: history keeps the query it opened on.
     fn show_entry(&mut self, entry: Entry) -> Vec<Step> {
-        match entry {
+        let mut steps = Vec::new();
+        if self
+            .results
+            .as_ref()
+            .is_some_and(|results| results.popover.is_some())
+        {
+            steps.push(Step::Show(Intent::Popover(None)));
+        }
+        steps.extend(match entry {
             Entry::Inbox => self.show_inbox(),
             Entry::Results(snapshot) => self.open_results(snapshot),
-        }
+        });
+        steps
     }
 
     /// ⌘[ and ⌘]: from the inbox or the results, nothing closed on the way

@@ -5,7 +5,7 @@
 # From opens over the results for "atlas budget". It lists only the people
 # the results hold, each with a bar and a count. Space on Ada Moreno checks
 # her: while the popover is still open the list, the tab count, the
-# timeline and the count line ("previewing From: Ada Moreno · ↩ applies")
+# timeline and the count line ("previewing Ada Moreno · ↩ applies")
 # all follow. Esc closes it and the query, list, counts and timeline are
 # as they were. Opening it again and pressing Return keeps the check: the
 # chip appears in the field and the From button is solid with her name.
@@ -43,7 +43,7 @@ expect  = "A click on From opens its popover, 360 wide with an arrow, hung from 
 [[step]]
 id      = "check-ada"
 key     = "space"
-expect  = "Space checks Ada Moreno. With the popover still open the list narrows to her conversations, the Conversations count and the timeline's bars drop, and the count line's second line reads “previewing From: Ada Moreno · ↩ applies”. The popover's rows and their counts stay as they opened."
+expect  = "Space checks Ada Moreno. With the popover still open the list narrows to her conversations, the Conversations count and the timeline's bars drop, and the count line's second line reads “previewing Ada Moreno · ↩ applies”. The popover's rows and their counts stay as they opened."
 
 [[step]]
 key     = "Escape"

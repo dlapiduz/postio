@@ -572,7 +572,7 @@ fn checking_a_person_previews_live_and_esc_restores_the_query_exactly() {
     assert_eq!(view.count_line, "60 conversations");
     assert_eq!(
         view.sub_line,
-        "previewing From: Ada Moreno \u{b7} \u{21a9} applies"
+        "previewing Ada Moreno \u{b7} \u{21a9} applies"
     );
     let popover = popover_view(&effects).flatten().expect("redrawn");
     assert!(popover.rows[0].checked);
@@ -1046,4 +1046,19 @@ fn the_date_popover_turns_words_into_dates_and_its_presets_carry_counts() {
     let query = query_view(&effects).expect("the field");
     assert_eq!(button(&query, FilterKind::Date).label, "Since July");
     assert!(button(&query, FilterKind::Date).applied);
+}
+
+#[test]
+fn leaving_the_results_takes_an_open_popover_down() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let _ = open_popover(&mut focus, FilterKind::From, &rows);
+    let effects = run(&mut focus, CommandId::HistoryBack, &rows);
+    assert!(!focus.in_results());
+    assert_eq!(
+        popover_view(&effects),
+        Some(None),
+        "no popover is left hanging over the inbox"
+    );
 }
