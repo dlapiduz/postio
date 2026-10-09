@@ -12,8 +12,8 @@ import SwiftUI
 /// no reading pane: an email opens in its own window (FR-011, later), and
 /// the list is the whole of the window.
 ///
-/// The toolbar is AppKit's (`MainToolbar`), because `NSSearchToolbarItem`
-/// is the field the command bar will drop from (FR-013); the strip is
+/// The toolbar is AppKit's (`MainToolbar`), because the command bar drops
+/// from its search field (FR-013), whose width it controls; the strip is
 /// SwiftUI over `HeaderStripWords`; the list is `FocusListTable` (R10).
 struct MainWindow: View {
     let engine: Engine
@@ -314,8 +314,8 @@ private struct HistorySwipeInstaller: NSViewRepresentable {
 
 /// Puts `MainToolbar` on the window this view is in, once it is in one.
 ///
-/// SwiftUI has no `NSSearchToolbarItem`, and the command bar has to drop
-/// from a real one (FR-013), so the toolbar is AppKit's. Nothing in the
+/// The command bar drops from the toolbar's search field (FR-013), which
+/// grows to 860 while it is up, so the toolbar is AppKit's. Nothing in the
 /// SwiftUI tree declares a `.toolbar`, so SwiftUI has none of its own to
 /// put back over this one.
 private struct MainToolbarInstaller: NSViewRepresentable {
@@ -350,10 +350,12 @@ private struct MainToolbarInstaller: NSViewRepresentable {
 final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
     private let engine: Engine
     private let toolbar = NSToolbar(identifier: "PostioFocusMain")
-    private weak var field: BarSearchField?
-    private weak var searchItem: NSSearchToolbarItem?
+    /// The inbox's search field (T054): Postio's own, whose width it sets.
+    private let searchBox = ToolbarSearchBox()
+    private var field: BarSearchField { searchBox.field }
     private weak var window: NSWindow?
-    private let cap = KeyCapView("")
+    /// Whether the bar is up over the inbox's field.
+    private var barOpen = false
 
     static let compose = NSToolbarItem.Identifier("postio.compose")
     static let sync = NSToolbarItem.Identifier("postio.sync")
@@ -408,7 +410,10 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
         NotificationCenter.default.addObserver(
             forName: NSWindow.didResizeNotification, object: window, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.layoutQuery() }
+            MainActor.assumeIsolated {
+                self?.layoutQuery()
+                self?.layoutSearch()
+            }
         }
         respell()
     }
@@ -419,6 +424,9 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
     private func showResults(_ shown: Bool) {
         guard shown != showingResults else { return }
         showingResults = shown
+        // The inbox's field comes back at rest, with the sync label.
+        barOpen = false
+        searchBox.open(false, windowWidth: window?.frame.width ?? 0)
         let items = shown ? Self.resultsItems : Self.inboxItems
         while !toolbar.items.isEmpty { toolbar.removeItem(at: 0) }
         for (index, identifier) in items.enumerated() {
@@ -463,18 +471,32 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
 
     /// The field grows leftward to 860 while the bar is up, its right edge
     /// where it was, and goes back after (specs/010-focus-search T054).
+    /// The sync label gives way while it is grown: the field covers its
+    /// place (screen 01), and a toolbar that cannot fit both would shrink
+    /// the field instead.
     private func grow(_ shown: Bool) {
         if showingResults {
             // The query is edited as text in the box's own place.
             queryBox.editing = shown
             return
         }
-        guard let item = searchItem else { return }
-        let width = shown
-            ? CommandBarGeometry.fieldWidth(window: window?.frame.width ?? 0)
-            : CommandBarGeometry.restingWidth
-        guard item.preferredWidthForSearchField != width else { return }
-        item.preferredWidthForSearchField = width
+        guard shown != barOpen else { return }
+        barOpen = shown
+        let syncAt = toolbar.items.firstIndex { $0.itemIdentifier == Self.sync }
+        if shown, let syncAt {
+            toolbar.removeItem(at: syncAt)
+        } else if !shown, syncAt == nil,
+                  let searchAt = toolbar.items.firstIndex(where: { $0.itemIdentifier == Self.search })
+        {
+            toolbar.insertItem(withItemIdentifier: Self.sync, at: searchAt)
+        }
+        layoutSearch()
+    }
+
+    /// The inbox's field at its width for the window as it is now.
+    private func layoutSearch() {
+        guard !showingResults else { return }
+        searchBox.open(barOpen, windowWidth: window?.frame.width ?? 0)
         window?.contentView?.superview?.layoutSubtreeIfNeeded()
     }
 
@@ -508,24 +530,13 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
             item.label = "Sync"
             return item
         case Self.search:
-            let item = NSSearchToolbarItem(itemIdentifier: identifier)
+            let item = searchBox.item(identifier)
             // A click into it opens the bar, as `/` does.
-            let field = BarSearchField()
             field.onFocus = { [weak self] in self?.engine.searchFieldFocused() }
-            item.searchField = field
-            item.preferredWidthForSearchField = CommandBarGeometry.restingWidth
-            searchItem = item
-            field.placeholderString = engine.session?.focusSearchPlaceholder() ?? ""
+            searchBox.placeholder = engine.session?.focusSearchPlaceholder() ?? ""
             field.delegate = self
             field.sendsSearchStringImmediately = false
             field.sendsWholeSearchString = true
-            cap.translatesAutoresizingMaskIntoConstraints = false
-            field.addSubview(cap)
-            NSLayoutConstraint.activate([
-                cap.trailingAnchor.constraint(equalTo: field.trailingAnchor, constant: -6),
-                cap.centerYAnchor.constraint(equalTo: field.centerYAnchor),
-            ])
-            self.field = field
             if !showingResults { engine.searchField = field }
             respell()
             return item
@@ -566,11 +577,11 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
         backView.rootView = ResultsBackButton(engine: engine)
         saveView.rootView = SaveSearchButton(engine: engine)
         engine.savePresenter?.anchor = saveView
-        let palette = KeyCapSpelling.cap(engine.session?.binding(for: BarCommand.palette))
-        cap.text = palette ?? ""
-        cap.isHidden = palette == nil || !(field?.stringValue.isEmpty ?? true)
+        searchBox.restingCap = KeyCapSpelling.cap(engine.session?.binding(for: BarCommand.palette))
+        // Escape closes the bar: the field's own key, not a command.
+        searchBox.openCap = KeyCapSpelling.cap("Escape")
         if let placeholder = engine.session?.focusSearchPlaceholder() {
-            field?.placeholderString = placeholder
+            searchBox.placeholder = placeholder
         }
         for item in toolbar.items where item.itemIdentifier == Self.compose {
             item.toolTip = composeTip()
@@ -585,8 +596,8 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
 
     func controlTextDidChange(_ obj: Notification) {
         // The inbox's field, or the results' query box's editor.
-        let text = (obj.object as? NSSearchField)?.stringValue ?? field?.stringValue ?? ""
-        cap.isHidden = cap.text.isEmpty || !(field?.stringValue.isEmpty ?? true)
+        let text = (obj.object as? NSSearchField)?.stringValue ?? field.stringValue
+        searchBox.textChanged()
         engine.searchFieldTyped(text)
     }
 

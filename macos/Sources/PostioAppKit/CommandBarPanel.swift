@@ -57,6 +57,9 @@ public final class CommandBarPanel {
     /// Put the panel under `field`, a child of the field's window, or move
     /// it there and resize it for what the model holds now.
     public func show(under field: NSView) {
+        // The field's text sits inside the box that draws it: the panel
+        // hangs from the box.
+        let field = (field as? BarSearchField)?.frameView ?? field
         guard let parent = field.window else { return }
         self.field = field
         hosting.rootView = CommandBarView(model: model, saveCap: saveCap())
@@ -112,8 +115,25 @@ final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
 /// words the controller never hears. `/` and ⌘K focus the field themselves
 /// once the bar is up, which this reports too; the caller ignores it then.
 public final class BarSearchField: NSSearchField {
+    /// A cell with no buttons: the box around the field draws the
+    /// magnifier and the keycap where the design puts them, and a cell's
+    /// own would draw a second of each.
+    override public class var cellClass: AnyClass? {
+        get { BareSearchFieldCell.self }
+        set {}
+    }
+
     /// The field took the keyboard.
     public var onFocus: (() -> Void)?
+
+    /// The view that draws the field around this text -- the toolbar's
+    /// box, the results' query box -- which the panel hangs from.
+    public weak var frameView: NSView?
+
+    /// The words' face while no operator is typed.
+    public var textFont: NSFont = .systemFont(ofSize: 13) {
+        didSet { applyFont() }
+    }
 
     /// The rest of the best word, drawn in tertiary after the typed text
     /// while a short prefix is typed ("at|las", specs/010-focus-search
@@ -129,10 +149,13 @@ public final class BarSearchField: NSSearchField {
     public var operatorTyped = false {
         didSet {
             guard operatorTyped != oldValue else { return }
-            if wordsFont == nil { wordsFont = font }
-            font = operatorTyped ? .monospacedSystemFont(ofSize: 14, weight: .regular) : wordsFont
-            placeGhost()
+            applyFont()
         }
+    }
+
+    private func applyFont() {
+        font = operatorTyped ? .monospacedSystemFont(ofSize: 14, weight: .regular) : textFont
+        placeGhost()
     }
 
     private let ghostLabel: NSTextField = {
@@ -142,7 +165,6 @@ public final class BarSearchField: NSSearchField {
         label.setAccessibilityElement(false)
         return label
     }()
-    private var wordsFont: NSFont?
 
     override public func becomeFirstResponder() -> Bool {
         let became = super.becomeFirstResponder()
@@ -180,5 +202,18 @@ public final class BarSearchField: NSSearchField {
             x: text.minX + 2 + width, y: (bounds.height - size.height) / 2,
             width: min(size.width, max(text.maxX - (text.minX + 2 + width), 0)), height: size.height)
         ghostLabel.isHidden = false
+    }
+}
+
+/// A search field cell whose buttons take no room and draw nothing.
+final class BareSearchFieldCell: NSSearchFieldCell {
+    override func searchButtonRect(forBounds rect: NSRect) -> NSRect { .zero }
+    override func cancelButtonRect(forBounds rect: NSRect) -> NSRect { .zero }
+    override func searchTextRect(forBounds rect: NSRect) -> NSRect { rect }
+    /// The words from the field's left edge, where the search cell would
+    /// have kept room for its magnifier; the height as the cell has it.
+    override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        let drawn = super.drawingRect(forBounds: rect)
+        return NSRect(x: rect.minX, y: drawn.minY, width: rect.width, height: drawn.height)
     }
 }
