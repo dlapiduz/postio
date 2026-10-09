@@ -195,6 +195,13 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .map_err(|error| error.to_string()),
         },
+        Request::QuickLookMatches { query, key, stamp } => Reply::QuickLookMatches {
+            stamp,
+            answer: client
+                .conversation_matches(query, key)
+                .await
+                .map_err(|error| error.to_string()),
+        },
         Request::RecentSearches => Reply::RecentSearches(
             client
                 .recent_searches()

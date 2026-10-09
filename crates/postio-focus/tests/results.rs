@@ -1115,3 +1115,289 @@ fn a_persons_chip_reads_as_their_name_and_the_query_keeps_the_address() {
         "no name, the value as typed"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Quick Look (spec 010 step 5, US4, FR-028, design §3.7, screen 10)
+// ---------------------------------------------------------------------------
+
+fn looked(effects: &[Effect]) -> postio_focus::QuickLookView {
+    quick_look_view(effects)
+        .flatten()
+        .expect("Quick Look, drawn")
+}
+
+fn matches_asked(effects: &[Effect]) -> Vec<postio_search::results::ConversationKey> {
+    asked(effects)
+        .into_iter()
+        .filter_map(|request| match request {
+            Request::QuickLookMatches { key, .. } => Some(key),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn quick_look_opens_on_the_focused_result_and_reads_its_matches() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let effects = run(&mut focus, CommandId::QuickLook, &rows);
+
+    // At once, from what the row knows; its conversation's matches asked.
+    let view = looked(&effects);
+    assert_eq!(view.title, "Quick Look");
+    assert_eq!(view.position, "1 of 123");
+    assert_eq!(text(&view.subject), "Atlas budget, part 7");
+    assert_eq!(lit(&view.subject), ["Atlas", "budget"]);
+    assert!(text(&view.sender).starts_with("Tom\u{e1}s Reyes tomas@example.com"));
+    // When it was sent, in this machine's zone.
+    assert!(
+        text(&view.sender).contains(" \u{b7} Sat 12 Sep, "),
+        "{}",
+        text(&view.sender)
+    );
+    assert_eq!(
+        view.walk
+            .as_ref()
+            .map(|hint| (hint.key.as_str(), hint.label.as_str())),
+        Some(("j/k", "moves through results while it stays open"))
+    );
+    assert_eq!(
+        view.actions
+            .iter()
+            .map(|hint| (hint.label.as_str(), hint.key.as_str()))
+            .collect::<Vec<_>>(),
+        [("Open", "Return"), ("Archive", "a"), ("Close", "space")]
+    );
+    assert_eq!(
+        matches_asked(&effects),
+        [postio_search::results::ConversationKey::Thread(
+            postio_model::ThreadId::new(2007)
+        )]
+    );
+    assert!(focus.in_results());
+    assert_eq!(
+        focus.key_context(),
+        KeyContext::Results,
+        "the results keep the keys"
+    );
+
+    // Its matches landed: one card each, oldest first, the row's message
+    // ringed.
+    let effects = settle(&mut focus, effects, &rows);
+    let view = looked(&effects);
+    assert_eq!(view.matches_line, "3 matches in this conversation");
+    assert_eq!(
+        view.matches_hint
+            .as_ref()
+            .map(|hint| (hint.key.as_str(), hint.label.as_str())),
+        Some(("]/[", "jump between them"))
+    );
+    assert_eq!(
+        view.cards
+            .iter()
+            .map(|card| (card.place.as_str(), card.when.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("Body", "Ben · 11 Sep"),
+            ("Body", "Tomás · 12 Sep"),
+            ("Subject", "")
+        ]
+    );
+    assert_eq!(lit(&view.cards[1].passage), ["Atlas", "budget"]);
+    assert_eq!(view.current, Some(1), "the result's own message");
+}
+
+#[test]
+fn j_and_k_move_the_results_and_quick_look_follows_in_place() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let effects = run(&mut focus, CommandId::QuickLook, &rows);
+    let _ = settle(&mut focus, effects, &rows);
+
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    assert!(shown(&effects).contains(&Intent::ResultsCursor(1)));
+    let view = looked(&effects);
+    assert_eq!(view.position, "2 of 123");
+    assert_eq!(text(&view.subject), "Atlas budget, part 2");
+    assert_eq!(
+        matches_asked(&effects),
+        [postio_search::results::ConversationKey::Thread(
+            postio_model::ThreadId::new(2002)
+        )]
+    );
+    let effects = settle(&mut focus, effects, &rows);
+    assert_eq!(looked(&effects).cards.len(), 3);
+
+    let effects = run(&mut focus, CommandId::PrevMessage, &rows);
+    assert_eq!(looked(&effects).position, "1 of 123");
+}
+
+#[test]
+fn brackets_move_the_ring_between_the_cards_while_it_is_open() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    assert!(
+        quick_look_view(&run(&mut focus, CommandId::NextMatch, &rows)).is_none(),
+        "] does nothing while Quick Look is closed"
+    );
+    let effects = run(&mut focus, CommandId::QuickLook, &rows);
+    let _ = settle(&mut focus, effects, &rows);
+
+    let effects = run(&mut focus, CommandId::NextMatch, &rows);
+    assert_eq!(looked(&effects).current, Some(2));
+    assert!(
+        quick_look_view(&run(&mut focus, CommandId::NextMatch, &rows)).is_none(),
+        "the last card stays ringed: nothing to redraw"
+    );
+    let effects = run(&mut focus, CommandId::PrevMatch, &rows);
+    assert_eq!(looked(&effects).current, Some(1));
+    let effects = run(&mut focus, CommandId::PrevMatch, &rows);
+    assert_eq!(looked(&effects).current, Some(0));
+    assert!(
+        !shown(&effects)
+            .iter()
+            .any(|intent| matches!(intent, Intent::ResultsCursor(_))),
+        "the results' ring does not move"
+    );
+}
+
+#[test]
+fn return_opens_the_message_and_quick_look_goes() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let _ = run(&mut focus, CommandId::QuickLook, &rows);
+    let effects = run(&mut focus, CommandId::OpenMessage, &rows);
+    assert_eq!(quick_look_view(&effects), Some(None));
+    let intents = shown(&effects);
+    let closed = intents
+        .iter()
+        .position(|intent| *intent == Intent::QuickLook(None))
+        .expect("closed");
+    let opened = intents
+        .iter()
+        .position(|intent| {
+            matches!(
+                intent,
+                Intent::OpenMessage { message, .. } if *message == MessageId::new(1007)
+            )
+        })
+        .expect("the message window opens");
+    assert!(closed < opened, "the panel goes before the window comes");
+}
+
+#[test]
+fn archive_moves_quick_look_to_the_next_result_and_closes_after_the_last() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let _ = run(&mut focus, CommandId::QuickLook, &rows);
+    let effects = run(&mut focus, CommandId::Archive, &rows);
+    assert!(
+        asked(&effects).iter().any(|request| matches!(
+            request,
+            Request::Send {
+                command: postio_core::Command::Archive { .. },
+                ..
+            }
+        )),
+        "the conversation is archived: {:?}",
+        asked(&effects)
+    );
+    assert!(shown(&effects).contains(&Intent::ResultsCursor(1)));
+    assert_eq!(looked(&effects).position, "2 of 123");
+
+    // ⌘Z takes it back, as it does anywhere; Quick Look stays.
+    let effects = run(&mut focus, CommandId::Undo, &rows);
+    assert_eq!(asked(&effects), [Request::Post(postio_core::Command::Undo)]);
+    assert_eq!(quick_look_view(&effects), None, "nothing closed");
+
+    // The last result archived: none is left to look at.
+    let _ = run(&mut focus, CommandId::QuickLook, &rows);
+    let _ = run(&mut focus, CommandId::LastMessage, &rows);
+    let last = focus.result_count() - 1;
+    let wanted = focus.results_wanted(last);
+    let _ = settle(&mut focus, wanted, &rows);
+    let effects = run(&mut focus, CommandId::QuickLook, &rows);
+    assert_eq!(looked(&effects).position, "123 of 123");
+    let effects = run(&mut focus, CommandId::Archive, &rows);
+    assert_eq!(quick_look_view(&effects), Some(None));
+    assert!(focus.in_results());
+}
+
+#[test]
+fn space_or_esc_closes_quick_look_and_nothing_else() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let _ = run(&mut focus, CommandId::ToggleSelection, &rows);
+
+    let _ = run(&mut focus, CommandId::QuickLook, &rows);
+    let effects = run(&mut focus, CommandId::QuickLook, &rows);
+    assert_eq!(
+        quick_look_view(&effects),
+        Some(None),
+        "Space again closes it"
+    );
+
+    let _ = run(&mut focus, CommandId::QuickLook, &rows);
+    let effects = run(&mut focus, CommandId::Back, &rows);
+    assert_eq!(quick_look_view(&effects), Some(None), "so does Esc");
+    assert!(focus.in_results());
+    let view = results_view(&effects);
+    assert!(
+        view.is_none_or(|view| view.selected == 1),
+        "the checked row is still checked: Esc's rung was Quick Look's"
+    );
+    let effects = run(&mut focus, CommandId::Back, &rows);
+    assert_eq!(
+        results_view(&effects).map(|view| view.selected),
+        Some(0),
+        "the next Esc clears the selection"
+    );
+}
+
+#[test]
+fn quick_look_goes_with_the_results_it_looked_into() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let _ = run(&mut focus, CommandId::QuickLook, &rows);
+    let effects = focus.handle_on(
+        Input::SearchEdit(TermEdit::Toggle {
+            field: "has".to_owned(),
+            value: "attachment".to_owned(),
+        }),
+        &rows,
+    );
+    assert_eq!(quick_look_view(&effects), Some(None), "a new query");
+
+    let _ = settle(&mut focus, effects, &rows);
+    let _ = run(&mut focus, CommandId::QuickLook, &rows);
+    let effects = run(&mut focus, CommandId::HistoryBack, &rows);
+    assert!(!focus.in_results());
+    assert_eq!(quick_look_view(&effects), Some(None), "back to the inbox");
+}
+
+#[test]
+fn an_answer_for_a_result_since_left_is_dropped() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let first = run(&mut focus, CommandId::QuickLook, &rows);
+    let second = run(&mut focus, CommandId::NextMessage, &rows);
+    // The first result's matches land after j moved on.
+    let mut late = Vec::new();
+    for (ticket, request) in asks(&first) {
+        if let Some(reply) = reply_to(&request) {
+            late.extend(focus.handle_on(Input::Reply(ticket, reply), &rows));
+        }
+    }
+    assert_eq!(quick_look_view(&late), None, "nothing redrawn for it");
+    let effects = settle(&mut focus, second, &rows);
+    assert_eq!(text(&looked(&effects).subject), "Atlas budget, part 2");
+}

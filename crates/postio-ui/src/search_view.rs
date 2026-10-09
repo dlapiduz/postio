@@ -601,6 +601,7 @@ pub fn results_hints(keymap: &Keymap) -> Vec<Hint> {
         CommandId::PrevMessage,
         "move",
     ));
+    out.extend(hints::hint(keymap, CommandId::QuickLook, "Quick Look"));
     out.extend(hints::hint(keymap, CommandId::OpenMessage, "open"));
     out.extend(hints::hint(keymap, CommandId::ToggleSelection, "select"));
     out.extend(hints::hint(keymap, CommandId::Search, "edit query"));
@@ -778,6 +779,104 @@ pub fn date_result(kept: u64, of: u64, capped: bool) -> String {
 /// The bulk bar's count while results are checked (§3.5): "5 selected".
 pub fn checked_line(n: u64) -> String {
     format!("{} selected", grouped(n))
+}
+
+/// Quick Look's title (§3.7, screen 10).
+pub const QUICK_LOOK: &str = "Quick Look";
+
+/// Which result Quick Look shows, `at` from 0: "1 of 12".
+pub fn quick_look_position(at: u64, of: u64) -> String {
+    format!("{} of {}", grouped(at.saturating_add(1)), grouped(of))
+}
+
+/// The header's hint that the results still walk: "j/k moves through
+/// results while it stays open".
+pub fn quick_look_walk(keymap: &Keymap) -> Option<Hint> {
+    hints::pair(
+        keymap,
+        CommandId::NextMessage,
+        CommandId::PrevMessage,
+        "moves through results while it stays open",
+    )
+}
+
+/// The header's buttons, each with its key: Open, Archive, Close.
+pub fn quick_look_actions(keymap: &Keymap) -> Vec<Hint> {
+    [
+        (CommandId::OpenMessage, "Open"),
+        (CommandId::Archive, "Archive"),
+        (CommandId::QuickLook, "Close"),
+    ]
+    .into_iter()
+    .filter_map(|(id, label)| hints::hint(keymap, id, label))
+    .collect()
+}
+
+/// How many matches the conversation holds: "4 matches in this
+/// conversation".
+pub fn matches_line(n: usize) -> String {
+    match n {
+        1 => "1 match in this conversation".to_owned(),
+        n => format!("{} matches in this conversation", grouped(n as u64)),
+    }
+}
+
+/// The hint after it: "]/[ jump between them".
+pub fn matches_hint(keymap: &Keymap) -> Option<Hint> {
+    hints::pair(
+        keymap,
+        CommandId::NextMatch,
+        CommandId::PrevMatch,
+        "jump between them",
+    )
+}
+
+/// Where a match card's words are, its left column's first line: "Body",
+/// "Earlier reply" for quoted history, "Subject", or the file's name.
+pub fn match_place(source: &Source) -> String {
+    match source {
+        Source::Subject => "Subject".to_owned(),
+        Source::Body => "Body".to_owned(),
+        Source::Quoted => "Earlier reply".to_owned(),
+        Source::FileName { name, .. } | Source::FileContent { name, .. } => name.clone(),
+    }
+}
+
+/// A match card's second line: who said it and when, by first name
+/// ("Ada · 26 Sep"); where in a file a file's match is; nothing for the
+/// subject or a quote, whose writer is not known.
+pub fn match_when<Tz: TimeZone>(
+    source: &Source,
+    from: Option<&postio_model::EmailAddress>,
+    when: Option<DateTime<Tz>>,
+    now: DateTime<Tz>,
+) -> String {
+    if let Source::FileContent { location: at, .. } = source {
+        return location(at);
+    }
+    let who = from.map(|from| match from.name.as_deref().map(str::trim) {
+        Some(name) if !name.is_empty() => name.split_whitespace().next().unwrap_or(name).to_owned(),
+        _ => from.address.clone(),
+    });
+    who.into_iter()
+        .chain(when.map(|when| hit_date(when, now)))
+        .collect::<Vec<_>>()
+        .join(" \u{b7} ")
+}
+
+/// When a message was sent, as Quick Look's sender line says it: "Sat 26
+/// Sep, 15:51".
+pub fn sent_at<Tz: TimeZone>(at: DateTime<Tz>) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    at.format("%a %-d %b, %H:%M").to_string()
+}
+
+/// A conversation's size on the sender line, when it is more than one
+/// message: "thread of 3".
+pub fn thread_size(messages: u32) -> Option<String> {
+    (messages > 1).then(|| format!("thread of {messages}"))
 }
 
 #[cfg(test)]
@@ -1334,8 +1433,16 @@ mod tests {
         let labels: Vec<&str> = said.iter().map(|(_, label)| label.as_str()).collect();
         assert_eq!(
             labels,
-            ["move", "open", "select", "edit query", "back to inbox"]
+            [
+                "move",
+                "Quick Look",
+                "open",
+                "select",
+                "edit query",
+                "back to inbox"
+            ]
         );
+        assert_eq!(said[1].0, "space", "screen 06's footer: Space Quick Look");
         assert_eq!(said[0].0, "j/k");
         assert_eq!(said.last().map(|(key, _)| key.as_str()), Some("Escape"));
     }
@@ -1355,5 +1462,76 @@ mod tests {
         );
         assert_eq!(checked_line(5), "5 selected");
         assert_eq!(checked_line(1_204), "1,204 selected");
+    }
+
+    // Quick Look's words (§3.7, screen 10).
+    #[test]
+    fn quick_look_says_where_each_match_is_and_when() {
+        let keymap = postio_core::Keymap::resolve_on(
+            &postio_config::KeyBindings::default(),
+            postio_config::paths::Platform::Apple,
+        );
+        assert_eq!(QUICK_LOOK, "Quick Look");
+        assert_eq!(quick_look_position(0, 12), "1 of 12");
+        assert_eq!(quick_look_position(1_203, 1_204), "1,204 of 1,204");
+        assert_eq!(
+            quick_look_walk(&keymap).map(|hint| (hint.key, hint.label)),
+            Some((
+                "j/k".to_owned(),
+                "moves through results while it stays open".to_owned()
+            ))
+        );
+        assert_eq!(
+            quick_look_actions(&keymap)
+                .into_iter()
+                .map(|hint| (hint.label, hint.key))
+                .collect::<Vec<_>>(),
+            [
+                ("Open".to_owned(), "Return".to_owned()),
+                ("Archive".to_owned(), "a".to_owned()),
+                ("Close".to_owned(), "space".to_owned()),
+            ]
+        );
+        assert_eq!(matches_line(4), "4 matches in this conversation");
+        assert_eq!(matches_line(1), "1 match in this conversation");
+        assert_eq!(
+            matches_hint(&keymap).map(|hint| (hint.key, hint.label)),
+            Some(("]/[".to_owned(), "jump between them".to_owned()))
+        );
+
+        assert_eq!(match_place(&Source::Body), "Body");
+        assert_eq!(match_place(&Source::Quoted), "Earlier reply");
+        assert_eq!(match_place(&Source::Subject), "Subject");
+        let file = Source::FileContent {
+            attachment: postio_model::AttachmentId::new(1),
+            name: "Atlas-Q3-budget.xlsx".to_owned(),
+            location: Location::Sheet {
+                name: "Q3".to_owned(),
+                row: 3,
+            },
+        };
+        assert_eq!(match_place(&file), "Atlas-Q3-budget.xlsx");
+
+        let now = at(2026, 9, 26);
+        let ada = postio_model::EmailAddress::new(Some("Ada Moreno"), "ada@example.com");
+        let bare = postio_model::EmailAddress::new(None::<&str>, "ravi@example.com");
+        assert_eq!(
+            match_when(&Source::Body, Some(&ada), Some(now), now),
+            "Ada \u{b7} 26 Sep"
+        );
+        assert_eq!(
+            match_when(&Source::Body, Some(&bare), Some(now), now),
+            "ravi@example.com \u{b7} 26 Sep",
+            "no name, the address"
+        );
+        assert_eq!(match_when(&Source::Quoted, None, None, now), "");
+        assert_eq!(
+            match_when(&file, Some(&ada), Some(now), now),
+            "Sheet \u{2018}Q3\u{2019}, row 3",
+            "a file's match says where in it"
+        );
+        assert_eq!(sent_at(now), "Sat 26 Sep, 15:30");
+        assert_eq!(thread_size(3), Some("thread of 3".to_owned()));
+        assert_eq!(thread_size(1), None);
     }
 }

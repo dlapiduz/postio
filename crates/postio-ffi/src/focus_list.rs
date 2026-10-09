@@ -853,6 +853,9 @@ impl FocusDriver {
             Intent::Popover(view) => self.say(UiEvent::FocusPopover {
                 view: view.map(|view| (*view).into()),
             }),
+            Intent::QuickLook(view) => self.say(UiEvent::FocusQuickLook {
+                view: view.map(|view| (*view).into()),
+            }),
             Intent::Place { name } => self.say(UiEvent::FocusPlace { name }),
             Intent::OpenPlaces => self.say(UiEvent::FocusOpenPlaces),
             Intent::PlacesChanged => self.say(UiEvent::FocusPlacesChanged),

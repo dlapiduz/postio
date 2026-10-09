@@ -167,6 +167,8 @@ pub enum Lane {
     Conversations,
     /// The passages of the hits on screen.
     Passages,
+    /// The matches of the conversation Quick Look shows: j supersedes them.
+    Matches,
 }
 
 /// The dropdown's top hits.

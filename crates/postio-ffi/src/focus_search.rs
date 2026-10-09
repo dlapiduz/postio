@@ -742,6 +742,76 @@ impl From<postio_focus::PopoverView> for PopoverViewFfi {
     }
 }
 
+/// One match card in Quick Look (design §3.7).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MatchCardFfi {
+    /// The left column's first line: "Body", "Earlier reply", "Subject",
+    /// a file's name.
+    pub place: String,
+    /// Its second line: "Ada · 26 Sep", where in a file; may be empty.
+    pub when: String,
+    /// The passage, 14/22, its words marked.
+    pub passage: Vec<RunFfi>,
+    /// The place is a file's name.
+    pub file: bool,
+}
+
+/// Quick Look, whole (design §3.7, screen 10).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct QuickLookViewFfi {
+    /// "Quick Look", bold in the header.
+    pub title: String,
+    /// "1 of 12".
+    pub position: String,
+    /// "j/k" "moves through results while it stays open".
+    pub walk: Option<KeyHintFfi>,
+    /// The header's buttons, in order: Open, Archive, Close, with keys.
+    pub actions: Vec<KeyHintFfi>,
+    /// The subject, 22/28 bold, its words marked.
+    pub subject: Vec<RunFfi>,
+    /// The sender line: the name strong, the address mono, then when and
+    /// the thread's size.
+    pub sender: Vec<RunFfi>,
+    /// "4 matches in this conversation".
+    pub matches_line: String,
+    /// "]/[" "jump between them".
+    pub matches_hint: Option<KeyHintFfi>,
+    /// One card per match, oldest first, the subject last.
+    pub cards: Vec<MatchCardFfi>,
+    /// The ringed card.
+    pub current: Option<u32>,
+}
+
+impl From<postio_focus::QuickLookView> for QuickLookViewFfi {
+    fn from(view: postio_focus::QuickLookView) -> Self {
+        let hint = |hint: postio_ui::hints::Hint| KeyHintFfi {
+            key: hint.key,
+            label: hint.label,
+        };
+        QuickLookViewFfi {
+            title: view.title,
+            position: view.position,
+            walk: view.walk.map(hint),
+            actions: hints(view.actions),
+            subject: runs(view.subject),
+            sender: runs(view.sender),
+            matches_line: view.matches_line,
+            matches_hint: view.matches_hint.map(hint),
+            cards: view
+                .cards
+                .into_iter()
+                .map(|card| MatchCardFfi {
+                    place: card.place,
+                    when: card.when,
+                    passage: runs(card.passage),
+                    file: card.file,
+                })
+                .collect(),
+            current: view.current,
+        }
+    }
+}
+
 /// One result row (design §3.4).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ResultRowFfi {

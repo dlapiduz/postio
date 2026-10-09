@@ -234,6 +234,9 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::ResultsPeople
         | C::StepRangeBack
         | C::StepRangeForward
+        | C::QuickLook
+        | C::NextMatch
+        | C::PrevMatch
         | C::GoToFiltered
         | C::GoToDigestRules
         | C::ToggleHasAction

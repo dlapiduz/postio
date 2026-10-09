@@ -1203,6 +1203,41 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
     },
+    // Space looks inside a result without opening it, and ]/[ walk its
+    // matches while it is open (spec 010 US4, FR-028, design §3.7): the
+    // results' own, and the Mac's until Linux adopts them (D25). The same
+    // brackets walk a thread's messages and a digest's references, each in
+    // its own context.
+    CommandSpec {
+        id: CommandId::QuickLook,
+        title: "Quick Look",
+        default_binding: "space",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::NextMatch,
+        title: "Next match",
+        default_binding: "]",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::PrevMatch,
+        title: "Previous match",
+        default_binding: "[",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
     CommandSpec {
         id: CommandId::Compose,
         title: "Compose",
@@ -2712,6 +2747,9 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             | (ActionId::Builtin(C::ResultsPeople), Platform::Freedesktop)
             | (ActionId::Builtin(C::StepRangeBack), Platform::Freedesktop)
             | (ActionId::Builtin(C::StepRangeForward), Platform::Freedesktop)
+            | (ActionId::Builtin(C::QuickLook), Platform::Freedesktop)
+            | (ActionId::Builtin(C::NextMatch), Platform::Freedesktop)
+            | (ActionId::Builtin(C::PrevMatch), Platform::Freedesktop)
     )
 }
 
@@ -2788,7 +2826,7 @@ mod tests {
 
     /// What only the Mac's search dropdown and results view draw, until
     /// Linux adopts them (spec 010 D23, D25).
-    const NOT_ON_LINUX_YET: [CommandId; 9] = [
+    const NOT_ON_LINUX_YET: [CommandId; 12] = [
         CommandId::ShowAllResults,
         CommandId::ForgetRecent,
         CommandId::HistoryBack,
@@ -2798,6 +2836,9 @@ mod tests {
         CommandId::ResultsPeople,
         CommandId::StepRangeBack,
         CommandId::StepRangeForward,
+        CommandId::QuickLook,
+        CommandId::NextMatch,
+        CommandId::PrevMatch,
     ];
 
     #[test]

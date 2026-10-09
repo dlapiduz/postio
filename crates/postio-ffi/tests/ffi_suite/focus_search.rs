@@ -519,3 +519,59 @@ async fn months_and_date_words_cross_as_dates() {
     session.focus_search_popover_done(true);
     session.shutdown();
 }
+
+/// Quick Look at the boundary (spec 010 step 5, FR-028): Space on a result
+/// says `FocusQuickLook` with the panel, its cards land as a second one
+/// with the conversation's matches, ] rings the next, and Space again
+/// closes it with `None`.
+#[tokio::test(flavor = "multi_thread")]
+async fn quick_look_crosses_with_its_cards_and_closes_with_none() {
+    let (session, _) = atlas_budget_results().await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    session.invoke("quick_look");
+    let view = next(&session, 10, |event| match event {
+        UiEvent::FocusQuickLook { view: Some(view) } if view.cards.len() > 1 => Some(view.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(view.title, "Quick Look");
+    assert!(view.position.starts_with("1 of "), "{}", view.position);
+    assert!(runs(&view.subject).to_lowercase().contains("atlas"));
+    assert!(view.subject.iter().any(|run| run.highlighted));
+    assert!(
+        view.matches_line.ends_with("matches in this conversation"),
+        "{}",
+        view.matches_line
+    );
+    assert_eq!(
+        view.actions
+            .iter()
+            .map(|hint| hint.label.as_str())
+            .collect::<Vec<_>>(),
+        ["Open", "Archive", "Close"]
+    );
+    let current = view.current.expect("a card is ringed");
+    assert!(
+        view.cards
+            .iter()
+            .any(|card| card.passage.iter().any(|run| run.highlighted)),
+        "{:?}",
+        view.cards
+    );
+
+    session.invoke("next_match");
+    let moved = next(&session, 10, |event| match event {
+        UiEvent::FocusQuickLook { view: Some(view) } => Some(view.current),
+        _ => None,
+    })
+    .await;
+    assert_eq!(moved, Some(current + 1));
+
+    session.invoke("quick_look");
+    let _ = next(&session, 10, |event| match event {
+        UiEvent::FocusQuickLook { view: None } => Some(()),
+        _ => None,
+    })
+    .await;
+    session.shutdown();
+}

@@ -947,3 +947,28 @@ fn the_timeline_steps_are_the_results_views_alone() {
     assert_eq!(CommandId::StepRangeBack.as_str(), "step_range_back");
     assert_eq!(CommandId::StepRangeForward.as_str(), "step_range_forward");
 }
+
+/// Spec 010 step 5 (FR-028, D25): Quick Look and its match steps are the
+/// results view's alone, and the Mac's until Linux adopts them.
+#[test]
+fn quick_look_is_the_results_views_alone() {
+    use postio_config::paths::Platform;
+    use postio_core::ActionId;
+    for id in [
+        CommandId::QuickLook,
+        CommandId::NextMatch,
+        CommandId::PrevMatch,
+    ] {
+        let action = ActionId::Builtin(id);
+        assert!(registry::offered_on(action, Platform::Apple), "{id}");
+        assert!(!registry::offered_on(action, Platform::Freedesktop), "{id}");
+        assert_eq!(
+            registry::get(id).contexts,
+            Context::Results.as_set(),
+            "{id} is the results view's alone"
+        );
+    }
+    assert_eq!(CommandId::QuickLook.as_str(), "quick_look");
+    assert_eq!(CommandId::NextMatch.as_str(), "next_match");
+    assert_eq!(CommandId::PrevMatch.as_str(), "prev_match");
+}

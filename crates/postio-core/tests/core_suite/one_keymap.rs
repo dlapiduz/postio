@@ -276,6 +276,11 @@ const CONTRACT: &[Row] = &[
         Graphical,
         &[Context::Results],
     ),
+    // Spec 010 step 5: Space looks inside a result; ]/[ walk its matches
+    // while it is open (FR-028).
+    with("quick_look", "space", &[], Graphical, &[Context::Results]),
+    with("next_match", "]", &[], Graphical, &[Context::Results]),
+    with("prev_match", "[", &[], Graphical, &[Context::Results]),
     // Spec 010 step 4: ⌥←/⌥→ step the timeline's range a month (FR-023).
     with(
         "step_range_back",
@@ -671,6 +676,28 @@ fn the_timeline_steps_on_alt_arrows_on_the_mac_and_not_on_linux() {
     ] {
         assert_eq!(mac.bindings(id), [key], "{id} on the Mac");
         assert!(registry::get(id).available_in(Context::Results), "{id}");
+        assert!(linux.bindings(id).is_empty(), "{id} has a key on Linux");
+        assert!(!linux.offers(id), "{id} is offered on Linux");
+    }
+}
+
+/// Spec 010 step 5 (FR-028, D25): Space opens Quick Look on a result and
+/// ]/[ walk its matches, in the results, on the Mac; not on Linux yet.
+#[test]
+fn quick_look_is_space_and_its_matches_are_brackets_on_the_mac() {
+    let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
+    let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+    for (id, key) in [
+        (CommandId::QuickLook, "space"),
+        (CommandId::NextMatch, "]"),
+        (CommandId::PrevMatch, "["),
+    ] {
+        assert_eq!(mac.bindings(id), [key], "{id} on the Mac");
+        assert_eq!(
+            mac.command_for(Context::Results, key),
+            Some(postio_core::ActionId::Builtin(id)),
+            "{key}"
+        );
         assert!(linux.bindings(id).is_empty(), "{id} has a key on Linux");
         assert!(!linux.offers(id), "{id} is offered on Linux");
     }
