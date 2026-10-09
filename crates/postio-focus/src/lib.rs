@@ -1270,6 +1270,7 @@ impl FocusController {
             }
             Input::Event(event) => {
                 let mut steps = self.verbs.event(&event);
+                steps.extend(self.results_heard(&event));
                 steps.extend(self.feed.event(&event));
                 steps.extend(self.hear_sync(&event));
                 steps.extend(self.filtered_event(&event));

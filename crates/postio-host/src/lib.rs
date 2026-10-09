@@ -268,6 +268,17 @@ struct Queued {
     command: Command,
     aim: StateSnapshot,
     invocation: Option<InvocationId>,
+    /// The command's target is a search's whole match, resolved when it
+    /// runs: in order with every other command, as one unit.
+    matching: Option<Matching>,
+}
+
+/// Every conversation a query matches but the rows taken back out
+/// (`Req::SendMatching`).
+struct Matching {
+    account: postio_model::AccountScope,
+    query: postio_search::ParsedQuery,
+    except: Vec<postio_model::MessageId>,
 }
 
 /// Whether `event` is a command speaking about itself, which only the
@@ -738,6 +749,22 @@ impl Inner {
                     refused => refused,
                 })
             }
+            Req::SendMatching {
+                command,
+                account,
+                query,
+                except,
+            } => InOrder::Answered(self.queue_command(Queued {
+                client,
+                command,
+                aim: StateSnapshot::default(),
+                invocation: None,
+                matching: Some(Matching {
+                    account,
+                    query,
+                    except,
+                }),
+            })),
             Req::NoteRemoved(mailbox, messages) => {
                 self.wiring.store.note_removed(mailbox, messages);
                 InOrder::Answered(Resp::Done)
@@ -800,10 +827,33 @@ impl Inner {
     }
 
     /// Run one client's command, aimed with that client's selection.
-    async fn run(&self, queued: Queued) {
+    async fn run(&self, mut queued: Queued) {
         let Some(entry) = self.entry(queued.client) else {
             return;
         };
+        if let Some(matching) = queued.matching.take() {
+            // A whole search's selection becomes its messages here, on the
+            // command queue: what the match holds when the verb runs, and
+            // one target, so one undo takes it all back. A match that could
+            // not be walked aims at nothing, which the verb refuses aloud.
+            let messages = match self.wiring.database.read().await {
+                Ok(reader) => postio_session::search::matching(
+                    &reader,
+                    matching.account,
+                    &matching.query,
+                    &matching.except,
+                )
+                .await
+                .unwrap_or_default(),
+                Err(error) => {
+                    tracing::warn!(%error, "no connection to walk the match with");
+                    Vec::new()
+                }
+            };
+            queued.command = queued
+                .command
+                .with_target(postio_core::MessageTarget::Messages(messages));
+        }
         let (quiet, _) = event_channel();
         entry.state.update(&quiet, |app| {
             app.adopt(queued.aim);
@@ -834,6 +884,7 @@ impl Inner {
         match request {
             Req::Send(..)
             | Req::SendTracked(..)
+            | Req::SendMatching { .. }
             | Req::NoteRemoved(..)
             | Req::SaveDraft { .. }
             | Req::QueueSend { .. }
@@ -1828,12 +1879,16 @@ impl Inner {
         aim: StateSnapshot,
         invocation: Option<InvocationId>,
     ) -> Resp {
-        let queued = Queued {
+        self.queue_command(Queued {
             client,
             command,
             aim,
             invocation,
-        };
+            matching: None,
+        })
+    }
+
+    fn queue_command(&self, queued: Queued) -> Resp {
         match self.queue.try_send(queued) {
             Ok(()) => Resp::Done,
             Err(_) => Resp::Stopped,

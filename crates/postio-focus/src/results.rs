@@ -120,10 +120,13 @@ pub struct ResultsView {
     pub hints: Vec<Hint>,
     /// "48 conversations · local index · 41 ms".
     pub footer: String,
-    /// How many rows are checked.
+    /// How many conversations are checked.
     pub selected: u64,
     /// The bulk bar's keys, while rows are checked.
     pub bulk: Vec<Hint>,
+    /// The bulk bar's right: "⇧X select all 12", while some but not every
+    /// conversation the query matches is checked.
+    pub select_all: Option<Hint>,
 }
 
 /// One result row (design §3.4).
@@ -546,8 +549,12 @@ pub(crate) struct Results {
     asked: BTreeSet<u32>,
     /// The row with the focus ring; restored rows wait for the frame.
     pub(crate) cursor: Option<u64>,
-    /// Checked rows, by their best message.
-    pub(crate) checked: Vec<MessageId>,
+    /// Checked rows, by their best message and its conversation -- or,
+    /// with `all`, the rows taken back out of the whole.
+    pub(crate) checked: Vec<(MessageId, Option<ThreadId>)>,
+    /// ⇧X: every conversation the query matches is checked, but `checked`
+    /// (a predicate, never the rows read).
+    pub(crate) all: bool,
     /// The query has been kept among the recent searches.
     pub(crate) remembered: bool,
     /// The filter popover that is open.
@@ -586,6 +593,7 @@ impl Results {
             asked: BTreeSet::new(),
             cursor: None,
             checked: Vec::new(),
+            all: false,
             remembered: false,
             popover: None,
             undated: None,
@@ -652,7 +660,7 @@ impl Results {
         self.terms = postio_search::highlight::terms(&parsed);
         self.query = query;
         self.parsed = parsed;
-        self.checked.clear();
+        self.clear_checked();
         self.cursor = None;
         self.remembered = false;
     }
@@ -1017,18 +1025,88 @@ impl Results {
         })
     }
 
-    /// `x` on the focused row: checked, or not.
+    /// `x` on the focused row: checked, or not -- under ⇧X, taken back
+    /// out of the whole, or put back in it.
     pub(crate) fn toggle_checked(&mut self) -> bool {
-        let Some((message, _)) = self.cursor_message() else {
+        let Some((message, thread)) = self.cursor_message() else {
             return false;
         };
-        match self.checked.iter().position(|at| *at == message) {
+        match self.checked.iter().position(|(at, _)| *at == message) {
             Some(at) => {
                 self.checked.remove(at);
             }
-            None => self.checked.push(message),
+            None => self.checked.push((message, thread)),
         }
         true
+    }
+
+    /// ⇧X: every conversation the query matches.
+    pub(crate) fn check_all(&mut self) {
+        self.all = true;
+        self.checked.clear();
+    }
+
+    /// Nothing checked.
+    pub(crate) fn clear_checked(&mut self) {
+        self.all = false;
+        self.checked.clear();
+    }
+
+    /// Whether anything is checked.
+    pub(crate) fn any_checked(&self) -> bool {
+        self.all || !self.checked.is_empty()
+    }
+
+    /// Whether the row whose best message is `message` is checked.
+    fn is_checked(&self, message: MessageId) -> bool {
+        self.all != self.checked.iter().any(|(at, _)| *at == message)
+    }
+
+    /// How many conversations are checked: under ⇧X, the whole match but
+    /// those taken back out.
+    pub(crate) fn selected(&self) -> u64 {
+        if self.all {
+            let total = self.frame.as_ref().map_or(0, |frame| frame.total);
+            total.saturating_sub(self.checked.len() as u64)
+        } else {
+            self.checked.len() as u64
+        }
+    }
+
+    /// Where a verb on the results goes: the checked conversations, the
+    /// whole match as a predicate under ⇧X, or the focused one. `None`
+    /// when there is nothing to aim at.
+    pub(crate) fn aim(&self) -> Option<ResultsAim> {
+        if self.all {
+            return Some(ResultsAim::Matching {
+                query: self.parsed.clone(),
+                except: self.checked.iter().map(|(message, _)| *message).collect(),
+            });
+        }
+        let picked: Vec<(MessageId, Option<ThreadId>)> = if self.checked.is_empty() {
+            self.cursor_message().into_iter().collect()
+        } else {
+            self.checked.clone()
+        };
+        if picked.is_empty() {
+            return None;
+        }
+        let selection = postio_core::state::Selection::These(
+            picked.iter().map(|(message, _)| *message).collect(),
+        );
+        let reach = picked
+            .iter()
+            .filter_map(|(message, thread)| thread.map(|thread| (*message, vec![thread])))
+            .collect();
+        match postio_ui::focus_target::aim_by(&selection, &reach, None) {
+            postio_ui::focus_target::Aim::Targets(aims) if !aims.is_empty() => {
+                Some(ResultsAim::Targets {
+                    aims,
+                    conversations: picked.len(),
+                })
+            }
+            _ => None,
+        }
     }
 
     /// The query's positive clauses.
@@ -1180,12 +1258,15 @@ impl Results {
             footer: frame.map_or_else(String::new, |frame| {
                 words::results_footer(total, capped, frame.elapsed)
             }),
-            selected: self.checked.len() as u64,
-            bulk: if self.checked.is_empty() {
-                Vec::new()
-            } else {
+            selected: self.selected(),
+            bulk: if self.any_checked() {
                 words::bulk_hints(with.keymap)
+            } else {
+                Vec::new()
             },
+            select_all: (self.any_checked() && self.selected() < total)
+                .then(|| words::select_all_hint(with.keymap, total, capped))
+                .flatten(),
         }
     }
 
@@ -1638,7 +1719,7 @@ impl Results {
                 words::in_folder(&folder_name)
             },
             date,
-            checked: self.checked.contains(&hit.best),
+            checked: self.is_checked(hit.best),
         })
     }
 
@@ -1811,6 +1892,7 @@ impl Results {
             order: self.order,
             cursor: self.cursor,
             checked: self.checked.clone(),
+            all: self.all,
         }
     }
 }
@@ -1837,6 +1919,45 @@ fn thread_of(hit: &ConversationHit) -> Option<ThreadId> {
     match hit.key {
         ConversationKey::Thread(thread) => Some(thread),
         ConversationKey::Lone(_) => None,
+    }
+}
+
+/// Where a verb on the results goes.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ResultsAim {
+    /// These conversations, named.
+    Targets {
+        /// The targets, in the order to send them.
+        aims: Vec<postio_core::MessageTarget>,
+        /// How many conversations they are: what a picker says it acts on.
+        conversations: usize,
+    },
+    /// Every conversation `query` matches but the rows `except` stands for.
+    Matching {
+        /// The query.
+        query: ParsedQuery,
+        /// Each a conversation's best message.
+        except: Vec<MessageId>,
+    },
+}
+
+/// `command`, sent where `aim` says.
+pub(crate) fn results_send(command: postio_core::Command, aim: ResultsAim) -> Request {
+    match aim {
+        ResultsAim::Targets { aims, .. } => Request::Send {
+            command,
+            aims,
+            everything: None,
+        },
+        ResultsAim::Matching { query, except } => Request::Send {
+            command,
+            aims: Vec::new(),
+            everything: Some(crate::Everything {
+                accounts: Vec::new(),
+                except,
+                query: Some(query),
+            }),
+        },
     }
 }
 
@@ -1982,6 +2103,7 @@ impl FocusController {
             order,
             cursor: None,
             checked: Vec::new(),
+            all: false,
         }));
         if let Some(step) = remembered {
             if let Some(results) = self.results.as_mut() {
@@ -1999,6 +2121,7 @@ impl FocusController {
         let mut results = Results::new(snapshot.query, parsed, snapshot.tab, snapshot.order, stamp);
         results.cursor = snapshot.cursor;
         results.checked = snapshot.checked;
+        results.all = snapshot.all;
         let asks = results.asks();
         self.results = Some(results);
         let mut steps = self.draw_results();
@@ -2062,37 +2185,31 @@ impl FocusController {
             }
             CommandId::FirstMessage => cursor_moved(results.step(i64::MIN / 2)),
             CommandId::LastMessage => cursor_moved(results.step(i64::MAX / 2)),
+            // A conversation can be drawn twice -- a Top hit and its
+            // month's row -- so every row redraws, which the toolkit does
+            // for the ones on screen.
             CommandId::ToggleSelection => {
                 if results.toggle_checked() {
-                    let at = results.cursor.unwrap_or(0);
-                    let mut steps = self.draw_results();
-                    steps.push(Step::Show(Intent::ResultsPage {
-                        first: at,
-                        count: 1,
-                    }));
-                    steps
+                    self.redraw_checks()
                 } else {
                     Vec::new()
                 }
             }
             // ⇧X selects every conversation the query matches, as a
-            // predicate: step 6 (T094).
-            CommandId::SelectAll => Vec::new(),
+            // predicate (FR-026).
+            CommandId::SelectAll => {
+                results.check_all();
+                self.redraw_checks()
+            }
             CommandId::Back if results.popover.is_some() => self.popover_done(false),
             CommandId::Back => {
-                if results.checked.is_empty() {
+                if !results.any_checked() {
                     let here = self.here();
                     self.history.home(here);
                     return Some(self.show_inbox());
                 }
-                results.checked.clear();
-                let rows = results.rows();
-                let mut steps = self.draw_results();
-                steps.push(Step::Show(Intent::ResultsPage {
-                    first: 0,
-                    count: rows,
-                }));
-                steps
+                results.clear_checked();
+                self.redraw_checks()
             }
             CommandId::HistoryBack | CommandId::HistoryForward => {
                 return self.history_command(id);
@@ -2138,21 +2255,87 @@ impl FocusController {
                     None => Vec::new(),
                 }
             }
-            // A picker hangs from a row the results draw: step 6 (T100).
-            _ if crate::pickers::opens_picker(id) => Vec::new(),
-            // A verb on mail acts on the focused result. One on nothing --
-            // Undo, Refresh -- goes on to the list's path, which sends it
-            // as it is: ⌘Z after archiving a result takes it back.
+            // A picker hangs from the focused result, over what a verb
+            // would aim at.
+            _ if crate::pickers::opens_picker(id) => self.picker_on_results(id).unwrap_or_default(),
+            // A verb on mail acts on what is checked, or the focused
+            // result. One on nothing -- Undo, Refresh -- goes on to the
+            // list's path, which sends it as it is: ⌘Z after archiving a
+            // result takes it back.
             _ if matches!(
                 postio_ui::focus_target::dispatch(id),
                 Some(postio_ui::focus_target::Dispatch::OnMail(_))
             ) =>
             {
-                self.result_verb(id)
+                self.results_verb(id)
             }
             _ => return None,
         };
         Some(steps)
+    }
+
+    /// A verb this client sent has landed, or was taken back: the results
+    /// are asked again, so a row says where its mail is now ("in:Archive")
+    /// and one deleted is gone. Search spans every folder, so an archived
+    /// result still matches; the focus ring stays where it was.
+    pub(crate) fn results_heard(&mut self, event: &postio_core::Event) -> Vec<Step> {
+        if !matches!(
+            event,
+            postio_core::Event::ActionCompleted { .. } | postio_core::Event::UndoPerformed { .. }
+        ) {
+            return Vec::new();
+        }
+        let stamp = self.stamp();
+        match self.results.as_mut() {
+            Some(results) => results.again(stamp),
+            None => Vec::new(),
+        }
+    }
+
+    /// The results' checks go, after a picker acted on them.
+    pub(crate) fn clear_results_checks(&mut self) -> Vec<Step> {
+        match self.results.as_mut() {
+            Some(results) if results.any_checked() => {
+                results.clear_checked();
+                self.redraw_checks()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The checks changed: the frame's count and bar, and every row.
+    fn redraw_checks(&self) -> Vec<Step> {
+        let rows = self.results.as_ref().map_or(0, Results::rows);
+        let mut steps = self.draw_results();
+        steps.push(Step::Show(Intent::ResultsPage {
+            first: 0,
+            count: rows,
+        }));
+        steps
+    }
+
+    /// A verb from the results: at what is checked -- the whole match as a
+    /// predicate under ⇧X -- or the focused result. What was checked has
+    /// been acted on, so it goes.
+    fn results_verb(&mut self, id: CommandId) -> Vec<Step> {
+        let Some(postio_ui::focus_target::Dispatch::OnMail(command)) =
+            postio_ui::focus_target::dispatch(id)
+        else {
+            return Vec::new();
+        };
+        let Some(results) = self.results.as_mut() else {
+            return Vec::new();
+        };
+        if !results.any_checked() {
+            return self.result_verb(id);
+        }
+        let Some(aim) = results.aim() else {
+            return Vec::new();
+        };
+        results.clear_checked();
+        let mut steps = vec![Step::Ask(results_send(command, aim))];
+        steps.extend(self.redraw_checks());
+        steps
     }
 
     /// A verb on the focused result.

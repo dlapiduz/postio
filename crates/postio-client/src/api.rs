@@ -86,6 +86,7 @@ impl Req {
         match self {
             Req::Send(..) => "Send",
             Req::SendTracked(..) => "SendTracked",
+            Req::SendMatching { .. } => "SendMatching",
             Req::Page(_) => "Page",
             Req::Count(_) => "Count",
             Req::Rows(_) => "Rows",
@@ -1551,6 +1552,30 @@ impl Client {
     pub async fn send(&self, command: Command) -> Result<(), SendError> {
         let aim = self.state.read(|state| state.snapshot());
         match self.call(Req::Send(command, aim)).await? {
+            Resp::Stopped => Err(SendError::Stopped),
+            _ => Ok(()),
+        }
+    }
+
+    /// Run `command` at every conversation `query` matches but those whose
+    /// best message is in `except`: a whole search's selection, said as the
+    /// predicate it is. Its effects arrive as events.
+    pub async fn send_matching(
+        &self,
+        command: Command,
+        account: postio_model::AccountScope,
+        query: postio_search::ParsedQuery,
+        except: Vec<MessageId>,
+    ) -> Result<(), SendError> {
+        match self
+            .call(Req::SendMatching {
+                command,
+                account,
+                query,
+                except,
+            })
+            .await?
+        {
             Resp::Stopped => Err(SendError::Stopped),
             _ => Ok(()),
         }

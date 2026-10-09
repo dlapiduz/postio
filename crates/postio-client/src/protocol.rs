@@ -77,6 +77,21 @@ pub enum Req {
     Send(Command, StateSnapshot),
     /// The same, learning the id its events will carry.
     SendTracked(Command, StateSnapshot),
+    /// Run a command at every conversation `query` matches but the rows
+    /// `except` stands for (each a conversation's best message): ⇧X in
+    /// Focus's search results (spec 010 US5). A predicate the host walks
+    /// with the results' own match, in order with every other command, so
+    /// one undo takes the whole back.
+    SendMatching {
+        /// The verb; its target is the match.
+        command: Command,
+        /// Which accounts the search is over.
+        account: postio_model::AccountScope,
+        /// The query, as the results ran it.
+        query: postio_search::ParsedQuery,
+        /// Rows taken back out of the selection.
+        except: Vec<MessageId>,
+    },
     /// One page of a list.
     Page(PageRequest),
     /// How many rows a list would show.

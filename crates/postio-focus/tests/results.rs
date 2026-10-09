@@ -1401,3 +1401,197 @@ fn an_answer_for_a_result_since_left_is_dropped() {
     let effects = settle(&mut focus, second, &rows);
     assert_eq!(text(&looked(&effects).subject), "Atlas budget, part 2");
 }
+
+// ---------------------------------------------------------------------------
+// Step 6: selection, the bulk bar, and Save search (US5, FR-026, FR-029)
+// ---------------------------------------------------------------------------
+
+fn labels(hints: &[postio_ui::hints::Hint]) -> Vec<&str> {
+    hints.iter().map(|hint| hint.label.as_str()).collect()
+}
+
+#[test]
+fn x_checks_results_and_the_footer_becomes_the_bulk_bar() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let effects = search(&mut focus, "atlas budget", &rows);
+    let view = results_view(&effects).expect("the results");
+    assert_eq!(view.selected, 0);
+    assert!(view.bulk.is_empty());
+    assert_eq!(view.select_all, None, "nothing checked, no bulk bar");
+
+    let effects = run(&mut focus, CommandId::ToggleSelection, &rows);
+    let view = results_view(&effects).expect("redrawn");
+    assert_eq!(view.selected, 1);
+    assert_eq!(
+        labels(&view.bulk),
+        ["Archive", "Label", "Move", "Mark read", "Snooze"]
+    );
+    let all = view.select_all.expect("⇧X on the bar's right");
+    assert_eq!(
+        all.label, "select all 120",
+        "every conversation, not every row"
+    );
+    assert_eq!(all.key, "X");
+
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let effects = run(&mut focus, CommandId::ToggleSelection, &rows);
+    assert_eq!(results_view(&effects).expect("redrawn").selected, 2);
+}
+
+#[test]
+fn capital_x_checks_every_conversation_the_query_matches() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let effects = run(&mut focus, CommandId::SelectAll, &rows);
+    let view = results_view(&effects).expect("redrawn");
+    assert_eq!(view.selected, 120, "the whole match, not the rows read");
+    assert_eq!(view.select_all, None, "everything is selected already");
+    assert!(!view.bulk.is_empty());
+    assert!(
+        shown(&effects).contains(&Intent::ResultsPage {
+            first: 0,
+            count: view.rows
+        }),
+        "every row redraws checked"
+    );
+    assert_eq!(focus.result_row(0).map(|row| row.checked), Some(true));
+    assert_eq!(focus.result_row(40).map(|row| row.checked), Some(true));
+
+    // x takes the focused one back out of the whole -- and its Top hit and
+    // month rows are one conversation.
+    let effects = run(&mut focus, CommandId::ToggleSelection, &rows);
+    let view = results_view(&effects).expect("redrawn");
+    assert_eq!(view.selected, 119);
+    let best = focus.result_row(0).expect("a row").message;
+    assert_eq!(focus.result_row(0).map(|row| row.checked), Some(false));
+    let again = (3..focus.result_count())
+        .find(|at| focus.result_row(*at).is_some_and(|row| row.message == best))
+        .expect("the conversation in its month");
+    assert_eq!(focus.result_row(again).map(|row| row.checked), Some(false));
+    assert!(view.select_all.is_some(), "not everything any more");
+}
+
+#[test]
+fn a_verb_on_everything_checked_aims_at_the_query_as_a_predicate() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let _ = run(&mut focus, CommandId::SelectAll, &rows);
+    let _ = run(&mut focus, CommandId::ToggleSelection, &rows);
+    let effects = run(&mut focus, CommandId::Archive, &rows);
+
+    let sent: Vec<Request> = asked(&effects)
+        .into_iter()
+        .filter(|request| matches!(request, Request::Send { .. }))
+        .collect();
+    let [
+        Request::Send {
+            command: postio_core::Command::Archive { .. },
+            aims,
+            everything: Some(everything),
+        },
+    ] = sent.as_slice()
+    else {
+        panic!("one archive, at a predicate: {sent:?}");
+    };
+    assert!(aims.is_empty(), "no rows named: {aims:?}");
+    assert_eq!(
+        everything.query.as_ref().map(|query| query.input()),
+        Some("atlas budget"),
+        "every conversation the query matches"
+    );
+    assert_eq!(
+        everything.except,
+        [MessageId::new(1007)],
+        "but the one taken back"
+    );
+    let view = results_view(&effects).expect("redrawn");
+    assert_eq!(view.selected, 0, "what was checked has been acted on");
+    assert!(view.bulk.is_empty());
+}
+
+#[test]
+fn a_verb_on_checked_rows_aims_at_their_conversations() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let _ = run(&mut focus, CommandId::ToggleSelection, &rows);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let _ = run(&mut focus, CommandId::ToggleSelection, &rows);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let effects = run(&mut focus, CommandId::ToggleRead, &rows);
+
+    let sent: Vec<Request> = asked(&effects)
+        .into_iter()
+        .filter(|request| matches!(request, Request::Send { .. }))
+        .collect();
+    assert_eq!(
+        sent,
+        [Request::Send {
+            command: postio_core::Command::ToggleRead {
+                target: postio_core::MessageTarget::Selection,
+                unread: None,
+            },
+            aims: vec![postio_core::MessageTarget::Threads(vec![
+                postio_model::ThreadId::new(2007),
+                postio_model::ThreadId::new(2002),
+            ])],
+            everything: None,
+        }],
+        "the two checked, not the focused third"
+    );
+    assert_eq!(results_view(&effects).expect("redrawn").selected, 0);
+}
+
+#[test]
+fn a_picker_in_the_results_opens_over_what_is_checked() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let _ = run(&mut focus, CommandId::ToggleSelection, &rows);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let _ = run(&mut focus, CommandId::ToggleSelection, &rows);
+    let effects = run(&mut focus, CommandId::Move, &rows);
+    let opened = shown(&effects)
+        .into_iter()
+        .find_map(|intent| match intent {
+            Intent::OpenPicker(view) => Some(view),
+            _ => None,
+        })
+        .expect("m opens the move picker");
+    assert_eq!(opened.anchor, postio_focus::Anchor::Result(1));
+    assert_eq!(opened.target, "2 conversations");
+    assert!(
+        asked(&effects)
+            .iter()
+            .any(|request| matches!(request, Request::Folders { .. })),
+        "its folders are read"
+    );
+}
+
+#[test]
+fn the_results_are_asked_again_once_a_verb_on_them_lands() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let _ = run(&mut focus, CommandId::Archive, &rows);
+    let effects = focus.handle_on(
+        Input::Event(postio_core::Event::ActionCompleted {
+            description: "Archived".to_owned(),
+            undoable: true,
+        }),
+        &rows,
+    );
+    assert_eq!(
+        results_reads(&effects),
+        [
+            (ConversationOrder::BestMatch, 0, 3),
+            (ConversationOrder::Newest, 0, 50)
+        ],
+        "an archived result is in another folder now: the rows say so"
+    );
+    let _ = settle(&mut focus, effects, &rows);
+    assert_eq!(focus.result_count(), 123, "and the ring stays where it was");
+}

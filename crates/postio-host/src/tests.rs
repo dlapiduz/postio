@@ -4313,3 +4313,112 @@ fn focus_counts_each_saved_search_and_none_is_new_yet() {
     assert_eq!(counts[0].2, 0, "nothing is new before step 6");
     assert_eq!(counts[1], ("nothing".to_string(), 0, 0));
 }
+
+#[test]
+fn an_archive_aimed_at_a_query_archives_what_it_matches_and_one_undo_restores_it() {
+    // US5's first scenario: ⇧X in the results, then `a`. The frontend says
+    // the query and the rows taken back out -- a predicate -- and the host
+    // walks the match the results were drawn from.
+    let seed = SearchSeed::new();
+    let events = seed.client.events();
+    let today = postio_demo::today().date_naive();
+    let all = |text: &str| {
+        seed.rt
+            .block_on(seed.client.conversations(
+                seed.scope(),
+                postio_search::parse(text, today),
+                postio_search::results::ConversationOrder::Newest,
+                0,
+                500,
+            ))
+            .expect("an answer")
+            .expect("the store was read")
+    };
+    let archive_folder = seed
+        .rt
+        .block_on(seed.client.mailboxes(seed.account))
+        .expect("the folders")
+        .into_iter()
+        .find(|folder| folder.role == postio_model::MailboxRole::Archive)
+        .expect("the seed has an Archive")
+        .id;
+    let before = all("atlas budget");
+    assert!(before.hits.len() > 3, "a match worth selecting");
+    let placed = |found: &postio_search::results::ConversationResults| {
+        found
+            .hits
+            .iter()
+            .map(|hit| (hit.best, hit.mailbox_id))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let was = placed(&before);
+    let kept = before
+        .hits
+        .iter()
+        .find(|hit| hit.mailbox_id != archive_folder)
+        .expect("one not archived yet")
+        .best;
+    // Something that does not match, in a folder of its own.
+    let elsewhere = all("dinner saturday");
+    let elsewhere_was = placed(&elsewhere);
+    assert!(
+        !elsewhere_was.is_empty() && elsewhere_was.keys().all(|best| !was.contains_key(best)),
+        "a conversation the query does not match"
+    );
+
+    seed.rt
+        .block_on(seed.client.send_matching(
+            Command::Archive {
+                target: MessageTarget::Selection,
+            },
+            seed.scope(),
+            postio_search::parse("atlas budget", today),
+            vec![kept],
+        ))
+        .expect("sent");
+    let completed = |event: &Event| matches!(event, Event::ActionCompleted { .. });
+    let rt = &seed.rt;
+    let hear = |wanted: &dyn Fn(&Event) -> bool| {
+        rt.block_on(async {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    let envelope = events.recv().await.expect("the host is running");
+                    if let Event::CommandRejected { reason, .. } = &envelope.event {
+                        panic!("rejected: {reason}");
+                    }
+                    if wanted(&envelope.event) {
+                        return;
+                    }
+                }
+            })
+            .await
+            .expect("the event arrived")
+        })
+    };
+    hear(&completed);
+
+    let after = placed(&all("atlas budget"));
+    assert_eq!(after.len(), was.len(), "archived mail still matches");
+    for (best, folder) in &after {
+        if *best == kept {
+            assert_eq!(Some(folder), was.get(best), "the row taken back out stays");
+        } else {
+            assert_eq!(*folder, archive_folder, "every other match is archived");
+        }
+    }
+    assert_eq!(
+        placed(&all("dinner saturday")),
+        elsewhere_was,
+        "nothing else moved"
+    );
+
+    seed.rt
+        .block_on(seed.client.send(Command::Undo))
+        .expect("sent");
+    hear(&|event| matches!(event, Event::UndoPerformed { .. }));
+    assert_eq!(
+        placed(&all("atlas budget")),
+        was,
+        "one undo puts it all back"
+    );
+}
