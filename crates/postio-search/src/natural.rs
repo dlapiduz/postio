@@ -18,6 +18,8 @@
 //!   `from:`; after `to` (or `sent to`), `to:`. A name is only a name when
 //!   the caller's address book knows it -- the `names` closure, tried on the
 //!   longest run of up to three words first -- or when it is an address.
+//!   Names joined by `or` after one cue are either of them: "from Ada or
+//!   Grace" is `from:{ada grace}` (spec 010, D26).
 //! * **Dates**, as bounds: `today`, `yesterday`, `this week`, `last month`,
 //!   `last year`, `last Monday` become an `after:`/`before:` pair; `in
 //!   August` and `in 2025` too. `since`, `before` and `after` take any of
@@ -382,23 +384,38 @@ impl Lowering<'_> {
         })
     }
 
-    /// A name after the cue at `at`: `from`, `by` or `to`.
+    /// A name after the cue at `at`: `from`, `by` or `to`; and more joined
+    /// by `or`, which is either of them (D26): "from Ada or Grace" is
+    /// `from:{ada grace}`.
     fn after_cue(&self, at: usize) -> Option<(usize, String)> {
         let field = match self.key(at)? {
             "from" | "by" => "from",
             "to" => "to",
             _ => return None,
         };
+        let (mut next, first) = self.correspondent_at(at + 1)?;
+        let mut values = vec![first];
+        while self.key(next) == Some("or")
+            && let Some((after, value)) = self.correspondent_at(next + 1)
+        {
+            values.push(value);
+            next = after;
+        }
+        Some((next, set_operator(field, &values)))
+    }
+
+    /// The person named at word `at` -- the longest run the address book
+    /// knows, or an address, which needs none -- and the word after it.
+    fn correspondent_at(&self, at: usize) -> Option<(usize, String)> {
         if let Some(found) = (1..=NAME_WORDS)
             .rev()
-            .find_map(|len| Some((at + 1 + len, operator(field, &self.name(at + 1, len)?))))
+            .find_map(|len| Some((at + len, self.name(at, len)?)))
         {
             return Some(found);
         }
-        // An address needs no address book.
-        let word = self.words.get(at + 1).filter(|word| !word.verbatim)?;
+        let word = self.words.get(at).filter(|word| !word.verbatim)?;
         let (local, domain) = word.bare.split_once('@')?;
-        (!local.is_empty() && !domain.is_empty()).then(|| (at + 2, operator(field, &word.bare)))
+        (!local.is_empty() && !domain.is_empty()).then(|| (at + 1, word.bare.clone()))
     }
 
     /// What the address book says for the `len` words at `at`, as one name.
@@ -676,6 +693,24 @@ fn season_from_name(name: &str) -> Option<u32> {
     }
 }
 
+/// `field:value` for one value, `field:{a b}` for more (D26), each quoted
+/// when it has a space in it.
+fn set_operator(field: &str, values: &[String]) -> String {
+    match values {
+        [one] => operator(field, one),
+        many => {
+            let values: Vec<String> = many
+                .iter()
+                .map(|value| {
+                    let spelled = operator(field, value);
+                    spelled[field.len() + 1..].to_owned()
+                })
+                .collect();
+            format!("{field}:{{{}}}", values.join(" "))
+        }
+    }
+}
+
 /// `field:value`, quoted when the value has a space in it.
 fn operator(field: &str, value: &str) -> String {
     let value: String = value.chars().filter(|c| *c != '"').collect();
@@ -774,6 +809,26 @@ mod tests {
     #[test]
     fn plain_english_lowers_to_what_could_have_been_typed_by_hand() {
         for (text, typed) in LOWERED {
+            assert_eq!(
+                lower(text, today(), &names),
+                parse(typed, today()),
+                "{text:?} should lower to {typed:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn or_joins_people_only_after_a_cue_and_only_known_ones() {
+        for (text, typed) in [
+            ("from ada or grace", "from:{ada grace}"),
+            (
+                "from ada or grace or ada moreno",
+                "from:{ada grace ada.moreno@example.org}",
+            ),
+            ("from ada or nobody", "from:ada nobody"),
+            ("ada or grace", "ada grace"),
+            ("from ada or", "from:ada"),
+        ] {
             assert_eq!(
                 lower(text, today(), &names),
                 parse(typed, today()),
@@ -893,6 +948,22 @@ mod tests {
             "café receipts from Ada",
             "café receipts from:ada",
             &[Some("café"), Some("receipts"), Some("from Ada")],
+        ),
+        // Either of two people is one set, from all the words that said so
+        // (D26).
+        (
+            "invoices from ada or grace",
+            "invoices from:{ada grace}",
+            &[Some("invoices"), Some("from ada or grace")],
+        ),
+        (
+            "to Ada Moreno or grace@example.com last month",
+            "to:{ada.moreno@example.org grace@example.com} after:2026-08-01 before:2026-09-01",
+            &[
+                Some("to Ada Moreno or grace@example.com"),
+                Some("last month"),
+                Some("last month"),
+            ],
         ),
     ];
 
