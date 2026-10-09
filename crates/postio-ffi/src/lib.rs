@@ -52,6 +52,7 @@ mod focus_list;
 mod focus_message;
 mod focus_pickers;
 mod focus_reader;
+mod focus_search;
 mod focus_states;
 mod focus_surfaces;
 mod keys;
@@ -108,6 +109,10 @@ pub use focus_pickers::{
     PickerAnchorFfi, PickerFieldFfi, PickerKindFfi, PickerRowFfi, PickerViewFfi,
 };
 pub use focus_reader::{FocusReaderDocumentFfi, RenderModeWordsFfi, TreatmentFfi};
+pub use focus_search::{
+    DropdownRowFfi, DropdownRowKindFfi, DropdownSectionFfi, DropdownStateFfi, DropdownViewFfi,
+    PillFfi, RunFfi, RunStyleFfi,
+};
 pub use focus_states::{
     BannerButtonFfi, BannerFfi, BannerProgressFfi, EmptyPageFfi, EmptyShortcutFfi, SyncMarkFfi,
 };

@@ -804,6 +804,7 @@ impl FocusDriver {
                 select: select.map(|(start, end)| crate::focus_bar::BarSelectFfi { start, end }),
             }),
             Intent::BarLines(view) => self.say(UiEvent::FocusBarLines { view: view.into() }),
+            Intent::Dropdown(view) => self.say(UiEvent::FocusDropdown { view: view.into() }),
             Intent::Place { name } => self.say(UiEvent::FocusPlace { name }),
             Intent::OpenPlaces => self.say(UiEvent::FocusOpenPlaces),
             Intent::PlacesChanged => self.say(UiEvent::FocusPlacesChanged),

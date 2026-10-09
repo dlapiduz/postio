@@ -7,7 +7,7 @@
 //! its token, and the folders popover lists the places one read found and
 //! opens the one chosen, which the list then shows.
 
-use postio_ffi::{BarLineKindFfi, BarModeFfi, BarSelectFfi, Session, SessionOptions, UiEvent};
+use postio_ffi::{BarLineKindFfi, BarModeFfi, Session, SessionOptions, UiEvent};
 
 use crate::focus::{cursor_on_the_first_row, heard, inbox_of};
 
@@ -221,23 +221,26 @@ async fn a_saved_search_runs_on_its_key_and_mod_s_saves_the_query() {
         .await,
         "alt+1 opens the bar on the first saved search"
     );
-    let view = lines(&session, |view| !view.saved.is_empty()).await;
-    assert_eq!(view.saved, ["budget"], "the saved row names it");
-
-    session.focus_bar_typed("from:ada invoice".to_owned());
-    let view = lines(&session, |view| view.chips.len() == 2).await;
-    assert_eq!(view.chips, ["from:ada", "invoice"]);
-    assert!(session.focus_bar_tab(), "Tab steps into the chips");
+    // The Mac's bar draws the search dropdown (specs/010-focus-search step
+    // 2), not spec 009's lines: the saved search's words are its words
+    // state. Tab there narrows, which `focus_search.rs` asserts.
     assert!(
-        heard(&session, 5, |event| matches!(
+        heard(&session, 10, |event| matches!(
             event,
-            UiEvent::FocusOpenBar {
-                select: Some(BarSelectFfi { start: 0, end: 8 }),
-                ..
-            }
+            UiEvent::FocusDropdown { view } if view.state == postio_ffi::DropdownStateFfi::Words
         ))
         .await,
-        "the first chip is selected in the field"
+        "the saved search's words are drawn as the dropdown"
+    );
+
+    session.focus_bar_typed("from:ada invoice".to_owned());
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusDropdown { .. }
+        ))
+        .await,
+        "and so are the words typed"
     );
 
     session.invoke("save_search");
