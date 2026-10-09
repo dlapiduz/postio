@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Enforce Postio's architectural crate boundaries.
 
-The invariants (see CLAUDE.md, "Architectural invariants"):
+The invariants (see docs/ARCHITECTURE.md; CLAUDE.md, "What the code must do"):
 
   * ``postio-core`` must not depend on ``gtk4``/``libadwaita``. It is the
     UI-agnostic runtime -- commands in, events out -- which is what makes a
@@ -960,8 +960,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if failed:
         print(
-            "\ncrate-boundary check FAILED. See CLAUDE.md "
-            '"Architectural invariants".',
+            "\ncrate-boundary check FAILED. See docs/ARCHITECTURE.md and "
+            'CLAUDE.md, "What the code must do".',
             file=sys.stderr,
         )
         return 1

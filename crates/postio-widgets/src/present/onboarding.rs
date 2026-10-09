@@ -334,7 +334,7 @@ pub fn open_in_browser(parent: &impl IsA<gtk::Widget>) -> impl Fn(&str) + 'stati
         // because the person pressed "Sign in with your browser" on the
         // account form and the host has just bound the loopback listener
         // that waits for its redirect. Never on render, never retried on its
-        // own. See ADR 0006 Q3 and CLAUDE.md, "Privacy is a feature".
+        // own. See ADR 0006 Q3 and CLAUDE.md, "Privacy".
         let window = parent
             .upgrade()
             .and_then(|parent| parent.root())

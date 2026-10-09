@@ -14,8 +14,8 @@ that fact. It gives you two ways in, and they are equally welcome:
 Either way, start by knowing how the project thinks: the product spec is
 [`docs/PRODUCT.md`](docs/PRODUCT.md), the architecture and its reasoning
 are [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and the ADRs in
-[`docs/decisions/`](docs/decisions), and the accumulated lessons live in
-[`docs/archive/engineering-notes.md`](docs/archive/engineering-notes.md). The agent-facing
+[`docs/decisions/`](docs/decisions), and the traps worth knowing are in
+[`docs/gotchas.md`](docs/gotchas.md). The agent-facing
 workflow (worktrees, claim/land scripts, session rules) is
 [`CLAUDE.md`](CLAUDE.md) — worth skimming even as a human, because it is
 where most conventions are defined.

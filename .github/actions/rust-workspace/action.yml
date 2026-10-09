@@ -48,7 +48,7 @@ runs:
     # what mold gives is ~265 MB lower peak RSS per link, and this job has
     # already had a debug build exhaust a runner and kill lld mid-link.
     #
-    # Ubuntu equivalents of the Fedora packages in CLAUDE.md:
+    # Ubuntu equivalents of the Fedora packages in README.md:
     #   gtk4-devel        -> libgtk-4-dev
     #   libadwaita-devel  -> libadwaita-1-dev
     #   webkitgtk6.0-devel-> libwebkitgtk-6.0-dev
