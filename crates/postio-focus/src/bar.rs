@@ -27,6 +27,7 @@ use postio_ui::finder::{self, Destination, Place};
 use postio_ui::places::Entry;
 
 use crate::cursor::{RowFacts, Rows};
+use crate::dropdown::{self, Action, DropdownState, Landed, Shown};
 use crate::feed::Step;
 use crate::{FocusController, Intent, Reply, Request, SurfaceKind};
 
@@ -233,10 +234,40 @@ pub(crate) struct Bar {
     places_read: u64,
     /// Whether Focus files mail away: the popover lists Filtered then.
     filtering: bool,
+    /// The search half is the dropdown (spec 010 step 2), not the blend.
+    results_view: bool,
+    /// The clock, when stopped: what the dropdown's dates count from.
+    clock: Option<chrono::DateTime<chrono::Local>>,
+    /// The dropdown, while it is what the bar shows.
+    drop: Option<Drop>,
+    /// The searches run lately, newest first, each with its token.
+    recents: Vec<(u64, postio_client::protocol::RecentSearch)>,
+    /// The saved searches' counts, by name, as last read.
+    saved_counts: Vec<(String, u64)>,
+    /// The saved pills' tokens, in order.
+    saved_tokens: Vec<u64>,
+    /// The cheat sheet's rows' tokens, and the example's.
+    sheet: Vec<u64>,
+    /// The row the toolkit's arrows rest on.
+    highlighted: Option<u64>,
+}
+
+/// The dropdown's state while the bar shows it.
+#[derive(Debug)]
+struct Drop {
+    state: DropdownState,
+    /// The query the words were lowered to.
+    query: Option<postio_search::ParsedQuery>,
+    /// The query's words, for the highlight.
+    terms: Vec<String>,
+    /// What the words found, once it has landed.
+    landed: Option<Landed>,
+    /// ⌘↩ came before the answer: run it when it lands.
+    show_all: bool,
 }
 
 impl Bar {
-    pub(crate) fn new(platform: postio_config::paths::Platform) -> Self {
+    pub(crate) fn new(platform: postio_config::paths::Platform, results_view: bool) -> Self {
         Bar {
             mode: None,
             typed: String::new(),
@@ -270,7 +301,23 @@ impl Bar {
             names: postio_ui::names::Names::default(),
             places_read: 0,
             filtering: false,
+            results_view,
+            clock: None,
+            drop: None,
+            recents: Vec::new(),
+            saved_counts: Vec::new(),
+            saved_tokens: Vec::new(),
+            sheet: Vec::new(),
+            highlighted: None,
         }
+    }
+
+    pub(crate) fn set_clock(&mut self, clock: Option<chrono::DateTime<chrono::Local>>) {
+        self.clock = clock;
+    }
+
+    fn now(&self) -> chrono::DateTime<chrono::Local> {
+        self.clock.unwrap_or_else(postio_ui::clock::now)
     }
 
     pub(crate) fn is_open(&self) -> bool {
@@ -311,6 +358,18 @@ impl Bar {
             }),
             Step::Ask(Request::Places),
         ];
+        if self.results_view && mode == BarMode::Search {
+            self.sheet = (0..=postio_ui::search_view::cheat_sheet().len())
+                .map(|_| self.token())
+                .collect();
+            steps.push(Step::Ask(Request::RecentSearches));
+            if !self.saved.is_empty() {
+                steps.push(Step::Ask(Request::SavedCounts {
+                    searches: self.saved.clone(),
+                    today: self.now().date_naive(),
+                }));
+            }
+        }
         steps.extend(self.answer());
         steps
     }
@@ -331,6 +390,8 @@ impl Bar {
         self.words = None;
         self.editing = None;
         self.saving = None;
+        self.drop = None;
+        self.highlighted = None;
     }
 
     /// The field's words now.
@@ -352,6 +413,10 @@ impl Bar {
         self.heading = None;
         self.folder = None;
         let typed = self.typed.trim().to_owned();
+        if self.shows_dropdown(&typed) {
+            return self.answer_dropdown(&typed);
+        }
+        self.drop = None;
         let lines = self.base_lines(&typed);
         self.base = self.items(lines);
         self.chips.clear();
@@ -521,6 +586,9 @@ impl Bar {
 
     /// The bar, as it is now, with the highlight on `highlight`.
     fn draw(&self, highlight: Option<u64>) -> Step {
+        if self.drop.is_some() {
+            return self.draw_dropdown(highlight);
+        }
         let after_search = self
             .base
             .iter()
@@ -755,6 +823,17 @@ impl Bar {
         let Some(mode) = self.mode else {
             return Vec::new();
         };
+        if let Some(drop) = &self.drop {
+            let first = drop
+                .landed
+                .as_ref()
+                .and_then(|landed| landed.pills.first())
+                .map(|(_, _, clause)| clause.clone());
+            return match first {
+                Some(clause) => self.narrow(mode, clause),
+                None => Vec::new(),
+            };
+        }
         if self.chips.is_empty() {
             return Vec::new();
         }
@@ -904,9 +983,13 @@ pub(crate) fn goes(id: CommandId) -> bool {
     GOING.contains(&id)
 }
 
-/// Whether the bar, up, answers `id` itself.
-pub(crate) fn bar_key(id: CommandId) -> bool {
-    BAR_KEYS.contains(&id) || GOING.contains(&id)
+/// The commands the dropdown answers while it is up (spec 010 step 2).
+const DROPDOWN_KEYS: [CommandId; 2] = [CommandId::ShowAllResults, CommandId::ForgetRecent];
+
+/// Whether the bar, up, answers `id` itself; `results_view` when its search
+/// half is the dropdown.
+pub(crate) fn bar_key(id: CommandId, results_view: bool) -> bool {
+    BAR_KEYS.contains(&id) || GOING.contains(&id) || (results_view && DROPDOWN_KEYS.contains(&id))
 }
 
 impl FocusController {
@@ -943,6 +1026,11 @@ impl FocusController {
                 vec![Step::Show(Intent::SaveSearch { query })]
             }
             CommandId::BackToWords => self.bar.back_to_words(),
+            CommandId::ShowAllResults if self.bar.results_view => self.bar.show_all(),
+            CommandId::ForgetRecent if self.bar.results_view => match self.bar.highlighted {
+                Some(token) => self.bar.forget(token),
+                None => Vec::new(),
+            },
             CommandId::ToggleResultOrder => self.bar.toggle_order(),
             CommandId::GoToInbox => self.go_inbox(),
             CommandId::GoToDrafts => vec![Step::Ask(Request::RoleFolder(MailboxRole::Drafts))],
@@ -1048,6 +1136,9 @@ impl FocusController {
         if !self.bar.is_open() {
             return Vec::new();
         }
+        if let Some(action) = self.bar.action(token) {
+            return self.drop_run(action, rows);
+        }
         let Some(row) = self.bar.row(token) else {
             return Vec::new();
         };
@@ -1108,27 +1199,38 @@ impl FocusController {
     fn open_hit(&mut self, message: MessageId) -> Vec<Step> {
         // A search's hits carry their conversations; a folder's (`in:`)
         // are its messages.
-        let found: Vec<Hit> = self
-            .bar
-            .base
-            .iter()
-            .chain(&self.bar.results)
-            .filter_map(|item| match &item.row {
-                Row::Message { message, .. } => Some(*message),
-                _ => None,
-            })
-            .map(|message| {
-                self.bar
-                    .walked
-                    .iter()
-                    .find(|hit| hit.message == message)
-                    .cloned()
-                    .unwrap_or(Hit {
-                        message,
-                        thread: None,
-                    })
-            })
-            .collect();
+        let found: Vec<Hit> = match &self.bar.drop {
+            Some(drop) => drop
+                .landed
+                .iter()
+                .flat_map(|landed| &landed.hits)
+                .map(|shown| Hit {
+                    message: shown.hit.best,
+                    thread: shown.thread(),
+                })
+                .collect(),
+            None => self
+                .bar
+                .base
+                .iter()
+                .chain(&self.bar.results)
+                .filter_map(|item| match &item.row {
+                    Row::Message { message, .. } => Some(*message),
+                    _ => None,
+                })
+                .map(|message| {
+                    self.bar
+                        .walked
+                        .iter()
+                        .find(|hit| hit.message == message)
+                        .cloned()
+                        .unwrap_or(Hit {
+                            message,
+                            thread: None,
+                        })
+                })
+                .collect(),
+        };
         let typed = self.bar.typed.clone();
         let mut steps = self.dismiss_bar(true);
         self.bar.found = found;
@@ -1235,6 +1337,10 @@ impl FocusController {
         match reply {
             Reply::Places(read) => self.bar.places_landed(read),
             Reply::Search { stamp, answer } => self.bar.found(stamp, answer),
+            Reply::Conversations { stamp, answer } => self.bar.conversations(stamp, answer),
+            Reply::Passages { stamp, answer } => self.bar.passages(stamp, answer),
+            Reply::RecentSearches(answer) => self.bar.recents_read(answer),
+            Reply::SavedCounts(answer) => self.bar.saved_counted(answer),
             Reply::Folder { stamp, count, rows } => self.bar.folder(stamp, count, rows),
             Reply::RoleFolder(Some((mailbox, name))) => {
                 self.go_to(Destination::Mailbox(mailbox), &name, rows)
@@ -1250,16 +1356,21 @@ impl FocusController {
             Input::Typed { text } => self.bar.typed(text),
             Input::BarRun(token) => self.bar_run(token, rows),
             Input::BarTab => self.bar.tab(),
+            Input::SearchHighlighted(token) => {
+                self.bar.highlighted = Some(token);
+                Vec::new()
+            }
+            Input::SearchForget(token) => self.bar.forget(token),
             Input::OpenPlace(token) => self.open_place(token, rows),
             Input::SavedSearches(saved) => {
-                self.bar.saved = saved;
+                self.bar.set_saved(saved);
                 self.redraw_bar()
             }
             Input::SearchSaved(result) => {
                 let saving = self.bar.saving.take();
                 match result {
                     Ok(saved) => {
-                        self.bar.saved = saved;
+                        self.bar.set_saved(saved);
                         let mut steps = vec![Step::Show(Intent::Toast {
                             text: postio_ui::focus_target::search_saved(
                                 saving.as_deref().unwrap_or_default(),
@@ -1288,6 +1399,429 @@ impl FocusController {
             vec![self.bar.draw(None)]
         } else {
             Vec::new()
+        }
+    }
+}
+
+/// The dropdown: its state, what it asks and what its rows run (spec 010
+/// step 2).
+impl Bar {
+    /// Whether `typed` is drawn as the dropdown: on a frontend with a
+    /// results view, the empty field and words. `>`, `in:` and `@` keep
+    /// spec 009's lines until their own states are built.
+    fn shows_dropdown(&self, typed: &str) -> bool {
+        self.results_view
+            && self.mode == Some(BarMode::Search)
+            && (typed.is_empty() || rules::route(typed) == rules::Route::Blend)
+    }
+
+    /// The pinned saved searches changed: their pills get new tokens.
+    fn set_saved(&mut self, saved: Vec<(String, String)>) {
+        self.saved = saved;
+        self.saved_tokens = (0..self.saved.len()).map(|_| self.token()).collect();
+    }
+
+    /// Answer what is typed as the dropdown: the empty state now, or the
+    /// words' search asked for.
+    fn answer_dropdown(&mut self, typed: &str) -> Vec<Step> {
+        if typed.is_empty() {
+            self.chips.clear();
+            self.drop = Some(Drop {
+                state: DropdownState::Empty,
+                query: None,
+                terms: Vec::new(),
+                landed: None,
+                show_all: false,
+            });
+            return vec![self.draw(None)];
+        }
+        let parsed = self.lower(typed);
+        self.chips = rules::chips(&parsed).unwrap_or_default();
+        let searchable = parsed.is_searchable();
+        // Words after words keep the last answer on screen until this one
+        // lands, rather than blinking empty on every keystroke.
+        let was_words = self
+            .drop
+            .as_ref()
+            .is_some_and(|drop| drop.state == DropdownState::Words && drop.landed.is_some());
+        let landed = if was_words && searchable {
+            self.drop.take().and_then(|drop| drop.landed)
+        } else {
+            None
+        };
+        self.drop = Some(Drop {
+            state: DropdownState::Words,
+            terms: postio_search::highlight::terms(&parsed),
+            query: Some(parsed.clone()),
+            landed,
+            show_all: false,
+        });
+        let mut steps = Vec::new();
+        if !(was_words && searchable) {
+            steps.push(self.draw(None));
+        }
+        if searchable {
+            steps.push(Step::Ask(Request::Conversations {
+                query: parsed,
+                order: postio_search::results::ConversationOrder::BestMatch,
+                limit: dropdown::TOP_HITS,
+                stamp: self.stamp,
+            }));
+        }
+        steps
+    }
+
+    /// The dropdown, as it is now.
+    fn draw_dropdown(&self, select: Option<u64>) -> Step {
+        let Some(drop) = &self.drop else {
+            return Step::Show(Intent::BarLines(BarView::default()));
+        };
+        let now = self.now();
+        let mut view = match drop.state {
+            DropdownState::Words => {
+                dropdown::words(drop.landed.as_ref(), &drop.terms, &self.keymap, now)
+            }
+            _ => {
+                let saved: Vec<(u64, String, Option<u64>)> = self
+                    .saved
+                    .iter()
+                    .zip(&self.saved_tokens)
+                    .map(|((name, _), token)| {
+                        let count = self
+                            .saved_counts
+                            .iter()
+                            .find(|(key, _)| key == name)
+                            .map(|(_, count)| *count);
+                        (*token, name.clone(), count)
+                    })
+                    .collect();
+                dropdown::empty(dropdown::EmptyParts {
+                    recents: &self.recents,
+                    saved: &saved,
+                    sheet: &self.sheet,
+                    example: self.example(),
+                    keymap: &self.keymap,
+                    now,
+                })
+            }
+        };
+        view.select = select;
+        Step::Show(Intent::Dropdown(view))
+    }
+
+    /// The cheat sheet's example, lowered against today and the address
+    /// book, as typing it would be.
+    fn example(&self) -> String {
+        let lowered = postio_search::natural::lower_with_origins(
+            postio_ui::search_view::EXAMPLE,
+            self.now().date_naive(),
+            &|name| self.names.lookup(name),
+        );
+        lowered
+            .query
+            .tokens()
+            .iter()
+            .map(|token| token.raw.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// What the dropdown's row or pill `token` runs.
+    fn action(&self, token: u64) -> Option<Action> {
+        let drop = self.drop.as_ref()?;
+        match drop.state {
+            DropdownState::Words => {
+                let landed = drop.landed.as_ref()?;
+                if landed.show_all == token {
+                    return Some(Action::ShowAll);
+                }
+                if let Some(shown) = landed.hits.iter().find(|shown| shown.token == token) {
+                    return Some(Action::Hit(shown.hit.best));
+                }
+                landed
+                    .pills
+                    .iter()
+                    .find(|(at, _, _)| *at == token)
+                    .map(|(_, _, clause)| Action::Narrow(clause.clone()))
+            }
+            _ => {
+                if let Some((_, recent)) = self.recents.iter().find(|(at, _)| *at == token) {
+                    return Some(Action::Recent(recent.query.clone()));
+                }
+                self.saved_tokens
+                    .iter()
+                    .position(|at| *at == token)
+                    .map(Action::Saved)
+            }
+        }
+    }
+
+    /// Put `text` in the field, as a run of the bar does, and answer it.
+    fn retype(&mut self, mode: BarMode, text: String) -> Vec<Step> {
+        let mut steps = vec![Step::Show(Intent::OpenBar {
+            mode,
+            text: text.clone(),
+            select: None,
+        })];
+        self.typed = text;
+        steps.extend(self.answer());
+        steps
+    }
+
+    /// Add `clause` to the query, spelled once (D13), and search again.
+    fn narrow(&mut self, mode: BarMode, clause: postio_search::query::Clause) -> Vec<Step> {
+        let text = postio_search::edit::apply(
+            self.typed.trim(),
+            postio_search::edit::Edit::Add(clause),
+            self.now().date_naive(),
+        );
+        self.retype(mode, text)
+    }
+
+    /// A conversation search landed: the words' top hits, pills and count,
+    /// when it is for the words still typed; then their passages.
+    fn conversations(
+        &mut self,
+        stamp: u64,
+        answer: Result<Box<postio_search::results::ConversationResults>, String>,
+    ) -> Vec<Step> {
+        if !self.is_open() || stamp != self.stamp {
+            return Vec::new();
+        }
+        let results = match answer {
+            Ok(results) => *results,
+            Err(error) => {
+                tracing::debug!(%error, "the dropdown's search found nothing to show");
+                return Vec::new();
+            }
+        };
+        let pills = dropdown::narrow_pills(&results);
+        let hits: Vec<Shown> = results
+            .hits
+            .into_iter()
+            .map(|hit| Shown {
+                token: self.token(),
+                hit,
+            })
+            .collect();
+        let pills = pills
+            .into_iter()
+            .map(|(pill, clause)| (self.token(), pill, clause))
+            .collect();
+        let show_all = self.token();
+        let mut folders = results.names.folders;
+        folders.extend(self.places.folders.iter().cloned());
+        let landed = Landed {
+            hits,
+            pills,
+            show_all,
+            total: results.total,
+            capped: results.capped,
+            elapsed: results.elapsed,
+            folders,
+        };
+        let Some(drop) = self.drop.as_mut() else {
+            return Vec::new();
+        };
+        let asked = landed
+            .hits
+            .iter()
+            .map(|shown| {
+                let sources = shown
+                    .hit
+                    .matches
+                    .iter()
+                    .map(|each| each.source.clone())
+                    .collect();
+                (shown.hit.best, sources)
+            })
+            .collect::<Vec<_>>();
+        drop.landed = Some(landed);
+        let query = drop.query.clone();
+        let mut steps = Vec::new();
+        if std::mem::take(&mut drop.show_all) {
+            steps.extend(self.show_all());
+        } else {
+            let select = match std::mem::take(&mut self.pending) {
+                Pending::Hit(message) => self.drop.as_ref().and_then(|drop| {
+                    drop.landed
+                        .as_ref()?
+                        .hits
+                        .iter()
+                        .find(|shown| shown.hit.best == message)
+                }),
+                _ => None,
+            }
+            .map(|shown| shown.token);
+            steps.push(self.draw(select));
+        }
+        if let Some(query) = query
+            && !asked.is_empty()
+        {
+            steps.push(Step::Ask(Request::Passages {
+                query,
+                hits: asked,
+                stamp,
+            }));
+        }
+        steps
+    }
+
+    /// The hits' passages landed: drawn in place, the arrows where they are.
+    fn passages(
+        &mut self,
+        stamp: u64,
+        answer: Result<Vec<(MessageId, Vec<postio_search::results::Match>)>, String>,
+    ) -> Vec<Step> {
+        if !self.is_open() || stamp != self.stamp {
+            return Vec::new();
+        }
+        let found = match answer {
+            Ok(found) => found,
+            Err(error) => {
+                tracing::debug!(%error, "the dropdown's passages could not be read");
+                return Vec::new();
+            }
+        };
+        let Some(landed) = self.drop.as_mut().and_then(|drop| drop.landed.as_mut()) else {
+            return Vec::new();
+        };
+        for (message, matches) in found {
+            if let Some(shown) = landed
+                .hits
+                .iter_mut()
+                .find(|shown| shown.hit.best == message)
+            {
+                shown.hit.matches = matches;
+            }
+        }
+        vec![self.draw(None)]
+    }
+
+    /// The recent searches, read: drawn when the empty dropdown is up.
+    fn recents_read(
+        &mut self,
+        answer: Result<Vec<postio_client::protocol::RecentSearch>, String>,
+    ) -> Vec<Step> {
+        let recents = match answer {
+            Ok(recents) => recents,
+            Err(error) => {
+                tracing::debug!(%error, "the recent searches could not be read");
+                return Vec::new();
+            }
+        };
+        // A query still listed keeps its token, so the arrows stay on it.
+        let kept = std::mem::take(&mut self.recents);
+        self.recents = recents
+            .into_iter()
+            .map(|recent| {
+                let token = kept
+                    .iter()
+                    .find(|(_, was)| was.query == recent.query)
+                    .map(|(token, _)| *token)
+                    .unwrap_or_else(|| self.token());
+                (token, recent)
+            })
+            .collect();
+        self.redraw_empty()
+    }
+
+    /// The saved searches' counts, read.
+    fn saved_counted(&mut self, answer: Result<Vec<(String, u64, u64)>, String>) -> Vec<Step> {
+        match answer {
+            Ok(counts) => {
+                self.saved_counts = counts
+                    .into_iter()
+                    .map(|(key, total, _)| (key, total))
+                    .collect();
+                self.redraw_empty()
+            }
+            Err(error) => {
+                tracing::debug!(%error, "the saved searches could not be counted");
+                Vec::new()
+            }
+        }
+    }
+
+    fn redraw_empty(&self) -> Vec<Step> {
+        match &self.drop {
+            Some(drop) if self.is_open() && drop.state == DropdownState::Empty => {
+                vec![self.draw(None)]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Forget the recent search `token`: gone from the panel now, from the
+    /// store when the host has it.
+    fn forget(&mut self, token: u64) -> Vec<Step> {
+        let Some(at) = self.recents.iter().position(|(at, _)| *at == token) else {
+            return Vec::new();
+        };
+        let (_, recent) = self.recents.remove(at);
+        let mut steps = self.redraw_empty();
+        steps.push(Step::Ask(Request::ForgetSearch {
+            query: recent.query,
+        }));
+        steps
+    }
+
+    /// The query, as it is kept among the recent searches.
+    fn remember(&self) -> Option<Step> {
+        let landed = self.drop.as_ref()?.landed.as_ref()?;
+        let query = self.typed.trim();
+        (!query.is_empty()).then(|| {
+            Step::Ask(Request::RememberSearch {
+                query: query.to_owned(),
+                hits: landed.total,
+            })
+        })
+    }
+
+    /// ⌘↩, or Show all: the query is kept among the searches run. Until the
+    /// results view arrives (spec 010 step 3) the panel stays, the
+    /// highlight on the first hit, as Return on 009's search row did.
+    pub(crate) fn show_all(&mut self) -> Vec<Step> {
+        let Some(drop) = self.drop.as_mut() else {
+            return Vec::new();
+        };
+        if drop.state != DropdownState::Words {
+            return Vec::new();
+        }
+        if drop.landed.is_none() {
+            drop.show_all = drop.query.is_some();
+            return Vec::new();
+        }
+        let first = drop
+            .landed
+            .as_ref()
+            .and_then(|landed| landed.hits.first())
+            .map(|shown| shown.token);
+        let mut steps: Vec<Step> = self.remember().into_iter().collect();
+        steps.push(self.draw(first));
+        steps
+    }
+}
+
+impl FocusController {
+    /// Run the dropdown's `action`.
+    fn drop_run(&mut self, action: Action, rows: &dyn Rows) -> Vec<Step> {
+        let Some(mode) = self.bar.mode else {
+            return Vec::new();
+        };
+        match action {
+            Action::Recent(query) => self.bar.retype(mode, query),
+            Action::Hit(message) => {
+                let mut steps: Vec<Step> = self.bar.remember().into_iter().collect();
+                steps.extend(self.open_hit(message));
+                steps
+            }
+            Action::ShowAll => self.bar.show_all(),
+            Action::Narrow(clause) => self.bar.narrow(mode, clause),
+            Action::Saved(index) => rules::SAVED
+                .get(index)
+                .and_then(|id| self.going(*id, rows))
+                .unwrap_or_default(),
         }
     }
 }

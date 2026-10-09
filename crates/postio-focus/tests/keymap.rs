@@ -174,7 +174,8 @@ fn the_bar_up_is_drawn_again_under_the_new_keys() {
     assert!(
         shown(&effects)
             .iter()
-            .any(|intent| matches!(intent, Intent::BarLines(_))),
+            // On the Mac the bar's search half is the dropdown (spec 010).
+            .any(|intent| matches!(intent, Intent::BarLines(_) | Intent::Dropdown(_))),
         "the bar's lines are drawn again: {effects:?}"
     );
 }
