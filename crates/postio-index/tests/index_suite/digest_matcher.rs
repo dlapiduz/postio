@@ -274,3 +274,27 @@ async fn the_matcher_reads_the_row_the_index_holds() {
         assert_eq!(Document::of(message), stored, "{name}");
     }
 }
+
+#[test]
+fn the_matcher_refuses_label_and_has_action() {
+    // D12: labels and open markers are written after a message is filed,
+    // which is when the matcher runs, so it must refuse them -- never answer
+    // from a state that does not exist yet. Pinned here so a later change
+    // to the matcher's table cannot start answering them at filing time.
+    use postio_search::matcher::Unsupported;
+    for (text, token) in [
+        ("label:atlas", "label:atlas"),
+        ("-label:atlas", "-label:atlas"),
+        (r#"label:"Q3 close""#, r#"label:"Q3 close""#),
+        ("has:action", "has:action"),
+        ("from:ada@example.com has:action", "has:action"),
+        ("label:atlas from:ada@example.com", "label:atlas"),
+    ] {
+        let refused = Matcher::new(&parse(text, today())).err();
+        assert_eq!(
+            refused,
+            Some(Unsupported::Token(token.to_owned())),
+            "{text:?} is refused, naming {token:?}"
+        );
+    }
+}
