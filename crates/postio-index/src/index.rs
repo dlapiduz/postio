@@ -1178,17 +1178,6 @@ pub struct MissingAttachment {
     pub name: Option<String>,
 }
 
-/// How one attachment's extraction went, as recorded.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Extraction {
-    /// The `postio_extract::EXTRACTOR_VERSION` that made it.
-    pub version: u32,
-    /// `complete`, `truncated`, `skipped` or `failed`.
-    pub outcome: String,
-    /// How many units it wrote.
-    pub units: u32,
-}
-
 /// The queue's question, before its order, limit or message filter: an
 /// attachment of a message, its bytes on this machine, and no row from the
 /// current extractor for its content and position.
@@ -1390,53 +1379,6 @@ pub async fn attachment_text(
         .into_iter()
         .filter_map(|(location, text)| decode_location(&location).map(|location| (location, text)))
         .collect())
-}
-
-/// How an attachment's extraction went, if it has been tried.
-pub async fn extraction_of(
-    connection: &Connection,
-    attachment: postio_model::AttachmentId,
-) -> Result<Option<Extraction>> {
-    let Some((content_id, position)) = part_of(connection, attachment).await? else {
-        return Ok(None);
-    };
-    Ok(sql::first(
-        connection,
-        "SELECT version, outcome, units FROM attachment_extraction
-          WHERE content_id = ?1 AND position = ?2",
-        (content_id, position),
-        |row| {
-            Ok(Extraction {
-                version: u32::try_from(row.col::<i64>(0)?).unwrap_or(0),
-                outcome: row.col(1)?,
-                units: u32::try_from(row.col::<i64>(2)?).unwrap_or(0),
-            })
-        },
-    )
-    .await?)
-}
-
-/// Removes `account_id`'s attachment text and records, so every downloaded
-/// attachment of the account is extracted again. Answers how many records
-/// went.
-pub async fn clear_account_attachment_index(
-    connection: &Connection,
-    account_id: i64,
-) -> Result<usize> {
-    connection
-        .execute(
-            "DELETE FROM attachment_passages
-              WHERE content_id IN (SELECT id FROM message_contents WHERE account_id = ?1)",
-            [account_id],
-        )
-        .await?;
-    Ok(connection
-        .execute(
-            "DELETE FROM attachment_extraction
-              WHERE content_id IN (SELECT id FROM message_contents WHERE account_id = ?1)",
-            [account_id],
-        )
-        .await? as usize)
 }
 
 /// A [`Location`](postio_search::results::Location) as its column holds
