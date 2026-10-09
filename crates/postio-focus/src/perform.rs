@@ -9,7 +9,6 @@ use postio_client::Client;
 use postio_model::listing::{ListPage, MailStore, PageRequest};
 use postio_model::mailbox::MailboxRole;
 use postio_model::{FocusScope, ListScope, MailboxId};
-use postio_search::passage::FirstLine;
 
 use postio_core::state::{SharedState, ViewScope};
 use postio_core::{Command, MessageTarget};
@@ -46,6 +45,8 @@ pub fn perform_now(client: &Client, request: Request) -> Result<Reply, Request> 
 
 /// Ask the engine; return what the controller is to be told.
 pub async fn perform(client: &Client, request: Request) -> Reply {
+    // How a passage treats the first line is the request's to say (D7).
+    let first_line = request.first_line().unwrap_or_default();
     match request {
         Request::FocusCounts => Reply::FocusCounts(
             client
@@ -163,11 +164,10 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .and_then(|found| found.ok_or_else(|| "no search index here".to_owned()))
                 .map(Box::new),
         },
-        // The dropdown's hits show their first line as the preview.
         Request::Passages { query, hits, stamp } => Reply::Passages {
             stamp,
             answer: client
-                .passages(query, hits, FirstLine::Shown)
+                .passages(query, hits, first_line)
                 .await
                 .map_err(|error| error.to_string()),
         },
@@ -194,11 +194,10 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .and_then(|found| found.ok_or_else(|| "no search index here".to_owned()))
                 .map(Box::new),
         },
-        // The results' rows show no preview (design §3.4).
         Request::ResultsPassages { query, hits, stamp } => Reply::ResultsPassages {
             stamp,
             answer: client
-                .passages(query, hits, FirstLine::Avoided)
+                .passages(query, hits, first_line)
                 .await
                 .map_err(|error| error.to_string()),
         },

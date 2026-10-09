@@ -49,14 +49,14 @@ pub enum FirstLine {
     /// line the row shows (quoted history under the person's own words).
     #[default]
     Any,
-    /// The row shows the first line as its preview, as the dropdown's hits
-    /// do: never in the passage; the window after it when it holds the only
+    /// The row shows the first line as its preview, as a list row does:
+    /// never in the passage; the window after it when it holds the only
     /// match.
     Shown,
-    /// The row shows no preview, as the results view's rows do: around the
-    /// first match after the first line, or around the first line's own
-    /// match when it holds the only one -- a passage that marks what matched
-    /// rather than an unmarked one, or none.
+    /// The row shows no preview, as the dropdown's hits and the results'
+    /// rows do: around the first match after the first line, or around the
+    /// first line's own match when it holds the only one -- a passage that
+    /// marks what matched rather than an unmarked one, or none.
     Avoided,
 }
 

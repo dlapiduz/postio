@@ -490,9 +490,9 @@ async fn names(
 /// The passages of each hit's matches, cut from its own body, each body
 /// match told apart into the person's own words and the history they quoted
 /// (spec 010 D6, D7). `first_line` is what the asking row does with the
-/// message's first line: the dropdown shows it as the preview
-/// ([`FirstLine::Shown`]), the results view shows none
-/// ([`FirstLine::Avoided`]).
+/// message's first line: a row that shows it as the preview asks
+/// [`FirstLine::Shown`]; the dropdown's hits and the results' rows show
+/// none ([`FirstLine::Avoided`]).
 ///
 /// One body read per hit that matched in its body, and none for the rest:
 /// a subject is drawn by the row itself and a file name is its own words.

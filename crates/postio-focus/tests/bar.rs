@@ -1749,6 +1749,12 @@ mod dropdown {
             .find(|(_, request)| matches!(request, Request::Passages { .. }))
             .expect("the four hits' passages are asked for");
         assert_eq!(request.lane(), Some(Lane::Passages));
+        assert_eq!(
+            request.first_line(),
+            Some(postio_search::passage::FirstLine::Avoided),
+            "the hit's row shows no preview (screen 03): a match in the first \
+             line is the passage"
+        );
         let Request::Passages { hits, stamp, .. } = request else {
             unreachable!()
         };
