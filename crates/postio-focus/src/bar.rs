@@ -89,7 +89,7 @@ pub struct BarLine {
     pub time: Option<String>,
 }
 
-/// The bar, whole: what [`Intent::BarLines`](crate::Intent::BarLines) draws.
+/// The bar, whole: what [`Intent::BarLines`] draws.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BarView {
     /// The heading over a folder's conversations (`in:`).
