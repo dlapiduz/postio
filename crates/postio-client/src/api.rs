@@ -72,7 +72,11 @@ impl Req {
     pub fn cancellable(&self) -> bool {
         matches!(
             self,
-            Req::Conversations { .. } | Req::Passages { .. } | Req::Relaxations { .. }
+            Req::Conversations { .. }
+                | Req::Passages { .. }
+                | Req::Relaxations { .. }
+                | Req::RecentSearches
+                | Req::SavedCounts { .. }
         )
     }
 
@@ -126,6 +130,10 @@ impl Req {
             Req::Conversations { .. } => "Conversations",
             Req::Passages { .. } => "Passages",
             Req::Relaxations { .. } => "Relaxations",
+            Req::RecentSearches => "RecentSearches",
+            Req::RememberSearch { .. } => "RememberSearch",
+            Req::ForgetSearch(_) => "ForgetSearch",
+            Req::SavedCounts { .. } => "SavedCounts",
             Req::StoredBody(_) => "StoredBody",
             Req::ExportMessages(_) => "ExportMessages",
             Req::Account(_) => "Account",
@@ -978,6 +986,69 @@ impl Client {
             Resp::Relaxed(found) => Some(found),
             _ => None,
         })
+        .await
+    }
+
+    /// The searches a person ran, newest first.
+    pub async fn recent_searches(&self) -> Result<Vec<crate::protocol::RecentSearch>, StoreError> {
+        self.read(
+            Req::RecentSearches,
+            "the recent searches",
+            |answer| match answer {
+                Resp::Recent(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Remember that `query` ran and matched `hits` conversations.
+    pub async fn remember_search(&self, query: String, hits: u64) -> Result<(), StoreError> {
+        self.read(
+            Req::RememberSearch { query, hits },
+            "a remembered search",
+            |answer| match answer {
+                Resp::Done => Some(()),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Forget one recent search.
+    pub async fn forget_search(&self, query: String) -> Result<(), StoreError> {
+        self.read(
+            Req::ForgetSearch(query),
+            "a forgotten search",
+            |answer| match answer {
+                Resp::Done => Some(()),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// `(key, total, new)` for each of `searches` (`(key, query text)`), in
+    /// the order asked. Keys not listed lose their seen-progress.
+    pub async fn saved_counts(
+        &self,
+        account: postio_model::AccountScope,
+        today: chrono::NaiveDate,
+        searches: Vec<(String, String)>,
+    ) -> Result<Vec<(String, u64, u64)>, StoreError> {
+        let request = Req::SavedCounts {
+            account,
+            today,
+            searches,
+        };
+        self.read(
+            request,
+            "the saved searches' counts",
+            |answer| match answer {
+                Resp::SavedCounts(found) => Some(found),
+                _ => None,
+            },
+        )
         .await
     }
 

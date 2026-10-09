@@ -17,6 +17,7 @@ use postio_search::results::{ConversationOrder, ConversationResults, Match, Sour
 use postio_search::{ParsedQuery, ResultOrder, SearchResults};
 use postio_session::search::{HIT_LIMIT, execute_with_snippets};
 use postio_storage::Store;
+use postio_storage::searches::SearchRepository;
 
 /// The hits for `query`, excerpted for the first `snippets`, on one reader
 /// turn. `None` when the store could not be read or the search did not run.
@@ -123,6 +124,100 @@ pub async fn relaxations(
     postio_session::search::relaxations(&reader, account, query, today)
         .await
         .unwrap_or_default()
+}
+
+fn failed(error: postio_storage::Error) -> postio_model::listing::StoreError {
+    tracing::warn!(%error, "could not read or write the remembered searches");
+    postio_model::listing::StoreError::new(error.to_string())
+}
+
+/// The searches a person ran, newest first.
+pub async fn recent(
+    database: &Store,
+) -> Result<Vec<postio_client::protocol::RecentSearch>, postio_model::listing::StoreError> {
+    let read = async {
+        let reader = database.read().await?;
+        SearchRepository::new(&reader).recent().await
+    };
+    Ok(read
+        .await
+        .map_err(failed)?
+        .into_iter()
+        .map(|search| postio_client::protocol::RecentSearch {
+            query: search.query,
+            last_run_at: search.last_run_at,
+            hits: search.hits,
+        })
+        .collect())
+}
+
+/// Record that `query` ran now and matched `hits` conversations.
+pub async fn remember(
+    database: &Store,
+    query: &str,
+    hits: u64,
+) -> Result<(), postio_model::listing::StoreError> {
+    let write = async {
+        let (connection, _permit) = database.interactive_write().await?;
+        SearchRepository::new(&connection)
+            .remember(query, hits, chrono::Utc::now())
+            .await
+    };
+    write.await.map_err(failed)
+}
+
+/// Forget one recent search.
+pub async fn forget(
+    database: &Store,
+    query: &str,
+) -> Result<(), postio_model::listing::StoreError> {
+    let write = async {
+        let (connection, _permit) = database.interactive_write().await?;
+        SearchRepository::new(&connection).forget(query).await
+    };
+    write.await.map(|_| ()).map_err(failed)
+}
+
+/// `(key, total, new)` for each saved search, in the order given. `total`
+/// is the conversations it matches, capped as a search's count is. `new`
+/// is zero until the badge lands (spec 010 step 6). A search that cannot
+/// be counted is zero rather than missing, so the row stays.
+///
+/// Also drops the seen-progress of any saved search not listed: one deleted
+/// from `config.toml` leaves an orphan, and this is the read that sees the
+/// whole list.
+pub async fn saved_counts(
+    database: &Store,
+    account: AccountScope,
+    today: NaiveDate,
+    searches: &[(String, String)],
+) -> Vec<(String, u64, u64)> {
+    let keys: Vec<&str> = searches.iter().map(|(key, _)| key.as_str()).collect();
+    let sweep = async {
+        let (connection, _permit) = database.interactive_write().await?;
+        SearchRepository::new(&connection)
+            .forget_seen_except(&keys)
+            .await
+    };
+    if let Err(error) = sweep.await {
+        tracing::warn!(%error, "could not drop a deleted saved search's progress");
+    }
+    let mut counted = Vec::with_capacity(searches.len());
+    for (key, text) in searches {
+        let query = postio_search::parse(text, today);
+        let total = conversations(
+            database,
+            account,
+            &query,
+            ConversationOrder::BestMatch,
+            0,
+            1,
+        )
+        .await
+        .map_or(0, |found| found.total);
+        counted.push((key.clone(), total, 0));
+    }
+    counted
 }
 
 /// A message's stored words, for a search preview; empty when none are

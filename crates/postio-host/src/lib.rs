@@ -958,6 +958,20 @@ impl Inner {
             } => Resp::Relaxed(
                 search::relaxations(&self.wiring.database, account, &query, today).await,
             ),
+            Req::RecentSearches => search::recent(&self.wiring.database)
+                .await
+                .map_or_else(Resp::Failed, Resp::Recent),
+            Req::RememberSearch { query, hits } => {
+                done(search::remember(&self.wiring.database, &query, hits).await)
+            }
+            Req::ForgetSearch(query) => done(search::forget(&self.wiring.database, &query).await),
+            Req::SavedCounts {
+                account,
+                today,
+                searches,
+            } => Resp::SavedCounts(
+                search::saved_counts(&self.wiring.database, account, today, &searches).await,
+            ),
             Req::StoredBody(message) => {
                 Resp::StoredBody(search::stored_body(&self.wiring.database, message).await)
             }

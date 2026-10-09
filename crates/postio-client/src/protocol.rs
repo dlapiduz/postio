@@ -320,6 +320,29 @@ pub enum Req {
         /// The day dates in the variants are read against.
         today: chrono::NaiveDate,
     },
+    /// The searches a person ran, newest first (spec 010 D16). Cancellable.
+    RecentSearches,
+    /// A search was committed: the results view opened, a hit was opened
+    /// from the dropdown, or a saved search ran. The host stamps the time.
+    RememberSearch {
+        /// The query, exactly as run.
+        query: String,
+        /// Conversations it matched, as the footer said.
+        hits: u64,
+    },
+    /// Forget one recent search.
+    ForgetSearch(String),
+    /// How many conversations each saved search matches, and how many of
+    /// those arrived since the person last looked. Cancellable.
+    SavedCounts {
+        /// Which accounts the counts are over.
+        account: postio_model::AccountScope,
+        /// The day relative dates in the queries are read against.
+        today: chrono::NaiveDate,
+        /// Every saved search as `(key, query text)`. A search whose key is
+        /// not listed is no longer saved, and its seen-progress is dropped.
+        searches: Vec<(String, String)>,
+    },
     /// Change an account the way the settings' account commands do.
     Account(AccountOp),
     /// Look up the servers for a new account's address.
@@ -673,6 +696,11 @@ pub enum Resp {
     /// The ways out that would find something, most first; empty when none
     /// would, or when they could not be counted.
     Relaxed(Vec<(postio_search::relax::Relaxation, u64)>),
+    /// The remembered searches, newest first.
+    Recent(Vec<RecentSearch>),
+    /// `(key, total, new)` for each saved search asked, in the order asked.
+    /// `total` is capped at the search's hit limit.
+    SavedCounts(Vec<(String, u64, u64)>),
     /// A message's stored words; empty when there are none here.
     StoredBody(postio_model::MessageBody),
     /// Where each exported message was written, in the order asked.
@@ -985,6 +1013,17 @@ impl Eq for Hits {}
 
 /// What a conversation search found, as Focus's results view draws it.
 ///
+/// A search a person ran: one row of the dropdown's Recent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecentSearch {
+    /// The query, exactly as run.
+    pub query: String,
+    /// When it last ran.
+    pub last_run_at: chrono::DateTime<chrono::Utc>,
+    /// Conversations it matched, as the footer said.
+    pub hits: u64,
+}
+
 /// A wrapper only for [`Resp`]'s `Eq`, as [`Hits`] is: a hit's score is an
 /// `f64`, never NaN.
 #[derive(Debug, Clone, PartialEq)]
