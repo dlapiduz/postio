@@ -1969,7 +1969,7 @@ impl Results {
                     let (_, name) = names.folders.iter().find(|(id, _)| *id == count.id)?;
                     Some(Offer {
                         filter: clause_of("in", name, false, today)?.filter,
-                        title: name.clone(),
+                        title: words::folder_name(name),
                         detail: None,
                         initials: None,
                         color: None,
