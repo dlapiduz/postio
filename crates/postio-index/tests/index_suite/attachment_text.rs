@@ -740,3 +740,74 @@ async fn what_the_search_is_owed_follows_the_queue_through_every_write() {
         .expect("schema again");
     assert_owed_is_queued(&connection, "a new extractor", 1).await;
 }
+
+/// A part skipped for want of the helper is recorded apart from one skipped
+/// for good, and putting it back puts it back in what the search is owed
+/// too.
+#[tokio::test]
+async fn a_skip_for_want_of_the_helper_can_be_put_back_in_the_queue() {
+    let (_store, connection, account, inbox) = world().await;
+    let (_, ids) = message_with(
+        &connection,
+        account,
+        inbox,
+        None,
+        &[
+            ("scan.pdf", "application/pdf", true),
+            ("locked.pdf", "application/pdf", true),
+        ],
+    )
+    .await;
+    let skipped = |skip| Extracted {
+        units: Vec::new(),
+        outcome: Outcome::Skipped(skip),
+    };
+    index::index_attachment_text(
+        &connection,
+        ids[0],
+        &skipped(postio_extract::Skip::Unavailable),
+    )
+    .await
+    .expect("recorded");
+    index::index_attachment_text(
+        &connection,
+        ids[1],
+        &skipped(postio_extract::Skip::Encrypted),
+    )
+    .await
+    .expect("recorded");
+    assert_eq!(
+        extraction_of(&connection, ids[0])
+            .await
+            .expect("read")
+            .map(|e| e.outcome),
+        Some("unavailable".to_owned())
+    );
+    assert_eq!(
+        extraction_of(&connection, ids[1])
+            .await
+            .expect("read")
+            .map(|e| e.outcome),
+        Some("skipped".to_owned())
+    );
+    assert_owed_is_queued(&connection, "recording both", 0).await;
+
+    assert_eq!(
+        index::requeue_unavailable(&connection)
+            .await
+            .expect("requeue"),
+        1
+    );
+    let queue = index::attachments_missing_text(&connection, 10)
+        .await
+        .expect("the queue");
+    assert_eq!(
+        queue
+            .iter()
+            .map(|missing| missing.attachment)
+            .collect::<Vec<_>>(),
+        [ids[0]],
+        "only the one the helper can read"
+    );
+    assert_owed_is_queued(&connection, "putting it back", 1).await;
+}

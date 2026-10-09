@@ -322,3 +322,72 @@ async fn a_pass_kills_the_helper_that_hangs_and_indexes_the_next_attachment() {
         assert!(!log.contains(secret), "{secret:?} reached the log: {log}");
     }
 }
+
+/// A PDF met while the helper was missing is recorded so the pass ends --
+/// and is read once the helper is there, on the next pass, rather than
+/// waiting for an extractor version that happens to move.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pdf_skipped_for_want_of_the_helper_is_read_once_the_helper_is_there() {
+    let database = test_support::temp().await;
+    let blobs = BlobStore::open(
+        database.directory().join("blobs"),
+        &test_support::blob_keys(),
+    )
+    .expect("a blob store");
+    let connection = database.connect().await.expect("checkout");
+    index::ensure_schema(&connection).await.expect("schema");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let pdf = stored(
+        &connection,
+        &blobs,
+        account.id,
+        inbox,
+        "Atlas-Sep-actuals.pdf",
+        "application/pdf",
+        &seed_file("Atlas-Sep-actuals.pdf").bytes,
+    )
+    .await;
+    drop(connection);
+
+    let dir = tempfile::tempdir().expect("scratch");
+    let missing = Extractor::with_helper(dir.path().join("postio-extract-helper"));
+    let indexed = postio_session::index_local_attachments_with(&database, &blobs, &missing)
+        .await
+        .expect("the pass runs");
+    assert_eq!(indexed, 1, "recorded, so the pass ends");
+    let connection = database.connect().await.expect("checkout");
+    assert!(outcome_of(&connection, pdf).await.is_some());
+    assert!(
+        index::attachment_text(&connection, pdf)
+            .await
+            .expect("its text")
+            .is_empty(),
+        "not read in this process"
+    );
+    drop(connection);
+
+    // Still no helper: nothing to do, and nothing tried again.
+    let again = postio_session::index_local_attachments_with(&database, &blobs, &missing)
+        .await
+        .expect("the pass runs");
+    assert_eq!(again, 0, "no helper, no retry");
+
+    // The helper arrives -- an install, a build -- and the next pass reads it.
+    let helper = Extractor::with_helper(HELPER);
+    let read = postio_session::index_local_attachments_with(&database, &blobs, &helper)
+        .await
+        .expect("the pass runs");
+    assert_eq!(read, 1, "read now");
+    let connection = database.connect().await.expect("checkout");
+    assert_eq!(
+        outcome_of(&connection, pdf).await.as_deref(),
+        Some("complete")
+    );
+    assert!(
+        !index::attachment_text(&connection, pdf)
+            .await
+            .expect("its text")
+            .is_empty(),
+        "the helper read its pages"
+    );
+}
