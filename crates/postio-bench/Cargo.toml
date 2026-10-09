@@ -95,5 +95,11 @@ harness = false
 name = "reader_render"
 harness = false
 
+# Conversation search for Focus (spec 010): the executor's calls and the
+# results view's whole exchange, against the 50 ms budget.
+[[bench]]
+name = "search_focus"
+harness = false
+
 [dependencies]
 postio-workspace-hack.workspace = true
