@@ -213,7 +213,7 @@ private struct ResultsPane: View {
             ResultsTableRepresentable(table: table)
             SearchFooter(
                 hints: results.footerHints, right: results.footerRight, checked: engine.resultsChecked,
-                bulk: results.bulk)
+                bulk: results.bulk, selectAll: results.selectAll)
         }
         .background(Color(nsColor: .textBackgroundColor))
         .accessibilityElement(children: .contain)
@@ -521,6 +521,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.view = saveView
             item.label = engine.searchWords.save
+            engine.savePresenter?.anchor = saveView
             return item
         default:
             return nil
@@ -542,6 +543,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
     private func respell() {
         backView.rootView = ResultsBackButton(engine: engine)
         saveView.rootView = SaveSearchButton(engine: engine)
+        engine.savePresenter?.anchor = saveView
         let palette = KeyCapSpelling.cap(engine.session?.binding(for: BarCommand.palette))
         cap.text = palette ?? ""
         cap.isHidden = palette == nil || !(field?.stringValue.isEmpty ?? true)
@@ -595,13 +597,13 @@ private struct ResultsBackButton: View {
     }
 }
 
-/// Save search with its ⌘S keycap (§3.1). Inert until step 6 builds the
-/// save popover (specs/010-focus-search T070).
+/// Save search with its ⌘S keycap (§3.1): what ⌘S runs, and what the Save
+/// popover hangs from (specs/010-focus-search T100).
 private struct SaveSearchButton: View {
     let engine: Engine
 
     var body: some View {
-        Button {} label: {
+        Button { engine.run(BarCommand.saveSearch) } label: {
             HStack(spacing: 6) {
                 Image(systemName: "bookmark").font(.system(size: 12))
                 Text(engine.searchWords.save).font(.system(size: 13, weight: .semibold))

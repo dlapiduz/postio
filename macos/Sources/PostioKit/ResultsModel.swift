@@ -103,6 +103,9 @@ public final class ResultsModel {
     /// Results checked: the footer is the bulk bar while above zero.
     public private(set) var selected: UInt64 = 0
     public private(set) var bulk: [Hint] = []
+    /// The bulk bar's right, "⇧X select all 12", while some but not every
+    /// conversation the query matches is checked.
+    public private(set) var selectAll: Hint?
 
     /// Bumped on every frame, so a view that draws the rows knows to.
     public private(set) var frame = 0
@@ -245,6 +248,7 @@ public final class ResultsModel {
         footerRight = view.footerRight
         selected = view.selected
         bulk = view.bulk.map { Hint(cap: KeyCapSpelling.cap($0.key) ?? $0.key, label: $0.label) }
+        selectAll = view.selectAll.map { Hint(cap: KeyCapSpelling.cap($0.key) ?? $0.key, label: $0.label) }
         var start = 0
         starts = groups.map { group in
             defer { start += 1 + Int(group.rows) }
@@ -269,6 +273,7 @@ public final class ResultsModel {
         footerRight = ""
         selected = 0
         bulk = []
+        selectAll = nil
         starts = []
         read = [:]
     }

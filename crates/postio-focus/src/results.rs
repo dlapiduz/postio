@@ -535,7 +535,7 @@ struct Offer {
 pub(crate) struct Results {
     /// The query, as the field holds it.
     pub(crate) query: String,
-    parsed: ParsedQuery,
+    pub(crate) parsed: ParsedQuery,
     terms: Vec<String>,
     pub(crate) tab: ResultsTab,
     pub(crate) order: ConversationOrder,
@@ -1119,7 +1119,7 @@ impl Results {
     }
 
     /// A person's name for an address, from the people the answers named.
-    fn name_of(&self, address: &str) -> Option<String> {
+    pub(crate) fn name_of(&self, address: &str) -> Option<String> {
         self.people
             .iter()
             .find(|person| person.address.eq_ignore_ascii_case(address))
@@ -1922,6 +1922,49 @@ fn thread_of(hit: &ConversationHit) -> Option<ThreadId> {
     }
 }
 
+/// The Save popover (design §3.9, screen 12): every word it draws, and
+/// the switches as they start.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaveView {
+    /// "Save as a saved search".
+    pub title: String,
+    /// "Name", over the field.
+    pub name_label: String,
+    /// The name offered: "Atlas budget from Ada".
+    pub name: String,
+    /// The terms, read-only: "from:Ada Moreno", "after:2026-07-01", the
+    /// words.
+    pub chips: Vec<String>,
+    /// Pin to saved searches, as it starts: on.
+    pub pin: bool,
+    /// "Pin to saved searches".
+    pub pin_label: String,
+    /// "Appears at the top of search as", before its key.
+    pub pin_note: String,
+    /// The key it will run on (`alt+3`), the next free; `None` past the
+    /// fourth.
+    pub pin_key: Option<String>,
+    /// Notify when new mail matches, as it starts: off.
+    pub notify: bool,
+    /// "Notify when new mail matches".
+    pub notify_label: String,
+    /// "A quiet badge, not a banner".
+    pub notify_note: String,
+    /// Keep the date rolling, as it starts: off.
+    pub rolling: bool,
+    /// "Keep the date rolling".
+    pub rolling_label: String,
+    /// "Off: always since 1 July. On: always the last 90 days"; `None`
+    /// when the query has no date to keep, and the switch is not drawn.
+    pub rolling_note: Option<String>,
+    /// "Cancel".
+    pub cancel: String,
+    /// "Save".
+    pub save: String,
+    /// Save's key (`Return`).
+    pub save_key: Option<String>,
+}
+
 /// Where a verb on the results goes.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ResultsAim {
@@ -2228,11 +2271,12 @@ impl FocusController {
             CommandId::ToggleHasAction => {
                 self.results_edit(postio_search::edit::Edit::Toggle(Filter::HasAction))
             }
-            CommandId::SaveSearch => {
-                let query = results.query.clone();
-                self.bar.set_saving(query.clone());
-                vec![Step::Show(Intent::SaveSearch { query })]
-            }
+            // ⌘S: the Save popover, from the toolbar's button (§3.9).
+            // Nothing is written until its Save.
+            CommandId::SaveSearch => self
+                .save_view()
+                .map(|view| vec![Step::Show(Intent::SavePopover(Some(Box::new(view))))])
+                .unwrap_or_default(),
             CommandId::StepRangeBack | CommandId::StepRangeForward => {
                 let today = self.bar.now().date_naive();
                 let back = id == CommandId::StepRangeBack;
@@ -2301,6 +2345,89 @@ impl FocusController {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// The Save popover for the results' query (§3.9, screen 12): a name
+    /// made from it, its terms as read-only chips, and the three switches
+    /// as they start. `None` with no query.
+    fn save_view(&self) -> Option<SaveView> {
+        let results = self.results.as_ref()?;
+        if results.query.trim().is_empty() {
+            return None;
+        }
+        let today = self.bar.now().date_naive();
+        let query = self.query_view();
+        let mut chips: Vec<String> = query
+            .chips
+            .iter()
+            .map(|chip| {
+                let not = if chip.excluded { "-" } else { "" };
+                format!("{not}{}{}", chip.operator, chip.value)
+            })
+            .collect();
+        if !query.words.trim().is_empty() {
+            chips.push(query.words.trim().to_owned());
+        }
+        let lookup = |address: &str| results.name_of(address);
+        let pin_key = postio_ui::command_bar::SAVED
+            .get(self.bar.saved_len())
+            .and_then(|id| postio_ui::hints::key(self.bar.keymap(), *id));
+        let after = results
+            .parsed
+            .filters()
+            .find_map(|clause| match clause.filter {
+                postio_search::query::Filter::After(date) if !clause.negated => Some(date),
+                _ => None,
+            });
+        Some(SaveView {
+            title: words::SAVE_TITLE.to_owned(),
+            name_label: words::SAVE_NAME.to_owned(),
+            name: words::save_name(&results.parsed, &lookup),
+            chips,
+            pin: true,
+            pin_label: words::SAVE_PIN.to_owned(),
+            pin_note: if pin_key.is_some() {
+                words::SAVE_PIN_NOTE.to_owned()
+            } else {
+                words::SAVE_PIN_NOTE_NO_KEY.to_owned()
+            },
+            pin_key,
+            notify: false,
+            notify_label: words::SAVE_NOTIFY.to_owned(),
+            notify_note: words::SAVE_NOTIFY_NOTE.to_owned(),
+            rolling: false,
+            rolling_label: words::SAVE_ROLLING.to_owned(),
+            rolling_note: after.map(|after| words::rolling_note(after, today)),
+            cancel: words::SAVE_CANCEL.to_owned(),
+            save: words::SAVE.to_owned(),
+            save_key: postio_ui::hints::key(self.bar.keymap(), CommandId::OpenMessage),
+        })
+    }
+
+    /// Save ↩ in the Save popover: it goes, and the frontend writes the
+    /// save; how it went comes back as `Input::SearchSaved`.
+    fn save_as(&mut self, name: String, pin: bool, notify: bool, rolling: bool) -> Vec<Step> {
+        let Some(results) = self.results.as_ref() else {
+            return Vec::new();
+        };
+        let today = self.bar.now().date_naive();
+        let name = name.trim();
+        let save = crate::SaveSearch {
+            query: results.query.clone(),
+            name: (!name.is_empty()).then(|| name.to_owned()),
+            pin,
+            notify,
+            dates: if rolling {
+                postio_ui::saved_search::Dates::Rolling { today }
+            } else {
+                postio_ui::saved_search::Dates::Fixed { today }
+            },
+        };
+        self.bar.set_saving(save.clone());
+        vec![
+            Step::Show(Intent::SavePopover(None)),
+            Step::Show(Intent::SaveSearch(save)),
+        ]
     }
 
     /// The checks changed: the frame's count and bar, and every row.
@@ -2687,6 +2814,12 @@ impl FocusController {
                 None => Vec::new(),
             },
             Input::ResultsTab(tab) => self.results_tab(tab),
+            Input::SaveSearchAs {
+                name,
+                pin,
+                notify,
+                rolling,
+            } => self.save_as(name, pin, notify, rolling),
             Input::ResultsOrder(order) => self.results_order(order),
             Input::ResultsPoint(position) => {
                 let Some(results) = self.results.as_mut() else {

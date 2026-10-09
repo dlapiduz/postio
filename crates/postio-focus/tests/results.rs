@@ -1595,3 +1595,133 @@ fn the_results_are_asked_again_once_a_verb_on_them_lands() {
     let _ = settle(&mut focus, effects, &rows);
     assert_eq!(focus.result_count(), 123, "and the ring stays where it was");
 }
+
+/// "atlas budget", then From: Ada and Since 1 July, as screen 12's query.
+fn screen_twelve(focus: &mut FocusController, rows: &List) {
+    let _ = search(focus, "atlas budget", rows);
+    for (field, value) in [("from", "ada@example.com"), ("after", "2026-07-01")] {
+        let effects = focus.handle_on(
+            Input::SearchEdit(TermEdit::Add {
+                field: field.to_owned(),
+                value: value.to_owned(),
+                negated: false,
+            }),
+            rows,
+        );
+        let _ = settle(focus, effects, rows);
+    }
+}
+
+fn save_popover(effects: &[Effect]) -> Option<Option<postio_focus::SaveView>> {
+    shown(effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::SavePopover(view) => Some(view.map(|view| *view)),
+            _ => None,
+        })
+}
+
+#[test]
+fn cmd_s_opens_the_save_popover_named_from_the_query() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let saved = |key: &str| postio_ui::saved_search::SavedSearch {
+        key: key.to_owned(),
+        name: key.to_owned(),
+        query: format!("subject:{key}"),
+        notify: false,
+    };
+    let _ = focus.handle(Input::SavedSearches(vec![saved("a"), saved("b")]));
+    screen_twelve(&mut focus, &rows);
+    let effects = run(&mut focus, CommandId::SaveSearch, &rows);
+    let view = save_popover(&effects)
+        .flatten()
+        .expect("⌘S opens the Save popover");
+    assert_eq!(view.title, "Save as a saved search");
+    assert_eq!(view.name, "Atlas budget from Ada");
+    assert_eq!(
+        view.chips,
+        ["from:Ada Moreno", "after:2026-07-01", "atlas budget"],
+        "the terms, read-only, a person by name"
+    );
+    assert!(view.pin, "pinned unless said");
+    assert_eq!(view.pin_note, "Appears at the top of search as");
+    assert_eq!(
+        view.pin_key.as_deref(),
+        Some("alt+3"),
+        "the next free number"
+    );
+    assert!(!view.notify);
+    assert_eq!(view.notify_note, "A quiet badge, not a banner");
+    assert!(!view.rolling);
+    assert_eq!(
+        view.rolling_note.as_deref(),
+        Some("Off: always since 1 July. On: always the last 87 days"),
+        "what each way means for this query's date"
+    );
+    assert!(
+        asked(&effects).is_empty(),
+        "nothing is written until Save: {:?}",
+        asked(&effects)
+    );
+}
+
+#[test]
+fn saving_from_the_popover_writes_what_it_says_and_a_notify_search_starts_seen() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    screen_twelve(&mut focus, &rows);
+    let _ = run(&mut focus, CommandId::SaveSearch, &rows);
+    let effects = focus.handle_on(
+        Input::SaveSearchAs {
+            name: "Atlas from Ada".to_owned(),
+            pin: true,
+            notify: true,
+            rolling: true,
+        },
+        &rows,
+    );
+    assert_eq!(save_popover(&effects), Some(None), "the popover goes");
+    let saving = shown(&effects)
+        .into_iter()
+        .find_map(|intent| match intent {
+            Intent::SaveSearch(save) => Some(save),
+            _ => None,
+        })
+        .expect("the save is the frontend's to write");
+    assert_eq!(
+        saving,
+        postio_focus::SaveSearch {
+            query: "atlas budget from:ada@example.com after:2026-07-01".to_owned(),
+            name: Some("Atlas from Ada".to_owned()),
+            pin: true,
+            notify: true,
+            dates: postio_ui::saved_search::Dates::Rolling {
+                today: today().date_naive()
+            },
+        }
+    );
+
+    let written = postio_ui::saved_search::SavedSearch {
+        key: "atlas-budget-from-ada-example-com-after-2026-07-01".to_owned(),
+        name: "Atlas from Ada".to_owned(),
+        query: "atlas budget from:ada@example.com after:87d".to_owned(),
+        notify: true,
+    };
+    let effects = focus.handle_on(
+        Input::SearchSaved(Ok(postio_focus::SearchesSaved {
+            searches: vec![written.clone()],
+            key: Some(written.key.clone()),
+        })),
+        &rows,
+    );
+    assert!(shown(&effects).iter().any(|intent| matches!(
+        intent,
+        Intent::Toast { text, .. } if text.contains("Atlas from Ada")
+    )));
+    assert!(
+        asked(&effects).contains(&Request::MarkSeen { key: written.key }),
+        "its badge counts from the moment it was saved"
+    );
+}

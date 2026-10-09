@@ -129,3 +129,106 @@ fn a_config_that_will_not_parse_is_refused_and_left_alone() {
         "the file was touched anyway"
     );
 }
+
+/// ⌘S in Focus's results, then Save ↩ with Notify and Keep the date
+/// rolling on (spec 010 US5, FR-029): the session's own `config.toml`
+/// holds the search afterwards, named, notifying, its date relative.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_save_popover_writes_name_notify_and_a_rolling_date_to_config_toml() {
+    use postio_ffi::{DropdownStateFfi, Session, SessionOptions, UiEvent};
+
+    use crate::focus::heard;
+
+    let (dir, path) = config("[sync]\nidle = true\n");
+    let (database, _) = postio_demo::seeded(postio_demo::Seed::Search).await;
+    let session = Session::open(
+        SessionOptions::in_memory_with(database)
+            .with_config_file_for_test(std::path::Path::new(&path)),
+    )
+    .expect("a session");
+    session.invoke("search");
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusDropdown { view } if view.state == DropdownStateFfi::Empty
+        ))
+        .await
+    );
+    session.focus_bar_typed("atlas budget after:2026-07-01".to_owned());
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusDropdown { view } if view.footer_count.is_some()
+        ))
+        .await
+    );
+    session.focus_search_show_all();
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusResults { view } if !view.groups.is_empty()
+        ))
+        .await
+    );
+
+    session.invoke("save_search");
+    let mut shown = None;
+    assert!(
+        heard(&session, 10, |event| match event {
+            UiEvent::FocusSavePopover { view: Some(view) } => {
+                shown = Some(view.clone());
+                true
+            }
+            _ => false,
+        })
+        .await,
+        "⌘S hangs the Save popover"
+    );
+    let view = shown.expect("seen");
+    assert_eq!(view.name, "Atlas budget");
+    assert_eq!(view.chips, ["after:2026-07-01", "atlas budget"]);
+    assert!(view.pin && !view.notify && !view.rolling);
+    assert!(
+        view.rolling_note
+            .as_deref()
+            .is_some_and(|note| note.starts_with("Off: always since 1 July.")),
+        "{:?}",
+        view.rolling_note
+    );
+    assert!(
+        std::fs::read_to_string(&path)
+            .expect("the file")
+            .lines()
+            .all(|line| !line.contains("saved_searches")),
+        "nothing is written before Save"
+    );
+
+    session.focus_search_save("Atlas, rolling".to_owned(), true, true, true);
+    assert!(
+        heard(&session, 10, |event| matches!(
+            event,
+            UiEvent::FocusSavePopover { view: None }
+        ))
+        .await,
+        "Save takes the popover down"
+    );
+    let written = std::fs::read_to_string(&path).expect("the file");
+    let read = postio_config::Config::from_toml_str(&written).expect("still parses");
+    let (_, saved) = read
+        .filters
+        .iter()
+        .find(|(_, filter)| filter.name.as_deref() == Some("Atlas, rolling"))
+        .unwrap_or_else(|| panic!("the search is in the file:\n{written}"));
+    assert!(saved.notify, "notify = true:\n{written}");
+    assert!(saved.pinned);
+    assert!(
+        saved.query.starts_with("atlas budget after:") && saved.query.ends_with('d'),
+        "its date is relative: {}",
+        saved.query
+    );
+    assert!(
+        written.starts_with("[sync]\nidle = true\n"),
+        "the rest as it was"
+    );
+    drop(dir);
+}

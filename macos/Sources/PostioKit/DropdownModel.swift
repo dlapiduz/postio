@@ -37,6 +37,8 @@ public final class DropdownModel {
         public let op: String?
         public let label: String
         public let count: String?
+        /// A saved search that notifies: its quiet badge, "3 new" (D15).
+        public let fresh: String?
         public let cap: String?
     }
 
@@ -98,7 +100,7 @@ public final class DropdownModel {
                 pills: section.pills.map { pill in
                     Pill(
                         id: pill.token, op: pill.op, label: pill.label, count: pill.count,
-                        cap: KeyCapSpelling.cap(pill.key))
+                        fresh: pill.fresh, cap: KeyCapSpelling.cap(pill.key))
                 })
         }
         hints = view.footerHints.map { hint in
