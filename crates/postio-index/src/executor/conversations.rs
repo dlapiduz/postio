@@ -1331,18 +1331,16 @@ struct Searched {
 /// off the counts the schema keeps (`total_count`, `bodies_owed`; see
 /// [`corpus_complete`](super::corpus_complete)), with the indexer's own
 /// question about attachments ([`crate::index::attachments_missing_text`])
-/// asked once beside it.
+/// answered beside it from the set the index keeps of it
+/// (`attachment_text_owed`): one seek, where asking the queue itself walked
+/// every attachment on the machine whenever nothing was waiting.
 ///
 /// The attachments are every account's, as the indexer's queue is: the
 /// search cannot say it looked inside files while any file this machine
 /// holds is still unread.
 async fn searched(connection: &Connection, request: &ConversationRequest<'_>) -> Result<Searched> {
     let mut conditions = Vec::new();
-    // The unread attachment's version first: its `?` comes first in the
-    // statement.
-    let mut params: Vec<turso::Value> = vec![turso::Value::Integer(i64::from(
-        postio_extract::EXTRACTOR_VERSION,
-    ))];
+    let mut params: Vec<turso::Value> = Vec::new();
     match request.account.account() {
         Some(id) => {
             conditions.push("account_id = ?".to_owned());
@@ -1360,9 +1358,8 @@ async fn searched(connection: &Connection, request: &ConversationRequest<'_>) ->
         connection,
         &format!(
             "SELECT coalesce(sum(total_count), 0), coalesce(max(bodies_owed > 0), 0),
-                    EXISTS ({})
+                    EXISTS (SELECT 1 FROM attachment_text_owed)
                FROM mailboxes WHERE {}",
-            crate::index::MISSING,
             conditions.join(" AND ")
         ),
         params,
