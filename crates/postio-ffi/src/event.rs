@@ -465,6 +465,35 @@ pub enum UiEvent {
         /// What it draws.
         view: crate::focus_search::DropdownViewFfi,
     },
+    /// The query's chips and words in the field, and the filter bar's
+    /// buttons (spec 010 step 3): after any edit.
+    FocusQuery {
+        /// What they draw.
+        view: crate::focus_search::QueryViewFfi,
+    },
+    /// The main window shows a search's results: this frame, whole --
+    /// entering them, and after every query, tab or sort change. Read the
+    /// rows with `focus_search_row`.
+    FocusResults {
+        /// The frame.
+        view: crate::focus_search::ResultsViewFfi,
+    },
+    /// Results rows `first..first + count` changed: read them again.
+    FocusResultsPage {
+        /// The first row.
+        first: u64,
+        /// How many.
+        count: u64,
+    },
+    /// The focus ring is on this result: draw it there and scroll it into
+    /// view.
+    FocusResultsCursor {
+        /// The row.
+        position: u64,
+    },
+    /// Back to the inbox: Esc's last rung, or ⌘[. The list's own cursor and
+    /// selection follow.
+    FocusLeaveResults,
 }
 
 /// How a Focus toast is drawn.

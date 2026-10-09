@@ -1817,7 +1817,7 @@ impl Bar {
     }
 
     /// The query, as it is kept among the recent searches.
-    fn remember(&self) -> Option<Step> {
+    pub(crate) fn remember(&self) -> Option<Step> {
         let landed = self.drop.as_ref()?.landed.as_ref()?;
         let query = self.typed.trim();
         (!query.is_empty()).then(|| {

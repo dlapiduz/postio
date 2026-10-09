@@ -8,6 +8,13 @@
 //! `focus_bar_run`, `focus_bar_tab`), and the dropdown's own keys here:
 //! where the arrows rest, ⌥⌫ on a recent search, and ⌘↩.
 //!
+//! The results view (step 3) is the controller's too: `FocusQuery`,
+//! `FocusResults`, `FocusResultsPage`, `FocusResultsCursor` and
+//! `FocusLeaveResults` say what to draw, `focus_search_row` reads a row, and
+//! a control's change to the query crosses as a `TermEditFfi`. A highlight
+//! crosses as runs of words, each marked or not, so no offset is counted in
+//! one encoding and drawn in another.
+//!
 //! Every word is composed in Rust by `postio-ui`; a keycap crosses as the
 //! keymap spells it and Swift draws it as every Mac keycap is drawn.
 
@@ -224,6 +231,445 @@ impl From<postio_focus::DropdownView> for DropdownViewFfi {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The results view (spec 010 step 3, screens 06 and 07)
+// ---------------------------------------------------------------------------
+
+/// The results' tabs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ResultsTabFfi {
+    /// Conversations.
+    Conversations,
+    /// Files.
+    Files,
+    /// People.
+    People,
+}
+
+impl From<ResultsTabFfi> for postio_search::results::ResultsTab {
+    fn from(tab: ResultsTabFfi) -> Self {
+        match tab {
+            ResultsTabFfi::Conversations => Self::Conversations,
+            ResultsTabFfi::Files => Self::Files,
+            ResultsTabFfi::People => Self::People,
+        }
+    }
+}
+
+impl From<postio_search::results::ResultsTab> for ResultsTabFfi {
+    fn from(tab: postio_search::results::ResultsTab) -> Self {
+        use postio_search::results::ResultsTab;
+        match tab {
+            ResultsTab::Conversations => ResultsTabFfi::Conversations,
+            ResultsTab::Files => ResultsTabFfi::Files,
+            ResultsTab::People => ResultsTabFfi::People,
+        }
+    }
+}
+
+/// The Sort menu's two orders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ConversationOrderFfi {
+    /// Ranked, with Top hits first.
+    BestMatch,
+    /// Newest first, in month groups only.
+    Newest,
+}
+
+impl From<ConversationOrderFfi> for postio_search::results::ConversationOrder {
+    fn from(order: ConversationOrderFfi) -> Self {
+        match order {
+            ConversationOrderFfi::BestMatch => Self::BestMatch,
+            ConversationOrderFfi::Newest => Self::Newest,
+        }
+    }
+}
+
+impl From<postio_search::results::ConversationOrder> for ConversationOrderFfi {
+    fn from(order: postio_search::results::ConversationOrder) -> Self {
+        match order {
+            postio_search::results::ConversationOrder::Newest => ConversationOrderFfi::Newest,
+            _ => ConversationOrderFfi::BestMatch,
+        }
+    }
+}
+
+/// A filter bar button (design §3.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FilterKindFfi {
+    /// From ▾.
+    From,
+    /// To ▾.
+    To,
+    /// Date ▾.
+    Date,
+    /// Anywhere ▾ (a folder).
+    Anywhere,
+    /// Label ▾.
+    Label,
+    /// The Attachment toggle.
+    Attachment,
+    /// The Has action toggle.
+    HasAction,
+    /// The Unread toggle.
+    Unread,
+}
+
+impl From<postio_ui::search_view::FilterKind> for FilterKindFfi {
+    fn from(kind: postio_ui::search_view::FilterKind) -> Self {
+        use postio_ui::search_view::FilterKind;
+        match kind {
+            FilterKind::From => FilterKindFfi::From,
+            FilterKind::To => FilterKindFfi::To,
+            FilterKind::Date => FilterKindFfi::Date,
+            FilterKind::Anywhere => FilterKindFfi::Anywhere,
+            FilterKind::Label => FilterKindFfi::Label,
+            FilterKind::Attachment => FilterKindFfi::Attachment,
+            FilterKind::HasAction => FilterKindFfi::HasAction,
+            FilterKind::Unread => FilterKindFfi::Unread,
+        }
+    }
+}
+
+/// A change to the query from a control: the operator's keyword and value,
+/// which Rust spells (D13). Swift never builds query text.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum TermEditFfi {
+    /// Add `field:value` (`-field:value` when `negated`): "from",
+    /// "ada@example.com".
+    Add {
+        /// The operator's keyword.
+        field: String,
+        /// Its value.
+        value: String,
+        /// Excluded.
+        negated: bool,
+    },
+    /// A chip's ✕, by its token.
+    Remove {
+        /// [`QueryChipFfi::token`].
+        token: u32,
+    },
+    /// A toggle button: "has" "attachment", "is" "unread", "has" "action".
+    Toggle {
+        /// The operator's keyword.
+        field: String,
+        /// Its value.
+        value: String,
+    },
+    /// A timeline drag over the months `first..=last`, 0 the oldest bar.
+    SetMonths {
+        /// The first month.
+        first: i32,
+        /// The last month.
+        last: i32,
+    },
+    /// Keep the words, drop every operator.
+    ClearFilters,
+}
+
+impl From<TermEditFfi> for postio_focus::TermEdit {
+    fn from(edit: TermEditFfi) -> Self {
+        let month = |n: i32| u32::try_from(n).unwrap_or(0);
+        match edit {
+            TermEditFfi::Add {
+                field,
+                value,
+                negated,
+            } => postio_focus::TermEdit::Add {
+                field,
+                value,
+                negated,
+            },
+            TermEditFfi::Remove { token } => postio_focus::TermEdit::Remove { token },
+            TermEditFfi::Toggle { field, value } => postio_focus::TermEdit::Toggle { field, value },
+            TermEditFfi::SetMonths { first, last } => postio_focus::TermEdit::SetMonths {
+                first: month(first),
+                last: month(last),
+            },
+            TermEditFfi::ClearFilters => postio_focus::TermEdit::ClearFilters,
+        }
+    }
+}
+
+/// One operator term, as a chip in the field (design §1).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct QueryChipFfi {
+    /// What `TermEditFfi::Remove` names it by.
+    pub token: u32,
+    /// The operator with its colon, tertiary: "from:".
+    pub operator: String,
+    /// Its value, in label colour.
+    pub value: String,
+    /// Struck through.
+    pub excluded: bool,
+    /// Ringed.
+    pub focused: bool,
+}
+
+/// One filter button (design §3.2).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FilterButtonFfi {
+    /// Which.
+    pub kind: FilterKindFfi,
+    /// "From", or "From: Ada Moreno" once applied.
+    pub label: String,
+    /// Solid.
+    pub applied: bool,
+    /// Its popover is open: the accent ring.
+    pub open: bool,
+}
+
+/// The query as the field and the filter bar draw it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct QueryViewFfi {
+    /// The chips, in the query's order.
+    pub chips: Vec<QueryChipFfi>,
+    /// The plain words, after the chips.
+    pub words: String,
+    /// "/ to edit".
+    pub hint: String,
+    /// The filter bar's buttons, left to right.
+    pub buttons: Vec<FilterButtonFfi>,
+}
+
+impl From<postio_focus::QueryView> for QueryViewFfi {
+    fn from(view: postio_focus::QueryView) -> Self {
+        QueryViewFfi {
+            chips: view
+                .chips
+                .into_iter()
+                .map(|chip| QueryChipFfi {
+                    token: chip.token,
+                    operator: chip.operator,
+                    value: chip.value,
+                    excluded: chip.excluded,
+                    focused: chip.focused,
+                })
+                .collect(),
+            words: view.words,
+            hint: view.hint,
+            buttons: view
+                .buttons
+                .into_iter()
+                .map(|button| FilterButtonFfi {
+                    kind: button.kind.into(),
+                    label: button.label,
+                    applied: button.applied,
+                    open: button.open,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// A results tab, with its count.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TabFfi {
+    /// Which.
+    pub tab: ResultsTabFfi,
+    /// "Conversations".
+    pub label: String,
+    /// "48".
+    pub count: String,
+    /// The one shown.
+    pub selected: bool,
+    /// Its key (`cmd+1`), as the keymap spells it.
+    pub key: Option<String>,
+}
+
+/// One bar of the timeline.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct MonthBarFfi {
+    /// "Sep".
+    pub label: String,
+    /// Conversations in it.
+    pub conversations: u64,
+    /// 0 to 1 of the tallest.
+    pub height: f64,
+    /// Inside the query's dates: the soft band, the bold label.
+    pub selected: bool,
+}
+
+// `height` is a share of the tallest bar, never NaN, so equality is total.
+impl Eq for MonthBarFfi {}
+
+/// A group header and the rows under it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ResultGroupFfi {
+    /// "Top hits", "September 2026".
+    pub title: String,
+    /// "9", tertiary after the title.
+    pub count: String,
+    /// "newest first", "why each one ranked is under the sender".
+    pub note: Option<String>,
+    /// The first row's position.
+    pub first: u64,
+    /// How many rows.
+    pub rows: u64,
+    /// Top hits: rows 66 tall, not 58.
+    pub top_hits: bool,
+}
+
+/// The results view's frame: everything but the rows, which
+/// `focus_search_row` reads.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ResultsViewFfi {
+    /// Conversations, Files, People.
+    pub tabs: Vec<TabFfi>,
+    /// The Sort menu.
+    pub order: ConversationOrderFfi,
+    /// "48 conversations".
+    pub count_line: String,
+    /// "12 files · 6 people · last 12 months".
+    pub sub_line: String,
+    /// The twelve bars, oldest first.
+    pub months: Vec<MonthBarFfi>,
+    /// The groups, top to bottom.
+    pub groups: Vec<ResultGroupFfi>,
+    /// How many rows the table has.
+    pub rows: u64,
+    /// The row with the focus ring.
+    pub cursor: Option<u64>,
+    /// The footer's keys.
+    pub footer_hints: Vec<KeyHintFfi>,
+    /// "48 conversations · local index · 41 ms".
+    pub footer_right: String,
+    /// Rows checked: the footer is the bulk bar while this is above zero.
+    pub selected: u64,
+    /// The bulk bar's verbs and keys.
+    pub bulk: Vec<KeyHintFfi>,
+}
+
+fn hints(hints: Vec<postio_ui::hints::Hint>) -> Vec<KeyHintFfi> {
+    hints
+        .into_iter()
+        .map(|hint| KeyHintFfi {
+            key: hint.key,
+            label: hint.label,
+        })
+        .collect()
+}
+
+impl From<postio_focus::ResultsView> for ResultsViewFfi {
+    fn from(view: postio_focus::ResultsView) -> Self {
+        ResultsViewFfi {
+            tabs: view
+                .tabs
+                .into_iter()
+                .map(|tab| TabFfi {
+                    tab: tab.tab.into(),
+                    label: tab.label,
+                    count: tab.count,
+                    selected: tab.selected,
+                    key: tab.key,
+                })
+                .collect(),
+            order: view.order.into(),
+            count_line: view.count_line,
+            sub_line: view.sub_line,
+            months: view
+                .months
+                .into_iter()
+                .map(|month| MonthBarFfi {
+                    label: month.label,
+                    conversations: month.conversations,
+                    height: month.height,
+                    selected: month.selected,
+                })
+                .collect(),
+            groups: view
+                .groups
+                .into_iter()
+                .map(|group| ResultGroupFfi {
+                    title: group.title,
+                    count: group.count,
+                    note: group.note,
+                    first: group.first,
+                    rows: group.rows,
+                    top_hits: group.top_hits,
+                })
+                .collect(),
+            rows: view.rows,
+            cursor: view.cursor,
+            footer_hints: hints(view.hints),
+            footer_right: view.footer,
+            selected: view.selected,
+            bulk: hints(view.bulk),
+        }
+    }
+}
+
+/// One result row (design §3.4).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ResultRowFfi {
+    /// The message it shows and opens.
+    pub id: i64,
+    /// Its conversation.
+    pub thread: Option<i64>,
+    /// Its group, an index into `ResultsViewFfi::groups`.
+    pub group: u32,
+    /// A top hit: 66 tall, with its reason.
+    pub top_hit: bool,
+    /// The sender column.
+    pub sender: String,
+    /// Bold sender, and the unread dot.
+    pub unread: bool,
+    /// Under the sender on a top hit: "you replied · 3 matches".
+    pub reason: Option<String>,
+    /// The subject, matched words in the find highlight.
+    pub subject: Vec<RunFfi>,
+    /// The label pills.
+    pub pills: Vec<crate::focus_list::LabelPillFfi>,
+    /// The paperclip.
+    pub attachments: bool,
+    /// The thread count.
+    pub count_badge: Option<String>,
+    /// "body", "quoted text", "subject", a file's name.
+    pub source_tag: String,
+    /// The tag is a file's name: italics.
+    pub source_is_file: bool,
+    /// The passage, matched words in the find highlight; empty until read.
+    pub passage: Vec<RunFfi>,
+    /// "in:Inbox".
+    pub folder: String,
+    /// "26 Sep".
+    pub date: String,
+    /// Checked: the filled box and the selection tint.
+    pub checked: bool,
+    /// What VoiceOver reads (design §5).
+    pub accessible: String,
+}
+
+impl From<postio_focus::ResultRow> for ResultRowFfi {
+    fn from(row: postio_focus::ResultRow) -> Self {
+        ResultRowFfi {
+            id: row.message.get(),
+            thread: row.thread.map(|thread| thread.get()),
+            group: row.group,
+            top_hit: row.top_hit,
+            sender: row.sender,
+            unread: row.unread,
+            reason: row.reason,
+            subject: runs(row.subject),
+            pills: row
+                .labels
+                .into_iter()
+                .map(|name| crate::focus_list::LabelPillFfi { name, color: None })
+                .collect(),
+            attachments: row.attachments,
+            count_badge: row.count_badge,
+            source_tag: row.source_tag,
+            source_is_file: row.source_is_file,
+            passage: runs(row.passage),
+            folder: row.folder,
+            date: row.date,
+            checked: row.checked,
+            accessible: row.accessible,
+        }
+    }
+}
+
 #[uniffi::export]
 impl Session {
     /// The arrows rest on the dropdown's row `token` now (the highlight is
@@ -239,13 +685,50 @@ impl Session {
             .input(postio_focus::Input::SearchForget(token));
     }
 
-    /// ⌘↩, or a click on Show all: the results for what is typed. Until
-    /// the results view arrives (spec 010 step 3) it keeps the query among
-    /// the recent searches and moves the highlight to the first hit.
+    /// ⌘↩, or a click on Show all: the main window turns into the results
+    /// for what is typed (`FocusQuery`, then `FocusResults`).
     pub fn focus_search_show_all(&self) {
         let _ = self
             .focus_driver()
             .command(postio_core::CommandId::ShowAllResults);
+    }
+
+    /// A filter button, a chip's ✕, a popover's check or a timeline drag:
+    /// the results' query changes, and `FocusQuery` then `FocusResults`
+    /// say how.
+    pub fn focus_search_edit(&self, edit: TermEditFfi) {
+        self.focus_driver()
+            .input(postio_focus::Input::SearchEdit(edit.into()));
+    }
+
+    /// A results tab picked by a click (⌘1-3 are commands).
+    pub fn focus_search_tab(&self, tab: ResultsTabFfi) {
+        self.focus_driver()
+            .input(postio_focus::Input::ResultsTab(tab.into()));
+    }
+
+    /// The Sort menu.
+    pub fn focus_search_order(&self, order: ConversationOrderFfi) {
+        self.focus_driver()
+            .input(postio_focus::Input::ResultsOrder(order.into()));
+    }
+
+    /// A click on the result at `position`: the focus ring goes there.
+    pub fn focus_search_point(&self, position: u64) {
+        self.focus_driver()
+            .input(postio_focus::Input::ResultsPoint(position));
+    }
+
+    /// How many rows the results table has.
+    pub fn focus_search_row_count(&self) -> u64 {
+        self.focus_driver().result_count()
+    }
+
+    /// The result at `position`, or `None` while its page is on its way:
+    /// a miss asks for it, and `FocusResultsPage` says when to read it
+    /// again. Synchronous; what the table calls for every visible row.
+    pub fn focus_search_row(&self, position: u64) -> Option<ResultRowFfi> {
+        self.focus_driver().result_row(position).map(Into::into)
     }
 
     /// The field's placeholder while it is empty (screen 01).

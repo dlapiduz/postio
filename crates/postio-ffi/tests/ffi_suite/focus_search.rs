@@ -192,3 +192,113 @@ async fn typing_quickly_completes_only_the_searches_still_wanted() {
     );
     session.shutdown();
 }
+
+/// Wait for the next event that `pick` takes.
+async fn next<T>(session: &Session, secs: u64, mut pick: impl FnMut(&UiEvent) -> Option<T>) -> T {
+    let mut seen = None;
+    assert!(
+        heard(session, secs, |event| {
+            seen = pick(event);
+            seen.is_some()
+        })
+        .await,
+        "the event never came"
+    );
+    seen.expect("seen")
+}
+
+/// ⌘↩ over the search seed turns the main window into the results (spec
+/// 010 step 3): `FocusQuery` says what the field holds, `FocusResults`
+/// the frame with its groups, and the rows read back with the query's
+/// words marked; a filter button edits the query into a chip; Esc leaves.
+#[tokio::test(flavor = "multi_thread")]
+async fn show_all_emits_the_results_and_their_rows_read_back_marked() {
+    use postio_ffi::{FilterKindFfi, ResultsViewFfi, TermEditFfi};
+
+    let (database, _) = postio_demo::seeded(postio_demo::Seed::Search).await;
+    let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");
+    session.invoke("search");
+    let _ = dropdown(&session, 10, |view| view.state == DropdownStateFfi::Empty).await;
+    session.focus_bar_typed("atlas budget".to_owned());
+    let _ = dropdown(&session, 10, |view| view.footer_count.is_some()).await;
+    session.focus_search_show_all();
+
+    let query = next(&session, 10, |event| match event {
+        UiEvent::FocusQuery { view } => Some(view.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(query.words, "atlas budget");
+    assert!(query.chips.is_empty());
+    assert_eq!(query.buttons.len(), 8);
+
+    let view: ResultsViewFfi = next(&session, 10, |event| match event {
+        UiEvent::FocusResults { view } if !view.groups.is_empty() => Some(view.clone()),
+        _ => None,
+    })
+    .await;
+    assert!(view.groups[0].top_hits, "Best match: Top hits first");
+    assert!(view.groups[0].rows <= 3);
+    assert!(view.groups.len() > 1, "then the months");
+    assert_eq!(session.focus_search_row_count(), view.rows);
+    assert!(
+        view.count_line.ends_with("conversations"),
+        "{}",
+        view.count_line
+    );
+    assert!(view.footer_right.contains("local index"));
+    assert_eq!(view.months.len(), 12);
+
+    // The rows' passages land after their pages; read every row then.
+    let _ = heard(&session, 3, |event| {
+        matches!(event, UiEvent::FocusResultsPage { .. })
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let mut marked = Vec::new();
+    for position in 0..view.rows.min(20) {
+        let Some(row) = session.focus_search_row(position) else {
+            continue;
+        };
+        assert!(!row.accessible.is_empty());
+        for run in row.subject.iter().chain(&row.passage) {
+            if run.highlighted {
+                marked.push(run.text.to_lowercase());
+            }
+        }
+    }
+    assert!(marked.iter().any(|word| word == "atlas"), "{marked:?}");
+    assert!(marked.iter().any(|word| word == "budget"), "{marked:?}");
+
+    // A filter button: the query grows a chip, and the button turns solid.
+    session.focus_search_edit(TermEditFfi::Toggle {
+        field: "has".to_owned(),
+        value: "attachment".to_owned(),
+    });
+    let query = next(&session, 10, |event| match event {
+        UiEvent::FocusQuery { view } if !view.chips.is_empty() => Some(view.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(
+        (
+            query.chips[0].operator.as_str(),
+            query.chips[0].value.as_str()
+        ),
+        ("has:", "attachment")
+    );
+    assert!(
+        query
+            .buttons
+            .iter()
+            .any(|button| button.kind == FilterKindFfi::Attachment && button.applied)
+    );
+
+    // Esc with nothing selected: the inbox.
+    session.invoke("back");
+    next(&session, 10, |event| {
+        matches!(event, UiEvent::FocusLeaveResults).then_some(())
+    })
+    .await;
+    session.shutdown();
+}
