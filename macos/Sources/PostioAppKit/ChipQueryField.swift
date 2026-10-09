@@ -1,4 +1,5 @@
 import AppKit
+import PostioFFI
 import PostioKit
 
 /// The results' query field (specs/010-focus-search T070; design §1 and
@@ -73,8 +74,8 @@ public final class ChipQueryField: NSTextView {
         textColor = .labelColor
         insertionPointColor = .controlAccentColor
         focusRingType = .none
-        setAccessibilityRole(.textField)
-        setAccessibilityLabel("Search query")
+        setAccessibilityRole(.comboBox)
+        setAccessibilityLabel(focusSearchWords().queryLabel)
     }
 
     /// The attachments in the text, in order: what is drawn.
@@ -384,6 +385,7 @@ public final class ResultsQueryBox: NSView {
     public var editing: Bool = false {
         didSet {
             editor.isHidden = !editing
+            editor.listOpen = editing
             field.isHidden = editing
             hint.isHidden = editing
             needsDisplay = true

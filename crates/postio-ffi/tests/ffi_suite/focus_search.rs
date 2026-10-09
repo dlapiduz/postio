@@ -318,6 +318,22 @@ fn the_results_chrome_words_cross_from_postio_ui() {
         "Matches by month \u{b7} drag across months to narrow"
     );
     assert_eq!(postio_ffi::focus_search_checked(5), "5 selected");
+    // Design §5: what a screen reader calls each surface, and a dropdown
+    // row's sentence.
+    assert_eq!(words.query_label, "Search query");
+    assert_eq!(words.suggestions_label, "Search suggestions");
+    assert_eq!(words.results_label, "Search results");
+    assert_eq!(words.files_label, "Files");
+    assert_eq!(words.people_label, "People");
+    assert_eq!(
+        postio_ffi::focus_search_row_accessible(
+            "Ada Moreno".into(),
+            "ada@example.com".into(),
+            None,
+            Some("yesterday".into())
+        ),
+        "Ada Moreno, ada@example.com, yesterday"
+    );
 }
 
 /// The search seed's results for "atlas budget", Best match: the session

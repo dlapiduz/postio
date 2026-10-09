@@ -331,8 +331,8 @@ it understood.
 
 ## Phase 11: Polish and landing
 
-- [ ] T135 [P] Write failing tests in `crates/postio-ui/src/search_view.rs` and `macos/Tests/PostioKitTests/` for accessibility (design §5): the dropdown is a combobox with a listbox, each result row's accessibility label is `accessible_row`, popovers and Quick Look are operable by keys alone. Then make them green
-- [ ] T136 [P] Add the search vocabulary (term, chip, relaxation, passage, facet, results view) to `CONTEXT.md`, citing this spec
+- [x] T135 [P] Write failing tests in `crates/postio-ui/src/search_view.rs` and `macos/Tests/PostioKitTests/` for accessibility (design §5): the dropdown is a combobox with a listbox, each result row's accessibility label is `accessible_row`, popovers and Quick Look are operable by keys alone. Then make them green
+- [x] T136 [P] Add the search vocabulary (term, chip, relaxation, passage, facet, results view) to `CONTEXT.md`, citing this spec
 - [ ] T137 Final sweep: capture all 13 screens at 1440×900 light, and 06 and 07 dark, against their PNGs; every difference listed in `docs/notes/<date>-focus-search-final.md`, none unexplained (SC-005)
 - [ ] T138 Final bench run on the dev Mac recorded in the same note (SC-001–SC-003)
 - [ ] T139 Run `/speckit-analyze` over spec.md, plan.md and tasks.md and fix what it finds

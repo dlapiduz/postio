@@ -56,6 +56,7 @@ public struct PeopleListView: View {
         }
         .background(Color(nsColor: .textBackgroundColor))
         .accessibilityElement(children: .contain)
+        .accessibilityLabel(focusSearchWords().peopleLabel)
         .accessibilityAddTraits(.isSummaryElement)
     }
 }

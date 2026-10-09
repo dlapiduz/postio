@@ -131,6 +131,7 @@ public final class ToolbarSearchBox: NSView {
     /// Open it -- grown to the bar's width for a window `windowWidth` wide,
     /// ringed -- or put it back at rest.
     public func open(_ open: Bool, windowWidth: CGFloat) {
+        field.listOpen = open
         frameView.ringed = open
         frameView.radius = open ? 8 : 7
         widthConstraint?.constant = open

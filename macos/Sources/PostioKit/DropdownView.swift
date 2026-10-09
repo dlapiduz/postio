@@ -103,7 +103,7 @@ public struct DropdownView: View {
             footer
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Search")
+        .accessibilityLabel(Self.words.suggestionsLabel)
     }
 
     // MARK: sections
@@ -322,8 +322,18 @@ public struct DropdownView: View {
         .padding(.horizontal, Metrics.inset)
         .contentShape(Rectangle())
         .onTapGesture { if row.selectable { run(row.id) } }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Self.accessibleLabel(row))
         .accessibilityAddTraits(focused ? [.isSelected, .isButton] : .isButton)
+    }
+
+    /// A row as one sentence: its words, then the folder and the date. The
+    /// matched words are in it as words, so the highlight is never the only
+    /// signal (design §5); `postio-ui` composes it.
+    static func accessibleLabel(_ row: DropdownModel.Row) -> String {
+        focusSearchRowAccessible(
+            title: row.title.map(\.text).joined(), detail: row.detail.map(\.text).joined(),
+            folder: row.folder, right: row.right)
     }
 
     static func symbol(for kind: DropdownRowKindFfi) -> String {

@@ -114,7 +114,7 @@ pub use focus_search::{
     DropdownViewFfi, FileCardFfi, FileCopyFfi, FilePreviewFfi, FilesHeaderFfi, FilterButtonFfi,
     FilterKindFfi, MonthBarFfi, PersonRowFfi, PillFfi, QueryChipFfi, QueryViewFfi, ResultGroupFfi,
     ResultRowFfi, ResultsTabFfi, ResultsViewFfi, RunFfi, RunStyleFfi, SearchWordsFfi, TabFfi,
-    TermEditFfi, focus_search_checked, focus_search_words,
+    TermEditFfi, focus_search_checked, focus_search_row_accessible, focus_search_words,
 };
 pub use focus_states::{
     BannerButtonFfi, BannerFfi, BannerProgressFfi, EmptyPageFfi, EmptyShortcutFfi, SyncMarkFfi,
