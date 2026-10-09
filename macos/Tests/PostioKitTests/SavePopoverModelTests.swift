@@ -35,7 +35,8 @@ struct SavePopoverModelTests {
         model.notify = true
         model.rolling = true
         model.save()
-        #expect(engine.saved.count == 1)
+        model.save()
+        #expect(engine.saved.count == 1, "Return in the field and in the monitor is one save")
         #expect(engine.saved.first?.0 == "Atlas from Ada")
         #expect(engine.saved.first?.1 == true)
         #expect(engine.saved.first?.2 == true)
