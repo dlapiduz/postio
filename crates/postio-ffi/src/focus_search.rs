@@ -658,7 +658,10 @@ impl From<postio_focus::ResultRow> for ResultRowFfi {
             pills: row
                 .labels
                 .into_iter()
-                .map(|name| crate::focus_list::LabelPillFfi { name, color: None })
+                .map(|pill| crate::focus_list::LabelPillFfi {
+                    name: pill.name,
+                    color: pill.color,
+                })
                 .collect(),
             attachments: row.attachments,
             count_badge: row.count_badge,

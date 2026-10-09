@@ -335,6 +335,9 @@ pub struct FacetNames {
     pub people: Vec<(AddressId, EmailAddress)>,
     /// Labels, by their names.
     pub labels: Vec<(LabelId, String)>,
+    /// The colours labels were given (`#rrggbb`), for the rows' pills;
+    /// a label with none is not here.
+    pub label_colors: Vec<(LabelId, String)>,
     /// Folders, by their names.
     pub folders: Vec<(MailboxId, String)>,
 }

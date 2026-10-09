@@ -111,6 +111,17 @@ fn turns(items: &[(From, &str)]) -> Vec<(From, String)> {
         .collect()
 }
 
+/// A label's colour, as the design draws its pill's dot: Atlas is
+/// screen 06's orange; the others are colours of their own.
+fn label_color(name: &str) -> Option<&'static str> {
+    match name {
+        "Atlas" => Some("#c08a2e"),
+        "Harbor" => Some("#3d7fb8"),
+        "Receipts" => Some("#5a9a5e"),
+        _ => None,
+    }
+}
+
 /// The conversations the screens show, written out.
 fn curated() -> Vec<Thread> {
     let quiet = Duration::hours(7);
@@ -664,6 +675,7 @@ pub async fn search_demo() -> (Store, AccountId) {
                 Some(id) => *id,
                 None => {
                     let mut label = Label::new(account.id, name);
+                    label.color = label_color(name).map(str::to_owned);
                     LabelRepository::new(&connection)
                         .create(&mut label)
                         .await

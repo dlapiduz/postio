@@ -1316,6 +1316,7 @@ mod dropdown {
             names: FacetNames {
                 people: vec![(AddressId::new(1), ada()), (AddressId::new(2), tomas())],
                 labels: vec![(LabelId::new(3), "Atlas".to_owned())],
+                label_colors: Vec::new(),
                 folders: vec![(MailboxId::new(1), "Inbox".to_owned())],
             },
             elapsed: std::time::Duration::from_millis(38),

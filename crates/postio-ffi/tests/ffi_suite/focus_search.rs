@@ -384,3 +384,19 @@ async fn a_top_hit_matched_in_its_body_shows_the_bodys_passage_marked() {
     }
     session.shutdown();
 }
+
+/// A result's label pill crosses with the label's own colour, as the
+/// list's pills do, so its dot is the label's and not grey (design §3.4:
+/// the orange dot for Atlas).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_results_label_pill_carries_the_labels_colour() {
+    let (session, view) = atlas_budget_results().await;
+    let pill = (0..view.rows.min(20))
+        .filter_map(|position| session.focus_search_row(position))
+        .flat_map(|row| row.pills)
+        .find(|pill| pill.name == "Atlas")
+        .expect("an Atlas row among the first");
+    // The seed gives Atlas the design's colour.
+    assert_eq!(pill.color.as_deref(), Some("#c08a2e"));
+    session.shutdown();
+}

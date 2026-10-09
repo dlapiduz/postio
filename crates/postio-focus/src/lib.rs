@@ -61,8 +61,8 @@ pub use pickers::{
 pub use postio_ui::capture::{Mode as CaptureMode, Pick as CapturePick};
 pub use postio_ui::digest::{Page as DigestPage, Schedule as RuleSchedule};
 pub use results::{
-    Chip, FilterButton, MonthBar, QueryView, ResultGroup, ResultRow, ResultsTabView, ResultsView,
-    TermEdit,
+    Chip, FilterButton, LabelPill, MonthBar, QueryView, ResultGroup, ResultRow, ResultsTabView,
+    ResultsView, TermEdit,
 };
 pub use states::{AccountsRead, BannerButton, BannerView};
 pub use surfaces::{Host, ReaderVerb, SurfaceKind};
