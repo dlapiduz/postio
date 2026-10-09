@@ -194,6 +194,14 @@ command_ids! {
     NextMatch => "next_match",
     /// Quick Look's previous match in its conversation.
     PrevMatch => "prev_match",
+    /// A search that found nothing: run its first looser search.
+    PickRelaxation1 => "pick_relaxation_1",
+    /// Run the second looser search.
+    PickRelaxation2 => "pick_relaxation_2",
+    /// Run the third looser search.
+    PickRelaxation3 => "pick_relaxation_3",
+    /// Run the fourth looser search.
+    PickRelaxation4 => "pick_relaxation_4",
     /// Start a new message.
     Compose => "compose",
     /// Send what is in the composer.
@@ -818,6 +826,15 @@ pub enum Command {
     NextMatch,
     /// Ring Quick Look's previous match card.
     PrevMatch,
+    /// Run the first looser search a search that found nothing offers
+    /// (spec 010 US6).
+    PickRelaxation1,
+    /// Run the second looser search.
+    PickRelaxation2,
+    /// Run the third looser search.
+    PickRelaxation3,
+    /// Run the fourth looser search.
+    PickRelaxation4,
 
     // -- Compose ---------------------------------------------------------
     /// Start a new message, optionally from an existing draft.
@@ -1286,6 +1303,10 @@ impl Command {
             Command::QuickLook => CommandId::QuickLook,
             Command::NextMatch => CommandId::NextMatch,
             Command::PrevMatch => CommandId::PrevMatch,
+            Command::PickRelaxation1 => CommandId::PickRelaxation1,
+            Command::PickRelaxation2 => CommandId::PickRelaxation2,
+            Command::PickRelaxation3 => CommandId::PickRelaxation3,
+            Command::PickRelaxation4 => CommandId::PickRelaxation4,
             Command::Compose { .. } => CommandId::Compose,
             Command::Send => CommandId::Send,
             Command::ScheduleSend => CommandId::ScheduleSend,
@@ -1475,6 +1496,10 @@ impl Command {
             CommandId::QuickLook => Command::QuickLook,
             CommandId::NextMatch => Command::NextMatch,
             CommandId::PrevMatch => Command::PrevMatch,
+            CommandId::PickRelaxation1 => Command::PickRelaxation1,
+            CommandId::PickRelaxation2 => Command::PickRelaxation2,
+            CommandId::PickRelaxation3 => Command::PickRelaxation3,
+            CommandId::PickRelaxation4 => Command::PickRelaxation4,
             CommandId::Compose => Command::Compose { draft: None },
             CommandId::Send => Command::Send,
             CommandId::ScheduleSend => Command::ScheduleSend,

@@ -130,6 +130,17 @@ pub fn popover_view(effects: &[Effect]) -> Option<Option<PopoverView>> {
         })
 }
 
+/// The last no-results page among `effects`: `Some(None)` when it went.
+pub fn no_results_view(effects: &[Effect]) -> Option<Option<postio_focus::NoResultsView>> {
+    shown(effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::Relaxations(view) => Some(view.map(|view| *view)),
+            _ => None,
+        })
+}
+
 /// The last Quick Look among `effects`: `Some(None)` when it closed.
 pub fn quick_look_view(effects: &[Effect]) -> Option<Option<QuickLookView>> {
     shown(effects)
@@ -291,6 +302,13 @@ pub fn matching(query: &postio_search::ParsedQuery) -> Vec<i64> {
         })
     };
     let (only, never) = (ada(false), ada(true));
+    // Nothing is called "v4" (screen 13's "budget v4").
+    if query.filters().any(|clause| {
+        !clause.negated
+            && matches!(&clause.filter, postio_search::query::Filter::Subject(words) if words.contains("v4"))
+    }) {
+        return Vec::new();
+    }
     // `after:` and `before:` keep the days they name, by the newest match.
     let (mut after, mut before) = (None, None);
     for clause in query.filters().filter(|clause| !clause.negated) {

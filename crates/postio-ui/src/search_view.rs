@@ -1084,6 +1084,36 @@ pub fn relaxation_line(
     }
 }
 
+/// The commands that pick the looser searches, by number.
+pub const PICK_RELAXATION: [CommandId; 4] = [
+    CommandId::PickRelaxation1,
+    CommandId::PickRelaxation2,
+    CommandId::PickRelaxation3,
+    CommandId::PickRelaxation4,
+];
+
+/// The footer's keys while nothing matches (screen 13): "1–4 loosen a
+/// filter" for the `offered` looser searches, and "⌘⌫ clear filters".
+pub fn no_results_hints(keymap: &Keymap, offered: usize) -> Vec<Hint> {
+    let mut out = Vec::new();
+    let last = offered.min(PICK_RELAXATION.len());
+    if last > 0 {
+        let first = hints::key(keymap, PICK_RELAXATION[0]);
+        let to = hints::key(keymap, PICK_RELAXATION[last - 1]);
+        let key = match (first, to) {
+            (Some(first), Some(to)) if last > 1 => Some(format!("{first}\u{2013}{to}")),
+            (Some(one), _) | (None, Some(one)) => Some(one),
+            (None, None) => None,
+        };
+        out.extend(key.map(|key| Hint {
+            key,
+            label: "loosen a filter".to_owned(),
+        }));
+    }
+    out.extend(hints::hint(keymap, CommandId::BackToWords, "clear filters"));
+    out
+}
+
 /// A looser search's count, on its row's right: "4 conversations".
 pub fn relaxation_count(n: u64) -> String {
     conversations(n, false)

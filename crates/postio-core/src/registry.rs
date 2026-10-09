@@ -1096,7 +1096,11 @@ static SPECS: &[CommandSpec] = &[
         // A terminal delivers `ctrl+BackSpace` as plain backspace, so the
         // terminal's key is `alt+BackSpace`.
         alternate_bindings: &["alt+BackSpace"],
-        contexts: Context::Search.as_set(),
+        // In the Mac's results, where nothing matched, the same key clears
+        // the filters and keeps the words (spec 010 D24): there are no
+        // words to go back to, and a second command on the key would be
+        // two meanings in one place.
+        contexts: Context::Search.as_set().with(Context::Results),
         destructive: false,
         recovery: Recovery::None,
         requires: FOCUS_MAIL,
@@ -1232,6 +1236,50 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::PrevMatch,
         title: "Previous match",
         default_binding: "[",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    // A search that found nothing offers up to four looser ones, numbered
+    // (spec 010 US6, FR-030, design §3.10): the results' own, and the
+    // Mac's until Linux adopts them (D25). The same digits pick a picker's
+    // options and Filtered's tabs, each in its own context.
+    CommandSpec {
+        id: CommandId::PickRelaxation1,
+        title: "Run looser search 1",
+        default_binding: "1",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::PickRelaxation2,
+        title: "Run looser search 2",
+        default_binding: "2",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::PickRelaxation3,
+        title: "Run looser search 3",
+        default_binding: "3",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::PickRelaxation4,
+        title: "Run looser search 4",
+        default_binding: "4",
         alternate_bindings: &[],
         contexts: Context::Results.as_set(),
         destructive: false,
@@ -2750,6 +2798,10 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             | (ActionId::Builtin(C::QuickLook), Platform::Freedesktop)
             | (ActionId::Builtin(C::NextMatch), Platform::Freedesktop)
             | (ActionId::Builtin(C::PrevMatch), Platform::Freedesktop)
+            | (ActionId::Builtin(C::PickRelaxation1), Platform::Freedesktop)
+            | (ActionId::Builtin(C::PickRelaxation2), Platform::Freedesktop)
+            | (ActionId::Builtin(C::PickRelaxation3), Platform::Freedesktop)
+            | (ActionId::Builtin(C::PickRelaxation4), Platform::Freedesktop)
     )
 }
 
@@ -2826,7 +2878,7 @@ mod tests {
 
     /// What only the Mac's search dropdown and results view draw, until
     /// Linux adopts them (spec 010 D23, D25).
-    const NOT_ON_LINUX_YET: [CommandId; 12] = [
+    const NOT_ON_LINUX_YET: [CommandId; 16] = [
         CommandId::ShowAllResults,
         CommandId::ForgetRecent,
         CommandId::HistoryBack,
@@ -2839,6 +2891,10 @@ mod tests {
         CommandId::QuickLook,
         CommandId::NextMatch,
         CommandId::PrevMatch,
+        CommandId::PickRelaxation1,
+        CommandId::PickRelaxation2,
+        CommandId::PickRelaxation3,
+        CommandId::PickRelaxation4,
     ];
 
     #[test]

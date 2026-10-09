@@ -61,9 +61,9 @@ pub use pickers::{
 pub use postio_ui::capture::{Mode as CaptureMode, Pick as CapturePick};
 pub use postio_ui::digest::{Page as DigestPage, Schedule as RuleSchedule};
 pub use results::{
-    Chip, DatePresetView, FilterButton, LabelPill, MatchCard, MonthBar, PopoverRow, PopoverView,
-    QueryView, QuickLookView, ResultGroup, ResultRow, ResultsTabView, ResultsView, SaveView,
-    TermEdit,
+    Chip, DatePresetView, FilterButton, LabelPill, MatchCard, MonthBar, NoResultsView, PopoverRow,
+    PopoverView, QueryView, QuickLookView, RelaxationView, ResultGroup, ResultRow, ResultsTabView,
+    ResultsView, SaveView, TermEdit,
 };
 pub use states::{AccountsRead, BannerButton, BannerView};
 pub use surfaces::{Host, ReaderVerb, SurfaceKind};
@@ -513,6 +513,9 @@ pub enum Intent {
     /// Draw Quick Look over the results, whole, in place of the one
     /// showing; `None` closes it (spec 010 US4).
     QuickLook(Option<Box<QuickLookView>>),
+    /// The results found nothing: draw this page, whole, in the rows'
+    /// place; `None` takes it away (spec 010 US6, design §3.10).
+    Relaxations(Option<Box<NoResultsView>>),
     /// The main window shows the inbox again; its cursor and selection
     /// follow.
     LeaveResults,
@@ -686,6 +689,16 @@ pub enum Request {
         /// Quick Look's stamp, echoed in the answer.
         stamp: u64,
     },
+    /// The ways out of a search that found nothing: each looser search
+    /// and how many conversations it finds (spec 010 US6, FR-043).
+    Relaxations {
+        /// The search that found nothing, lowered.
+        query: postio_search::ParsedQuery,
+        /// The day its relative dates are counted from.
+        today: chrono::NaiveDate,
+        /// The results' stamp, echoed in the answer.
+        stamp: u64,
+    },
     /// The searches run lately, newest first.
     RecentSearches,
     /// Keep `query` among the searches run, with what it matched.
@@ -850,6 +863,7 @@ impl Request {
             Request::Conversations { .. } => Some(Lane::Conversations),
             Request::Passages { .. } => Some(Lane::Passages),
             Request::QuickLookMatches { .. } => Some(Lane::Matches),
+            Request::Relaxations { .. } => Some(Lane::Relaxations),
             _ => None,
         }
     }
@@ -930,6 +944,13 @@ pub enum Reply {
         stamp: u64,
         /// The conversation's matches, oldest first.
         answer: Result<Vec<postio_search::results::ConversationMatch>, String>,
+    },
+    /// The answer to [`Request::Relaxations`].
+    Relaxations {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// Each looser search with its count.
+        answer: Result<Vec<(postio_search::relax::Relaxation, u64)>, String>,
     },
     /// The answer to [`Request::RecentSearches`] and
     /// [`Request::ForgetSearch`].
@@ -1252,7 +1273,8 @@ impl FocusController {
                 _,
                 reply @ (Reply::ResultsPage { .. }
                 | Reply::ResultsPassages { .. }
-                | Reply::QuickLookMatches { .. }),
+                | Reply::QuickLookMatches { .. }
+                | Reply::Relaxations { .. }),
             ) => {
                 let steps = self.results_reply(reply);
                 self.effects(steps)
@@ -1673,6 +1695,16 @@ impl FocusController {
         }
         if self.surfaces.top().is_none() {
             if self.results.is_some() && results::results_key(id) {
+                return true;
+            }
+            // ⌘⌫ clears the filters while nothing matches (D24), and is
+            // nobody's otherwise.
+            if id == CommandId::BackToWords
+                && self
+                    .results
+                    .as_ref()
+                    .is_some_and(results::Results::found_nothing)
+            {
                 return true;
             }
             if self.policy.caps.results_view

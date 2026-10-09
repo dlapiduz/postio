@@ -213,7 +213,11 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::StepRangeForward
         | C::QuickLook
         | C::NextMatch
-        | C::PrevMatch => Some(G::InSearch),
+        | C::PrevMatch
+        | C::PickRelaxation1
+        | C::PickRelaxation2
+        | C::PickRelaxation3
+        | C::PickRelaxation4 => Some(G::InSearch),
 
         // ── Digests and filtering ───────────────────────────────────────
         C::DigestRule
