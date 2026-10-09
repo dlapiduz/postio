@@ -39,9 +39,11 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use chrono::{DateTime, NaiveDate, Utc};
-use postio_model::{AccountScope, AttachmentId, EmailAddress, LabelId, MailboxId, MessageId};
+use postio_model::{
+    AccountScope, AddressId, AttachmentId, EmailAddress, LabelId, MailboxId, MessageId,
+};
 use postio_search::ParsedQuery;
-use postio_search::facets::{Scope, SearchFacets};
+use postio_search::facets::{Count, MonthCount, Scope, SearchFacets, months_ending, preset_starts};
 use postio_search::query::Filter;
 use postio_search::results::{
     ConversationHit, ConversationKey, ConversationOrder, ConversationResults, Match, RankReason,
@@ -161,12 +163,12 @@ pub async fn search_conversations(
         // Nothing reads attachment contents yet (step 9), so there is
         // nothing outstanding to be incomplete about.
         contents_complete: true,
-        facets: SearchFacets {
-            capped: fold.capped(),
-            ..SearchFacets::default()
-        },
-        files: 0,
-        people: 0,
+        facets: facets(&conversations, request.today, fold.capped()),
+        files: conversations
+            .iter()
+            .map(|conversation| conversation.files)
+            .sum(),
+        people: people_in(&conversations),
         elapsed,
     })
 }
@@ -426,6 +428,109 @@ impl Conversation {
         self.labels.extend(&message.labels);
         self.folders.push(message.mailbox);
     }
+}
+
+// ---------------------------------------------------------------------------
+// The facets
+// ---------------------------------------------------------------------------
+
+/// How many senders and recipients a facet keeps: the popovers' lists.
+const FACET_PEOPLE: usize = 50;
+
+/// Every facet, counted in conversations over the fold (D3): a conversation
+/// counts once for a value when any of its matched messages has it, which
+/// is exactly when the query with that term added would still find it
+/// (SC-008). The months put a conversation in the month of its newest
+/// match (D4), and a preset counts it when its newest match is on or after
+/// the preset's start, which is when that `after:` would find it.
+fn facets(conversations: &[Conversation], today: NaiveDate, capped: bool) -> SearchFacets {
+    let mut senders: HashMap<i64, u64> = HashMap::new();
+    let mut recipients: HashMap<i64, u64> = HashMap::new();
+    let mut labels: HashMap<i64, u64> = HashMap::new();
+    let mut folders: HashMap<i64, u64> = HashMap::new();
+    let mut facets = SearchFacets {
+        capped,
+        ..SearchFacets::default()
+    };
+
+    let firsts = months_ending(today);
+    let bounds: Vec<i64> = firsts
+        .iter()
+        .copied()
+        .chain(firsts[11].checked_add_months(chrono::Months::new(1)))
+        .map(super::day_start_millis)
+        .collect();
+    let presets: Vec<Option<i64>> = preset_starts(today)
+        .iter()
+        .map(|start| start.map(super::day_start_millis))
+        .collect();
+    let mut months = [0u64; 12];
+
+    for conversation in conversations {
+        for (set, counts) in [
+            (&conversation.senders, &mut senders),
+            (&conversation.recipients, &mut recipients),
+            (&conversation.labels, &mut labels),
+            (&conversation.folders, &mut folders),
+        ] {
+            for id in set {
+                *counts.entry(*id).or_default() += 1;
+            }
+        }
+        facets.attachment += u64::from(conversation.attachment);
+        facets.action += u64::from(conversation.action);
+        facets.unread += u64::from(conversation.unread);
+        let newest = conversation.newest;
+        if let Some(month) = bounds
+            .windows(2)
+            .position(|bound| bound[0] <= newest && newest < bound[1])
+        {
+            months[month] += 1;
+        }
+        for (count, start) in facets.presets.iter_mut().zip(&presets) {
+            if start.is_none_or(|start| newest >= start) {
+                *count += 1;
+            }
+        }
+    }
+
+    facets.senders = ranked(senders, Some(FACET_PEOPLE), AddressId::new);
+    facets.recipients = ranked(recipients, Some(FACET_PEOPLE), AddressId::new);
+    facets.labels = ranked(labels, None, LabelId::new);
+    facets.folders = ranked(folders, None, MailboxId::new);
+    facets.months = std::array::from_fn(|at| MonthCount {
+        month: firsts[at],
+        conversations: months[at],
+    });
+    facets
+}
+
+/// A facet's counts, most first, ties by id so the order is stable.
+fn ranked<T>(counts: HashMap<i64, u64>, keep: Option<usize>, id: fn(i64) -> T) -> Vec<Count<T>> {
+    let mut counts: Vec<(i64, u64)> = counts.into_iter().collect();
+    counts.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    if let Some(keep) = keep {
+        counts.truncate(keep);
+    }
+    counts
+        .into_iter()
+        .map(|(value, conversations)| Count {
+            id: id(value),
+            conversations,
+        })
+        .collect()
+}
+
+/// Everyone the matched messages are from or to: the People tab's count.
+fn people_in(conversations: &[Conversation]) -> u64 {
+    let mut everyone: Vec<i64> = conversations
+        .iter()
+        .flat_map(|conversation| conversation.senders.iter().chain(&conversation.recipients))
+        .copied()
+        .collect();
+    everyone.sort_unstable();
+    everyone.dedup();
+    everyone.len() as u64
 }
 
 // ---------------------------------------------------------------------------

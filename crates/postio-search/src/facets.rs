@@ -231,6 +231,26 @@ pub fn months_ending(today: NaiveDate) -> [NaiveDate; 12] {
     })
 }
 
+/// Where the Date popover's five presets start, in [`SearchFacets::presets`]
+/// order: last 7 days, last 30 days, this quarter, this year, and any time
+/// (`None`, no start).
+///
+/// Each is the `after:` its words lower to, so a preset's count is the
+/// count of the query with that `after:` added: "the last 30 days" is
+/// [`crate::natural`]'s rolling `after:` thirty days back, and a quarter or
+/// a year starts on its first day.
+pub fn preset_starts(today: NaiveDate) -> [Option<NaiveDate>; 5] {
+    let back = |days: u64| today.checked_sub_days(chrono::Days::new(days));
+    let quarter = (today.month0() / 3) * 3 + 1;
+    [
+        back(7),
+        back(30),
+        NaiveDate::from_ymd_opt(today.year(), quarter, 1),
+        NaiveDate::from_ymd_opt(today.year(), 1, 1),
+        None,
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,6 +270,26 @@ mod tests {
             day(2026, 1, 1),
             "December's twelve are one calendar year"
         );
+    }
+
+    #[test]
+    fn the_date_presets_start_where_their_words_would() {
+        let day = |y, m, d| chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        // "the last 7 days" and "the last 30 days" lower to an `after:` that
+        // many days back (`natural`); a quarter and a year from their first
+        // day; any time has no start.
+        assert_eq!(
+            preset_starts(day(2026, 9, 30)),
+            [
+                Some(day(2026, 9, 23)),
+                Some(day(2026, 8, 31)),
+                Some(day(2026, 7, 1)),
+                Some(day(2026, 1, 1)),
+                None,
+            ]
+        );
+        assert_eq!(preset_starts(day(2026, 2, 3))[2], Some(day(2026, 1, 1)));
+        assert_eq!(preset_starts(day(2026, 12, 31))[2], Some(day(2026, 10, 1)));
     }
 
     fn refinement(token: &str, hits: u64) -> Refinement {
