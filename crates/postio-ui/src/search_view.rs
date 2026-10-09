@@ -149,14 +149,16 @@ pub fn results_count(n: u64) -> String {
     }
 }
 
-/// A top hit's date column: the day and month ("26 Sep"), with the year
-/// for another year. Both times in the person's zone.
+/// A top hit's date column: the day and month ("26 Sep"), with the year's
+/// last two digits for another year ("22 Oct 25"), the list's short form
+/// (`row::timestamp`): the design never draws a year, and the full one
+/// does not fit the results' 62-pt column. Both times in the person's zone.
 pub fn hit_date<Tz: TimeZone>(at: DateTime<Tz>, now: DateTime<Tz>) -> String {
     let (day, today) = (at.date_naive(), now.date_naive());
     if day.year() == today.year() {
         day.format("%-d %b").to_string()
     } else {
-        day.format("%-d %b %Y").to_string()
+        day.format("%-d %b %y").to_string()
     }
 }
 
@@ -750,7 +752,9 @@ mod tests {
         let now = at(2026, 9, 26);
         assert_eq!(hit_date(now, now), "26 Sep");
         assert_eq!(hit_date(at(2026, 8, 14), now), "14 Aug");
-        assert_eq!(hit_date(at(2025, 12, 3), now), "3 Dec 2025");
+        // Another year: the list's short form (`row::timestamp`), which
+        // fits the 62-pt date column.
+        assert_eq!(hit_date(at(2025, 12, 3), now), "3 Dec 25");
     }
 
     #[test]
