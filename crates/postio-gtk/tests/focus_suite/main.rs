@@ -127,6 +127,11 @@ const IGNORED: &[&str] = &[
     // Needs a working document portal on the session bus, which a CI machine
     // does not have; run by name where there is one.
     "drag_out::a_dragged_message_survives_the_portal",
+    // Flaky on CI's loaded headless runner: the right-click menu sometimes
+    // never opens inside the settle window (#1793; three PRs that change no
+    // GTK code, once on the retry too). Back in `CASES`' default run when
+    // #1793 finds what the popover waits on; run by name until then.
+    "row_menu::a_right_click_outside_the_selection_is_for_that_row_inside_it_for_the_selection",
 ];
 
 const CASES: &[(&str, fn())] = &[
