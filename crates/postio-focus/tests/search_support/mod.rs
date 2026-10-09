@@ -12,14 +12,14 @@ use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
 use postio_config::paths::Platform;
 use postio_core::CommandId;
 use postio_focus::{
-    Effect, FocusController, Input, Intent, Policy, PopoverView, QueryView, Reply, Request,
-    ResultsView, RowFacts, Rows, Ticket,
+    Effect, FocusController, Input, Intent, Policy, PopoverView, QueryView, QuickLookView, Reply,
+    Request, ResultsView, RowFacts, Rows, Ticket,
 };
 use postio_model::{AddressId, EmailAddress, LabelId, MailboxId, MessageId, ThreadId};
 use postio_search::facets::{Count, MonthCount, SearchFacets, months_ending};
 use postio_search::results::{
-    ConversationHit, ConversationKey, ConversationOrder, ConversationResults, FacetNames, Match,
-    Passage, RankReason, Source,
+    ConversationHit, ConversationKey, ConversationMatch, ConversationOrder, ConversationResults,
+    FacetNames, Match, Passage, RankReason, Source,
 };
 
 /// An inbox of `len` conversations.
@@ -128,6 +128,65 @@ pub fn popover_view(effects: &[Effect]) -> Option<Option<PopoverView>> {
             Intent::Popover(view) => Some(view.map(|view| *view)),
             _ => None,
         })
+}
+
+/// The last Quick Look among `effects`: `Some(None)` when it closed.
+pub fn quick_look_view(effects: &[Effect]) -> Option<Option<QuickLookView>> {
+    shown(effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::QuickLook(view) => Some(view.map(|view| *view)),
+            _ => None,
+        })
+}
+
+/// Every match in conversation `n`, oldest first, as the engine reads
+/// them: an earlier message from Ben, the best message's own words, the
+/// subject.
+pub fn conversation_matches(key: ConversationKey) -> Vec<ConversationMatch> {
+    let ConversationKey::Thread(thread) = key else {
+        return Vec::new();
+    };
+    let n = thread.get() - 2000;
+    let best = conversation(n);
+    let subject = best.subject.clone().unwrap_or_default();
+    let marks =
+        postio_search::highlight::find(&subject, &["atlas".to_owned(), "budget".to_owned()]);
+    vec![
+        ConversationMatch {
+            message: Some(MessageId::new(500 + n)),
+            from: Some(ben()),
+            found: Match {
+                source: Source::Body,
+                passage: Some(passage_for(MessageId::new(500 + n))),
+                when: Some(when(n) - chrono::TimeDelta::days(1)),
+            },
+        },
+        ConversationMatch {
+            message: Some(best.best),
+            from: best.from.clone(),
+            found: Match {
+                source: Source::Body,
+                passage: Some(passage_for(best.best)),
+                when: Some(when(n)),
+            },
+        },
+        ConversationMatch {
+            message: None,
+            from: None,
+            found: Match {
+                source: Source::Subject,
+                passage: Some(Passage {
+                    text: subject,
+                    ranges: marks,
+                    elided_start: false,
+                    elided_end: false,
+                }),
+                when: None,
+            },
+        },
+    ]
 }
 
 /// The query each results read among `effects` asked for.
@@ -389,6 +448,10 @@ pub fn reply_to(request: &Request) -> Option<Reply> {
                     )
                 })
                 .collect()),
+        }),
+        Request::QuickLookMatches { key, stamp, .. } => Some(Reply::QuickLookMatches {
+            stamp: *stamp,
+            answer: Ok(conversation_matches(*key)),
         }),
         _ => None,
     }

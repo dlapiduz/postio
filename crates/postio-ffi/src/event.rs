@@ -500,6 +500,12 @@ pub enum UiEvent {
         /// What it draws.
         view: Option<crate::focus_search::PopoverViewFfi>,
     },
+    /// Draw Quick Look over the results, whole, in place of the one
+    /// showing; `None` closes it (spec 010 step 5, FR-028).
+    FocusQuickLook {
+        /// What it draws.
+        view: Option<crate::focus_search::QuickLookViewFfi>,
+    },
 }
 
 /// How a Focus toast is drawn.

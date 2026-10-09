@@ -25,8 +25,8 @@ use postio_search::ParsedQuery;
 use postio_search::facets::SearchFacets;
 use postio_search::query::{Clause, Filter, TokenKind};
 use postio_search::results::{
-    ConversationHit, ConversationKey, ConversationOrder, ConversationResults, FacetNames, Match,
-    ResultsTab, Source,
+    ConversationHit, ConversationKey, ConversationMatch, ConversationOrder, ConversationResults,
+    FacetNames, Match, ResultsTab, Source,
 };
 use postio_ui::hints::Hint;
 use postio_ui::search_view::{self as words, FilterKind};
@@ -288,6 +288,106 @@ pub struct DatePresetView {
     pub selected: bool,
 }
 
+/// One match card in Quick Look (design §3.7): where and when on the left,
+/// the passage on the right.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatchCard {
+    /// "Body", "Earlier reply", "Subject", a file's name.
+    pub place: String,
+    /// "Ada · 26 Sep"; where in a file; empty for the subject.
+    pub when: String,
+    /// The words around the match, marked; empty until they are cut.
+    pub passage: Vec<Run>,
+    /// The place is a file's name.
+    pub file: bool,
+}
+
+/// Quick Look over the results, whole (design §3.7, screen 10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuickLookView {
+    /// "Quick Look".
+    pub title: String,
+    /// "1 of 12".
+    pub position: String,
+    /// "j/k moves through results while it stays open".
+    pub walk: Option<Hint>,
+    /// The header's buttons: Open, Archive, Close, each with its key.
+    pub actions: Vec<Hint>,
+    /// The result's subject, its matched words marked.
+    pub subject: Vec<Run>,
+    /// Its sender line: the name (strong), the address (mono), when, and
+    /// the thread's size.
+    pub sender: Vec<Run>,
+    /// "4 matches in this conversation".
+    pub matches_line: String,
+    /// "]/[ jump between them".
+    pub matches_hint: Option<Hint>,
+    /// One card per match, oldest first, the subject last.
+    pub cards: Vec<MatchCard>,
+    /// The card with the accent ring.
+    pub current: Option<u32>,
+}
+
+/// Quick Look, open on one result.
+#[derive(Debug)]
+pub(crate) struct QuickLook {
+    /// The row it shows.
+    position: u64,
+    /// That row's conversation, as it was when Quick Look came to it.
+    hit: ConversationHit,
+    /// Every match in the conversation, once read; until then the row's.
+    matches: Option<Vec<ConversationMatch>>,
+    /// The ringed card.
+    current: usize,
+    /// What its read was asked under.
+    stamp: u64,
+}
+
+impl QuickLook {
+    /// The cards' matches: the conversation's once read, else the row's
+    /// own, each with its writer when the row knows it.
+    fn matches(&self) -> Vec<ConversationMatch> {
+        if let Some(matches) = &self.matches {
+            return matches.clone();
+        }
+        let mut row: Vec<ConversationMatch> = self
+            .hit
+            .matches
+            .iter()
+            .filter(|found| found.source != Source::Subject)
+            .map(|found| ConversationMatch {
+                message: Some(self.hit.best),
+                from: match found.source {
+                    Source::Quoted => None,
+                    _ => self.hit.from.clone(),
+                },
+                found: Match {
+                    when: found.when.or(Some(self.hit.newest_match)),
+                    ..found.clone()
+                },
+            })
+            .collect();
+        // The subject is one card, last, as the conversation's are.
+        if self
+            .hit
+            .matches
+            .iter()
+            .any(|found| found.source == Source::Subject)
+        {
+            row.push(ConversationMatch {
+                message: None,
+                from: None,
+                found: Match {
+                    source: Source::Subject,
+                    passage: None,
+                    when: None,
+                },
+            });
+        }
+        row
+    }
+}
+
 /// A change to the query from a control rather than the keyboard, as
 /// `postio-ffi` hands it over (contracts/ffi-search.md `TermEditFfi`): the
 /// operator's keyword and value, which Rust spells (D13).
@@ -456,6 +556,8 @@ pub(crate) struct Results {
     /// the bars outside a range are drawn from, so a range can be dragged
     /// wider than the one the results were narrowed to.
     undated: Option<(String, [postio_search::facets::MonthCount; 12])>,
+    /// Quick Look, while it is open over the results.
+    pub(crate) quick_look: Option<QuickLook>,
     /// Everyone an answer has named, kept across queries: a chip or a
     /// button names its person while the next answer is on its way,
     /// rather than falling back to the address and back again.
@@ -487,6 +589,7 @@ impl Results {
             remembered: false,
             popover: None,
             undated: None,
+            quick_look: None,
             people: Vec::new(),
         }
     }
@@ -1539,6 +1642,163 @@ impl Results {
         })
     }
 
+    /// Quick Look on the focused row: what it reads, asked under `stamp`;
+    /// `None` while the row is not read yet.
+    fn look(&mut self, stamp: u64) -> Option<Request> {
+        let position = self.cursor?;
+        let (hit, _, _) = self.hit_at(position)?;
+        let hit = hit.clone();
+        let key = hit.key;
+        self.quick_look = Some(QuickLook {
+            position,
+            hit,
+            matches: None,
+            current: 0,
+            stamp,
+        });
+        Some(Request::QuickLookMatches {
+            query: self.parsed.clone(),
+            key,
+            stamp,
+        })
+    }
+
+    /// The conversation's matches landed: the cards are theirs, and the
+    /// ring on the first that is the row's own message. Whether Quick Look
+    /// changed.
+    fn matches_landed(
+        &mut self,
+        stamp: u64,
+        answer: Result<Vec<ConversationMatch>, String>,
+    ) -> bool {
+        let Some(look) = self.quick_look.as_mut().filter(|look| look.stamp == stamp) else {
+            return false;
+        };
+        let found = match answer {
+            Ok(found) if !found.is_empty() => found,
+            // Nothing read: the row's own matches stay, which are true.
+            Ok(_) => return false,
+            Err(error) => {
+                tracing::debug!(%error, "a conversation's matches could not be read");
+                return false;
+            }
+        };
+        look.current = found
+            .iter()
+            .position(|each| each.message == Some(look.hit.best))
+            .unwrap_or(0);
+        look.matches = Some(found);
+        true
+    }
+
+    /// ] or [: the ring a card on, or back. Whether it moved.
+    fn step_match(&mut self, by: i64) -> bool {
+        let Some(look) = self.quick_look.as_mut() else {
+            return false;
+        };
+        let cards = look.matches().len();
+        if cards == 0 {
+            return false;
+        }
+        let next = (look.current as i64 + by).clamp(0, cards as i64 - 1) as usize;
+        if next == look.current {
+            return false;
+        }
+        look.current = next;
+        true
+    }
+
+    /// Quick Look, drawn.
+    fn quick_look_view(&self, with: &Words<'_>) -> Option<QuickLookView> {
+        use crate::dropdown::RunStyle;
+        let look = self.quick_look.as_ref()?;
+        let hit = &look.hit;
+        let matches = look.matches();
+        let subject = hit.subject.clone().unwrap_or_default();
+        let run = |text: String, style: RunStyle| Run {
+            text,
+            highlighted: false,
+            style,
+        };
+
+        let mut sender = Vec::new();
+        if let Some(from) = &hit.from {
+            sender.push(run(postio_ui::command_bar::said_of(from), RunStyle::Strong));
+            if from
+                .name
+                .as_deref()
+                .is_some_and(|name| !name.trim().is_empty())
+            {
+                sender.push(run(" ".to_owned(), RunStyle::Plain));
+                sender.push(run(from.address.clone(), RunStyle::Mono));
+            }
+        }
+        // When the row's own message was sent, once its card says; until
+        // then when the conversation last matched.
+        let sent = matches
+            .iter()
+            .find(|each| each.message == Some(hit.best))
+            .and_then(|each| each.found.when)
+            .unwrap_or(hit.newest_match);
+        let tail: Vec<String> = std::iter::once(words::sent_at(sent.with_timezone(&Local)))
+            .chain(words::thread_size(hit.messages))
+            .collect();
+        let tail = tail.join(" \u{b7} ");
+        sender.push(run(
+            if sender.is_empty() {
+                tail
+            } else {
+                format!(" \u{b7} {tail}")
+            },
+            RunStyle::Plain,
+        ));
+
+        let cards: Vec<MatchCard> = matches
+            .iter()
+            .map(|each| {
+                let passage = match (&each.found.passage, &each.found.source) {
+                    (Some(cut), _) => dropdown::passage(cut),
+                    // The subject before the conversation is read: the
+                    // row's own, marked as the header marks it.
+                    (None, Source::Subject) => dropdown::marked(
+                        &subject,
+                        &postio_search::highlight::find(&subject, &self.terms),
+                    ),
+                    (None, _) => Vec::new(),
+                };
+                MatchCard {
+                    place: words::match_place(&each.found.source),
+                    when: words::match_when(
+                        &each.found.source,
+                        each.from.as_ref(),
+                        each.found.when.map(|when| when.with_timezone(&Local)),
+                        with.now,
+                    ),
+                    passage,
+                    file: matches!(
+                        each.found.source,
+                        Source::FileName { .. } | Source::FileContent { .. }
+                    ),
+                }
+            })
+            .collect();
+        Some(QuickLookView {
+            title: words::QUICK_LOOK.to_owned(),
+            position: words::quick_look_position(look.position, self.rows()),
+            walk: words::quick_look_walk(with.keymap),
+            actions: words::quick_look_actions(with.keymap),
+            subject: dropdown::marked(
+                &subject,
+                &postio_search::highlight::find(&subject, &self.terms),
+            ),
+            sender,
+            matches_line: words::matches_line(cards.len()),
+            matches_hint: words::matches_hint(with.keymap),
+            current: (!cards.is_empty()).then(|| look.current.min(cards.len() - 1) as u32),
+            cards,
+        })
+    }
+
     /// The results as history keeps them.
     pub(crate) fn snapshot(&self) -> crate::history::Snapshot {
         crate::history::Snapshot {
@@ -1586,7 +1846,7 @@ pub(crate) fn show(view: ResultsView) -> Step {
 }
 
 /// The commands the results answer while nothing is over them.
-const RESULTS_KEYS: [CommandId; 18] = [
+const RESULTS_KEYS: [CommandId; 21] = [
     CommandId::NextMessage,
     CommandId::PrevMessage,
     CommandId::FirstMessage,
@@ -1605,6 +1865,9 @@ const RESULTS_KEYS: [CommandId; 18] = [
     CommandId::SaveSearch,
     CommandId::StepRangeBack,
     CommandId::StepRangeForward,
+    CommandId::QuickLook,
+    CommandId::NextMatch,
+    CommandId::PrevMatch,
 ];
 
 /// Whether the results, up, answer `id` themselves: their own keys, and
@@ -1745,8 +2008,9 @@ impl FocusController {
 
     /// Back to the inbox, on its own cursor and selection.
     fn show_inbox(&mut self) -> Vec<Step> {
+        let mut steps = self.close_quick_look();
         self.results = None;
-        let mut steps = vec![Step::Show(Intent::LeaveResults)];
+        steps.push(Step::Show(Intent::LeaveResults));
         steps.extend(self.cursor.redraw(self.feed.total()));
         steps
     }
@@ -1754,7 +2018,7 @@ impl FocusController {
     /// Show `entry`, from history. A popover open over what it leaves
     /// goes with it, unapplied: history keeps the query it opened on.
     fn show_entry(&mut self, entry: Entry) -> Vec<Step> {
-        let mut steps = Vec::new();
+        let mut steps = self.close_quick_look();
         if self
             .results
             .as_ref()
@@ -1787,6 +2051,9 @@ impl FocusController {
     /// A command while the results are up and nothing is over them;
     /// `None` hands it on to the list's table (`/`, `c`, `?`, the palette).
     pub(crate) fn results_command(&mut self, id: CommandId) -> Option<Vec<Step>> {
+        if let Some(steps) = self.quick_look_command(id) {
+            return Some(steps);
+        }
         let results = self.results.as_mut()?;
         let steps = match id {
             CommandId::NextMessage | CommandId::PrevMessage => {
@@ -1873,21 +2140,136 @@ impl FocusController {
             }
             // A picker hangs from a row the results draw: step 6 (T100).
             _ if crate::pickers::opens_picker(id) => Vec::new(),
-            _ if postio_ui::focus_target::dispatch(id).is_some() => {
-                let Some((message, thread)) = results.cursor_message() else {
-                    return Some(Vec::new());
-                };
-                let row = crate::RowFacts {
-                    id: message,
-                    digest: false,
-                    threads: thread.into_iter().collect(),
-                    writes: false,
-                };
-                self.verbs.command_on(id, &row).unwrap_or_default()
+            // A verb on mail acts on the focused result. One on nothing --
+            // Undo, Refresh -- goes on to the list's path, which sends it
+            // as it is: ⌘Z after archiving a result takes it back.
+            _ if matches!(
+                postio_ui::focus_target::dispatch(id),
+                Some(postio_ui::focus_target::Dispatch::OnMail(_))
+            ) =>
+            {
+                self.result_verb(id)
             }
             _ => return None,
         };
         Some(steps)
+    }
+
+    /// A verb on the focused result.
+    fn result_verb(&mut self, id: CommandId) -> Vec<Step> {
+        let Some((message, thread)) = self.results.as_ref().and_then(Results::cursor_message)
+        else {
+            return Vec::new();
+        };
+        let row = crate::RowFacts {
+            id: message,
+            digest: false,
+            threads: thread.into_iter().collect(),
+            writes: false,
+        };
+        self.verbs.command_on(id, &row).unwrap_or_default()
+    }
+
+    /// Quick Look's keys (spec 010 US4, FR-028, design §3.7): Space opens
+    /// and closes it; while it is open, ]/[ ring the next and previous
+    /// match, j/k move the results and it follows in place, ↩ opens the
+    /// message in its place, `a` archives and it moves on, Esc closes it
+    /// first. `None` when `id` is not one of its keys now.
+    fn quick_look_command(&mut self, id: CommandId) -> Option<Vec<Step>> {
+        let results = self.results.as_mut()?;
+        let open = results.quick_look.is_some();
+        let steps = match id {
+            CommandId::QuickLook if open => self.close_quick_look(),
+            CommandId::QuickLook => self.look(),
+            CommandId::NextMatch | CommandId::PrevMatch => {
+                let by = if id == CommandId::NextMatch { 1 } else { -1 };
+                if results.step_match(by) {
+                    self.draw_quick_look()
+                } else {
+                    Vec::new()
+                }
+            }
+            _ if !open => return None,
+            CommandId::NextMessage
+            | CommandId::PrevMessage
+            | CommandId::FirstMessage
+            | CommandId::LastMessage => {
+                let by = match id {
+                    CommandId::NextMessage => 1,
+                    CommandId::PrevMessage => -1,
+                    CommandId::FirstMessage => i64::MIN / 2,
+                    _ => i64::MAX / 2,
+                };
+                let moved = results.step(by);
+                let mut steps = cursor_moved(moved);
+                if moved.is_some() {
+                    steps.extend(self.look());
+                }
+                steps
+            }
+            CommandId::OpenMessage => {
+                let mut steps = self.close_quick_look();
+                steps.extend(self.open_result());
+                steps
+            }
+            CommandId::Back => self.close_quick_look(),
+            // The verb, then the next result -- or, after the last, nothing
+            // left to look at (spec edge case: "the panel moves to the next
+            // result, or closes if none is left").
+            CommandId::Archive | CommandId::Delete => {
+                let mut steps = self.result_verb(id);
+                let moved = self.results.as_mut().and_then(|results| results.step(1));
+                steps.extend(cursor_moved(moved));
+                if moved.is_some() {
+                    steps.extend(self.look());
+                } else {
+                    steps.extend(self.close_quick_look());
+                }
+                steps
+            }
+            _ => return None,
+        };
+        Some(steps)
+    }
+
+    /// Quick Look on the focused result: drawn from the row now, its
+    /// conversation's matches asked for. Closed when the row is not read.
+    fn look(&mut self) -> Vec<Step> {
+        let stamp = self.stamp();
+        let Some(results) = self.results.as_mut() else {
+            return Vec::new();
+        };
+        match results.look(stamp) {
+            Some(request) => {
+                let mut steps = self.draw_quick_look();
+                steps.push(Step::Ask(request));
+                steps
+            }
+            None => self.close_quick_look(),
+        }
+    }
+
+    /// Quick Look, drawn whole.
+    fn draw_quick_look(&self) -> Vec<Step> {
+        let words = self.results_words();
+        self.results
+            .as_ref()
+            .and_then(|results| results.quick_look_view(&words))
+            .map(|view| Step::Show(Intent::QuickLook(Some(Box::new(view)))))
+            .into_iter()
+            .collect()
+    }
+
+    /// Close Quick Look, when it is open.
+    pub(crate) fn close_quick_look(&mut self) -> Vec<Step> {
+        match self
+            .results
+            .as_mut()
+            .and_then(|results| results.quick_look.take())
+        {
+            Some(_) => vec![Step::Show(Intent::QuickLook(None))],
+            None => Vec::new(),
+        }
     }
 
     /// Open the focused result, among the others its `j`/`k` walk.
@@ -1924,7 +2306,9 @@ impl FocusController {
         results.tab = tab;
         // The Files and People tabs list their own (steps 9 and 10); the
         // frame says which is shown.
-        self.draw_results()
+        let mut steps = self.close_quick_look();
+        steps.extend(self.draw_results());
+        steps
     }
 
     fn results_order(&mut self, order: ConversationOrder) -> Vec<Step> {
@@ -1937,7 +2321,10 @@ impl FocusController {
         }
         results.order = order;
         results.cursor = None;
-        results.again(stamp)
+        let asks = results.again(stamp);
+        let mut steps = self.close_quick_look();
+        steps.extend(asks);
+        steps
     }
 
     /// Change the query by `edit` and ask again: the field shows the new
@@ -1958,7 +2345,8 @@ impl FocusController {
         };
         results.set_query(query, parsed);
         let asks = results.again(stamp);
-        let mut steps = vec![Step::Show(Intent::Query(self.query_view()))];
+        let mut steps = self.close_quick_look();
+        steps.push(Step::Show(Intent::Query(self.query_view())));
         steps.extend(self.draw_popover());
         steps.extend(asks);
         steps
@@ -1977,7 +2365,7 @@ impl FocusController {
         if !kind.has_popover() {
             return Vec::new();
         }
-        let mut steps = Vec::new();
+        let mut steps = self.close_quick_look();
         if self
             .results
             .as_ref()
@@ -2072,6 +2460,7 @@ impl FocusController {
         };
         results.set_query(popover.before, parsed);
         let asks = results.again(stamp);
+        steps.extend(self.close_quick_look());
         steps.push(Step::Show(Intent::Query(self.query_view())));
         steps.extend(asks);
         steps
@@ -2116,10 +2505,18 @@ impl FocusController {
             },
             Input::ResultsTab(tab) => self.results_tab(tab),
             Input::ResultsOrder(order) => self.results_order(order),
-            Input::ResultsPoint(position) => match self.results.as_mut() {
-                Some(results) => cursor_moved(results.point(position)),
-                None => Vec::new(),
-            },
+            Input::ResultsPoint(position) => {
+                let Some(results) = self.results.as_mut() else {
+                    return Vec::new();
+                };
+                let moved = results.point(position);
+                let looking = results.quick_look.is_some();
+                let mut steps = cursor_moved(moved);
+                if moved.is_some() && looking {
+                    steps.extend(self.look());
+                }
+                steps
+            }
             Input::SearchPopover(kind) => self.open_popover(kind),
             Input::PopoverToggle { token, exclude } => {
                 let today = self.bar.now().date_naive();
@@ -2183,6 +2580,13 @@ impl FocusController {
                 .map(|(first, count)| Step::Show(Intent::ResultsPage { first, count }))
                 .into_iter()
                 .collect(),
+            Reply::QuickLookMatches { stamp, answer } => {
+                if results.matches_landed(stamp, answer) {
+                    self.draw_quick_look()
+                } else {
+                    Vec::new()
+                }
+            }
             _ => Vec::new(),
         }
     }

@@ -210,7 +210,10 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::ResultsFiles
         | C::ResultsPeople
         | C::StepRangeBack
-        | C::StepRangeForward => Some(G::InSearch),
+        | C::StepRangeForward
+        | C::QuickLook
+        | C::NextMatch
+        | C::PrevMatch => Some(G::InSearch),
 
         // ── Digests and filtering ───────────────────────────────────────
         C::DigestRule

@@ -188,6 +188,12 @@ command_ids! {
     StepRangeBack => "step_range_back",
     /// The timeline's range, a month later.
     StepRangeForward => "step_range_forward",
+    /// Look inside the focused result without opening it, or stop looking.
+    QuickLook => "quick_look",
+    /// Quick Look's next match in its conversation.
+    NextMatch => "next_match",
+    /// Quick Look's previous match in its conversation.
+    PrevMatch => "prev_match",
     /// Start a new message.
     Compose => "compose",
     /// Send what is in the composer.
@@ -806,6 +812,12 @@ pub enum Command {
     StepRangeBack,
     /// Step the timeline's range a month later.
     StepRangeForward,
+    /// Open Quick Look on the focused result, or close it (spec 010 US4).
+    QuickLook,
+    /// Ring Quick Look's next match card.
+    NextMatch,
+    /// Ring Quick Look's previous match card.
+    PrevMatch,
 
     // -- Compose ---------------------------------------------------------
     /// Start a new message, optionally from an existing draft.
@@ -1271,6 +1283,9 @@ impl Command {
             Command::ResultsPeople => CommandId::ResultsPeople,
             Command::StepRangeBack => CommandId::StepRangeBack,
             Command::StepRangeForward => CommandId::StepRangeForward,
+            Command::QuickLook => CommandId::QuickLook,
+            Command::NextMatch => CommandId::NextMatch,
+            Command::PrevMatch => CommandId::PrevMatch,
             Command::Compose { .. } => CommandId::Compose,
             Command::Send => CommandId::Send,
             Command::ScheduleSend => CommandId::ScheduleSend,
@@ -1457,6 +1472,9 @@ impl Command {
             CommandId::ResultsPeople => Command::ResultsPeople,
             CommandId::StepRangeBack => Command::StepRangeBack,
             CommandId::StepRangeForward => Command::StepRangeForward,
+            CommandId::QuickLook => Command::QuickLook,
+            CommandId::NextMatch => Command::NextMatch,
+            CommandId::PrevMatch => Command::PrevMatch,
             CommandId::Compose => Command::Compose { draft: None },
             CommandId::Send => Command::Send,
             CommandId::ScheduleSend => Command::ScheduleSend,
