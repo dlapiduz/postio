@@ -44,8 +44,8 @@ public struct ResultRowView: View {
                     .font(.system(size: 11.5, design: .monospaced))
                     .foregroundStyle(.tertiary)
                     .frame(width: Columns.folder, alignment: .trailing)
-                // A date with its year ("22 Oct 2025") is wider than the
-                // column: it takes the room it needs rather than an ellipsis.
+                // A date never ends in an ellipsis: one with its year
+                // ("22 Oct 25") takes the room it needs if the column is short.
                 Text(row.date)
                     .font(.system(size: 12, weight: row.unread ? .bold : .regular).monospacedDigit())
                     .foregroundStyle(.secondary)
