@@ -22,6 +22,7 @@ mod body_index;
 mod body_index_size;
 mod content_membership;
 mod digest_matcher;
+mod driven_join_plan;
 mod executor;
 mod group_filter;
 mod header_index;

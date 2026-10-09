@@ -1,7 +1,7 @@
 //! The search half of docs/PRODUCT.md §18's `<100 ms` budget (CLAUDE.md), gated on a
 //! corpus large enough to be honest about it: 120,000 messages, one account.
 //!
-//! Four query shapes, chosen to stress different parts of `search`:
+//! Five query shapes, chosen to stress different parts of `search`:
 //!
 //! - **simple term** — a free-text word that matches about 1% of the corpus.
 //!   The ordinary case: join `messages_fts`, rank the matches, snippet them.
@@ -14,6 +14,10 @@
 //!   contains. `messages_fts MATCH` and the `count(*)` it feeds have to walk
 //!   effectively the whole corpus; this is the shape most likely to blow the
 //!   budget if an index is missing.
+//! - **word plus a date** — the simple term with `after:`. Driven by the
+//!   word's hits, each looked up by its content; a date range in the same
+//!   `WHERE` once tempted the planner into walking the range per hit
+//!   instead, over a second on 20k messages (#1809).
 //!
 //! # Running
 //!
@@ -75,6 +79,16 @@ fn on_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
         .block_on(future)
 }
 
+/// Runs `work` on a thread of its own and waits for it.
+///
+/// The corpora are built on first use, and first use is inside
+/// `on_runtime(run(..))`: blocking on the runtime again from there is the
+/// nested `block_on` tokio refuses ("Cannot start a runtime from within a
+/// runtime"). A scoped thread is outside it, and the caller only waits.
+fn outside_the_runtime<T: Send>(work: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|scope| scope.spawn(work).join().expect("the corpus builds"))
+}
+
 /// docs/PRODUCT.md §18 / CLAUDE.md: local search must resolve in under this.
 const SEARCH_BUDGET: Duration = Duration::from_millis(100);
 
@@ -101,7 +115,7 @@ struct Corpus {
 
 fn corpus() -> &'static Corpus {
     static CORPUS: OnceLock<Corpus> = OnceLock::new();
-    CORPUS.get_or_init(|| on_runtime(build_corpus()))
+    CORPUS.get_or_init(|| outside_the_runtime(|| on_runtime(build_corpus())))
 }
 
 /// A tiny, fixed-seed xorshift64 generator: reproducible across machines and
@@ -130,7 +144,9 @@ impl Xorshift64 {
 async fn build_corpus() -> Corpus {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    on_runtime(postio_index::index::ensure_schema(&connection)).expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
     let (account, mailbox) = test_support::account_with_inbox(&connection).await;
 
     let base = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap();
@@ -141,7 +157,10 @@ async fn build_corpus() -> Corpus {
     // its own SAVEPOINT per call (see `postio_storage::repository::Scope`),
     // which nests fine inside this outer transaction and turns 120,000
     // separate commits into one.
-    on_runtime(connection.execute_batch("BEGIN")).expect("start bulk load transaction");
+    connection
+        .execute_batch("BEGIN")
+        .await
+        .expect("start bulk load transaction");
     for i in 0..MESSAGE_COUNT {
         // Uncorrelated with `i % 100` below (which places `UNCOMMON_WORD`)
         // on purpose: `i % SENDER_COUNT` would put every sender on a fixed
@@ -171,12 +190,9 @@ async fn build_corpus() -> Corpus {
         if i % 100 == 0 {
             body.push_str(&format!(" {UNCOMMON_WORD} figures attached"));
         }
-        on_runtime(postio_index::index::index_body(
-            &connection,
-            message.id.get(),
-            Some(&body),
-        ))
-        .expect("index body");
+        postio_index::index::index_body(&connection, message.id.get(), Some(&body))
+            .await
+            .expect("index body");
     }
     // #746: a contacts table at real-mailbox scale. Sender affinity's cost
     // scales with `candidates × contacts`, and an empty table multiplies the
@@ -185,26 +201,33 @@ async fn build_corpus() -> Corpus {
     // The corpus' own senders get affinity to exercise the probe's hit path;
     // the rest is the long tail every real address book carries.
     {
-        let mut insert = on_runtime(connection.prepare(
-            "INSERT INTO contacts (account_id, address, address_normalized, times_seen)
+        let mut insert = connection
+            .prepare(
+                "INSERT INTO contacts (account_id, address, address_normalized, times_seen)
                  VALUES (?1, ?2, ?2, ?3)",
-        ))
-        .expect("prepare contact insert");
+            )
+            .await
+            .expect("prepare contact insert");
         for i in 0..CONTACT_COUNT {
             let address = if i < SENDER_COUNT {
                 format!("sender{i}@example.com")
             } else {
                 format!("correspondent{i}@example.com")
             };
-            on_runtime(insert.execute(postio_storage::bind![
-                account.id.get(),
-                address,
-                rng.below(100) as i64
-            ]))
-            .expect("seed contact");
+            insert
+                .execute(postio_storage::bind![
+                    account.id.get(),
+                    address,
+                    rng.below(100) as i64
+                ])
+                .await
+                .expect("seed contact");
         }
     }
-    on_runtime(connection.execute_batch("COMMIT")).expect("commit bulk load transaction");
+    connection
+        .execute_batch("COMMIT")
+        .await
+        .expect("commit bulk load transaction");
 
     drop(connection);
     Corpus {
@@ -230,7 +253,7 @@ async fn run(query: &str, limit: u32) -> Duration {
     };
 
     let start = Instant::now();
-    let results = on_runtime(search(&connection, &request, now())).expect("search");
+    let results = search(&connection, &request, now()).await.expect("search");
     let elapsed = start.elapsed();
     assert!(!results.hits.is_empty(), "query {query:?} matched nothing");
     elapsed
@@ -251,7 +274,9 @@ async fn run_facets(query: &str) -> Duration {
     };
 
     let start = Instant::now();
-    let facets = on_runtime(postio_index::executor::facets(&connection, &request)).expect("facets");
+    let facets = postio_index::executor::facets(&connection, &request)
+        .await
+        .expect("facets");
     let elapsed = start.elapsed();
     assert!(
         facets.hits(Scope::AllMail) > 0,
@@ -288,6 +313,17 @@ fn bench_composed(c: &mut Criterion) {
     assert_budget("composed", on_runtime(run(query, 50)));
 }
 
+/// The simple term inside a date range: `after:` keeps about two thirds of
+/// the corpus (it spans 2020-01-01 to late March, a message a minute), so a
+/// plan that walks the range once per hit reads tens of millions of rows.
+fn bench_word_after_date(c: &mut Criterion) {
+    let query = "quarterly after:2020-02-01";
+    c.bench_function("search_word_after_date", |b| {
+        b.iter(|| on_runtime(run(query, 50)))
+    });
+    assert_budget("word plus after:", on_runtime(run(query, 50)));
+}
+
 fn bench_common_word_worst_case(c: &mut Criterion) {
     c.bench_function("search_common_word", |b| {
         b.iter(|| on_runtime(run(COMMON_WORD, 50)))
@@ -321,20 +357,25 @@ struct MultiAccount {
 
 fn multi_account_corpus() -> &'static MultiAccount {
     static CORPUS: OnceLock<MultiAccount> = OnceLock::new();
-    CORPUS.get_or_init(|| on_runtime(build_multi_account_corpus()))
+    CORPUS.get_or_init(|| outside_the_runtime(|| on_runtime(build_multi_account_corpus())))
 }
 
 async fn build_multi_account_corpus() -> MultiAccount {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
-    on_runtime(postio_index::index::ensure_schema(&connection)).expect("schema");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
 
     let base = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap();
     let mut rng = Xorshift64::new(0x51de_9876_5432_10ab);
     let repository = MessageRepository::new(&connection);
     let mut first = None;
 
-    on_runtime(connection.execute_batch("BEGIN")).expect("start bulk load");
+    connection
+        .execute_batch("BEGIN")
+        .await
+        .expect("start bulk load");
     for a in 0..ACCOUNTS {
         let (account, mailbox) = test_support::account_with_inbox(&connection).await;
         first.get_or_insert(account.id);
@@ -360,15 +401,15 @@ async fn build_multi_account_corpus() -> MultiAccount {
             if i % 100 == 0 {
                 body.push_str(&format!(" {UNCOMMON_WORD} figures attached"));
             }
-            on_runtime(postio_index::index::index_body(
-                &connection,
-                message.id.get(),
-                Some(&body),
-            ))
-            .expect("index body");
+            postio_index::index::index_body(&connection, message.id.get(), Some(&body))
+                .await
+                .expect("index body");
         }
     }
-    on_runtime(connection.execute_batch("COMMIT")).expect("commit bulk load");
+    connection
+        .execute_batch("COMMIT")
+        .await
+        .expect("commit bulk load");
 
     drop(connection);
     MultiAccount {
@@ -390,7 +431,7 @@ async fn run_multi_account(query: &str, account: AccountScope) -> Duration {
     };
 
     let start = Instant::now();
-    let results = on_runtime(search(&connection, &request, now())).expect("search");
+    let results = search(&connection, &request, now()).await.expect("search");
     let elapsed = start.elapsed();
     assert!(!results.hits.is_empty(), "query {query:?} matched nothing");
     elapsed
@@ -449,6 +490,7 @@ criterion_group!(
     bench_simple_term,
     bench_operator_only,
     bench_composed,
+    bench_word_after_date,
     bench_common_word_worst_case,
     bench_facets_worst_case,
     bench_unified_common_word,

@@ -44,6 +44,8 @@ The store is Turso (ADR 0038). Its planner and defaults are not SQLite's, and mo
 
 **A `SEARCH` that binds one column of a two-column key is a scan, and a gate that greps for `SCAN` misses it.** Plan gates must name the columns they expect bound. An aggregate is one statement and one row however much it read, so statement and row counts cannot see it: keep `count(*)` off the first-frame path, and read a panel's figures when the panel is mapped. Do not time a statement by wrapping it in `SELECT count(*) FROM (..)`, because the engine prunes columns nothing reads.
 
+**Without statistics the planner takes the seek that binds more columns, even inside a join.** A per-row lookup on a one-column key, such as `idx_messages_content (content_id=?)`, loses to any two-column range the same `WHERE` offers, such as `idx_messages_account_list (account_id=? AND received_at<=?)`, and the range is then walked once per outer row. Only a rowid seek is never outbid. When a join has to look rows up through a secondary index, name it with `INDEXED BY`, as `HITS_JOIN` in `crates/postio-index/src/executor.rs` does (#1809).
+
 **A bench only sees a cost shaped like `rows × other_table` if both tables are seeded.** Populate both at real-mailbox scale.
 
 **Never run `ANALYZE`.** With statistics, the planner turns hot sync statements into scans. Fix a plan with an index the planner cannot misjudge. `crates/postio-sync/tests/sync_suite/scan_audit.rs` asserts that the store has no `sqlite_stat1`.
