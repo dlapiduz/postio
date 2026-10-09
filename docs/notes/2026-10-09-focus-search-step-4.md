@@ -142,3 +142,28 @@ and not offered on Freedesktop (D25): the Linux golden table gains two
 unbound rows and `docs/keybindings.md` is unchanged. `Intent::Popover`
 and the new `Input`s are matched nowhere in GTK (it never enters the
 results, `results_view` off).
+
+## Two people checked: either of them (D26, T150)
+
+The maintainer decided on 2026-10-09 that a second check in one popover
+means either. Captured the same way, with a second person checked:
+
+```bash
+POSTIO_DEMO_KEYS='/ atlas ␣ budget ⌘⏎ @from ␣ ↓ ↓ ↓ ↓ ␣' \
+  POSTIO_DEMO_SNAPSHOT=/tmp/08-or.png …              # as above otherwise
+```
+
+The field holds one chip, "from: Ada Moreno, Tomás Reyes" (the query is
+`atlas budget from:{ada@example.com tomas@example.com}`), From reads
+"From: Ada Moreno +1", both rows are checked, and the list and counts are
+either's: 15 conversations, Ada's 13 and Tomás's 2. Nothing in Swift
+changed: the chip's value, the checks and the button's words all come
+from `postio-focus`.
+
+Not changed, and worth knowing: a popover lists the people of the query
+it **opened on**. Opened on `atlas budget`, every sender is there to
+check. Opened again after `from:ada` was applied, it lists only who that
+query found — Ada — so a second person cannot be added from it until
+the From clause is taken off. Listing the field's popover from the query
+without its own clause is a second facet read per open (D5 asks for
+one), so it is left for the maintainer.
