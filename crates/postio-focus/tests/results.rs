@@ -114,6 +114,7 @@ fn best_match_gives_top_hits_then_month_groups() {
     let view = results_view(&effects).expect("the results");
 
     assert_eq!(view.order, ConversationOrder::BestMatch);
+    assert!(view.sortable, "the conversations can be ranked or dated");
     assert_eq!(view.count_line, "120 conversations");
     assert_eq!(view.sub_line, "12 files · 6 people · last 12 months");
     assert_eq!(view.footer, "120 conversations · local index · 41 ms");
@@ -627,10 +628,9 @@ fn return_keeps_the_previewed_query() {
     assert!(button(&query, FilterKind::From).applied);
     assert!(!button(&query, FilterKind::From).open);
     let view = results_view(&effects).expect("the frame, no longer a preview");
-    assert_eq!(
-        view.sub_line,
-        "12 files \u{b7} 6 people \u{b7} last 12 months"
-    );
+    // Screen 11's "from Ada since July · 9 files": the filter in words,
+    // then the files; a person is the filter, so no people.
+    assert_eq!(view.sub_line, "from Ada \u{b7} 12 files");
     assert_eq!(view.count_line, "60 conversations");
 }
 
@@ -2313,6 +2313,10 @@ fn the_files_tab_reads_its_cards_and_draws_them() {
     assert_eq!(view.rows, 3);
     assert_eq!(view.cursor, Some(0), "the first card ringed");
     assert!(view.groups.is_empty(), "a grid, not month groups");
+    // Screen 11's "Sort Newest": the cards come newest first, whatever
+    // the conversations' order, and a file has no rank to sort by.
+    assert_eq!(view.order, ConversationOrder::Newest);
+    assert!(!view.sortable);
     assert_eq!(view.tabs[1].count, "3", "the tab counts the cards");
     assert!(view.tabs[1].selected);
     let header = view.files.as_ref().expect("the Files tab's header");

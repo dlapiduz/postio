@@ -15,6 +15,8 @@ public struct FilterBarView: View {
     let query: SearchQueryModel
     let tabs: [TabFfi]
     let order: ConversationOrderFfi
+    /// Whether Sort is a menu: the Files tab's cards have one order.
+    let sortable: Bool
     let words: SearchWordsFfi
     let pickTab: (ResultsTabFfi) -> Void
     let pickOrder: (ConversationOrderFfi) -> Void
@@ -24,13 +26,15 @@ public struct FilterBarView: View {
     let anchor: (FilterKindFfi) -> AnyView
 
     public init(
-        query: SearchQueryModel, tabs: [TabFfi], order: ConversationOrderFfi, words: SearchWordsFfi,
+        query: SearchQueryModel, tabs: [TabFfi], order: ConversationOrderFfi, sortable: Bool = true,
+        words: SearchWordsFfi,
         pickTab: @escaping (ResultsTabFfi) -> Void, pickOrder: @escaping (ConversationOrderFfi) -> Void,
         anchor: @escaping (FilterKindFfi) -> AnyView = { _ in AnyView(EmptyView()) }
     ) {
         self.query = query
         self.tabs = tabs
         self.order = order
+        self.sortable = sortable
         self.words = words
         self.pickTab = pickTab
         self.pickOrder = pickOrder
@@ -92,16 +96,26 @@ public struct FilterBarView: View {
     // MARK: sort
 
     private var sortMenu: some View {
-        Menu {
-            Button(words.bestMatch) { pickOrder(.bestMatch) }
-            Button(words.newest) { pickOrder(.newest) }
-        } label: {
-            Text(order == .bestMatch ? words.bestMatch : words.newest)
-                .font(.system(size: 12.5, weight: .semibold))
+        let label = order == .bestMatch ? words.bestMatch : words.newest
+        return Group {
+            if sortable {
+                Menu {
+                    Button(words.bestMatch) { pickOrder(.bestMatch) }
+                    Button(words.newest) { pickOrder(.newest) }
+                } label: {
+                    Text(label).font(.system(size: 12.5, weight: .semibold))
+                }
+                .menuStyle(.borderlessButton)
+            } else {
+                // The Files tab: its cards are newest first, the one order a
+                // file has, so Sort says it and offers nothing to pick.
+                Text(label)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .padding(.trailing, 4)
+            }
         }
-        .menuStyle(.borderlessButton)
         .fixedSize()
-        .accessibilityLabel("\(words.sort): \(order == .bestMatch ? words.bestMatch : words.newest)")
+        .accessibilityLabel("\(words.sort): \(label)")
     }
 }
 

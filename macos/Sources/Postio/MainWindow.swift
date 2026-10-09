@@ -198,7 +198,8 @@ private struct ResultsPane: View {
     var body: some View {
         VStack(spacing: 0) {
             FilterBarView(
-                query: query, tabs: results.tabs, order: results.order, words: engine.searchWords,
+                query: query, tabs: results.tabs, order: results.order, sortable: results.sortable,
+                words: engine.searchWords,
                 pickTab: { results.pick($0) }, pickOrder: { results.pick($0) },
                 anchor: { kind in
                     guard let presenter = engine.filterPopoverPresenter else { return AnyView(EmptyView()) }

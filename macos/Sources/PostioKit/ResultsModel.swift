@@ -85,6 +85,8 @@ public final class ResultsModel {
     public private(set) var isOpen = false
     public private(set) var tabs: [TabFfi] = []
     public private(set) var order: ConversationOrderFfi = .bestMatch
+    /// Whether Sort offers a choice: not on the Files tab.
+    public private(set) var sortable = true
     /// "48 conversations".
     public private(set) var countLine = ""
     /// "12 files · 6 people · last 12 months".
@@ -303,6 +305,7 @@ public final class ResultsModel {
     private func draw(_ view: ResultsViewFfi) {
         tabs = view.tabs
         order = view.order
+        sortable = view.sortable
         countLine = view.countLine
         subLine = view.subLine
         months = view.months

@@ -61,7 +61,7 @@ struct ResultsModelTests {
         .focusResults(
             view: ResultsViewFfi(
                 tabs: [TabFfi(tab: .conversations, label: "Conversations", count: "26", selected: true, key: "cmd+1")],
-                order: .bestMatch, countLine: "26 conversations", subLine: "12 files · 6 people · last 12 months",
+                order: .bestMatch, sortable: true, countLine: "26 conversations", subLine: "12 files · 6 people · last 12 months",
                 months: [], timelineHint: "Matches by month · drag across months to narrow", timelineStep: nil,
                 groups: [
                     group("Top hits", first: 0, rows: 3, topHits: true),
@@ -84,7 +84,7 @@ struct ResultsModelTests {
         .focusResults(
             view: ResultsViewFfi(
                 tabs: [TabFfi(tab: .files, label: "Files", count: "3", selected: true, key: "cmd+2")],
-                order: .newest, countLine: "26 conversations", subLine: "3 files", months: [], timelineHint: "",
+                order: .newest, sortable: false, countLine: "26 conversations", subLine: "3 files", months: [], timelineHint: "",
                 timelineStep: nil, groups: [], rows: 3, cursor: cursor, footerHints: [], footerRight: "",
                 selected: 0, bulk: [], selectAll: nil,
                 files: FilesHeaderFfi(title: "Files whose name or contents match", note: "contents are indexed")))
@@ -106,7 +106,7 @@ struct ResultsModelTests {
                     TabFfi(tab: .conversations, label: "Conversations", count: "26", selected: false, key: "cmd+1"),
                     TabFfi(tab: .people, label: "People", count: "2", selected: true, key: "cmd+3"),
                 ],
-                order: .bestMatch, countLine: "26 conversations", subLine: "2 people", months: [],
+                order: .bestMatch, sortable: true, countLine: "26 conversations", subLine: "2 people", months: [],
                 timelineHint: "", timelineStep: nil, groups: [], rows: 2, cursor: cursor, footerHints: [],
                 footerRight: "", selected: 0, bulk: [], selectAll: nil, files: nil))
     }
@@ -141,8 +141,12 @@ struct ResultsModelTests {
         let model = ResultsModel(engine: engine)
         model.apply(Self.results())
         #expect(!model.isFiles)
+        #expect(model.sortable)
         #expect(model.apply(Self.files()) == .redraw)
         #expect(model.isFiles)
+        // Screen 11's "Sort Newest": the cards' one order, not a choice.
+        #expect(model.order == .newest)
+        #expect(!model.sortable)
         #expect(model.filesHeader?.title == "Files whose name or contents match")
         #expect(model.count == 0, "the table draws nothing under the grid")
         #expect(model.cardCount == 3)

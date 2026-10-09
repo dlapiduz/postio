@@ -396,6 +396,91 @@ pub fn sub_line(files: u64, people: u64) -> String {
     format!("{files} \u{b7} {people} \u{b7} last 12 months")
 }
 
+/// The timeline's sub-line for the query's positive `filters` (§3.3,
+/// screen 11): its filters in words, then its files -- "from Ada since
+/// July · 9 files" -- and its people while no person is the filter. With
+/// no filter it is [`sub_line`]. `name_of` gives a person's name for an
+/// address; a person is said by their first name, as [`save_name`] does.
+pub fn narrowed_sub_line(
+    filters: &[Filter],
+    name_of: &dyn Fn(&str) -> Option<String>,
+    today: chrono::NaiveDate,
+    files: u64,
+    people: u64,
+) -> String {
+    let held = |kind: FilterKind| -> Vec<&Filter> {
+        filters
+            .iter()
+            .flat_map(Filter::alternatives)
+            .filter(|filter| kind.holds(filter))
+            .collect()
+    };
+    let first_name = |address: &str| {
+        name_of(address)
+            .and_then(|name| name.split_whitespace().next().map(str::to_owned))
+            .unwrap_or_else(|| address.to_owned())
+    };
+    let values = |kind: FilterKind| -> Vec<String> {
+        held(kind)
+            .into_iter()
+            .filter_map(|filter| match filter {
+                Filter::From(who) | Filter::To(who) => Some(first_name(who)),
+                Filter::In(name) | Filter::Label(name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let mut said: Vec<String> = Vec::new();
+    // An adjective first, then who, where, what, and when last, as
+    // "from Ada since July" reads.
+    let order = [
+        (FilterKind::Unread, ""),
+        (FilterKind::From, "from"),
+        (FilterKind::To, "to"),
+        (FilterKind::Anywhere, "in"),
+        (FilterKind::Label, "labelled"),
+        (FilterKind::Attachment, ""),
+        (FilterKind::HasAction, ""),
+    ];
+    for (kind, word) in order {
+        if held(kind).is_empty() {
+            continue;
+        }
+        said.push(match kind {
+            FilterKind::Unread => "unread".to_owned(),
+            FilterKind::Attachment => "with attachments".to_owned(),
+            FilterKind::HasAction => "with an action".to_owned(),
+            _ => format!("{word} {}", values(kind).join(" or ")),
+        });
+    }
+    if !held(FilterKind::Date).is_empty() {
+        let label = filter_button_label(FilterKind::Date, filters, name_of, today);
+        // "Since July" in a sentence: "since July"; a range keeps its months.
+        said.push(match label.split_once(' ') {
+            Some((first @ ("Since" | "Before"), rest)) => {
+                format!("{} {rest}", first.to_lowercase())
+            }
+            _ => label,
+        });
+    }
+    if said.is_empty() {
+        return sub_line(files, people);
+    }
+    let mut line = vec![said.join(" "), plural(files, "file", "files")];
+    if held(FilterKind::From).is_empty() && held(FilterKind::To).is_empty() {
+        line.push(plural(people, "person", "people"));
+    }
+    line.join(" \u{b7} ")
+}
+
+/// "1 file", "9 files", grouped.
+fn plural(n: u64, one: &str, many: &str) -> String {
+    match n {
+        1 => format!("1 {one}"),
+        n => format!("{} {many}", grouped(n)),
+    }
+}
+
 /// The results footer's right-hand side (§3.5): "48 conversations · local
 /// index · 41 ms".
 pub fn results_footer(total: u64, capped: bool, elapsed: Duration) -> String {
@@ -1981,6 +2066,64 @@ mod tests {
         assert_eq!(
             results_footer(1, false, Duration::from_micros(300)),
             "1 conversation · local index · <1 ms"
+        );
+    }
+
+    // Screen 11 and McSearch.dc.html: a narrowed query's sub-line says its
+    // filters in words, then its files ("from Ada since July · 9 files");
+    // the people are left out once a person is the filter. With no filter
+    // it is the plain line.
+    #[test]
+    fn a_narrowed_sub_line_says_the_filters_then_the_files() {
+        use postio_search::query::{Filter, State};
+        let names = |address: &str| (address == "ada@example.com").then(|| "Ada Moreno".to_owned());
+        let date = |y, m, d| chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        let today = date(2026, 9, 30);
+        let line = |filters: &[Filter], files, people| {
+            narrowed_sub_line(filters, &names, today, files, people)
+        };
+
+        assert_eq!(line(&[], 12, 6), "12 files · 6 people · last 12 months");
+        assert_eq!(
+            line(
+                &[
+                    Filter::From("ada@example.com".into()),
+                    Filter::After(date(2026, 7, 1))
+                ],
+                9,
+                1
+            ),
+            "from Ada since July · 9 files"
+        );
+        assert_eq!(
+            line(
+                &[Filter::AnyOf(
+                    postio_search::query::AnyOf::new(vec![
+                        Filter::From("ada@example.com".into()),
+                        Filter::From("tomas@example.com".into()),
+                    ])
+                    .unwrap()
+                )],
+                3,
+                2
+            ),
+            "from Ada or tomas@example.com · 3 files"
+        );
+        assert_eq!(
+            line(&[Filter::HasAttachment, Filter::Is(State::Unread)], 1, 4),
+            "unread with attachments · 1 file · 4 people"
+        );
+        assert_eq!(
+            line(
+                &[
+                    Filter::In("Archive".into()),
+                    Filter::Label("Atlas".into()),
+                    Filter::Before(date(2026, 3, 1))
+                ],
+                0,
+                1
+            ),
+            "in Archive labelled Atlas before March · 0 files · 1 person"
         );
     }
 

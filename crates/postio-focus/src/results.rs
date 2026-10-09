@@ -98,8 +98,12 @@ pub struct ResultGroup {
 pub struct ResultsView {
     /// Conversations, Files, People.
     pub tabs: Vec<ResultsTabView>,
-    /// The sort.
+    /// The order the tab shown is in: the conversations' sort, or Newest
+    /// on the Files tab, whose cards come newest first.
     pub order: ConversationOrder,
+    /// Whether Sort offers a choice: the conversations can be ranked or
+    /// dated; a file has no rank (screen 11 reads "Newest").
+    pub sortable: bool,
     /// "48 conversations".
     pub count_line: String,
     /// "12 files · 6 people · last 12 months".
@@ -1813,7 +1817,12 @@ impl Results {
             .collect();
         ResultsView {
             tabs,
-            order: self.order,
+            order: if self.tab == ResultsTab::Files {
+                ConversationOrder::Newest
+            } else {
+                self.order
+            },
+            sortable: self.tab != ResultsTab::Files,
             count_line: frame.map_or_else(String::new, |_| words::count_line(total, capped)),
             sub_line: frame.map_or_else(String::new, |frame| {
                 // The tabs' own counts, once their rows are read.
@@ -1825,8 +1834,10 @@ impl Results {
                     .listed
                     .as_ref()
                     .map_or(frame.people, |people| people.len() as u64);
-                self.previewing(with)
-                    .unwrap_or_else(|| words::sub_line(files, people))
+                self.previewing(with).unwrap_or_else(|| {
+                    let name_of = |address: &str| self.name_of(address);
+                    words::narrowed_sub_line(&self.filters(), &name_of, today, files, people)
+                })
             }),
             months,
             timeline_hint: range
