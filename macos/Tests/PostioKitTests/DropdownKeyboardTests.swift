@@ -24,6 +24,7 @@ struct DropdownKeyboardTests {
         var forgotten: [UInt64] = []
         var shownAll = 0
         var highlightedTokens: [UInt64] = []
+        var excluded: [UInt64] = []
 
         func focusBarTyped(_ text: String) {}
         func focusBarRun(_ token: UInt64) { ran.append(token) }
@@ -36,6 +37,7 @@ struct DropdownKeyboardTests {
         func focusSearchForget(_ token: UInt64) { forgotten.append(token) }
         func focusSearchShowAll() { shownAll += 1 }
         func focusSearchHighlighted(_ token: UInt64) { highlightedTokens.append(token) }
+        func focusSearchExclude(_ token: UInt64) { excluded.append(token) }
     }
 
     static func run(_ text: String) -> RunFfi { RunFfi(text: text, highlighted: false, style: .plain) }
@@ -45,7 +47,7 @@ struct DropdownKeyboardTests {
     {
         DropdownRowFfi(
             token: token, kind: kind, title: [run(title)], detail: [], folder: nil, right: nil,
-            key: nil, selectable: selectable)
+            key: nil, selectable: selectable, initials: kind == .person ? "AM" : nil)
     }
 
     static func section(_ title: String, _ rows: [DropdownRowFfi]) -> DropdownSectionFfi {
@@ -58,7 +60,7 @@ struct DropdownKeyboardTests {
     {
         .focusDropdown(
             view: DropdownViewFfi(
-                state: .empty,
+                state: .empty, ghost: nil, understood: [],
                 sections: [
                     section("Recent", recents.map { row($0, .recent, "recent \($0)") }),
                     DropdownSectionFfi(
@@ -76,7 +78,7 @@ struct DropdownKeyboardTests {
     static func words(highlight: UInt64? = 49, select: UInt64? = nil) -> UiEvent {
         .focusDropdown(
             view: DropdownViewFfi(
-                state: .words,
+                state: .words, ghost: nil, understood: [],
                 sections: [
                     section("Top hits", (41...44).map { row($0, .hit, "hit \($0)") }),
                     section("", [row(49, .showAll, "Show all 48 results")]),
@@ -84,6 +86,30 @@ struct DropdownKeyboardTests {
                 highlight: highlight, select: select,
                 footerHints: [KeyHintFfi(key: "cmd+Return", label: "all results")],
                 footerCount: "48 matches · 38 ms"))
+    }
+
+    /// Screen 04: two people, a label, then the latest from the first.
+    static func people() -> UiEvent {
+        .focusDropdown(
+            view: DropdownViewFfi(
+                state: .operator, ghost: nil, understood: [],
+                sections: [
+                    section("People", [row(51, .person, "Ada Moreno"), row(52, .person, "Ben Adeyemi"),
+                                       row(53, .label, "Atlas")]),
+                    section("Latest from Ada Moreno", [row(61, .hit, "hit 61")]),
+                ],
+                highlight: 51, select: nil,
+                footerHints: [KeyHintFfi(key: "alt+Return", label: "exclude (-from:)")],
+                footerCount: "Contacts and everyone you have mail with"))
+    }
+
+    /// Screen 02: the ghost after "at", the word focused.
+    static func prefix() -> UiEvent {
+        .focusDropdown(
+            view: DropdownViewFfi(
+                state: .prefix, ghost: "las", understood: [],
+                sections: [section("Suggestions", [row(71, .word, "atlas")])],
+                highlight: 71, select: nil, footerHints: [], footerCount: nil))
     }
 
     static func model() -> (CommandBarModel, Engine) {
@@ -176,5 +202,56 @@ struct DropdownKeyboardTests {
         #expect(!model.showsDropdown)
         model.move(by: 1)
         #expect(model.highlighted == 7, "the arrows walk the lines again")
+    }
+
+    @Test func optionReturnExcludesTheHighlightedPersonLabelOrFolder() {
+        let (model, engine) = Self.model()
+        model.apply(Self.people())
+        #expect(model.dropdown.state == .operator)
+        #expect(model.dropdown.highlightedRow?.initials == "AM", "the avatar's letters")
+        model.move(by: 1)
+        #expect(model.excludeHighlighted())
+        #expect(engine.excluded == [52], "Ben, where the arrows rest")
+        model.move(by: 1)
+        #expect(model.excludeHighlighted())
+        #expect(engine.excluded == [52, 53], "a label too")
+        model.move(by: 1)
+        #expect(!model.excludeHighlighted(), "a message is not excluded: the field's own key")
+        model.apply(Self.words())
+        #expect(!model.excludeHighlighted())
+        #expect(engine.excluded == [52, 53])
+    }
+
+    @Test func movingTheHighlightOntoAPersonSaysSoForTheirLatest() {
+        let (model, engine) = Self.model()
+        model.apply(Self.people())
+        model.move(by: 1)
+        #expect(engine.highlightedTokens == [52], "the controller asks for Ben's latest")
+    }
+
+    @Test func tabWithAGhostIsTheBarsAndTheGhostIsKept() {
+        let (model, engine) = Self.model()
+        model.apply(Self.prefix())
+        #expect(model.dropdown.ghost == "las", "drawn after the caret")
+        #expect(model.tab())
+        #expect(engine.tabs == 1)
+        model.apply(Self.words())
+        #expect(model.dropdown.ghost == nil, "gone with the prefix state")
+    }
+
+    @Test func plainEnglishKeepsItsTiles() {
+        let (model, _) = Self.model()
+        model.apply(
+            .focusDropdown(
+                view: DropdownViewFfi(
+                    state: .plainEnglish, ghost: nil,
+                    understood: [
+                        UnderstoodTileFfi(op: "", value: "invoices", origin: "from \u{2018}invoices\u{2019}"),
+                        UnderstoodTileFfi(op: "after:", value: "2026-08-01", origin: "from \u{2018}last month\u{2019}"),
+                    ],
+                    sections: [Self.section("Results", [Self.row(81, .hit, "hit 81")])],
+                    highlight: 81, select: nil, footerHints: [], footerCount: nil)))
+        #expect(model.dropdown.understood.map(\.value) == ["invoices", "2026-08-01"])
+        #expect(model.dropdown.understood.last?.origin == "from \u{2018}last month\u{2019}")
     }
 }

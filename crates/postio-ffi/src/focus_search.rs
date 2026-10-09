@@ -6,7 +6,8 @@
 //! the `FocusDropdown` it is told and reports what happened -- the field's
 //! words and a row run, through the bar's own exports (`focus_bar_typed`,
 //! `focus_bar_run`, `focus_bar_tab`), and the dropdown's own keys here:
-//! where the arrows rest, ⌥⌫ on a recent search, and ⌘↩.
+//! where the arrows rest (which asks for a person's latest), ⌥⌫ on a
+//! recent search, ⌥↩ on a person, label or folder, and ⌘↩.
 //!
 //! The results view (step 3) is the controller's too: `FocusQuery`,
 //! `FocusResults`, `FocusResultsPage`, `FocusResultsCursor` and
@@ -28,12 +29,22 @@ pub enum DropdownStateFfi {
     Empty,
     /// Words: top hits, Narrow to, Show all (screen 03).
     Words,
+    /// One to three letters: the ghost and suggestions (screen 02).
+    Prefix,
+    /// An operator's value: people, labels or folders (screen 04). The
+    /// field sets its text in SF Mono 14.
+    Operator,
+    /// A sentence lowered into operators: "Understood as" (screen 05).
+    PlainEnglish,
 }
 
 impl From<postio_focus::DropdownState> for DropdownStateFfi {
     fn from(state: postio_focus::DropdownState) -> Self {
         match state {
             postio_focus::DropdownState::Words => DropdownStateFfi::Words,
+            postio_focus::DropdownState::Prefix => DropdownStateFfi::Prefix,
+            postio_focus::DropdownState::Operator => DropdownStateFfi::Operator,
+            postio_focus::DropdownState::PlainEnglish => DropdownStateFfi::PlainEnglish,
             _ => DropdownStateFfi::Empty,
         }
     }
@@ -94,6 +105,19 @@ pub enum DropdownRowKindFfi {
     CheatSheet,
     /// The plain-English example.
     Example,
+    /// A completed word: Return or Tab puts it in the field.
+    Word,
+    /// A label: Return its chip, Option-Return its exclusion.
+    Label,
+    /// A mailing list.
+    List,
+    /// The files whose names match.
+    File,
+    /// A person: the initials avatar, Return the chip, Option-Return the
+    /// exclusion.
+    Person,
+    /// A folder, for `in:`.
+    Folder,
 }
 
 impl From<postio_focus::DropdownRowKind> for DropdownRowKindFfi {
@@ -104,6 +128,12 @@ impl From<postio_focus::DropdownRowKind> for DropdownRowKindFfi {
             Kind::Hit => DropdownRowKindFfi::Hit,
             Kind::ShowAll => DropdownRowKindFfi::ShowAll,
             Kind::Example => DropdownRowKindFfi::Example,
+            Kind::Word => DropdownRowKindFfi::Word,
+            Kind::Label => DropdownRowKindFfi::Label,
+            Kind::List => DropdownRowKindFfi::List,
+            Kind::File => DropdownRowKindFfi::File,
+            Kind::Person => DropdownRowKindFfi::Person,
+            Kind::Folder => DropdownRowKindFfi::Folder,
             _ => DropdownRowKindFfi::CheatSheet,
         }
     }
@@ -128,6 +158,19 @@ pub struct DropdownRowFfi {
     pub key: Option<String>,
     /// Whether the arrows may rest on it.
     pub selectable: bool,
+    /// A person's initials, for the round avatar.
+    pub initials: Option<String>,
+}
+
+/// One tile of the "Understood as" bar (screen 05).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct UnderstoodTileFfi {
+    /// The operator with its colon, tertiary ("from:"); empty for a word.
+    pub op: String,
+    /// Its value, or the word.
+    pub value: String,
+    /// "from ‘last month’", 10.5 pt under the term.
+    pub origin: String,
 }
 
 /// A pill: a saved search, or a filter to narrow to.
@@ -168,6 +211,10 @@ pub struct DropdownSectionFfi {
 pub struct DropdownViewFfi {
     /// Which state it is in.
     pub state: DropdownStateFfi,
+    /// The rest of the best word, tertiary after the caret ("las").
+    pub ghost: Option<String>,
+    /// The "Understood as" bar's tiles, in plain English.
+    pub understood: Vec<UnderstoodTileFfi>,
     /// Top to bottom.
     pub sections: Vec<DropdownSectionFfi>,
     /// The row focused by default: kept while the highlighted row is still
@@ -185,6 +232,16 @@ impl From<postio_focus::DropdownView> for DropdownViewFfi {
     fn from(view: postio_focus::DropdownView) -> Self {
         DropdownViewFfi {
             state: view.state.into(),
+            ghost: view.ghost,
+            understood: view
+                .understood
+                .into_iter()
+                .map(|tile| UnderstoodTileFfi {
+                    op: tile.op,
+                    value: tile.value,
+                    origin: tile.origin,
+                })
+                .collect(),
             sections: view
                 .sections
                 .into_iter()
@@ -204,6 +261,7 @@ impl From<postio_focus::DropdownView> for DropdownViewFfi {
                             right: row.right,
                             key: row.key,
                             selectable: row.selectable,
+                            initials: row.initials,
                         })
                         .collect(),
                     pills: section
@@ -1039,6 +1097,10 @@ pub struct SearchWordsFfi {
     pub newest: String,
     /// The timeline's hint on its right.
     pub timeline_hint: String,
+    /// The plain-English bar's title (screen 05).
+    pub understood_as: String,
+    /// Its note on the right.
+    pub understood_note: String,
 }
 
 /// The results view's chrome words.
@@ -1052,6 +1114,8 @@ pub fn focus_search_words() -> SearchWordsFfi {
         best_match: words::BEST_MATCH.to_owned(),
         newest: words::NEWEST.to_owned(),
         timeline_hint: words::TIMELINE_HINT.to_owned(),
+        understood_as: words::UNDERSTOOD_AS.to_owned(),
+        understood_note: words::UNDERSTOOD_NOTE.to_owned(),
     }
 }
 
@@ -1074,6 +1138,13 @@ impl Session {
     pub fn focus_search_forget(&self, token: u64) {
         self.focus_driver()
             .input(postio_focus::Input::SearchForget(token));
+    }
+
+    /// ⌥↩ on the person, label or folder `token`: its chip,
+    /// excluded (spec 010 US7).
+    pub fn focus_search_exclude(&self, token: u64) {
+        self.focus_driver()
+            .input(postio_focus::Input::SearchExclude(token));
     }
 
     /// ⌘↩, or a click on Show all: the main window turns into the results

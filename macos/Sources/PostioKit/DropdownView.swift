@@ -29,6 +29,10 @@ public struct DropdownView: View {
     public enum Metrics {
         public static let header: CGFloat = 30
         public static let row: CGFloat = 38
+        /// A person's row: the avatar, the name over the address line.
+        public static let personRow: CGFloat = 48
+        /// The "Understood as" bar (screen 05).
+        public static let understood: CGFloat = 52
         public static let inset: CGFloat = 6
         public static let rowRadius: CGFloat = 6
         public static let pills: CGFloat = 36
@@ -48,6 +52,7 @@ public struct DropdownView: View {
     /// How tall the dropdown is for what `model` holds.
     public static func height(for model: DropdownModel) -> CGFloat {
         var height = Metrics.footer + 1
+        if !model.understood.isEmpty { height += Metrics.understood }
         for section in model.sections {
             height += sectionHeight(section)
         }
@@ -65,12 +70,16 @@ public struct DropdownView: View {
             if !section.title.isEmpty { height += Metrics.header }
             if !section.pills.isEmpty { height += Metrics.pills }
         }
-        height += CGFloat(rows.count) * Metrics.row
+        height += rows.reduce(0) { $0 + rowHeight($1) }
         let sheetRows = (sheet.count + Metrics.sheetColumns - 1) / Metrics.sheetColumns
         height += CGFloat(sheetRows) * Metrics.sheetRow
         if example { height += Metrics.example }
         if section.title.isEmpty, !rows.isEmpty { height += 2 * Metrics.gap }
         return height
+    }
+
+    static func rowHeight(_ row: DropdownModel.Row) -> CGFloat {
+        row.kind == .person ? Metrics.personRow : Metrics.row
     }
 
     /// Narrow to draws its title and pills on one line.
@@ -80,6 +89,7 @@ public struct DropdownView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if !model.understood.isEmpty { understoodBar }
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(model.sections) { section in
@@ -159,23 +169,117 @@ public struct DropdownView: View {
         .accessibilityAddTraits(.isHeader)
     }
 
+    // MARK: plain English
+
+    /// "Understood as", one tile a term: the term in SF Mono, and under it
+    /// at 10.5 what it came from (§1, screen 05).
+    private var understoodBar: some View {
+        HStack(spacing: 8) {
+            Text(Self.words.understoodAs)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.secondary)
+                .fixedSize()
+                .padding(.trailing, 4)
+            ForEach(Array(model.understood.enumerated()), id: \.offset) { _, tile in
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 0) {
+                        Text(tile.op).foregroundStyle(.tertiary)
+                        Text(tile.value).foregroundStyle(.primary).fontWeight(.medium)
+                    }
+                    .font(.system(size: 12, design: .monospaced))
+                    Text(tile.origin)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                }
+                .lineLimit(1)
+                .fixedSize()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator, lineWidth: 1))
+            }
+            Spacer(minLength: 8)
+            Text(Self.words.understoodNote)
+                .font(.system(size: 12))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: Metrics.understood)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .overlay(alignment: .bottom) { Divider() }
+        .accessibilityElement(children: .combine)
+    }
+
     // MARK: rows
 
-    private func rowView(_ row: DropdownModel.Row) -> some View {
-        let focused = model.highlighted == row.id
-        return HStack(spacing: 0) {
+    @ViewBuilder
+    private func leading(_ row: DropdownModel.Row) -> some View {
+        switch row.kind {
+        case .person:
+            Text(row.initials ?? "?")
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: Metrics.icon, height: Metrics.icon)
+                .background(Circle().fill(Self.avatar(row.title.map(\.text).joined())))
+        case .word:
+            Text("Aa")
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(width: Metrics.icon, height: Metrics.icon)
+                .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary))
+        case .label, .list, .file, .folder:
+            Image(systemName: Self.symbol(for: row.kind))
+                .font(.system(size: row.kind == .label ? 8 : 11))
+                .foregroundStyle(row.kind == .label ? AnyShapeStyle(Self.labelDot) : AnyShapeStyle(.secondary))
+                .frame(width: Metrics.icon, height: Metrics.icon)
+                .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary))
+        default:
             Image(systemName: Self.symbol(for: row.kind))
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
                 .frame(width: Metrics.icon)
-            HStack(spacing: 8) {
-                Text(attributed(row.title, size: row.kind == .showAll ? 14 : 14))
-                    .lineLimit(1)
-                    .layoutPriority(1)
-                if !row.detail.isEmpty {
-                    Text(attributed(row.detail, size: 12.5, secondary: true))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+        }
+    }
+
+    /// The chrome's words, composed in Rust.
+    static let words = focusSearchWords()
+
+    /// The design's label dot (screen 02): the system's orange, as a
+    /// label's own colour is not read here.
+    static let labelDot = Color.orange
+
+    /// A person's avatar colour: the popovers' (`PopoverRowView.avatar`),
+    /// so one person is one colour across search.
+    static func avatar(_ name: String) -> Color {
+        PopoverRowView.avatar(name)
+    }
+
+    private func rowView(_ row: DropdownModel.Row) -> some View {
+        let focused = model.highlighted == row.id
+        return HStack(spacing: 0) {
+            leading(row)
+                .padding(.trailing, row.kind == .person || row.kind == .word ? 10 : 0)
+            Group {
+                if row.kind == .person {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(attributed(row.title, size: 13.5)).lineLimit(1)
+                        Text(attributed(row.detail, size: 11.5, secondary: true))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        Text(attributed(row.title, size: 14))
+                            .lineLimit(1)
+                            .layoutPriority(1)
+                        if !row.detail.isEmpty {
+                            Text(attributed(row.detail, size: 12.5, secondary: true))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -198,7 +302,7 @@ public struct DropdownView: View {
         }
         .padding(.leading, 6)
         .padding(.trailing, 10)
-        .frame(height: Metrics.row)
+        .frame(height: Self.rowHeight(row))
         .background(
             RoundedRectangle(cornerRadius: Metrics.rowRadius)
                 .fill(focused ? AnyShapeStyle(.tint.opacity(0.09)) : AnyShapeStyle(.clear))
@@ -221,6 +325,12 @@ public struct DropdownView: View {
         case .hit: return "envelope"
         case .showAll: return "line.3.horizontal"
         case .cheatSheet, .example: return "text.magnifyingglass"
+        case .word: return "textformat"
+        case .label: return "circle.fill"
+        case .list: return "list.bullet"
+        case .file: return "doc"
+        case .person: return "person.crop.circle"
+        case .folder: return "folder"
         }
     }
 

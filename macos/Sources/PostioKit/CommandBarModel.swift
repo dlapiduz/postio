@@ -27,6 +27,9 @@ public protocol CommandBarEngine: AnyObject {
     func focusSearchForget(_ token: UInt64)
     /// ⌘↩ in the dropdown: every result for what is typed.
     func focusSearchShowAll()
+    /// ⌥↩ on the dropdown's person, label or folder `token`: its chip,
+    /// excluded (specs/010-focus-search US7).
+    func focusSearchExclude(_ token: UInt64)
 }
 
 extension PostioSession: CommandBarEngine {}
@@ -216,6 +219,13 @@ public final class CommandBarModel {
     public func forgetHighlighted() -> Bool {
         guard isOpen, showsDropdown else { return false }
         return dropdown.forgetHighlighted()
+    }
+
+    /// ⌥↩: exclude the dropdown's highlighted person, label or folder.
+    /// `false` leaves the key to the field.
+    public func excludeHighlighted() -> Bool {
+        guard isOpen, showsDropdown else { return false }
+        return dropdown.excludeHighlighted()
     }
 
     /// Escape: the controller's Back, which closes the bar and says so.

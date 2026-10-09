@@ -42,6 +42,7 @@ struct CommandBarModelTests {
         func focusSearchHighlighted(_ token: UInt64) {}
         func focusSearchForget(_ token: UInt64) {}
         func focusSearchShowAll() {}
+        func focusSearchExclude(_ token: UInt64) {}
     }
 
     static func line(

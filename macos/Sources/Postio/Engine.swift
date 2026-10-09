@@ -911,9 +911,15 @@ final class Engine {
             }
         case .lines:
             barPanel?.relayout()
+            // The ghost after the caret, and the operator's face (§2).
+            let dropdown = commandBar?.showsDropdown == true ? commandBar?.dropdown : nil
+            searchField?.ghost = dropdown?.ghost
+            searchField?.operatorTyped = dropdown?.state == .operator
         case .close:
             barPanel?.hide()
             barShown?(false)
+            searchField?.ghost = nil
+            searchField?.operatorTyped = false
             searchField?.stringValue = ""
             keycapsChanged?()
             typedAhead = ""
@@ -1063,6 +1069,14 @@ final class Engine {
             if NSApp.currentEvent?.modifierFlags.contains(.command) == true, bar.showAll() {
                 return true
             }
+            // ⌥↩ excludes the highlighted person, label or folder (US7).
+            if NSApp.currentEvent?.modifierFlags.contains(.option) == true, bar.excludeHighlighted() {
+                return true
+            }
+            bar.runHighlighted()
+        case #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
+            // What a field editor makes of ⌥↩.
+            if bar.excludeHighlighted() { return true }
             bar.runHighlighted()
         case #selector(NSResponder.insertTab(_:)):
             return bar.tab()

@@ -115,9 +115,70 @@ public final class BarSearchField: NSSearchField {
     /// The field took the keyboard.
     public var onFocus: (() -> Void)?
 
+    /// The rest of the best word, drawn in tertiary after the typed text
+    /// while a short prefix is typed ("at|las", specs/010-focus-search
+    /// screen 02). Tab takes it; the controller says what it is.
+    public var ghost: String? {
+        didSet {
+            guard ghost != oldValue else { return }
+            placeGhost()
+        }
+    }
+
+    /// An operator's value is being typed: the text is SF Mono 14 (§2).
+    public var operatorTyped = false {
+        didSet {
+            guard operatorTyped != oldValue else { return }
+            if wordsFont == nil { wordsFont = font }
+            font = operatorTyped ? .monospacedSystemFont(ofSize: 14, weight: .regular) : wordsFont
+            placeGhost()
+        }
+    }
+
+    private let ghostLabel: NSTextField = {
+        let label = NSTextField(labelWithString: "")
+        label.textColor = .tertiaryLabelColor
+        label.isHidden = true
+        label.setAccessibilityElement(false)
+        return label
+    }()
+    private var wordsFont: NSFont?
+
     override public func becomeFirstResponder() -> Bool {
         let became = super.becomeFirstResponder()
         if became { onFocus?() }
         return became
+    }
+
+    override public func layout() {
+        super.layout()
+        placeGhost()
+    }
+
+    override public func textDidChange(_ notification: Notification) {
+        super.textDidChange(notification)
+        placeGhost()
+    }
+
+    /// The ghost, right after the typed text, in the field's font.
+    private func placeGhost() {
+        if ghostLabel.superview == nil { addSubview(ghostLabel) }
+        guard let ghost, !ghost.isEmpty, let font else {
+            ghostLabel.isHidden = true
+            return
+        }
+        let typed = currentEditor()?.string ?? stringValue
+        let text = (cell as? NSSearchFieldCell)?.searchTextRect(forBounds: bounds) ?? bounds
+        let width = (typed as NSString).size(withAttributes: [.font: font]).width
+        ghostLabel.font = font
+        ghostLabel.stringValue = ghost
+        ghostLabel.sizeToFit()
+        let size = ghostLabel.frame.size
+        // The field editor sets its text two points in (its line fragment
+        // padding); the ghost follows the last glyph.
+        ghostLabel.frame = NSRect(
+            x: text.minX + 2 + width, y: (bounds.height - size.height) / 2,
+            width: min(size.width, max(text.maxX - (text.minX + 2 + width), 0)), height: size.height)
+        ghostLabel.isHidden = false
     }
 }

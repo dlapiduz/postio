@@ -191,6 +191,10 @@ public final class PostioSession {
     /// ⌥⌫ on the dropdown's recent search `token`.
     public func focusSearchForget(_ token: UInt64) { inner.focusSearchForget(token: token) }
 
+    /// ⌥↩ on the dropdown's person, label or folder `token`: its chip,
+    /// excluded.
+    public func focusSearchExclude(_ token: UInt64) { inner.focusSearchExclude(token: token) }
+
     /// ⌘↩ in the dropdown.
     public func focusSearchShowAll() { inner.focusSearchShowAll() }
 

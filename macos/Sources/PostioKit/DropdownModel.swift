@@ -29,6 +29,8 @@ public final class DropdownModel {
         /// The keycap, spelled for the Mac.
         public let cap: String?
         public let selectable: Bool
+        /// A person's initials, for the round avatar.
+        public let initials: String?
     }
 
     /// One pill, as drawn.
@@ -64,6 +66,11 @@ public final class DropdownModel {
     public private(set) var hints: [Hint] = []
     /// "48 matches · 38 ms".
     public private(set) var count: String?
+    /// The rest of the best word, drawn tertiary after the caret ("las"),
+    /// while a short prefix is typed (screen 02).
+    public private(set) var ghost: String?
+    /// What plain English was understood as, one tile a term (screen 05).
+    public private(set) var understood: [UnderstoodTileFfi] = []
     /// The highlighted row's token.
     public private(set) var highlighted: UInt64?
 
@@ -87,6 +94,8 @@ public final class DropdownModel {
     /// Draw `view`.
     public func draw(_ view: DropdownViewFfi) {
         state = view.state
+        ghost = view.ghost
+        understood = view.understood
         sections = view.sections.enumerated().map { index, section in
             Section(
                 id: index, title: section.title, note: section.note,
@@ -95,7 +104,7 @@ public final class DropdownModel {
                     Row(
                         id: row.token, kind: row.kind, title: row.title, detail: row.detail,
                         folder: row.folder, right: row.right, cap: KeyCapSpelling.cap(row.key),
-                        selectable: row.selectable)
+                        selectable: row.selectable, initials: row.initials)
                 },
                 pills: section.pills.map { pill in
                     Pill(
@@ -153,9 +162,21 @@ public final class DropdownModel {
         return true
     }
 
+    /// ⌥↩: exclude the highlighted person, label or folder. `false` when it
+    /// is none of those, and the key is the field's own.
+    public func excludeHighlighted() -> Bool {
+        guard let row = highlightedRow, [.person, .label, .folder].contains(row.kind) else {
+            return false
+        }
+        engine.focusSearchExclude(row.id)
+        return true
+    }
+
     /// The bar closed, or its lines came back: nothing is kept.
     func forget() {
         state = .empty
+        ghost = nil
+        understood = []
         sections = []
         hints = []
         count = nil
