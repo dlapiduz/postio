@@ -60,6 +60,12 @@ fn count(total: u64, capped: bool) -> String {
     format!("{}{}", grouped(total), if capped { "+" } else { "" })
 }
 
+/// A dropdown suggestion's count on the row's right: "412", or "1,000+"
+/// when it stopped at the completion cap and is a floor (spec 010 D29).
+pub fn suggestion_count(count: u64, capped: bool) -> String {
+    self::count(count, capped)
+}
+
 /// The dropdown footer's right-hand side: "48 matches · 38 ms", or
 /// "10,000+ matches · 41 ms" when the count stopped at the cap.
 pub fn footer_count(total: u64, elapsed: Duration, capped: bool) -> String {
@@ -1346,7 +1352,8 @@ pub fn file_accessible(name: &str, kind: &str, meta: &str, line: &str, subject: 
 
 /// A file whose bytes are not on this Mac cannot be previewed or saved
 /// from here: nothing is fetched to do it (FR-050).
-pub const FILE_NOT_HERE: &str = "That file isn\u{2019}t on this Mac yet: open its message to download it";
+pub const FILE_NOT_HERE: &str =
+    "That file isn\u{2019}t on this Mac yet: open its message to download it";
 
 /// The Files tab's footer (design §3.8): the grid's arrows, Quick Look,
 /// open the message, save, and the tabs.
@@ -1358,7 +1365,11 @@ pub fn files_hints(keymap: &Keymap) -> Vec<Hint> {
          the collection view lays out; j and k step it as the list's do",
     )];
     out.extend(hints::hint(keymap, CommandId::QuickLook, "Quick Look"));
-    out.extend(hints::hint(keymap, CommandId::OpenMessage, "open the message"));
+    out.extend(hints::hint(
+        keymap,
+        CommandId::OpenMessage,
+        "open the message",
+    ));
     out.extend(hints::hint(keymap, CommandId::SaveFile, "save file"));
     out.extend(hints::pair(
         keymap,
@@ -1532,6 +1543,16 @@ mod tests {
 
     fn at(year: i32, month: u32, day: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(year, month, day, 15, 30, 0).unwrap()
+    }
+
+    // D29: a suggestion's count past its cap is a floor, grouped as every
+    // count is; an exact one is the number alone.
+    #[test]
+    fn a_suggestion_count_is_grouped_and_a_capped_one_is_a_floor() {
+        assert_eq!(suggestion_count(1_000, true), "1,000+");
+        assert_eq!(suggestion_count(12, false), "12");
+        assert_eq!(suggestion_count(4_512, false), "4,512");
+        assert_eq!(suggestion_count(0, false), "0");
     }
 
     // The design's "Search by" grid (screen 01), in its order.
@@ -2334,7 +2355,10 @@ mod tests {
 
     #[test]
     fn a_file_card_says_its_type_who_sent_it_and_where_it_came() {
-        assert_eq!(file_kind("Atlas-Q3-budget.xlsx", "application/octet-stream"), "XLSX");
+        assert_eq!(
+            file_kind("Atlas-Q3-budget.xlsx", "application/octet-stream"),
+            "XLSX"
+        );
         assert_eq!(file_kind("variance-by-team.numbers", ""), "NUM");
         assert_eq!(file_kind("scan", "application/pdf"), "PDF");
         assert_eq!(file_kind("notes", "text/plain; charset=utf-8"), "TXT");

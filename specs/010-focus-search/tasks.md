@@ -288,7 +288,7 @@ it understood.
 - [x] T112 [P] [US7] Write failing tests in `crates/postio-focus/tests/bar.rs`: 1–3 characters → Prefix state (ghost, suggestions, top hits so far, Show all), Tab accepts the ghost; `from:` → Operator state listing people, and `focus_search_highlighted` on a person asks for the latest two from them; ↩ makes the chip, `ExcludeSuggestion` (⌥↩) the excluded chip; ⌫ on an empty value returns to words; `label:` and `in:` list labels and folders; plain English → PlainEnglish state with one tile per token and its origin (T014), Tab turns them into chips, `BackToWords` keeps the words. Red: missing
 - [x] T113 [US7] Implement those states in `crates/postio-focus/src/bar.rs`, `ExcludeSuggestion` (`alt+Return`, Search, Apple only) in `crates/postio-core/src/registry.rs` (test first in `core_suite`), and `origin_line` in `postio_ui::search_view`. Make T112 green
 - [x] T114 [US7] Add `focus_search_highlighted`, `focus_search_exclude`, the ghost and understood tiles to `DropdownViewFfi` (`crates/postio-ffi`), and draw them in `macos/Sources/PostioKit/DropdownView.swift` and `ChipQueryField.swift` (ghost in tertiary after the caret; SF Mono 14 while an operator is typed). Extend `DropdownKeyboardTests.swift` first: ⌥↩ calls `focusSearchExclude`; moving the highlight onto a person calls `focusSearchHighlighted`; Tab with a ghost calls `focusBarTab`
-- [x] T115 Extend `search_focus.rs` with `completions` for `a`, `at`, `atl` and `from:a`; run it and record it in `docs/notes/<date>-focus-search-step-8.md`. **Stop rule** for 20 ms; a vocabulary table (D22) only after asking *Recorded: `a` misses it (28 ms p95, 35 under load), `atl` is at it under load; the cost is the exact count of a common completion, not finding the words. Stopped: the ways out are the maintainer's (step-8 note).*
+- [x] T115 Extend `search_focus.rs` with `completions` for `a`, `at`, `atl` and `from:a`; run it and record it in `docs/notes/<date>-focus-search-step-8.md`. **Stop rule** for 20 ms; a vocabulary table (D22) only after asking *Recorded: `a` misses it (28 ms p95, 35 under load), `atl` is at it under load; the cost is the exact count of a common completion, not finding the words. Stopped: the ways out are the maintainer's (step-8 note). Decided: D29, a capped count shown as a floor (Phase 14).*
 - [x] T116 [US7] Capture screens 02, 04 and 05, list every difference in the step-8 note; commit the phase *The toolbar's search field stays 327 wide (step 2's T054 does not hold: `NSSearchToolbarItem` ignores the preferred width), so every row is cut; owed before T137 (step-8 note).*
 
 ---
@@ -382,6 +382,20 @@ and the next attachment in the same pass is indexed; the demo bundle
 
 ---
 
+## Phase 14: Capped suggestion counts (D29)
+
+**Goal**: the dropdown's counts cost a keystroke's budget however common
+the completion: `a` under 20 ms at p95.
+
+**Independent test**: the `completions` bench's `a`, `at`, `atl` and
+`from:a` under 20 ms at p95; a suggestion past the cap reads "1,000+".
+
+- [x] T156 [P] [US7] Write failing tests: in `crates/postio-index/tests/index_suite/completions.rs`, a label on three times `COMPLETION_COUNT_CAP` messages counts to the cap, flagged `capped`, reading no more than twice the cap's rows, and ten of them count exactly; `suggestion_count` in `crates/postio-ui/src/search_view.rs` ("1,000+", "4,512"); in `crates/postio-focus/tests/bar.rs`, a capped ghost word's row says "1,000+" and an exact label's "4,512". Red: no `capped`, no cap, no words, the row said "1000"
+- [x] T157 [US7] Add `Completion::capped`, `executor::COMPLETION_COUNT_CAP` (1,000), a cap argument to `relaxations::counts` (the relaxations keep `TOTAL_HITS_CAP`), and draw every dropdown count through `suggestion_count`. Make T156 green
+- [ ] T158 Re-run the `completions` bench shapes and record them, with the caps tried, in the step-8 note
+
+---
+
 ## Dependencies
 
 - Phase 1 blocks everything. Phases 2 → 3 → 4 are in order (the dropdown,
@@ -389,7 +403,8 @@ and the next attachment in the same pass is indexed; the demo bundle
   Phase 3 and may run in any order. Phase 8 needs Phase 2. Phase 9 needs
   Phase 3 (the Files tab) and Phase 1 (the search arm). Phase 10 needs
   Phase 3. Phase 12 needs Phase 4 (the popovers) and Phase 7 (relaxations).
-  Phase 13 needs Phase 9 (the extractor and its indexer). Phase 11 last.
+  Phase 13 needs Phase 9 (the extractor and its indexer). Phase 14 needs
+  Phase 8. Phase 11 last.
 - Within a phase, a test task precedes its implementation; `[P]` test tasks
   in one phase can be written together.
 - The brief's order is kept for building and screenshots (FR-060); the

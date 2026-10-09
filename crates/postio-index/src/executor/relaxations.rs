@@ -50,11 +50,24 @@ async fn count(
     account: AccountScope,
     query: &postio_search::ParsedQuery,
 ) -> Result<u64> {
-    Ok(counts(connection, account, std::slice::from_ref(query))
-        .await?
-        .first()
-        .copied()
-        .unwrap_or(0))
+    Ok(counts(
+        connection,
+        account,
+        std::slice::from_ref(query),
+        TOTAL_HITS_CAP,
+    )
+    .await?
+    .first()
+    .map_or(0, |counted| counted.conversations))
+}
+
+/// One query's conversations, and whether the walk stopped at its cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) struct Counted {
+    /// The conversations among the matches walked.
+    pub(super) conversations: u64,
+    /// The walk stopped at the cap: `conversations` is a floor.
+    pub(super) capped: bool,
 }
 
 /// Each query's conversations, as [`count`] counts one, in **one**
@@ -62,15 +75,20 @@ async fn count(
 /// row tagged with the query it is for. What a completion's suggestions
 /// are counted with (spec 010 US7), where a statement each would spend the
 /// keystroke's budget on round trips.
+///
+/// The walk of each stops at `cap` matches, and a count that stopped says
+/// so: the relaxations pass [`TOTAL_HITS_CAP`], the total a conversation
+/// search would show; a completion passes its own, smaller cap (D29).
 pub(super) async fn counts(
     connection: &Connection,
     account: AccountScope,
     queries: &[postio_search::ParsedQuery],
-) -> Result<Vec<u64>> {
+    cap: u64,
+) -> Result<Vec<Counted>> {
     if queries.is_empty() {
         return Ok(Vec::new());
     }
-    let cap = i64::try_from(TOTAL_HITS_CAP).unwrap_or(i64::MAX);
+    let limit = i64::try_from(cap).unwrap_or(i64::MAX);
     let mut arms: Vec<String> = Vec::new();
     let mut params: Vec<turso::Value> = Vec::new();
     let mut plans = Vec::with_capacity(queries.len());
@@ -106,7 +124,7 @@ pub(super) async fn counts(
             }
         };
         // Rows, not messages: the union's two halves, so twice the cap.
-        params.push(turso::Value::Integer(cap.saturating_mul(2)));
+        params.push(turso::Value::Integer(limit.saturating_mul(2)));
         arms.push(format!(
             "SELECT * FROM (SELECT {index} AS q, -1 AS k, m.id AS id,
                                      coalesce(m.thread_id, -m.id) AS conv,
@@ -169,6 +187,8 @@ pub(super) async fn counts(
             // message filed in two folders (#1780) is counted once, in the
             // conversation of its earliest occurrence that holds.
             let mut kept: HashMap<Held, (i64, i64)> = HashMap::new();
+            // A walk that filled its LIMIT may have more behind it.
+            let mut capped = walked.len() as u64 >= cap.saturating_mul(2);
             for (id, conversation, content) in walked {
                 if !holds(id) {
                     continue;
@@ -180,7 +200,8 @@ pub(super) async fn counts(
                     }
                     continue;
                 }
-                if kept.len() as u64 >= TOTAL_HITS_CAP {
+                if kept.len() as u64 >= cap {
+                    capped = true;
                     break;
                 }
                 kept.insert(key, (id, conversation));
@@ -189,7 +210,10 @@ pub(super) async fn counts(
                 .values()
                 .map(|(_, conversation)| *conversation)
                 .collect();
-            conversations.len() as u64
+            Counted {
+                conversations: conversations.len() as u64,
+                capped,
+            }
         })
         .collect())
 }

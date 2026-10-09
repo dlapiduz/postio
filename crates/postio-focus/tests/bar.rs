@@ -1956,6 +1956,7 @@ mod dropdown {
             text: text.to_owned(),
             query: query.to_owned(),
             count,
+            capped: false,
         }
     }
 
@@ -2034,6 +2035,33 @@ mod dropdown {
         results.total = 214;
         results.elapsed = std::time::Duration::from_millis(12);
         results
+    }
+
+    // D29: a completion as common as `as` is counted to the cap, and the
+    // ghost's row says so as a floor; a label's count past it likewise.
+    #[test]
+    fn a_capped_suggestion_count_reads_as_a_floor() {
+        let rows = List::of(1);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let effects = typed(&mut focus, "a", &rows);
+        let mut found = Suggestions {
+            ghost: Some("s".to_owned()),
+            words: vec![completion("as", "as", 1_000)],
+            labels: vec![completion("Accounts", "label:Accounts", 4_512)],
+            ..Suggestions::default()
+        };
+        found.words[0].capped = true;
+        let effects = suggested(&mut focus, &effects, found, &rows);
+        let view = dropdown(&effects);
+        let ghost_row = &view.sections[0].rows[0];
+        assert_eq!(ghost_row.key.as_deref(), Some("Tab"), "the ghost's word");
+        assert_eq!(ghost_row.right.as_deref(), Some("1,000+"));
+        assert_eq!(
+            view.sections[0].rows[1].right.as_deref(),
+            Some("4,512"),
+            "an exact count, grouped as every count is"
+        );
     }
 
     #[test]
