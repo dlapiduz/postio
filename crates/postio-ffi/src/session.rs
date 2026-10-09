@@ -1785,7 +1785,7 @@ impl Session {
             // no prompt. The moment a slice *does* read a secret, this is
             // where a `MemorySecretStore` goes.
             let config = load_config(&source);
-            let saved = postio_session::focus::saved_searches(&config);
+            let saved = postio_ui::saved_search::pinned(&config);
             let sync_config = config.sync;
             // Honour `with_secrets` here too. It was read only on the real
             // path, so an in-memory session that had been handed a test
@@ -1892,7 +1892,7 @@ impl Session {
                 .map_err(SessionError::from_refusal)?;
 
         let config = load_config(&source);
-        let saved = postio_session::focus::saved_searches(&config);
+        let saved = postio_ui::saved_search::pinned(&config);
         let keys = config.keys;
         let sync_config = config.sync;
         let ui_config = config.ui;
@@ -3831,7 +3831,7 @@ impl Session {
             }
             if update.changed.filters {
                 session.focus_list.input(postio_focus::Input::SavedSearches(
-                    postio_session::focus::saved_searches(service.config()),
+                    postio_ui::saved_search::pinned(service.config()),
                 ));
             }
             if update.changed.focus {
@@ -3861,7 +3861,7 @@ impl Session {
     /// keycaps), `[focus]` (whether Focus files mail away, and the digests an
     /// empty inbox names), and the file a saved search is written to. `follow_config` keeps them
     /// current.
-    fn prime_focus(&self, saved: Vec<(String, String)>, source: &ConfigSource) {
+    fn prime_focus(&self, saved: Vec<postio_ui::saved_search::SavedSearch>, source: &ConfigSource) {
         let driver = &self.focus_list;
         driver.set_config_path(source.path());
         driver.input(postio_focus::Input::SavedSearches(saved));

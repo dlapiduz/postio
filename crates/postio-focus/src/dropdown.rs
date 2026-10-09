@@ -120,8 +120,19 @@ pub struct DropdownPill {
     pub label: String,
     /// How many it holds.
     pub count: Option<String>,
+    /// A saved search that notifies: its quiet badge, "3 new", while mail
+    /// has matched since it was last viewed (D15).
+    pub fresh: Option<String>,
     /// The key that runs it (`alt+1`), as the keymap spells it.
     pub key: Option<String>,
+}
+
+/// A saved search's pill, as the empty dropdown is drawn from.
+pub(crate) struct SavedPill {
+    pub(crate) token: u64,
+    pub(crate) name: String,
+    pub(crate) count: Option<u64>,
+    pub(crate) fresh: Option<u64>,
 }
 
 /// One section: its title, its note, and its rows or pills.
@@ -335,7 +346,7 @@ fn query_runs(query: &str) -> Vec<Run> {
 /// What the empty dropdown is drawn from.
 pub(crate) struct EmptyParts<'a> {
     pub(crate) recents: &'a [(u64, RecentSearch)],
-    pub(crate) saved: &'a [(u64, String, Option<u64>)],
+    pub(crate) saved: &'a [SavedPill],
     pub(crate) sheet: &'a [u64],
     pub(crate) example: String,
     pub(crate) keymap: &'a Keymap,
@@ -378,11 +389,12 @@ pub(crate) fn empty(parts: EmptyParts<'_>) -> DropdownView {
             .saved
             .iter()
             .enumerate()
-            .map(|(index, (token, name, count))| DropdownPill {
-                token: *token,
+            .map(|(index, pill)| DropdownPill {
+                token: pill.token,
                 op: None,
-                label: name.clone(),
-                count: count.map(|count| count.to_string()),
+                label: pill.name.clone(),
+                count: pill.count.map(|count| count.to_string()),
+                fresh: pill.fresh.map(words::new_badge),
                 key: postio_ui::command_bar::SAVED
                     .get(index)
                     .and_then(|id| postio_ui::hints::key(parts.keymap, *id)),
@@ -521,6 +533,7 @@ pub(crate) fn words(
                     op: Some(pill.op.clone()),
                     label: pill.value.clone(),
                     count: Some(pill.count.clone()),
+                    fresh: None,
                     key: None,
                 })
                 .collect(),

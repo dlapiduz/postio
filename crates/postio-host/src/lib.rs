@@ -1023,6 +1023,7 @@ impl Inner {
                 done(search::remember(&self.wiring.database, &query, hits).await)
             }
             Req::ForgetSearch(query) => done(search::forget(&self.wiring.database, &query).await),
+            Req::MarkSeen(key) => done(search::mark_seen(&self.wiring.database, &key).await),
             Req::SavedCounts {
                 account,
                 today,

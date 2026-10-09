@@ -369,6 +369,9 @@ pub enum Req {
         /// not listed is no longer saved, and its seen-progress is dropped.
         searches: Vec<(String, String)>,
     },
+    /// The saved search under this key has been viewed: its badge counts
+    /// from now (spec 010 D15).
+    MarkSeen(String),
     /// Change an account the way the settings' account commands do.
     Account(AccountOp),
     /// Look up the servers for a new account's address.

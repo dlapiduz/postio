@@ -207,11 +207,11 @@ pub enum Input {
     /// Go to the folders popover's place with this token
     /// ([`FocusController::places`]).
     OpenPlace(u64),
-    /// The pinned saved searches, in order: each name and its query.
-    SavedSearches(Vec<(String, String)>),
+    /// The pinned saved searches, in order.
+    SavedSearches(Vec<postio_ui::saved_search::SavedSearch>),
     /// What became of an [`Intent::SaveSearch`]: the saved searches now, or
     /// the sentence saying why it was not saved.
-    SearchSaved(Result<Vec<(String, String)>, String>),
+    SearchSaved(Result<Vec<postio_ui::saved_search::SavedSearch>, String>),
     /// The bindings in force: what the bar's keycaps say.
     Keymap(postio_core::Keymap),
     /// Whether Focus files mail away: the places list Filtered while it does.
@@ -661,6 +661,12 @@ pub enum Request {
     ForgetSearch {
         /// The query.
         query: String,
+    },
+    /// The saved search under `key` was viewed: its badge counts from now
+    /// (D15).
+    MarkSeen {
+        /// The `[saved_searches.<key>]` identity.
+        key: String,
     },
     /// How many each saved search matches.
     SavedCounts {
@@ -1271,6 +1277,7 @@ impl FocusController {
             Input::Event(event) => {
                 let mut steps = self.verbs.event(&event);
                 steps.extend(self.results_heard(&event));
+                steps.extend(self.bar.heard(&event));
                 steps.extend(self.feed.event(&event));
                 steps.extend(self.hear_sync(&event));
                 steps.extend(self.filtered_event(&event));
@@ -1930,6 +1937,9 @@ mod tests {
             },
             Request::ForgetSearch {
                 query: "atlas".to_owned(),
+            },
+            Request::MarkSeen {
+                key: "atlas".to_owned(),
             },
             Request::Places,
             Request::Search {
