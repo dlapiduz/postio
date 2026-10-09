@@ -23,6 +23,7 @@ base64-3c51e837cfc5589a = { package = "base64", version = "0.22" }
 bitflags = { version = "2", default-features = false, features = ["serde", "std"] }
 block-buffer = { version = "0.12", default-features = false, features = ["zeroize"] }
 bytemuck = { version = "1", default-features = false, features = ["derive", "extern_crate_alloc", "min_const_generics"] }
+cbc = { version = "0.1", features = ["zeroize"] }
 chacha20 = { version = "0.10", default-features = false, features = ["rng", "xchacha"] }
 chrono = { version = "0.4", features = ["serde"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "zeroize"] }
@@ -32,6 +33,7 @@ crypto-common-6f8ce4dd05d13bba = { package = "crypto-common", version = "0.2", d
 crypto-common-c65f7effa3be6d31 = { package = "crypto-common", version = "0.1", default-features = false, features = ["getrandom", "std"] }
 cssparser = { version = "0.37", features = ["serde"] }
 derive_more = { version = "2", features = ["add", "add_assign", "deref", "deref_mut", "from", "is_variant"] }
+digest = { version = "0.10", features = ["mac", "std"] }
 either = { version = "1", features = ["use_std"] }
 event-listener = { version = "5" }
 event-listener-strategy = { version = "0.5" }
@@ -39,7 +41,7 @@ fastrand = { version = "2" }
 foldhash = { version = "0.2", default-features = false, features = ["std"] }
 futures-core = { version = "0.3" }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
-getrandom-9fbad63c4bcf4a8f = { package = "getrandom", version = "0.4", default-features = false, features = ["std", "sys_rng"] }
+getrandom-9fbad63c4bcf4a8f = { package = "getrandom", version = "0.4", default-features = false, features = ["std", "sys_rng", "wasm_js"] }
 hashbrown = { version = "0.17" }
 icu_locale_core = { version = "2", default-features = false, features = ["alloc", "zerovec"] }
 icu_normalizer = { version = "2", default-features = false, features = ["compiled_data", "utf16_iter", "utf8_iter"] }
@@ -66,7 +68,8 @@ pimalaya-stream = { version = "0.3" }
 potential_utf = { version = "0.1", default-features = false, features = ["alloc", "zerovec"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 pulldown-cmark = { version = "0.13" }
-rand = { version = "0.9" }
+rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
+rand-93f6ce9d446188ac = { package = "rand", version = "0.10" }
 rand_core = { version = "0.9", default-features = false, features = ["os_rng", "std"] }
 regex = { version = "1" }
 regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
@@ -75,6 +78,7 @@ secrecy = { version = "0.10", default-features = false, features = ["serde"] }
 serde = { version = "1", features = ["alloc", "derive"] }
 serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
 serde_json = { version = "1", features = ["alloc"] }
+simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_new", "union", "write"] }
 stable_deref_trait = { version = "1" }
 string_cache = { version = "0.9" }
@@ -92,6 +96,7 @@ tracing = { version = "0.1" }
 tracing-core = { version = "0.1" }
 tracing-log = { version = "0.2" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+typenum = { version = "1", default-features = false, features = ["const-generics"] }
 url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["serde", "v4", "v5", "v7"] }
 winnow = { version = "1" }
@@ -112,6 +117,7 @@ base64-3c51e837cfc5589a = { package = "base64", version = "0.22" }
 bitflags = { version = "2", default-features = false, features = ["serde", "std"] }
 block-buffer = { version = "0.12", default-features = false, features = ["zeroize"] }
 bytemuck = { version = "1", default-features = false, features = ["derive", "extern_crate_alloc", "min_const_generics"] }
+cbc = { version = "0.1", features = ["zeroize"] }
 cc = { version = "1", default-features = false, features = ["parallel"] }
 chacha20 = { version = "0.10", default-features = false, features = ["rng", "xchacha"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -123,6 +129,7 @@ crypto-common-c65f7effa3be6d31 = { package = "crypto-common", version = "0.1", d
 cssparser = { version = "0.37", features = ["serde"] }
 derive_more = { version = "2", features = ["add", "add_assign", "deref", "deref_mut", "from", "is_variant"] }
 derive_more-impl = { version = "2", features = ["add", "add_assign", "deref", "deref_mut", "from", "is_variant"] }
+digest = { version = "0.10", features = ["mac", "std"] }
 either = { version = "1", features = ["use_std"] }
 event-listener = { version = "5" }
 event-listener-strategy = { version = "0.5" }
@@ -130,7 +137,7 @@ fastrand = { version = "2" }
 foldhash = { version = "0.2", default-features = false, features = ["std"] }
 futures-core = { version = "0.3" }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
-getrandom-9fbad63c4bcf4a8f = { package = "getrandom", version = "0.4", default-features = false, features = ["std", "sys_rng"] }
+getrandom-9fbad63c4bcf4a8f = { package = "getrandom", version = "0.4", default-features = false, features = ["std", "sys_rng", "wasm_js"] }
 hashbrown = { version = "0.17" }
 icu_locale_core = { version = "2", default-features = false, features = ["alloc", "zerovec"] }
 icu_normalizer = { version = "2", default-features = false, features = ["compiled_data", "utf16_iter", "utf8_iter"] }
@@ -157,7 +164,8 @@ pimalaya-stream = { version = "0.3" }
 potential_utf = { version = "0.1", default-features = false, features = ["alloc", "zerovec"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 pulldown-cmark = { version = "0.13" }
-rand = { version = "0.9" }
+rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
+rand-93f6ce9d446188ac = { package = "rand", version = "0.10" }
 rand_core = { version = "0.9", default-features = false, features = ["os_rng", "std"] }
 regex = { version = "1" }
 regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
@@ -166,6 +174,7 @@ secrecy = { version = "0.10", default-features = false, features = ["serde"] }
 serde = { version = "1", features = ["alloc", "derive"] }
 serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
 serde_json = { version = "1", features = ["alloc"] }
+simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_new", "union", "write"] }
 stable_deref_trait = { version = "1" }
 string_cache = { version = "0.9" }
@@ -184,6 +193,7 @@ tracing = { version = "0.1" }
 tracing-core = { version = "0.1" }
 tracing-log = { version = "0.2" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+typenum = { version = "1", default-features = false, features = ["const-generics"] }
 url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["serde", "v4", "v5", "v7"] }
 winnow = { version = "1" }
