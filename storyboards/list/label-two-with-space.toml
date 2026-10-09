@@ -8,6 +8,9 @@
 # the picker stays up, so a second label is one arrow and one Space away.
 # Return closes it, and the selection it acted on goes with it.
 apps   = ["focus"]
+# Red on the GTK app until it drives this flow through postio-focus (#1807):
+# the catalogue expects it to fail there and says when it starts passing.
+proof  = "open"
 source = { kind = "spec", ref = "specs/009-focus-macos US6" }
 
 [[step]]

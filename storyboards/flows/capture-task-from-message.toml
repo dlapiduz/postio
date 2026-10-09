@@ -9,6 +9,9 @@
 # date (C21). ⌥S puts the subject in its place; ⌘↩ appends the line and
 # the toast says where it went.
 apps   = ["focus"]
+# Red on the GTK app until it drives this flow through postio-focus (#1807):
+# the catalogue expects it to fail there and says when it starts passing.
+proof  = "open"
 source = { kind = "spec", ref = "specs/009-focus-macos US9" }
 
 [[step]]
