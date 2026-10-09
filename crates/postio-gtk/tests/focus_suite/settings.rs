@@ -555,9 +555,11 @@ pub fn mod_e_opens_config_toml_in_the_persons_editor() {
             .next()
             .expect("the foot strip's Open in $EDITOR");
         support::click(&window, &button, 1);
-        // The click is delivered, not handled, when `click` returns: wait for
-        // what it does rather than reading the list in the same breath, which
-        // a loaded runner lost (two opens seen of three).
+        // Waited for, not read in the same breath: a loaded runner once saw
+        // two opens of three. `click` already drains the main loop after the
+        // press and the release, so what was lost was not a pending handler;
+        // a press that did not land (the dialog still settling under it) is
+        // the likelier cause, and the wait at least names it (#1800).
         assert!(
             crate::settle_until(async || opened.borrow().len() == 3).await,
             "the foot strip's button opened nothing: {:?}",
