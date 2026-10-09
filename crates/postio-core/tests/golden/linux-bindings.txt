@@ -49,6 +49,8 @@ toggle_reading_pane	F8
 search	/ | alt+ctrl+f
 save_search	ctrl+s
 back_to_words	ctrl+BackSpace | alt+BackSpace
+show_all_results	
+forget_recent	
 compose	c | ctrl+n
 send	ctrl+Return | alt+s | alt+Return
 schedule_send	ctrl+shift+Return | alt+S

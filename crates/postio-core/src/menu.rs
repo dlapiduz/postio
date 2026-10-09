@@ -225,6 +225,8 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::MoreActions
         | C::ToggleReadingPane
         | C::BackToWords
+        | C::ShowAllResults
+        | C::ForgetRecent
         | C::GoToFiltered
         | C::GoToDigestRules
         | C::ToggleHasAction

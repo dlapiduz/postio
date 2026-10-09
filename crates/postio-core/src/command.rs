@@ -168,6 +168,11 @@ command_ids! {
     SaveSearch => "save_search",
     /// Leave a search's chips for the plain words it was typed as.
     BackToWords => "back_to_words",
+    /// Open the search bar's words as a results view (the Mac's dropdown
+    /// "Show all N results").
+    ShowAllResults => "show_all_results",
+    /// Forget the recent search the dropdown has highlighted.
+    ForgetRecent => "forget_recent",
     /// Start a new message.
     Compose => "compose",
     /// Send what is in the composer.
@@ -767,6 +772,10 @@ pub enum Command {
     SaveSearch,
     /// Leave a search's chips for the plain words it was typed as.
     BackToWords,
+    /// Open the words in the search bar as a results view.
+    ShowAllResults,
+    /// Forget the highlighted recent search.
+    ForgetRecent,
 
     // -- Compose ---------------------------------------------------------
     /// Start a new message, optionally from an existing draft.
@@ -1223,6 +1232,8 @@ impl Command {
             Command::Search { .. } => CommandId::Search,
             Command::SaveSearch => CommandId::SaveSearch,
             Command::BackToWords => CommandId::BackToWords,
+            Command::ShowAllResults => CommandId::ShowAllResults,
+            Command::ForgetRecent => CommandId::ForgetRecent,
             Command::Compose { .. } => CommandId::Compose,
             Command::Send => CommandId::Send,
             Command::ScheduleSend => CommandId::ScheduleSend,
@@ -1400,6 +1411,8 @@ impl Command {
             CommandId::Search => Command::Search { query: None },
             CommandId::SaveSearch => Command::SaveSearch,
             CommandId::BackToWords => Command::BackToWords,
+            CommandId::ShowAllResults => Command::ShowAllResults,
+            CommandId::ForgetRecent => Command::ForgetRecent,
             CommandId::Compose => Command::Compose { draft: None },
             CommandId::Send => Command::Send,
             CommandId::ScheduleSend => Command::ScheduleSend,

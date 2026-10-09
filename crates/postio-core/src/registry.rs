@@ -1098,6 +1098,31 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: FOCUS_MAIL,
     },
+    // Spec 010: the Mac's search dropdown, drawn as pixels (so not the
+    // terminal's). Neither is offered on Linux until it adopts the dropdown
+    // (`offered_on`, D25).
+    CommandSpec {
+        id: CommandId::ShowAllResults,
+        title: "Show all results",
+        // Where `mod+Return` sends in the composer: contexts do not overlap.
+        default_binding: "mod+Return",
+        alternate_bindings: &[],
+        contexts: Context::Search.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ForgetRecent,
+        title: "Forget recent search",
+        // The design names the Mac's Option-Delete (D23).
+        default_binding: "alt+BackSpace",
+        alternate_bindings: &[],
+        contexts: Context::Search.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
     CommandSpec {
         id: CommandId::Compose,
         title: "Compose",
@@ -2595,13 +2620,18 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             // repair, and recolouring there would break the contrast floor;
             // the maintainer chose to leave it out (2026-10-01, #1705).
             | (ActionId::Builtin(C::DarkenMessage), Platform::Apple)
+            // The search dropdown is the Mac's until Linux adopts it
+            // (spec 010 D23, D25).
+            | (ActionId::Builtin(C::ShowAllResults), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ForgetRecent), Platform::Freedesktop)
     )
 }
 
 /// Whether `platform` lets `action` take its alternate `binding` (as the
 /// registry spells it, before `mod+` is expanded).
 ///
-/// One alternate is the desktop's and not the Mac's: `quit`'s `mod+w`.
+/// Two alternates are the desktop's and not the Mac's: `quit`'s `mod+w`, and
+/// `back_to_words`' `alt+BackSpace`, which the Mac's `forget_recent` takes.
 /// GTK's Postio has one window, so closing it is quitting (spec 007 T216);
 /// on the Mac ⌘W closes the window in front -- the message, digest or
 /// compose window over the list most of all -- through Window › Close, and
@@ -2611,6 +2641,13 @@ pub fn alternate_offered_on(action: ActionId, binding: &str, platform: Platform)
     !matches!(
         (action, binding, platform),
         (ActionId::Builtin(CommandId::Quit), "mod+w", Platform::Apple)
+            // The terminal's key for `back_to_words` is the Mac's for
+            // `forget_recent` (spec 010 D23).
+            | (
+                ActionId::Builtin(CommandId::BackToWords),
+                "alt+BackSpace",
+                Platform::Apple
+            )
     )
 }
 
@@ -2661,17 +2698,24 @@ mod tests {
         CommandId::NextScope,
     ];
 
+    /// What only the Mac's search dropdown draws, until Linux adopts it
+    /// (spec 010 D23, D25).
+    const NOT_ON_LINUX_YET: [CommandId; 2] = [CommandId::ShowAllResults, CommandId::ForgetRecent];
+
     #[test]
     fn every_command_is_offered_on_freedesktop() {
         // GTK draws every surface these commands name, so nothing is scoped
-        // away there -- this is the half that guards the GTK build against a
-        // Mac decision leaking into it.
-        for id in CommandId::ALL {
-            assert!(
-                offered_on(ActionId::Builtin(*id), Platform::Freedesktop),
-                "`{id}` stopped being offered on Linux"
-            );
-        }
+        // away there but the Mac's dropdown -- this is the half that guards
+        // the GTK build against a Mac decision leaking into it.
+        let scoped: Vec<CommandId> = CommandId::ALL
+            .iter()
+            .copied()
+            .filter(|id| !offered_on(ActionId::Builtin(*id), Platform::Freedesktop))
+            .collect();
+        assert_eq!(
+            scoped, NOT_ON_LINUX_YET,
+            "a command left Linux's menus without anyone deciding it"
+        );
     }
 
     #[test]

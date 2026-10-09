@@ -137,6 +137,11 @@ fn render() -> String {
     );
 
     for spec in registry::all() {
+        // This file documents Linux, and the Mac's search dropdown is its
+        // own until Linux adopts it (spec 010 D25).
+        if !registry::offered_on(spec.id.into(), Platform::Freedesktop) {
+            continue;
+        }
         // Expanded first: the registry stores `mod+k`, the reader presses
         // Ctrl+K. This file documents Linux, so it renders the freedesktop
         // spelling and reads exactly as it did before #669.
@@ -221,6 +226,9 @@ fn the_reference_names_every_command() {
     let rendered = render();
 
     for spec in registry::all() {
+        if !registry::offered_on(spec.id.into(), Platform::Freedesktop) {
+            continue;
+        }
         assert!(
             rendered.contains(&format!("`{}`", spec.id)),
             "`{}` is missing from the keyboard reference",

@@ -222,6 +222,22 @@ const CONTRACT: &[Row] = &[
         &[Context::Search],
     ),
     with("toggle_result_order", "alt+o", &[], All, &[Context::Search]),
+    // Spec 010: the Mac's search bar. `mod+Return` sends in the composer;
+    // here it opens the results. Neither is offered on Freedesktop yet (D25).
+    with(
+        "show_all_results",
+        "mod+Return",
+        &[],
+        Graphical,
+        &[Context::Search],
+    ),
+    with(
+        "forget_recent",
+        "alt+BackSpace",
+        &[],
+        Graphical,
+        &[Context::Search],
+    ),
     // -- Pickers --------------------------------------------------------
     with("picker_choose_1", "1", &[], Focus, &[Context::Picker]),
     with("picker_choose_2", "2", &[], Focus, &[Context::Picker]),
@@ -509,4 +525,31 @@ fn a_command_has_the_same_key_in_every_app_that_offers_it() {
             }
         }
     }
+}
+
+/// Spec 010 D23 and D25: the Mac's search bar has two keys Linux does not
+/// adopt yet, and the one `alt+BackSpace` means a different command on each
+/// platform -- the terminal's alternate for `back_to_words` on Linux, the
+/// forgetting of a recent search on the Mac.
+#[test]
+fn the_search_bar_s_new_keys_resolve_on_the_mac_and_not_on_linux() {
+    let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
+    let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+
+    assert_eq!(mac.bindings(CommandId::ShowAllResults), ["cmd+Return"]);
+    assert_eq!(mac.bindings(CommandId::ForgetRecent), ["alt+BackSpace"]);
+    assert!(linux.bindings(CommandId::ShowAllResults).is_empty());
+    assert!(linux.bindings(CommandId::ForgetRecent).is_empty());
+    assert!(!linux.offers(CommandId::ShowAllResults));
+    assert!(!linux.offers(CommandId::ForgetRecent));
+
+    assert_eq!(
+        mac.bindings(CommandId::BackToWords),
+        ["cmd+BackSpace"],
+        "the terminal's alternate is not the Mac's: alt+BackSpace forgets a recent"
+    );
+    assert_eq!(
+        linux.bindings(CommandId::BackToWords),
+        ["ctrl+BackSpace", "alt+BackSpace"]
+    );
 }

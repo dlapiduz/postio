@@ -209,16 +209,28 @@ fn ids_serialize_as_their_stable_string() {
 
 #[test]
 fn bindings_do_not_collide_within_a_context() {
+    // A key can mean one command on one platform and another on the other
+    // (`alt+BackSpace`: the terminal's back-to-words on Linux, the Mac's
+    // forget-recent), so a collision is two commands that are both live on
+    // some platform (`offered_on`, `alternate_offered_on`).
     for context in Context::ALL {
-        let mut seen: BTreeMap<&str, CommandId> = BTreeMap::new();
+        let mut seen: BTreeMap<(bool, &str), CommandId> = BTreeMap::new();
         for spec in registry::for_context(*context) {
-            for binding in spec.bindings() {
-                if let Some(other) = seen.insert(binding, spec.id) {
-                    panic!(
-                        "`{binding}` is bound to both `{other}` and `{}` in the \
-                         {context} context",
-                        spec.id
-                    );
+            for (at, binding) in spec.bindings().enumerate() {
+                for platform in [Platform::Freedesktop, Platform::Apple] {
+                    let action = postio_core::ActionId::Builtin(spec.id);
+                    if !registry::offered_on(action, platform)
+                        || (at > 0 && !registry::alternate_offered_on(action, binding, platform))
+                    {
+                        continue;
+                    }
+                    if let Some(other) = seen.insert((platform == Platform::Apple, binding), spec.id) {
+                        panic!(
+                            "`{binding}` is bound to both `{other}` and `{}` in the \
+                             {context} context on {platform:?}",
+                            spec.id
+                        );
+                    }
                 }
             }
         }
@@ -851,4 +863,28 @@ fn a_focus_only_command_is_offered_to_focus_and_the_terminal_that_draws_it() {
         [Frontend::Terminal, Frontend::Focus],
         "a Focus row is reachable in the terminal"
     );
+}
+
+/// Spec 010 D23 and D25: the Mac's search bar commands are not offered on
+/// Linux until it adopts the dropdown, and are reachable in the search bar.
+#[test]
+fn the_search_bar_s_new_commands_are_the_macs_until_linux_adopts_them() {
+    use postio_config::paths::Platform;
+    use postio_core::ActionId;
+    for id in [CommandId::ShowAllResults, CommandId::ForgetRecent] {
+        let action = ActionId::Builtin(id);
+        assert!(registry::offered_on(action, Platform::Apple), "{id}");
+        assert!(!registry::offered_on(action, Platform::Freedesktop), "{id}");
+        assert!(registry::get(id).available_in(Context::Search), "{id}");
+    }
+    assert!(!registry::alternate_offered_on(
+        ActionId::Builtin(CommandId::BackToWords),
+        "alt+BackSpace",
+        Platform::Apple
+    ));
+    assert!(registry::alternate_offered_on(
+        ActionId::Builtin(CommandId::BackToWords),
+        "alt+BackSpace",
+        Platform::Freedesktop
+    ));
 }
