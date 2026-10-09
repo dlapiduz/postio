@@ -4788,6 +4788,7 @@ dependencies = [
  "postio-workspace-hack",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
