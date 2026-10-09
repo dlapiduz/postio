@@ -1,0 +1,44 @@
+# The timeline narrows by months: a drag across bars sets `after:` and
+# `before:`, and ⌥← / ⌥→ step the range a month at a time
+# (specs/010-focus-search US3 scenario 4, FR-023, design §3.3).
+#
+# The drag is a pointer gesture the format cannot press, so its first
+# step is skipped with the reason; the drag's report is proven by
+# macos/Tests/PostioKitTests/TimelineTests.swift and the months it becomes
+# by postio-focus tests/results.rs. The keys are the keyboard's way to the
+# same range, and they are pressed here.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/010-focus-search US3" }
+seed   = "search"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "search"
+
+[[step]]
+type    = "atlas"
+
+[[step]]
+command = "show_all_results"
+check   = { keyboard.region = "results" }
+expect  = "The timeline under the filter bar: twelve bars ending with this month, “Matches by month · drag across months to narrow” on the right."
+
+[[step]]
+id      = "drag"
+wait    = { ms = 300 }
+expect  = "A drag from July's bar to September's: nothing is asked while the pointer moves; on release the field gains “after:” the 1st of July and “before:” the 1st of October, the Date button reads “July – September”, the three bars are bold over a soft band and the others fade."
+
+[[step]]
+command = "step_range_back"
+check   = { keyboard.region = "results" }
+expect  = "⌥← moves the band a month earlier: June – August, both chips changed in place, the list and counts following."
+
+[[step]]
+command = "step_range_forward"
+check   = { keyboard.region = "results" }
+expect  = "⌥→ moves it back: July – September again. The hint on the right says “Jul – Sep selected · drag to change” with ⌥← ⌥→ “steps a month”."
+
+[app.macos.step.drag]
+skip = { reason = "A drag across the timeline's bars: the format has no pointer input; filmed by hand until it does" }

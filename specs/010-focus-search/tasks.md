@@ -204,7 +204,7 @@ GTK's bar is unchanged.
 
 **Independent test**: US3's.
 
-- [ ] T076 [US3] Write storyboards `storyboards/search/popover-preview-and-restore.toml`, `timeline-drag-narrows.toml`, `date-words.toml`
+- [x] T076 [US3] Write storyboards `storyboards/search/popover-preview-and-restore.toml`, `timeline-drag-narrows.toml`, `date-words.toml`
 - [ ] T077 [P] [US3] Write failing tests in `crates/postio-focus/tests/results.rs`: opening From records the query; checking a person re-asks with `from:` added and the list, counts and timeline update; Esc restores the recorded query exactly; ↩ keeps it; ⌥-click adds `-from:`; the popover's own filter narrows its rows locally; From/To list only people in the current facets; Anywhere and Label the same with folders and labels. Red: no popovers
 - [ ] T078 [US3] Implement popovers in `crates/postio-focus/src/results.rs`. Make T077 green
 - [ ] T079 [P] [US3] Write failing tests: `StepRangeBack`/`StepRangeForward` (`alt+Left`/`alt+Right`, Results) in `crates/postio-core/tests/core_suite/`; in `crates/postio-focus/tests/results.rs`, `focus_search_months(3, 5)` sets `after:`/`before:` per US3 scenario 4, ⌥←/⌥→ shift both bounds by a month, and the selected months come back marked; the Date popover's words "since july" show "→ after:2026-07-01" and its presets carry counts. Red: missing

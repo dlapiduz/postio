@@ -1,0 +1,70 @@
+# A filter popover previews live and Esc puts back exactly what it opened
+# on; Return keeps the preview (specs/010-focus-search US3 scenarios 1-3,
+# FR-027, design §3.6, screen 08).
+#
+# From opens over the results for "atlas budget". It lists only the people
+# the results hold, each with a bar and a count. Space on Ada Moreno checks
+# her: while the popover is still open the list, the tab count, the
+# timeline and the count line ("previewing From: Ada Moreno · ↩ applies")
+# all follow. Esc closes it and the query, list, counts and timeline are
+# as they were. Opening it again and pressing Return keeps the check: the
+# chip appears in the field and the From button is solid with her name.
+#
+# The format has no pointer input (specs/008-storyboards
+# storyboard-format.md), so the click on From is a step the Mac skips with
+# the reason; the controller's half is proven by postio-focus
+# tests/results.rs (checking_a_person_previews_live_and_esc_restores_the_
+# query_exactly, return_keeps_the_previewed_query).
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/010-focus-search US3" }
+seed   = "search"
+design = "08-filter-from"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "search"
+
+[[step]]
+type    = "atlas budget"
+
+[[step]]
+id      = "results"
+command = "show_all_results"
+check   = { keyboard.region = "results" }
+expect  = "The results for “atlas budget”: the filter bar's From button is an outline, unringed."
+
+[[step]]
+id      = "open-from"
+wait    = { ms = 300 }
+expect  = "A click on From opens its popover, 360 wide with an arrow, hung from the button, which takes the accent ring. Its field says “Filter people in these results”; the rows are the senders the results hold, 44 tall: a checkbox, the initials, the name over the address, a bar and a count."
+
+[[step]]
+id      = "check-ada"
+key     = "space"
+expect  = "Space checks Ada Moreno. With the popover still open the list narrows to her conversations, the Conversations count and the timeline's bars drop, and the count line's second line reads “previewing From: Ada Moreno · ↩ applies”. The popover's rows and their counts stay as they opened."
+
+[[step]]
+key     = "Escape"
+check   = { keyboard.region = "results", overlay.kind = "none" }
+expect  = "Esc closes the popover and nothing it previewed is left: no chip, the From button an outline again, the list, counts and timeline as at the results step."
+
+[[step]]
+id      = "reopen-from"
+wait    = { ms = 300 }
+expect  = "From again: the popover, nobody checked."
+
+[[step]]
+key     = "space"
+
+[[step]]
+key     = "Return"
+check   = { keyboard.region = "results", overlay.kind = "none" }
+expect  = "Return keeps it: the field holds a “from: Ada Moreno” chip before the words, the From button is solid and reads “From: Ada Moreno”, and the list is hers."
+
+[app.macos.step.open-from]
+skip = { reason = "A click on the From button: the format has no pointer input; filmed by hand until it does" }
+
+[app.macos.step.reopen-from]
+skip = { reason = "A click on the From button: the format has no pointer input; filmed by hand until it does" }
