@@ -1796,8 +1796,15 @@ impl Bar {
         let landed = self
             .kept(DropdownState::PlainEnglish)
             .and_then(|drop| drop.landed);
+        // The words are marked, not the person: the sender column says who
+        // (screen 05 marks "Invoice" alone).
+        let terms = query
+            .text_terms()
+            .filter(|term| !term.negated)
+            .map(|term| term.value.clone())
+            .collect();
         self.drop = Some(Drop {
-            terms: postio_search::highlight::terms(&query),
+            terms,
             query: Some(query.clone()),
             landed,
             tiles,

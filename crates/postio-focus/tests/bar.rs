@@ -2499,6 +2499,24 @@ mod dropdown {
             "the first result is focused"
         );
 
+        // The words are what the results mark, not the person: the sender
+        // column says who, and screen 05 marks only "Invoice".
+        let effects = typed(&mut focus, "invoices from:ada last month", &rows);
+        let mut found = atlas_budget();
+        found.hits.truncate(1);
+        let effects = landed(&mut focus, &effects, found, &rows);
+        let view = dropdown(&effects);
+        assert_eq!(view.state, DropdownState::PlainEnglish);
+        assert!(
+            view.sections[0].rows[0]
+                .title
+                .iter()
+                .all(|run| !run.highlighted),
+            "{:?}",
+            view.sections[0].rows[0].title
+        );
+        let _ = typed(&mut focus, "invoices last month", &rows);
+
         // Tab: the parse, as chips.
         let effects = focus.handle(Input::BarTab);
         assert!(
