@@ -13,8 +13,8 @@ file and ⌘↓ a save panel.
   `attachment_passages`, grouped by content so a sheet whose every row
   says the word is one hit. Only the conversation search has it: GTK's
   `search` keeps `HITS_JOIN`'s corpus (D11). **Keep the two joins in
-  step**: main's #1812 (`INDEXED BY idx_messages_content`) is not on this
-  branch yet, and when it lands it is owed in both strings. Relaxation
+  step**: main's #1812 (`INDEXED BY idx_messages_content`) is in both
+  strings since the rebase below. Relaxation
   counts still use `HITS_JOIN`, so a way out of no results does not count
   file matches.
 - **Where in the file** is read only for the shown rows that matched in
@@ -105,6 +105,71 @@ run and put back, as step 1's note says. Load average 6-7 during the run
   (#1812) is on main and not on this branch. Not worked around.
 - `Files tab, one word` finds nothing because `quarterly` is only in
   bodies, and the tab is files whose name or contents match.
+
+## Measured again, rebased onto #1812
+
+Rebased onto main at 5dabb96f (#1811, #1812, #1815, #1816). #1812 pinned
+`HITS_JOIN`'s lookup to `idx_messages_content`; this branch then named it
+on its own content joins too (`HITS_JOIN_WITH_FILES`, the set path's
+arms, the negated-word and column sets, the Files tab's passages), and
+kept the projection's attachment count a per-message seek: the engine
+had rewritten `count(*) ... WHERE f.message_id = m.id` group-first, a
+walk of every attachment on each search (`docs/gotchas.md`).
+`index_suite::driven_join_plan` holds both.
+
+Same bench, corpus and method as above: release, Apple M1 Pro, GTK
+dev-dependencies out for the run and put back, 60 timed runs after 5
+warm-ups. Load average 11.8 when the build started (other sessions
+compiling), 3.7-5.3 while the shapes ran.
+
+| shape | query | p50 ms | p95 ms | stmts | found |
+|---|---|---:|---:|---:|---:|
+| one word | `quarterly` | 3.08 | 3.40 | 3 | 203 |
+| two words | `quarterly forecast` | 1.00 | 1.01 | 3 | 7 |
+| operator only | `from:sender3` | 8.02 | 9.03 | 4 | 479 |
+| operator + words | `from:sender3 regarding` | 17.99 | 19.13 | 4 | 460 |
+| **common word** | `regarding` | 50.90 | **52.31** | 3 | 1,676 |
+| typed `a` | `a` | 41.29 | 42.01 | 3 | 1,560 |
+| **typed `at`** | `at` | 50.94 | **53.43** | 3 | 1,568 |
+| typed `atl` | `atl` | 4.32 | 4.72 | 3 | 366 |
+| completions | `a` | 4.12 | 4.27 | 4 | 2 |
+| completions | `at` | 2.16 | 2.29 | 4 | 2 |
+| completions | `atl` | 3.84 | 4.25 | 4 | 2 |
+| completions | `from:a` | 1.54 | 1.54 | 1 | 4 |
+| zero hits, four filters | (step 1's) | 1.19 | 1.25 | 2 | 0 |
+| relaxations of that | five variants | 3.22 | 3.82 | 5 | 1 variant |
+| e2e one word | `quarterly` | 4.42 | 4.53 | 56 | 203 |
+| e2e two words | `quarterly forecast` | 1.47 | 1.81 | 13 | 7 |
+| e2e operator + words | `from:sender3 regarding` | 19.21 | 20.89 | 57 | 460 |
+| **e2e common word** | `regarding` | 52.57 | **55.16** | 56 | 1,676 |
+| e2e typed `atl` | `atl` | 5.69 | 5.76 | 56 | 366 |
+| preview check a person | `quarterly from:sender3` | 2.28 | 2.30 | 4 | 9 |
+| preview exclude a person | `quarterly -from:sender3` | 4.40 | 5.13 | 4 | 194 |
+| preview check a label | `quarterly label:atlas` | 1.52 | 1.54 | 4 | 21 |
+| preview check a folder | `quarterly in:inbox` | 3.12 | 3.39 | 3 | 203 |
+| timeline range + word | `quarterly after:… before:…` | 1.43 | 2.09 | 3 | 24 |
+| date words since + word | `quarterly after:…` | 1.40 | 1.74 | 3 | 24 |
+| timeline range alone | `after:… before:…` | 11.08 | 12.08 | 3 | 352 |
+| timeline range + operator | `from:sender3 after:… before:…` | 3.41 | 4.04 | 4 | 66 |
+| file word | `kestrel` | 1.40 | 1.66 | 4 | 20 |
+| e2e file word | `kestrel` | 1.73 | 1.96 | 8 | 20 |
+| Files tab, file word | `kestrel` | 0.45 | 0.47 | 3 | 20 |
+| Files tab, one word | `quarterly` | 1.47 | 1.82 | 2 | 0 |
+| Files tab, operator | `from:sender3` | 7.33 | 9.13 | 3 | 350 |
+| e2e preview check a person | `quarterly from:sender3` | 2.92 | 9.85 | 16 | 9 |
+| e2e timeline range + word | `quarterly after:… before:…` | 2.04 | 2.19 | 30 | 24 |
+
+- **The date shapes are fixed.** `timeline range + word` 104.95 ms to
+  2.09 at p95, `date words since + word` 92.42 to 1.74, `e2e timeline
+  range + word` 102.32 to 2.19; `relaxations` 3,003 ms to 3.82, because
+  its zero-hit variants keep a word and a date.
+- **Also faster**: `completions a` 26.36 to 4.27 (under its 20 ms budget
+  now), `one word` 6.49 to 3.40, `file word` 5.25 to 1.66 -- the
+  attachment count no longer walks the store's attachments per search.
+- **Still over budget**, and not worked around: `common word` 52.31 ms,
+  `typed at` 53.43, `e2e common word` 55.16, against 50. These are the
+  same three step 8 and the table above found over (54-59 there). The
+  load was lower this time and they are within 3-11% of the budget.
 
 ## The capture
 
