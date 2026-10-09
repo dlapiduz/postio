@@ -215,12 +215,31 @@ public final class BarSearchField: NSSearchField {
         ghostLabel.stringValue = ghost
         ghostLabel.sizeToFit()
         let size = ghostLabel.frame.size
-        // The field editor sets its text two points in (its line fragment
-        // padding); the ghost follows the last glyph.
+        // The ghost follows the last glyph where the field editor laid it
+        // out; without an editor, two points in (its line fragment
+        // padding) past the typed text's width. The label draws its own
+        // text inset in its frame, which the frame takes back, so "at" and
+        // "las" read as one word (screen 02).
+        let end = lastGlyphEnd() ?? (text.minX + 2 + width)
+        let inset = ghostLabel.cell?.titleRect(forBounds: ghostLabel.bounds).minX ?? 0
+        let x = end - inset
         ghostLabel.frame = NSRect(
-            x: text.minX + 2 + width, y: (bounds.height - size.height) / 2,
-            width: min(size.width, max(text.maxX - (text.minX + 2 + width), 0)), height: size.height)
+            x: x, y: (bounds.height - size.height) / 2,
+            width: min(size.width, max(text.maxX - x, 0)), height: size.height)
         ghostLabel.isHidden = false
+    }
+
+    /// Where the field editor drew the typed text's last glyph, in this
+    /// field's coordinates; nil while nothing is being edited.
+    private func lastGlyphEnd() -> CGFloat? {
+        guard let editor = currentEditor() as? NSTextView,
+            let layout = editor.layoutManager, let container = editor.textContainer,
+            layout.numberOfGlyphs > 0
+        else { return nil }
+        let last = layout.boundingRect(
+            forGlyphRange: NSRange(location: layout.numberOfGlyphs - 1, length: 1), in: container)
+        let x = last.maxX + editor.textContainerOrigin.x
+        return editor.convert(NSPoint(x: x, y: 0), to: self).x
     }
 }
 
