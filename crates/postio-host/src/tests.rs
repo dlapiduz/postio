@@ -3977,6 +3977,7 @@ struct SearchSeed {
     host: Option<Host>,
     client: Client,
     account: postio_model::AccountId,
+    database: postio_storage::Store,
     _blobs: tempfile::TempDir,
 }
 
@@ -3994,7 +3995,7 @@ impl SearchSeed {
         )
         .expect("a blob store");
         postio_demo::store_search_blobs(&blobs).expect("the seed's files");
-        let host = Host::start(database, blobs, |wiring| {
+        let host = Host::start(database.clone(), blobs, |wiring| {
             wiring.with_secrets(std::sync::Arc::new(MemorySecretStore::new()))
         })
         .expect("a host");
@@ -4004,6 +4005,7 @@ impl SearchSeed {
             host: Some(host),
             client,
             account,
+            database,
             _blobs: directory,
         }
     }
@@ -4134,5 +4136,64 @@ fn focus_asks_the_host_for_the_ways_out_of_no_results() {
     assert!(
         at(&answered[0].0) > at(&answered[1].0),
         "the more fruitful way out leads though the query names it later: {answered:?}"
+    );
+}
+
+#[test]
+fn a_search_whose_caller_has_gone_stops_on_the_host() {
+    // D9: the driver aborts a superseded search by dropping the client's
+    // future, and the host has to notice, or the abandoned search keeps
+    // its reader and its CPU while the one that replaced it waits.
+    //
+    // Every reader turn is held here, so the host's search waits for one:
+    // a piece of work in flight, holding the host (its task's share of
+    // `Inner`) for as long as it lives. Dropped, it must let go without
+    // ever reading a row.
+    let seed = SearchSeed::new();
+    let host = seed.host.as_ref().expect("running");
+    let query = postio_search::parse("atlas budget", postio_demo::today().date_naive());
+    // Warm: whatever the host starts lazily on a first search is started.
+    seed.conversations("atlas budget");
+    let idle = std::sync::Arc::strong_count(&host.inner);
+
+    let held: Vec<postio_storage::Reader> = seed.rt.block_on(async {
+        let mut held = Vec::new();
+        while let Ok(turn) =
+            tokio::time::timeout(Duration::from_millis(50), seed.database.read()).await
+        {
+            held.push(turn.expect("a reader"));
+        }
+        held
+    });
+    assert!(!held.is_empty(), "every reader turn is held");
+
+    let call = seed.client.conversations(
+        seed.scope(),
+        query,
+        postio_search::results::ConversationOrder::BestMatch,
+        0,
+        20,
+    );
+    let mut call = Box::pin(call);
+    let waited = seed.rt.block_on(async {
+        tokio::time::timeout(Duration::from_millis(50), &mut call)
+            .await
+            .is_err()
+    });
+    assert!(waited, "the search waits for a reader turn");
+    postio_test_support::wait_until("the host to be working on the search", || {
+        std::sync::Arc::strong_count(&host.inner) > idle
+    });
+
+    drop(call);
+    postio_test_support::wait_until("the host to stop the abandoned search", || {
+        std::sync::Arc::strong_count(&host.inner) == idle
+    });
+
+    drop(held);
+    let after = seed.conversations("atlas budget");
+    assert!(
+        after.total > 1,
+        "the host searches on after an abandoned one"
     );
 }

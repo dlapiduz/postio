@@ -107,8 +107,8 @@ index_suite` green; the bench reports under budget, or the stop rule fires.
 - [x] T030 [P] Write a failing test in `crates/postio-host/src/tests.rs`: over the search seed, `Client::conversations` and `Client::passages` answer; `Client::relaxations` drops zero counts and sorts. Red: no requests
 - [x] T031 Add `Req::{Conversations, Passages, Relaxations}`, their `Resp`s, `family()` names and `Client` methods in `crates/postio-client/src/{protocol,api}.rs`; route them in `crates/postio-host/src/lib.rs` `answer` through new wrappers in `crates/postio-host/src/search.rs`. Make T030 green
 - [x] T032 [P] Write a capability test in `crates/postio-storage/tests/turso_capabilities.rs`: a read future over an fts match dropped after its first row leaves the connection usable and the next read correct. Observe its result before relying on it (research R8). *Observed green, through the readers' pool and on one connection: the capability holds. Not covered: a drop while a step itself is pending on IO, which a small store never shows*
-- [ ] T033 [P] Write a failing test in `crates/postio-host/src/tests.rs`: a `Conversations` call whose future is dropped stops the host's work (a counting hook sees no hydrate statement after the drop). Red: the host finishes it
-- [ ] T034 Add `Req::cancellable()` and the `select!` on `answer.closed()` in `Local::call` (`crates/postio-host/src/lib.rs`) for cancellable requests only (D9). Make T033 green
+- [x] T033 [P] Write a failing test in `crates/postio-host/src/tests.rs`: a `Conversations` call whose future is dropped stops the host's work (a counting hook sees no hydrate statement after the drop). Red: the host finishes it. *Observed differently: `counting` is thread-local and cannot see the host's workers, so the test holds every reader turn (the search waits for one, never reading a row) and watches the waiting task's hold on the host (`Arc<Inner>`) go when the call is dropped*
+- [x] T034 Add `Req::cancellable()` and the `select!` on `answer.closed()` in `Local::call` (`crates/postio-host/src/lib.rs`) for cancellable requests only (D9). Make T033 green
 
 ### Bench and report
 
