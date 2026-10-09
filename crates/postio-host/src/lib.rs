@@ -1016,6 +1016,13 @@ impl Inner {
             } => Resp::Relaxed(
                 search::relaxations(&self.wiring.database, account, &query, today).await,
             ),
+            Req::Suggest {
+                account,
+                prefix,
+                field,
+            } => Resp::Suggestions(Box::new(
+                search::suggest(&self.wiring.database, account, &prefix, field).await,
+            )),
             Req::RecentSearches => search::recent(&self.wiring.database)
                 .await
                 .map_or_else(Resp::Failed, Resp::Recent),

@@ -4184,6 +4184,61 @@ fn focus_asks_the_host_for_the_ways_out_of_no_results() {
 }
 
 #[test]
+fn focus_asks_the_host_what_a_prefix_could_become() {
+    // Spec 010 US7: the dropdown's short-prefix and `from:` states. The
+    // host answers on a reader turn, and stops when the keystroke after
+    // supersedes it (D9).
+    let seed = SearchSeed::new();
+    let found = seed
+        .rt
+        .block_on(seed.client.suggest(seed.scope(), "at".to_owned(), None))
+        .expect("an answer");
+    assert_eq!(
+        found.words.first().map(|word| word.text.as_str()),
+        Some("atlas"),
+        "the seed's Atlas mail: {found:?}"
+    );
+    assert_eq!(found.ghost.as_deref(), Some("las"));
+    let atlas = &found.words[0];
+    assert_eq!(
+        atlas.count,
+        seed.conversations(&atlas.query).total,
+        "the count is what the query finds"
+    );
+    assert!(
+        found.labels.iter().any(|label| label.text == "Atlas"),
+        "the seed's label: {:?}",
+        found.labels
+    );
+
+    let people = seed
+        .rt
+        .block_on(seed.client.suggest(
+            seed.scope(),
+            "ad".to_owned(),
+            Some(postio_search::query::Field::From),
+        ))
+        .expect("an answer");
+    assert!(
+        people
+            .people
+            .iter()
+            .any(|person| person.address.starts_with("ada")),
+        "Ada is someone the seed's mail is from: {:?}",
+        people.people
+    );
+    assert!(
+        postio_client::protocol::Req::Suggest {
+            account: seed.scope(),
+            prefix: "at".to_owned(),
+            field: None,
+        }
+        .cancellable(),
+        "a keystroke supersedes it"
+    );
+}
+
+#[test]
 fn a_search_whose_caller_has_gone_stops_on_the_host() {
     // D9: the driver aborts a superseded search by dropping the client's
     // future, and the host has to notice, or the abandoned search keeps

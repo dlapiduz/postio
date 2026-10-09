@@ -821,6 +821,21 @@ fn unquoted(lines: &str) -> String {
         .collect()
 }
 
+/// What `prefix` could become (spec 010 US7): the words, labels, lists and
+/// files it begins, or `field`'s values, each counted. `None` when the
+/// index could not be read.
+pub async fn suggest(
+    connection: &Checkout,
+    account: AccountScope,
+    prefix: &str,
+    field: Option<postio_search::query::Field>,
+) -> Option<postio_search::suggest::Suggestions> {
+    postio_index::executor::completions(connection, account, prefix, field)
+        .await
+        .map_err(|error| tracing::warn!(%error, "the completions could not be read"))
+        .ok()
+}
+
 /// The looser searches a query that found nothing offers, each with the
 /// conversations it would find: those that would find none left out, most
 /// first, ties in the query's own order (spec 010 US6, FR-043).

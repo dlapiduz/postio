@@ -346,6 +346,18 @@ pub enum Req {
         /// The day dates in the variants are read against.
         today: chrono::NaiveDate,
     },
+    /// What a prefix could become (spec 010 US7, FR-042): with no `field`
+    /// the words, labels, lists and file names it begins; with one, the
+    /// operator's values -- people for `from:` and `to:`, labels, folders.
+    /// Each counted as its query counts. Cancellable.
+    Suggest {
+        /// Which accounts the counts are over.
+        account: postio_model::AccountScope,
+        /// What is typed: the word, or the operator's value so far.
+        prefix: String,
+        /// The operator being typed, when one is.
+        field: Option<postio_search::query::Field>,
+    },
     /// The searches a person ran, newest first (spec 010 D16). Cancellable.
     RecentSearches,
     /// A search was committed: the results view opened, a hit was opened
@@ -728,6 +740,8 @@ pub enum Resp {
     /// The ways out that would find something, most first; empty when none
     /// would, or when they could not be counted.
     Relaxed(Vec<(postio_search::relax::Relaxation, u64)>),
+    /// What a prefix could become; empty when the store could not be read.
+    Suggestions(Box<postio_search::suggest::Suggestions>),
     /// The remembered searches, newest first.
     Recent(Vec<RecentSearch>),
     /// `(key, total, new)` for each saved search asked, in the order asked.
