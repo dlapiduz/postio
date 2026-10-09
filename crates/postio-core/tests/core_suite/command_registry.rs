@@ -909,10 +909,21 @@ fn the_results_views_commands_are_the_macs_until_linux_adopts_them() {
         assert!(registry::offered_on(action, Platform::Apple), "{id}");
         assert!(!registry::offered_on(action, Platform::Freedesktop), "{id}");
         assert!(registry::get(id).available_in(Context::Results), "{id}");
+    }
+    // ⌘[ and ⌘] reach back and forward from the inbox too (D17); the tabs
+    // are the results view's alone.
+    for id in [CommandId::HistoryBack, CommandId::HistoryForward] {
+        assert!(registry::get(id).available_in(Context::List), "{id}");
+    }
+    for id in [
+        CommandId::ResultsConversations,
+        CommandId::ResultsFiles,
+        CommandId::ResultsPeople,
+    ] {
         assert_eq!(
             registry::get(id).contexts,
             Context::Results.as_set(),
-            "{id} is the results view's alone"
+            "{id}"
         );
     }
 }

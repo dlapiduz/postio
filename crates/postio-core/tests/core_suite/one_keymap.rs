@@ -246,14 +246,14 @@ const CONTRACT: &[Row] = &[
         "mod+bracketleft",
         &[],
         Graphical,
-        &[Context::Results],
+        &[Context::List, Context::Results],
     ),
     with(
         "history_forward",
         "mod+bracketright",
         &[],
         Graphical,
-        &[Context::Results],
+        &[Context::List, Context::Results],
     ),
     with(
         "results_conversations",
