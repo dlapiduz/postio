@@ -63,6 +63,7 @@ tempfile = { workspace = true, optional = true }
 zstd = "0.13"
 thiserror = { workspace = true }
 tracing = { workspace = true }
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 # Self dev-dependency so `cargo test -p postio-storage` gets the harness without

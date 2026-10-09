@@ -17,6 +17,7 @@ rustls-platform-verifier = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "net", "rt", "time"] }
 tokio-rustls = { workspace = true }
+postio-workspace-hack.workspace = true
 
 [lints]
 workspace = true

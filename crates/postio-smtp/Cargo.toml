@@ -22,6 +22,7 @@ postio-transport.workspace = true
 secrecy = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "time"] }

@@ -94,3 +94,6 @@ harness = false
 [[bench]]
 name = "reader_render"
 harness = false
+
+[dependencies]
+postio-workspace-hack.workspace = true

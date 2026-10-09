@@ -1,0 +1,49 @@
+# `cargo hakari`'s settings: what `crates/postio-workspace-hack` holds and
+# for which platforms. ADR 0047 says why the crate exists and what it may
+# and may not hold.
+#
+# After a change to any manifest's dependencies:
+#
+#     cargo hakari generate && cargo hakari manage-deps --yes
+#
+# `scripts/checks/check-workspace-hack.py` fails when either would change
+# something.
+
+hakari-package = "postio-workspace-hack"
+dep-format-version = "4"
+resolver = "3"
+workspace-hack-line-style = "workspace-dotted"
+
+# Where Postio is built: the Linux desktop and its CI on both arches, and
+# the Mac. A platform left out here still builds; it just pays the rebuilds
+# the crate exists to save.
+platforms = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+]
+
+[traversal-excludes]
+# `postio-ffi`'s `uniffi` takes the `cli` feature, which pulls
+# `uniffi_bindgen`, `clap` and `cargo_metadata`. That is why the root
+# Cargo.toml leaves it out of `default-members` (#1306); unified here, every
+# crate would build them anyway.
+workspace-members = ["postio-ffi"]
+
+[final-excludes]
+third-party = [
+    # GLib's C bindings reach the workspace only through GTK and a
+    # dev-dependency of `postio-storage`. Unified, every crate on Linux would
+    # link system libraries the terminal's Flatpak runtime is chosen not to
+    # need.
+    { name = "glib-sys" },
+    { name = "gobject-sys" },
+    { name = "gio-sys" },
+    # The reading renderer decodes hostile images with exactly the four
+    # decoders it asks for (ADR 0042, research R4). Unified, `image` would
+    # carry every decoder any crate on that platform asks for into the
+    # renderer's own calls -- TIFF on macOS, the day this was written.
+    # `check-renderer-is-memory-safe.py` would refuse it on Linux; this
+    # keeps it out everywhere.
+    { name = "image" },
+]

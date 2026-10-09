@@ -21,6 +21,7 @@ chrono = { workspace = true, features = ["std"] }
 # nothing this crate's boundary rule bans.
 postio-model = { workspace = true }
 thiserror = { workspace = true }
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 postio-model = { workspace = true, features = ["test-corpus"] }

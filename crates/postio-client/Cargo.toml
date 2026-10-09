@@ -22,6 +22,7 @@ postio-ui.workspace = true
 # capture requests as they are (spec 007 US15).
 postio-vault.workspace = true
 thiserror = { workspace = true }
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

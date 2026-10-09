@@ -18,6 +18,7 @@ postio-search = { workspace = true }
 postio-ui = { workspace = true }
 postio-vault = { workspace = true }
 tracing = { workspace = true }
+postio-workspace-hack.workspace = true
 
 
 [dev-dependencies]

@@ -24,6 +24,7 @@ postio-storage = { workspace = true }
 turso = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 # The `.eml` corpus, for ADR 0008's differential test between the executor

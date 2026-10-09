@@ -29,6 +29,7 @@ postio-model = { version = "0.4.2", path = "../postio-model" }
 secrecy = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 url = { workspace = true }
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

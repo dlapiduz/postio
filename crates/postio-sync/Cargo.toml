@@ -35,6 +35,7 @@ postio-storage.workspace = true
 secrecy = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 # Decoding the SASL PLAIN argument a transcript recorded, so a test can say

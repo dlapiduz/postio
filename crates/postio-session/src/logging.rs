@@ -532,11 +532,16 @@ mod tests {
         let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("the crate directory has a parent");
+        // The workspace-hack has no code, so it has nothing to log (ADR 0047).
+        const SILENT: &[&str] = &["postio_workspace_hack"];
         let mut missing = Vec::new();
         for entry in std::fs::read_dir(crates).expect("the crates directory") {
             let name = entry.expect("a directory entry").file_name();
             let name = name.to_string_lossy().replace('-', "_");
-            if name.starts_with("postio_") && !OURS.contains(&name.as_str()) {
+            if name.starts_with("postio_")
+                && !OURS.contains(&name.as_str())
+                && !SILENT.contains(&name.as_str())
+            {
                 missing.push(name);
             }
         }

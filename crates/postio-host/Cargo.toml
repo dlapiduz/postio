@@ -46,6 +46,7 @@ postio-vault.workspace = true
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 tracing = { workspace = true }
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 # Its fake runtime: no host test opens a connection, loopback included.

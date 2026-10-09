@@ -14,6 +14,7 @@ chrono = { workspace = true }
 # `MessageId`, which a task's `postio://` link names.
 postio-model.workspace = true
 thiserror = { workspace = true }
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 # A throwaway vault for every test.

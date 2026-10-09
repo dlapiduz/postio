@@ -20,6 +20,7 @@ postio-search = { workspace = true }
 # The automated-senders table ships as TOML, data rather than code (FR-114).
 serde = { workspace = true }
 toml = { workspace = true }
+postio-workspace-hack.workspace = true
 
 [build-dependencies]
 # build.rs parses data/senders.toml with the classifier's own parser, so a

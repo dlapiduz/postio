@@ -22,6 +22,7 @@ serde = { workspace = true }
 # socket depend on who else is being built.
 tokio = { workspace = true, features = ["net", "rt", "rt-multi-thread", "sync", "time"] }
 tracing = { workspace = true }
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 postio-test-support = { workspace = true, features = ["logs"] }
