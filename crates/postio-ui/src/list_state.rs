@@ -1,10 +1,8 @@
-//! What a frontend says while the store is opening, and when a search
-//! matched nothing.
+//! What a frontend says while the store is opening.
 //!
 //! Toolkit-free, so Focus, the terminal and macOS make the same claims: the
-//! store's four waits are named as themselves ([`describe_wait`]), nothing is
-//! said before [`OPENING_THRESHOLD`], and an empty result set blames the
-//! query rather than the mailbox ([`no_matches_detail`]).
+//! store's four waits are named as themselves ([`describe_wait`]), and
+//! nothing is said before [`OPENING_THRESHOLD`].
 
 /// What a start that has not finished is actually waiting on.
 ///
