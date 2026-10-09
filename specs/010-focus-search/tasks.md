@@ -189,8 +189,10 @@ GTK's bar is unchanged.
 - [x] T072 [US2] Add `macos/Sources/PostioKit/{ResultsModel,ResultRowView,TimelineView,SearchFooter}.swift` (timeline display only) and `macos/Sources/PostioAppKit/ResultsTable.swift` (view-based `NSTableView` with group rows, the gutter, focus ring and find-yellow runs). Make T071 green
   - Wiring (`Engine.swift`, `MainWindow.swift`) landed with T070: the results pane sits over the inbox column in the window's `ZStack`, as Filtered does, so the list keeps its scroll, cursor and selection; `FocusKeyboardHome` in the results gives the results table the keyboard; `mainContext` is `.results` while they are up.
 - [x] T073 [US2] Wire `HistoryBack`/`HistoryForward` to the trackpad swipe (`NSEvent` swipe/`scrollWheel` gesture on the main window) in `macos/Sources/Postio/MainWindow.swift`; Swift reports the gesture as the command, decides nothing
-- [ ] T074 [US2] Capture screen 06 (light) and 07 (dark), list every difference in the step-3 note, fix or explain each
-- [ ] T075 Grep `crates/postio-gtk` for `KeyContext`, `Context`, `Policy`; commit the phase
+- [x] T074 [US2] Capture screen 06 (light) and 07 (dark), list every difference in the step-3 note, fix or explain each
+  - Captured with the demo's own `POSTIO_DEMO_SNAPSHOT` (`screencapture` still has no grant here); the note lists 23 differences. Owed to the Rust side before the review: passages over the search seed are empty or the quoted header rather than the match's window (14), Top hits' group count (13), label pill colours at the boundary (18). A capture with the grant should be taken before the review.
+- [x] T075 Grep `crates/postio-gtk` for `KeyContext`, `Context`, `Policy`; commit the phase
+  - `crates/postio-gtk` matches no `KeyContext`/`Context` exhaustively and builds its policy with `Policy::for_platform`; step 3's Swift, the `postio-ui` words and the two FFI exports are additive.
 
 **Checkpoint**: results view, history and Esc ladder on the Mac.
 
