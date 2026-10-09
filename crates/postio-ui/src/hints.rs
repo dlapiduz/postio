@@ -137,6 +137,33 @@ pub fn pair(keymap: &Keymap, first: CommandId, second: CommandId, label: &str) -
     })
 }
 
+/// Numbered commands that are one idea -- the saved searches, the results'
+/// tabs -- as one hint: `alt+1–4 saved`, `cmd+1–3 switch tab`.
+///
+/// The run is one cap only while its keys are one modifier and the digits
+/// in order, as the defaults are; a rebind that breaks it says the first
+/// and the last apart ([`pair`]), so the cap never names a key that does
+/// something else.
+pub fn run(keymap: &Keymap, commands: &[CommandId], label: &str) -> Option<Hint> {
+    let (first, last) = (commands.first()?, commands.last()?);
+    let keys: Vec<Option<&str>> = commands.iter().map(|id| keymap.binding(*id)).collect();
+    let modifier = keys.first().copied().flatten()?.strip_suffix('1');
+    let in_order = commands.len() > 1
+        && modifier.is_some_and(|modifier| {
+            keys.iter().enumerate().all(|(at, key)| {
+                key.and_then(|key| key.strip_prefix(modifier))
+                    .is_some_and(|digit| digit == (at + 1).to_string())
+            })
+        });
+    match modifier {
+        Some(modifier) if in_order => Some(Hint {
+            key: format!("{modifier}1\u{2013}{}", commands.len()),
+            label: label.to_owned(),
+        }),
+        _ => pair(keymap, *first, *last, label),
+    }
+}
+
 /// A hint for a key that is not a command.
 ///
 /// `because` says why no command could carry it -- `Tab` moving between a
@@ -261,6 +288,25 @@ mod tests {
             "walk",
         );
         assert_eq!(walk.map(|h| h.key).as_deref(), Some("j/k"));
+    }
+
+    #[test]
+    fn a_numbered_run_is_one_range_and_a_broken_one_its_ends() {
+        // Screen 01's "⌥1–4 saved" and screen 11's "⌘1–3 switch tab": keys
+        // that are one modifier and consecutive digits are one cap.
+        let saved = [
+            CommandId::SavedSearch1,
+            CommandId::SavedSearch2,
+            CommandId::SavedSearch3,
+            CommandId::SavedSearch4,
+        ];
+        let defaults = run(Keymap::defaults(), &saved, "saved");
+        assert_eq!(defaults.map(|h| h.key).as_deref(), Some("alt+1\u{2013}4"));
+        // One of them moved: the run is broken, so its ends are said apart.
+        let keymap = rebound(CommandId::SavedSearch3, "alt+9");
+        let broken = run(&keymap, &saved, "saved");
+        assert_eq!(broken.map(|h| h.key).as_deref(), Some("alt+1/alt+4"));
+        assert_eq!(run(Keymap::defaults(), &[], "nothing"), None);
     }
 
     #[test]

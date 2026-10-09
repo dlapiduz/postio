@@ -200,26 +200,16 @@ pub fn empty_hints(keymap: &Keymap) -> Vec<Hint> {
         ),
     ];
     // ⌥1 to ⌥4 as one cap, when the four keys are one modifier and the digits.
-    let saved = [
-        CommandId::SavedSearch1,
-        CommandId::SavedSearch2,
-        CommandId::SavedSearch3,
-        CommandId::SavedSearch4,
-    ];
-    let keys: Vec<Option<&str>> = saved.iter().map(|id| keymap.binding(*id)).collect();
-    if let [Some(first), .., Some(last)] = keys.as_slice() {
-        let run = first
-            .strip_suffix('1')
-            .filter(|modifier| last.strip_suffix('4') == Some(*modifier))
-            .map(|modifier| format!("{modifier}1\u{2013}4"));
-        hints.extend(match run {
-            Some(key) => Some(Hint {
-                key,
-                label: "saved".to_owned(),
-            }),
-            None => hints::pair(keymap, saved[0], saved[3], "saved"),
-        });
-    }
+    hints.extend(hints::run(
+        keymap,
+        &[
+            CommandId::SavedSearch1,
+            CommandId::SavedSearch2,
+            CommandId::SavedSearch3,
+            CommandId::SavedSearch4,
+        ],
+        "saved",
+    ));
     hints.push(hints::fixed(
         ">",
         "commands",
@@ -1355,6 +1345,13 @@ pub fn file_accessible(name: &str, kind: &str, meta: &str, line: &str, subject: 
 pub const FILE_NOT_HERE: &str =
     "That file isn\u{2019}t on this Mac yet: open its message to download it";
 
+/// The results' tabs' commands, in their order: ⌘1–3 (§3.2).
+const RESULTS_TABS: [CommandId; 3] = [
+    CommandId::ResultsConversations,
+    CommandId::ResultsFiles,
+    CommandId::ResultsPeople,
+];
+
 /// The Files tab's footer (design §3.8): the grid's arrows, Quick Look,
 /// open the message, save, and the tabs.
 pub fn files_hints(keymap: &Keymap) -> Vec<Hint> {
@@ -1371,12 +1368,7 @@ pub fn files_hints(keymap: &Keymap) -> Vec<Hint> {
         "open the message",
     ));
     out.extend(hints::hint(keymap, CommandId::SaveFile, "save file"));
-    out.extend(hints::pair(
-        keymap,
-        CommandId::ResultsConversations,
-        CommandId::ResultsPeople,
-        "switch tab",
-    ));
+    out.extend(hints::run(keymap, &RESULTS_TABS, "switch tab"));
     out
 }
 
@@ -1419,12 +1411,7 @@ pub fn people_hints(keymap: &Keymap) -> Vec<Hint> {
         CommandId::OpenMessage,
         "search their mail",
     ));
-    out.extend(hints::pair(
-        keymap,
-        CommandId::ResultsConversations,
-        CommandId::ResultsPeople,
-        "switch tab",
-    ));
+    out.extend(hints::run(keymap, &RESULTS_TABS, "switch tab"));
     out
 }
 
@@ -1609,6 +1596,12 @@ mod tests {
         let hints = people_hints(&keymap);
         let said: Vec<&str> = hints.iter().map(|hint| hint.label.as_str()).collect();
         assert_eq!(said, ["move", "search their mail", "switch tab"]);
+        // Screen 11: the three tabs' keys are one range, "⌘1–3".
+        assert_eq!(hints[2].key, "cmd+1\u{2013}3");
+        assert_eq!(
+            files_hints(&keymap).last().map(|hint| hint.key.as_str()),
+            Some("cmd+1\u{2013}3")
+        );
     }
 
     // D29: a suggestion's count past its cap is a floor, grouped as every
