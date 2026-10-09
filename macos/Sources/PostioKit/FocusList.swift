@@ -45,13 +45,15 @@ public struct LabelColour: Equatable, Sendable {
 
 /// A binding as the keycap that shows it.
 ///
-/// The keymap's own spelling (spec 007 C22): `e` stays `e` and `Y` stays
-/// `Y`, because they are two different keys and a cap that drew both as
-/// `Y` -- or the menu's `⇧Y` -- would be teaching a different keyboard
-/// from the one the resolver reads. A sequence is one cap, its presses
-/// spaced (`g o`), as screen 01 draws it. A chord, which a single
-/// character cannot be, is drawn with the Mac's glyphs, as the menu draws
-/// it (`⌘K`).
+/// The keymap's own keys (spec 007 C22): `e` and `E` are two different
+/// keys, and a cap that drew both as `E` would be teaching a different
+/// keyboard from the one the resolver reads. So a shifted letter says its
+/// Shift, as the design writes it (`⇧X`, `⇧J ⇧K`, KEYS.md), and a plain
+/// one is itself. A sequence is one cap, its presses spaced (`g o`), as
+/// screen 01 draws it. A chord is drawn with the Mac's glyphs, as the menu
+/// draws it (`⌘K`). A pair (`hints::pair`'s `j/k`) is its two keys spaced
+/// (`j k`, `] [`), and bare arrows, pair or sequence, are one run of glyphs
+/// (`↑↓`, `↑↓←→`), as the design's footers draw them.
 ///
 /// **An FFI gap, said here so it is found.** C22 asks for the shared hint
 /// code (`postio_ui::hints::short`) to spell every cap, and the boundary
@@ -60,29 +62,39 @@ public struct LabelColour: Equatable, Sendable {
 public enum KeyCapSpelling {
     public static func cap(_ binding: String?) -> String? {
         guard let binding, !binding.isEmpty else { return nil }
-        return binding.split(separator: " ").map { press in
+        let presses = binding.split(separator: " ").map { press -> [String] in
             let press = String(press)
-            if press.count == 1 { return press }
-            // A pair (`hints::pair`'s "j/k", "alt+Left/alt+Right"): each key
-            // spelled on its own.
-            let halves = press.split(separator: "/")
-            if halves.count > 1 {
-                return halves.map { key in
-                    key.count == 1 ? String(key) : (MenuPlan.accelerator(from: String(key)) ?? String(key))
-                }.joined(separator: "/")
-            }
-            // A popover's own keys (`popover_hints`): Space as its cap
-            // says it, a modifier held for a click as its glyph.
-            switch press.lowercased() {
-            case "space": return "Space"
-            case "alt", "option": return "⌥"
-            case "cmd", "command": return "⌘"
-            case "shift": return "⇧"
-            case "ctrl", "control": return "⌃"
-            default: break
-            }
-            return MenuPlan.accelerator(from: press) ?? press
-        }.joined(separator: " ")
+            // A pair: each key spelled on its own.
+            // `alt+/` is one key, the slash itself, not a pair.
+            let halves = press.split(separator: "/").map(String.init)
+            return (halves.count > 1 ? halves : [press]).map(key)
+        }
+        let keys = presses.flatMap { $0 }
+        if keys.count > 1, keys.allSatisfy(arrows.contains) { return keys.joined() }
+        return presses.map { $0.joined(separator: " ") }.joined(separator: " ")
+    }
+
+    /// The arrows' glyphs, which run together when they stand alone.
+    private static let arrows: Set<String> = ["↑", "↓", "←", "→"]
+
+    /// One key as its cap spells it.
+    private static func key(_ press: String) -> String {
+        if press.count == 1 {
+            // A folded Shift (`X` is `shift+x`) says so.
+            guard let only = press.first, only.isUppercase, only.isLetter else { return press }
+            return "⇧" + press
+        }
+        // A popover's own keys (`popover_hints`): Space as its cap says
+        // it, a modifier held for a click as its glyph.
+        switch press.lowercased() {
+        case "space": return "Space"
+        case "alt", "option": return "⌥"
+        case "cmd", "command": return "⌘"
+        case "shift": return "⇧"
+        case "ctrl", "control": return "⌃"
+        default: break
+        }
+        return MenuPlan.accelerator(from: press) ?? press
     }
 }
 

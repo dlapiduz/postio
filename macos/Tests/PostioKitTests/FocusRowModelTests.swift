@@ -149,21 +149,36 @@ import Testing
                 FocusRowActionFfi(command: "decline_invite", label: "Decline"),
             ])
         let model = FocusRowModel(Self.row(marker: invite), binding: Self.binding)
-        // The keymap's spelling (spec 007 C22): `y` and `Y` are two keys,
-        // and the cap must not fold them into one.
-        #expect(model.marker?.actions.map(\.cap) == ["y", "Y"])
+        // `y` and `Y` are two keys (spec 007 C22), and the cap must not fold
+        // them into one: the shifted one says its Shift (KEYS.md's ⇧X).
+        #expect(model.marker?.actions.map(\.cap) == ["y", "⇧Y"])
     }
 
     @Test func aCapIsSpelledAsTheKeymapSpellsItWithGlyphsForChords() {
         #expect(KeyCapSpelling.cap("e") == "e")
-        #expect(KeyCapSpelling.cap("Y") == "Y")
+        // A shifted letter says its Shift, as the design's ⇧X and ⇧J ⇧K do.
+        #expect(KeyCapSpelling.cap("Y") == "⇧Y")
+        #expect(KeyCapSpelling.cap("X") == "⇧X")
         #expect(KeyCapSpelling.cap("!") == "!")
         // A sequence is one cap, as the strip's `g o` is on screen 01.
         #expect(KeyCapSpelling.cap("g o") == "g o")
         #expect(KeyCapSpelling.cap("cmd+k") == "⌘K")
-        // A pair, as `hints::pair` spells it (the results' "j/k move"):
-        // each key its own spelling, never a chord's capital.
-        #expect(KeyCapSpelling.cap("j/k") == "j/k")
+        // A pair, as `hints::pair` spells it: each key its own spelling,
+        // never a chord's capital, spaced as the design writes them (the
+        // results' "j k move", Quick Look's "] [ jump", KEYS.md's "⇧J ⇧K").
+        #expect(KeyCapSpelling.cap("j/k") == "j k")
+        #expect(KeyCapSpelling.cap("]/[") == "] [")
+        #expect(KeyCapSpelling.cap("J/K") == "⇧J ⇧K")
+        #expect(KeyCapSpelling.cap("alt+Left/alt+Right") == "⌥← ⌥→")
+        // Bare arrows are one glyph run, a pair or a sequence alike:
+        // screen 01's "↑↓ move", screen 11's "↑↓←→ move".
+        #expect(KeyCapSpelling.cap("Up Down") == "↑↓")
+        #expect(KeyCapSpelling.cap("Up/Down/Left/Right") == "↑↓←→")
+        // A numbered run (`hints::run`): screen 11's "⌘1–3", screen 01's
+        // "⌥1–4", screen 13's "1–4".
+        #expect(KeyCapSpelling.cap("cmd+1\u{2013}3") == "⌘1\u{2013}3")
+        #expect(KeyCapSpelling.cap("alt+1\u{2013}4") == "⌥1\u{2013}4")
+        #expect(KeyCapSpelling.cap("1\u{2013}4") == "1\u{2013}4")
         #expect(KeyCapSpelling.cap("/") == "/")
         #expect(KeyCapSpelling.cap(nil) == nil)
     }
