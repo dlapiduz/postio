@@ -331,6 +331,22 @@ impl From<postio_ui::search_view::FilterKind> for FilterKindFfi {
     }
 }
 
+impl From<FilterKindFfi> for postio_ui::search_view::FilterKind {
+    fn from(kind: FilterKindFfi) -> Self {
+        use postio_ui::search_view::FilterKind;
+        match kind {
+            FilterKindFfi::From => FilterKind::From,
+            FilterKindFfi::To => FilterKind::To,
+            FilterKindFfi::Date => FilterKind::Date,
+            FilterKindFfi::Anywhere => FilterKind::Anywhere,
+            FilterKindFfi::Label => FilterKind::Label,
+            FilterKindFfi::Attachment => FilterKind::Attachment,
+            FilterKindFfi::HasAction => FilterKind::HasAction,
+            FilterKindFfi::Unread => FilterKind::Unread,
+        }
+    }
+}
+
 /// A change to the query from a control: the operator's keyword and value,
 /// which Rust spells (D13). Swift never builds query text.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -527,6 +543,11 @@ pub struct ResultsViewFfi {
     pub sub_line: String,
     /// The twelve bars, oldest first.
     pub months: Vec<MonthBarFfi>,
+    /// The timeline's hint on its right: "Matches by month · drag across
+    /// months to narrow", or "Jul – Sep selected · drag to change".
+    pub timeline_hint: String,
+    /// ⌥←/⌥→ "steps a month", after the hint while a range is selected.
+    pub timeline_step: Option<KeyHintFfi>,
     /// The groups, top to bottom.
     pub groups: Vec<ResultGroupFfi>,
     /// How many rows the table has.
@@ -541,6 +562,18 @@ pub struct ResultsViewFfi {
     pub selected: u64,
     /// The bulk bar's verbs and keys.
     pub bulk: Vec<KeyHintFfi>,
+}
+
+fn month_bars(months: Vec<postio_focus::MonthBar>) -> Vec<MonthBarFfi> {
+    months
+        .into_iter()
+        .map(|month| MonthBarFfi {
+            label: month.label,
+            conversations: month.conversations,
+            height: month.height,
+            selected: month.selected,
+        })
+        .collect()
 }
 
 fn hints(hints: Vec<postio_ui::hints::Hint>) -> Vec<KeyHintFfi> {
@@ -570,16 +603,12 @@ impl From<postio_focus::ResultsView> for ResultsViewFfi {
             order: view.order.into(),
             count_line: view.count_line,
             sub_line: view.sub_line,
-            months: view
-                .months
-                .into_iter()
-                .map(|month| MonthBarFfi {
-                    label: month.label,
-                    conversations: month.conversations,
-                    height: month.height,
-                    selected: month.selected,
-                })
-                .collect(),
+            months: month_bars(view.months),
+            timeline_hint: view.timeline_hint,
+            timeline_step: view.timeline_step.map(|hint| KeyHintFfi {
+                key: hint.key,
+                label: hint.label,
+            }),
             groups: view
                 .groups
                 .into_iter()
@@ -599,6 +628,116 @@ impl From<postio_focus::ResultsView> for ResultsViewFfi {
             footer_right: view.footer,
             selected: view.selected,
             bulk: hints(view.bulk),
+        }
+    }
+}
+
+/// One row of a list popover (§3.6): a person, a folder or a label.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PopoverRowFfi {
+    /// What `focus_search_popover_toggle` names it by.
+    pub token: u64,
+    /// "Ada Moreno", "Inbox", "Atlas".
+    pub title: String,
+    /// The address under a person's name, in SF Mono 11.
+    pub detail: Option<String>,
+    /// A person's avatar: "AM".
+    pub initials: Option<String>,
+    /// A label's colour, `#rrggbb`.
+    pub color: Option<String>,
+    /// Conversations among the results it opened on.
+    pub count: u64,
+    /// Its bar, 0 to 1 of the largest.
+    pub share: f64,
+    /// Checked: the query holds it.
+    pub checked: bool,
+    /// Excluded: the query holds `-` it.
+    pub excluded: bool,
+}
+
+// `share` is a share of the largest count, never NaN.
+impl Eq for PopoverRowFfi {}
+
+/// One of the Date popover's presets.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DatePresetFfi {
+    /// What `focus_search_date_preset` names it by.
+    pub token: u64,
+    /// "Last 30 days", "Custom…".
+    pub label: String,
+    /// Its count; none for Custom….
+    pub count: Option<String>,
+    /// Ringed: the query's dates are its own.
+    pub selected: bool,
+}
+
+/// A filter popover, whole (§3.6, screens 08 and 09).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PopoverViewFfi {
+    /// The button it hangs from.
+    pub kind: FilterKindFfi,
+    /// Its search field's placeholder; empty for Date, which has none.
+    pub placeholder: String,
+    /// What its search field holds.
+    pub filter: String,
+    /// The rows its field leaves.
+    pub rows: Vec<PopoverRowFfi>,
+    /// Its footer's keys: Space toggle, ⌥ -click excludes, ↩ apply.
+    pub hints: Vec<KeyHintFfi>,
+    /// The Date popover's presets, Custom… last.
+    pub presets: Vec<DatePresetFfi>,
+    /// The Date popover's plain words.
+    pub words: String,
+    /// What they became: "→ after:2026-07-01".
+    pub parsed: Option<String>,
+    /// The line under the words.
+    pub words_hint: String,
+    /// The Date popover's chart, 90 tall: the timeline's bars.
+    pub months: Vec<MonthBarFfi>,
+    /// "12 of 21".
+    pub result: Option<String>,
+    /// "Jul – Sep 2026".
+    pub range: Option<String>,
+}
+
+impl From<postio_focus::PopoverView> for PopoverViewFfi {
+    fn from(view: postio_focus::PopoverView) -> Self {
+        PopoverViewFfi {
+            kind: view.kind.into(),
+            placeholder: view.placeholder,
+            filter: view.filter,
+            rows: view
+                .rows
+                .into_iter()
+                .map(|row| PopoverRowFfi {
+                    token: row.token,
+                    title: row.title,
+                    detail: row.detail,
+                    initials: row.initials,
+                    color: row.color,
+                    count: row.count,
+                    share: row.share,
+                    checked: row.checked,
+                    excluded: row.excluded,
+                })
+                .collect(),
+            hints: hints(view.hints),
+            presets: view
+                .presets
+                .into_iter()
+                .map(|preset| DatePresetFfi {
+                    token: preset.token,
+                    label: preset.label,
+                    count: preset.count,
+                    selected: preset.selected,
+                })
+                .collect(),
+            words: view.words,
+            parsed: view.parsed,
+            words_hint: view.words_hint,
+            months: month_bars(view.months),
+            result: view.result,
+            range: view.range,
         }
     }
 }
@@ -743,6 +882,56 @@ impl Session {
     pub fn focus_search_edit(&self, edit: TermEditFfi) {
         self.focus_driver()
             .input(postio_focus::Input::SearchEdit(edit.into()));
+    }
+
+    /// A filter button with a popover was pressed: `FocusQuery` rings it
+    /// and `FocusPopover` says what to hang from it. A toggle button's kind
+    /// opens nothing.
+    pub fn focus_search_popover(&self, kind: FilterKindFfi) {
+        self.focus_driver()
+            .input(postio_focus::Input::SearchPopover(kind.into()));
+    }
+
+    /// Space or a click on the open popover's row `token`; `exclude` when
+    /// ⌥ was held. The controller decides what that writes.
+    pub fn focus_search_popover_toggle(&self, token: u64, exclude: bool) {
+        self.focus_driver()
+            .input(postio_focus::Input::PopoverToggle { token, exclude });
+    }
+
+    /// The popover's own search field ("Filter people in these results").
+    pub fn focus_search_popover_filter(&self, text: String) {
+        self.focus_driver()
+            .input(postio_focus::Input::PopoverFilter(text));
+    }
+
+    /// ↩ (`apply`), or Esc and a click away: the popover closes, keeping
+    /// its preview or putting back the query it opened on. Not an echo:
+    /// the Mac reports the close the toolkit made, and a close the
+    /// controller made (`FocusPopover` with none) needs no report.
+    pub fn focus_search_popover_done(&self, apply: bool) {
+        self.focus_driver()
+            .input(postio_focus::Input::PopoverDone { apply });
+    }
+
+    /// The Date popover's plain-words field.
+    pub fn focus_search_date_words(&self, text: String) {
+        self.focus_driver()
+            .input(postio_focus::Input::DateWords(text));
+    }
+
+    /// The Date popover's preset `token`.
+    pub fn focus_search_date_preset(&self, token: u64) {
+        self.focus_driver()
+            .input(postio_focus::Input::DatePreset(token));
+    }
+
+    /// A drag across the timeline ended over bars `first..=last`, 0 the
+    /// oldest (either order): the query's dates become those months.
+    pub fn focus_search_months(&self, first: u32, last: u32) {
+        self.focus_driver().input(postio_focus::Input::SearchEdit(
+            postio_focus::TermEdit::SetMonths { first, last },
+        ));
     }
 
     /// A results tab picked by a click (⌘1-3 are commands).
