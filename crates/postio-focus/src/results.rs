@@ -170,6 +170,26 @@ pub struct FileCard {
     pub accessible: String,
 }
 
+/// One row of the People tab (design §3.11): someone the results are
+/// from or to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersonRow {
+    /// Their address: what ↩ searches `from:`.
+    pub address: String,
+    /// Their name, or the address when their mail gave none.
+    pub name: String,
+    /// The avatar's letters: "AM".
+    pub initials: String,
+    /// The matched messages from and to them: "3 messages".
+    pub messages: String,
+    /// The newest of those, as a result row dates it: "26 Sep".
+    pub last: String,
+    /// Whether the focus ring is on it.
+    pub focused: bool,
+    /// What a screen reader says for it.
+    pub accessible: String,
+}
+
 /// What a copy of a file handed to the system is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilePurpose {
@@ -193,6 +213,10 @@ pub struct FileCopy {
 /// The cards the Files tab reads at once: every one, up to the engine's
 /// cap, so the grid's count is what the tab says.
 pub(crate) const FILES_READ: u32 = 1_000;
+
+/// The people the People tab reads at once: every one, up to the
+/// engine's cap, so the list's count is what the tab says.
+pub(crate) const PEOPLE_READ: u32 = 1_000;
 
 /// Where copies handed to the system are written: a folder of this
 /// app's own under the user's temporary directory, which on the Mac is
@@ -727,6 +751,12 @@ pub(crate) struct Results {
     file_cursor: Option<u64>,
     /// A copy of a file asked for, or handed to the system.
     pub(crate) copy: Option<PendingCopy>,
+    /// The People tab's rows, once read for this query.
+    listed: Option<Vec<postio_search::suggest::Person>>,
+    /// Whether they have been asked for under this stamp.
+    listed_asked: bool,
+    /// The person with the focus ring.
+    person_cursor: Option<u64>,
 }
 
 /// A copy of a file, asked for or handed to the system.
@@ -772,6 +802,9 @@ impl Results {
             files_asked: false,
             file_cursor: None,
             copy: None,
+            listed: None,
+            listed_asked: false,
+            person_cursor: None,
         }
     }
 
@@ -800,7 +833,77 @@ impl Results {
         }
         steps.extend(self.ask_page(0));
         steps.extend(self.ask_files());
+        steps.extend(self.ask_people());
         steps
+    }
+
+    /// The People tab's rows, when it is shown and they are not read.
+    pub(crate) fn ask_people(&mut self) -> Option<Step> {
+        if self.tab != ResultsTab::People || self.listed.is_some() || self.listed_asked {
+            return None;
+        }
+        self.listed_asked = true;
+        Some(Step::Ask(Request::People {
+            query: self.parsed.clone(),
+            stamp: self.stamp,
+        }))
+    }
+
+    /// The people landed, asked under `stamp`: whether they are this
+    /// query's.
+    pub(crate) fn people_landed(
+        &mut self,
+        stamp: u64,
+        answer: Result<Vec<postio_search::suggest::Person>, String>,
+    ) -> bool {
+        if stamp != self.stamp {
+            return false;
+        }
+        self.listed_asked = false;
+        let found = match answer {
+            Ok(found) => found,
+            Err(error) => {
+                tracing::debug!(%error, "the people could not be read");
+                Vec::new()
+            }
+        };
+        self.person_cursor = match self.person_cursor {
+            Some(at) if !found.is_empty() => Some(at.min(found.len() as u64 - 1)),
+            _ if !found.is_empty() => Some(0),
+            _ => None,
+        };
+        self.listed = Some(found);
+        true
+    }
+
+    /// The person under the focus ring.
+    fn cursor_person(&self) -> Option<&postio_search::suggest::Person> {
+        self.listed.as_ref()?.get(self.person_cursor? as usize)
+    }
+
+    /// The People row at `position`, drawn.
+    pub(crate) fn person_row(&self, position: u64, with: &Words<'_>) -> Option<PersonRow> {
+        let person = self.listed.as_ref()?.get(usize::try_from(position).ok()?)?;
+        let address = postio_model::EmailAddress::new(person.name.as_deref(), &person.address);
+        let name = person
+            .name
+            .clone()
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| person.address.clone());
+        let messages = words::person_messages(person.received + person.sent);
+        let last = person
+            .last
+            .map(|last| words::hit_date(last.with_timezone(&Local), with.now))
+            .unwrap_or_default();
+        Some(PersonRow {
+            accessible: words::person_accessible(&name, &person.address, &messages, &last),
+            address: person.address.clone(),
+            initials: postio_ui::row::initials(Some(&address)),
+            name,
+            messages,
+            last,
+            focused: self.person_cursor == Some(position),
+        })
     }
 
     /// The Files tab's cards, when it is shown and they are not read.
@@ -918,6 +1021,8 @@ impl Results {
         self.asked.clear();
         self.files = None;
         self.files_asked = false;
+        self.listed = None;
+        self.listed_asked = false;
         let mut steps = Vec::new();
         if self.none.take().is_some() {
             steps.push(Step::Show(Intent::Relaxations(None)));
@@ -1076,6 +1181,7 @@ impl Results {
                 self.top_len() + frame.total
             }
             (_, ResultsTab::Files) => self.files.as_ref().map_or(0, |files| files.len() as u64),
+            (_, ResultsTab::People) => self.listed.as_ref().map_or(0, |people| people.len() as u64),
             _ => 0,
         }
     }
@@ -1447,6 +1553,7 @@ impl Results {
     fn ring(&mut self) -> &mut Option<u64> {
         match self.tab {
             ResultsTab::Files => &mut self.file_cursor,
+            ResultsTab::People => &mut self.person_cursor,
             _ => &mut self.cursor,
         }
     }
@@ -1672,7 +1779,12 @@ impl Results {
             tab(
                 ResultsTab::People,
                 words::TABS[2],
-                frame.map_or(0, |frame| frame.people),
+                // The rows once read, which leave the person out; until
+                // then the search's own count of everyone.
+                self.listed.as_ref().map_or_else(
+                    || frame.map_or(0, |frame| frame.people),
+                    |people| people.len() as u64,
+                ),
                 false,
                 CommandId::ResultsPeople,
             ),
@@ -1718,12 +1830,15 @@ impl Results {
             rows: self.rows(),
             cursor: match self.tab {
                 ResultsTab::Files => self.file_cursor,
+                ResultsTab::People => self.person_cursor,
                 _ => self.cursor.filter(|_| self.ready()),
             },
             hints: if self.found_nothing() {
                 words::no_results_hints(with.keymap, self.ways_out().len())
             } else if self.tab == ResultsTab::Files {
                 words::files_hints(with.keymap)
+            } else if self.tab == ResultsTab::People {
+                words::people_hints(with.keymap)
             } else {
                 words::results_hints(with.keymap)
             },
@@ -2562,6 +2677,13 @@ impl FocusController {
         self.results.as_ref()?.file_card(position, &words)
     }
 
+    /// The People tab's row at `position`, drawn; `None` past the last,
+    /// or before the rows are read.
+    pub fn result_person(&self, position: u64) -> Option<PersonRow> {
+        let words = self.results_words();
+        self.results.as_ref()?.person_row(position, &words)
+    }
+
     /// A row the table wants and [`result_row`](Self::result_row) could
     /// not give: its page is read, and `Intent::ResultsPage` says when.
     pub fn results_wanted(&mut self, position: u64) -> Vec<Effect> {
@@ -2776,6 +2898,9 @@ impl FocusController {
     /// `None` hands it on to the list's table (`/`, `c`, `?`, the palette).
     pub(crate) fn results_command(&mut self, id: CommandId) -> Option<Vec<Step>> {
         if let Some(steps) = self.files_command(id) {
+            return Some(steps);
+        }
+        if let Some(steps) = self.people_command(id) {
             return Some(steps);
         }
         if let Some(steps) = self.quick_look_command(id) {
@@ -3202,14 +3327,69 @@ impl FocusController {
             return Vec::new();
         }
         results.tab = tab;
-        // The Files tab reads its cards when it is first shown for a query
-        // (step 9); People lists its own in step 10. The frame says which
-        // is shown.
-        let ask = results.ask_files();
+        // The Files and People tabs read their own when first shown for a
+        // query (steps 9 and 10). The frame says which is shown.
+        let ask = results.ask_files().into_iter().chain(results.ask_people());
+        let ask: Vec<Step> = ask.collect();
         let mut steps = self.close_quick_look();
         steps.extend(self.draw_results());
         steps.extend(ask);
         steps
+    }
+
+    /// A key on the People tab (design §3.11): j/k step the ring, ↩
+    /// searches the mail of the person under it -- `from:` them, on the
+    /// Conversations tab, what was shown kept behind it (⌘[). A verb on
+    /// mail has no mail here. `None` hands `id` on, to the results' own
+    /// keys (the tabs, history, Esc).
+    fn people_command(&mut self, id: CommandId) -> Option<Vec<Step>> {
+        let results = self.results.as_mut()?;
+        if results.tab != ResultsTab::People {
+            return None;
+        }
+        let steps = match id {
+            CommandId::NextMessage | CommandId::PrevMessage => {
+                cursor_moved(results.step(if id == CommandId::NextMessage { 1 } else { -1 }))
+            }
+            CommandId::FirstMessage => cursor_moved(results.step(i64::MIN / 2)),
+            CommandId::LastMessage => cursor_moved(results.step(i64::MAX / 2)),
+            CommandId::OpenMessage => {
+                let Some(address) = results.cursor_person().map(|person| person.address.clone())
+                else {
+                    return Some(Vec::new());
+                };
+                let query = postio_search::query::spell(&Clause {
+                    negated: false,
+                    filter: Filter::From(address),
+                });
+                let leaving = self.here();
+                self.history.visit(leaving);
+                let order = Results::default_order(&self.bar.lower(&query));
+                self.open_results(Snapshot {
+                    query,
+                    tab: ResultsTab::Conversations,
+                    order,
+                    cursor: None,
+                    checked: Vec::new(),
+                    all: false,
+                })
+            }
+            CommandId::ToggleSelection
+            | CommandId::SelectAll
+            | CommandId::QuickLook
+            | CommandId::SaveFile
+            | CommandId::NextMatch
+            | CommandId::PrevMatch => Vec::new(),
+            _ if matches!(
+                postio_ui::focus_target::dispatch(id),
+                Some(postio_ui::focus_target::Dispatch::OnMail(_))
+            ) || crate::pickers::opens_picker(id) =>
+            {
+                Vec::new()
+            }
+            _ => return None,
+        };
+        Some(steps)
     }
 
     /// A key on the Files tab (design §3.8): j/k step the ring, Space
@@ -3683,6 +3863,13 @@ impl FocusController {
                 .collect(),
             Reply::Files { stamp, answer } => {
                 if results.files_landed(stamp, answer) {
+                    self.draw_results()
+                } else {
+                    Vec::new()
+                }
+            }
+            Reply::People { stamp, answer } => {
+                if results.people_landed(stamp, answer) {
                     self.draw_results()
                 } else {
                     Vec::new()

@@ -494,6 +494,10 @@ pub fn reply_to(request: &Request) -> Option<Reply> {
             stamp: *stamp,
             answer: Ok(files()),
         }),
+        Request::People { stamp, .. } => Some(Reply::People {
+            stamp: *stamp,
+            answer: Ok(people()),
+        }),
         Request::AttachmentCopy {
             attachment,
             purpose,
@@ -635,6 +639,28 @@ pub fn files() -> Vec<postio_search::results::FileHit> {
                 passage: Some(atlas_budget("budget-notes.pdf")),
                 when: Some(when(20)),
             }),
+        },
+    ]
+}
+
+/// The People tab's rows for "atlas": Ada, then Tomás, as the engine
+/// orders them -- most matched messages first.
+pub fn people() -> Vec<postio_search::suggest::Person> {
+    use postio_search::suggest::Person;
+    vec![
+        Person {
+            name: ada().name,
+            address: ada().address,
+            received: 2,
+            sent: 1,
+            last: Some(when(0)),
+        },
+        Person {
+            name: tomas().name,
+            address: tomas().address,
+            received: 1,
+            sent: 0,
+            last: Some(when(11)),
         },
     ]
 }

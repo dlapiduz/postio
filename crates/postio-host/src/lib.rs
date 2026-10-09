@@ -1017,6 +1017,14 @@ impl Inner {
             } => Resp::Files(
                 search::files(&self.wiring.database, account, &query, offset, limit).await,
             ),
+            Req::People {
+                account,
+                query,
+                offset,
+                limit,
+            } => Resp::People(
+                search::people(&self.wiring.database, account, &query, offset, limit).await,
+            ),
             Req::AttachmentCopy { attachment, dir } => Resp::Path(
                 parts::local_copy(&self.wiring.database, &self.wiring.blobs, attachment, &dir)
                     .await,

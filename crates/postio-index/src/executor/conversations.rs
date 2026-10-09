@@ -236,6 +236,64 @@ pub(super) async fn carriers(
         .collect())
 }
 
+/// One person the match reaches, as the People tab counts them.
+pub(super) struct Correspondent {
+    /// Their address row.
+    pub(super) address: i64,
+    /// Matched messages from them.
+    pub(super) from: u64,
+    /// Matched messages to them (to, cc, bcc) not also from them.
+    pub(super) to: u64,
+    /// The newest of those, in milliseconds.
+    pub(super) last: i64,
+}
+
+/// Everyone the request's match is from or to, each with how many of the
+/// matched messages and the newest: the same walk [`search_conversations`]
+/// makes, capped as it is, one occurrence per content -- the people its
+/// People count is of.
+pub(super) async fn correspondents(
+    connection: &Connection,
+    request: &ConversationRequest<'_>,
+) -> Result<Vec<Correspondent>> {
+    let plan = Plan::build_sets(&request.as_search());
+    let fold = if plan.sets.is_empty() {
+        Fold::walk(connection, &plan).await?
+    } else {
+        Fold::walk_sets(connection, &plan).await?
+    };
+    let mut people: HashMap<i64, Correspondent> = HashMap::new();
+    for found in &fold.found {
+        let mut met = |address: i64, from: bool| {
+            let person = people.entry(address).or_insert(Correspondent {
+                address,
+                from: 0,
+                to: 0,
+                last: i64::MIN,
+            });
+            if from {
+                person.from += 1;
+            } else {
+                person.to += 1;
+            }
+            person.last = person.last.max(found.received_at);
+        };
+        let mut senders = found.senders.clone();
+        senders.sort_unstable();
+        senders.dedup();
+        for address in &senders {
+            met(*address, true);
+        }
+        let mut recipients = found.recipients.clone();
+        recipients.sort_unstable();
+        recipients.dedup();
+        for address in recipients.iter().filter(|id| !senders.contains(id)) {
+            met(*address, false);
+        }
+    }
+    Ok(people.into_values().collect())
+}
+
 /// The words a file's name is checked for: the free text and every
 /// `filename:` value; empty when the query names no word for a file.
 pub(super) fn file_terms(query: &ParsedQuery) -> Vec<String> {

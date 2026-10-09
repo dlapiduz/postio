@@ -214,6 +214,18 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .map_err(|error| error.to_string()),
         },
+        Request::People { query, stamp } => Reply::People {
+            stamp,
+            answer: client
+                .people(
+                    postio_model::AccountScope::Unified,
+                    query,
+                    0,
+                    crate::results::PEOPLE_READ,
+                )
+                .await
+                .map_err(|error| error.to_string()),
+        },
         Request::AttachmentCopy {
             attachment,
             purpose,

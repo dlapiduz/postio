@@ -2525,3 +2525,117 @@ fn a_new_query_reads_the_cards_again_and_leaving_removes_a_copy() {
     );
     assert_eq!(removed(&effects).len(), 1);
 }
+
+// ---------------------------------------------------------------------------
+// The People tab (spec 010 step 10, US9, FR-032, design §3.11)
+// ---------------------------------------------------------------------------
+
+fn people_asked(effects: &[Effect]) -> Vec<Request> {
+    asked(effects)
+        .into_iter()
+        .filter(|request| matches!(request, Request::People { .. }))
+        .collect()
+}
+
+/// "atlas", then ⌘3: the People tab, its rows read.
+fn on_the_people_tab(focus: &mut FocusController, rows: &List) -> Vec<Effect> {
+    let _ = search(focus, "atlas", rows);
+    let effects = run(focus, CommandId::ResultsPeople, rows);
+    let asked = people_asked(&effects);
+    assert_eq!(asked.len(), 1, "the rows are read when the tab opens");
+    assert_eq!(asked[0].lane(), Some(postio_focus::Lane::People));
+    settle(focus, effects, rows)
+}
+
+#[test]
+fn the_people_tab_lists_who_the_results_are_from_and_to() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let effects = on_the_people_tab(&mut focus, &rows);
+    let view = results_view(&effects).expect("the frame, with the people counted");
+    assert_eq!(view.rows, 2);
+    assert_eq!(view.cursor, Some(0), "the first person ringed");
+    assert!(view.groups.is_empty(), "a list, not month groups");
+    assert_eq!(view.tabs[2].count, "2", "the tab counts the rows");
+    assert!(view.tabs[2].selected);
+    assert_eq!(
+        view.hints
+            .iter()
+            .map(|hint| hint.label.as_str())
+            .collect::<Vec<_>>(),
+        ["move", "search their mail", "switch tab"]
+    );
+
+    let ada = focus.result_person(0).expect("the first person");
+    assert_eq!(ada.name, "Ada Moreno");
+    assert_eq!(ada.address, "ada@example.com");
+    assert_eq!(ada.initials, "AM");
+    assert_eq!(ada.messages, "3 messages");
+    assert_eq!(ada.last, "26 Sep");
+    assert!(ada.focused);
+    assert_eq!(
+        ada.accessible,
+        "Ada Moreno, ada@example.com, 3 messages, last 26 Sep"
+    );
+    let tomas = focus.result_person(1).expect("the second");
+    assert_eq!(tomas.messages, "1 message");
+    assert!(!tomas.focused);
+    assert!(focus.result_person(2).is_none());
+}
+
+#[test]
+fn return_on_a_person_searches_their_mail_on_the_conversations_tab() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = on_the_people_tab(&mut focus, &rows);
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    assert!(
+        shown(&effects)
+            .iter()
+            .any(|intent| matches!(intent, Intent::ResultsCursor(1))),
+        "{:?}",
+        shown(&effects)
+    );
+    assert!(focus.result_person(1).expect("Tomás").focused);
+
+    let effects = run(&mut focus, CommandId::OpenMessage, &rows);
+    assert!(
+        queries_asked(&effects)
+            .iter()
+            .all(|query| query == "from:tomas@example.com"),
+        "{:?}",
+        queries_asked(&effects)
+    );
+    assert!(!queries_asked(&effects).is_empty(), "their mail is read");
+    let effects = settle(&mut focus, effects, &rows);
+    let view = results_view(&effects).expect("the results again");
+    assert!(view.tabs[0].selected, "on the Conversations tab");
+    assert!(people_asked(&effects).is_empty(), "no People read there");
+    let query = query_view(&effects).expect("the field");
+    assert_eq!(query.chips.len(), 1, "the query is the person alone");
+
+    // ⌘[ goes back to the People tab of what was searched before.
+    let effects = run(&mut focus, CommandId::HistoryBack, &rows);
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas")
+    );
+    assert_eq!(people_asked(&effects).len(), 1);
+    let effects = settle(&mut focus, effects, &rows);
+    assert!(results_view(&effects).expect("the frame").tabs[2].selected);
+}
+
+#[test]
+fn a_new_query_reads_the_people_again() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = on_the_people_tab(&mut focus, &rows);
+    let effects = focus.handle_on(
+        Input::SearchEdit(TermEdit::Toggle {
+            field: "has".to_owned(),
+            value: "attachment".to_owned(),
+        }),
+        &rows,
+    );
+    assert_eq!(people_asked(&effects).len(), 1, "the tab shown reads again");
+}

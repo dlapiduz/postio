@@ -674,6 +674,40 @@ impl From<postio_focus::FilePreview> for FilePreviewFfi {
     }
 }
 
+/// One row of the People tab (design §3.11): someone the results are
+/// from or to.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PersonRowFfi {
+    /// Their address: what ↩ searches `from:`.
+    pub address: String,
+    /// Their name, or the address when their mail gave none.
+    pub name: String,
+    /// The avatar's letters: "AM".
+    pub initials: String,
+    /// "3 messages": the matched messages from and to them.
+    pub messages: String,
+    /// The newest of those: "26 Sep".
+    pub last: String,
+    /// The focus ring is on it.
+    pub focused: bool,
+    /// What VoiceOver reads.
+    pub accessible: String,
+}
+
+impl From<postio_focus::PersonRow> for PersonRowFfi {
+    fn from(row: postio_focus::PersonRow) -> Self {
+        PersonRowFfi {
+            address: row.address,
+            name: row.name,
+            initials: row.initials,
+            messages: row.messages,
+            last: row.last,
+            focused: row.focused,
+            accessible: row.accessible,
+        }
+    }
+}
+
 /// One card of the Files tab (design §3.8, screen 11).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FileCardFfi {
@@ -1372,6 +1406,12 @@ impl Session {
     /// Synchronous; what the grid calls for every visible card.
     pub fn focus_search_file(&self, position: u64) -> Option<FileCardFfi> {
         self.focus_driver().result_file(position).map(Into::into)
+    }
+
+    /// The People tab's row at `position`, or `None` past the last.
+    /// Synchronous; what the list calls for every visible row.
+    pub fn focus_search_person(&self, position: u64) -> Option<PersonRowFfi> {
+        self.focus_driver().result_person(position).map(Into::into)
     }
 
     /// The system's Quick Look on a file, or its save panel, is gone --

@@ -1041,3 +1041,81 @@ async fn with_no_words_every_attachment_of_the_matched_mail_is_a_card() {
     );
     assert_eq!(found[0].matched, None, "no word to have matched");
 }
+
+// ---------------------------------------------------------------------------
+// The People tab (spec 010 step 10, US9, T132)
+// ---------------------------------------------------------------------------
+
+async fn people(connection: &Connection, query: &str) -> Vec<postio_search::suggest::Person> {
+    let parsed = parse(query, today());
+    postio_index::executor::people(
+        connection,
+        &ConversationRequest {
+            account: AccountScope::Unified,
+            query: &parsed,
+            order: ConversationOrder::Newest,
+            offset: 0,
+            limit: 50,
+            today: today(),
+        },
+    )
+    .await
+    .expect("the people")
+}
+
+#[tokio::test]
+async fn the_people_tab_lists_who_the_matched_mail_is_from_and_to_but_you() {
+    let (_database, connection, account, inbox) = store().await;
+    let days = Duration::days;
+    // "test" is the account's own address: never a row.
+    for (from, to, subject, ago) in [
+        ("ada", &["test"][..], "Atlas plan", days(5)),
+        ("tomas", &["test", "ada"][..], "Atlas staffing", days(3)),
+        ("test", &["ada"][..], "Re: Atlas plan", days(1)),
+        ("grace", &["test"][..], "Lunch on Friday", days(2)),
+    ] {
+        file(
+            &connection,
+            &account,
+            inbox,
+            Mail {
+                from,
+                to,
+                subject,
+                body: "notes",
+                ago,
+                ..Mail::default()
+            },
+        )
+        .await;
+    }
+
+    let found = people(&connection, "atlas").await;
+    let rows: Vec<(&str, Option<&str>, u64, u64)> = found
+        .iter()
+        .map(|person| {
+            (
+                person.address.as_str(),
+                person.name.as_deref(),
+                person.received,
+                person.sent,
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            // From her once, to her twice among the three matched.
+            ("ada@example.com", Some("ada"), 1, 2),
+            ("tomas@example.com", Some("tomas"), 1, 0),
+        ],
+        "most messages first; you are not among them, nor anyone the match \
+         does not reach"
+    );
+    assert_eq!(
+        found[0].last,
+        Some(now() - days(1)),
+        "the newest matched message with her"
+    );
+    assert_eq!(found[1].last, Some(now() - days(3)));
+}

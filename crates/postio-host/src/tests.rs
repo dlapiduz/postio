@@ -4300,6 +4300,49 @@ fn focus_asks_the_host_what_a_prefix_could_become() {
 }
 
 #[test]
+fn focus_asks_the_host_who_the_results_are_from_and_to() {
+    // Spec 010 US9: the People tab. The host answers on a reader turn, the
+    // person's own addresses left out, and stops when a newer search
+    // supersedes it (D9).
+    let seed = SearchSeed::new();
+    let query = postio_search::parse("atlas", postio_demo::today().date_naive());
+    let people = seed
+        .rt
+        .block_on(seed.client.people(seed.scope(), query.clone(), 0, 50))
+        .expect("an answer");
+    assert!(
+        people
+            .iter()
+            .any(|person| person.address.starts_with("ada")),
+        "Ada wrote about Atlas in the seed: {people:?}"
+    );
+    let own = seed.rt.block_on(async {
+        let reader = seed.database.read().await.expect("a reader");
+        postio_storage::repository::IdentityRepository::new(&reader)
+            .own_addresses()
+            .await
+            .expect("own addresses")
+    });
+    assert!(!own.is_empty());
+    assert!(
+        people.iter().all(|person| own
+            .iter()
+            .all(|mine| !mine.address.eq_ignore_ascii_case(&person.address))),
+        "never yourself: {people:?}"
+    );
+    assert!(
+        postio_client::protocol::Req::People {
+            account: seed.scope(),
+            query,
+            offset: 0,
+            limit: 50,
+        }
+        .cancellable(),
+        "a newer search supersedes it"
+    );
+}
+
+#[test]
 fn a_search_whose_caller_has_gone_stops_on_the_host() {
     // D9: the driver aborts a superseded search by dropping the client's
     // future, and the host has to notice, or the abandoned search keeps

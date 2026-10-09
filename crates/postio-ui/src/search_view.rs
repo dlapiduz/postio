@@ -1380,6 +1380,54 @@ pub fn files_hints(keymap: &Keymap) -> Vec<Hint> {
     out
 }
 
+/// A People row's count (design §3.11): the matched messages from and to
+/// them, "3 messages".
+pub fn person_messages(messages: u64) -> String {
+    format!(
+        "{} {}",
+        grouped(messages),
+        if messages == 1 { "message" } else { "messages" }
+    )
+}
+
+/// What a screen reader says for a People row: "Ada Moreno,
+/// ada@example.com, 3 messages, last 26 Sep".
+pub fn person_accessible(name: &str, address: &str, messages: &str, last: &str) -> String {
+    let mut said: Vec<String> = [name, address, messages]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if !last.is_empty() {
+        said.push(format!("last {last}"));
+    }
+    said.join(", ")
+}
+
+/// The People tab's footer (design §3.11): move, ↩ runs `from:` them,
+/// and the tabs.
+pub fn people_hints(keymap: &Keymap) -> Vec<Hint> {
+    let mut out = Vec::new();
+    out.extend(hints::pair(
+        keymap,
+        CommandId::NextMessage,
+        CommandId::PrevMessage,
+        "move",
+    ));
+    out.extend(hints::hint(
+        keymap,
+        CommandId::OpenMessage,
+        "search their mail",
+    ));
+    out.extend(hints::pair(
+        keymap,
+        CommandId::ResultsConversations,
+        CommandId::ResultsPeople,
+        "switch tab",
+    ));
+    out
+}
+
 /// The operator state's first section: "People matching “ad”", or the
 /// operator's own noun while nothing is typed after it.
 pub fn matching(noun: &str, typed: &str) -> String {
@@ -1543,6 +1591,24 @@ mod tests {
 
     fn at(year: i32, month: u32, day: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(year, month, day, 15, 30, 0).unwrap()
+    }
+
+    // US9, design §3.11: a People row's words and its footer.
+    #[test]
+    fn a_people_row_says_its_messages_and_the_tab_its_keys() {
+        assert_eq!(person_messages(1), "1 message");
+        assert_eq!(person_messages(4_512), "4,512 messages");
+        assert_eq!(
+            person_accessible("Ada Moreno", "ada@example.com", "3 messages", "26 Sep"),
+            "Ada Moreno, ada@example.com, 3 messages, last 26 Sep"
+        );
+        let keymap = postio_core::Keymap::resolve_on(
+            &postio_config::KeyBindings::default(),
+            postio_config::paths::Platform::Apple,
+        );
+        let hints = people_hints(&keymap);
+        let said: Vec<&str> = hints.iter().map(|hint| hint.label.as_str()).collect();
+        assert_eq!(said, ["move", "search their mail", "switch tab"]);
     }
 
     // D29: a suggestion's count past its cap is a floor, grouped as every
