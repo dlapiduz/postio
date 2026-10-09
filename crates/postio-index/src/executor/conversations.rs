@@ -177,9 +177,10 @@ pub async fn search_conversations(
         capped: fold.capped(),
         messages_searched,
         corpus_complete,
-        // Nothing reads attachment contents yet (step 9), so there is
-        // nothing outstanding to be incomplete about.
-        contents_complete: true,
+        // Nothing reads attachment contents yet (step 9): no file's text
+        // was searched, so the search must not say it was (US6 scenario
+        // 2). Step 9 makes this "every downloaded attachment is read".
+        contents_complete: false,
         facets: facets(&conversations, request.today, fold.capped()),
         files: conversations
             .iter()
