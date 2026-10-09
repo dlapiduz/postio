@@ -66,16 +66,13 @@ fn where_available(contexts: ContextSet) -> String {
 /// gives every command the same key in every app, and an app that does not
 /// offer one leaves its key free (specs/007-postio-focus research R4).
 fn which_apps(requires: RequirementSet) -> &'static str {
-    // Focus is the desktop app and the terminal (spec 007 C27, C29), so a
-    // Focus command is one only macOS leaves out.
-    if requires.contains(Requirement::Focus) {
-        " (not macOS)"
-    } else if requires.contains(Requirement::Terminal) {
+    // Focus is every app but the terminal's composer: the desktop app, the
+    // Mac (specs/009-focus-macos R5) and the terminal, which is Focus drawn
+    // in character cells (spec 007 C29). So a Focus command needs no note.
+    if requires.contains(Requirement::Terminal) {
         " (terminal)"
     } else if requires.contains(Requirement::Graphical) {
         " (not the terminal)"
-    } else if requires.contains(Requirement::ThreePane) {
-        " (macOS)"
     } else {
         ""
     }

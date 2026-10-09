@@ -1026,8 +1026,8 @@ async fn a_body_that_was_re_indexed_no_longer_matches_its_old_words() {
 async fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
     // #499: the list column says `Newest ▾` and has to be able to mean it.
     // Relevance is the default and stays ranked; asking for `Newest` must
-    // come back in plain date order even when bm25 would put an older,
-    // denser match first.
+    // come back in plain date order even when the ranking would put an
+    // older message first -- here, the one whose subject says the word.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -1050,22 +1050,22 @@ async fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
         .await;
     }
 
-    // Older, but saturated with the term: the far better bm25 match.
-    let dense = message(
+    // Older, and about the thing: its subject says it.
+    let dense = with_body(
         &connection,
         &account,
         mailbox,
-        "ada",
-        "report report report report report",
+        "Quarterly report",
+        "The figures are attached.",
         at(6),
     )
     .await;
-    // Newer, and a glancing match.
-    let recent = message(
+    // Newer, and a glancing match in passing.
+    let recent = with_body(
         &connection,
         &account,
         mailbox,
-        "bob",
+        "Notes",
         "One report among other things entirely",
         at(11),
     )
@@ -1088,8 +1088,8 @@ async fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
     assert_eq!(
         ranked.hits[0].message_id,
         dense.id,
-        "relevance still ranks: the dense match outweighs five hours of recency \
-         (scores: {:?})",
+        "relevance still ranks: the message about it outweighs five hours of \
+         recency (scores: {:?})",
         ranked
             .hits
             .iter()
@@ -1811,5 +1811,416 @@ async fn whether_the_corpus_is_complete_is_read_off_the_folders_not_the_messages
         !plan.iter().any(|step| step.contains("messages")),
         "the completeness check reads the messages table:\n{}",
         plan.join("\n")
+    );
+}
+
+#[tokio::test]
+async fn a_message_moved_today_is_as_old_as_its_own_date() {
+    // A message archived or resynced today arrives in its folder today: the
+    // server's arrival date is the move, not the mail. Ranked by that, last
+    // month's invoice -- archived this morning -- beat this week's, which
+    // was still where it landed. Age is the earlier of the two dates.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    let now = Utc.with_ymd_and_hms(2026, 10, 8, 18, 0, 0).unwrap();
+    let days = |n: i64| now - chrono::TimeDelta::days(n);
+
+    for i in 0..20 {
+        message(
+            &connection,
+            &account,
+            mailbox,
+            "carol",
+            &format!("Entirely unrelated subject {i}"),
+            days(40),
+        )
+        .await;
+    }
+    let store = |date: chrono::DateTime<Utc>, received: chrono::DateTime<Utc>, subject: &str| {
+        let mut message = Message::new(account.id, mailbox, received);
+        message.from = vec![EmailAddress::new(
+            Some("Music Studio"),
+            "studio@example.com",
+        )];
+        message.subject = Some(subject.to_string());
+        message.date = Some(date);
+        message
+    };
+    let mut older = store(
+        days(21),
+        now - chrono::TimeDelta::hours(5),
+        "Lapiduz 9/17/2026 Invoice",
+    );
+    let mut newer = store(days(13), days(13), "Lapiduz 9/26/2026 Invoice");
+    let repository = MessageRepository::new(&connection);
+    repository.create(&mut older).await.expect("older");
+    repository.create(&mut newer).await.expect("newer");
+
+    let query = parse("invoice", now.date_naive());
+    let ranked = search(
+        &connection,
+        &SearchRequest {
+            account: AccountScope::Account(account.id),
+            query: &query,
+            scope: Scope::AllMail,
+            limit: 10,
+            order: postio_search::ResultOrder::Relevance,
+        },
+        now,
+    )
+    .await
+    .expect("search");
+    let order: Vec<_> = ranked.hits.iter().map(|hit| hit.message_id).collect();
+    assert_eq!(
+        order,
+        vec![newer.id, older.id],
+        "the newer invoice first, though the older one arrived in its folder today"
+    );
+}
+
+/// One sender's issues, found by the sender's name: as good a match as each
+/// other, so the newest leads, whatever the bodies say or how often each of
+/// the sender's addresses was seen.
+#[tokio::test]
+async fn a_senders_mail_found_by_its_name_comes_newest_first() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    let now = Utc.with_ymd_and_hms(2026, 10, 8, 18, 0, 0).unwrap();
+    let days = |n: i64| now - chrono::TimeDelta::days(n);
+    for i in 0..20 {
+        message(
+            &connection,
+            &account,
+            mailbox,
+            "carol",
+            &format!("Unrelated {i}"),
+            days(40),
+        )
+        .await;
+    }
+    let repository = MessageRepository::new(&connection);
+    let mut issues = Vec::new();
+    for (age, subject, address) in [
+        (8, "Distributed databases", "weekly@news.example.com"),
+        (1, "Building resilient systems", "deep@news.example.com"),
+        (0, "The Pulse: a new trend", "pulse@news.example.com"),
+        (2, "The state of the industry", "deep@news.example.com"),
+    ] {
+        let mut issue = Message::new(account.id, mailbox, days(age));
+        issue.from = vec![EmailAddress::new(Some("The Weekly Engineer"), address)];
+        issue.subject = Some(subject.to_string());
+        issue.date = Some(days(age));
+        repository.create(&mut issue).await.expect("issue");
+        issues.push((age, issue.id));
+    }
+    let query = parse("weekly engineer", now.date_naive());
+    let ranked = search(
+        &connection,
+        &SearchRequest {
+            account: AccountScope::Account(account.id),
+            query: &query,
+            scope: Scope::AllMail,
+            limit: 10,
+            order: postio_search::ResultOrder::Relevance,
+        },
+        now,
+    )
+    .await
+    .expect("search");
+    issues.sort_by_key(|(age, _)| *age);
+    let newest_first: Vec<_> = issues.iter().map(|(_, id)| *id).collect();
+    let order: Vec<_> = ranked.hits.iter().map(|hit| hit.message_id).collect();
+    assert_eq!(order, newest_first);
+}
+
+/// A message whose subject says part of what was asked beats one that only
+/// mentions it all in passing, when the two are otherwise as good.
+#[tokio::test]
+async fn a_subject_that_says_part_of_the_query_beats_a_passing_mention() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    let now = Utc.with_ymd_and_hms(2026, 10, 8, 18, 0, 0).unwrap();
+    let days = |n: i64| now - chrono::TimeDelta::days(n);
+    for i in 0..20 {
+        with_body(
+            &connection,
+            &account,
+            mailbox,
+            &format!("Unrelated {i}"),
+            "nothing here",
+            days(40),
+        )
+        .await;
+    }
+    let lessons = with_body(
+        &connection,
+        &account,
+        mailbox,
+        "Re: Voice Lessons",
+        "Hello, I sent the zoom link again for the voice lessons on Tuesday.",
+        days(13),
+    )
+    .await;
+    let bingo = with_body(
+        &connection,
+        &account,
+        mailbox,
+        "Join us for musical bingo tomorrow",
+        "Bingo night! Voice lessons raffle, a zoom link for those at home, and more voice lessons news. Zoom link below.",
+        days(1),
+    )
+    .await;
+    let query = parse("zoom link voice lessons", now.date_naive());
+    let ranked = search(
+        &connection,
+        &SearchRequest {
+            account: AccountScope::Account(account.id),
+            query: &query,
+            scope: Scope::AllMail,
+            limit: 10,
+            order: postio_search::ResultOrder::Relevance,
+        },
+        now,
+    )
+    .await
+    .expect("search");
+    let order: Vec<_> = ranked.hits.iter().map(|hit| hit.message_id).collect();
+    assert_eq!(
+        order.first(),
+        Some(&lessons.id),
+        "{order:?} (bingo is {:?})",
+        bingo.id
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Phrases, and the forgiving search the command bar asks for (ADR 0037 as
+// amended): exact first, then near words -- never for a rule.
+// ---------------------------------------------------------------------------
+
+async fn forgiving_world() -> (
+    postio_storage::Store,
+    postio_model::Account,
+    Vec<(&'static str, postio_model::MessageId)>,
+) {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    for i in 0..20 {
+        with_body(
+            &connection,
+            &account,
+            mailbox,
+            &format!("Unrelated {i}"),
+            "nothing here",
+            at(1),
+        )
+        .await;
+    }
+    let mut made = Vec::new();
+    for (name, subject, body, hour) in [
+        (
+            "phone bill",
+            "Factura telefonica mama",
+            "La factura del mes",
+            3,
+        ),
+        (
+            "bill phone",
+            "Telefonica: nueva factura",
+            "Adjuntamos la factura",
+            4,
+        ),
+        (
+            "tickets",
+            "Buy two, get movie tickets half off",
+            "Offer inside",
+            5,
+        ),
+        ("ticket", "Your ticket for Saturday", "See you there", 6),
+        (
+            "southwest",
+            "Your Southwest flight tomorrow",
+            "Boarding at 9",
+            7,
+        ),
+    ] {
+        let message = with_body(&connection, &account, mailbox, subject, body, at(hour)).await;
+        made.push((name, message.id));
+    }
+    drop(connection);
+    (database, account, made)
+}
+
+async fn searched(
+    database: &postio_storage::Store,
+    account: &postio_model::Account,
+    text: &str,
+    forgiving: bool,
+) -> Vec<postio_model::MessageId> {
+    let connection = database.connect().await.expect("checkout");
+    let mut query = parse(text, at(12).date_naive());
+    if forgiving {
+        query = query.forgiving();
+    }
+    search(
+        &connection,
+        &SearchRequest {
+            account: AccountScope::Account(account.id),
+            query: &query,
+            scope: Scope::AllMail,
+            limit: 10,
+            order: postio_search::ResultOrder::Relevance,
+        },
+        at(12),
+    )
+    .await
+    .expect("search")
+    .hits
+    .iter()
+    .map(|hit| hit.message_id)
+    .collect()
+}
+
+fn id(made: &[(&str, postio_model::MessageId)], name: &str) -> postio_model::MessageId {
+    made.iter().find(|(n, _)| *n == name).expect("made").1
+}
+
+#[tokio::test]
+async fn a_quoted_phrase_matches_those_words_together() {
+    let (database, account, made) = forgiving_world().await;
+    assert_eq!(
+        searched(&database, &account, "\"factura telefonica\"", false).await,
+        vec![id(&made, "phone bill")],
+        "the words side by side, in that order; not \"Telefonica: nueva factura\""
+    );
+    assert_eq!(
+        searched(&database, &account, "factura telefonica", false)
+            .await
+            .len(),
+        2,
+        "unquoted, both words anywhere"
+    );
+}
+
+#[tokio::test]
+async fn a_forgiving_search_finds_a_plural() {
+    let (database, account, made) = forgiving_world().await;
+    let found = searched(&database, &account, "ticket", true).await;
+    assert_eq!(
+        found,
+        vec![id(&made, "ticket"), id(&made, "tickets")],
+        "the exact word first, then the plural"
+    );
+}
+
+#[tokio::test]
+async fn a_forgiving_search_finds_a_misspelling() {
+    let (database, account, made) = forgiving_world().await;
+    assert_eq!(
+        searched(&database, &account, "southwset flight", true).await,
+        vec![id(&made, "southwest")]
+    );
+}
+
+#[tokio::test]
+async fn a_forgiving_search_finds_a_misspelling_in_a_body() {
+    let (database, account, made) = forgiving_world().await;
+    assert_eq!(
+        searched(&database, &account, "boardng", true).await,
+        vec![id(&made, "southwest")],
+        "the body index is folded, and its near words are read from it"
+    );
+}
+
+/// A mailbox where a misspelling's neighbours are mostly the wrong word:
+/// sixty trips beside one girl scout troop, every one saying "your" and
+/// "or" -- the word a disjunction becomes if it is lowercased.
+async fn crowded_world() -> (
+    postio_storage::Store,
+    postio_model::Account,
+    Vec<(&'static str, postio_model::MessageId)>,
+) {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    for i in 0..60 {
+        with_body(
+            &connection,
+            &account,
+            mailbox,
+            &format!("Your trip {i}"),
+            "Scout the route, or stay home: your trip, your tour",
+            at(1),
+        )
+        .await;
+    }
+    let mut made = Vec::new();
+    for (name, subject, body, hour) in [
+        ("troop", "Girl scout troop meeting", "Bring the cookies", 3),
+        ("tour", "Redfin home tour confirmed", "See you Saturday", 4),
+        ("your home", "Your Redfin home value", "Updated estimate", 5),
+        // So "girl" has a word it begins, and is widened too.
+        ("girls", "Girls night", "Bring snacks", 6),
+    ] {
+        let message = with_body(&connection, &account, mailbox, subject, body, at(hour)).await;
+        made.push((name, message.id));
+    }
+    drop(connection);
+    (database, account, made)
+}
+
+#[tokio::test]
+async fn a_misspelling_is_read_beside_the_words_around_it() {
+    // "trop" is one edit from "trip", which sixty messages hold, and from
+    // "troop", which one does; the words beside it say which was meant.
+    let (database, account, made) = crowded_world().await;
+    assert_eq!(
+        searched(&database, &account, "girl scout trop", true).await,
+        vec![id(&made, "troop")]
+    );
+}
+
+#[tokio::test]
+async fn a_word_spelled_right_is_not_widened_to_its_neighbours() {
+    // "tour" is a word the mailbox holds: "your", one edit away, is not
+    // what was meant.
+    let (database, account, made) = crowded_world().await;
+    assert_eq!(
+        searched(&database, &account, "redfn home tour", true).await,
+        vec![id(&made, "tour")]
+    );
+}
+
+#[tokio::test]
+async fn a_rule_or_saved_search_stays_exact() {
+    // ADR 0037: a rule acts on what its query says, never on a near miss.
+    let (database, account, made) = forgiving_world().await;
+    assert_eq!(
+        searched(&database, &account, "ticket", false).await,
+        vec![id(&made, "ticket")]
+    );
+    assert!(
+        searched(&database, &account, "southwset", false)
+            .await
+            .is_empty()
     );
 }

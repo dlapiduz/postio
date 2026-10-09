@@ -25,16 +25,12 @@ by_address                        # crates/postio-storage/src/repository/contact
 can_redo                          # crates/postio-body/src/edit.rs:118
 check_budget                      # crates/postio-core/src/perf_budget.rs:65
 closing_after                     # crates/postio-account/src/imap/transport.rs:634
-compose_demo                      # crates/postio-demo/src/lib.rs -- called by postio-gtk's shot example; examples are not callers to this check
 conformance_cases                 # crates/postio-core/src/aim.rs:346
-demo_vault                        # crates/postio-demo/src/lib.rs -- called by postio-gtk's shot example; examples are not callers to this check
-digest_size                       # crates/postio-ui/src/focus_dialog.rs -- spec 009 slice 1; the Mac's digest window calls it (tasks.md T114)
 dispatch_ext                      # crates/postio-core/src/dispatch.rs:458
 extend_selection_to               # crates/postio-core/src/state.rs:562
 extensions_to_enable              # crates/postio-account/src/imap/dispatch.rs:197
 failing_tls                       # crates/postio-account/src/imap/transport.rs:618
 fts_match                         # crates/postio-search/src/query.rs:417
-guard_kept_colours              # crates/postio-body/src/treatment.rs -- spec 009 T060/T061; the Mac FFI calls it (tasks.md T063)
 has_name                          # crates/postio-account/src/backend/capability.rs:180
 has_pending                       # crates/postio-storage/src/repository/operations.rs:435
 idles                             # crates/postio-sync/src/watch.rs:290
@@ -62,7 +58,6 @@ latest_message_id                 # crates/postio-model/src/thread.rs:91
 lookup_binding                    # crates/postio-core/src/registry.rs:1067
 mark_in_flight                    # crates/postio-storage/src/repository/operations.rs:465
 message_page                      # crates/postio-runtime/src/store/local.rs -- the flat window under MailStore::list_page; for postio-bench store_reads and runtime_suite, which measure one window on purpose
-message_uri                       # crates/postio-ui/src/links.rs:18 -- the link postio-vault's Tasks line (T157, milestone 3) writes; parsed by links::message today
 needing_backfill                  # crates/postio-storage/src/repository/messages.rs:1384
 normalized_subject                # crates/postio-model/src/message.rs:313
 on_data_body                      # crates/postio-smtp/src/transport.rs:436
@@ -76,7 +71,6 @@ recount                           # crates/postio-storage/src/repository/mailbox
 recount_account                   # crates/postio-storage/src/repository/mailboxes.rs:303
 recovers_on_its_own               # crates/postio-sync/src/connect.rs:209
 refresh_capabilities              # crates/postio-account/src/imap/mod.rs:300
-refresh_counts                    # crates/postio-focus/src/lib.rs -- spec 009 slice 1; the feed calls it after each landing (tasks.md T024)
 rejected_recipient                # crates/postio-smtp/src/error.rs:255
 remove_member                     # crates/postio-storage/src/repository/contact_groups.rs:105
 reports_destination_uid           # crates/postio-account/src/imap/dispatch.rs:181

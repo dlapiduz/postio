@@ -436,35 +436,6 @@ pub async fn save_part(
     Ok(())
 }
 
-/// Write one part into `directory`, under the name Postio chose for it.
-///
-/// The difference from [`save_part`] is who names the file, and it is the
-/// whole point. This is what "Open with…" and a drag-out are built on — paths
-/// where the file is handed to *another application* — and on those paths the
-/// caller supplies only a directory. A frontend cannot pass a filename
-/// through, so the sender cannot choose one: the name is always
-/// [`postio_ui::reader::parts::save_name`]'s, which has already had its
-/// separators and control characters taken out.
-///
-/// Returns where it landed, which is what the caller hands to the launcher.
-pub async fn export_part(
-    database: &Store,
-    blobs: &BlobStore,
-    engine: Option<Engine>,
-    message: MessageId,
-    part_id: &str,
-    directory: &std::path::Path,
-) -> Result<std::path::PathBuf, String> {
-    let node = node_for(database, message, part_id).await?;
-    let bytes = part_bytes_at(database, blobs, engine, message, part_id).await?;
-
-    std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-    let path = directory.join(parts::save_name(&node));
-    std::fs::write(&path, &bytes).map_err(|error| error.to_string())?;
-    tracing::debug!(message = %message, part = part_id, bytes = bytes.len(), "part exported");
-    Ok(path)
-}
-
 /// How a "save every part" went.
 pub struct SavedParts {
     /// How many landed on disk.
@@ -524,16 +495,6 @@ pub async fn save_all_parts(
         "every part saved"
     );
     Ok(outcome)
-}
-
-/// The node `part_id` names, for the rules that are about one part.
-async fn node_for(database: &Store, message: MessageId, part_id: &str) -> Result<Node, String> {
-    message_parts(database, message)
-        .await?
-        .nodes
-        .into_iter()
-        .find(|node| node.part_id == part_id)
-        .ok_or_else(|| "That part is not in this message".to_string())
 }
 
 /// Wait for a queued part to land, or give up saying so.

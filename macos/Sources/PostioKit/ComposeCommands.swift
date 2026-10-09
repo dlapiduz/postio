@@ -20,6 +20,15 @@ import PostioFFI
 /// this frontend owns, unsaved, and the store has not seen most of it. So
 /// these are `Intercepted`, and the coverage sweep counts them as answered
 /// for that reason.
+/// The four verbs that write: the controller's (T073), named for the
+/// toolbar's compose button and its tip.
+public enum WritingCommand {
+    public static let compose = "compose"
+    public static let reply = "reply"
+    public static let replyAll = "reply_all"
+    public static let forward = "forward"
+}
+
 @MainActor
 public enum ComposeCommands {
     /// The marks that are a request to the editing surface rather than a call.
@@ -40,7 +49,7 @@ public enum ComposeCommands {
     nonisolated public static var handled: [String] {
         marks + [
             "insert_link", "copy_fields", "send", "save_draft", "discard_draft",
-            "attach_file", "schedule_send", "insert_image",
+            "attach_file", "schedule_send", "insert_image", "remind_if_no_reply",
         ]
     }
 
@@ -82,6 +91,9 @@ public enum ComposeCommands {
             composer.wantsAttachment = true
         case "schedule_send":
             composer.wantsSchedule = true
+        case "remind_if_no_reply":
+            // ⌘H: the reminder's times, which only the view can list.
+            composer.wantsRemind = true
         case "insert_image":
             // An open panel, which only the view can put up -- or a sentence,
             // on a draft that has no document to hold a picture.

@@ -27,4 +27,5 @@ leaves this list. Traps worth knowing before you start are in
 - 2026-09-30 — [ANALYZE makes the hot plans worse (#1708)](2026-09-30-analyze-makes-the-hot-plans-worse.md)
 - 2026-10-01 — [The store migrates what it can and starts over what it cannot (2026-10-01, spec 007 T215)](2026-10-01-store-migrations-and-starting-over.md)
 - 2026-10-01 — [What a storyboard capture costs, and which renderer repeats itself](2026-10-01-what-a-storyboard-capture-costs.md)
+- 2026-10-08 — [Focus on the Mac: what the next session must keep](2026-10-08-focus-on-the-mac.md)
 - 2026-10-05 — [Architecture inventory: Postio, Flectar and Letter](2026-10-05-reference-codebase-architecture-inventory.md)

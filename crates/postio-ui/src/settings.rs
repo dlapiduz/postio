@@ -204,15 +204,9 @@ impl Section {
     /// classic-parity.md rows 18, 19) -- so a control there would change
     /// nothing a person could see.
     ///
-    /// The Mac does not show Filtering: Focus's rules act only while Focus
-    /// runs, on the desktop or in the terminal (spec 007 US11, scenario 4),
-    /// so a switch there would turn something the Mac never does.
     pub fn shown_in(self, frontend: postio_core::Frontend) -> bool {
         use postio_core::Frontend;
-        !matches!(
-            (self, frontend),
-            (Section::Appearance, Frontend::Focus) | (Section::Filtering, Frontend::Macos)
-        )
+        !matches!((self, frontend), (Section::Appearance, Frontend::Focus))
     }
 
     /// The `config.toml` table this pane owns, for the footer line.
@@ -391,19 +385,6 @@ mod tests {
                 .all(|section| section.shown_in(postio_core::Frontend::Terminal)),
             "the terminal shows all nine: filtering runs while it has the store"
         );
-    }
-
-    #[test]
-    fn macos_shows_no_filtering_page_because_filtering_does_not_run_there() {
-        // Focus's rules act only while Focus runs, on the desktop or in the
-        // terminal (spec 007 US11, scenario 4): a switch on the Mac would
-        // turn something the Mac never does.
-        let macos: Vec<Section> = Section::ALL
-            .into_iter()
-            .filter(|section| section.shown_in(postio_core::Frontend::Macos))
-            .collect();
-        assert!(!macos.contains(&Section::Filtering), "{macos:?}");
-        assert_eq!(macos.len(), Section::ALL.len() - 1, "{macos:?}");
     }
 
     #[test]

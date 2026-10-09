@@ -24,7 +24,6 @@ zoom_in	ctrl+plus | ctrl+equal | ctrl+KP_Add
 zoom_out	ctrl+minus | ctrl+KP_Subtract
 zoom_reset	ctrl+0 | ctrl+KP_0
 expand_all	O | ctrl+shift+e
-toggle_rail	I
 reply	e | ctrl+r
 reply_all	E | ctrl+shift+r
 forward	f | ctrl+shift+f
@@ -80,7 +79,6 @@ quit	ctrl+q | ctrl+w
 show_images	i i
 always_show_images	i a
 unsubscribe	U
-toggle_sidebar	ctrl+b
 go_to_folders	g o
 go_to_inbox	g i
 go_to_drafts	g t
@@ -98,15 +96,6 @@ saved_search_2	alt+2
 saved_search_3	alt+3
 saved_search_4	alt+4
 toggle_has_action	!
-cycle_pane	tab
-cycle_pane_back	shift+tab
-next_folder	j | Down
-prev_folder	k | Up
-toggle_folder	space
-rename_saved_search	r
-move_saved_search_up	shift+Up
-move_saved_search_down	shift+Down
-delete_saved_search	Delete
 toggle_account_enabled	Return
 remove_account	Delete
 update_credential	c
@@ -115,14 +104,6 @@ set_default_account	m
 map_mailbox_role	M
 next_scope	g a
 refresh	F5
-open_parts	p
-next_part	j | Down
-prev_part	k | Up
-open_part	Return
-save_part	s
-save_all_parts	S
-open_part_externally	x
-render_part_once	H
 scroll_reader_down	Page_Down | space
 scroll_reader_up	Page_Up | shift+space
 picker_choose_1	1

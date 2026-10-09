@@ -438,9 +438,8 @@ fn start_over(window: &FocusWindow, opener: &Opener, open_fresh: Rc<dyn Fn()>) {
             Ok(started) => {
                 tracing::info!(accounts = started.accounts, "the store was started over");
                 open_fresh();
-                window.say(&format!(
-                    "Started a fresh store. The old one is in {}",
-                    started.set_aside.display()
+                window.say(&postio_ui::focus_state::started_over(
+                    &started.set_aside.display().to_string(),
                 ));
             }
             Err(sentence) => {

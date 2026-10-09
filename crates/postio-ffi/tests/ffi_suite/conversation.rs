@@ -15,7 +15,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use postio_core::bridge::Bridge;
 use postio_core::dispatch::Dispatcher;
 use postio_core::state::SharedState;
-use postio_ffi::{ConversationFfi, ScopeFfi, Session, SessionOptions};
+use postio_ffi::{ConversationFfi, Session, SessionOptions};
 use postio_model::{AccountId, EmailAddress, Flag, MailboxId, Message, Thread};
 use postio_storage::repository::{MessageRepository, ThreadRepository};
 use postio_storage::test_support;
@@ -61,7 +61,7 @@ async fn message(
 /// have been read.
 async fn a_conversation() -> (std::sync::Arc<Session>, i64, Vec<i64>) {
     let database = test_support::memory().await;
-    let (thread, ids, inbox) = {
+    let (thread, ids, _inbox) = {
         let connection = database.connect().await.expect("a connection");
         let (account, inbox) = test_support::account_with_inbox(&connection).await;
         let archive = test_support::mailbox(&connection, &account, "Archive").await;
@@ -108,9 +108,6 @@ async fn a_conversation() -> (std::sync::Arc<Session>, i64, Vec<i64>) {
             .on_bridge(bridge.handle(), bridge.commands()),
     )
     .expect("a session over the store");
-    session.open_scope(ScopeFfi::Mailbox {
-        mailbox: inbox.into(),
-    });
     (session, thread, ids)
 }
 
@@ -204,34 +201,4 @@ async fn a_thread_that_is_not_there_reads_as_empty_rather_than_stale() {
         "a pane must not keep drawing the last conversation under a new one"
     );
     assert_eq!(conversation.focus, None);
-}
-
-// -- the folded run (canvas turn 8a) -----------------------------------------
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_message_can_be_asked_for_as_a_row_without_a_list_position() {
-    // The single-message pane's whole problem. `rowAt` answers by *index*
-    // into whatever list is open, and a message the store has not threaded
-    // is drawn from an id with no list under it -- so the pane had a
-    // message id, no way to turn it into a row, and therefore no sender, no
-    // subject, no date and no actions.
-    let (session, _thread, ids) = a_conversation().await;
-    let message = *ids.first().expect("a message");
-
-    let row = session.row_for(message).expect("a row for the message");
-    assert_eq!(row.id, message);
-    assert!(
-        row.from.is_some(),
-        "the row carries no sender, so a header built from it would say nothing"
-    );
-    session.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_message_that_is_gone_is_no_row_rather_than_an_empty_one() {
-    // A row full of blanks reads as a message with no sender, which is a
-    // statement about somebody's mail. Nothing is the truthful answer.
-    let (session, _thread, _ids) = a_conversation().await;
-    assert!(session.row_for(9_999).is_none());
-    session.shutdown();
 }

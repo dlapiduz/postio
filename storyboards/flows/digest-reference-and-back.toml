@@ -1,0 +1,50 @@
+# Open a digest, walk its references, read one in place, and come back to
+# the same reference (specs/009-focus-macos US9, screens 22 and 23; the
+# controller's digest, T109).
+#
+# Return on the digest row opens the digest's window on its summary by
+# topic, each statement ending in its numbered reference (on its list when
+# no model is configured, C6). `]` steps to the next reference and the
+# card under its topic follows; Return opens that reference's email in the
+# same window, never a second one (M4), with "‹ Summary" and Esc, the
+# citation banner and the cited passage highlighted. Esc goes back to the
+# summary at the same reference, and a second Esc closes the window with
+# the keyboard back on the digest's row.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/009-focus-macos US9" }
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", overlay.kind = "none" }
+
+[[step]]
+id      = "row"
+command = "next_message"
+check   = { cursor.index = 1 }
+expect  = "The ring is on the digest row: the stacked icon, \"Weekly · digest\", and how many messages it holds."
+
+[[step]]
+command = "open_message"
+check   = { view = "digest" }
+expect  = "The digest opens in a window of its own over the undimmed list, the message window's size: its title and \"N messages from M senders · came due today\", Archive all with its key, the Summary and list tabs with Tab, and the rule line with \"Edit rule and cadence\" and d. The summary reads by topic, each statement ending in a numbered chip; the first reference is marked and its card stands under its topic."
+
+[[step]]
+command = "next_reference"
+check   = { view = "digest" }
+expect  = "The second reference is marked now, and the card under its topic names its sender and subject with \"open the full email\" and Return."
+
+[[step]]
+id      = "email"
+command = "open_message"
+check   = { view = "digest" }
+expect  = "The reference's email opens in the same window, at the same size: \"‹ Summary\" with Esc on the left of the title area, the email's subject and \"Source n of N\" in the centre, the stepper on the right. A banner says where the email was cited, and the cited passage is highlighted in the body."
+
+[[step]]
+command = "back"
+check   = { view = "digest" }
+expect  = "Back on the summary, at the same reference: the second one is still marked, with its card under its topic."
+
+[[step]]
+command = "back"
+check   = { view = "list", keyboard.region = "list", cursor.id = { same_as = "row" } }
+expect  = "The digest's window closes and the keyboard is back on the digest row, ringed, the list as it was."

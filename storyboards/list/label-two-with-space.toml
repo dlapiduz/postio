@@ -1,0 +1,56 @@
+# Two labels put on two selected rows with Space, from the label picker at
+# the row (specs/009-focus-macos US6, screen 13; the controller's pickers,
+# T089).
+#
+# `l` opens "Labels" at the cursor's row, acting on the selection: its
+# filter holds the keyboard, and while it is empty a Space is the picker's,
+# not typing. Space puts the highlighted label on everything selected and
+# the picker stays up, so a second label is one arrow and one Space away.
+# Return closes it, and the selection it acted on goes with it.
+apps   = ["focus"]
+# Red on the GTK app until it drives this flow through postio-focus (#1807):
+# the catalogue expects it to fail there and says when it starts passing.
+proof  = "open"
+source = { kind = "spec", ref = "specs/009-focus-macos US6" }
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", overlay.kind = "none" }
+
+[[step]]
+command = "toggle_selection"
+check   = { selection.count = 1 }
+
+[[step]]
+command = "next_message"
+check   = { cursor.index = 1, selection.count = 1 }
+
+[[step]]
+command = "toggle_selection"
+check   = { selection.count = 2 }
+expect  = "Two rows are selected, and the bulk bar says two."
+
+[[step]]
+command = "add_label"
+check   = { overlay.kind = "picker", keyboard.region = "picker", selection.count = 2 }
+expect  = "\"Labels\" hangs from the cursor's row and says it acts on 2 conversations. Its filter says \"Filter, or type a new label\" and holds the keyboard; the labels are listed with their colour dots and counts, the first highlighted, and the footnote names Space and Return."
+
+[[step]]
+key     = "space"
+check   = { overlay.kind = "picker", keyboard.region = "picker", selection.count = 2 }
+expect  = "The first label is on both rows: its line says \"✓ applied\", the filter is still empty, and the picker stays up."
+
+[[step]]
+key     = "Down"
+check   = { overlay.kind = "picker" }
+expect  = "The highlight moves to the second label."
+
+[[step]]
+key     = "space"
+check   = { overlay.kind = "picker", selection.count = 2 }
+expect  = "The second label is on both rows too: both lines say \"✓ applied\"."
+
+[[step]]
+key     = "Return"
+check   = { overlay.kind = "none", keyboard.region = "list", selection.count = 0 }
+expect  = "The picker closes, the selection goes, and both rows carry the two labels as pills after their subjects. The toast offers Undo for the last label put on."

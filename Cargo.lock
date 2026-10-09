@@ -4792,7 +4792,9 @@ dependencies = [
  "postio-client",
  "postio-config",
  "postio-core",
+ "postio-demo",
  "postio-ffi",
+ "postio-focus",
  "postio-host",
  "postio-index",
  "postio-model",
@@ -4803,6 +4805,7 @@ dependencies = [
  "postio-storage",
  "postio-test-support",
  "postio-ui",
+ "postio-vault",
  "tempfile",
  "thiserror",
  "tokio",
@@ -4815,11 +4818,14 @@ name = "postio-focus"
 version = "0.4.2"
 dependencies = [
  "async-channel",
+ "chrono",
  "postio-client",
  "postio-config",
  "postio-core",
  "postio-model",
+ "postio-search",
  "postio-ui",
+ "postio-vault",
  "tracing",
 ]
 

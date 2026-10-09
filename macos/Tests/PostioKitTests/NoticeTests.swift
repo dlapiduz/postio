@@ -75,7 +75,7 @@ import Testing
             kind: .completed, message: "Archived 12 messages", undoable: true
         )
         #expect(Notice(event) == Notice(kind: .completed, message: "Archived 12 messages", undoable: true))
-        #expect(Notice(.pageReady(page: 0)) == nil, "only a notice is a notice")
+        #expect(Notice(.keymapChanged) == nil, "only a notice is a notice")
     }
 
     @Test func theUndoButtonRunsTheRegistrysUndo() {
@@ -85,5 +85,16 @@ import Testing
         // guards on the other list.
         let known = Set(PostioRegistry.commands.map(\.id))
         #expect(known.contains(Notice.undoCommand))
+    }
+
+    @Test func inFocusOnlyAFailureIsANoticeTheRestAreTheControllersToast() {
+        // The controller hears every completion, undo and refusal and says
+        // it as `FocusToast` (T052). Drawn as a notice as well, the same
+        // archive would be announced twice; a failure is not the
+        // controller's to say, so it stays a notice.
+        for kind in [NoticeKindFfi.completed, .undone, .refused] {
+            #expect(!Notice(kind: kind, message: "", undoable: false).shownBesideFocusToast)
+        }
+        #expect(Notice(kind: .failed, message: "", undoable: false).shownBesideFocusToast)
     }
 }

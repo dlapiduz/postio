@@ -147,9 +147,9 @@ pub struct Prompt {
 /// Asked before a saved search is deleted.
 ///
 /// A config-file edit has no undo stack to reach — #292 weighed that directly
-/// — so `CommandId::DeleteSavedSearch` declares `Recovery::Confirm` and this
-/// is the confirmation. The body says what is actually lost: not the folder,
-/// which can be made again, but the query somebody composed.
+/// — so deleting one is confirmed, and this is the confirmation. The body
+/// says what is actually lost: not the folder, which can be made again, but
+/// the query somebody composed.
 pub const DELETE_PROMPT: Prompt = Prompt {
     title: "Delete this saved search?",
     body: Some("It can be saved again from the same query, but the query itself is gone."),

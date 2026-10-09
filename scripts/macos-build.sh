@@ -46,8 +46,14 @@ TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 scripts/install-shims.sh
 
 echo "--- cargo: postio-ffi ---"
+# `POSTIO_FFI_FEATURES=demo` builds the demo stores in, for `macos-shot.sh`
+# (specs/009-focus-macos T004). Never for a bundle anyone ships.
+FEATURE_ARGS=""
+if [ -n "${POSTIO_FFI_FEATURES:-}" ]; then
+    FEATURE_ARGS="--features $POSTIO_FFI_FEATURES"
+fi
 # shellcheck disable=SC2086  # deliberate: see CARGO_PROFILE_ARGS above
-cargo build -p postio-ffi $CARGO_PROFILE_ARGS
+cargo build -p postio-ffi $CARGO_PROFILE_ARGS $FEATURE_ARGS
 
 # The bindings are generated every time rather than tracked, so the generator
 # and the `uniffi` runtime are the same version by construction (#571). They
@@ -86,8 +92,8 @@ fi
 if [ "$LIB_ONLY" = 1 ]; then
     # After the tokens, deliberately. `--lib-only` means "stop before
     # `swift build`", and the tokens are an *input* to that build exactly as
-    # the bindings are -- `MessageRowCell` will not compile without
-    # `PostioTokens`. With the step below the exit, `scripts/macos-test.sh`
+    # the bindings are -- the compose, first-run and settings views will
+    # not compile without `PostioTokens`. With the step below the exit, `scripts/macos-test.sh`
     # (which calls this) could not build the Swift tests in a fresh worktree
     # at all: it worked only where some earlier full build had left the
     # generated file behind.

@@ -29,6 +29,13 @@ use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, DraftId, LabelId, MailboxId, MailboxRole, MessageId, OperationRange, ThreadId,
 };
+
+/// How long an answer to an invitation waits in the outbox before it may
+/// leave, and so how long it can be taken back (specs/007-postio-focus
+/// FR-102, research R9): about ten seconds, the toast's own life. Here
+/// rather than with the verb that applies it, so every frontend's toast
+/// says the same window the engine keeps.
+pub const RSVP_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 macro_rules! command_ids {
@@ -111,8 +118,6 @@ command_ids! {
     ZoomReset => "zoom_reset",
     /// Open every collapsed message in the conversation.
     ExpandAll => "expand_all",
-    /// Put the conversation rail away, or bring it back.
-    ToggleRail => "toggle_rail",
     /// Reply to the sender.
     Reply => "reply",
     /// Reply to everyone on the message.
@@ -223,8 +228,6 @@ command_ids! {
     AlwaysShowImages => "always_show_images",
     /// Leave the mailing list this message came from.
     Unsubscribe => "unsubscribe",
-    /// Show or hide the sidebar.
-    ToggleSidebar => "toggle_sidebar",
     /// Go to the folders: the folder list, or a popover of them.
     GoToFolders => "go_to_folders",
     /// Go to the inbox.
@@ -259,24 +262,6 @@ command_ids! {
     SavedSearch4 => "saved_search_4",
     /// Show only the mail that asks something of you, or everything again.
     ToggleHasAction => "toggle_has_action",
-    /// Move the keyboard to the next pane: sidebar, list, reader, round.
-    CyclePane => "cycle_pane",
-    /// Move the keyboard to the previous pane.
-    CyclePaneBack => "cycle_pane_back",
-    /// Move to the next folder in the sidebar.
-    NextFolder => "next_folder",
-    /// Move to the previous folder in the sidebar.
-    PrevFolder => "prev_folder",
-    /// Expand or collapse the focused folder's children.
-    ToggleFolder => "toggle_folder",
-    /// Rename the focused saved search.
-    RenameSavedSearch => "rename_saved_search",
-    /// Move the focused saved search up one place.
-    MoveSavedSearchUp => "move_saved_search_up",
-    /// Move the focused saved search down one place.
-    MoveSavedSearchDown => "move_saved_search_down",
-    /// Delete the focused saved search.
-    DeleteSavedSearch => "delete_saved_search",
     /// Enable or disable the focused account.
     ToggleAccountEnabled => "toggle_account_enabled",
     /// Remove the focused account.
@@ -293,22 +278,6 @@ command_ids! {
     NextScope => "next_scope",
     /// Ask the sync engine to check for new mail now.
     Refresh => "refresh",
-    /// Show the focused message's MIME structure.
-    OpenParts => "open_parts",
-    /// Move the parts panel's cursor to the next part.
-    NextPart => "next_part",
-    /// Move the parts panel's cursor to the previous part.
-    PrevPart => "prev_part",
-    /// Open the part under the parts panel's cursor.
-    OpenPart => "open_part",
-    /// Save the part under the parts panel's cursor.
-    SavePart => "save_part",
-    /// Save every part the message holds.
-    SaveAllParts => "save_all_parts",
-    /// Hand the part under the parts panel's cursor to the desktop.
-    OpenPartExternally => "open_part_externally",
-    /// Render a held-back part once, loading what it references.
-    RenderPartOnce => "render_part_once",
     /// Scroll the reading pane down by about a screenful, without moving
     /// the keyboard off the message list.
     ScrollReaderDown => "scroll_reader_down",
@@ -583,16 +552,6 @@ pub enum Command {
     /// No payload: it means the conversation on screen, which is the only
     /// one there is.
     ExpandAll,
-    /// Put the conversation rail away, or bring it back (#1375).
-    ///
-    /// No payload, and a toggle rather than a hide: the control that hides
-    /// the rail lives *inside* it, so once it is away this is the only route
-    /// back. A one-way `HideRail` would make hiding irreversible for the
-    /// session.
-    ///
-    /// The choice belongs to the window and outlives the conversation open in
-    /// it (FR-047), which is why nothing here names a thread.
-    ToggleRail,
 
     // -- Message actions -------------------------------------------------
     /// Reply to the sender.
@@ -950,8 +909,6 @@ pub enum Command {
     /// Leave the mailing list this message came from, by its one-click
     /// `List-Unsubscribe` -- only ever on this deliberate act.
     Unsubscribe,
-    /// Show or hide the sidebar.
-    ToggleSidebar,
     /// Go to the folders: the classic app puts the keyboard in its folder
     /// list, and Focus opens its folders popover.
     GoToFolders,
@@ -997,31 +954,9 @@ pub enum Command {
     SavedSearch4,
     /// Show only the mail that asks something of you, or everything again.
     ToggleHasAction,
-    /// Move the keyboard to the next pane: sidebar, list, reader, round.
-    ///
-    /// The *top-level* meaning of bare Tab, for when a pane itself has the
-    /// keyboard. Panes that own Tab for their own purpose -- a refine chip,
-    /// recipient completion, the finder -- keep first claim on it (#494).
-    CyclePane,
-    /// Move the keyboard to the previous pane.
-    CyclePaneBack,
-    /// Move to the next folder.
-    NextFolder,
-    /// Move to the previous folder.
-    PrevFolder,
-    /// Expand or collapse the focused folder's children.
-    ToggleFolder,
-    /// Rename the focused saved search.
-    RenameSavedSearch,
-    /// Move the focused saved search up one place.
-    MoveSavedSearchUp,
-    /// Move the focused saved search down one place.
-    MoveSavedSearchDown,
-    /// Delete the focused saved search.
-    DeleteSavedSearch,
     /// Enable or disable the focused account.
     ///
-    /// No payload, like the saved-search verbs above and for the same reason:
+    /// No payload, like `Archive`'s selection and for the same reason:
     /// these are only ever offered while `Context::Accounts` is active, which
     /// means an account row has focus, which means the target is that row --
     /// exactly as `Archive`'s target is the current selection (ADR 0005 Q6c).
@@ -1064,29 +999,11 @@ pub enum Command {
     ///
     /// Cycling rather than `SetScope(id)` because a keystroke has no argument
     /// to carry one, and because the sidebar's own rows are the surface for
-    /// naming a scope directly — the same split `NextFolder` and clicking a
-    /// folder already have.
+    /// naming a scope directly — the same split clicking a folder already
+    /// has with walking to one.
     NextScope,
     /// Check for new mail now.
     Refresh,
-
-    // -- Parts panel -------------------------------------------------------
-    /// Show the focused message's MIME structure.
-    OpenParts,
-    /// Move the parts panel's cursor to the next part.
-    NextPart,
-    /// Move the parts panel's cursor to the previous part.
-    PrevPart,
-    /// Open the part under the parts panel's cursor.
-    OpenPart,
-    /// Save the part under the parts panel's cursor.
-    SavePart,
-    /// Save every part the message holds.
-    SaveAllParts,
-    /// Hand the part under the parts panel's cursor to the desktop.
-    OpenPartExternally,
-    /// Render a held-back part once, loading what it references.
-    RenderPartOnce,
 
     // -- Reader --------------------------------------------------------
     /// Scroll the reading pane down by about a screenful.
@@ -1277,7 +1194,6 @@ impl Command {
             Command::ZoomOut => CommandId::ZoomOut,
             Command::ZoomReset => CommandId::ZoomReset,
             Command::ExpandAll => CommandId::ExpandAll,
-            Command::ToggleRail => CommandId::ToggleRail,
             Command::Reply { .. } => CommandId::Reply,
             Command::ReplyAll { .. } => CommandId::ReplyAll,
             Command::Forward { .. } => CommandId::Forward,
@@ -1337,7 +1253,6 @@ impl Command {
             Command::ShowImages => CommandId::ShowImages,
             Command::AlwaysShowImages => CommandId::AlwaysShowImages,
             Command::Unsubscribe => CommandId::Unsubscribe,
-            Command::ToggleSidebar => CommandId::ToggleSidebar,
             Command::GoToFolders => CommandId::GoToFolders,
             Command::GoToInbox => CommandId::GoToInbox,
             Command::GoToDrafts => CommandId::GoToDrafts,
@@ -1355,15 +1270,6 @@ impl Command {
             Command::SavedSearch3 => CommandId::SavedSearch3,
             Command::SavedSearch4 => CommandId::SavedSearch4,
             Command::ToggleHasAction => CommandId::ToggleHasAction,
-            Command::CyclePane => CommandId::CyclePane,
-            Command::CyclePaneBack => CommandId::CyclePaneBack,
-            Command::NextFolder => CommandId::NextFolder,
-            Command::PrevFolder => CommandId::PrevFolder,
-            Command::ToggleFolder => CommandId::ToggleFolder,
-            Command::RenameSavedSearch => CommandId::RenameSavedSearch,
-            Command::MoveSavedSearchUp => CommandId::MoveSavedSearchUp,
-            Command::MoveSavedSearchDown => CommandId::MoveSavedSearchDown,
-            Command::DeleteSavedSearch => CommandId::DeleteSavedSearch,
             Command::ToggleAccountEnabled => CommandId::ToggleAccountEnabled,
             Command::RemoveAccount => CommandId::RemoveAccount,
             Command::UpdateCredential => CommandId::UpdateCredential,
@@ -1372,14 +1278,6 @@ impl Command {
             Command::MapMailboxRole { .. } => CommandId::MapMailboxRole,
             Command::NextScope => CommandId::NextScope,
             Command::Refresh => CommandId::Refresh,
-            Command::OpenParts => CommandId::OpenParts,
-            Command::NextPart => CommandId::NextPart,
-            Command::PrevPart => CommandId::PrevPart,
-            Command::OpenPart => CommandId::OpenPart,
-            Command::SavePart => CommandId::SavePart,
-            Command::SaveAllParts => CommandId::SaveAllParts,
-            Command::OpenPartExternally => CommandId::OpenPartExternally,
-            Command::RenderPartOnce => CommandId::RenderPartOnce,
             Command::ScrollReaderDown => CommandId::ScrollReaderDown,
             Command::ScrollReaderUp => CommandId::ScrollReaderUp,
             Command::PickerChoose1 => CommandId::PickerChoose1,
@@ -1443,7 +1341,6 @@ impl Command {
             CommandId::ZoomOut => Command::ZoomOut,
             CommandId::ZoomReset => Command::ZoomReset,
             CommandId::ExpandAll => Command::ExpandAll,
-            CommandId::ToggleRail => Command::ToggleRail,
             CommandId::Reply => Command::Reply { message: None },
             CommandId::ReplyAll => Command::ReplyAll { message: None },
             CommandId::Forward => Command::Forward { message: None },
@@ -1533,7 +1430,6 @@ impl Command {
             CommandId::ShowImages => Command::ShowImages,
             CommandId::AlwaysShowImages => Command::AlwaysShowImages,
             CommandId::Unsubscribe => Command::Unsubscribe,
-            CommandId::ToggleSidebar => Command::ToggleSidebar,
             CommandId::GoToFolders => Command::GoToFolders,
             CommandId::GoToInbox => Command::GoToInbox,
             CommandId::GoToDrafts => Command::GoToDrafts,
@@ -1551,15 +1447,6 @@ impl Command {
             CommandId::SavedSearch3 => Command::SavedSearch3,
             CommandId::SavedSearch4 => Command::SavedSearch4,
             CommandId::ToggleHasAction => Command::ToggleHasAction,
-            CommandId::CyclePane => Command::CyclePane,
-            CommandId::CyclePaneBack => Command::CyclePaneBack,
-            CommandId::NextFolder => Command::NextFolder,
-            CommandId::PrevFolder => Command::PrevFolder,
-            CommandId::ToggleFolder => Command::ToggleFolder,
-            CommandId::RenameSavedSearch => Command::RenameSavedSearch,
-            CommandId::MoveSavedSearchUp => Command::MoveSavedSearchUp,
-            CommandId::MoveSavedSearchDown => Command::MoveSavedSearchDown,
-            CommandId::DeleteSavedSearch => Command::DeleteSavedSearch,
             CommandId::ToggleAccountEnabled => Command::ToggleAccountEnabled,
             CommandId::RemoveAccount => Command::RemoveAccount,
             CommandId::UpdateCredential => Command::UpdateCredential,
@@ -1572,14 +1459,6 @@ impl Command {
             },
             CommandId::NextScope => Command::NextScope,
             CommandId::Refresh => Command::Refresh,
-            CommandId::OpenParts => Command::OpenParts,
-            CommandId::NextPart => Command::NextPart,
-            CommandId::PrevPart => Command::PrevPart,
-            CommandId::OpenPart => Command::OpenPart,
-            CommandId::SavePart => Command::SavePart,
-            CommandId::SaveAllParts => Command::SaveAllParts,
-            CommandId::OpenPartExternally => Command::OpenPartExternally,
-            CommandId::RenderPartOnce => Command::RenderPartOnce,
             CommandId::ScrollReaderDown => Command::ScrollReaderDown,
             CommandId::ScrollReaderUp => Command::ScrollReaderUp,
             CommandId::PickerChoose1 => Command::PickerChoose1,

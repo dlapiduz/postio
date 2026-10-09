@@ -36,6 +36,26 @@ pub fn typed(text: &str, now: DateTime<Local>) -> Option<DateTime<Local>> {
     postio_search::date::parse_when(text, now).filter(|at| *at > now)
 }
 
+/// What the date field says under itself while nothing is typed.
+pub const TYPE_A_DATE: &str = "Tab to type";
+
+/// What the date field says under words that are no date still ahead.
+pub const NOT_A_DATE: &str = "A day and a time: \u{201c}tue 9am\u{201d}";
+
+/// What the date field says under `text`, typed at `now`: how to start,
+/// when the words land ([`when_label`]), or what it wants instead. GTK's
+/// when picker said these as literals; they are here so the Mac's says
+/// the same.
+pub fn date_hint(text: &str, now: DateTime<Local>) -> String {
+    if text.trim().is_empty() {
+        return TYPE_A_DATE.to_owned();
+    }
+    match typed(text, now) {
+        Some(at) => when_label(at, now),
+        None => NOT_A_DATE.to_owned(),
+    }
+}
+
 /// What a picker acts on, as its title row names it: the sender and the
 /// subject for one conversation, and how many for a selection.
 pub fn target(conversations: usize, sender: &str, subject: &str) -> String {
@@ -371,6 +391,16 @@ mod tests {
                 format!("Return moves the message and it leaves the inbox \u{b7} {undo} undoes.")
             );
         }
+    }
+
+    #[test]
+    fn the_date_field_says_how_to_start_when_the_words_land_or_what_it_wants() {
+        let now = saturday_afternoon();
+        assert_eq!(date_hint("", now), TYPE_A_DATE);
+        assert_eq!(date_hint("  ", now), TYPE_A_DATE);
+        assert_eq!(date_hint("tue 9am", now), "Tue 29 Sep, 09:00");
+        assert_eq!(date_hint("receipts", now), NOT_A_DATE);
+        assert_eq!(date_hint("yesterday 9am", now), NOT_A_DATE, "the past");
     }
 
     #[test]

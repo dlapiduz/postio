@@ -142,21 +142,16 @@ mod through_the_boundary {
     use postio_core::bridge::Bridge;
     use postio_core::dispatch::Dispatcher;
     use postio_core::state::SharedState;
-    use postio_ffi::{ScopeFfi, Session, SessionOptions};
+    use postio_ffi::{FocusRowFfi, FocusScopeFfi, Session, SessionOptions};
     use postio_model::{Flag, Message};
     use postio_storage::repository::{MessageRepository, ThreadRepository};
     use postio_storage::test_support;
 
     /// A session over a store holding one conversation of two messages, with
     /// the real action handlers on the bus.
-    async fn conversation() -> (
-        std::sync::Arc<Session>,
-        ScopeFfi,
-        Vec<i64>,
-        postio_storage::Store,
-    ) {
+    async fn conversation() -> (std::sync::Arc<Session>, Vec<i64>, postio_storage::Store) {
         let database = test_support::memory().await;
-        let (mailbox, members) = {
+        let members = {
             let connection = database.connect().await.expect("a connection");
             let (account, inbox) = test_support::account_with_inbox(&connection).await;
             let messages = MessageRepository::new(&connection);
@@ -173,7 +168,7 @@ mod through_the_boundary {
                     .expect("membership");
                 members.push(id.get());
             }
-            (inbox, members)
+            members
         };
 
         let state = SharedState::default();
@@ -191,14 +186,28 @@ mod through_the_boundary {
                 .on_bridge(bridge.handle(), bridge.commands()),
         )
         .expect("a session over the seeded store");
-        (
-            session,
-            ScopeFfi::Mailbox {
-                mailbox: mailbox.into(),
-            },
-            members,
-            database,
-        )
+        (session, members, database)
+    }
+
+    /// Focus's first row, the way the table draws it: open the inbox and
+    /// ask for the row until its page has landed. A session that has only
+    /// opened a list holds no rows, and a cursor pointing at a row nobody
+    /// holds is `RowKind::Missing`, which is deliberately *not* guessed into a
+    /// conversation (#468). The frontend draws, then the user acts.
+    async fn first_row(session: &Session) -> FocusRowFfi {
+        session.open_focus(FocusScopeFfi::Inbox);
+        let deadline = std::time::Instant::now()
+            + postio_test_support::scaled(std::time::Duration::from_secs(10));
+        loop {
+            if let Some(row) = session.focus_row_at(0) {
+                return row;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Focus's first row never arrived"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
     }
 
     /// Whether the store has this message marked read.
@@ -226,27 +235,18 @@ mod through_the_boundary {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn invoking_a_verb_on_a_conversation_row_acts_on_the_conversation() {
-        let (session, scope, members, database) = conversation().await;
-        session.open_scope(scope);
-        // Draw the row, the way a table does. Pages load when something asks
-        // for them, so a session that has only opened a scope is holding no
-        // rows at all -- and a cursor pointing at a row nobody holds is
-        // `RowKind::Missing`, which is deliberately *not* guessed into a
-        // conversation (#468). The frontend draws, then the user acts.
-        session.row_at(0);
-        session.settle_for_test();
-        let row = session.row_at(0).expect("the first row is resident now");
+        let (session, members, database) = conversation().await;
+        let row = first_row(&session).await;
         assert!(
-            row.is_thread,
-            "the fixture's folder row should stand for the conversation, or \
+            row.thread.is_some(),
+            "the fixture's inbox row should stand for the conversation, or \
              this test is not about aiming at one"
         );
 
-        // The cursor on the row, nothing marked: the gesture is about the
-        // row, and the row stands for a conversation (ADR 0015 Q3).
-        session.set_cursor(Some(row.id));
+        // The cursor on the row -- the list opens with it there (C30) --
+        // and nothing marked: the gesture is about the row, and the row
+        // stands for a conversation (ADR 0015 Q3).
         session.invoke("flag");
-        session.settle_for_test();
 
         let flagged = settle_until(async || {
             for id in &members {
@@ -277,8 +277,7 @@ mod through_the_boundary {
     async fn an_id_this_build_does_not_know_is_ignored_rather_than_fatal() {
         // It arrives from another process. A boundary that panicked on a
         // typo would be one Swift could crash.
-        let (session, scope, _members, _database) = conversation().await;
-        session.open_scope(scope);
+        let (session, _members, _database) = conversation().await;
         session.invoke("no_such_command");
         session.invoke("");
         assert!(session.is_open(), "an unknown id took the session down");
@@ -310,53 +309,6 @@ mod through_the_boundary {
     /// `actions::wire`, so all of them exercised a bus the shipped application
     /// never has.
     #[tokio::test(flavor = "multi_thread")]
-    async fn select_all_then_a_verb_acts_on_the_view() {
-        // #1300. Every message verb defaults to `MessageTarget::Selection`.
-        // `aim::refine` narrows that for thread rows — and in a threaded
-        // folder every row is one, which is why the rest of this module never
-        // noticed. What it deliberately does *not* narrow is `Ctrl+A`: that
-        // stays a predicate over the view, resolved by the actions against
-        // app state.
-        //
-        // The boundary never wrote to that state, so select-all-then-flag
-        // resolved against an empty one and acted on nothing at all.
-        let database = test_support::memory().await;
-        let (mailbox, message) = {
-            let connection = database.connect().await.expect("a connection");
-            let (account, inbox) = test_support::account_with_inbox(&connection).await;
-            let mut message = Message::new(account.id, inbox, Utc::now());
-            let id = MessageRepository::new(&connection)
-                .create(&mut message)
-                .await
-                .expect("a message")
-                .get();
-            (inbox, id)
-        };
-
-        let session = Session::open(SessionOptions::in_memory_with(database.clone()))
-            .expect("a session over the seeded store");
-        session.open_scope(ScopeFfi::Mailbox {
-            mailbox: mailbox.into(),
-        });
-        session.row_at(0);
-        session.settle_for_test();
-        let row = session.row_at(0).expect("the first row is resident now");
-
-        session.set_cursor(Some(row.id));
-        // The gesture: mark the whole view, then act on it.
-        session.invoke("select_all");
-        session.invoke("flag");
-        session.settle_for_test();
-
-        assert!(
-            settle_until(async || is_flagged(&database, message).await).await,
-            "select-all stayed a predicate the actions resolved against an app \
-             state the boundary never mirrored its view into"
-        );
-        session.shutdown();
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
     async fn a_session_that_was_given_no_bus_still_runs_its_verbs() {
         // The report was "emails are not marked read in the UI when open for the
         // dwell time". The dwell was innocent: it armed, it fired, and it sent
@@ -369,7 +321,7 @@ mod through_the_boundary {
         // the verb travels once somebody has given the session somewhere to
         // send it. This one gives it nowhere, which is what `openAt` does.
         let database = test_support::memory().await;
-        let (mailbox, message) = {
+        let message = {
             let connection = database.connect().await.expect("a connection");
             let (account, inbox) = test_support::account_with_inbox(&connection).await;
             let mut message = Message::new(account.id, inbox, Utc::now());
@@ -378,28 +330,26 @@ mod through_the_boundary {
                 .await
                 .expect("a message")
                 .get();
-            (inbox, id)
+            // Threaded, as sync would leave it: Focus lists conversations.
+            let threads = ThreadRepository::new(&connection);
+            let mut thread = postio_model::Thread::new(account.id);
+            threads.create(&mut thread).await.expect("a thread");
+            threads
+                .add_message(thread.id, postio_model::ids::MessageId::new(id))
+                .await
+                .expect("membership");
+            id
         };
 
         // No `on_bridge`. `SessionOptions::at_default_path` — what `openAt` uses,
         // and what Swift calls — supplies none either, so this is that path.
         let session = Session::open(SessionOptions::in_memory_with(database.clone()))
             .expect("a session over the seeded store");
-        session.open_scope(ScopeFfi::Mailbox {
-            mailbox: mailbox.into(),
-        });
-        // Draw the row first: a session that has only opened a scope holds no
-        // rows, and a cursor pointing at a row nobody holds resolves to
-        // nothing at all.
-        session.row_at(0);
-        session.settle_for_test();
-        let row = session.row_at(0).expect("the first row is resident now");
+        let row = first_row(&session).await;
 
         // The reported verb, and it carries its own target: the dwell names
         // the message it timed, so this tests the *bus* rather than the aim.
-        session.set_cursor(Some(row.id));
         session.mark_read_on_dwell(row.id);
-        session.settle_for_test();
 
         let read = settle_until(async || is_seen(&database, message).await).await;
         assert!(

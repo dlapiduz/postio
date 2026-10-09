@@ -45,6 +45,17 @@ public final class PostioSession {
         PostioSession(inner: try Session.openAt(storePath: nil))
     }
 
+    /// Say what sync would have said about a demo's account
+    /// (`DemoMode.state`); `false` for an unknown word, and always outside a
+    /// demo build.
+    public func demoState(_ state: String) -> Bool { inner.demoState(state: state) }
+
+    /// Opens a session over the demo store `seed` names, in memory
+    /// (`DemoMode`). Reads no Keychain; refused by a build without demos.
+    public static func openDemo(_ seed: String) throws -> PostioSession {
+        PostioSession(inner: try Session.openDemo(seed: seed))
+    }
+
     private init(inner: Session) {
         self.inner = inner
     }
@@ -80,10 +91,6 @@ public final class PostioSession {
     /// Every configured account, as the settings pane lists them.
     public func accounts() -> [AccountFfi] { inner.accounts() }
 
-    /// Show `scope`, and answer the generation the window is now on.
-    @discardableResult
-    public func openScope(_ scope: ScopeFfi) -> UInt64 { inner.openScope(scope: scope) }
-
     /// Read a conversation into the reading pane.
     ///
     /// Returns at once. `UiEvent.conversationReady` says when there is
@@ -103,18 +110,190 @@ public final class PostioSession {
     /// answers it for both frontends.
     public var conversation: ConversationFfi? { inner.conversation() }
 
-    /// How many rows the current scope has.
-    ///
-    /// A `COUNT` on the other side, not the length of anything: a hundred
-    /// thousand rows are a number here, never a hundred thousand structs.
-    public var rowCount: UInt32 { inner.rowCount() }
+    // MARK: Focus's list
 
-    /// The row at `position`, or `nil` while its page is on its way.
-    ///
-    /// Synchronous and does no I/O. A `nil` means draw a placeholder — the
-    /// fetch is already running by the time this returns, and
-    /// `UiEvent.pageReady` says when to ask again.
-    public func row(at position: UInt32) -> RowFfi? { inner.rowAt(position: position) }
+    /// Show one of Focus's lists. Counted first, then `FocusListChanged`
+    /// says how long it is; pages follow as `FocusPageReady`.
+    public func openFocus(_ scope: FocusScopeFfi) { inner.openFocus(scope: scope) }
+
+    /// A plain click put the cursor on `position`. The controller answers
+    /// with `FocusCursor` on `nextEvent`; nothing moves before that.
+    public func focusPoint(_ position: Int) {
+        guard let row = UInt32(exactly: position) else { return }
+        inner.focusPoint(position: row)
+    }
+
+    /// A modified click on `position`: `range` for ⇧ (from the anchor), a
+    /// toggle for ⌘. Answered with `FocusSelection` and `FocusCursor`.
+    public func focusPick(_ position: Int, range: Bool) {
+        guard let row = UInt32(exactly: position) else { return }
+        inner.focusPick(position: row, range: range)
+    }
+
+    /// Whether the list stands scrolled to its very top: where an undo
+    /// that brings rows in above leaves it.
+    public func focusAtTop(_ atTop: Bool) { inner.focusAtTop(atTop: atTop) }
+
+    /// What Undo would take back now, in the toast's words, or `nil`. A
+    /// store read: off the main actor (`PostioUndoManager.refresh`).
+    public nonisolated func undoDescription() -> String? { inner.undoDescription() }
+
+    /// The header strip's counts, read now.
+    public func focusCounts() throws -> FocusCountsFfi { try inner.focusCounts() }
+
+    /// The header strip's words, composed by the engine (`focus_strip`).
+    public func focusStrip() throws -> FocusStripFfi { try inner.focusStrip() }
+
+    // MARK: Focus's surfaces
+
+    /// A surface opened over the list: the keys are its now (the
+    /// controller's Reader context for the message window), and on the
+    /// Mac it replaces the secondary window that was open (M4).
+    public func focusSurfaceOpened(_ kind: SurfaceKindFfi) { inner.focusSurfaceOpened(kind: kind) }
+
+    /// A surface over the list closed, however it closed: ⌘W, its close
+    /// button, or the controller's own `FocusCloseSurface`.
+    public func focusSurfaceClosed(_ kind: SurfaceKindFfi) { inner.focusSurfaceClosed(kind: kind) }
+
+    // MARK: the composer (T079)
+
+    /// Something was written in the composer: said on every edit.
+    public func focusComposerEdited() { inner.focusComposerEdited() }
+
+    /// How the save `FocusSaveDraft { composition }` asked for went.
+    public func focusDraftSaved(_ composition: UInt64, kept: Bool, error: String?) {
+        inner.focusDraftSaved(composition: composition, kept: kept, error: error)
+    }
+
+    /// What completes `text` in a recipient field of `account`'s draft:
+    /// mail's correspondents and groups, with what Contacts lent ranked
+    /// among them (T075). Blocks on the store: off the main actor.
+    public nonisolated func recipientSuggestions(
+        account: Int64, text: String, limit: UInt32, extra: [ExternalContactFfi]
+    ) -> [RecipientSuggestionFfi] {
+        inner.recipientSuggestions(account: account, text: text, limit: limit, extra: extra)
+    }
+
+        // MARK: the command bar and the folders popover (T084-T086)
+
+    /// The bar's field holds `text` now: said on every change.
+    public func focusBarTyped(_ text: String) { inner.focusBarTyped(text: text) }
+
+    /// Run the bar's line `token`: Return on the highlighted line, or a click.
+    public func focusBarRun(_ token: UInt64) { inner.focusBarRun(token: token) }
+
+    /// `Tab` in the bar's field; `false` leaves the key to the toolkit.
+    public func focusBarTab() -> Bool { inner.focusBarTab() }
+
+    /// The folders popover's places whose names hold `filter`, read now
+    /// from the last read (ask again on `FocusPlacesChanged`).
+    public func focusPlaces(_ filter: String) -> [PlaceEntryFfi] { inner.focusPlaces(filter: filter) }
+
+    /// Go to the popover's place `token`.
+    public func focusOpenPlace(_ token: UInt64) { inner.focusOpenPlace(token: token) }
+
+    /// What the popover's filter says before anything is typed.
+    public func focusPlacesPlaceholder() -> String { inner.focusPlacesPlaceholder() }
+
+    // MARK: the pickers at the row (T091, T092)
+
+    /// The picker's field holds `text` now: said on every change.
+    public func focusPickerTyped(_ text: String) { inner.focusPickerTyped(text: text) }
+
+    /// The picker's row `token` chosen: a click, or Return on the highlight.
+    /// A preset or a folder acts and closes; a label goes on or off.
+    public func focusPickerChoose(_ token: UInt64) { inner.focusPickerChoose(token: token) }
+
+    /// Space on the picker's highlighted row `token`: a label on or off.
+    public func focusPickerToggle(_ token: UInt64) { inner.focusPickerToggle(token: token) }
+
+    // MARK: Filtered, the digest, the rule sheet and capture (T113-T117)
+
+    /// Filtered's row `index` was clicked: the keyboard goes there.
+    public func focusFilteredPoint(_ index: UInt32) { inner.focusFilteredPoint(index: index) }
+
+    /// Filtered was scrolled to the end of the rows it has: read more.
+    public func focusFilteredMore() { inner.focusFilteredMore() }
+
+    /// The digest list's row `index` was clicked.
+    public func focusDigestPoint(_ index: UInt32) { inner.focusDigestPoint(index: index) }
+
+    /// The digest summary's reference `index` (in reading order) was clicked.
+    public func focusDigestReference(_ index: UInt32) { inner.focusDigestReference(index: index) }
+
+    /// Yes to the `FocusConfirm` named `token`.
+    public func focusConfirmed(_ token: UInt64) { inner.focusConfirmed(token: token) }
+
+    /// The rule sheet's query field holds `text` now.
+    public func focusRuleQuery(_ text: String) { inner.focusRuleQuery(text: text) }
+
+    /// "Match a list or a search instead…".
+    public func focusRuleMatchInstead() { inner.focusRuleMatchInstead() }
+
+    /// "Digest mail like this".
+    public func focusRuleLikeThis() { inner.focusRuleLikeThis() }
+
+    /// The rule sheet's schedule, as its controls hold it now.
+    public func focusRuleSchedule(_ schedule: RuleScheduleFfi) { inner.focusRuleSchedule(schedule: schedule) }
+
+    /// Create (or Save): write the rule.
+    public func focusRuleCreate() { inner.focusRuleCreate() }
+
+    /// Capture's text field holds `text` now.
+    public func focusCaptureTyped(_ text: String) { inner.focusCaptureTyped(text: text) }
+
+    /// Capture's due day, "YYYY-MM-DD", or `nil` for none.
+    public func focusCaptureDue(_ day: String?) { inner.focusCaptureDue(day: day) }
+
+    /// Capture's project filter holds `text` now.
+    public func focusCaptureFilter(_ text: String) { inner.focusCaptureFilter(text: text) }
+
+    /// Capture's project `token` was chosen.
+    public func focusCaptureProject(_ token: UInt64) { inner.focusCaptureProject(token: token) }
+
+    /// Open the message a `postio://` link names, or say why not.
+    public func focusOpenLink(uri: String) { inner.focusOpenLink(uri: uri) }
+
+    /// The open message's More menu and find, as they are now: what Back
+    /// closes first.
+    public func focusReaderState(moreOpen: Bool, finding: Bool) {
+        inner.focusReaderState(moreOpen: moreOpen, finding: finding)
+    }
+
+    /// Always draw `sender`'s mail in `treatment`, or forget the choice
+    /// with `nil`: "Always for this sender", in the file GTK keeps it in.
+    public func alwaysTreatment(sender: String, treatment: TreatmentFfi?) {
+        inner.alwaysTreatment(sender: sender, treatment: treatment)
+    }
+
+    /// What the message window draws around `message`'s body, shown from
+    /// row `index` of `total`: composed in Rust (`focus_message_view`). A
+    /// store read; never on the main actor.
+    public nonisolated func focusMessageView(
+        message: Int64, index: UInt32, total: UInt32
+    ) -> FocusMessageViewFfi {
+        inner.focusMessageView(message: message, index: index, total: total)
+    }
+
+    /// `message`'s treated body, in `chosen` when `O` switched it, and the
+    /// message window's geometry beside a main window `mainWidth` wide
+    /// (M1). A store read; never on the main actor.
+    public nonisolated func focusReaderDocument(
+        message: Int64, remote: RemoteImagesFfi, chosen: TreatmentFfi?, mainWidth: Int32
+    ) -> FocusReaderDocumentFfi {
+        inner.focusReaderDocument(
+            message: message, remote: remote, chosen: chosen, mainWidth: mainWidth)
+    }
+
+    /// `message`'s raw source, for `v`. May fetch it from the server, the
+    /// person having asked for these bytes by name: never on the main
+    /// actor.
+    public nonisolated func rawSource(_ message: Int64) throws -> Data {
+        try inner.rawSource(message: message)
+    }
+
+    /// One of the reader's vendored faces by name, for `postio-font:`.
+    public nonisolated func readerFont(_ name: String) -> Data? { inner.readerFont(name: name) }
 
     /// Tell the engine whether the machine currently has a connection.
     ///
@@ -148,16 +327,6 @@ public final class PostioSession {
     /// which is exactly what `ExpandedMessage.task(id:)` does.
     public nonisolated func messageFacts(_ message: Int64) -> MessageFactsFfi {
         inner.messageFacts(message: message)
-    }
-
-    /// One message as a row, by id rather than by list position.
-    ///
-    /// What the single-message pane draws its header from: a message the
-    /// store has not threaded belongs to no conversation and arrives as an
-    /// id, with no list under it to index into. `nil` for a message that is
-    /// not there — a row full of blanks reads as a message with no sender.
-    public func rowFor(_ message: Int64) -> RowFfi? {
-        inner.rowFor(message: message)
     }
 
     /// The whole document for a message, ready to hand a web view.
@@ -283,89 +452,6 @@ public final class PostioSession {
     /// happened arrives on `nextEvent`. The UI never awaits the network.
     public func invoke(_ id: String) { inner.invoke(id: id) }
 
-    /// Report where the keyboard is, so a verb with nothing marked knows
-    /// which row it is about.
-    ///
-    /// The *cursor*, not the selection: `docs/PRODUCT.md` §9 keeps them
-    /// separate, and moving down the list must not build a selection.
-    public func setCursor(_ message: Int64?) { inner.setCursor(message: message) }
-
-    /// Run `query`, and show its hits as the list.
-    ///
-    /// **One query language.** `postio-search` parses the operators, behind
-    /// the boundary, for both frontends — Swift does not re-implement
-    /// `from:` or `is:unread`, or the two platforms would accept different
-    /// queries. Answers the generation the window is now on, the same as
-    /// `openScope`, and the rows page in behind exactly as a folder's do:
-    /// a search matching forty thousand messages is a count and a few
-    /// resident pages.
-    @discardableResult
-    public func search(_ query: String) -> UInt64 { inner.search(query: query) }
-
-    /// Leave search and restore the scope that was open.
-    ///
-    /// Restores rather than reloads: the boundary remembered what was on
-    /// screen, so this costs nothing where re-opening the folder would cost a
-    /// count and a page.
-    @discardableResult
-    public func clearSearch() -> UInt64 { inner.clearSearch() }
-
-    /// What the last search turned out to be, or `nil` outside a search.
-    ///
-    /// The wording is `postio_ui::search::readout`'s, including its caveats —
-    /// "still syncing" is a state that ends (#352), and an account named
-    /// unreachable is ADR 0005 Q10's promise that a view says what it left
-    /// out. Neither is worth a second frontend re-deriving.
-    public var searchOutcome: OutcomeFfi? { inner.searchOutcome() }
-
-    /// Whether the list is showing search results rather than a folder.
-    public var isSearching: Bool { inner.isSearching() }
-
-    /// The query the rows on screen came from, or `nil` over a mailbox.
-    ///
-    /// What *Save search as folder* keeps. Not the text in the field: that
-    /// is whatever has been typed since the last run.
-    public var searchQuery: String? { inner.searchQuery() }
-
-    /// Which order the results are in, as the sort control says it —
-    /// "Relevance" or "Newest". The boundary's word, so this control and
-    /// GTK's own say the same thing.
-    public var resultOrderLabel: String { inner.resultOrderLabel() }
-
-    /// The scope rail's counts and the refine chips for the results on
-    /// screen, from one pass over the index (#1157). A second pass, so off
-    /// the main actor: search is budgeted under 100 ms and paying for this
-    /// inline spent that budget twice on one keystroke.
-    public nonisolated func searchFacets() -> SearchFacetsFfi { inner.searchFacets() }
-
-    /// Which scope the search is looking in — All mail unless the rail said
-    /// otherwise, and All mail again for every new search.
-    public var searchScope: SearchScopeFfi { inner.searchScope() }
-
-    /// Look in `scope` and ask the same query again there. The scope is not
-    /// written into the query, so what was typed stays what was typed.
-    @discardableResult
-    public func setSearchScope(_ scope: SearchScopeFfi) -> UInt64 {
-        inner.setSearchScope(scope: scope)
-    }
-
-    /// Read the results the other way round — best first, or newest first.
-    ///
-    /// Re-asks the same query rather than re-sorting what is on screen, and
-    /// does nothing over a mailbox. Answers with the list's new generation.
-    @discardableResult
-    public func toggleResultOrder() -> UInt64 { inner.toggleResultOrder() }
-
-    /// What to draw over a list with nothing in it, when the boundary has
-    /// something to say about *why* it is empty.
-    ///
-    /// `nil` for an empty folder — that plate is this frontend's own and says
-    /// something different. The case the boundary has to answer is a search
-    /// that matched nothing: its row count is zero exactly like an empty
-    /// mailbox's, so a list keyed on the count alone says "no mail" about a
-    /// mailbox holding thousands (ADR 0005 Q10).
-    public var emptyPlate: EmptyPlateFfi? { inner.emptyPlate() }
-
     /// Throw a draft away — the row and the server copy.
     ///
     /// Discarding one that is already gone is not an error: a retried
@@ -373,50 +459,6 @@ public final class PostioSession {
     /// expected case, and the window has closed either way.
     @discardableResult
     public func discardDraft(_ draft: Int64) -> String? { inner.discardDraft(draft: draft) }
-
-    /// A message's parts, as a tree with the rows already laid out.
-    ///
-    /// The prefixes, the labels, what each row *says*, and above all the
-    /// filename a part is safe to be written under are all the boundary's:
-    /// a sender's `filename=` is attacker-controlled text, and two frontends
-    /// making it safe differently is two answers to a security question.
-    public func messageParts(_ message: Int64) -> MessagePartsFfi {
-        inner.messageParts(message: message)
-    }
-
-    /// Write one part to `path`, which the user chose.
-    ///
-    /// The path is exact — a save panel's answer. Asking for a part that has
-    /// not arrived is what fetches it, so this can take a moment.
-    public func savePart(_ message: Int64, partId: String, to path: String) throws {
-        try inner.savePart(message: message, partId: partId, path: path)
-    }
-
-    /// Write every savable part into `directory`, and say how it went.
-    public func saveAllParts(_ message: Int64, into directory: String) throws -> SavedPartsFfi {
-        try inner.saveAllParts(message: message, directory: directory)
-    }
-
-    /// Write one part into `directory` under a name **Postio** chooses, and
-    /// answer where it landed.
-    ///
-    /// The directory only. This is the route where bytes leave Postio's own
-    /// window — handed to another application — so the frontend does not get
-    /// to pass the sender's filename through to the filesystem.
-    public func exportPart(_ message: Int64, partId: String, into directory: String) throws
-        -> String
-    {
-        try inner.exportPart(message: message, partId: partId, directory: directory)
-    }
-
-    /// The excerpt for `message`, with the match located.
-    ///
-    /// Text and byte ranges, never marked-up text — the same decision the
-    /// palette's highlighting makes, and for the same reason: one answer
-    /// about what matched, drawn each frontend's own way.
-    public func snippet(for message: Int64) -> SnippetFfi? {
-        inner.snippetFor(message: message)
-    }
 
     /// Whether `id` can run in `context`, given the open view.
     ///
@@ -428,76 +470,9 @@ public final class PostioSession {
         inner.isAvailable(id: id, context: context)
     }
 
-    /// The palette's rows for `query`, best first.
-    ///
-    /// Already ranked and already filtered to what `context` can run.
-    /// **Do not sort or filter these again**: the ranking is
-    /// `postio_ui::palette`'s, and a second one means the same query offers
-    /// different things on each platform.
-    public func paletteEntries(_ query: String, in context: UiContext) -> [PaletteEntryFfi] {
-        inner.paletteEntries(query: query, context: context)
-    }
-
-    /// Every command reachable in `context`, with the binding in force.
-    ///
-    /// The same list the palette reads, unfiltered — one list read two ways.
-    public func cheatSheet(in context: UiContext) -> [PaletteEntryFfi] {
-        inner.cheatSheet(context: context)
-    }
-
-    /// The `?` sheet, grouped the way the product groups it: Everywhere, the
-    /// box's prefixes, the reader's own surface, then one section per
-    /// extension namespace.
-    ///
-    /// The grouping is `postio_ui::cheatsheet::sections`' — the same
-    /// function the GTK overlay draws from, so the two frontends teach the
-    /// same sheet. The flat `cheatSheet` above predates it, and a `?`
-    /// overlay drawing that is an ungrouped wall of keys where the other
-    /// platform has headings.
-    public func cheatSheetSections(in context: UiContext) -> [CheatSectionFfi] {
-        inner.cheatSheetSections(context: context)
-    }
-
-    /// Whether `message` is *marked*.
-    ///
-    /// Not whether it is under the cursor: `PRODUCT.md` §9 keeps those apart,
-    /// and `NSTableView`'s own selection is the cursor here. Answered without
-    /// enumerating a whole-view selection, which is what makes "select all,
-    /// then deselect three" cost three ids rather than a hundred thousand.
-    public func isSelected(_ message: Int64) -> Bool { inner.isSelected(message: message) }
-
-    /// What to show above the list — "12 selected" — or nothing.
-    ///
-    /// From the model, which knows the answer for a whole-view selection
-    /// without listing it. Counting ids on this side could not draw the one
-    /// case that most needs a count.
-    public var selectionSummary: String? { inner.selectionSummary() }
-
-    /// The row the cursor is on, or `nil` when the list has none.
-    public var cursorRow: UInt32? { inner.cursorRow() }
-
-    /// The message the cursor is on, if its page has arrived.
-    public var cursorMessage: Int64? { inner.cursorMessage() }
-
-    /// Land on the first row when the list has mail and nothing is under the
-    /// cursor, or name the cursor's message once its page arrives. Asked
-    /// after every change to the list; a cursor somebody placed stays put.
-    /// The landing raises `cursorMoved` with `chosen` false.
-    public func settleCursor() { inner.settleCursor() }
-
-    /// Whether a person put the cursor where it is, rather than the list
-    /// landing on its first row. Only a chosen row is read by dwell (#601).
-    public var cursorChosen: Bool { inner.cursorChosen() }
-
-    /// `#` in the search box: folders matching `query`, best first, and
-    /// what to say when none do.
-    public func finderFolders(_ query: String) -> FinderAnswerFfi { inner.finderFolders(query: query) }
-
-    /// `@` in the search box: correspondents matching `query`.
-    public func finderContacts(_ query: String) -> FinderAnswerFfi { inner.finderContacts(query: query) }
-
-    /// `+` in the search box: labels matching `query`.
-    public func finderLabels(_ query: String) -> FinderAnswerFfi { inner.finderLabels(query: query) }
+    /// The key map as the controller would open it now (`focus_key_map`):
+    /// what an open key map draws again after `[keys]` changes (T106).
+    public func focusKeyMap() -> KeyMapSheetFfi { inner.focusKeyMap() }
 
     /// Put `label` on the selection, or on the message under the cursor when
     /// nothing is marked.
@@ -512,18 +487,6 @@ public final class PostioSession {
     public func markReadOnDwell(_ message: Int64) {
         inner.markReadOnDwell(message: message)
     }
-
-    /// Put the cursor on `row` — what a click on the list means.
-    ///
-    /// The position, not just the message: after a click, `j` has to move
-    /// from where the user clicked.
-    public func setCursorRow(_ row: UInt32?) { inner.setCursorRow(row: row) }
-
-    /// Mark `message`, or take it out of the selection again.
-    public func toggleSelection(_ message: Int64) { inner.toggleSelection(message: message) }
-
-    /// Unmark everything.
-    public func clearSelection() { inner.clearSelection() }
 
     /// The binding in force for a command, for drawing an accelerator.
     ///
@@ -912,4 +875,15 @@ public final class PostioSession {
     /// actor: the same drain the GTK window runs on its main context, so no
     /// backend work reaches the UI thread on either platform.
     public func nextEvent() async -> UiEvent? { await inner.nextEvent() }
+}
+
+extension PostioSession: FocusRowSource {
+    /// How many rows Focus's list draws.
+    public var focusRowCount: UInt32 { inner.focusRowCount() }
+
+    /// The row at `position`, or `nil` while its page is on its way.
+    /// Synchronous and no I/O: what the table asks for every visible row.
+    public func focusRow(at position: UInt32) -> FocusRowFfi? {
+        inner.focusRowAt(position: position)
+    }
 }

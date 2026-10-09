@@ -63,7 +63,7 @@ command from inside a text field.
 | `ctrl+o` | View original | List, conversation, reader |  | `view_original` |
 | `ctrl+shift+o` or `alt+o` | Reader view | List, conversation, reader |  | `toggle_reader_view` |
 | `alt+d` | Darken this message | List, conversation, reader (not the terminal) |  | `darken_message` |
-| `O` | Show original or app colours | Reader (not macOS) |  | `switch_treatment` |
+| `O` | Show original or app colours | Reader (not the terminal) |  | `switch_treatment` |
 | `ctrl+f` | Find in message | List, conversation, reader |  | `find_in_message` |
 | `ctrl+g` or `F3` | Next match | List, conversation, reader |  | `find_next` |
 | `ctrl+shift+g` or `shift+F3` | Previous match | List, conversation, reader |  | `find_previous` |
@@ -71,7 +71,6 @@ command from inside a text field.
 | `ctrl+minus` or `ctrl+KP_Subtract` | Zoom out | List, conversation, reader (not the terminal) |  | `zoom_out` |
 | `ctrl+0` or `ctrl+KP_0` | Actual size | List, conversation, reader (not the terminal) |  | `zoom_reset` |
 | `O` or `ctrl+shift+e` | Expand all | Conversation |  | `expand_all` |
-| `I` | Hide or show the conversation rail | Conversation (macOS) |  | `toggle_rail` |
 | `e` or `ctrl+r` | Reply | List, conversation, reader, composer |  | `reply` |
 | `E` or `ctrl+shift+r` | Reply to all | List, conversation, reader, composer |  | `reply_all` |
 | `f` or `ctrl+shift+f` | Forward | List, conversation, reader, composer |  | `forward` |
@@ -83,20 +82,20 @@ command from inside a text field.
 | `r` | Mark read or unread | List, conversation, reader | Undoable | `toggle_read` |
 | `s` | Snooze | List, conversation, reader | Undoable | `snooze` |
 | `B` | Unsnooze | List, conversation, reader | Undoable | `unsnooze` |
-| `h` or `ctrl+h` | Remind if no reply… | List, conversation, reader, composer (not macOS) | Undoable | `remind_if_no_reply` |
+| `h` or `ctrl+h` | Remind if no reply… | List, conversation, reader, composer | Undoable | `remind_if_no_reply` |
 | `l` | Add label… | List, conversation, reader | Undoable | `add_label` |
-| `y` | Accept invitation | List, conversation, reader (not macOS) | Undo briefly | `accept_invite` |
-| `Y` | Decline invitation | List, conversation, reader (not macOS) | Undo briefly | `decline_invite` |
-| `d` | Digest rule… | List, conversation, reader, digest (not macOS) |  | `digest_rule` |
-| `D` | Stop digesting this sender | Reader, digest (not macOS) | Undoable | `stop_digesting_sender` |
-| `v` | View source | List, conversation, reader (not macOS) |  | `view_source` |
-| `o` | Open attachment or link… | List, conversation, reader (not macOS) |  | `open_attachment_or_link` |
-| `-` | Dismiss marker | List, conversation, reader (not macOS) | Undoable | `dismiss_marker` |
-| `.` | More actions | Reader (not macOS) |  | `more_actions` |
-| `F8` | Read beside the list or over it | List (not macOS) |  | `toggle_reading_pane` |
+| `y` | Accept invitation | List, conversation, reader | Undo briefly | `accept_invite` |
+| `Y` | Decline invitation | List, conversation, reader | Undo briefly | `decline_invite` |
+| `d` | Digest rule… | List, conversation, reader, digest |  | `digest_rule` |
+| `D` | Stop digesting this sender | Reader, digest | Undoable | `stop_digesting_sender` |
+| `v` | View source | List, conversation, reader |  | `view_source` |
+| `o` | Open attachment or link… | List, conversation, reader |  | `open_attachment_or_link` |
+| `-` | Dismiss marker | List, conversation, reader | Undoable | `dismiss_marker` |
+| `.` | More actions | Reader |  | `more_actions` |
+| `F8` | Read beside the list or over it | List |  | `toggle_reading_pane` |
 | `/` or `alt+ctrl+f` | Search | List, conversation, reader, search, folder list |  | `search` |
 | `ctrl+s` | Save search as folder | Search |  | `save_search` |
-| `ctrl+BackSpace` or `alt+BackSpace` | Back to words | Search (not macOS) |  | `back_to_words` |
+| `ctrl+BackSpace` or `alt+BackSpace` | Back to words | Search |  | `back_to_words` |
 | `c` or `ctrl+n` | Compose | List, conversation, reader |  | `compose` |
 | `ctrl+Return` or `alt+s` or `alt+Return` | Send | Composer | Undo briefly | `send` |
 | `ctrl+shift+Return` or `alt+S` | Schedule send… | Composer |  | `schedule_send` |
@@ -127,7 +126,6 @@ command from inside a text field.
 | `i i` | Show remote images | List, conversation, reader |  | `show_images` |
 | `i a` | Always show images from this sender | List, conversation, reader |  | `always_show_images` |
 | `U` | Unsubscribe from this list | List, conversation, reader, digest |  | `unsubscribe` |
-| `ctrl+b` | Toggle sidebar | List, conversation, reader, folder list (macOS) |  | `toggle_sidebar` |
 | `g o` | Go to folders | List, conversation, reader, search |  | `go_to_folders` |
 | `g i` | Go to inbox | List, conversation, reader, search, folder list, digest, Filtered view |  | `go_to_inbox` |
 | `g t` | Go to drafts | List, conversation, reader, search, folder list |  | `go_to_drafts` |
@@ -135,25 +133,16 @@ command from inside a text field.
 | `g *` | Go to flagged | List, conversation, reader, search, folder list |  | `go_to_flagged` |
 | `g r` | Go to archive | List, conversation, reader, search, folder list |  | `go_to_archive` |
 | `g z` | Go to snoozed | List, conversation, reader, search, folder list |  | `go_to_snoozed` |
-| `g b` | Go to outbox | List, conversation, reader, search, folder list (not macOS) |  | `go_to_outbox` |
-| `g j` | Go to junk | List, conversation, reader, search, folder list (not macOS) |  | `go_to_junk` |
-| `g #` | Go to trash | List, conversation, reader, search, folder list (not macOS) |  | `go_to_trash` |
-| `g f` | Go to Filtered | List, conversation, reader, search, folder list (not macOS) |  | `go_to_filtered` |
-| `g d` | Go to digest rules | List, conversation, reader, search, folder list (not macOS) |  | `go_to_digest_rules` |
+| `g b` | Go to outbox | List, conversation, reader, search, folder list |  | `go_to_outbox` |
+| `g j` | Go to junk | List, conversation, reader, search, folder list |  | `go_to_junk` |
+| `g #` | Go to trash | List, conversation, reader, search, folder list |  | `go_to_trash` |
+| `g f` | Go to Filtered | List, conversation, reader, search, folder list |  | `go_to_filtered` |
+| `g d` | Go to digest rules | List, conversation, reader, search, folder list |  | `go_to_digest_rules` |
 | `alt+1` | Saved search 1 | List, conversation, reader, search, folder list |  | `saved_search_1` |
 | `alt+2` | Saved search 2 | List, conversation, reader, search, folder list |  | `saved_search_2` |
 | `alt+3` | Saved search 3 | List, conversation, reader, search, folder list |  | `saved_search_3` |
 | `alt+4` | Saved search 4 | List, conversation, reader, search, folder list |  | `saved_search_4` |
-| `!` | Show only what has an action | List (not macOS) |  | `toggle_has_action` |
-| `tab` | Next pane | List, conversation, reader, folder list (macOS) |  | `cycle_pane` |
-| `shift+tab` | Previous pane | List, conversation, reader, folder list (macOS) |  | `cycle_pane_back` |
-| `j` or `Down` | Next folder | Folder list (macOS) |  | `next_folder` |
-| `k` or `Up` | Previous folder | Folder list (macOS) |  | `prev_folder` |
-| `space` | Expand or collapse folder | Folder list (macOS) |  | `toggle_folder` |
-| `r` | Rename saved search | Folder list (macOS) |  | `rename_saved_search` |
-| `shift+Up` | Move saved search up | Folder list (macOS) |  | `move_saved_search_up` |
-| `shift+Down` | Move saved search down | Folder list (macOS) |  | `move_saved_search_down` |
-| `Delete` | Delete saved search | Folder list (macOS) | Asks first | `delete_saved_search` |
+| `!` | Show only what has an action | List |  | `toggle_has_action` |
 | `Return` | Enable or disable account | Account list |  | `toggle_account_enabled` |
 | `Delete` | Remove account | Account list | Undoable | `remove_account` |
 | `c` | Update account credential | Account list |  | `update_credential` |
@@ -162,41 +151,33 @@ command from inside a text field.
 | `M` | Map mailbox role | Account list | Undoable | `map_mailbox_role` |
 | `g a` | Next scope | List, folder list |  | `next_scope` |
 | `F5` | Refresh | List, conversation, reader |  | `refresh` |
-| `p` | Show message parts | Reader (macOS) |  | `open_parts` |
-| `j` or `Down` | Next part | Parts panel (macOS) |  | `next_part` |
-| `k` or `Up` | Previous part | Parts panel (macOS) |  | `prev_part` |
-| `Return` | Open part | Parts panel (macOS) |  | `open_part` |
-| `s` | Save part | Parts panel (macOS) |  | `save_part` |
-| `S` | Save all parts | Parts panel (macOS) |  | `save_all_parts` |
-| `x` | Open part externally | Parts panel (macOS) |  | `open_part_externally` |
-| `H` | Render part once | Parts panel (macOS) |  | `render_part_once` |
 | `Page_Down` or `space` | Scroll reading pane down | List, conversation, reader |  | `scroll_reader_down` |
 | `Page_Up` or `shift+space` | Scroll reading pane up | List, conversation, reader |  | `scroll_reader_up` |
-| `1` | Choose option 1 | Picker (not macOS) |  | `picker_choose_1` |
-| `2` | Choose option 2 | Picker (not macOS) |  | `picker_choose_2` |
-| `3` | Choose option 3 | Picker (not macOS) |  | `picker_choose_3` |
-| `4` | Choose option 4 | Picker (not macOS) |  | `picker_choose_4` |
-| `tab` | Type a date | Picker (not macOS) |  | `picker_type_date` |
-| `space` | Toggle option | Picker (not macOS) |  | `picker_toggle` |
-| `Return` | Confirm | Picker (not macOS) |  | `picker_confirm` |
-| `]` | Next reference | Digest (not macOS) |  | `next_reference` |
-| `[` | Previous reference | Digest (not macOS) |  | `prev_reference` |
-| `tab` | Summary or messages | Digest (not macOS) |  | `toggle_digest_summary` |
-| `R` | Restore to inbox | Filtered view (not macOS) | Undoable | `restore_filtered` |
-| `1` | Reason 1 | Filtered view (not macOS) |  | `filtered_tab_1` |
-| `2` | Reason 2 | Filtered view (not macOS) |  | `filtered_tab_2` |
-| `3` | Reason 3 | Filtered view (not macOS) |  | `filtered_tab_3` |
-| `4` | Reason 4 | Filtered view (not macOS) |  | `filtered_tab_4` |
-| `5` | Reason 5 | Filtered view (not macOS) |  | `filtered_tab_5` |
-| `6` | Reason 6 | Filtered view (not macOS) |  | `filtered_tab_6` |
-| `7` | Reason 7 | Filtered view (not macOS) |  | `filtered_tab_7` |
-| `F` | Filter what is in the inbox… | List (not macOS) | Undoable | `sweep_inbox` |
-| `t` | Capture a task… | List, conversation, reader, capture sheet (not macOS) |  | `capture_task` |
-| `n` | Capture a note… | List, conversation, reader, capture sheet (not macOS) |  | `capture_note` |
-| `ctrl+p` | Change project | Capture sheet (not macOS) |  | `capture_change_project` |
-| `alt+s` | Use the subject instead | Capture sheet (not macOS) |  | `capture_use_subject` |
-| `ctrl+Return` or `alt+Return` | Add to the vault | Capture sheet (not macOS) |  | `capture_write` |
-| `L` | Digest mail like this | List (not macOS) |  | `digest_like_this` |
+| `1` | Choose option 1 | Picker |  | `picker_choose_1` |
+| `2` | Choose option 2 | Picker |  | `picker_choose_2` |
+| `3` | Choose option 3 | Picker |  | `picker_choose_3` |
+| `4` | Choose option 4 | Picker |  | `picker_choose_4` |
+| `tab` | Type a date | Picker |  | `picker_type_date` |
+| `space` | Toggle option | Picker |  | `picker_toggle` |
+| `Return` | Confirm | Picker |  | `picker_confirm` |
+| `]` | Next reference | Digest |  | `next_reference` |
+| `[` | Previous reference | Digest |  | `prev_reference` |
+| `tab` | Summary or messages | Digest |  | `toggle_digest_summary` |
+| `R` | Restore to inbox | Filtered view | Undoable | `restore_filtered` |
+| `1` | Reason 1 | Filtered view |  | `filtered_tab_1` |
+| `2` | Reason 2 | Filtered view |  | `filtered_tab_2` |
+| `3` | Reason 3 | Filtered view |  | `filtered_tab_3` |
+| `4` | Reason 4 | Filtered view |  | `filtered_tab_4` |
+| `5` | Reason 5 | Filtered view |  | `filtered_tab_5` |
+| `6` | Reason 6 | Filtered view |  | `filtered_tab_6` |
+| `7` | Reason 7 | Filtered view |  | `filtered_tab_7` |
+| `F` | Filter what is in the inbox… | List | Undoable | `sweep_inbox` |
+| `t` | Capture a task… | List, conversation, reader, capture sheet |  | `capture_task` |
+| `n` | Capture a note… | List, conversation, reader, capture sheet |  | `capture_note` |
+| `ctrl+p` | Change project | Capture sheet |  | `capture_change_project` |
+| `alt+s` | Use the subject instead | Capture sheet |  | `capture_use_subject` |
+| `ctrl+Return` or `alt+Return` | Add to the vault | Capture sheet |  | `capture_write` |
+| `L` | Digest mail like this | List |  | `digest_like_this` |
 
 ## The one box
 

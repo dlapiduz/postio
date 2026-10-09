@@ -31,6 +31,15 @@ use crate::{Intent, Request};
 pub(crate) enum Step {
     Show(Intent),
     Ask(Request),
+    /// Open this place through the feed, as `FocusController::open` does.
+    Open(ListScope),
+    /// Call back with `Input::Timer(token)` once `after` has passed.
+    Timer {
+        /// Handed back when it fires.
+        token: u64,
+        /// How long to wait.
+        after: std::time::Duration,
+    },
 }
 
 /// A page's rows as the store answered them, before the feed shapes them.
@@ -59,6 +68,9 @@ pub enum PageAnswer {
 pub struct Opened {
     /// The place that was opened.
     pub scope: ListScope,
+    /// The enabled accounts: what Focus's inbox is made of, and what
+    /// "select everything" reaches.
+    pub accounts: Vec<postio_model::AccountId>,
     /// Every enabled account's folders, and whether each is an inbox.
     pub folders: Vec<(MailboxId, bool)>,
     /// How many conversations the place holds.
@@ -294,6 +306,14 @@ impl Feed {
     }
 
     /// The place in view, once one is open.
+    /// The digest whose row is `row`, among what Focus surfaces.
+    pub(crate) fn digest(&self, row: postio_model::MessageId) -> Option<focus_list::Digest> {
+        self.surfaced.iter().find_map(|surfaced| match surfaced {
+            FocusRow::Digest(digest) if surfaced.id() == row => Some(digest.clone()),
+            _ => None,
+        })
+    }
+
     pub(crate) fn scope(&self) -> Option<ListScope> {
         self.paging.scope()
     }

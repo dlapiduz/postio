@@ -194,17 +194,6 @@ impl Paging {
         total
     }
 
-    /// Put the scope back. Returns whether there were results to leave.
-    pub fn close_results(&mut self) -> bool {
-        self.failed.clear();
-        self.results.take().is_some()
-    }
-
-    /// Whether the list is showing search hits rather than the scope.
-    pub fn showing_results(&self) -> bool {
-        self.results.is_some()
-    }
-
     /// What to read for `page`, or `None` when there is nothing to read:
     /// nothing is open, or the page is past the end of the result set —
     /// asking for ids a short last page does not have would make the store
@@ -412,29 +401,6 @@ mod tests {
             None,
             "past the end of the ranking there is nothing to ask for"
         );
-    }
-
-    #[test]
-    fn leaving_a_result_set_pages_the_scope_again() {
-        let mut paging = inbox();
-        paging.show_results(ids(1..4));
-        assert!(paging.showing_results());
-        assert!(paging.close_results());
-        assert!(!paging.showing_results());
-        assert!(matches!(paging.fetch_for(0), Some(Fetch::Scope(_))));
-        assert!(
-            !paging.close_results(),
-            "there were no results left to leave"
-        );
-    }
-
-    #[test]
-    fn opening_a_scope_leaves_the_result_set() {
-        let mut paging = inbox();
-        paging.show_results(ids(1..4));
-        paging.open(ListScope::Mailbox(ARCHIVE));
-        assert!(!paging.showing_results());
-        assert_eq!(paging.mailbox(), Some(ARCHIVE));
     }
 
     #[test]

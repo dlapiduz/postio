@@ -235,3 +235,81 @@ fn asking_for_a_buttons_key_does_not_resolve_the_keymap_again() {
         "the keymap is resolved once per session, not once per question"
     );
 }
+
+/// The Mac app is Focus (specs/009-focus-macos FR-001): it answers Focus's
+/// keys and none of the three-pane app's.
+#[test]
+fn the_mac_answers_focus_keys_and_not_the_three_pane_apps() {
+    let session = session();
+    assert_eq!(
+        typed(&session, "y", UiContext::List, false),
+        KeyOutcomeFfi::Command {
+            id: "accept_invite".to_string()
+        },
+        "`y` accepts an invitation in Focus"
+    );
+    assert_eq!(
+        session.key(Some("b"), None, PRIMARY, UiContext::List, false),
+        KeyOutcomeFfi::Unhandled,
+        "Focus has no sidebar to toggle"
+    );
+    session.shutdown();
+}
+
+/// Focus's whole keymap resolves, as the Mac's frontend, on both platforms:
+/// asserted for each from either host, because a gate that runs one platform
+/// cannot see the other's answer (31 bindings once died that way, the note
+/// `docs/notes/2026-09-05-the-gate-that-runs-cannot-see-the-platform-that-does-not.md`).
+#[test]
+fn focus_s_keymap_resolves_on_both_platforms() {
+    use postio_config::paths::Platform;
+    for platform in [Platform::Freedesktop, Platform::Apple] {
+        let keymap = postio_core::Keymap::resolve_on(&Default::default(), platform);
+        assert!(
+            keymap.problems().is_empty(),
+            "{platform:?}: {:?}",
+            keymap.problems()
+        );
+        let (_, problems) =
+            postio_ui::keymap::Resolver::from_commands_for(&keymap, postio_ffi::FRONTEND);
+        assert!(problems.is_empty(), "{platform:?}: {problems:?}");
+    }
+}
+
+/// `[keys]` edited while the app runs rebinds at once (FR-031): the Mac
+/// watches `config.toml`, rebuilds the resolver, and tells the frontend so
+/// its menus and keycaps follow.
+#[tokio::test(flavor = "multi_thread")]
+async fn editing_keys_rebinds_while_the_app_runs() {
+    let directory = tempfile::tempdir().expect("a directory");
+    let path = directory.path().join("config.toml");
+    std::fs::write(&path, "[keys]\narchive = \"w\"\n").expect("written");
+    let session = Session::open(SessionOptions::in_memory().with_config_file_for_test(&path))
+        .expect("a session");
+    let archive = KeyOutcomeFfi::Command {
+        id: "archive".to_string(),
+    };
+    assert_eq!(typed(&session, "w", UiContext::List, false), archive);
+
+    std::fs::write(&path, "[keys]\narchive = \"a\"\n").expect("rewritten");
+
+    let heard = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match session.next_event().await {
+                Some(postio_ffi::UiEvent::KeymapChanged) => return true,
+                Some(_) => continue,
+                None => return false,
+            }
+        }
+    })
+    .await
+    .unwrap_or(false);
+    assert!(heard, "the frontend is told the keymap changed");
+    assert_eq!(typed(&session, "a", UiContext::List, false), archive);
+    assert_eq!(
+        typed(&session, "w", UiContext::List, false),
+        KeyOutcomeFfi::Unhandled,
+        "the old key is free again"
+    );
+    session.shutdown();
+}

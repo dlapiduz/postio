@@ -212,6 +212,9 @@ impl Keymap {
                 continue;
             }
             for alternate in spec.alternate_bindings {
+                if !registry::alternate_offered_on(spec.id, alternate, platform) {
+                    continue;
+                }
                 let alternate = keys::expand_mod(alternate, platform);
                 if keymap.holder_of(&alternate, spec.contexts).is_none() {
                     keymap.claim(spec.id, alternate);

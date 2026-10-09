@@ -1,0 +1,41 @@
+# `O` draws the open message the other way and the render-mode line says
+# which (specs/009-focus-macos T064; spec 007 T213).
+#
+# A newsletter that sets its own background opens on paper, and the line
+# names it: "Original layout, on paper · this message sets its own
+# background · Use app colours O". `O` draws it in app colours and the line
+# names that, offering the original back; `O` again returns it. The column
+# narrows to app colours' measure and widens for paper, inside a window that
+# does not change size.
+apps   = ["focus"]
+source = { kind = "flow", ref = "O switches the treatment" }
+seed   = "long-newsletter"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+
+[[step]]
+command = "open_message"
+settle  = { until = { view = "reader" } }
+check   = { view = "reader", reading.id = "90" }
+expect  = "The newsletter opens on paper, a white sheet in the column, and the line above it says \"Original layout, on paper\" with \"Use app colours O\"."
+
+[[step]]
+command = "switch_treatment"
+settle  = { watch_ms = 600 }
+check   = { view = "reader", reading.id = "90" }
+expect  = "Drawn in app colours: the sender's background and fonts are gone, the column is the narrower reading measure, and the line says \"App colours\" with \"Show original O\". The window is the same size."
+
+[[step]]
+command = "switch_treatment"
+settle  = { watch_ms = 600 }
+check   = { view = "reader", reading.id = "90" }
+expect  = "Back on paper, as it opened."

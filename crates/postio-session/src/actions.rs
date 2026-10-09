@@ -110,10 +110,9 @@ pub const WIRED: &[CommandId] = &[
 /// R6), and it names its time, so this is only ever the default.
 const DEFAULT_SNOOZE: Duration = Duration::hours(3);
 
-/// How long an answer to an invitation waits in the outbox before it may
-/// leave, and so how long it can be taken back (specs/007-postio-focus
-/// FR-102, research R9): about ten seconds, the toast's own life.
-pub const RSVP_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
+/// How long an answer to an invitation can be taken back: `postio-core`'s,
+/// so a frontend's toast lasts as long as the window it describes.
+pub use postio_core::command::RSVP_WINDOW;
 
 /// Whether a verb is being performed or replayed backwards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

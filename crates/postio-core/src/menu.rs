@@ -124,7 +124,7 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // has ever clicked, and seven of them crowd out the ones people do.
         C::NextMessage | C::PrevMessage | C::ExtendSelectionDown | C::ExtendSelectionUp => None,
         C::FirstMessage | C::LastMessage => Some(M::Go),
-        C::NextFolder | C::PrevFolder | C::GoToFolders => Some(M::Go),
+        C::GoToFolders => Some(M::Go),
         // The destinations belong in the Go menu for the same reason they
         // belong in the palette: a person who does not know `g i` still wants
         // the inbox, and this is where they look for it.
@@ -134,10 +134,8 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // The pinned searches are places too, and a person who does not know
         // `alt+1` looks for them where the other places are.
         C::SavedSearch1 | C::SavedSearch2 | C::SavedSearch3 | C::SavedSearch4 => Some(M::Go),
-        C::CyclePane | C::CyclePaneBack => Some(M::Go),
         C::NextScope => Some(M::Go),
         C::NextInConversation | C::PrevInConversation => Some(M::Go),
-        C::NextPart | C::PrevPart => Some(M::Go),
         C::Back | C::PrevView => Some(M::Go),
 
         // ── File ─────────────────────────────────────────────────────────
@@ -148,7 +146,6 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         C::AttachFile | C::DetachComposer | C::MarkSent | C::RetrySend | C::CancelSend => {
             Some(M::File)
         }
-        C::SavePart | C::SaveAllParts | C::OpenPartExternally => Some(M::File),
         C::Refresh => Some(M::File),
 
         // ── Edit ─────────────────────────────────────────────────────────
@@ -158,14 +155,10 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         C::ShowImages | C::AlwaysShowImages | C::Unsubscribe => Some(M::Message),
         // Settings surfaces act on the row the settings list has focus on.
         // They are commands so `[keys]` can reach them and so the palette
-        // can offer them where they apply; a menu bar item for "rename the
-        // saved search you are looking at" is meaningless anywhere else, and
+        // can offer them where they apply; a menu bar item for "remove the
+        // account you are looking at" is meaningless anywhere else, and
         // a menu is global.
-        C::RenameSavedSearch
-        | C::MoveSavedSearchUp
-        | C::MoveSavedSearchDown
-        | C::DeleteSavedSearch
-        | C::ToggleAccountEnabled
+        C::ToggleAccountEnabled
         | C::RemoveAccount
         | C::UpdateCredential
         | C::RebuildAccountIndex
@@ -173,14 +166,13 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::MapMailboxRole => None,
 
         // ── View ─────────────────────────────────────────────────────────
-        C::ToggleSidebar | C::ToggleFolder | C::ToggleFold | C::ExpandAll => Some(M::View),
-        C::ToggleRail => Some(M::View),
+        C::ToggleFold | C::ExpandAll => Some(M::View),
         // With the other two show/hide toggles rather than under File
         // beside the composer's verbs: this raises and lowers rows, it
         // does not do anything to the draft.
         C::CopyFields => Some(M::View),
         C::ToggleResultOrder => Some(M::View),
-        C::OpenParts | C::ViewOriginal | C::ToggleReaderView => Some(M::View),
+        C::ViewOriginal | C::ToggleReaderView => Some(M::View),
         // Spec 006: how the message on screen is drawn.
         C::DarkenMessage | C::SwitchTreatment | C::ZoomIn | C::ZoomOut | C::ZoomReset => {
             Some(M::View)
@@ -200,19 +192,13 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // command, and putting it in a menu invites the reader to be driven
         // from one.
         C::ScrollReaderDown | C::ScrollReaderUp => None,
-        // The one-off render of a part the reader would not draw by itself.
-        // Deliberately *not* a menu item: `PRODUCT.md`'s privacy rule is that
-        // this happens on a deliberate activation on the part itself, and a
-        // menu item is a way to do it without having looked at what it
-        // applies to.
-        C::RenderPartOnce => None,
 
         // ── Message ──────────────────────────────────────────────────────
         C::Reply | C::ReplyAll | C::Forward => Some(M::Message),
         C::Archive | C::ArchiveThread | C::Delete | C::Move => Some(M::Message),
         C::Flag | C::ToggleRead | C::AddLabel => Some(M::Message),
         C::Snooze | C::Unsnooze => Some(M::Message),
-        C::OpenMessage | C::OpenPart => Some(M::Message),
+        C::OpenMessage => Some(M::Message),
 
         // ── Format ───────────────────────────────────────────────────────
         C::Bold | C::Italic | C::BulletList | C::NumberedList => Some(M::Format),

@@ -83,3 +83,27 @@ intact: **the query language is still never widened.**
 - Saving a search from the box is not wired yet (`CommandId::SaveSearch` has
   no handler). When it is, a rewritten search saves the word it showed, not
   the one typed: what is saved is what was seen.
+
+## Amended 2026-10-08: the command bar's search forgives
+
+The maintainer asked for misspelled and inexact words to find mail in the
+Focus command bar, and chose to apply it to **interactive search only**. So
+the query *language* is still never widened, and the reason above still holds
+in full: what widens is one way of *asking*, which no rule can take.
+
+- `ParsedQuery::forgiving()` marks a query as asked by a person in the bar
+  (`postio_focus::bar`). It is a flag on the parsed value, not syntax in the
+  string, so a saved search, virtual folder or rule -- each parsed from its
+  string -- cannot be forgiving, and saving from the bar saves the words.
+- A forgiving search runs the exact query first. Only when that does not
+  fill the page does it run again with each unquoted, positive word read as
+  any of the words near it (`postio_search::suggest::near`: the word itself,
+  then the words it begins, then the ones it is a misspelling of, at most
+  eight) -- and those hits come **after every exact one**, so widening can
+  add to a page but never reorder what the words found.
+- The near words come from the index the same way the offer's do
+  (`words_near`), and the second query is a disjunction of quoted literals,
+  `("ticket" OR "tickets") AND ("southwest")`: the fork expands `word~N` only
+  in a query of bare words, so it cannot be combined with an AND or a phrase.
+- A quoted word or phrase is still exactly itself, which is the way out of
+  the forgiving reading, as it was of the offer.

@@ -124,56 +124,14 @@ pub enum UiEvent {
     },
     /// The conversation asked for has been read and can now be drawn.
     ///
-    /// Boundary-local, for the same reason [`UiEvent::PageReady`] is: the
-    /// reading pane's read is this frontend's, and the engine has no event
-    /// for it. Carries the thread so a pane that has moved on can drop a
+    /// Boundary-local: the reading pane's read is this frontend's, and the
+    /// engine has no event for it. Carries the thread so a pane that has moved on can drop a
     /// read that arrived late rather than drawing the wrong conversation
     /// under someone's cursor.
     ConversationReady {
         /// The conversation that was read.
         thread: i64,
     },
-    /// A page of list rows arrived and its rows can now be drawn.
-    ///
-    /// Boundary-local: `postio-core` has no such event and should not gain
-    /// one. Paging is how *this* frontend reads a list, not something the
-    /// engine does — the GTK frontend drives the same `ListWindow` with no
-    /// event at all, because its model and its widget are in one process.
-    /// Putting it in the core's vocabulary would be a frontend's concern
-    /// leaking into everyone's, which is a thing shared layers accumulate and
-    /// do not shed.
-    PageReady {
-        /// The page whose rows are now resident.
-        page: u32,
-    },
-    /// The cursor moved, and to where.
-    ///
-    /// Raised by this boundary rather than by the engine: `j` and `k` move
-    /// the frontend's own state, and the frontend learns where they left it
-    /// the same way it learns everything else. `row` is where the cursor is;
-    /// `message` is what is there, and is `None` while that row's page is
-    /// still on its way — a real state, not an error.
-    CursorMoved {
-        /// The row, or `None` when the list has none.
-        row: Option<u32>,
-        /// The message on it, if its page has arrived.
-        message: Option<i64>,
-        /// Whether a person put it there -- a key, a click, a verb -- rather
-        /// than the list landing on its first row by itself
-        /// ([`Session::settle_cursor`](crate::Session::settle_cursor)). The
-        /// pane shows either; only a chosen row starts the read clock
-        /// (#601, #71).
-        chosen: bool,
-    },
-    /// What is marked changed -- `x`, a shift-extension, select-all, or
-    /// `Escape` clearing it.
-    ///
-    /// No payload: the rows ask `is_selected` as they draw and the bar asks
-    /// `selection_summary`, so what the frontend needs is only *that* it
-    /// changed. Raised by this boundary, which is where the selection is;
-    /// without it the Mac's list drew no mark at all (the cursor moving is
-    /// [`CursorMoved`](Self::CursorMoved), and marks nothing).
-    SelectionChanged,
     /// An account's connection changed.
     ConnectionChanged {
         /// The account.
@@ -183,7 +141,7 @@ pub enum UiEvent {
     },
     /// How far a re-index has got.
     ///
-    /// Boundary-local, like `PageReady`: re-indexing is something a person
+    /// Boundary-local: re-indexing is something a person
     /// asked this window for, not something the engine does on its own. A
     /// pass over five thousand messages takes long enough that a button with
     /// no progress is indistinguishable from a button that does nothing
@@ -244,6 +202,273 @@ pub enum UiEvent {
         /// The core variant's name, for a log line on the far side.
         kind: String,
     },
+    /// `[keys]` changed while the app ran: every key, menu item and keycap
+    /// may mean something else now (specs/009-focus-macos FR-031).
+    KeymapChanged,
+    /// The rows Focus surfaces in the inbox -- digests, reminders -- changed,
+    /// so the list re-reads them (spec 007's `SurfacedChanged`).
+    SurfacedChanged,
+    /// Focus's list changed over, was re-read, or changed length: redraw it
+    /// whole, `total` rows long (specs/009-focus-macos T027).
+    FocusListChanged {
+        /// How many rows the list draws now.
+        total: u32,
+    },
+    /// A page of Focus's list landed: redraw its rows.
+    FocusPageReady {
+        /// Which page.
+        page: u32,
+    },
+    /// The cursor is on `position`: draw its ring there and bring it into
+    /// view (specs/009-focus-macos T046).
+    FocusCursor {
+        /// The row.
+        position: u32,
+        /// Whether the list scrolls back to its very top.
+        to_top: bool,
+    },
+    /// The selection changed: redraw the rows' boxes and the bar's words.
+    FocusSelection {
+        /// The selected messages, when the selection names them.
+        selected: Vec<i64>,
+        /// Whether everything the view shows is selected (a predicate).
+        everything: bool,
+        /// "3 selected", or nothing with nothing selected.
+        summary: Option<String>,
+    },
+    /// The list's one heading while `!` narrows it, or back to the day
+    /// headings with none.
+    FocusHeading {
+        /// "Has action · 7".
+        text: Option<String>,
+    },
+    /// Scroll the list back to its very top.
+    FocusListToTop,
+    /// Say something in the toast: the host's words.
+    FocusToast {
+        /// What to say.
+        text: String,
+        /// How to draw it.
+        kind: ToastKindFfi,
+        /// Whether Undo can take it back.
+        undoable: bool,
+        /// How long it stays, when not the usual (an answer's window).
+        seconds: Option<u32>,
+    },
+    /// Show `message` in the message window: opening it, or in place of the
+    /// one it shows. `index` of `total` is its row's place in the list.
+    FocusOpenMessage {
+        /// The message.
+        message: i64,
+        /// Its row's place.
+        index: u32,
+        /// How many rows the list draws.
+        total: u32,
+    },
+    /// A digest's row opens its window. `delivery` is the digest delivery,
+    /// as `FocusRowFfi.id` carries it.
+    FocusOpenDigest {
+        /// The delivery.
+        delivery: i64,
+    },
+    /// Close this surface, then say `focus_surface_closed`.
+    FocusCloseSurface {
+        /// Which.
+        kind: crate::focus_list::SurfaceKindFfi,
+    },
+    /// The open message does this.
+    FocusReader {
+        /// What.
+        verb: crate::focus_list::ReaderVerbFfi,
+    },
+    /// Nothing is over the list: the keyboard goes back to it, on the
+    /// cursor's row.
+    FocusKeyboardHome,
+    /// Show the command bar, opened `mode`'s way, its field holding `text`
+    /// with `select` selected (the chip being edited), or the caret at the
+    /// end. Said again while the bar is up, it is only new words for the
+    /// field. Say `focus_surface_opened(Bar)` once it shows; the controller
+    /// has already put it on the stack, so that changes nothing.
+    FocusOpenBar {
+        /// How it was opened.
+        mode: crate::focus_bar::BarModeFfi,
+        /// The field's words.
+        text: String,
+        /// What of them is selected.
+        select: Option<crate::focus_bar::BarSelectFfi>,
+    },
+    /// Redraw the bar's lines, whole.
+    FocusBarLines {
+        /// Everything the bar draws under its field.
+        view: crate::focus_bar::BarViewFfi,
+    },
+    /// The list shows this place now: what the header strip's Inbox ▾
+    /// button names.
+    FocusPlace {
+        /// "Inbox", "Receipts", "Snoozed".
+        name: String,
+    },
+    /// Show the folders popover, anchored to Inbox ▾, listing
+    /// `focus_places`.
+    FocusOpenPlaces,
+    /// The places were read again: the popover asks `focus_places` anew.
+    FocusPlacesChanged,
+    /// Show Filtered, the view of what Focus filed away.
+    FocusShowFiltered,
+    /// Run this registry command as the Mac's own -- a line of the bar the
+    /// controller does not answer, such as Compose or Settings -- the way a
+    /// menu item would run it.
+    FocusRun {
+        /// The registry command.
+        command: String,
+    },
+    /// Show this picker, hung from its anchor, in a transient popover
+    /// (specs/009-focus-macos T089). Say `focus_surface_opened(Picker)` once
+    /// it shows; the controller has already put it on the stack, so that
+    /// changes nothing. It closes on `FocusCloseSurface { kind: Picker }`,
+    /// and any other way it closes is `focus_surface_closed(Picker)`.
+    FocusOpenPicker {
+        /// Everything it draws.
+        view: crate::focus_pickers::PickerViewFfi,
+    },
+    /// Redraw the picker up, whole: its rows read, a label toggled, the
+    /// field's text and hint changed. Its row tokens replace the last.
+    FocusPickerRows {
+        /// Everything it draws.
+        view: crate::focus_pickers::PickerViewFfi,
+    },
+    /// Put the keyboard in the picker's date field (`Tab`).
+    FocusPickerField,
+    /// The banner under the header strip, full width, or none
+    /// (specs/009-focus-macos T096). Said only when it changes.
+    FocusBanner {
+        /// What it says, or `None` to take it away.
+        banner: Option<crate::focus_states::BannerFfi>,
+    },
+    /// What the toolbar's sync label says now. Said only when it changes.
+    FocusSyncLabel {
+        /// "Synced 09:30", "Syncing 1,200 of 8,400", "Offline".
+        text: String,
+        /// The mark beside it.
+        mark: crate::focus_states::SyncMarkFfi,
+    },
+    /// The page an empty list shows in its place, or the list again with
+    /// `None`. The list is what is drawn until this says otherwise.
+    FocusEmpty {
+        /// What the page says.
+        page: Option<crate::focus_states::EmptyPageFfi>,
+    },
+    /// How far filling in an account's message bodies has come
+    /// (specs/009-focus-macos T099). It crossed as `Other` before.
+    BackfillProgress {
+        /// The account.
+        account: i64,
+        /// Messages the queue has finished with.
+        done: u32,
+        /// Messages that have entered the queue.
+        total: u32,
+    },
+    /// Show the key map (`?`), as a sheet over the main window
+    /// (specs/009-focus-macos T103). The controller has put it on the stack;
+    /// it closes on `FocusCloseSurface { kind: KeyMap }`, and any other way
+    /// it closes is `focus_surface_closed(KeyMap)`. On `KeymapChanged` while
+    /// it is up, draw `focus_key_map()` again.
+    FocusOpenKeyMap {
+        /// What it draws.
+        sheet: crate::focus_keymap::KeyMapSheetFfi,
+    },
+    /// Draw Filtered, whole, in the list's place (specs/009-focus-macos
+    /// T109, screen 21). It follows `FocusShowFiltered`, and again whenever
+    /// its tabs, rows or focus change. It closes on
+    /// `FocusCloseSurface { kind: Filtered }`.
+    FocusFiltered {
+        /// What it draws.
+        view: crate::focus_surfaces::FilteredViewFfi,
+    },
+    /// Filtered's keyboard moved to the row at `index` (`j`/`k`, a click).
+    FocusFilteredFocus {
+        /// The row, an index into the view's `rows`.
+        index: Option<u32>,
+    },
+    /// Draw the digest's window, whole (screens 22 and 23). It follows
+    /// `FocusOpenDigest`, and again for every change: the reads landing,
+    /// a reference stepped to, the page switched, an email opened in place.
+    /// It closes on `FocusCloseSurface { kind: Digest }`.
+    FocusDigest {
+        /// What it draws.
+        view: crate::focus_surfaces::DigestViewFfi,
+    },
+    /// Ask before doing it: an alert with Cancel and one button. On yes,
+    /// say `focus_confirmed(confirm.token)`; on no, nothing.
+    FocusConfirm {
+        /// What it asks.
+        confirm: crate::focus_surfaces::ConfirmFfi,
+    },
+    /// Show the digest-this-sender sheet (screen 24). The controller has
+    /// put it on the stack as a `Dialog`; it closes on
+    /// `FocusCloseSurface { kind: Dialog }`, and any other way it closes is
+    /// `focus_surface_closed(Dialog)`.
+    FocusOpenRule {
+        /// What it draws.
+        view: crate::focus_surfaces::RuleViewFfi,
+    },
+    /// Redraw the rule sheet, whole.
+    FocusRule {
+        /// What it draws.
+        view: crate::focus_surfaces::RuleViewFfi,
+    },
+    /// Show the capture window (screen 25), replacing the secondary window
+    /// open (M4). The controller has put it on the stack; it closes on
+    /// `FocusCloseSurface { kind: Capture }`.
+    FocusOpenCapture {
+        /// What it draws.
+        view: crate::focus_surfaces::CaptureViewFfi,
+    },
+    /// Redraw the capture window, whole.
+    FocusCapture {
+        /// What it draws.
+        view: crate::focus_surfaces::CaptureViewFfi,
+    },
+    /// Open the composer -- or, while it is open, put this in it in place
+    /// of what it held, which the controller has had saved first -- on a
+    /// draft of `kind` answering `message`: `newDraft()`, `replyDraft`,
+    /// `forwardDraft`, or `draftForMessage` for `Draft`. The controller has
+    /// put the composer on its stack; say `focus_surface_closed(Composer)`
+    /// only for a close the toolkit made (its close button), and
+    /// `focus_composer_edited()` on every edit.
+    FocusComposer {
+        /// What is being written.
+        kind: crate::focus_compose::ComposerKindFfi,
+        /// The message it answers, or the draft's own message.
+        message: Option<i64>,
+    },
+    /// Save what the composer holds -- open, or just closed -- now, and say
+    /// how it went with `focus_draft_saved(composition, …)`.
+    FocusSaveDraft {
+        /// Echoed back to `focus_draft_saved`.
+        composition: u64,
+    },
+    /// A toast with one way to put right what it says is missing: a button
+    /// labelled `label` that runs `command` ("Add account").
+    FocusOffer {
+        /// What is missing.
+        text: String,
+        /// The button's words.
+        label: String,
+        /// The registry command the button runs.
+        command: String,
+    },
+}
+
+/// How a Focus toast is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ToastKindFfi {
+    /// A verb ran.
+    Completed,
+    /// An undo was applied.
+    Undone,
+    /// A command could not run: a quiet hint.
+    Notice,
 }
 
 /// What an outcome was.
@@ -362,6 +587,17 @@ impl From<postio_core::Event> for UiEvent {
             // Rule 2 in practice: everything the boundary has not modelled yet
             // still arrives, named. `{:?}` would carry the payload, and rule 3
             // forbids that, so only the variant name crosses.
+            Event::SurfacedChanged => UiEvent::SurfacedChanged,
+            Event::BackfillProgress {
+                account,
+                done,
+                total,
+                ..
+            } => UiEvent::BackfillProgress {
+                account: account.into(),
+                done,
+                total,
+            },
             other => UiEvent::Other {
                 kind: variant_name(&other).to_string(),
             },

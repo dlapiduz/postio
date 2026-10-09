@@ -117,10 +117,18 @@ pub fn recipient_line(addresses: &[EmailAddress]) -> String {
     if addresses.len() <= RECIPIENTS_SHOWN {
         return address_list(addresses);
     }
-    let hidden = addresses.len() - RECIPIENTS_SHOWN;
     format!(
-        "{} and {hidden} {}",
+        "{} {}",
         address_list(&addresses[..RECIPIENTS_SHOWN]),
+        others(addresses.len() - RECIPIENTS_SHOWN)
+    )
+}
+
+/// How a recipient line says the `hidden` names it left out: "and 1
+/// other", "and 197 others".
+pub fn others(hidden: usize) -> String {
+    format!(
+        "and {hidden} {}",
         if hidden == 1 { "other" } else { "others" }
     )
 }

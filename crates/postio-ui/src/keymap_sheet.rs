@@ -245,19 +245,8 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::QuoteBlock => None,
         // The terminal composer's (`Requirement::Terminal`).
         C::EditExternally | C::TogglePreview => None,
-        // The three-pane apps' surfaces (`Requirement::ThreePane`): the
-        // sidebar, the panes, and the parts panel. Focus has none.
-        C::ToggleSidebar | C::CyclePane | C::CyclePaneBack | C::OpenParts => None,
         // A stacked conversation pane's, which Focus's dialog is not.
-        C::ToggleFold | C::ExpandAll | C::ToggleRail => None,
-        // The folder list's own keys.
-        C::NextFolder
-        | C::PrevFolder
-        | C::ToggleFolder
-        | C::RenameSavedSearch
-        | C::MoveSavedSearchUp
-        | C::MoveSavedSearchDown
-        | C::DeleteSavedSearch => None,
+        C::ToggleFold | C::ExpandAll => None,
         // The account list's own keys.
         C::ToggleAccountEnabled
         | C::RemoveAccount
@@ -265,14 +254,6 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::RebuildAccountIndex
         | C::SetDefaultAccount
         | C::MapMailboxRole => None,
-        // The parts panel's own keys.
-        C::NextPart
-        | C::PrevPart
-        | C::OpenPart
-        | C::SavePart
-        | C::SaveAllParts
-        | C::OpenPartExternally
-        | C::RenderPartOnce => None,
     }
 }
 
@@ -331,6 +312,24 @@ pub fn key_map(
         .collect()
 }
 
+/// [`key_map`] for an app on `platform`: less what the registry keeps off
+/// it (`postio_core::registry::offered_on`), so the Mac's key map does not
+/// teach a key its app does not answer. A group left with no rows is left
+/// out.
+pub fn key_map_on(
+    keymap: &postio_core::Keymap,
+    frontend: postio_core::Frontend,
+    platform: postio_config::paths::Platform,
+) -> Vec<(Group, Vec<KeyMapRow>)> {
+    key_map(keymap, frontend)
+        .into_iter()
+        .filter_map(|(group, mut rows)| {
+            rows.retain(|row| postio_core::registry::offered_on(row.action, platform));
+            (!rows.is_empty()).then_some((group, rows))
+        })
+        .collect()
+}
+
 /// The key map's title.
 pub const TITLE: &str = "Keys";
 
@@ -340,6 +339,29 @@ pub const SUBTITLE: &str = "Single keys act on the focused row, or on the select
 
 /// The footer's line about rebinding.
 pub const REBIND_FOOTER: &str = "Rebind anything in ~/.config/postio/config.toml under [keys]";
+
+/// The line beside the title on `platform`. The Mac draws its keys with
+/// \u{2318} already, so the sentence saying Ctrl becomes \u{2318} is
+/// Linux's alone.
+pub fn subtitle(platform: postio_config::paths::Platform) -> &'static str {
+    match platform {
+        postio_config::paths::Platform::Apple => {
+            "Single keys act on the focused row, or on the selection if there is one."
+        }
+        postio_config::paths::Platform::Freedesktop => SUBTITLE,
+    }
+}
+
+/// The footer's line about rebinding on `platform`, naming the file that
+/// platform reads (`postio_config::paths`; spec 009 C3).
+pub fn rebind_footer(platform: postio_config::paths::Platform) -> &'static str {
+    match platform {
+        postio_config::paths::Platform::Apple => {
+            "Rebind anything in ~/Library/Application Support/Postio/config.toml under [keys]"
+        }
+        postio_config::paths::Platform::Freedesktop => REBIND_FOOTER,
+    }
+}
 
 /// The footer's line about the mouse.
 pub const MOUSE_FOOTER: &str = "The mouse works everywhere: every key has a visible button.";
@@ -491,10 +513,6 @@ mod tests {
             .flat_map(|(_, rows)| rows.iter().map(|row| row.action))
             .collect();
         assert!(
-            !rows.contains(&CommandId::OpenParts.into()),
-            "a three-pane verb"
-        );
-        assert!(
             rows.contains(&CommandId::Flag.into()),
             "Focus flags on `*` (C13)"
         );
@@ -504,6 +522,51 @@ mod tests {
         );
         assert!(rows.contains(&CommandId::ToggleHasAction.into()));
         assert!(rows.contains(&CommandId::Undo.into()));
+    }
+
+    #[test]
+    fn the_mac_names_its_own_file_and_says_nothing_of_ctrl() {
+        use postio_config::paths::Platform;
+        assert_eq!(rebind_footer(Platform::Freedesktop), REBIND_FOOTER);
+        assert_eq!(
+            rebind_footer(Platform::Apple),
+            "Rebind anything in ~/Library/Application Support/Postio/config.toml under [keys]",
+            "C3: the Mac's config.toml"
+        );
+        assert_eq!(subtitle(Platform::Freedesktop), SUBTITLE);
+        assert!(
+            SUBTITLE.starts_with(subtitle(Platform::Apple)),
+            "the same sentence about single keys"
+        );
+        assert!(
+            !subtitle(Platform::Apple).contains("Ctrl"),
+            "the Mac's keys are drawn with \u{2318} already"
+        );
+    }
+
+    #[test]
+    fn a_platform_s_key_map_holds_only_what_it_offers() {
+        use postio_config::paths::Platform;
+        let shown = |platform| -> Vec<postio_core::ActionId> {
+            let keymap = Keymap::resolve_on(&Default::default(), platform);
+            key_map_on(&keymap, Frontend::Focus, platform)
+                .into_iter()
+                .flat_map(|(_, rows)| rows.into_iter().map(|row| row.action))
+                .collect()
+        };
+        let mac = shown(Platform::Apple);
+        let linux = shown(Platform::Freedesktop);
+        for action in &mac {
+            assert!(registry::offered_on(*action, Platform::Apple), "{action:?}");
+        }
+        assert!(
+            linux.contains(&CommandId::DarkenMessage.into()),
+            "Linux darkens a sender's design"
+        );
+        assert!(
+            !mac.contains(&CommandId::DarkenMessage.into()),
+            "the Mac does not (#1705), so its key map does not teach it"
+        );
     }
 
     #[test]

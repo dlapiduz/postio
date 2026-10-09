@@ -366,12 +366,8 @@ mod tests {
             frontend: postio_core::Frontend::Terminal,
             ..an_account()
         };
-        let macos = Availability {
-            frontend: postio_core::Frontend::Macos,
-            ..an_account()
-        };
         for spec in registry::all().filter(|spec| keymap.offers(spec.id)) {
-            let reachable = [an_account(), terminal, macos].into_iter().any(|state| {
+            let reachable = [an_account(), terminal].into_iter().any(|state| {
                 Context::ALL.iter().any(|context| {
                     entries(&keymap, *context, state, spec.title)
                         .iter()

@@ -699,6 +699,12 @@ pub const SURFACES: [Surface; 2] = [LIGHT_SURFACE, DARK_SURFACE];
 /// every theme but high contrast.
 pub const CONTRAST_FLOOR: f64 = 4.5;
 
+/// The least a paper body is scaled to fit its column (the handoff's
+/// SPEC.md section 3): below it, text would be too small to read, so the
+/// sheet stays at this scale and the view scrolls it sideways instead.
+/// Every renderer fits paper to this one number.
+pub const PAPER_FIT_FLOOR: f64 = 0.85;
+
 /// The class prefix [`guard_kept_colours`] marks an element with.
 pub const KEPT_CLASS: &str = "postio-kept-";
 

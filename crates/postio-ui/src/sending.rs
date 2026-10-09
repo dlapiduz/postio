@@ -13,6 +13,13 @@ pub const NO_RECIPIENTS: &str = "not sent — add a recipient first";
 /// already been handed over: it is the queue's now, not the composer's.
 pub const ALREADY_QUEUED: &str = "not sent again — this draft is already on its way";
 
+/// What Focus's toast says of a send now waiting in the Outbox. Its Undo
+/// cancels the send (specs/009-focus-macos T089, #1752).
+pub const QUEUED_TO_SEND: &str = "Message queued to send";
+
+/// What Focus's toast says of a send waiting for the time chosen.
+pub const SEND_SCHEDULED: &str = "Send scheduled";
+
 /// What is odd about this message, in the words the dialog uses.
 ///
 /// Empty for a message with nothing odd about it, which is almost all of

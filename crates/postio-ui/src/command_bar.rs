@@ -364,11 +364,16 @@ pub fn conversations(hits: Vec<SearchHit>) -> Vec<SearchHit> {
 /// for a correction of the typed word (ADR 0037), `instead` is that
 /// correction and the row names it, so no two rows name one query and the
 /// highlighted row matches the results under it.
+///
+/// Words that carry their own quotes -- a phrase -- are shown as typed
+/// rather than quoted again.
 pub fn search_title(query: &str, instead: Option<&str>) -> String {
-    format!(
-        "Search mail for \u{201c}{}\u{201d}",
-        instead.unwrap_or(query)
-    )
+    let words = instead.unwrap_or(query);
+    if words.contains('"') {
+        format!("Search mail for {words}")
+    } else {
+        format!("Search mail for \u{201c}{words}\u{201d}")
+    }
 }
 
 /// The results' heading: "Conversations · 3 matches".
@@ -632,6 +637,14 @@ mod tests {
         let shown = search_title("harbourO", Some("harbour"));
         assert_eq!(shown, "Search mail for \u{201c}harbour\u{201d}");
         assert!(!shown.contains("harbourO"));
+    }
+
+    #[test]
+    fn a_quoted_phrase_is_not_quoted_twice() {
+        assert_eq!(
+            search_title("\"factura telefonica\"", None),
+            "Search mail for \"factura telefonica\""
+        );
     }
 
     #[test]

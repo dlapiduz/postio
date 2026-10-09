@@ -1,5 +1,6 @@
 import AppKit
 import PostioFFI
+import PostioAppKit
 import PostioKit
 
 /// The window-level `NSEvent` monitor that dispatches every keystroke.
@@ -14,6 +15,14 @@ import PostioKit
 ///
 /// It owns no keymap. Everything it does is: reduce the event, ask, and act on
 /// one of three answers.
+///
+/// **It moves nothing in the list either** (specs/009-focus-macos T050). `j`,
+/// `k`, `x`, `X`, `J`, `K`, `!` and Back on the list resolve to commands that
+/// `invoke` hands to Focus's controller, and the cursor, the selection and
+/// the heading move when its intents come back (`FocusIntents`). What stays
+/// the frontend's is the surfaces above the list: Escape closes the command
+/// bar's question, the key map or the search field first (`Engine.run`), and
+/// only then reaches `back`, which clears the selection.
 @MainActor
 final class KeyMonitor {
     /// Ask the boundary what a press means.

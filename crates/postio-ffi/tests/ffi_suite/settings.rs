@@ -112,19 +112,20 @@ fn appearance_is_unreadable_from_a_file_that_will_not_parse() {
 }
 
 #[test]
-fn the_nav_lists_the_macs_eight_sections_by_human_name_under_two_headings() {
-    // Filtering is not among them: Focus's rules act only while Focus runs,
-    // on the desktop or in the terminal (spec 007 US11, scenario 4), so the
-    // Mac has nothing for its switch to turn.
+fn the_nav_is_focus_s_filtering_in_and_appearance_out() {
+    // The Mac is Focus (specs/009-focus-macos T131): its settings window
+    // lists what Focus honours. Filtering is in -- Focus files mail away on
+    // the Mac as it does on Linux -- and Appearance is out, since Focus
+    // follows the system's scheme and honours none of `[ui]`.
     let sections = settings_sections();
     let labels: Vec<&str> = sections.iter().map(|s| s.label.as_str()).collect();
     assert_eq!(
         labels,
         [
             "Accounts",
+            "Filtering",
             "Saved searches",
             "Composing",
-            "Appearance",
             "Keyboard",
             "Sync & storage",
             "Privacy",
@@ -140,13 +141,80 @@ fn the_nav_lists_the_macs_eight_sections_by_human_name_under_two_headings() {
         .filter(|s| s.group == GroupFfi::Mail)
         .map(|s| s.label.as_str())
         .collect();
-    assert_eq!(mail, ["Accounts", "Saved searches", "Composing"]);
+    assert_eq!(
+        mail,
+        ["Accounts", "Filtering", "Saved searches", "Composing"]
+    );
     assert_eq!(settings_group_label(GroupFfi::Application), "APPLICATION");
+}
+
+const FILTERING: &str = "# mine\n[focus]\nfiltering = true\n\n[focus.filter]\n\
+    never = [\"ada@example.com\"]\n\
+    stop_markers = [{ sender = \"news@ledger.example\", kind = \"question\" }]\n\n\
+    [ui]\ndensity = \"compact\"\n";
+
+#[test]
+fn the_filtering_pane_says_what_gtk_s_says() {
+    let page = postio_ffi::settings_filtering(FILTERING.to_owned(), Some(186)).expect("it parses");
+    let config = postio_config::Config::from_toml_str(FILTERING).expect("it parses");
+    let shared = postio_ui::filtering::page(
+        &config.focus,
+        Some(186),
+        &postio_core::Keymap::resolve(&config.keys),
+    );
+    assert!(page.on);
+    assert_eq!(page.state, shared.state);
+    assert_eq!(page.today, shared.today);
+    assert_eq!(page.switch, postio_ui::filtering::SWITCH);
+    let never: Vec<&str> = page.never.iter().map(|entry| entry.says.as_str()).collect();
+    assert_eq!(
+        never,
+        shared
+            .never
+            .iter()
+            .map(|entry| entry.says.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(page.never[0].undo_label, postio_ui::filtering::NEVER_UNDO);
+    assert_eq!(page.stopped.len(), 1);
+    assert_eq!(
+        page.stopped[0].undo_label,
+        postio_ui::filtering::STOPPED_UNDO
+    );
+    assert!(postio_ffi::settings_filtering("[focus\n".to_owned(), None).is_none());
+}
+
+#[test]
+fn filtering_off_and_an_entry_taken_back_leave_the_rest_of_the_file_alone() {
+    let off = postio_ffi::settings_patch_filtering(FILTERING.to_owned(), false).expect("written");
+    assert!(off.starts_with("# mine\n"), "{off}");
+    assert!(off.contains("density = \"compact\""), "{off}");
+    assert!(
+        !postio_ffi::settings_filtering(off, None)
+            .expect("it parses")
+            .on
+    );
+
+    let page = postio_ffi::settings_filtering(FILTERING.to_owned(), None).expect("it parses");
+    let again =
+        postio_ffi::settings_take_back_filter(FILTERING.to_owned(), page.never[0].undo.clone())
+            .expect("written");
+    let after = postio_ffi::settings_filtering(again.clone(), None).expect("it parses");
+    assert!(after.never.is_empty(), "{again}");
+    assert_eq!(after.stopped.len(), 1, "only the entry taken back goes");
+    let back_on = postio_ffi::settings_take_back_filter(again, page.stopped[0].undo.clone())
+        .expect("written");
+    assert!(
+        postio_ffi::settings_filtering(back_on, None)
+            .expect("it parses")
+            .stopped
+            .is_empty()
+    );
 }
 
 #[test]
 fn a_pane_names_the_table_it_writes_and_the_two_that_own_none_say_so() {
-    // The footer under every structured pane reads `[ui] in config.toml`, so
+    // The footer under every structured pane reads `[sync] in config.toml`, so
     // the table is the pane's, not a string the frontend keeps beside it.
     let by_key = |key: &str| {
         settings_sections()
@@ -154,7 +222,7 @@ fn a_pane_names_the_table_it_writes_and_the_two_that_own_none_say_so() {
             .find(|s| s.key == key)
             .expect("the section exists")
     };
-    assert_eq!(by_key("ui").table.as_deref(), Some("[ui]"));
+    assert_eq!(by_key("focus").table.as_deref(), Some("[focus]"));
     assert_eq!(by_key("sync").table.as_deref(), Some("[sync]"));
     // Privacy is not a `config.toml` table at all (#871), and Config file is
     // every table there is rather than one.

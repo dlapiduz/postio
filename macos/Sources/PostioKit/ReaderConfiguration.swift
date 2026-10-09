@@ -23,6 +23,10 @@ public enum ReaderConfiguration {
     /// The scheme inline parts are addressed by.
     public static let cidScheme = "postio-cid"
 
+    /// The scheme the document names Postio's faces by
+    /// (`postio_ui::reader::document::FONT_SCHEME`, ADR 0023).
+    public static let fontScheme = "postio-font"
+
     /// A configuration with everything scripting-adjacent turned off.
     ///
     /// `@MainActor` because `WKWebViewConfiguration` is: a web view and its
@@ -68,4 +72,62 @@ public enum ReaderConfiguration {
         configuration.setURLSchemeHandler(baseHandler, forURLScheme: baseScheme)
         return configuration
     }
+
+    /// The message window's configuration (specs/009-focus-macos T069):
+    /// `hardened`, Postio's faces served over `postio-font:`, and
+    /// `blockingRules` installed -- a second wall behind the document's own
+    /// CSP, so a policy that is present and wrong still fetches nothing.
+    @MainActor
+    public static func focus(
+        cidHandler: WKURLSchemeHandler,
+        fontHandler: WKURLSchemeHandler,
+        baseHandler: WKURLSchemeHandler
+    ) async throws -> WKWebViewConfiguration {
+        let configuration = hardened(cidHandler: cidHandler, baseHandler: baseHandler)
+        configuration.setURLSchemeHandler(fontHandler, forURLScheme: fontScheme)
+        configuration.userContentController.add(try await blockingRules())
+        return configuration
+    }
+
+    /// The schemes a message's document may load from: Postio's three, the
+    /// `data:` images and faces a sanitised body keeps, and `about:`, which
+    /// is what a document loaded from a string with no base is.
+    public static let allowedSchemes = [cidScheme, fontScheme, baseScheme, "data", "about"]
+
+    /// Block every load, then let Postio's own schemes through.
+    ///
+    /// One rule per scheme: WebKit's rule regexes have no alternation, so
+    /// `^(a|b):` would not compile.
+    public static var blockingRuleSource: String {
+        let allow = allowedSchemes.map {
+            #"{"trigger":{"url-filter":"^\#($0):"},"action":{"type":"ignore-previous-rules"}}"#
+        }
+        let block = #"{"trigger":{"url-filter":".*"},"action":{"type":"block"}}"#
+        return "[" + ([block] + allow).joined(separator: ",") + "]"
+    }
+
+    /// The identifier the compiled list is stored under.
+    static let blockingRulesIdentifier = "postio.message.block-remote"
+
+    /// `blockingRuleSource`, compiled once per process. Compiled into a
+    /// store of its own in the temporary directory rather than WebKit's
+    /// default one: a filter is not data, and nothing about it needs to
+    /// outlive the process.
+    @MainActor
+    public static func blockingRules() async throws -> WKContentRuleList {
+        if let compiled = compiledRules { return compiled }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("postio-content-rules", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        guard let store = WKContentRuleListStore(url: directory) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        let list = try await store.compileContentRuleList(
+            forIdentifier: blockingRulesIdentifier, encodedContentRuleList: blockingRuleSource)
+        guard let list else { throw CocoaError(.coderInvalidValue) }
+        compiledRules = list
+        return list
+    }
+
+    @MainActor private static var compiledRules: WKContentRuleList?
 }

@@ -848,22 +848,31 @@ pub fn o_is_a_letter_and_the_order_row_switches_the_results() {
                 )
                 .await;
         }
+        // The older one's subject says the word and the newer one's only
+        // its body: a subject that says all of the query outranks a passing
+        // mention, while two that both say it are as good as each other and
+        // the newer leads -- so this pair is what disagrees with date order.
         let (dense, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Report", "Report.", 600)
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Quarterly report",
+                "Report.",
+                600,
+            )
             .await;
         fixture
-            .write_body(dense, "report report report report report")
+            .write_searchable_body(dense, "report report report report report")
             .await;
         let (glancing, _) = fixture
             .file(
                 ("Ada Moreno", "ada@example.com"),
-                "One report",
+                "Notes",
                 "One report among other things.",
                 300,
             )
             .await;
         fixture
-            .write_body(glancing, "One report among other things entirely")
+            .write_searchable_body(glancing, "One report among other things entirely")
             .await;
         fixture.index().await;
         let (window, _client) = fixture.open().await;
@@ -875,8 +884,8 @@ pub fn o_is_a_letter_and_the_order_row_switches_the_results() {
         );
         let bar = open_bar(&window);
         type_in(&bar, "report").await;
-        let relevance = vec!["Report".to_owned(), "One report".to_owned()];
-        let by_date = vec!["One report".to_owned(), "Report".to_owned()];
+        let relevance = vec!["Quarterly report".to_owned(), "Notes".to_owned()];
+        let by_date = vec!["Notes".to_owned(), "Quarterly report".to_owned()];
         assert!(
             crate::settle_until(async || bar.result_subjects().len() == 2).await,
             "no results: {:?}",
@@ -1013,10 +1022,11 @@ pub fn a_hit_steps_the_results_and_its_own_thread() {
         );
 
         // The hit's own thread: step to the three-message conversation and
-        // back through it with `[` and `]`.
+        // through it with `[` and `]`. Its row is whichever of its messages
+        // ranked first -- all three say "harbor", so the newest, a reply.
         let thread_hit = hits
             .iter()
-            .position(|subject| subject == "Harbor draft")
+            .position(|subject| subject.ends_with("Harbor draft"))
             .expect("the thread is among the hits");
         while reading.title() != hits[thread_hit] {
             chain(&window, "j");
@@ -1027,10 +1037,21 @@ pub fn a_hit_steps_the_results_and_its_own_thread() {
             "the hit's thread was never read: {}",
             reading.thread_known()
         );
-        chain(&window, "bracketright");
+        // Toward the middle message, from whichever end the hit opened at.
+        assert!(
+            crate::settle_until(async || reading.body_text().contains("Message ")).await,
+            "the hit's body never drew: {:?}",
+            reading.body_text()
+        );
+        let toward_middle = if reading.body_text().contains("Message 1") {
+            "bracketright"
+        } else {
+            "bracketleft"
+        };
+        chain(&window, toward_middle);
         assert!(
             crate::settle_until(async || reading.body_text().contains("Message 2")).await,
-            "] did not step the hit's thread: {:?}",
+            "{toward_middle} did not step the hit's thread: {:?}",
             reading.body_text()
         );
         assert!(

@@ -1,0 +1,46 @@
+# Open Filtered, narrow it to one reason, restore a message and stop
+# filtering its sender, take it back, and leave (specs/009-focus-macos US9,
+# screen 21; the controller's Filtered, T109).
+#
+# `g f` draws Filtered in the list's place: "‹ Inbox", the reason tabs 1
+# to 7 with their counts, the note that nothing here is deleted (C4), and
+# each row's reason. A number key narrows it to one reason. `R` restores
+# the focused row to the inbox and never filters its sender again; the
+# toast offers Undo. Back leaves for the inbox with the cursor on its
+# first row (C30).
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/009-focus-macos US9" }
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", overlay.kind = "none" }
+
+[[step]]
+command = "go_to_filtered"
+check   = { view = "filtered" }
+expect  = "Filtered fills the list's place: \"‹ Inbox\", the title and \"Archived automatically · newest first\", the tabs All, Spam, Promotions, Notifications, Receipts, Shipping and Social with their counts, All on, and on the right \"Nothing here is deleted automatically\". The first row is ringed and offers \"Restore, never filter this sender\" with R; every row carries its reason as a pill, under its day's heading."
+
+[[step]]
+command = "filtered_tab_4"
+check   = { view = "filtered" }
+expect  = "Only Notifications is listed now, its tab on, and the first of them is ringed."
+
+[[step]]
+command = "next_message"
+check   = { view = "filtered" }
+expect  = "The ring and the Restore button move to the second notification."
+
+[[step]]
+command = "restore_filtered"
+check   = { view = "filtered", notice.undo = true }
+expect  = "The row leaves Filtered and the next takes the ring. The toast says the message was restored and its sender will not be filtered again, and offers Undo with its key."
+
+[[step]]
+command = "undo"
+check   = { view = "filtered" }
+expect  = "The message is back in Filtered under Notifications, and the toast says it was undone."
+
+[[step]]
+command = "back"
+check   = { view = "list", keyboard.region = "list", cursor.index = 0 }
+expect  = "Filtered gives way to the inbox, with the cursor on its first row."

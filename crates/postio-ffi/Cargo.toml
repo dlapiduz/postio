@@ -22,12 +22,18 @@ path = "src/bin/uniffi-bindgen.rs"
 # rather than always-on: a store that lives only in RAM is not a mode a mail
 # client should be able to reach by accident.
 testing = ["dep:tempfile", "postio-storage/test-support"]
+# A session over one of Focus's demo stores (`postio-demo`), for the
+# screenshots and the comparison against the design (specs/009-focus-macos
+# T004, FR-061). Never in a shipped build: it brings the in-memory store.
+demo = ["testing", "dep:postio-demo"]
 
 [dependencies]
 async-channel = { workspace = true }
 postio-body.workspace = true
 postio-config.workspace = true
 postio-core.workspace = true
+postio-demo = { workspace = true, optional = true }
+postio-focus.workspace = true
 # `maildir` on: the sheet's local-store route asks whether a directory is
 # one before it writes the account down.
 postio-account = { workspace = true, features = ["maildir"] }
@@ -38,6 +44,7 @@ postio-client.workspace = true
 postio-host.workspace = true
 postio-runtime.workspace = true
 postio-ui.workspace = true
+postio-vault.workspace = true
 postio-model.workspace = true
 # The query language's "today", for a relative date operator like
 # `after:yesterday`. One clock, on this side, so both frontends resolve a
@@ -52,7 +59,7 @@ postio-smtp.workspace = true
 postio-storage.workspace = true
 tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
 tracing = { workspace = true }
 uniffi = { version = "0.32", features = ["cli"] }
 

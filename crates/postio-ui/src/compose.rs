@@ -645,12 +645,111 @@ pub fn remind_meaning(at: Option<chrono::DateTime<chrono::Utc>>) -> String {
     }
 }
 
+/// A reply's quote, folded under what is being written (screen 06): the
+/// words before it, the quote itself, and what the fold says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuoteFold {
+    /// Everything before the quote: what the person writes in. With
+    /// [`quote`](Self::quote) after it, the body as it was, byte for byte.
+    pub written: String,
+    /// The attribution line and the quoted lines under it.
+    pub quote: String,
+    /// What the fold says: "On 2026-09-26, Lena Park wrote · 18 quoted
+    /// lines".
+    pub summary: String,
+}
+
+/// `body` with the quote it ends in folded away, as `postio_model::reply`
+/// builds one: an attribution line ending "wrote:", then only quoted
+/// lines (`>`). `None` for a body that ends in no quote.
+pub fn fold_quote(body: &str) -> Option<QuoteFold> {
+    // Each line with the byte it starts at, last first.
+    let mut starts = Vec::new();
+    let mut at = 0;
+    for line in body.split('\n') {
+        starts.push((at, line));
+        at += line.len() + 1;
+    }
+    // Blank lines after the quote are the quote's: a body often ends in a
+    // newline.
+    let trailing = starts
+        .iter()
+        .rev()
+        .take_while(|(_, line)| line.trim().is_empty())
+        .count();
+    let quoted = starts
+        .iter()
+        .rev()
+        .skip(trailing)
+        .take_while(|(_, line)| line.starts_with('>'))
+        .count();
+    if quoted == 0 {
+        return None;
+    }
+    let (start, attribution) = *starts.iter().rev().nth(trailing + quoted)?;
+    let said = attribution.trim_end().strip_suffix(':')?;
+    if !said.ends_with("wrote") {
+        return None;
+    }
+    let lines = match quoted {
+        1 => "1 quoted line".to_owned(),
+        count => format!("{count} quoted lines"),
+    };
+    Some(QuoteFold {
+        written: body[..start].to_owned(),
+        quote: body[start..].to_owned(),
+        summary: format!("{said} \u{b7} {lines}"),
+    })
+}
+
 #[cfg(test)]
 mod frame_tests {
     use chrono::{Local, TimeZone, Utc};
     use postio_model::{AccountId, Draft, DraftKind};
 
     use super::*;
+
+    #[test]
+    fn a_replys_quote_folds_under_what_is_written() {
+        let body = "\n\nOn 2026-09-26, Lena Park wrote:\n> v3 is up.\n>\n> Comments welcome.";
+        let fold = fold_quote(body).expect("a reply's quote folds");
+        assert_eq!(fold.written, "\n\n");
+        assert_eq!(
+            fold.summary,
+            "On 2026-09-26, Lena Park wrote \u{b7} 3 quoted lines"
+        );
+        assert_eq!(
+            format!("{}{}", fold.written, fold.quote),
+            body,
+            "nothing lost"
+        );
+
+        // A quote that ends in a newline, as a message body often does.
+        let trailing = "\n\nOn 2026-09-26, Ada wrote:\n> Hi\n";
+        let fold = fold_quote(trailing).expect("a trailing newline is still the quote's");
+        assert_eq!(fold.written, "\n\n");
+        assert!(fold.summary.ends_with("1 quoted line"), "{}", fold.summary);
+        assert_eq!(format!("{}{}", fold.written, fold.quote), trailing);
+
+        let one = fold_quote("Thanks.\nOn 2026-09-26, Ada wrote:\n> Hi").expect("folds");
+        assert_eq!(one.written, "Thanks.\n");
+        assert!(one.summary.ends_with("1 quoted line"), "{}", one.summary);
+    }
+
+    #[test]
+    fn a_body_that_ends_in_no_quote_folds_nothing() {
+        assert_eq!(fold_quote(""), None);
+        assert_eq!(fold_quote("Hi Ada,\n\nSee you Monday."), None);
+        // Writing under the quote: the quote is no longer at the end.
+        assert_eq!(
+            fold_quote("On 2026-09-26, Ada wrote:\n> Hi\nAnd below it."),
+            None
+        );
+        // An attribution with nothing quoted under it.
+        assert_eq!(fold_quote("Hi\nOn 2026-09-26, Ada wrote:"), None);
+        // Quoted lines with no attribution above them are someone's own.
+        assert_eq!(fold_quote("> a quote\n> of my own"), None);
+    }
 
     #[test]
     fn the_subtitle_counts_the_words_that_will_be_sent_and_says_which_kind() {

@@ -287,16 +287,6 @@ pub fn detail(node: &Node) -> String {
     format!("{} · {}", node.mime, human_size(node.size))
 }
 
-/// Whether a part is one Postio can show inline rather than only save.
-///
-/// Images and PDFs, and nothing else. Everything else is bytes the
-/// application has no business interpreting, and "Open with…" hands those to
-/// the desktop rather than guessing.
-pub fn previewable(mime: &str) -> bool {
-    let mime = mime.trim().to_ascii_lowercase();
-    mime.starts_with("image/") || mime == "application/pdf"
-}
-
 /// What the detail pane says about a part nothing has fetched.
 pub const NOT_FETCHED: &str =
     "Described by the server, not downloaded. Nothing here has touched the network.";
@@ -528,21 +518,6 @@ pub fn save_all_failure(failed: usize) -> Option<String> {
         "{failed} part{} could not be saved",
         if failed == 1 { "" } else { "s" }
     ))
-}
-
-/// Which row a freshly opened parts panel puts its cursor on.
-///
-/// The first *part*, not the message: the row the user came to look at is one
-/// of the things inside, and starting on the container would cost a keystroke
-/// every single time. A message with no parts at all has only the root, and
-/// the cursor goes there because there is nowhere else.
-///
-/// The rule crosses; the cursor itself does not. Where the keyboard is inside
-/// a panel is the panel's own state, the same way the message list's cursor
-/// is — what has to be shared is what "the first part" and "the next one"
-/// mean, so the two frontends do not walk the same tree differently.
-pub fn first_part(count: usize) -> usize {
-    if count > 1 { 1 } else { 0 }
 }
 
 /// Where the cursor goes when the walk keys are pressed.
@@ -890,15 +865,6 @@ mod tests {
     // -- previewing and saving ---------------------------------------------
 
     #[test]
-    fn only_images_and_pdfs_are_shown_rather_than_handed_over() {
-        assert!(previewable("image/png"));
-        assert!(previewable("IMAGE/JPEG"));
-        assert!(previewable("application/pdf"));
-        assert!(!previewable("text/html"));
-        assert!(!previewable("application/octet-stream"));
-    }
-
-    #[test]
     fn a_save_name_comes_from_the_sender_when_it_is_usable() {
         let nodes = tree("multipart/mixed", &message());
         assert_eq!(save_name(&nodes[3]), "0001-index.patch");
@@ -1027,17 +993,6 @@ mod tests {
     }
 
     // -- walking -----------------------------------------------------------
-
-    #[test]
-    fn the_cursor_opens_on_the_first_part_rather_than_on_the_message() {
-        assert_eq!(first_part(5), 1, "four parts and the message");
-        assert_eq!(
-            first_part(1),
-            0,
-            "a message with no parts has only the root to stand on"
-        );
-        assert_eq!(first_part(0), 0, "nothing drawn yet");
-    }
 
     #[test]
     fn walking_holds_at_both_ends_rather_than_wrapping() {

@@ -26,6 +26,13 @@ pub const NOT_BEING_SENT: &str = "That message is not one being sent";
 /// has no other party yet, and answering it would be replying to oneself.
 pub const NO_REPLY_TO_OUTGOING: &str = "An outgoing message cannot be replied to";
 
+/// What `c` says while there is no account to write from (spec 007 T172):
+/// what is missing, beside the button that adds one ([`ADD_ACCOUNT`]).
+pub const NO_ACCOUNT_TO_WRITE_FROM: &str = "There's no account to write from yet.";
+
+/// The button beside [`NO_ACCOUNT_TO_WRITE_FROM`]: the add-account form.
+pub const ADD_ACCOUNT: &str = "Add account";
+
 /// Whether a reply to a message in `state` is refused: a draft being written
 /// or on its way, or stopped. A message that was sent is mail like any other
 /// -- replying to your own sent message answers its recipients.
@@ -44,6 +51,9 @@ pub const NO_CONFIG_TO_SAVE: &str = "There is no config.toml to save the search 
 
 /// Said when writing a saved search to the configuration failed.
 pub const SEARCH_NOT_WRITTEN: &str = "Focus could not write the search to config.toml";
+
+/// The stop-digesting question's button.
+pub const STOP_DIGESTING: &str = "Stop digesting";
 
 /// What stopping a sender's digesting does, under its title.
 pub const STOP_DIGESTING_BODY: &str = "Their mail comes to the inbox again, and what the digest holds from them now comes back with it.";
@@ -118,6 +128,32 @@ pub fn aim(
     reach: &HashMap<MessageId, Vec<ThreadId>>,
     cursor: Option<&FocusRow>,
 ) -> Aim {
+    let cursor = cursor.map(|row| AimRow {
+        id: row.id(),
+        threads: row.threads(),
+        digest: matches!(row, FocusRow::Digest(_)),
+    });
+    aim_by(selection, reach, cursor.as_ref())
+}
+
+/// The cursor's row as [`aim_by`] needs it: what a frontend that keeps its
+/// rows as something other than [`FocusRow`] can say about one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AimRow {
+    /// The row's message.
+    pub id: MessageId,
+    /// The conversations it stands for, every copy.
+    pub threads: Vec<ThreadId>,
+    /// Whether it is a digest's row.
+    pub digest: bool,
+}
+
+/// [`aim`], with the cursor's row given as an [`AimRow`].
+pub fn aim_by(
+    selection: &Selection,
+    reach: &HashMap<MessageId, Vec<ThreadId>>,
+    cursor: Option<&AimRow>,
+) -> Aim {
     match selection {
         Selection::Everything { except } => Aim::Everything {
             except: except.clone(),
@@ -143,9 +179,12 @@ pub fn aim(
         Selection::These(_) => Aim::Targets(match cursor {
             // A digest stands for its delivery, which its own verbs name; a
             // message verb has nothing to aim at there.
-            Some(FocusRow::Digest(_)) | None => Vec::new(),
-            Some(row) if !row.threads().is_empty() => vec![MessageTarget::Threads(row.threads())],
-            Some(row) => vec![MessageTarget::Messages(vec![row.id()])],
+            Some(row) if row.digest => Vec::new(),
+            None => Vec::new(),
+            Some(row) if !row.threads.is_empty() => {
+                vec![MessageTarget::Threads(row.threads.clone())]
+            }
+            Some(row) => vec![MessageTarget::Messages(vec![row.id])],
         }),
     }
 }

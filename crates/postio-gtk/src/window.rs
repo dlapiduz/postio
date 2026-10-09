@@ -40,12 +40,6 @@ type Editor = Rc<dyn Fn(&std::path::Path)>;
 /// What the page offering a fresh store says (T215): what happened, why
 /// trying again would not help, what a fresh store keeps and what it does
 /// not, and that the old one is set aside rather than deleted.
-const START_OVER: &str = "This version of Postio can\u{2019}t read the store an earlier \
-     build wrote, and no update carries it forward, so trying again won\u{2019}t help. \
-     A fresh store keeps your accounts and settings and syncs your mail again from the \
-     server. Snoozes, reminders, Focus\u{2019}s filing history, and drafts or changes \
-     not yet sent stay in the old store, which is set aside, not deleted.";
-
 /// The window's pages, by name.
 /// What a window with nothing saved opens at.
 const DEFAULT_GEOMETRY: postio_widgets::state::Geometry =
@@ -2293,9 +2287,9 @@ impl FocusWindow {
     /// Postio having the store open. "Try again" runs `retry`.
     pub fn show_unavailable(&self, reason: &str, retry: impl Fn() + 'static) {
         self.show_refusal(
-            "Postio can\u{2019}t open your mail",
+            postio_ui::focus_state::CANT_OPEN_MAIL,
             reason,
-            "Try again",
+            postio_ui::focus_state::TRY_AGAIN,
             Rc::new(retry),
         );
     }
@@ -2306,9 +2300,9 @@ impl FocusWindow {
     /// offer it. "Start a fresh store" runs `start_over`.
     pub fn show_start_over(&self, start_over: impl Fn() + 'static) {
         self.show_refusal(
-            "Your mail store is from another version of Postio",
-            START_OVER,
-            "Start a fresh store",
+            postio_ui::focus_state::STORE_FROM_ANOTHER_VERSION,
+            postio_ui::focus_state::START_OVER,
+            postio_ui::focus_state::START_A_FRESH_STORE,
             Rc::new(start_over),
         );
     }
@@ -2317,7 +2311,11 @@ impl FocusWindow {
     /// held until the store opens or says why not.
     pub fn show_starting_over(&self) {
         let imp = self.imp();
-        postio_widgets::widgets::keyhint::dress(&imp.retry, "Starting a fresh store\u{2026}", None);
+        postio_widgets::widgets::keyhint::dress(
+            &imp.retry,
+            postio_ui::focus_state::STARTING_A_FRESH_STORE,
+            None,
+        );
         imp.retry.set_sensitive(false);
     }
 

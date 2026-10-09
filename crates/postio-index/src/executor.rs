@@ -168,6 +168,105 @@ const RECENCY_HALF_LIFE_DAYS: f64 = 730.0;
 /// recent one, which is the intent, rather than being excluded outright.
 const POOL_AGE_WEIGHT_PER_YEAR: f64 = 0.25;
 
+/// How far below a better text match a candidate may score and still count
+/// as just as good a match: 10%.
+///
+/// The text score separates near-identical mail by noise. Three invoices
+/// from one template scored -18.2, -17.6 and -17.2 for "Hannah invoice" on
+/// a real store: a few percent, from a longer greeting or a name said
+/// twice, and it outweighed nine days of recency, so the oldest came first.
+/// Within this tolerance the matches are one band, and recency and the
+/// sender decide; a match clearly better than another still wins outright.
+const TEXT_TIE: f64 = 0.10;
+
+/// The tolerance among messages whose subject and sender say *every* word
+/// of the query: 50%.
+///
+/// They are each about what was asked -- one sender's newsletters found by
+/// its name, one studio's invoices -- and a person reads them as a dated
+/// series, newest first. Their scores still differ by more than
+/// [`TEXT_TIE`] when, say, one of the sender's addresses also spells a word
+/// of the query. Twice as good a match still leads.
+const SAID_TIE: f64 = 0.50;
+
+/// Each score in `bm25` (lower is better) replaced by the best of its band:
+/// the candidates within [`TEXT_TIE`] of a better one. A band is measured
+/// from its best, never from its last member, so a run of small steps
+/// cannot drift a weak match into a strong one's band.
+pub fn text_bands(bm25: &[f64]) -> Vec<f64> {
+    bands(bm25, TEXT_TIE)
+}
+
+/// [`text_bands`], with the tolerance named: each score replaced by the
+/// best of the run within `tie` of it.
+fn bands(bm25: &[f64], tie: f64) -> Vec<f64> {
+    let mut order: Vec<usize> = (0..bm25.len()).collect();
+    order.sort_by(|a, b| bm25[*a].total_cmp(&bm25[*b]));
+    let mut banded = bm25.to_vec();
+    let mut best: Option<f64> = None;
+    for index in order {
+        let score = bm25[index];
+        let lead = match best {
+            // Scores are negative, larger in magnitude when better: within
+            // the tolerance means at least (1 - TEXT_TIE) of the best's size.
+            Some(lead) if lead < 0.0 && score <= lead * (1.0 - tie) => lead,
+            _ => score,
+        };
+        best = Some(lead);
+        banded[index] = lead;
+    }
+    banded
+}
+
+/// How much of the query a message's subject and sender say, from 0 to 1:
+/// the share of `terms` whose every word begins a word of `said`.
+///
+/// What separates the message *about* something from one that mentions it
+/// in passing, when their scores tie: the free-text score credits subject
+/// and sender only when every term is there, so "zoom link voice lessons"
+/// gave "Re: Voice Lessons" no credit for its subject at all. A prefix,
+/// so "invoice" covers "invoices" and "hannah" covers "Hannah's".
+pub fn coverage(terms: &[String], said: &str) -> f64 {
+    if terms.is_empty() {
+        return 0.0;
+    }
+    let words: Vec<String> = said
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .collect();
+    let covered = terms
+        .iter()
+        .filter(|term| {
+            term.split_whitespace().all(|part| {
+                let part = part.to_lowercase();
+                words.iter().any(|word| word.starts_with(&part))
+            })
+        })
+        .count();
+    covered as f64 / terms.len() as f64
+}
+
+/// How well a sender is known, in four steps of [`rank_score`]'s affinity:
+/// coarse on purpose, so a sender's two addresses seen four and five times
+/// are one step, while a correspondent seen eighty times is not a stranger.
+fn known(times_seen: i64) -> u8 {
+    let affinity = (1.0 + times_seen.max(0) as f64).ln() / (1.0 + 100f64).ln();
+    (affinity.min(1.0) * 4.0).floor().min(3.0) as u8
+}
+
+/// How old a message is, to the ranking: its own `Date`, when that is
+/// earlier than the server's arrival date, else the arrival date.
+///
+/// `received_at` is when the message arrived *in its folder*. A move, an
+/// archive or a resync files it again and the server dates it again, so
+/// last month's invoice archived this morning was ranked as this morning's
+/// mail and beat this week's. The `Date` header is the sender's claim, and
+/// taken only when it is the earlier: a claim of a future date can never
+/// lift a message, and arrival still bounds anything with no header.
+const AGED_FROM: &str = "CASE WHEN m.date IS NOT NULL AND m.date < m.received_at \
+     THEN m.date ELSE m.received_at END";
+
 /// Milliseconds in a year, for the pool ordering's age term.
 const MILLIS_PER_YEAR: f64 = 31_557_600_000.0;
 /// Sender affinity's weight in [`rank_score`].
@@ -217,8 +316,46 @@ pub async fn search(
     request: &SearchRequest<'_>,
     now: DateTime<Utc>,
 ) -> Result<SearchResults> {
+    let exact = search_as(connection, request, now, &Default::default()).await?;
+    // The forgiving search the command bar asks for (ADR 0037, as amended):
+    // the words as typed first, and only when they do not fill the page,
+    // the words near them -- a plural, an unfinished word, a misspelling --
+    // after every exact match. A rule's query is never forgiving.
+    if !request.query.is_forgiving() || exact.hits.len() >= request.limit as usize {
+        return Ok(exact);
+    }
     let start = Instant::now();
-    let plan = Plan::build(request);
+    let words = near_words(connection, request).await?;
+    if words.is_empty() {
+        return Ok(exact);
+    }
+    let near = search_as(connection, request, now, &words).await?;
+    let mut merged = exact;
+    let have: std::collections::HashSet<MessageId> =
+        merged.hits.iter().map(|hit| hit.message_id).collect();
+    let room = (request.limit as usize).saturating_sub(merged.hits.len());
+    merged.hits.extend(
+        near.hits
+            .into_iter()
+            .filter(|hit| !have.contains(&hit.message_id))
+            .take(room),
+    );
+    merged.total_hits = merged.total_hits.max(near.total_hits);
+    merged.total_hits_capped |= near.total_hits_capped;
+    merged.elapsed += start.elapsed();
+    Ok(merged)
+}
+
+/// [`search`], once: exactly, or with each word `near` names read as any of
+/// the words near it ([`near_words`]).
+async fn search_as(
+    connection: &Connection,
+    request: &SearchRequest<'_>,
+    now: DateTime<Utc>,
+    near: &std::collections::HashMap<String, Vec<String>>,
+) -> Result<SearchResults> {
+    let start = Instant::now();
+    let plan = Plan::build_near(request, near);
 
     let total_hits = plan.count(connection).await?;
     let total_hits_capped = total_hits >= TOTAL_HITS_CAP;
@@ -260,15 +397,95 @@ pub async fn search(
 
     match request.order {
         postio_search::ResultOrder::Relevance => {
-            for candidate in &mut candidates {
-                candidate.score = rank_score(
-                    candidate.bm25,
-                    candidate.received_at,
-                    now,
-                    candidate.sender_times_seen,
+            let texts = text_bands(
+                &candidates
+                    .iter()
+                    .map(|candidate| candidate.bm25)
+                    .collect::<Vec<_>>(),
+            );
+            for (candidate, text) in candidates.iter_mut().zip(texts) {
+                candidate.score =
+                    rank_score(text, candidate.aged_from, now, candidate.sender_times_seen);
+            }
+            // Scores within [`TEXT_TIE`] of each other are one band: as good
+            // an answer as each other, so within it the message whose subject
+            // and sender say more of the query leads, then the newer one.
+            // Recency and affinity are too weak to order recent mail on their
+            // own -- a week is 0.02, and a sender seen four times rather than
+            // five is 0.04 -- so a sender's own newsletters came back in no
+            // order a person could see.
+            let terms: Vec<String> = request
+                .query
+                .searchable_terms()
+                .filter(|term| !term.negated)
+                .map(|term| term.value.clone())
+                .collect();
+            let said: Vec<f64> = candidates
+                .iter()
+                .map(|candidate| {
+                    let said = [
+                        candidate.subject.as_deref(),
+                        candidate.from_name.as_deref(),
+                        candidate.from_address.as_deref(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                    coverage(&terms, &said)
+                })
+                .collect();
+            // Those that say all of it are banded among themselves, more
+            // loosely ([`SAID_TIE`]); the rest by [`TEXT_TIE`].
+            let mut banded = vec![0.0; candidates.len()];
+            for all in [true, false] {
+                let members: Vec<usize> = (0..candidates.len())
+                    .filter(|index| (said[*index] >= 1.0) == all)
+                    .collect();
+                let scores: Vec<f64> = members
+                    .iter()
+                    .map(|index| candidates[*index].score)
+                    .collect();
+                let tie = if all { SAID_TIE } else { TEXT_TIE };
+                for (index, band) in members.into_iter().zip(bands(&scores, tie)) {
+                    banded[index] = band;
+                }
+            }
+            let mut keyed: Vec<(f64, f64, Candidate)> = banded
+                .into_iter()
+                .zip(said)
+                .zip(candidates)
+                .map(|((band, said), candidate)| (band, said, candidate))
+                .collect();
+            // In a band: what the subject and sender say, then how well the
+            // sender is known in coarse steps (a correspondent of eighty
+            // letters still leads a stranger, but four sightings against
+            // five is noise), then the newer.
+            keyed.sort_by(|(a_band, a_said, a), (b_band, b_said, b)| {
+                a_band
+                    .total_cmp(b_band)
+                    .then(b_said.total_cmp(a_said))
+                    .then(known(b.sender_times_seen).cmp(&known(a.sender_times_seen)))
+                    .then(b.aged_from.cmp(&a.aged_from))
+                    .then(a.score.total_cmp(&b.score))
+            });
+            candidates = keyed
+                .into_iter()
+                .map(|(_, _, candidate)| candidate)
+                .collect();
+            // Why the order is what it is, in numbers and ids only: the
+            // text match, the age, how often the sender was seen, and what
+            // they came to.
+            for candidate in candidates.iter().take(request.limit as usize) {
+                tracing::trace!(
+                    id = candidate.message_id.get(),
+                    text = candidate.bm25,
+                    age_days = (now - candidate.aged_from).num_hours() as f64 / 24.0,
+                    sender_seen = candidate.sender_times_seen,
+                    score = candidate.score,
+                    "ranked"
                 );
             }
-            candidates.sort_by(|a, b| a.score.total_cmp(&b.score));
         }
         // Asked for date order, given date order: the fetch already came
         // back `received_at DESC`, and running the ranker over it — even
@@ -338,8 +555,9 @@ pub async fn search(
 /// This replaced a vocabulary rebuilt from the newest 5,000 senders and
 /// subjects: a sample, so a list whose mail was older than that was never
 /// offered, and a word only a body held never was either. The widened query
-/// is only ever run here, on a search that found nothing — the query itself
-/// stays exact, which is ADR 0037's whole point.
+/// runs here, on a search that found nothing, and in [`near_words`], for the
+/// command bar's forgiving search -- never for a rule's query, which stays
+/// exact, ADR 0037's whole point.
 ///
 /// Documents are counted within what was read, which is at most
 /// [`SUGGESTION_DOCUMENTS`] of each half: enough to rank candidates against
@@ -348,9 +566,7 @@ async fn suggestion_for(
     connection: &Connection,
     query: &postio_search::ParsedQuery,
 ) -> Result<Option<postio_search::suggest::Suggestion>> {
-    use std::collections::{HashMap, HashSet};
-
-    let mut terms = query.text_terms();
+    let mut terms = query.searchable_terms();
     let Some(term) = terms.next() else {
         return Ok(None);
     };
@@ -358,18 +574,71 @@ async fn suggestion_for(
     if terms.next().is_some() || term.negated || term.quoted || query.filters().next().is_some() {
         return Ok(None);
     }
-    let Some(metadata_query) = postio_search::suggest::widened(&term.value) else {
-        return Ok(None);
+    let counts = words_near(connection, &term.value, &[]).await?;
+    Ok(postio_search::suggest::suggest(
+        &term.value,
+        counts
+            .iter()
+            .map(|(text, documents)| postio_search::suggest::Term {
+                text,
+                documents: *documents,
+            }),
+    ))
+}
+
+/// The words the index holds that are near `typed`, each with how many of
+/// the documents read hold it -- the vocabulary [`suggestion_for`] ranks an
+/// offer from and [`near_words`] a forgiving search's words. Empty when
+/// `typed` cannot be widened at all.
+///
+/// The index expands `typed~N` or `typed*` against its own dictionary (see
+/// [`suggestion_for`]), and since it answers with rows rather than with the
+/// terms it expanded to, the words are recovered from the text of at most
+/// [`SUGGESTION_DOCUMENTS`] documents of each half.
+async fn words_near(
+    connection: &Connection,
+    typed: &str,
+    beside: &[&str],
+) -> Result<std::collections::HashMap<String, u64>> {
+    use std::collections::{HashMap, HashSet};
+
+    let Some(widened) = postio_search::suggest::widened(typed) else {
+        return Ok(HashMap::new());
     };
+    // The words typed beside it, bare, so the index reads the whole thing as
+    // one query of bare words -- the only kind it expands `~N` in -- and the
+    // documents read are the ones that best match all of it. Without them,
+    // "trop" read fifty of the thousand messages saying "trip" and never
+    // reached the one girl scout troop.
+    let beside: Vec<String> = beside
+        .iter()
+        .map(|word| word.to_lowercase())
+        .filter(|word| !word.is_empty() && word.chars().all(char::is_alphanumeric))
+        .collect();
+    let metadata_query = std::iter::once(widened.clone())
+        .chain(beside.iter().cloned())
+        .collect::<Vec<_>>()
+        .join(" ");
     // The body column is folded on the way in, so its query is folded the
     // same way — the rule every body query here keeps (ADR 0038).
-    let body_query = postio_search::suggest::widened(&postio_model::fold::fold(&term.value));
+    let body_query =
+        postio_search::suggest::widened(&postio_model::fold::fold(typed)).map(|widened| {
+            std::iter::once(widened)
+                .chain(beside.iter().map(|word| postio_model::fold::fold(word)))
+                .collect::<Vec<_>>()
+                .join(" ")
+        });
 
+    // Best first, so a common neighbour cannot crowd the meant word out of
+    // what is read. `fts_score` is projected bare and with the match's own
+    // parameter, or it answers 0.0 (see `HITS_JOIN`).
     let mut texts: Vec<Vec<Option<String>>> = sql::all(
         connection,
-        "SELECT sender, recipients, subject, filenames, list_id
+        "SELECT sender, recipients, subject, filenames, list_id,
+                fts_score(sender, recipients, subject, filenames, list_id, ?1) AS score
            FROM search_documents
           WHERE fts_match(sender, recipients, subject, filenames, list_id, ?1)
+          ORDER BY score DESC
           LIMIT ?2",
         (metadata_query, SUGGESTION_DOCUMENTS),
         |row| {
@@ -387,8 +656,10 @@ async fn suggestion_for(
         texts.extend(
             sql::all(
                 connection,
-                "SELECT body_search FROM message_search_bodies
+                "SELECT body_search, fts_score(body_search, ?1) AS score
+                   FROM message_search_bodies
                   WHERE fts_match(body_search, ?1)
+                  ORDER BY score DESC
                   LIMIT ?2",
                 (body_query, SUGGESTION_DOCUMENTS),
                 |row| Ok(vec![row.opt_text(0)?]),
@@ -416,16 +687,81 @@ async fn suggestion_for(
         }
     }
 
-    Ok(postio_search::suggest::suggest(
-        &term.value,
-        counts
-            .iter()
-            .map(|(text, documents)| postio_search::suggest::Term {
-                text,
-                documents: *documents,
-            }),
-    ))
+    Ok(counts)
 }
+
+/// The words each unquoted, positive word of a forgiving search is read as
+/// ([`postio_search::suggest::near`]), keyed by the word as typed. A word
+/// with nothing near it beyond itself is left out, and so is one that
+/// cannot be widened: it is searched for as typed.
+async fn near_words(
+    connection: &Connection,
+    request: &SearchRequest<'_>,
+) -> Result<std::collections::HashMap<String, Vec<String>>> {
+    let mut near = std::collections::HashMap::new();
+    let words: Vec<&str> = request
+        .query
+        .searchable_terms()
+        .filter(|term| !term.negated)
+        .map(|term| term.value.as_str())
+        .collect();
+    for term in request.query.searchable_terms() {
+        if term.negated || term.quoted || near.contains_key(&term.value) {
+            continue;
+        }
+        let beside: Vec<&str> = words
+            .iter()
+            .copied()
+            .filter(|word| *word != term.value)
+            .collect();
+        let mut counts = words_near(connection, &term.value, &beside).await?;
+        // Whether the word is one the mailbox holds decides whether it is
+        // corrected (`suggest::near`), so it is asked, not left to whether
+        // the documents read happened to say it.
+        let typed = term.value.to_lowercase();
+        if !counts.contains_key(&typed) && holds(connection, &typed).await? {
+            counts.insert(typed, 1);
+        }
+        let words = postio_search::suggest::near(
+            &term.value,
+            counts
+                .iter()
+                .map(|(text, documents)| postio_search::suggest::Term {
+                    text,
+                    documents: *documents,
+                }),
+            NEAR_WORDS,
+        );
+        if words.iter().any(|word| *word != term.value.to_lowercase()) {
+            near.insert(term.value.clone(), words);
+        }
+    }
+    Ok(near)
+}
+
+/// Whether any message holds `word` exactly, in either index.
+async fn holds(connection: &Connection, word: &str) -> Result<bool> {
+    let literal = fts_literal(word);
+    Ok(sql::exists(
+        connection,
+        "SELECT 1 FROM search_documents
+          WHERE fts_match(sender, recipients, subject, filenames, list_id, ?1)",
+        (literal.clone(),),
+    )
+    .await?
+        || sql::exists(
+            connection,
+            "SELECT 1 FROM message_search_bodies WHERE fts_match(body_search, ?1)",
+            (postio_model::fold::fold(&literal),),
+        )
+        .await?)
+}
+
+/// How many words one typed word is read as in a forgiving search.
+///
+/// Enough for a plural, a completion and a misspelling or two; each is one
+/// more term in the index's disjunction, so not the whole neighbourhood.
+const NEAR_WORDS: usize = 8;
 
 /// Whether every message in the searched scope has a body to search.
 ///
@@ -775,6 +1111,8 @@ struct Candidate {
     from_name: Option<String>,
     from_address: Option<String>,
     received_at: DateTime<Utc>,
+    /// What the ranking ages it from: see [`AGED_FROM`].
+    aged_from: DateTime<Utc>,
     preview: Option<String>,
     snippet: String,
     bm25: f64,
@@ -816,6 +1154,10 @@ struct Plan {
     /// Whether a positive free-text `MATCH` is part of `conditions`, in which
     /// case `messages_fts` must be joined so `bm25()`/`snippet()` can read it.
     has_match: bool,
+    /// Whether the words were widened to the words near them: then the
+    /// probed shape is never taken, since it would run the disjunction once
+    /// per message walked rather than once.
+    widened: bool,
     /// The free-text `MATCH` expression itself, when `has_match` is set.
     ///
     /// Kept separately rather than found by position in `params`: a filter
@@ -835,6 +1177,16 @@ struct Plan {
 
 impl Plan {
     fn build(request: &SearchRequest<'_>) -> Self {
+        Self::build_near(request, &Default::default())
+    }
+
+    /// The plan with each word `near` names read as any of its words: the
+    /// forgiving search's second pass. Every word is still a quoted literal,
+    /// so the index reads the disjunction exactly as written.
+    fn build_near(
+        request: &SearchRequest<'_>,
+        near: &std::collections::HashMap<String, Vec<String>>,
+    ) -> Self {
         // `AccountScope::Unified` names no account, so the predicate is
         // absent rather than widened -- which is why migration 0012 exists:
         // without `idx_messages_recency` the recency path has no index that
@@ -896,21 +1248,51 @@ impl Plan {
             params.push(turso::Value::Text(postio_model::fold::fold(&literal)));
         }
 
-        let positive = request
+        // Each positive word, as the words it may be read as: itself, or in
+        // a forgiving search's second pass the words near it.
+        let positive: Vec<Vec<&str>> = request
             .query
-            .text_terms()
+            .searchable_terms()
             .filter(|term| !term.negated)
-            .map(|term| fts_literal(&term.value))
-            .collect::<Vec<_>>();
+            .map(
+                |term| match near.get(&term.value).filter(|_| !term.quoted) {
+                    Some(words) => words.iter().map(String::as_str).collect(),
+                    None => vec![term.value.as_str()],
+                },
+            )
+            .collect();
+        // `("ticket" OR "tickets") AND "southwest"`: a disjunction of
+        // literals rather than the index's own `ticket~1`, which it expands
+        // only in a query of bare words and reads as plain text beside a
+        // quoted one or an AND. The body half folds each word, never the
+        // whole expression: folded, `OR` is the word "or", which nearly
+        // every message says.
+        let expression = |folded: bool| {
+            positive
+                .iter()
+                .map(|words| {
+                    let literals: Vec<String> = words
+                        .iter()
+                        .map(|word| {
+                            let literal = fts_literal(word);
+                            if folded {
+                                postio_model::fold::fold(&literal)
+                            } else {
+                                literal
+                            }
+                        })
+                        .collect();
+                    match literals.as_slice() {
+                        [one] => one.clone(),
+                        many => format!("({})", many.join(" OR ")),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" AND ")
+        };
         if !positive.is_empty() {
-            let expr = positive.join(" AND ");
-            body_match_param = Some(turso::Value::Text(
-                positive
-                    .iter()
-                    .map(|literal| postio_model::fold::fold(literal))
-                    .collect::<Vec<_>>()
-                    .join(" AND "),
-            ));
+            let expr = expression(false);
+            body_match_param = Some(turso::Value::Text(expression(true)));
             // The match itself has moved into the join (see `Plan::join_sql`),
             // because free text now has to reach two indexes and a row that
             // matched in either one is a hit. `MATCH` cannot be written as an
@@ -950,6 +1332,7 @@ impl Plan {
             params,
             account,
             has_match,
+            widened: !near.is_empty(),
             match_param,
             body_match_param,
         }
@@ -1100,7 +1483,7 @@ impl Plan {
     /// index, with `messages_fts` tested one row at a time as a cheap
     /// point lookup rather than scanned.
     fn fetch_form(&self, rank_by_relevance: bool, total_hits: u64) -> Form {
-        if rank_by_relevance || total_hits <= PROBED_FORM_LIMIT {
+        if rank_by_relevance || self.widened || total_hits <= PROBED_FORM_LIMIT {
             Form::Driven
         } else {
             Form::Probed
@@ -1288,7 +1671,7 @@ impl Plan {
         let order_by = if rank_by_relevance {
             &format!(
                 "-coalesce(hits.meta, 0.0) - coalesce(hits.body, 0.0) \
-                 + {POOL_AGE_WEIGHT_PER_YEAR} * (? - m.received_at) / {MILLIS_PER_YEAR}"
+                 + {POOL_AGE_WEIGHT_PER_YEAR} * (? - {AGED_FROM}) / {MILLIS_PER_YEAR}"
             )
         } else {
             "m.received_at DESC"
@@ -1421,9 +1804,10 @@ impl Plan {
                  (SELECT max(c.times_seen) FROM contacts c
                     WHERE c.address_normalized = a.address_normalized
                       {affinity}) AS sender_times_seen,
-                 sub.preview
+                 sub.preview, sub.aged_from
              FROM (SELECT
                      m.id, m.thread_id, m.mailbox_id, m.subject, m.received_at, m.preview,
+                     {AGED_FROM} AS aged_from,
                      (SELECT r.id FROM recipients r
                         WHERE r.message_id = m.id AND r.kind = 'from'
                         ORDER BY r.position LIMIT 1) AS from_recipient
@@ -1479,6 +1863,7 @@ impl Plan {
                         from_address: row.col(6)?,
                         sender_times_seen: row.col::<Option<i64>>(7)?.unwrap_or(0),
                         preview: row.col(8)?,
+                        aged_from: postio_storage::repository::from_millis(row.col(9)?),
                         // Filled in below, from the pool.
                         bm25: 0.0,
                         // Filled by whoever can read the body — see
@@ -1796,9 +2181,64 @@ mod tests {
             params: Vec::new(),
             account: AccountScope::Unified,
             has_match: true,
+            widened: false,
             match_param: Some(turso::Value::Text("invoice".to_owned())),
             body_match_param: Some(turso::Value::Text("invoice".to_owned())),
         }
+    }
+
+    #[test]
+    fn coverage_is_the_share_of_terms_the_subject_and_sender_say() {
+        let terms = |words: &[&str]| words.iter().map(|w| (*w).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            coverage(
+                &terms(&["voice", "lessons", "zoom", "link"]),
+                "Re: Voice Lessons Ada ada@example.com"
+            ),
+            0.5
+        );
+        assert_eq!(
+            coverage(
+                &terms(&["hannah", "invoice"]),
+                "Lapiduz 9/26 Invoices Hannah's Music Studio"
+            ),
+            1.0
+        );
+        assert_eq!(coverage(&terms(&["bingo"]), "Re: Voice Lessons"), 0.0);
+        assert_eq!(coverage(&[], "anything"), 0.0);
+    }
+
+    #[test]
+    fn near_equal_text_matches_are_one_band_led_by_the_best() {
+        // Three invoices from one template: the text differs by a few
+        // percent, which is noise to a reader, so they are one band and
+        // carry the best one's score.
+        assert_eq!(
+            text_bands(&[-18.19, -17.61, -17.19, -6.9, -6.5, -2.0]),
+            vec![-18.19, -18.19, -18.19, -6.9, -6.9, -2.0]
+        );
+    }
+
+    #[test]
+    fn a_band_is_measured_from_its_best_so_it_cannot_drift() {
+        // Each a little worse than the one before, but the fourth is more
+        // than the tolerance below the first: a new band, not a chain.
+        let bands = text_bands(&[-10.0, -9.5, -9.1, -8.6]);
+        assert_eq!(bands, vec![-10.0, -10.0, -10.0, -8.6]);
+    }
+
+    #[test]
+    fn in_one_band_the_newer_message_ranks_first() {
+        let now = Utc::now();
+        let at = |days: i64| now - chrono::TimeDelta::days(days);
+        let bands = text_bands(&[-18.19, -17.61, -17.19]);
+        let older = rank_score(bands[0], at(21), now, 5);
+        let newer = rank_score(bands[1], at(12), now, 5);
+        let newest = rank_score(bands[2], at(6), now, 5);
+        assert!(
+            newest < newer && newer < older,
+            "lower is better: {newest} {newer} {older}"
+        );
     }
 
     #[test]

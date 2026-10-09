@@ -41,6 +41,16 @@ import Testing
         #expect(KeyboardContext.resolving(keyWindow: .main, mainWindow: .search) == .search)
     }
 
+    @Test func theMessageWindowResolvesAsTheReader() {
+        // The controller's own context wins while the message window is
+        // reported open (`key_context`); this is what is asked before it
+        // is, and what a menu greys against. Never the list: `a` in the
+        // message window archives the message shown, by the reader's verb.
+        for pane in [UiContext.list, .search] {
+            #expect(KeyboardContext.resolving(keyWindow: .message, mainWindow: pane) == .reader)
+        }
+    }
+
     @Test func theSettingsWindowIsNotTheListEither() {
         // Settings has its own context in the registry (`Context::Accounts`
         // is the pane inside it that has keys). What matters here is the

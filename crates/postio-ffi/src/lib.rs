@@ -37,13 +37,25 @@
 
 mod account;
 mod compose;
+mod contacts;
 mod conversation;
 mod cost;
+mod demo;
 mod dwell;
 mod event;
 mod finder;
 mod focus;
+mod focus_bar;
+mod focus_compose;
+mod focus_keymap;
+mod focus_list;
+mod focus_message;
+mod focus_pickers;
+mod focus_reader;
+mod focus_states;
+mod focus_surfaces;
 mod keys;
+mod links;
 mod list;
 mod logging;
 mod mailbox;
@@ -51,21 +63,21 @@ mod notify;
 mod palette;
 mod parts;
 mod provisioning;
-mod rail;
 mod reader;
 pub mod registry;
 mod saved_search;
 mod search;
 mod session;
 mod settings;
-mod sidebar;
 mod unsubscribe;
 
 pub use account::{AccountFfi, ConnectionReportFfi, RepairRouteFfi};
 pub use compose::{
-    AttachmentFfi, ComposeError, DraftFfi, DraftKindFfi, InlineImageFfi, PastedFfi, outgoing_shape,
-    recipient_summary,
+    AttachmentFfi, ComposeError, DraftFfi, DraftKindFfi, InlineImageFfi, PastedFfi, QuoteFoldFfi,
+    composer_title, draft_saved_words, draft_summary, fold_quote, outgoing_shape,
+    recipient_summary, remind_meaning, remind_presets,
 };
+pub use contacts::{ExternalContactFfi, RecipientSuggestionFfi};
 pub use conversation::{
     ConversationFfi, ThreadAnchorFfi, ThreadDocumentFfi, ThreadVerbFfi, ThreadVerbKindFfi,
     message_when, thread_expand_all_script, thread_observer_script, thread_scroll_script,
@@ -76,10 +88,38 @@ pub use cost::{
     reader_renders_issued, reader_surfaces_created, reader_surfaces_held,
 };
 pub use dwell::{DwellArmFfi, dwell_on_cursor};
-pub use event::{ConnectionStateFfi, FailureReasonFfi, NoticeKindFfi, UiEvent};
+pub use event::{ConnectionStateFfi, FailureReasonFfi, NoticeKindFfi, ToastKindFfi, UiEvent};
 pub use finder::{FinderAnswerFfi, FinderHitFfi};
-pub use focus::next_pane;
+pub use focus::{FocusCountsFfi, FocusStripFfi};
+pub use focus_bar::{
+    BarLineFfi, BarLineKindFfi, BarModeFfi, BarSelectFfi, BarViewFfi, PlaceEntryFfi, PlaceMarkFfi,
+};
+pub use focus_compose::ComposerKindFfi;
+pub use focus_keymap::{KeyMapGroupFfi, KeyMapRowFfi, KeyMapSheetFfi};
+pub use focus_list::{
+    FocusRowActionFfi, FocusRowFfi, FocusRowKindFfi, FocusScopeFfi, LabelPillFfi, MarkerLineFfi,
+    ReaderVerbFfi, SurfaceKindFfi,
+};
+pub use focus_message::{
+    FocusAttachmentFfi, FocusFieldFfi, FocusMessageViewFfi, FocusPersonFfi, FocusThreadChipFfi,
+    FocusVerbFfi,
+};
+pub use focus_pickers::{
+    PickerAnchorFfi, PickerFieldFfi, PickerKindFfi, PickerRowFfi, PickerViewFfi,
+};
+pub use focus_reader::{FocusReaderDocumentFfi, RenderModeWordsFfi, TreatmentFfi};
+pub use focus_states::{
+    BannerButtonFfi, BannerFfi, BannerProgressFfi, EmptyPageFfi, EmptyShortcutFfi, SyncMarkFfi,
+};
+pub use focus_surfaces::{
+    CaptureModeFfi, CapturePickFfi, CaptureProjectFfi, CaptureViewFfi, CapturedFfi, ConfirmFfi,
+    DigestCardFfi, DigestEmailFfi, DigestLineFfi, DigestPageFfi, DigestStatementFfi,
+    DigestSummaryFfi, DigestTopicFfi, DigestViewFfi, FilteredLineFfi, FilteredTabFfi,
+    FilteredViewFfi, FocusDigestGeometryFfi, FocusHintFfi, RulePreviewLineFfi, RuleScheduleFfi,
+    RuleViewFfi, SummaryStatementFfi, VaultPictureFfi, VaultProjectFfi, focus_digest_geometry,
+};
 pub use keys::{KeyOutcomeFfi, ModifiersFfi};
+pub use links::{link_gone, link_unknown, message_link, parse_message_link};
 pub use list::{RowFfi, ScopeFfi};
 pub use logging::start_logging;
 pub use mailbox::{MailboxFfi, MailboxRoleFfi, mailbox_role_name};
@@ -88,43 +128,33 @@ pub use notify::{
     decide_notification,
 };
 pub use palette::{CheatRowFfi, CheatSectionFfi, PaletteEntryFfi};
-pub use parts::{
-    MessagePartsFfi, PartFfi, PartsError, SavedPartsFfi, part_cursor_after, part_held_back_note,
-    part_note,
-};
+pub use parts::PartsError;
 pub use provisioning::{
     DiscoveredFfi, NewAccountFfi, ProviderHintFfi, RouteFfi, ScopesFfi, SecurityFfi, ServerFfi,
     SignInProgressFfi, SyncWindowChoiceFfi, SyncWindowFfi, looks_like_an_address, provider_hint,
     sign_in_scopes, sync_window_choices, write_initial_sync_window,
 };
-pub use rail::{RailEffectFfi, RailFfi, RailPresentationFfi, RailRowFfi, rail_presentation};
 pub use reader::{
     ConversationActionFfi, GrantFfi, InlinePart, MessageFactsFfi, ReaderActionFfi,
     ReaderDocumentFfi, ReaderNoticeFfi, RecipientsFfi, RemoteImagesFfi, middle_truncate,
     reader_page_after, reader_page_fragment, reader_scroll_markers,
 };
 pub use registry::{CommandSpecFfi, MenuFfi, MenuSectionFfi, UiContext, UiRecovery, menus};
-pub use saved_search::{
-    PromptFfi, ReorderFfi, SavedSearchEditFfi, SavedSearchFfi, delete_saved_search,
-    move_saved_search, rename_saved_search, save_search, saved_search_delete_prompt,
-    saved_search_rename_prompt, saved_searches,
-};
-pub use search::{
-    ChipFfi, EmptyPlateFfi, MatchRangeFfi, OutcomeFfi, RefinementFfi, ScopeCountFfi,
-    SearchFacetsFfi, SearchScopeFfi, SnippetFfi, query_chips,
-};
-pub use session::{HANDLED_HERE, Session, SessionError, SessionOptions};
+pub use saved_search::{SavedSearchEditFfi, SavedSearchFfi, save_search, saved_searches};
+pub use search::{ChipFfi, MatchRangeFfi, SnippetFfi, query_chips};
+pub use session::{Session, SessionError, SessionOptions, StartedOverFfi, start_over_with};
 pub use settings::{
     AppearanceFfi, AttachmentFetchFfi, BodyFetchFfi, CheckForMailFfi, ComposingFfi, DensityFfi,
-    FilterFfi, FoundEditorFfi, GroupFfi, HandoffTargetFfi, KeyHintFfi, RowActionFfi, RowMetricsFfi,
-    SettingsError, SettingsSectionFfi, SettingsStatusFfi, SignaturePlacementFfi, SyncingFfi,
-    ThemeFfi, row_actions, row_metrics, row_timestamp, settings_add_filter, settings_appearance,
-    settings_composing, settings_filters, settings_group_label, settings_handoff_label,
+    FilterFfi, FilteringEntryFfi, FilteringPageFfi, FilteringUndoFfi, FoundEditorFfi, GroupFfi,
+    HandoffTargetFfi, KeyHintFfi, RowActionFfi, RowMetricsFfi, SettingsError, SettingsSectionFfi,
+    SettingsStatusFfi, SignaturePlacementFfi, SyncingFfi, ThemeFfi, row_actions, row_metrics,
+    row_timestamp, settings_add_filter, settings_appearance, settings_composing,
+    settings_filtering, settings_filters, settings_group_label, settings_handoff_label,
     settings_handoff_target, settings_humanize_interval, settings_load, settings_patch_appearance,
-    settings_patch_composing, settings_patch_filter, settings_patch_syncing, settings_path,
-    settings_remove_filter, settings_save, settings_sections, settings_status, settings_syncing,
+    settings_patch_composing, settings_patch_filter, settings_patch_filtering,
+    settings_patch_syncing, settings_path, settings_remove_filter, settings_save,
+    settings_sections, settings_status, settings_syncing, settings_take_back_filter,
 };
-pub use sidebar::{ActivityFfi, sidebar_status};
 pub use unsubscribe::{UnsubscribeActivationFfi, UnsubscribeOfferFfi};
 
 /// Every command the registry knows, in cheat-sheet order.
@@ -156,7 +186,66 @@ pub fn intercepted_commands() -> Vec<String> {
         .collect()
 }
 
+/// Which of Postio's interfaces the Mac app is, to the registry: Focus
+/// (specs/009-focus-macos FR-001, ADR 0043). What it is offered -- keys,
+/// palette rows, menu items, settings sections -- is Focus's, less what
+/// `postio_core::registry::offered_on` keeps off the Mac.
+pub const FRONTEND: postio_core::Frontend = postio_core::Frontend::Focus;
+
 uniffi::setup_scaffolding!();
+
+/// Set aside the store at `store_path` (or the usual path) and start a fresh
+/// one there, carrying its accounts across: what "Start over" does when
+/// [`Session::open_at`] answers [`SessionError::StoreFromAnotherBuild`]
+/// (specs/009-focus-macos T098). The store key is the keyring's. Blocks, as
+/// opening a session does: call it off the main actor, then open again.
+#[uniffi::export]
+pub fn start_over(store_path: Option<String>) -> Result<StartedOverFfi, SessionError> {
+    start_over_with(match store_path {
+        Some(path) => SessionOptions::at(path),
+        None => SessionOptions::at_default_path(),
+    })
+}
+
+/// The words of the page a store that will not open shows
+/// (specs/009-focus-macos T100), `postio_ui::focus_state`'s, as GTK's
+/// window says them.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct StoreRefusalWordsFfi {
+    /// The heading when trying again can help.
+    pub cant_open: String,
+    /// Its button.
+    pub try_again: String,
+    /// The heading for [`SessionError::StoreFromAnotherBuild`].
+    pub from_another_build: String,
+    /// What that page says: why, what a fresh store keeps, what stays.
+    pub start_over_sentence: String,
+    /// Its button, which runs [`start_over`].
+    pub start_over: String,
+    /// The button while [`start_over`] runs.
+    pub starting_over: String,
+}
+
+/// The refusal page's words. No session: there is none while it shows.
+#[uniffi::export]
+pub fn store_refusal_words() -> StoreRefusalWordsFfi {
+    use postio_ui::focus_state as words;
+    StoreRefusalWordsFfi {
+        cant_open: words::CANT_OPEN_MAIL.to_owned(),
+        try_again: words::TRY_AGAIN.to_owned(),
+        from_another_build: words::STORE_FROM_ANOTHER_VERSION.to_owned(),
+        start_over_sentence: words::START_OVER.to_owned(),
+        start_over: words::START_A_FRESH_STORE.to_owned(),
+        starting_over: words::STARTING_A_FRESH_STORE.to_owned(),
+    }
+}
+
+/// What is said once [`start_over`] has set the old store aside at
+/// `set_aside` and the fresh one has opened.
+#[uniffi::export]
+pub fn started_over_words(set_aside: String) -> String {
+    postio_ui::focus_state::started_over(&set_aside)
+}
 
 /// Answers with the name of this application.
 ///

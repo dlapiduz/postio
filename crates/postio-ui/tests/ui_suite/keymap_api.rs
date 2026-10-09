@@ -181,11 +181,12 @@ fn an_exclamation_mark_parses_by_either_name_and_resolves() {
 }
 
 /// A key the one keymap keeps for another app is bound to nothing here
-/// (specs/007-postio-focus research R4). `y` accepts an invitation in
-/// Focus, and in the terminal, which is Focus drawn in character cells
-/// (C29); in macOS it has to do nothing at all -- not reach a command the app
+/// (specs/007-postio-focus research R4). `alt+e` edits a draft in the
+/// terminal's editor, and only the terminal's composer has one: in Focus,
+/// desktop or Mac, it has to do nothing at all -- not reach a command the app
 /// never offers, which the dispatcher would refuse as "not wired up" -- and a
-/// command every app has still answers its key in each.
+/// command every app has still answers its key in each. `y` is Focus's, and
+/// the terminal is Focus drawn in character cells (C29).
 #[test]
 fn a_key_another_app_keeps_is_bound_to_nothing_here() {
     use postio_core::{Context, Frontend, Keymap as Commands};
@@ -193,42 +194,34 @@ fn a_key_another_app_keeps_is_bound_to_nothing_here() {
 
     let now = std::time::Instant::now();
     let press = |frontend: Frontend, context: Context, key: &str| {
-        // Each app resolved for its own platform: the Mac's three-pane app on
-        // Apple, Focus and the terminal on Linux, whichever host runs this.
-        let platform = match frontend {
-            Frontend::Macos => Platform::Apple,
-            _ => Platform::Freedesktop,
-        };
-        let commands = Commands::resolve_on(&Default::default(), platform);
+        // Resolved for Linux, whichever host runs this: the keys pressed
+        // below are Linux's spellings.
+        let commands = Commands::resolve_on(&Default::default(), Platform::Freedesktop);
         let (mut resolver, problems) = Resolver::from_commands_for(&commands, frontend);
         assert!(problems.is_empty(), "{frontend:?}: {problems:?}");
         resolver.press(&chord(key), KeyContext::from(context), false, now)
     };
 
     assert_eq!(
-        press(Frontend::Macos, Context::List, "y"),
+        press(Frontend::Focus, Context::Composer, "alt+e"),
         Outcome::Unhandled,
-        "macOS answered Focus's `y`"
+        "Focus answered the terminal composer's `alt+e`"
     );
-    for app in [Frontend::Terminal, Frontend::Macos] {
+    assert_eq!(
+        press(Frontend::Terminal, Context::Composer, "alt+e"),
+        Outcome::Command("edit_externally".to_owned()),
+        "the terminal lost its editor key"
+    );
+    for app in [Frontend::Terminal, Frontend::Focus] {
         assert_eq!(
             press(app, Context::List, "a"),
             Outcome::Command("archive".to_owned()),
             "{app:?} lost a key every app has"
         );
+        assert_eq!(
+            press(app, Context::List, "y"),
+            Outcome::Command("accept_invite".to_owned()),
+            "{app:?} lost Focus's `y`"
+        );
     }
-    assert_eq!(
-        press(Frontend::Focus, Context::List, "y"),
-        Outcome::Command("accept_invite".to_owned())
-    );
-    // And the other way: Focus has no sidebar to toggle.
-    assert_eq!(
-        press(Frontend::Focus, Context::List, "ctrl+b"),
-        Outcome::Unhandled,
-        "Focus answered the three-pane app's `ctrl+b`"
-    );
-    assert_eq!(
-        press(Frontend::Macos, Context::List, "cmd+b"),
-        Outcome::Command("toggle_sidebar".to_owned())
-    );
 }

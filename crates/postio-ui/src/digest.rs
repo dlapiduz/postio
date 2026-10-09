@@ -544,9 +544,36 @@ pub const RULE_ROW_BUTTONS: [(postio_core::CommandId, &str); 2] = [
     (postio_core::CommandId::Delete, "Remove"),
 ];
 
+/// The plain list's tab: "14 messages".
+pub fn list_tab(count: usize) -> String {
+    if count == 1 {
+        "1 message".to_owned()
+    } else {
+        format!("{count} messages")
+    }
+}
+
+/// The rule dialog's first row's label, beside the senders or the query.
+pub const FROM: &str = "From";
+
+/// The rule dialog's schedule row's label.
+pub const DELIVER: &str = "Deliver";
+
+/// The link under the senders that swaps them for a typed query (US14).
+pub const MATCH_INSTEAD: &str = "Match a list or a search instead\u{2026}";
+
+/// The button that asks the person's model for a rule (US14, FR-171).
+pub const LIKE_THIS: &str = "Digest mail like this";
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_list_tab_counts_the_messages() {
+        assert_eq!(list_tab(1), "1 message");
+        assert_eq!(list_tab(14), "14 messages");
+    }
 
     #[test]
     fn a_topic_heading_carries_its_count_and_its_sources() {

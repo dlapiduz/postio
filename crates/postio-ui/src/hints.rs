@@ -256,8 +256,8 @@ mod tests {
     fn a_pair_is_one_clause() {
         let walk = pair(
             Keymap::defaults(),
-            CommandId::NextPart,
-            CommandId::PrevPart,
+            CommandId::NextMessage,
+            CommandId::PrevMessage,
             "walk",
         );
         assert_eq!(walk.map(|h| h.key).as_deref(), Some("j/k"));

@@ -136,3 +136,47 @@ public final class ClosedSchemeHandler: NSObject, WKURLSchemeHandler {
 
     public func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
 }
+
+/// Answers `postio-font:` with one of Postio's vendored faces, and nothing
+/// else (ADR 0023).
+///
+/// The document names Barlow and IBM Plex Mono by URL because a web view's
+/// content process cannot see the faces the application has: without this
+/// a body in app colours is drawn in the content process's own sans,
+/// silently, against C25. The bytes are the engine's (`reader_font`), which
+/// answers only for a name in its compiled-in table -- so a font URL can
+/// only ever resolve to one of those files, never to a path.
+public final class FontSchemeHandler: NSObject, WKURLSchemeHandler {
+    private let resolve: (String) -> Data?
+
+    /// Over `resolve`, which answers a face's bytes by its name.
+    public init(resolve: @escaping (String) -> Data?) {
+        self.resolve = resolve
+    }
+
+    /// The face a `postio-font:` URL names: everything after the scheme,
+    /// without the slashes a parser may insert.
+    public static func name(from url: URL) -> String? {
+        let text = url.absoluteString
+        let prefix = "\(ReaderConfiguration.fontScheme):"
+        guard text.hasPrefix(prefix) else { return nil }
+        var rest = Substring(text.dropFirst(prefix.count))
+        while rest.hasPrefix("/") { rest.removeFirst() }
+        return rest.isEmpty ? nil : String(rest)
+    }
+
+    public func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
+        guard let url = task.request.url, let name = Self.name(from: url),
+              let bytes = resolve(name)
+        else {
+            task.didFailWithError(NSError(domain: NSURLErrorDomain, code: NSURLErrorFileDoesNotExist))
+            return
+        }
+        task.didReceive(
+            URLResponse(url: url, mimeType: "font/ttf", expectedContentLength: bytes.count, textEncodingName: nil))
+        task.didReceive(bytes)
+        task.didFinish()
+    }
+
+    public func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
+}

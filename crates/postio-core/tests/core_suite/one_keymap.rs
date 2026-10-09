@@ -24,8 +24,14 @@ use postio_core::config::Keymap;
 use postio_core::{Availability, CommandId, Context, Frontend, Scope, registry};
 use postio_model::AccountId;
 
-/// Every app that reads the registry.
-const APPS: [Frontend; 3] = [Frontend::Terminal, Frontend::Focus, Frontend::Macos];
+/// Every app that reads the registry, with the platform whose `mod` it
+/// means: the terminal and Postio on Linux, and Postio on the Mac, which
+/// registers as Focus on `Platform::Apple` (specs/009-focus-macos R5).
+const APPS: [(Frontend, Platform); 3] = [
+    (Frontend::Terminal, Platform::Freedesktop),
+    (Frontend::Focus, Platform::Freedesktop),
+    (Frontend::Focus, Platform::Apple),
+];
 
 /// Who offers a row, in the contract's words.
 #[derive(Debug, Clone, Copy)]
@@ -34,9 +40,6 @@ enum Offered {
     All,
     /// Every app that draws a message as pixels: all but the terminal.
     Graphical,
-    /// The three-pane app -- macOS -- and not Focus, whichever toolkit
-    /// draws it.
-    ThreePane,
     /// `Requirement::Focus`: Focus, in either toolkit (the terminal is Focus, C29).
     Focus,
 }
@@ -46,7 +49,6 @@ impl Offered {
         match self {
             Offered::All => true,
             Offered::Graphical => app != Frontend::Terminal,
-            Offered::ThreePane => app == Frontend::Macos,
             Offered::Focus => matches!(app, Frontend::Terminal | Frontend::Focus),
         }
     }
@@ -93,7 +95,7 @@ const fn with(
     }
 }
 
-use Offered::{All, Focus, Graphical, ThreePane};
+use Offered::{All, Focus, Graphical};
 
 /// contracts/keymap.md, table by table.
 const CONTRACT: &[Row] = &[
@@ -291,17 +293,7 @@ const CONTRACT: &[Row] = &[
         Focus,
         &[Context::Digest],
     ),
-    // -- Classic-only surfaces: "delete" has one key ---------------------
-    // Only the apps with a folder list offer the first (T166): Focus has
-    // none. The account list's verbs are Focus's too, from Settings'
-    // Accounts section (T258).
-    with(
-        "delete_saved_search",
-        "Delete",
-        &[],
-        ThreePane,
-        &[Context::Sidebar],
-    ),
+    // -- The account list's verbs, from Settings' Accounts section (T258) --
     with("remove_account", "Delete", &[], All, &[Context::Accounts]),
     // `R` is Filtered's now; refresh keeps F5.
     row("refresh", "F5", All),
@@ -313,14 +305,6 @@ fn open_in(app: Frontend) -> Availability {
     Availability {
         frontend: app,
         ..Availability::open(Scope::Account(AccountId::new(1)))
-    }
-}
-
-/// The platform whose modifier `app`'s `mod` means.
-fn platform_of(app: Frontend) -> Platform {
-    match app {
-        Frontend::Macos => Platform::Apple,
-        Frontend::Terminal | Frontend::Focus => Platform::Freedesktop,
     }
 }
 
@@ -345,7 +329,7 @@ fn the_registry_holds_the_contracts_keys() {
                 row.id, spec.alternate_bindings, row.alternates
             ));
         }
-        for app in APPS {
+        for (app, _) in APPS {
             let offered = spec.requires.met_by(open_in(app));
             if offered != row.offered.by(app) {
                 problems.push(format!(
@@ -373,35 +357,35 @@ fn the_registry_holds_the_contracts_keys() {
     );
 }
 
-/// "All" is every app that has the surface (the contract's legend), and
-/// Focus has no folder sidebar, no panes to cycle and no parts panel: one
-/// list, with mail opened in dialogs. The commands that work on those are
-/// the other three apps', and their keys stay free in Focus. Flag is not
-/// among them: Focus offers it on `*` with no mark on the row (spec C13).
-#[test]
-fn focus_offers_nothing_that_works_on_a_surface_it_does_not_have() {
-    for command in [
-        CommandId::ToggleSidebar,
-        CommandId::CyclePane,
-        CommandId::CyclePaneBack,
-        CommandId::OpenParts,
-    ] {
-        let spec = registry::get(command);
-        for app in APPS {
-            assert_eq!(
-                spec.requires.met_by(open_in(app)),
-                app == Frontend::Macos,
-                "`{command}` for {app:?}"
-            );
-        }
-    }
-}
-
 #[test]
 fn a_renamed_command_keeps_no_old_name() {
     // No backwards compatibility: a `[keys]` entry naming the old id is
     // reported as unknown, the same as any other (contracts/config.md).
-    for retired in ["mark_unread", "focus_sidebar"] {
+    // The three-pane app's own commands went with it (specs/009-focus-macos
+    // R5): Focus has no sidebar, no panes to cycle and no parts panel.
+    for retired in [
+        "mark_unread",
+        "focus_sidebar",
+        "toggle_sidebar",
+        "toggle_rail",
+        "cycle_pane",
+        "cycle_pane_back",
+        "next_folder",
+        "prev_folder",
+        "toggle_folder",
+        "rename_saved_search",
+        "move_saved_search_up",
+        "move_saved_search_down",
+        "delete_saved_search",
+        "open_parts",
+        "next_part",
+        "prev_part",
+        "open_part",
+        "save_part",
+        "save_all_parts",
+        "open_part_externally",
+        "render_part_once",
+    ] {
         assert!(
             retired.parse::<CommandId>().is_err(),
             "`{retired}` still names a command"
@@ -411,19 +395,19 @@ fn a_renamed_command_keeps_no_old_name() {
 
 #[test]
 fn every_command_an_app_offers_has_a_key() {
-    for app in APPS {
-        let keymap = Keymap::resolve_on(&KeyBindings::default(), platform_of(app));
+    for (app, platform) in APPS {
+        let keymap = Keymap::resolve_on(&KeyBindings::default(), platform);
         for spec in registry::all() {
             // Not offered, and so unbound, where the platform has no
             // surface for it (`registry::offered_on`).
             if !spec.requires.met_by(open_in(app))
-                || !registry::offered_on(spec.id.into(), platform_of(app))
+                || !registry::offered_on(spec.id.into(), platform)
             {
                 continue;
             }
             assert!(
                 keymap.binding(spec.id).is_some_and(|key| !key.is_empty()),
-                "{app:?} offers `{}` with no key",
+                "{app:?} on {platform:?} offers `{}` with no key",
                 spec.id
             );
         }
@@ -433,8 +417,8 @@ fn every_command_an_app_offers_has_a_key() {
 #[test]
 fn no_key_means_two_commands_in_one_context_in_any_app() {
     let mut problems = Vec::new();
-    for app in APPS {
-        let keymap = Keymap::resolve_on(&KeyBindings::default(), platform_of(app));
+    for (app, platform) in APPS {
+        let keymap = Keymap::resolve_on(&KeyBindings::default(), platform);
         for context in Context::ALL {
             let mut seen: BTreeMap<&str, CommandId> = BTreeMap::new();
             for action in registry::reachable_in(*context, open_in(app)) {
@@ -446,7 +430,7 @@ fn no_key_means_two_commands_in_one_context_in_any_app() {
                         && other != id
                     {
                         problems.push(format!(
-                            "{app:?}, {context}: `{binding}` is both `{other}` and `{id}`"
+                            "{app:?} on {platform:?}, {context}: `{binding}` is both `{other}` and `{id}`"
                         ));
                     }
                 }
@@ -462,37 +446,58 @@ fn a_command_has_the_same_key_in_every_app_that_offers_it() {
     // Command on macOS, `Delete` is the Mac's BackSpace, and nothing else may
     // differ.
     for spec in registry::all() {
-        let mut keys: Vec<(Frontend, Vec<String>)> = Vec::new();
-        for app in APPS {
+        let mut keys: Vec<((Frontend, Platform), Vec<String>)> = Vec::new();
+        for (app, platform) in APPS {
             if !spec.requires.met_by(open_in(app))
-                || !registry::offered_on(spec.id.into(), platform_of(app))
+                || !registry::offered_on(spec.id.into(), platform)
             {
                 continue;
             }
-            let keymap = Keymap::resolve_on(&KeyBindings::default(), platform_of(app));
+            let keymap = Keymap::resolve_on(&KeyBindings::default(), platform);
+            // Less an alternate the platform keeps for itself: ⌘W closes
+            // the window in front on the Mac (`alternate_offered_on`).
             let expected: Vec<String> = spec
                 .bindings()
-                .map(|binding| expand_mod(binding, platform_of(app)))
+                .enumerate()
+                .filter(|(at, binding)| {
+                    *at == 0 || registry::alternate_offered_on(spec.id.into(), binding, platform)
+                })
+                .map(|(_, binding)| expand_mod(binding, platform))
                 .collect();
             assert_eq!(
                 keymap.bindings(spec.id),
                 expected.as_slice(),
-                "{app:?} does not give `{}` the registry's key",
+                "{app:?} on {platform:?} does not give `{}` the registry's key",
                 spec.id
             );
             // Back to one spelling: Command is Control, and the Mac's lone
             // BackSpace is the `Delete` it was written as (specs/009-focus-macos
             // M6). No registry default is a lone BackSpace, so that is
             // unambiguous; `mod+BackSpace` keeps its modifier and its key.
+            // Compared as the registry writes them, less an alternate some
+            // platform keeps for itself.
+            let reserved: Vec<String> = spec
+                .alternate_bindings
+                .iter()
+                .filter(|alternate| {
+                    [Platform::Freedesktop, Platform::Apple]
+                        .iter()
+                        .any(|platform| {
+                            !registry::alternate_offered_on(spec.id.into(), alternate, *platform)
+                        })
+                })
+                .map(|alternate| alternate.replace("mod+", "ctrl+"))
+                .collect();
             let as_written: Vec<String> = keymap
                 .bindings(spec.id)
                 .iter()
                 .map(|binding| match binding.as_str() {
-                    "BackSpace" if platform_of(app) == Platform::Apple => "Delete".to_owned(),
+                    "BackSpace" if platform == Platform::Apple => "Delete".to_owned(),
                     other => other.replace("cmd+", "ctrl+"),
                 })
+                .filter(|binding| !reserved.contains(binding))
                 .collect();
-            keys.push((app, as_written));
+            keys.push(((app, platform), as_written));
         }
         if let Some((first, key)) = keys.first() {
             for (app, other) in &keys[1..] {

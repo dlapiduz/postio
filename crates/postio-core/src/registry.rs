@@ -121,24 +121,17 @@ pub enum Requirement {
     /// (specs/007-postio-focus research R4). The one keymap reserves their
     /// keys in every app; only Focus offers them.
     Focus,
-    /// The frontend has to be the three-pane app -- macOS -- because the
-    /// command works on what it has and Postio Focus, in either toolkit, does
-    /// not: a folder sidebar, panes to move between and the parts panel.
-    /// Focus shows one list and opens mail in dialogs (specs/007-postio-focus).
-    /// The one keymap keeps these keys free in Focus.
-    ThreePane,
 }
 
 impl Requirement {
     /// Every requirement, in declaration order. What [`RequirementSet`] is
     /// built over.
-    pub const ALL: [Requirement; 6] = [
+    pub const ALL: [Requirement; 5] = [
         Requirement::SingleAccount,
         Requirement::StoreOpen,
         Requirement::Terminal,
         Requirement::Graphical,
         Requirement::Focus,
-        Requirement::ThreePane,
     ];
 
     const fn bit(self) -> u8 {
@@ -151,10 +144,7 @@ impl Requirement {
     pub const fn is_about_the_app(self) -> bool {
         matches!(
             self,
-            Requirement::Terminal
-                | Requirement::Graphical
-                | Requirement::Focus
-                | Requirement::ThreePane
+            Requirement::Terminal | Requirement::Graphical | Requirement::Focus
         )
     }
 }
@@ -242,10 +232,9 @@ impl RequirementSet {
 pub enum Frontend {
     /// The terminal app (spec 005).
     Terminal,
-    /// Postio, the desktop app: Focus (spec 007).
+    /// Postio, the desktop app: Focus (spec 007). The Mac registers as this
+    /// too (specs/009-focus-macos R5).
     Focus,
-    /// The macOS app.
-    Macos,
 }
 
 /// The state [`Requirement`]s are evaluated against.
@@ -292,7 +281,6 @@ impl Requirement {
             Requirement::Terminal => state.frontend == Frontend::Terminal,
             Requirement::Graphical => state.frontend != Frontend::Terminal,
             Requirement::Focus => matches!(state.frontend, Frontend::Focus | Frontend::Terminal),
-            Requirement::ThreePane => state.frontend == Frontend::Macos,
         }
     }
 }
@@ -369,12 +357,6 @@ const FOCUS_GRAPHICAL_MAIL: RequirementSet = needs(&[
     Requirement::Focus,
     Requirement::Graphical,
 ]);
-/// Mail on a surface only the three-pane apps have: flags, the folder
-/// list, the account list, the parts panel and the conversation rail.
-/// Focus has none of them, in either toolkit (T166).
-const THREE_PANE_MAIL: RequirementSet = needs(&[Requirement::StoreOpen, Requirement::ThreePane]);
-/// Chrome only the three-pane apps have: the sidebar and the panes.
-const THREE_PANE_CHROME: RequirementSet = needs(&[Requirement::ThreePane]);
 
 /// Chrome: it means the same thing with an empty window as with a full one.
 const CHROME: RequirementSet = RequirementSet::NONE;
@@ -404,18 +386,6 @@ const REPLY_SURFACES: &[Context] = &[
     Context::Reader,
     Context::Composer,
 ];
-/// The three panes bare Tab cycles between, and only those.
-///
-/// Deliberately not `LIST_SURFACES`: `Search` is in that one, and the search
-/// field owns Tab for its refine chips. A cycle that resolved there would
-/// take Tab away from a pane that is using it (#494).
-const PANE_SURFACES: &[Context] = &[
-    Context::Sidebar,
-    Context::List,
-    Context::Conversation,
-    Context::Reader,
-];
-
 /// The surfaces that scroll through a list of messages.
 /// Where extending a *row* selection means something.
 ///
@@ -820,30 +790,6 @@ static SPECS: &[CommandSpec] = &[
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
-    },
-    CommandSpec {
-        id: CommandId::ToggleRail,
-        title: "Hide or show the conversation rail",
-        // **Not the `\u{21e7}R` screen 28 draws.** `R` is `Refresh`'s alternate on
-        // every message surface, `MESSAGE_SURFACES` includes the conversation,
-        // and taking the retry key away inside a thread to gain a rail toggle
-        // is a bad trade -- so the drawing loses this one string and the
-        // registry keeps its key (#1375, maintainer's call).
-        //
-        // `I` for index, which is what the rail is: a column saying where you
-        // are in the thread. Shifted like `O` beside it, because it acts on
-        // the whole conversation rather than on the focused message, and free
-        // everywhere else in the table.
-        default_binding: "I",
-        alternate_bindings: &[],
-        // Only where there is a rail. On the list it would be a key that does
-        // nothing, and the choice it toggles is the window's rather than the
-        // conversation's (FR-047) only in the sense that it outlives any one
-        // thread -- there is still no rail to speak about outside one.
-        contexts: ctx(&[Context::Conversation]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: THREE_PANE_MAIL,
     },
     CommandSpec {
         id: CommandId::Reply,
@@ -1311,7 +1257,7 @@ static SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId::DetachComposer,
-        // A toggle, like `toggle_sidebar`, and named for the direction the
+        // A toggle, and named for the direction the
         // user has to ask for: in-place is the default and detaching is the
         // opt-in, so "Detach composer" is what someone looking for it in the
         // palette will type. Offered only while composing, which is also the
@@ -1588,24 +1534,6 @@ static SPECS: &[CommandSpec] = &[
         requires: MAIL,
     },
     CommandSpec {
-        id: CommandId::ToggleSidebar,
-        title: "Toggle sidebar",
-        default_binding: "mod+b",
-        alternate_bindings: &[],
-        // The sidebar too: a toggle that cannot be pressed from inside the
-        // thing it closes leaves the terminal's narrow layout, where it is
-        // brought forward with the keyboard in it, with no way back but Tab.
-        contexts: ctx(&[
-            Context::List,
-            Context::Conversation,
-            Context::Reader,
-            Context::Sidebar,
-        ]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: THREE_PANE_CHROME,
-    },
-    CommandSpec {
         id: CommandId::GoToFolders,
         title: "Go to folders",
         // `g` is already the "go to" prefix — `g g` is the first message — so
@@ -1841,129 +1769,6 @@ static SPECS: &[CommandSpec] = &[
         requires: FOCUS_MAIL,
     },
     CommandSpec {
-        id: CommandId::CyclePane,
-        title: "Next pane",
-        // The top-level meaning of bare Tab, which had none: it was not a
-        // command at all, so what it did was whatever GTK's native focus
-        // chain produced -- "sometimes it changes panes, sometimes it
-        // changes items within a pane" (#494).
-        //
-        // Rebindable like everything else here. The panes that own Tab for
-        // their own purpose keep first claim on it: they are not in
-        // `PANE_SURFACES`, so this never resolves there.
-        default_binding: "tab",
-        alternate_bindings: &[],
-        contexts: ctx(PANE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: THREE_PANE_CHROME,
-    },
-    CommandSpec {
-        id: CommandId::CyclePaneBack,
-        title: "Previous pane",
-        default_binding: "shift+tab",
-        alternate_bindings: &[],
-        contexts: ctx(PANE_SURFACES),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: THREE_PANE_CHROME,
-    },
-    CommandSpec {
-        id: CommandId::NextFolder,
-        title: "Next folder",
-        // The same keys the message list moves by, in a context where they
-        // mean a different thing. One idiom for "move down", two verbs —
-        // rather than reusing `next_message` for something that is not a
-        // message, which is how a registry stops meaning anything.
-        default_binding: "j",
-        alternate_bindings: &["Down"],
-        contexts: ctx(&[Context::Sidebar]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: THREE_PANE_MAIL,
-    },
-    CommandSpec {
-        id: CommandId::PrevFolder,
-        title: "Previous folder",
-        default_binding: "k",
-        alternate_bindings: &["Up"],
-        contexts: ctx(&[Context::Sidebar]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: THREE_PANE_MAIL,
-    },
-    CommandSpec {
-        id: CommandId::ToggleFolder,
-        title: "Expand or collapse folder",
-        // Distinct from `Return`/`l`/`Right`, which the message surfaces use
-        // to open something — the folder list already opens on selection
-        // (`postio-cfd.2`), so this is a second verb the same key would
-        // otherwise be asked to mean two things at once.
-        default_binding: "space",
-        alternate_bindings: &[],
-        contexts: ctx(&[Context::Sidebar]),
-        destructive: false,
-        // Which folders are open is view state, not durable data — nothing
-        // here for undo to reach.
-        recovery: Recovery::None,
-        requires: THREE_PANE_MAIL,
-    },
-    CommandSpec {
-        id: CommandId::RenameSavedSearch,
-        title: "Rename saved search",
-        // Free in `Context::Sidebar`: none of the message surfaces' bindings
-        // reach here, since `Sidebar` is not one of `MESSAGE_SURFACES`.
-        default_binding: "r",
-        alternate_bindings: &[],
-        // Only meaningful with a saved search focused, not a folder — the
-        // guard is defensive the same way `ToggleThreadUnread`'s is, since
-        // the registry already keeps this to the one context both kinds of
-        // row share (#455).
-        contexts: ctx(&[Context::Sidebar]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: THREE_PANE_MAIL,
-    },
-    CommandSpec {
-        id: CommandId::MoveSavedSearchUp,
-        title: "Move saved search up",
-        // The same physical key `PrevFolder`'s alternate binding sits on,
-        // with Shift held to move the row instead of the cursor — the usual
-        // "hold Shift to reorder" idiom rather than a second unrelated key.
-        default_binding: "shift+Up",
-        alternate_bindings: &[],
-        contexts: ctx(&[Context::Sidebar]),
-        destructive: false,
-        // A reorder destroys nothing; moving it back is the same action
-        // once more, same as the mouse menu's version of this verb.
-        recovery: Recovery::None,
-        requires: THREE_PANE_MAIL,
-    },
-    CommandSpec {
-        id: CommandId::MoveSavedSearchDown,
-        title: "Move saved search down",
-        default_binding: "shift+Down",
-        alternate_bindings: &[],
-        contexts: ctx(&[Context::Sidebar]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: THREE_PANE_MAIL,
-    },
-    CommandSpec {
-        id: CommandId::DeleteSavedSearch,
-        title: "Delete saved search",
-        // `Delete`, the key the message verb has: "delete" has one key.
-        default_binding: "Delete",
-        alternate_bindings: &[],
-        contexts: ctx(&[Context::Sidebar]),
-        // Deleting a saved search is a config-file edit with no undo stack
-        // to reach, so like `DiscardDraft` this asks first rather than
-        // offering undo.
-        destructive: true,
-        recovery: Recovery::Confirm,
-        requires: THREE_PANE_MAIL,
-    },
-    CommandSpec {
         id: CommandId::ToggleAccountEnabled,
         title: "Enable or disable account",
         default_binding: "Return",
@@ -1983,8 +1788,8 @@ static SPECS: &[CommandSpec] = &[
         alternate_bindings: &[],
         contexts: ctx(&[Context::Accounts]),
         destructive: true,
-        // Unlike DeleteSavedSearch, which is a config edit with no undo stack
-        // to reach: #464 built removal as a soft delete with a toast wired to
+        // Unlike a config-file edit, which has no undo stack to reach: #464
+        // built removal as a soft delete with a toast wired to
         // AccountRepository::restore, and reaped at the next start. So there
         // is something to undo for as long as the toast is up, and declaring
         // it here is what the registry enforces a keyboard path for.
@@ -2096,92 +1901,6 @@ static SPECS: &[CommandSpec] = &[
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
-    },
-    // -- Parts panel -------------------------------------------------------
-    CommandSpec {
-        id: CommandId::OpenParts,
-        title: "Show message parts",
-        default_binding: "p",
-        alternate_bindings: &[],
-        contexts: ctx(&[Context::Reader]),
-        destructive: false,
-        recovery: Recovery::None,
-        // The parts panel is the three-pane apps'; Focus's `o` chooses among
-        // a message's links and parts instead.
-        requires: THREE_PANE_MAIL,
-    },
-    CommandSpec {
-        id: CommandId::NextPart,
-        title: "Next part",
-        // The same keys the message list walks by, in a context where they
-        // mean a different verb — see `Context::Sidebar`'s `NextFolder` for
-        // why that is one idiom rather than reusing `next_message`.
-        default_binding: "j",
-        alternate_bindings: &["Down"],
-        contexts: ctx(&[Context::Parts]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: THREE_PANE_MAIL,
-    },
-    CommandSpec {
-        id: CommandId::PrevPart,
-        title: "Previous part",
-        default_binding: "k",
-        alternate_bindings: &["Up"],
-        contexts: ctx(&[Context::Parts]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: THREE_PANE_MAIL,
-    },
-    CommandSpec {
-        id: CommandId::OpenPart,
-        title: "Open part",
-        default_binding: "Return",
-        alternate_bindings: &[],
-        contexts: ctx(&[Context::Parts]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: THREE_PANE_MAIL,
-    },
-    CommandSpec {
-        id: CommandId::SavePart,
-        title: "Save part",
-        default_binding: "s",
-        alternate_bindings: &[],
-        contexts: ctx(&[Context::Parts]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: THREE_PANE_MAIL,
-    },
-    CommandSpec {
-        id: CommandId::SaveAllParts,
-        title: "Save all parts",
-        default_binding: "S",
-        alternate_bindings: &[],
-        contexts: ctx(&[Context::Parts]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: THREE_PANE_MAIL,
-    },
-    CommandSpec {
-        id: CommandId::OpenPartExternally,
-        title: "Open part externally",
-        default_binding: "x",
-        alternate_bindings: &[],
-        contexts: ctx(&[Context::Parts]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: THREE_PANE_MAIL,
-    },
-    CommandSpec {
-        id: CommandId::RenderPartOnce,
-        title: "Render part once",
-        default_binding: "H",
-        alternate_bindings: &[],
-        contexts: ctx(&[Context::Parts]),
-        destructive: false,
-        recovery: Recovery::None,
-        requires: THREE_PANE_MAIL,
     },
     // -- Reader --------------------------------------------------------
     CommandSpec {
@@ -2879,6 +2598,22 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
     )
 }
 
+/// Whether `platform` lets `action` take its alternate `binding` (as the
+/// registry spells it, before `mod+` is expanded).
+///
+/// One alternate is the desktop's and not the Mac's: `quit`'s `mod+w`.
+/// GTK's Postio has one window, so closing it is quitting (spec 007 T216);
+/// on the Mac ⌘W closes the window in front -- the message, digest or
+/// compose window over the list most of all -- through Window › Close, and
+/// the key monitor sees a key before any menu does, so a ⌘W resolved to
+/// `quit` ended the app (specs/009-focus-macos T105).
+pub fn alternate_offered_on(action: ActionId, binding: &str, platform: Platform) -> bool {
+    !matches!(
+        (action, binding, platform),
+        (ActionId::Builtin(CommandId::Quit), "mod+w", Platform::Apple)
+    )
+}
+
 /// Every command reachable in `context` for a window in `state`.
 ///
 /// What the palette, the cheat sheet and the key hints iterate. [`reachable`]
@@ -3028,13 +2763,12 @@ mod tests {
         // Italic is Composer-only; NextMessage never reaches there, so reusing
         // Italic's own binding is not shadowing anything.
         //
-        // This used to propose `mod+b` and pass for the wrong reason. `mod+b`
-        // is Bold's default *and* ToggleSidebar's, and ToggleSidebar shares a
-        // context with NextMessage — a real conflict the check could not see
-        // while it asked a table ToggleSidebar was not in (#1227). Reusing a
-        // key across disjoint contexts is deliberate here (`j` is three
-        // commands, `d` is three more), so the case is worth keeping; it just
-        // needs a binding only one command claims.
+        // This used to propose `mod+b` and pass for the wrong reason: `mod+b`
+        // was claimed in a context NextMessage shares, a real conflict the
+        // check could not see while it asked a table that command was not in
+        // (#1227). Reusing a key across disjoint contexts is deliberate here
+        // (`j` is three commands, `d` is three more), so the case is worth
+        // keeping; it just needs a binding only one command claims.
         let bindings = postio_config::KeyBindings::default();
         let conflict = binding_conflict(
             CommandId::NextMessage,
@@ -3145,39 +2879,12 @@ mod tests {
     }
 
     #[test]
-    fn tab_cycles_the_panes_from_every_pane_it_cycles_through() {
-        // #494, reported directly: "tab, shift+tab, ctrl+tab are
-        // inconsistent, sometimes it changes panes, sometimes it changes
-        // items within a pane. I need an easy way to go from the sidebar to
-        // the message list to the preview pane."
-        //
-        // Bare Tab had no entry in the table at all, so its top-level meaning
-        // was whatever GTK's native focus chain happened to produce. A
-        // binding that resolves from the sidebar but not the reader would
-        // cycle you out and strand you, so every pane in the cycle is
-        // asserted rather than one of them.
-        for context in [
-            Context::Sidebar,
-            Context::List,
-            Context::Conversation,
-            Context::Reader,
-        ] {
-            assert_eq!(
-                lookup_binding(context, "tab").map(|spec| spec.id),
-                Some(CommandId::CyclePane),
-                "Tab does not cycle panes from {context:?}"
-            );
-            assert_eq!(
-                lookup_binding(context, "shift+tab").map(|spec| spec.id),
-                Some(CommandId::CyclePaneBack),
-                "Shift+Tab does not cycle back from {context:?}"
-            );
-        }
-
-        // The panes that own Tab for their own purpose keep it. A refine
-        // chip, a recipient-completion popover and the finder are all
-        // correctly consuming Tab, and #494 says so explicitly: those local
-        // overrides are legitimate and must not regress.
+    fn tab_belongs_to_the_pane_that_owns_it() {
+        // #494: the panes that own Tab for their own purpose keep it. A
+        // refine chip, a recipient-completion popover and the finder are all
+        // correctly consuming Tab, and a top-level binding there would take
+        // it away. The pane cycle that once claimed bare Tab went with the
+        // three-pane app (specs/009-focus-macos R5).
         assert_eq!(lookup_binding(Context::Composer, "tab"), None);
         assert_eq!(lookup_binding(Context::Search, "tab"), None);
     }

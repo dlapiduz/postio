@@ -1,13 +1,12 @@
 import PostioFFI
+import PostioAppKit
 import PostioKit
 import SwiftUI
 
-/// The application.
+/// The application: Postio Focus on the Mac (specs/009-focus-macos).
 ///
-/// Useless on purpose, for now. It shows what came back through the boundary,
-/// which is the only thing worth asserting at this stage: every other link in
-/// the chain — cargo, the bindings generator, the module map, the linker, the
-/// bundle — fails in its own way and none of them is covered by anything else.
+/// The main window is Focus's inbox (`MainWindow`); settings and compose
+/// are windows of their own.
 @main
 struct PostioApp: App {
     @State private var engine = Engine()
@@ -22,7 +21,7 @@ struct PostioApp: App {
 
     var body: some Scene {
         WindowGroup("Postio") {
-            Shell(engine: engine)
+            MainWindow(engine: engine)
                 .background(WindowConfigurator())
                 // `[ui].theme`, not the system's, when the file says so.
                 .preferredColorScheme(engine.colorScheme)
@@ -32,6 +31,8 @@ struct PostioApp: App {
                 // is clicked, not what was true when the delegate was built.
                 .onAppear {
                     urls.write = { engine.write(mailto: $0) }
+                    // A captured task's `postio://` link (T117).
+                    urls.follow = { engine.follow($0) }
                     // Quitting is where the orderly shutdown belongs. The
                     // delegate is the only thing that hears it.
                     urls.stop = { engine.shutdown() }
@@ -51,16 +52,13 @@ struct PostioApp: App {
             // `SessionLifetime` is the rule, and carries the rest of it.
             if SessionLifetime.shouldEnd(on: SessionPhase(now)) { engine.shutdown() }
         }
-        // Canvas 25's proportions. At 1100pt the sidebar and the list left the
-        // reader about 310pt, the conversation rail took 118 of them, and a
-        // body read three words to a line.
+        // Screen 01's size: the Mac pack draws the inbox at 1440 × 900.
         .defaultSize(width: 1440, height: 900)
         .windowToolbarStyle(.unified)
-        // Size and position across launches. `SceneStorage` handles the split
-        // widths; the frame is `NSWindow`'s own autosave, which is the only
-        // thing that survives a window being closed and reopened rather than
-        // the app being quit.
-        .windowResizability(.contentSize)
+        // Size and position across launches: the frame is `NSWindow`'s own
+        // autosave, which is the only thing that survives a window being
+        // closed and reopened rather than the app being quit.
+        .windowResizability(.contentMinSize)
 
         // A real window, not an overlay on the main one: `⌘,` has opened one
         // on this platform since Mac OS X 10.0, and ADR 0019 Q1 rejected the
@@ -81,14 +79,6 @@ struct PostioApp: App {
         .defaultSize(width: 900, height: 560)
         .windowResizability(.contentSize)
 
-        // Compose: its own window, several at once, each in the Window menu
-        // (canvas screen 26). `WindowGroup` rather than `Window` for exactly
-        // that reason — a `Window` is a singleton, and writing two messages
-        // at once is ordinary.
-        WindowGroup(id: WindowId.compose, for: Int64.self) { $draft in
-            ComposeWindow(engine: engine, draft: draft)
-        }
-        .defaultSize(width: 640, height: 520)
     }
 }
 
@@ -137,30 +127,18 @@ private struct SettingsWindow: View {
             accountCursor: engine.settingsAccounts,
             repair: engine.accountRepair,
             reloadAccounts: { engine.refreshAccounts() },
-            session: engine.session
+            session: engine.session,
+            run: engine.session == nil ? nil : { command in engine.runFromSettings(command) }
         )
         .preferredColorScheme(engine.colorScheme)
         .background(WindowConfigurator(role: .settings))
-    }
-}
-
-/// One compose window's content, for the same reason as `SettingsWindow`:
-/// its reads -- the open drafts, the session, the theme -- belong to this
-/// window, not to the scene graph the menu bar is built from.
-private struct ComposeWindow: View {
-    let engine: Engine
-    let draft: Int64?
-
-    var body: some View {
-        if let draft, let model = engine.compose.model(draft), let session = engine.session {
-            ComposeView(
-                session: session,
-                model: model,
-                close: { engine.compose.close(draft) }
-            )
-            .preferredColorScheme(engine.colorScheme)
-            .navigationTitle(model.title)
-            .background(WindowConfigurator(role: .compose, draft: draft))
+        // Filtering's "186 filtered today": the count the header strip says,
+        // read when the window opens. `nil` until it lands, so the pane says
+        // nothing rather than a zero.
+        .task {
+            guard let session = engine.session else { return }
+            let today = await Task.detached { try? session.focusCounts().filteredToday }.value
+            settings.filteredToday = today
         }
     }
 }

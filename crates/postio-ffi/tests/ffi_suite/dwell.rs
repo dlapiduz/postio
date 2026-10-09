@@ -10,7 +10,7 @@ use chrono::Utc;
 use postio_core::bridge::Bridge;
 use postio_core::dispatch::Dispatcher;
 use postio_core::state::SharedState;
-use postio_ffi::{ScopeFfi, Session, SessionOptions};
+use postio_ffi::{Session, SessionOptions};
 use postio_model::{Flag, Message};
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
@@ -28,14 +28,14 @@ async fn is_read(database: &postio_storage::Store, message: i64) -> bool {
 /// A store with one unread message, and the session over it.
 async fn one_unread() -> (std::sync::Arc<Session>, postio_storage::Store, i64) {
     let database = test_support::memory().await;
-    let (mailbox, message) = {
+    let message = {
         let connection = database.connect().await.expect("a connection");
         let (account, inbox) = test_support::account_with_inbox(&connection).await;
         let repository = MessageRepository::new(&connection);
         let mut message = Message::new(account.id, inbox, Utc::now());
         message.flags.remove(&Flag::Seen);
         repository.create(&mut message).await.expect("a message");
-        (inbox, message.id.get())
+        message.id.get()
     };
     // The real action handlers on the bus. An in-memory session's default
     // bridge takes commands and drops them, so a verb dispatched against it
@@ -55,11 +55,6 @@ async fn one_unread() -> (std::sync::Arc<Session>, postio_storage::Store, i64) {
             .on_bridge(bridge.handle(), bridge.commands()),
     )
     .expect("a session over the store");
-    session.open_scope(ScopeFfi::Mailbox {
-        mailbox: mailbox.into(),
-    });
-    let _ = session.row_at(0);
-    session.settle_for_test();
     (session, database, message)
 }
 

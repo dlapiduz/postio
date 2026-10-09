@@ -378,9 +378,31 @@ impl Token {
 pub struct ParsedQuery {
     pub(crate) input: String,
     pub(crate) tokens: Vec<Token>,
+    /// Whether a near word counts too: see [`forgiving`](Self::forgiving).
+    pub(crate) forgiving: bool,
 }
 
 impl ParsedQuery {
+    /// This query, asked the forgiving way: after the words it says, the
+    /// words near them -- a plural, an unfinished word, a misspelling --
+    /// ranked below every exact match (ADR 0037, as amended).
+    ///
+    /// For a person searching, never for a rule. A query *string* is always
+    /// exact, so a saved search, a virtual folder and a rule mean exactly
+    /// what they say however they are run; only the caller that is showing
+    /// results to somebody watching marks the query forgiving, and nothing
+    /// typed can.
+    #[must_use]
+    pub fn forgiving(mut self) -> Self {
+        self.forgiving = true;
+        self
+    }
+
+    /// Whether near words count: [`forgiving`](Self::forgiving).
+    pub fn is_forgiving(&self) -> bool {
+        self.forgiving
+    }
+
     /// The query string this was parsed from.
     pub fn input(&self) -> &str {
         &self.input
@@ -420,6 +442,30 @@ impl ParsedQuery {
         })
     }
 
+    /// The free-text terms worth matching: [`text_terms`](Self::text_terms)
+    /// without a single unquoted character.
+    ///
+    /// A single character is too little to search for. It is in most of a
+    /// mailbox -- every "Hannah's" says "s" -- so it narrows nothing, and the
+    /// bar asks for it on the first keystroke of every word: matching it
+    /// over a store of 80,000 messages ran for three minutes and held every
+    /// other search behind it. Quoted, it was asked for; a digit is a word;
+    /// a negation excludes and costs nothing to keep.
+    pub fn searchable_terms(&self) -> impl Iterator<Item = &TextTerm> {
+        self.text_terms().filter(|term| {
+            term.quoted
+                || term.negated
+                || term.value.chars().count() >= 2
+                || term.value.chars().all(|c| c.is_ascii_digit())
+        })
+    }
+
+    /// Whether there is anything to search by: a word worth matching or a
+    /// filter. A query of single letters alone is not yet a search.
+    pub fn is_searchable(&self) -> bool {
+        self.searchable_terms().next().is_some() || self.filters().next().is_some()
+    }
+
     /// The free-text portion as an FTS5 `MATCH` expression, or `None` when
     /// there is nothing positive to match on.
     ///
@@ -432,7 +478,7 @@ impl ParsedQuery {
     pub fn fts_match(&self) -> Option<String> {
         let mut positive = Vec::new();
         let mut negative = Vec::new();
-        for term in self.text_terms() {
+        for term in self.searchable_terms() {
             let literal = fts_literal(&term.value);
             if term.negated {
                 negative.push(literal);
@@ -474,6 +520,55 @@ pub fn fts_literal(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_one_character_word_is_not_searched_for() {
+        // Typing "southwest" asks for "s" first; and "Hannah's" says "s".
+        // A single letter is in most of a mailbox and says nothing, and
+        // matching it ran for minutes over a large store.
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 8).unwrap();
+        let fts = |text: &str| crate::parse(text, today).fts_match();
+        assert_eq!(fts("s"), None, "nothing to match yet");
+        assert_eq!(
+            fts("hannah s invoice"),
+            Some(r#""hannah" AND "invoice""#.to_owned())
+        );
+        assert_eq!(
+            fts("\"s\""),
+            Some(r#""s""#.to_owned()),
+            "asked for in quotes, it is"
+        );
+        assert_eq!(
+            fts("c 104"),
+            Some(r#""104""#.to_owned()),
+            "a number is a word"
+        );
+    }
+
+    #[test]
+    fn forgiving_is_how_a_query_is_asked_not_what_it_says() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 8).unwrap();
+        let typed = crate::parse("tickt", today);
+        assert!(
+            !typed.is_forgiving(),
+            "a parsed string is exact: a rule's is"
+        );
+        let asked = typed.clone().forgiving();
+        assert!(asked.is_forgiving());
+        assert_eq!(
+            asked.fts_match(),
+            typed.fts_match(),
+            "the words are the same words; only the asking differs"
+        );
+    }
+
+    #[test]
+    fn a_letter_alone_is_not_a_search_but_a_filter_is() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 8).unwrap();
+        assert!(!crate::parse("s", today).is_searchable());
+        assert!(crate::parse("so", today).is_searchable());
+        assert!(crate::parse("s is:unread", today).is_searchable());
+    }
 
     #[test]
     fn fts_literal_doubles_quotes() {
@@ -578,6 +673,7 @@ mod tests {
         let parsed = ParsedQuery {
             input: "from:ada docker".to_owned(),
             tokens: Vec::new(),
+            forgiving: false,
         };
         assert_eq!(parsed.input(), "from:ada docker");
     }

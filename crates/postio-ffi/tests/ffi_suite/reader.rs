@@ -17,6 +17,11 @@ use postio_ui::reader::document as shared;
 
 /// A session over a store holding one message whose HTML body is `html`.
 async fn with_body(html: &str) -> (std::sync::Arc<Session>, i64) {
+    with_body_sent_by(html, None).await
+}
+
+/// [`with_body`], from `sender` when there is one.
+async fn with_body_sent_by(html: &str, sender: Option<&str>) -> (std::sync::Arc<Session>, i64) {
     let database = test_support::memory().await;
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let blobs =
@@ -28,6 +33,10 @@ async fn with_body(html: &str) -> (std::sync::Arc<Session>, i64) {
         let (account, inbox) = test_support::account_with_inbox(&connection).await;
         let repository = MessageRepository::new(&connection);
         let mut message = Message::new(account.id, inbox, Utc::now());
+        message.from = sender
+            .map(|sender| postio_model::EmailAddress::new(None::<&str>, sender))
+            .into_iter()
+            .collect();
         let id = repository.create(&mut message).await.expect("a message");
 
         repository
@@ -448,4 +457,169 @@ fn revoking_a_domain_does_not_need_to_be_told_it_is_one() {
     session.revoke_remote_images("example.org".to_owned());
 
     assert!(session.remote_image_grants().is_empty());
+}
+
+/// A newsletter, as the shared treatment tests have it: its own background
+/// and a fixed-width table, so the rule puts it on paper.
+const NEWSLETTER: &str = "<html><head><style>body { color: #222 }</style></head>\
+    <body bgcolor=\"#f6f1e7\"><table width=\"640\"><tr><td><p>Issue 48</p></td></tr></table></body></html>";
+
+/// [`with_body`], from `sender`.
+async fn with_body_from(html: &str, sender: &str) -> (std::sync::Arc<Session>, i64) {
+    with_body_sent_by(html, Some(sender)).await
+}
+
+/// Focus's reader on the Mac draws the same treated document as GTK's
+/// (T062): classified, named on the render-mode line, switched by `O`,
+/// remembered for a sender, and sized by the Mac's geometry (M1).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_newsletter_opens_on_paper_and_can_be_switched_and_remembered() {
+    use postio_ffi::TreatmentFfi;
+    let (session, id) = with_body_from(NEWSLETTER, "news@example.com").await;
+
+    let document = session.focus_reader_document(id, RemoteImagesFfi::Blocked, None, 1440);
+    assert_eq!(document.treatment_shown, TreatmentFfi::Paper);
+    assert_eq!(document.treatment_classified, TreatmentFfi::Paper);
+    let words = document
+        .render_mode
+        .expect("an HTML body names its treatment");
+    assert_eq!(words.title, "Original layout, on paper");
+    assert_eq!(
+        words.always, None,
+        "the rule's own choice offers nothing to keep"
+    );
+    assert_eq!(document.sender_choice, None);
+    // A 1440-wide main window: the message window is 720 wide, and paper's
+    // column is 640 of it.
+    assert_eq!(document.window_width, 720);
+    assert_eq!(document.column_width, 640);
+    assert!(document.paper_floor > 0.0 && document.paper_floor < 1.0);
+
+    let switched = session.focus_reader_document(
+        id,
+        RemoteImagesFfi::Blocked,
+        Some(TreatmentFfi::AppColours),
+        1440,
+    );
+    assert_eq!(switched.treatment_shown, TreatmentFfi::AppColours);
+    assert_eq!(switched.treatment_classified, TreatmentFfi::Paper);
+    assert_eq!(switched.column_width, 560, "app colours' column");
+    let offered = switched.render_mode.expect("still HTML");
+    assert!(offered.offer_always);
+    assert_eq!(
+        offered.always.as_deref(),
+        Some(shared::ALWAYS_FOR_SENDER),
+        "a switch can be kept for the sender, in the reader's words"
+    );
+
+    session.always_treatment("news@example.com".into(), Some(TreatmentFfi::AppColours));
+    let remembered = session.focus_reader_document(id, RemoteImagesFfi::Blocked, None, 1440);
+    assert_eq!(remembered.treatment_shown, TreatmentFfi::AppColours);
+    assert_eq!(remembered.sender_choice, Some(TreatmentFfi::AppColours));
+
+    // A 1024-wide main window: the window narrows (655, the formula
+    // rounded; the pack draws 656) and Label, Move and Delete fold into
+    // More; app colours' column still fits whole.
+    let narrow = session.focus_reader_document(id, RemoteImagesFfi::Blocked, None, 1024);
+    assert_eq!(narrow.window_width, 655);
+    assert_eq!(narrow.column_width, 560);
+    assert!(narrow.folds_into_more);
+    session.shutdown();
+}
+
+/// A colour the sender set on purpose is kept only where it reads, in the
+/// document itself: the Mac's web view runs no guard of its own (T061).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_kept_colour_is_guarded_in_the_document() {
+    let (session, id) = with_body_from(
+        "<p>Status: <span style=\"color:#990000\">URGENT</span></p>",
+        "ada@example.com",
+    )
+    .await;
+    let document = session.focus_reader_document(
+        id,
+        RemoteImagesFfi::Blocked,
+        Some(postio_ffi::TreatmentFfi::AppColours),
+        1440,
+    );
+    assert!(
+        document.html.contains("postio-kept-0"),
+        "the kept colour is a guarded class"
+    );
+    assert!(
+        document.html.contains("prefers-color-scheme: light"),
+        "scoped to where it reads"
+    );
+    session.shutdown();
+}
+
+/// `v` asks for the message's source by name. With nothing on this machine
+/// and no server to ask, it says why rather than answering with nothing
+/// (a zero-byte "source" reads as an empty message).
+#[tokio::test(flavor = "multi_thread")]
+async fn raw_source_says_why_when_there_is_none() {
+    let (session, id) = with_body("<p>hello</p>").await;
+    let answer = session.raw_source(id);
+    assert!(
+        matches!(&answer, Err(postio_ffi::SessionError::StoreUnavailable { message }) if !message.is_empty()),
+        "an error with a sentence: {answer:?}"
+    );
+    session.shutdown();
+}
+
+/// The document names Postio's faces over `postio-font:` (ADR 0023), and a
+/// web view's content process cannot see the app's fonts: the Mac serves
+/// them from these bytes, and nothing else under that scheme (C25, Barlow
+/// for a body in app colours).
+#[test]
+fn the_reader_s_faces_are_served_by_name_and_nothing_else_is() {
+    let session = a_session();
+    let face = shared::FACES
+        .iter()
+        .find(|face| face.family == "Barlow")
+        .expect("Barlow is vendored");
+    assert_eq!(
+        session.reader_font(face.name.to_owned()).as_deref(),
+        Some(face.bytes),
+        "a face the document names is served whole"
+    );
+    assert_eq!(session.reader_font("../../etc/passwd".to_owned()), None);
+    assert_eq!(session.reader_font("Helvetica.ttf".to_owned()), None);
+    session.shutdown();
+}
+
+/// The Mac's message window flows the body in its column, as GTK's open
+/// message does (T207): correspondence loses the reader's frame and its
+/// ground so its lines share the column's edges, and the palette is the
+/// platform's own semantic colours, so it follows light, dark and the
+/// accent. A page of its own (paper) keeps its sheet's inset.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_mac_flows_the_body_in_its_column() {
+    let (session, id) = with_body_from("<p>Hi all,</p>", "ada@example.com").await;
+    let app = session.focus_reader_document(id, RemoteImagesFfi::Blocked, None, 1440);
+    assert_eq!(app.treatment_shown, postio_ffi::TreatmentFfi::AppColours);
+    assert!(app.html.contains(shared::FLOW_CSS), "no ground of its own");
+    assert!(
+        app.html.contains(shared::FLOW_FLAT_CSS),
+        "no frame for correspondence"
+    );
+    assert!(
+        app.html.contains("--r-ink: -apple-system-label"),
+        "the platform's ink, which follows the appearance"
+    );
+    assert!(
+        app.html.contains("color-scheme: light dark"),
+        "WebKit resolves the system's colours as dark only for a page that says it can be"
+    );
+    session.shutdown();
+
+    let (session, id) = with_body_from(NEWSLETTER, "news@example.com").await;
+    let paper = session.focus_reader_document(id, RemoteImagesFfi::Blocked, None, 1440);
+    assert_eq!(paper.treatment_shown, postio_ffi::TreatmentFfi::Paper);
+    assert!(paper.html.contains(shared::FLOW_CSS));
+    assert!(
+        !paper.html.contains(shared::FLOW_FLAT_CSS),
+        "a sheet keeps its inset"
+    );
+    session.shutdown();
 }

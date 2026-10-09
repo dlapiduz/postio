@@ -7,7 +7,7 @@ import Testing
 /// The settings window's model: what it shows, and what reaches the file.
 ///
 /// Everything here is about the boundary's contract holding on this side of
-/// it. The Rust suite already proves `patch_appearance` preserves the rest of
+/// it. The Rust suite already proves the `patch_*` edits preserve the rest of
 /// the file; what these assert is that the window actually goes through it
 /// rather than around it, which is the mistake a frontend makes once and
 /// nobody notices until a config file comes back reordered.
@@ -26,21 +26,22 @@ import Testing
         let path = tempPath("first-run")
         let store = SettingsStore(path: path)
 
-        #expect(store.appearance != nil, "defaults are readable from an empty document")
+        #expect(store.filtering != nil, "defaults are readable from an empty document")
+        #expect(store.composing != nil, "defaults are readable from an empty document")
         #expect(store.status.valid)
         #expect(!FileManager.default.fileExists(atPath: path), "opening the window wrote a file")
     }
 
     @Test func changingOneSettingLandsInTheFileAndLeavesTheRestAlone() throws {
         let path = tempPath("patch")
-        let original = "# mine\n[sync]\nidle = true\n\n[ui]\ntheme = \"dark\"\nmystery = 1\n"
+        let original = "# mine\n[sync]\nidle = true\n\n[focus]\nmystery = 1\n"
         try original.write(toFile: path, atomically: true, encoding: .utf8)
 
         let store = SettingsStore(path: path)
-        store.apply { $0.density = .compact }
+        store.applyFiltering(on: false)
 
         let written = try String(contentsOfFile: path, encoding: .utf8)
-        #expect(written.contains("density = \"compact\""), "\(written)")
+        #expect(written.contains("filtering = false"), "\(written)")
         #expect(written.contains("# mine"), "the comment did not survive: \(written)")
         #expect(written.contains("idle = true"), "[sync] moved: \(written)")
         #expect(written.contains("mystery = 1"), "an unknown key was dropped: \(written)")
@@ -64,28 +65,66 @@ import Testing
         try "[ui]\ndensity = = \n".write(toFile: path, atomically: true, encoding: .utf8)
 
         let store = SettingsStore(path: path)
-        #expect(store.appearance == nil)
+        #expect(store.filtering == nil)
+        #expect(store.composing == nil)
     }
 
-    @Test func theNavIsTheSameEightSectionsUnderTheSameTwoHeadings() {
+    @Test func theNavIsFocusSEightSectionsUnderTheSameTwoHeadings() {
         // The nav is the shared model's, not a list this frontend keeps
-        // beside it — the GTK window shows these eight in this order, and two
-        // navs that drift are two different applications.
+        // beside it -- GTK's Focus window shows these eight in this order,
+        // and two navs that drift are two different applications. Focus has
+        // Filtering and no Appearance (specs/009-focus-macos T131).
         let store = SettingsStore(path: tempPath("nav"))
         #expect(store.sections.map(\.label) == [
-            "Accounts", "Saved searches", "Composing", "Appearance",
+            "Accounts", "Filtering", "Saved searches", "Composing",
             "Keyboard", "Sync & storage", "Privacy", "Config file",
         ])
-        #expect(store.sections(in: .mail).map(\.label) == ["Accounts", "Saved searches", "Composing"])
-        #expect(store.selected == "ui", "the only pane built on macOS so far")
+        #expect(
+            store.sections(in: .mail).map(\.label)
+                == ["Accounts", "Filtering", "Saved searches", "Composing"])
+        #expect(store.selected == "accounts", "the window opens on the nav's first pane")
     }
 
     @Test func thePaneNamesTheTableItWrites() {
-        // The footer reads `[ui] in config.toml · applied live`, and the table
-        // comes from the section rather than a string kept next to the view.
+        // The footer reads `[focus] in config.toml · applied live`, and the
+        // table comes from the section rather than a string kept next to the
+        // view.
         let store = SettingsStore(path: tempPath("table"))
-        #expect(store.current?.table == "[ui]")
-        #expect(store.footer.hasPrefix("[ui] in config.toml · applied live"))
+        store.selected = "focus"
+        #expect(store.current?.table == "[focus]")
+        #expect(store.footer.hasPrefix("[focus] in config.toml · applied live"))
+    }
+
+    @Test func theFilteringPaneSaysWhatTheFileSaysAndTodaySCount() throws {
+        // GTK's page, word for word: the switch, the sentence under it, and
+        // the count only once it is known.
+        let path = tempPath("filtering")
+        try "[focus]\nfiltering = true\n".write(toFile: path, atomically: true, encoding: .utf8)
+        let store = SettingsStore(path: path)
+
+        let before = try #require(store.filtering)
+        #expect(before.on)
+        #expect(before.today == nil, "no count is drawn before one is known")
+
+        store.filteredToday = 186
+        let after = try #require(store.filtering)
+        #expect(after.today?.contains("186") == true, "\(String(describing: after.today))")
+    }
+
+    @Test func takingANeverEntryBackRemovesItAndLeavesTheRestAlone() throws {
+        let path = tempPath("take-back")
+        let original =
+            "# mine\n[focus]\nfiltering = true\n\n[focus.filter]\nnever = [\"ada@example.com\"]\n"
+        try original.write(toFile: path, atomically: true, encoding: .utf8)
+        let store = SettingsStore(path: path)
+
+        let entry = try #require(store.filtering?.never.first)
+        store.takeBack(entry.undo)
+
+        let written = try String(contentsOfFile: path, encoding: .utf8)
+        #expect(!written.contains("ada@example.com"), "\(written)")
+        #expect(written.contains("# mine"), "the comment did not survive: \(written)")
+        #expect(store.filtering?.never.isEmpty == true)
     }
 
     @Test func aBrokenFileTakesOverTheFooterFromTheTableName() throws {
@@ -96,6 +135,7 @@ import Testing
         try "[ui]\ndensity = = \n".write(toFile: path, atomically: true, encoding: .utf8)
 
         let store = SettingsStore(path: path)
+        store.selected = "focus"
         #expect(store.footer.contains("line 2"), "\(store.footer)")
         #expect(!store.footer.contains("applied live"))
     }
@@ -110,22 +150,20 @@ import Testing
         // that patches a *remembered* version of it is a second writer racing
         // the first, and the loser is whichever one the user typed into.
         let path = tempPath("external-edit")
-        try "[ui]\ntheme = \"dark\"\n".write(toFile: path, atomically: true, encoding: .utf8)
+        try "[focus]\nfiltering = true\n".write(toFile: path, atomically: true, encoding: .utf8)
         let store = SettingsStore(path: path)
 
         // Somebody runs ⌘E and adds to the file while the window sits open.
-        // The comment sits above `[sync]` rather than above `[ui]` on purpose:
-        // `patch_ui` rewrites its own table wholesale, so a comment attached
-        // to `[ui]` is explicitly *not* promised -- `postio_config::ui` calls
-        // that "the deliberate half of the promise". Everything outside the
-        // patched table is promised, and that is what this asserts.
-        try("[ui]\ntheme = \"dark\"\nsome_future_key = 42\n\n# hand-written\n[sync]\nidle = true\n")
+        // The comment sits above `[sync]`, outside the table the switch
+        // edits: everything outside the patched key is promised, and that is
+        // what this asserts.
+        try("[focus]\nfiltering = true\nsome_future_key = 42\n\n# hand-written\n[sync]\nidle = true\n")
             .write(toFile: path, atomically: true, encoding: .utf8)
 
-        store.apply { $0.density = .compact }
+        store.applyFiltering(on: false)
 
         let written = try String(contentsOfFile: path, encoding: .utf8)
-        #expect(written.contains("density = \"compact\""), "the click did not land: \(written)")
+        #expect(written.contains("filtering = false"), "the click did not land: \(written)")
         #expect(written.contains("# hand-written"), "a comment on another table was destroyed: \(written)")
         #expect(written.contains("some_future_key = 42"), "an unknown key was dropped: \(written)")
         #expect(written.contains("[sync]"), "a whole table was destroyed: \(written)")
@@ -136,13 +174,13 @@ import Testing
         // canvas 3f put it where OK and Cancel would be — so it has to
         // describe the file as it is now, not as it was when the window opened.
         let path = tempPath("restat")
-        try "[ui]\ntheme = \"dark\"\n".write(toFile: path, atomically: true, encoding: .utf8)
+        try "[focus]\nfiltering = true\n".write(toFile: path, atomically: true, encoding: .utf8)
 
         let store = SettingsStore(path: path)
-        store.apply { $0.theme = .light }
+        store.applyFiltering(on: false)
 
         #expect(store.status.valid)
-        #expect(store.appearance?.theme == .light)
+        #expect(store.filtering?.on == false)
     }
 
     @Test func theAccountsPaneDoesNotClaimToWriteConfigToml() {
@@ -169,7 +207,7 @@ import Testing
         // The keys `SettingsPaneView` switches on, kept beside the switch
         // rather than inferred: the point is to fail when the core grows a
         // section and this frontend has not caught up.
-        let drawn: Set<String> = ["accounts", "saved_searches", "compose", "ui", "keys", "sync", "privacy", ""]
+        let drawn: Set<String> = ["accounts", "focus", "saved_searches", "compose", "keys", "sync", "privacy", ""]
 
         let sections = Set(settingsSections().map(\.key))
 

@@ -190,6 +190,59 @@ pub fn suggest<'a>(typed: &str, vocabulary: impl Iterator<Item = Term<'a>>) -> O
         documents: term.documents,
     })
 }
+/// The words a forgiving search reads `typed` as: the word itself when the
+/// vocabulary holds it, then the words it begins, then the words it is a
+/// misspelling of -- the same two kinds of closeness [`suggest`] ranks, and
+/// in the same order -- at most `most` of them.
+///
+/// This is the one place a query is widened rather than answered with an
+/// offer, and only for the command bar's interactive search: ADR 0037, as
+/// amended. A rule's query never comes here.
+///
+/// A word the vocabulary holds is not corrected: spelled right, `tour` meant
+/// tour, and `your`, one edit away and in every other message, would drown
+/// it. Only the words it begins -- `tours` -- are near it then.
+pub fn near<'a>(
+    typed: &str,
+    vocabulary: impl Iterator<Item = Term<'a>>,
+    most: usize,
+) -> Vec<String> {
+    let typed = typed.to_lowercase();
+    let vocabulary: Vec<Term<'a>> = vocabulary.collect();
+    let held = vocabulary
+        .iter()
+        .any(|term| term.text.to_lowercase() == typed);
+    let limit = if held { 0 } else { tolerance(&typed) };
+    let completes = typed.chars().count() >= SHORTEST_BEGINNING;
+
+    // Ranked: the word itself, then a completion, then a correction by how
+    // many edits it is away; between equals, the commoner word.
+    let mut found: Vec<(usize, u64, String)> = Vec::new();
+    for term in vocabulary {
+        let text = term.text.to_lowercase();
+        let rank = if text == typed {
+            0
+        } else if completes && text.starts_with(&typed) {
+            1
+        } else if limit == 0 {
+            continue;
+        } else {
+            match distance_within(&typed, &text, limit) {
+                Some(distance) => 1 + distance,
+                None => continue,
+            }
+        };
+        found.push((rank, term.documents, text));
+    }
+    found.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)));
+    found.dedup_by(|a, b| a.2 == b.2);
+    found
+        .into_iter()
+        .take(most)
+        .map(|(_, _, text)| text)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,5 +380,50 @@ mod tests {
     fn case_is_not_a_misspelling() {
         let offered = suggest("Hanah", vocabulary().into_iter()).expect("a suggestion");
         assert_eq!(offered.term, "hannah");
+    }
+
+    #[test]
+    fn near_words_are_the_word_itself_then_its_completions_then_its_misspellings() {
+        let words = near("hanna", vocabulary().into_iter(), 8);
+        assert_eq!(
+            words,
+            ["hanna", "hannah"],
+            "the word as typed first, then what it begins, the commoner first"
+        );
+        let words = near("hannh", vocabulary().into_iter(), 8);
+        assert_eq!(
+            words,
+            ["hannah", "hanna"],
+            "equally close: the commoner first"
+        );
+    }
+
+    #[test]
+    fn near_words_are_capped_at_the_most_asked_for() {
+        let vocabulary: Vec<Term<'static>> = ["ticket", "tickets", "ticketed", "ticketing"]
+            .into_iter()
+            .map(|text| Term { text, documents: 1 })
+            .collect();
+        assert_eq!(near("ticket", vocabulary.into_iter(), 2).len(), 2);
+    }
+
+    #[test]
+    fn a_short_word_is_near_only_what_begins_with_it() {
+        assert_eq!(
+            near("cot", vocabulary().into_iter(), 8),
+            Vec::<String>::new()
+        );
+        assert_eq!(near("ban", vocabulary().into_iter(), 8), ["banana"]);
+    }
+
+    #[test]
+    fn a_word_the_vocabulary_holds_is_near_only_what_it_begins() {
+        // "tour" is spelled right, so "your" -- one edit away and in every
+        // other message -- is not what was meant; "tours" may be.
+        let vocabulary: Vec<Term<'static>> = [("tour", 3), ("tours", 2), ("your", 900)]
+            .into_iter()
+            .map(|(text, documents)| Term { text, documents })
+            .collect();
+        assert_eq!(near("tour", vocabulary.into_iter(), 8), ["tour", "tours"]);
     }
 }

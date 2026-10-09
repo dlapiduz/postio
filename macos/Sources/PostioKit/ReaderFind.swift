@@ -6,13 +6,14 @@ import WebKit
 /// because SwiftUI calls `updateNSView` for every reason there is and a
 /// search that re-ran on each would walk the matches on its own.
 @MainActor
-final class ReaderFind {
+public final class ReaderFind {
+    public init() {}
     private var searched = 0
     private var highlighting = false
 
     /// Act on `request` if it is new, reporting whether anything matched;
     /// with no request, take away a highlight left by the last one.
-    func perform(_ request: FindInMessage.Request?, in view: WKWebView, onFound: @escaping (Bool) -> Void) {
+    public func perform(_ request: FindInMessage.Request?, in view: WKWebView, onFound: @escaping (Bool) -> Void) {
         guard let request else {
             if highlighting {
                 highlighting = false

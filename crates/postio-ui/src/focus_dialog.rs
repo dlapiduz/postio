@@ -434,6 +434,20 @@ pub const LATER_MESSAGE: &str = "later message";
 /// What follows the key on the thread chip.
 pub const EARLIER_MESSAGE: &str = "earlier message";
 
+/// The button after the label pills, beside `l`'s key.
+pub const ADD_LABEL: &str = "+ Label";
+
+/// The marker card's last button, beside `-`'s key: the marker was wrong,
+/// or is done with (T118).
+pub const DISMISS: &str = "Dismiss";
+
+/// The sender block's field names, in its 44px label column.
+pub const FIELD_FROM: &str = "From";
+/// See [`FIELD_FROM`].
+pub const FIELD_TO: &str = "To";
+/// See [`FIELD_FROM`].
+pub const FIELD_CC: &str = "Cc";
+
 /// Where stepping `by` messages from `at` lands in a conversation of `len`
 /// messages: `None` past either end, or before the conversation is read.
 pub fn step_thread(at: usize, len: usize, by: isize) -> Option<usize> {

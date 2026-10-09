@@ -1,0 +1,45 @@
+# Open a to-do, capture it as a task in the vault, and come back
+# (specs/009-focus-macos US9, screen 25; the controller's capture, T109).
+#
+# Needs `[focus.vault]` (C9): without one `t` says so in the toast and
+# opens nothing. With one, `t` on an open message with a to-do opens
+# capture in place of the message window (M4): the sentence verbatim,
+# its due day with the quick picks, the project the vault suggests and
+# why, and the exact line it will append, its `postio://` link before the
+# date (C21). ⌥S puts the subject in its place; ⌘↩ appends the line and
+# the toast says where it went.
+apps   = ["focus"]
+# Red on the GTK app until it drives this flow through postio-focus (#1807):
+# the catalogue expects it to fail there and says when it starts passing.
+proof  = "open"
+source = { kind = "spec", ref = "specs/009-focus-macos US9" }
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", overlay.kind = "none" }
+
+[[step]]
+id      = "todo"
+command = "toggle_has_action"
+check   = { keyboard.region = "list" }
+expect  = "Only rows with an invite, a question or a to-do are listed, under the Has action heading."
+
+[[step]]
+command = "open_message"
+check   = { view = "reader", keyboard.region = "reader" }
+expect  = "The first marked message opens in the message window, its action card under the sender block."
+
+[[step]]
+command = "capture_task"
+check   = { keyboard.typing = true }
+expect  = "Capture opens in the message window's place: Cancel with Esc, Task and Note with t and n, Add task with ⌘↩ filled in the label colour. \"From\" names the sender, the subject and when it came; the Task field holds the action sentence as written, with \"⌥S use the subject instead\" under it; Due shows the day the mail gives with Today, the weekdays and None beside it; Project names the vault's suggestion and why, with Change and ⌘P; and the preview is the exact line, ending in the message's postio:// link and the date."
+
+[[step]]
+command = "capture_use_subject"
+check   = { keyboard.typing = true }
+expect  = "The Task field holds the message's subject now, and the preview's line says the subject too."
+
+[[step]]
+command = "capture_write"
+check   = { keyboard.region = "list" }
+expect  = "Capture closes, the keyboard goes back to the list, and the toast says the task was added to the project, with its due day."

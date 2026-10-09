@@ -1195,13 +1195,6 @@ pub const NEVER_PRESSED: &[(&str, &str)] = &[
     ("unsubscribe", "follows an unsubscribe link off the machine"),
     ("edit_config", "opens an external editor"),
     ("edit_externally", "opens an external editor"),
-    ("open_part", "hands a part to another application"),
-    (
-        "open_part_externally",
-        "hands a part to another application",
-    ),
-    ("save_part", "opens a file chooser"),
-    ("save_all_parts", "opens a file chooser"),
     ("attach_file", "opens a file chooser"),
     ("insert_image", "opens a file chooser"),
     ("add_account", "may open a browser to sign in"),

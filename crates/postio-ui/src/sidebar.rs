@@ -651,37 +651,6 @@ pub enum Activity {
     Idle,
 }
 
-/// What a failing account's footer says, by what kind of failure it is.
-///
-/// One sentence per reason, here rather than in a frontend, because this is
-/// the line somebody reads when their mail has stopped arriving — and two
-/// platforms phrasing "your password was rejected" differently is two
-/// products. `postio_core::FailureReason` is a *classification*; this is the
-/// wording for it.
-///
-/// Short, and about what to do rather than about what happened. A footer is
-/// one column wide and is glanced at: the place for the server's own text is
-/// the notice, which carries `Event::Error` verbatim.
-pub fn failing_because(reason: postio_core::FailureReason) -> &'static str {
-    use postio_core::FailureReason as Why;
-    match reason {
-        // Never phrased as "wrong password": an app-specific password, an
-        // expired OAuth grant and a revoked one all land here, and only one
-        // of those is a password anybody typed.
-        Why::Auth | Why::NoPassword => "sign-in needed",
-        // Recovers on its own, so it says what is true rather than asking for
-        // anything. A footer demanding action for something the supervisor is
-        // already retrying is a footer people learn to ignore.
-        Why::Network => "cannot reach the server",
-        // The connection worked and the work was refused, which is the
-        // server's to explain — the notice carries what it said.
-        Why::Server => "the server refused",
-        // Something about how this account is set up. The settings window is
-        // where it is fixed, and saying so is more use than naming the field.
-        Why::Config => "check this account's settings",
-    }
-}
-
 /// The sidebar's footer line: `idle · synced 40s` (canvas screen 25).
 ///
 /// `since` is how many seconds ago the last pass *completed*, or `None` for a
@@ -849,23 +818,5 @@ mod status_tests {
             ),
             "idle · synced 40s"
         );
-    }
-
-    #[test]
-    fn every_failure_has_a_sentence_and_none_of_them_blames_a_password() {
-        use postio_core::FailureReason as Why;
-        for reason in [Why::Auth, Why::Network, Why::Server, Why::Config] {
-            let said = failing_because(reason);
-            assert!(!said.is_empty(), "{reason:?} says nothing");
-            // An app-specific password, an expired grant and a revoked one
-            // all classify as `Auth`, and only one of them is a password
-            // anybody typed. A footer that says "wrong password" to somebody
-            // whose OAuth grant expired sends them to change a password that
-            // is fine.
-            assert!(
-                !said.to_lowercase().contains("wrong password"),
-                "{reason:?} blames a password: {said}"
-            );
-        }
     }
 }

@@ -1,0 +1,36 @@
+# `!` narrows the inbox to the rows that need something, and back, without
+# losing the person's place (specs/009-focus-macos T047; contract
+# invariant 3, spec 007 FR-017).
+#
+# The selection goes when the list narrows, since what it named may not be
+# shown; the cursor's message is kept and found again when the list lands.
+# Every row Has action shows is also in the inbox, so turning it off puts the
+# cursor back on exactly the message it was on.
+apps   = ["focus"]
+source = { kind = "flow", ref = "! keeps the cursor" }
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", scope = "Inbox" }
+
+[[step]]
+command = "toggle_selection"
+check   = { selection.count = 1 }
+
+[[step]]
+id      = "on"
+command = "toggle_has_action"
+check   = { keyboard.region = "list", selection.count = 0 }
+expect  = "The list narrows to the rows with a marker line, under one heading that counts them; the selection is gone and the cursor ring is on a row."
+settle  = { watch_ms = 500 }
+
+[[step]]
+id      = "walked"
+command = "next_message"
+expect  = "The ring moves to the next marked row."
+
+[[step]]
+command = "toggle_has_action"
+check   = { keyboard.region = "list", cursor.id = { same_as = "walked" }, selection.count = 0 }
+expect  = "The whole inbox is back under its day headings, and the cursor ring is on the same message it was on in Has action."
+settle  = { watch_ms = 500 }

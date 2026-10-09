@@ -1,25 +1,11 @@
 //! Search, as the frontend sees it.
 //!
-//! Two things cross: a result set becomes the list's contents, and each hit's
-//! excerpt crosses as text plus *ranges*. Neither the query language nor the
+//! Two things cross: an excerpt as text plus *ranges*, and a query as the
+//! chips its operators draw. Neither the query language nor the
 //! highlighting is re-decided here — `postio-search` parses,
 //! `postio_session::search` runs, and this only carries the answers. **One
 //! query language**: Swift does not re-implement operator parsing, or the two
 //! platforms accept different queries.
-
-/// One hit, kept so the frontend can ask for its excerpt while it draws.
-///
-/// Bounded by `postio_session::search::HIT_LIMIT`, which is why holding the
-/// whole set is not the thing `PRODUCT.md` §18 forbids: two hundred excerpts,
-/// not a mailbox. A search matching forty thousand messages is still a count
-/// and a few resident pages.
-#[derive(Debug, Clone)]
-pub struct Hit {
-    /// The message this hit points at.
-    pub message: i64,
-    /// Its excerpt, already located.
-    pub snippet: SnippetFfi,
-}
 
 /// A hit's excerpt, and where in it the query matched.
 ///
@@ -47,28 +33,6 @@ pub struct MatchRangeFfi {
     pub start: u32,
     /// One past the last byte.
     pub end: u32,
-}
-
-/// A `postio-search` snippet, split into plain text and match ranges.
-///
-/// `postio_search::highlight` marks matches with its own control characters
-/// and `from_snippet` takes them back out — including dropping an unbalanced
-/// marker, so a message that contains one cannot paint a highlight the query
-/// did not earn. Splitting here rather than in each frontend is what keeps one
-/// answer to what matched.
-pub fn snippet_of(marked: &str) -> SnippetFfi {
-    let highlighted = postio_search::highlight::from_snippet(marked);
-    SnippetFfi {
-        ranges: highlighted
-            .matches
-            .iter()
-            .map(|range| MatchRangeFfi {
-                start: range.start as u32,
-                end: range.end as u32,
-            })
-            .collect(),
-        text: highlighted.text,
-    }
 }
 
 /// One operator in the query, drawn as a pill.
@@ -120,108 +84,4 @@ pub fn query_chips(query: String) -> Vec<ChipFfi> {
             spoken: postio_ui::search::spoken(&chip),
         })
         .collect()
-}
-
-/// What to draw over a list with nothing in it.
-///
-/// Two sentences, both the core's. A frontend that composed its own would be
-/// composing the same ones again and getting them different — and this is the
-/// family of sentence where being different means being *wrong*, not merely
-/// inconsistent: "No messages" over a search that matched nothing is a claim
-/// about the user's mail that is false (ADR 0005 Q10).
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct EmptyPlateFfi {
-    /// The heading. *No matches*, not *No messages*.
-    pub title: String,
-    /// The sentence under it, including what could not be searched.
-    pub detail: String,
-}
-
-/// What one search turned out to be, as the field's right-hand end says it.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct OutcomeFfi {
-    /// The line canvas 2b draws — "14 hits · 11 ms", plus any caveats.
-    pub readout: String,
-    /// The same facts in words, for a screen reader: "·" and "ms" are
-    /// punctuation and an abbreviation rather than something to read out.
-    pub spoken: String,
-    /// How many messages matched.
-    pub hits: u64,
-}
-
-/// Which slice of the mailbox a search looks at: the scope rail's three
-/// rows (#1157). `postio_search::facets::Scope`, crossed as it is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum SearchScopeFfi {
-    /// Every folder but drafts, junk and trash — the default.
-    AllMail,
-    /// Only what is still in the inbox.
-    Inbox,
-    /// The folders list mail is filed into.
-    Lists,
-}
-
-impl From<postio_search::facets::Scope> for SearchScopeFfi {
-    fn from(scope: postio_search::facets::Scope) -> Self {
-        use postio_search::facets::Scope;
-        match scope {
-            Scope::AllMail => SearchScopeFfi::AllMail,
-            Scope::Inbox => SearchScopeFfi::Inbox,
-            Scope::Lists => SearchScopeFfi::Lists,
-        }
-    }
-}
-
-impl From<SearchScopeFfi> for postio_search::facets::Scope {
-    fn from(scope: SearchScopeFfi) -> Self {
-        use postio_search::facets::Scope;
-        match scope {
-            SearchScopeFfi::AllMail => Scope::AllMail,
-            SearchScopeFfi::Inbox => Scope::Inbox,
-            SearchScopeFfi::Lists => Scope::Lists,
-        }
-    }
-}
-
-/// One row of the scope rail: a scope, what it is called, and how many of
-/// the query's matches switching to it would find.
-///
-/// The word and the sentence are the boundary's — `Scope::label` and
-/// `postio_ui::search::scope_spoken` — so both rails say the same thing.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct ScopeCountFfi {
-    /// Which scope.
-    pub scope: SearchScopeFfi,
-    /// What the row says — `Inbox only`.
-    pub label: String,
-    /// Matches inside it, zero included.
-    pub hits: u64,
-    /// What a screen reader hears — `Inbox only, 2 matches`.
-    pub spoken: String,
-}
-
-/// What the result set on screen is made of: the scope rail's counts and the
-/// refine chips, from one pass over the index rather than two.
-#[derive(Debug, Clone, PartialEq, Eq, Default, uniffi::Record)]
-pub struct SearchFacetsFfi {
-    /// Every scope, in the canvas' order, with its count. Empty over a
-    /// mailbox.
-    pub scopes: Vec<ScopeCountFfi>,
-    /// The refine chips worth offering, best first. Empty over a mailbox.
-    pub refinements: Vec<RefinementFfi>,
-}
-
-/// One refine chip: the token to append, and what it would keep.
-///
-/// The measurement is the point. A chip that keeps none of the current
-/// matches is a dead end and one that keeps all of them appears to do
-/// nothing when clicked, so `Facets::suggested` drops both and the frontend
-/// draws whatever survives — it does not choose, and it certainly does not
-/// carry a fixed list of operators of its own.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct RefinementFfi {
-    /// The query token, exactly as it would be typed — `is:unread`.
-    pub token: String,
-    /// How many of the current matches it would keep.
-    pub hits: u64,
 }

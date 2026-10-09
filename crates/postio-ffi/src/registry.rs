@@ -275,29 +275,19 @@ impl From<&'static postio_core::registry::CommandSpec> for CommandSpecFfi {
 pub const INTERCEPTED: &[postio_core::CommandId] = {
     use postio_core::CommandId as C;
     &[
-        C::CommandPalette,
-        C::CheatSheet,
-        C::Search,
+        // Not `/`, `mod+k`, `g o` or the go-to keys: Focus's controller
+        // opens the command bar and the folders popover and goes to each
+        // place (specs/009-focus-macos T082), and the Mac draws what it says
+        // (T085, T086). Not `?` either: the controller opens and closes the
+        // key map, and the Mac draws it (T103, T106).
         C::Back,
-        C::CyclePane,
-        C::CyclePaneBack,
-        C::GoToFolders,
         C::Settings,
-        C::ToggleSidebar,
         C::ScrollReaderDown,
         C::ScrollReaderUp,
-        // The sidebar's keyboard. The tree, which rows are collapsed and
-        // where the keyboard is inside it are this frontend's state.
-        C::NextFolder,
-        C::PrevFolder,
-        C::ToggleFolder,
-        C::GoToInbox,
-        C::GoToDrafts,
-        C::GoToSent,
-        C::GoToFlagged,
-        // Where the keyboard is among the panes, and whether a message is
-        // drawn as its sender wrote it.
-        C::OpenMessage,
+        // Whether a message is drawn as its sender wrote it. Not
+        // `open_message`: Focus's controller opens the message from the
+        // list, from Filtered and from the digest's list, and the Mac has
+        // no handler of its own for it (specs/009-focus-macos T113-T114).
         C::PrevView,
         C::ViewOriginal,
         // Reader view for one message, the other half of the same choice.
@@ -311,16 +301,6 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         C::FindInMessage,
         C::FindNext,
         C::FindPrevious,
-        // The parts panel: a surface, a cursor this side holds, and verbs
-        // that each need a dialog or a launcher.
-        C::OpenParts,
-        C::NextPart,
-        C::PrevPart,
-        C::SavePart,
-        C::SaveAllParts,
-        C::OpenPartExternally,
-        C::RenderPartOnce,
-        C::OpenPart,
         // "Show remote images" is render-once under the reader's own name:
         // this message, this view, no grant written (#1706).
         C::ShowImages,
@@ -332,19 +312,9 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         // one deliberate act, from the keyboard and the palette (#1706).
         C::AlwaysShowImages,
         C::Unsubscribe,
-        // The list has to be told to redraw after the query is re-asked.
-        C::ToggleResultOrder,
         // The picker is a surface, and the four times it offers come from
         // the boundary so both frontends mean the same thing by them.
         C::ScheduleSend,
-        // Saved searches: all five patch `config.toml` through the
-        // frontend-facing functions rather than the bus, and two of them ask
-        // a question no session can put on screen.
-        C::SaveSearch,
-        C::RenameSavedSearch,
-        C::DeleteSavedSearch,
-        C::MoveSavedSearchUp,
-        C::MoveSavedSearchDown,
         // The settings window's account verbs. Each acts on the row that
         // window's keyboard is on -- a cursor no session holds -- and adding
         // an account, replacing a credential and opening `config.toml` all
@@ -373,16 +343,17 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         // An open panel, and a picture that has to land at the caret of a
         // document only the window holds (#1571).
         C::InsertImage,
+        // ⌘H in the composer: the draft's own reminder, which only its
+        // window holds until it is saved (specs/009-focus-macos T079). On
+        // the list and the open message `h` is the controller's picker.
+        C::RemindIfNoReply,
         C::ExpandAll,
         C::ToggleFold,
         C::NextInConversation,
         C::PrevInConversation,
-        // The conversation rail, hidden or shown for this window (FR-047).
-        C::ToggleRail,
-        C::Compose,
-        C::Reply,
-        C::ReplyAll,
-        C::Forward,
+        // Not `c`, `e`, `E` or `f`: Focus's controller opens the composer
+        // and says what it answers (specs/009-focus-macos T073), and the
+        // Mac draws it (T079).
     ]
 };
 

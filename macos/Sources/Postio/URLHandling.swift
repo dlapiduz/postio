@@ -1,4 +1,5 @@
 import AppKit
+import PostioAppKit
 import PostioKit
 
 /// What Postio does when the system hands it a `mailto:` link.
@@ -22,6 +23,17 @@ final class URLHandler: NSObject, NSApplicationDelegate {
     /// *after* the scene's first update rather than in the middle of it
     /// (#1262).
     func applicationDidFinishLaunching(_: Notification) {
+        // A demo is photographed in the appearance it was told (`DemoMode`).
+        switch DemoMode.appearance {
+        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        default: break
+        }
+        // And in front, as a person would have it: launched from a script
+        // it opens behind the terminal, and WebKit stops painting a web
+        // view whose window it thinks is covered -- the message window's
+        // body came out blank or not, by where the terminal stood.
+        if DemoMode.seed != nil { NSApp.activate(ignoringOtherApps: true) }
         MenuBar.reassert()
         DispatchQueue.main.async { MenuBar.reassert() }
     }
@@ -42,8 +54,29 @@ final class URLHandler: NSObject, NSApplicationDelegate {
     /// session and the compose windows.
     var write: ((Mailto) -> Bool)?
 
+    /// Where a `postio://` link goes (specs/009-focus-macos T117). Set by
+    /// the application, which owns the session and the message window. A
+    /// link that launched Postio can arrive before it is set; those wait
+    /// here and go as soon as it is.
+    var follow: ((PostioLink.Route) -> Void)? {
+        didSet {
+            guard let follow else { return }
+            for route in early.take() { follow(route) }
+        }
+    }
+
+    /// Links that came before `follow` did.
+    private var early = PostioLink.Waiting()
+
     func application(_: NSApplication, open urls: [URL]) {
         for url in urls {
+            // Postio's own: a captured task's link back to its message. The
+            // app comes forward, as a click from another app expects.
+            if let route = PostioLink.route(url) {
+                NSApp.activate(ignoringOtherApps: true)
+                if let follow { follow(route) } else { early.hold(route) }
+                continue
+            }
             guard let mailto = Mailto(url) else { continue }
             // A composer, when there is one to open. `false` means there was
             // not — no account to write from, or no session yet — and that
