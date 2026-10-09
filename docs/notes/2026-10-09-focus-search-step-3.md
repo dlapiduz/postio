@@ -66,15 +66,16 @@ the second row and that row still selected, its toolbar back.
 
 | # | Design | Built | Decision |
 |---|---|---|---|
-| 13 | Group header: "Top hits  why each one ranked is under the sender" (no count), "September 2026  9 · newest first" | "Top hits  3 · why each one ranked…": the controller gives Top hits a count, and the view draws count then note for every group | **Not fixed**, the controller's: `ResultGroupFfi.count` for Top hits could be empty (a one-line change in `postio-focus` with its test). Left for the Rust side rather than hidden in Swift |
-| 14 | Every row has a passage: a window of about 120 characters around the first match, never the email's first line | Rows matched in "subject + body" have no passage at all; some body matches show the quoted header ("On Fri 9 Oct 2026 at 10:59, You wrote:") rather than a window around the match | **Not fixed: an engine defect, not the view's.** The view draws `ResultRowFfi.passage` as it arrives and redraws on `FocusResultsPage`; the passages `postio_session::search::passages` returns over the search seed are empty or not the match's. Needs its own task before the review (owner: the Rust side) |
+| 13 | Group header: "Top hits  why each one ranked is under the sender" (no count), "September 2026  9 · newest first" | First capture: "Top hits  3 · why each one ranked…", the controller gave Top hits a count | **Fixed** in the controller: `ResultGroup.count` is empty for Top hits (the Mac already drops an empty count); VoiceOver still hears "Top hits · 3" |
+| 14 | Every row has a passage: a window of about 120 characters around the first match, never the email's first line | First capture: rows matched in "subject + body" (every top hit) had no passage; "Re: Atlas Q3 budget" and "Re: Harbor SOW" showed the attribution line ("On Fri 9 Oct 2026 at 10:59, You wrote:") | **Fixed** in the engine, two causes. (a) D7 cuts after the first line because the *dropdown's* row shows it as the preview; the seed's messages are one line, so nothing was left. The results' row shows no preview, so the cut now takes `passage::FirstLine`: `Shown` for the dropdown (unchanged), `Avoided` for the results -- a match after the first line if there is one, else the first line's own match, marked. (b) The own words above a quote kept its attribution line, which became "the window after" the first line; `postio_body::quote::without_attribution` drops it before cutting. Neither row was a quoted match: both matched in the best message's own words, so their passage is that, tagged body. The design's "quoted text" for Harbor SOW is its data, not ours |
+| 14a | -- | "Re: Notes from the Atlas budget sync" and "Atlas budget review deck" show only a file's name as the tag, with no passage | **Explained**: they matched by file name alone, and a file name is its own words (no passage to cut). A file *content* passage ("Sheet 'Summary', row 14: …") needs the seed's attachments extracted, which the demo does not run |
 | 15 | Top hits' reason: at most two reasons plus matches ("you replied · 3 matches") | "you replied · frequent sender · …", truncated in the 176 column | **Not fixed**, the controller's words: the seed's top hits have more than two reasons, and `reason_line` keeps at most two plus matches, so the third is the match count; it does not fit 176 at 11.5 pt. Check against `reason_line`'s tests when 14 is fixed |
 | 16 | Folder "in:Inbox" | "in:INBOX" for the demo's inbox | **Explained**: the folder's own name in the seed, which `in_folder` does not recase |
-| 17 | Date column 62, "26 Sep" | Dates past a year carry the year ("22 Oct 2025") and were cut to "22 Oct 2…" | **Fixed**: the date takes the room it needs |
-| 18 | Label pills with the label's own colour (orange dot for Atlas) | A plain tertiary dot | **Not fixed**, the boundary's: `ResultRowFfi.pills` crosses with `color: None` (`focus_search.rs`); the list's pills carry the colour. Small Rust follow-up |
+| 17 | Date column 62, "26 Sep"; the design never draws a year | Dates past a year carried the year ("22 Oct 2025") and were cut to "22 Oct 2…" | **Fixed**: another year is the list's short form, "22 Oct 25" (`row::timestamp`), which fits 62; the column still never ellipsizes |
+| 18 | Label pills with the label's own colour (orange dot for Atlas) | First capture: a plain tertiary dot; `ResultRowFfi.pills` crossed with `color: None` | **Fixed**: the facet names carry the labels' colours (`FacetNames::label_colors`), the row's `LabelPill` and the boundary pass them on. The search seed now gives its labels colours, Atlas the design's `#c08a2e` |
 | 19 | Focus ring: 2 pt accent ring around the row, faint accent fill | As designed, drawn by `ResultRowBackground` | Same |
 | 20 | Unread: the dot in the gutter, bold sender and date | As designed | Same |
-| 21 | Source tag: a filled 17-tall pill, italic file names | As designed; "subject + body", "body + subject" are the controller's joined tags (T065's `sources_tag`) | Same |
+| 21 | Source tag: a filled 17-tall pill, italic file names; the tag is where the passage came from ("body", "quoted text", a file), plus a file that also matched ("body + Atlas-Q3-budget.xlsx") | First capture: "subject + body", "body + subject": the first two distinct sources joined | **Fixed** (`search_view::shown_match`, `sources_tag`): the passage's source, then a matching file beside a non-file passage; "subject" only when nothing else matched |
 
 ## Footer (§3.5)
 
@@ -82,6 +83,15 @@ the second row and that row still selected, its toolbar back.
 |---|---|---|---|
 | 22 | "j k move · Space Quick Look · ↩ open · x select · / edit query · Esc back to inbox" | "j/k move · ↩ open · x select · / edit query · ⎋ back to inbox" | Quick Look joins with step 5. "j/k" was first drawn "J/K": a pair's cap went through the chord path and was capitalised -- **fixed** (`KeyCapSpelling`) |
 | 23 | "48 conversations · local index · 41 ms" | The controller's, with the real time ("8 ms") | Same |
+
+## After the fixes
+
+Taken again the same way after 13, 14, 17, 18 and 21 were fixed:
+every row in the first screenful has a marked passage (but 14a's two),
+no tag names the subject over a body passage, the Atlas dots are orange
+and Harbor's blue, Top hits has no count and last October's top hit
+reads "22 Oct 25". Light and dark agree. Still open from this list: 5,
+7, 12 and 22's Quick Look (later steps), and 15 (the reason line).
 
 ## Dark (screen 07)
 
