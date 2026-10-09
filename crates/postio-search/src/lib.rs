@@ -67,6 +67,7 @@ pub mod matcher;
 pub mod natural;
 mod parser;
 pub mod query;
+pub mod relax;
 pub mod results;
 mod size;
 pub mod suggest;
