@@ -247,7 +247,7 @@ GTK's bar is unchanged.
 
 **Independent test**: US5's.
 
-- [ ] T093 [US5] Write storyboards `storyboards/search/results-select-and-archive.toml`, `save-search-popover.toml`
+- [x] T093 [US5] Write storyboards `storyboards/search/results-select-and-archive.toml`, `save-search-popover.toml`
 - [ ] T094 [P] [US5] Write failing tests in `crates/postio-focus/tests/results.rs`: `x` toggles the cursor's result; ⇧X selects every conversation the query matches as `Aim::Matching { query, except }`; the bulk verbs aim at it; the footer view becomes the bulk bar with the count and keys. And in `crates/postio-host/src/tests.rs`: an archive aimed `Matching` archives exactly what the query matches and one undo restores it. Red: `Everything` is the inbox
 - [ ] T095 [US5] Add `Aim::Matching` to `crates/postio-focus/src/verbs.rs` and its resolution in the host's verb path (the same match `search_conversations` walks). Make T094 green
 - [ ] T096 [P] [US5] Write failing tests in `crates/postio-config/src/filters.rs` and `crates/postio-ui/src/saved_search.rs`: `notify` round-trips and defaults to false; `Verb::Save { query, name, pin, notify }` writes all four and the next free order; a rolling save rewrites date terms to relative (`after:90d`) and a fixed one to ISO (D14), via `edit`. Red: no field

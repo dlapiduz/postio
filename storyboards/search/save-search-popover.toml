@@ -1,0 +1,44 @@
+# ⌘S in the results keeps the query (specs/010-focus-search US5, FR-029,
+# design §3.9, screen 12): a popover hangs from the toolbar's Save search
+# button, 364 wide, titled “Save as a saved search”. A Name field holds a
+# name made from the query (“Atlas budget from Ada”), the terms are small
+# read-only chips, and three switches follow: Pin to saved searches (on,
+# “Appears at the top of search as ⌥N”, the next free number), Notify
+# when new mail matches (off, “A quiet badge, not a banner”), and Keep
+# the date rolling (off, saying what each way means for this query's
+# date). Cancel, or Save ↩.
+#
+# The controller's half is postio-focus tests/results.rs (save_*); what
+# reaches config.toml is ffi_suite saved_search.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/010-focus-search US5" }
+seed   = "search"
+design = "12-select-and-save"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "search"
+
+[[step]]
+type    = "atlas budget from:ada@example.com after:2026-07-01"
+
+[[step]]
+command = "show_all_results"
+check   = { keyboard.region = "results" }
+
+[[step]]
+id      = "popover"
+command = "save_search"
+expect  = "⌘S opens the Save popover under Save search: “Save as a saved search”, Name “Atlas budget from Ada” with the field focused, the chips “from:Ada Moreno”, “after:2026-07-01” and “atlas budget”, Pin on with “Appears at the top of search as ⌥…”, Notify off, Keep the date rolling off with “Off: always since 1 July. On: always the last … days”, then Cancel and Save ↩."
+
+[[step]]
+key     = "Return"
+check   = { keyboard.region = "results" }
+expect  = "Return saves it: the popover goes, a toast says it was saved, and the results are as they were."
+
+[[step]]
+command = "search"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+expect  = "The empty dropdown lists the new saved search among Saved searches, last, with its count and its ⌥ number."
