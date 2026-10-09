@@ -7,6 +7,9 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Datelike, TimeZone};
+use postio_core::{CommandId, Keymap};
+
+use crate::hints::{self, Hint};
 
 /// The operators the empty dropdown lists under "Search by", each with the
 /// hint after it (screen 01), in the design's order.
@@ -113,6 +116,134 @@ pub fn show_all(total: u64, capped: bool, typed: Option<&str>) -> String {
     format!("Show all {} results{for_typed}", count(total, capped))
 }
 
+/// The field's placeholder while it is empty (screen 01).
+pub const PLACEHOLDER: &str = "Search mail, people and files, or type > for commands";
+/// The empty dropdown's first section: the searches run lately.
+pub const RECENT: &str = "Recent";
+/// What the Recent section's note says after its key: "⌥⌫ forgets one".
+pub const FORGETS_ONE: &str = "forgets one";
+/// The pinned saved searches' section.
+pub const SAVED_SEARCHES: &str = "Saved searches";
+/// The cheat sheet's section.
+pub const SEARCH_BY: &str = "Search by";
+/// The cheat sheet's last line, before the example sentence.
+pub const JUST_TYPE_IT: &str = "Or just type it:";
+/// Between the example sentence and the query it becomes.
+pub const BECOMES: &str = "becomes";
+/// The plain English the cheat sheet lowers live, as screen 01 has it.
+pub const EXAMPLE: &str = "invoices from ada last month";
+/// The words state's hits.
+pub const TOP_HITS: &str = "Top hits";
+/// The Top hits section's note.
+pub const TOP_HITS_NOTE: &str = "ranked by sender, recency and where the words matched";
+/// The words state's filter pills.
+pub const NARROW_TO: &str = "Narrow to";
+/// What the Show all row says after its count.
+pub const SHOW_ALL_DETAIL: &str = "in the main window, with filters, a timeline and Quick Look";
+
+/// How many conversations a recent search found: "48 results".
+pub fn results_count(n: u64) -> String {
+    match n {
+        1 => "1 result".to_owned(),
+        n => format!("{} results", grouped(n)),
+    }
+}
+
+/// A top hit's date column: the day and month ("26 Sep"), with the year
+/// for another year. Both times in the person's zone.
+pub fn hit_date<Tz: TimeZone>(at: DateTime<Tz>, now: DateTime<Tz>) -> String {
+    let (day, today) = (at.date_naive(), now.date_naive());
+    if day.year() == today.year() {
+        day.format("%-d %b").to_string()
+    } else {
+        day.format("%-d %b %Y").to_string()
+    }
+}
+
+/// A hit's folder column, as the operator that would find it there:
+/// `in:Inbox`, quoted when the name has a space.
+pub fn in_folder(name: &str) -> String {
+    if name.contains(char::is_whitespace) {
+        format!("in:\"{name}\"")
+    } else {
+        format!("in:{name}")
+    }
+}
+
+/// The arrows, as one hint: the panel's own walk, which the toolkit keeps
+/// (009 FR-004), not a command.
+fn arrows(label: &str) -> Hint {
+    hints::fixed(
+        "Up Down",
+        label,
+        "the arrows move the dropdown's highlight, which the toolkit keeps",
+    )
+}
+
+/// The empty dropdown's footer (screen 01): move, run a recent search
+/// again, the saved searches' keys, and `>` for commands.
+pub fn empty_hints(keymap: &Keymap) -> Vec<Hint> {
+    let mut hints = vec![
+        arrows("move"),
+        hints::fixed(
+            "Return",
+            "run again",
+            "Return runs the highlighted row: the field's own key, not a command",
+        ),
+    ];
+    // ⌥1 to ⌥4 as one cap, when the four keys are one modifier and the digits.
+    let saved = [
+        CommandId::SavedSearch1,
+        CommandId::SavedSearch2,
+        CommandId::SavedSearch3,
+        CommandId::SavedSearch4,
+    ];
+    let keys: Vec<Option<&str>> = saved.iter().map(|id| keymap.binding(*id)).collect();
+    if let [Some(first), .., Some(last)] = keys.as_slice() {
+        let run = first
+            .strip_suffix('1')
+            .filter(|modifier| last.strip_suffix('4') == Some(*modifier))
+            .map(|modifier| format!("{modifier}1\u{2013}4"));
+        hints.extend(match run {
+            Some(key) => Some(Hint {
+                key,
+                label: "saved".to_owned(),
+            }),
+            None => hints::pair(keymap, saved[0], saved[3], "saved"),
+        });
+    }
+    hints.push(hints::fixed(
+        ">",
+        "commands",
+        "`>` typed first is the bar's commands-only prefix, not a key",
+    ));
+    hints
+}
+
+/// The words dropdown's footer (screen 03): move, open the highlighted
+/// message, all results, and Tab for the first filter.
+pub fn words_hints(keymap: &Keymap) -> Vec<Hint> {
+    let mut hints = vec![
+        arrows("move"),
+        hints::fixed(
+            "Return",
+            "open message",
+            "Return runs the highlighted row: the field's own key, not a command",
+        ),
+    ];
+    hints.extend(hints::hint(
+        keymap,
+        CommandId::ShowAllResults,
+        "all results",
+    ));
+    hints.push(hints::fixed(
+        "Tab",
+        "add first filter",
+        "Tab in the field is the toolkit's key; the bar takes it only for a pill",
+    ));
+    hints
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,6 +332,75 @@ mod tests {
 
         let big = narrow_pill("label:", "Atlas", 1_204);
         assert_eq!(big.count, "1,204");
+    }
+
+    #[test]
+    fn a_recent_search_counts_its_results() {
+        assert_eq!(results_count(48), "48 results");
+        assert_eq!(results_count(1), "1 result");
+        assert_eq!(results_count(0), "0 results");
+        assert_eq!(results_count(18_204), "18,204 results");
+    }
+
+    #[test]
+    fn a_top_hit_says_its_day_and_month_and_another_years() {
+        let now = at(2026, 9, 26);
+        assert_eq!(hit_date(now, now), "26 Sep");
+        assert_eq!(hit_date(at(2026, 8, 14), now), "14 Aug");
+        assert_eq!(hit_date(at(2025, 12, 3), now), "3 Dec 2025");
+    }
+
+    #[test]
+    fn a_hits_folder_is_written_as_its_operator() {
+        assert_eq!(in_folder("Inbox"), "in:Inbox");
+        assert_eq!(in_folder("Q3 close"), "in:\"Q3 close\"");
+    }
+
+    #[test]
+    fn the_empty_dropdowns_footer_names_its_keys_from_the_keymap() {
+        let keymap = postio_core::Keymap::resolve_on(
+            &postio_config::KeyBindings::default(),
+            postio_config::paths::Platform::Apple,
+        );
+        let hints = empty_hints(&keymap);
+        let said: Vec<(&str, &str)> = hints
+            .iter()
+            .map(|hint| (hint.key.as_str(), hint.label.as_str()))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                ("Up Down", "move"),
+                ("Return", "run again"),
+                ("alt+1\u{2013}4", "saved"),
+                (">", "commands"),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_words_dropdowns_footer_names_its_keys_from_the_keymap() {
+        let keymap = postio_core::Keymap::resolve_on(
+            &postio_config::KeyBindings::default(),
+            postio_config::paths::Platform::Apple,
+        );
+        let said: Vec<(String, String)> = words_hints(&keymap)
+            .into_iter()
+            .map(|hint| (hint.key, hint.label))
+            .collect();
+        let show_all = keymap
+            .binding(postio_core::CommandId::ShowAllResults)
+            .expect("bound on the Mac")
+            .to_owned();
+        assert_eq!(
+            said,
+            [
+                ("Up Down".to_owned(), "move".to_owned()),
+                ("Return".to_owned(), "open message".to_owned()),
+                (show_all, "all results".to_owned()),
+                ("Tab".to_owned(), "add first filter".to_owned()),
+            ]
+        );
     }
 
     #[test]

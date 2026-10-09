@@ -27,6 +27,7 @@ mod compose;
 mod confirm;
 mod cursor;
 mod digest;
+mod dropdown;
 mod feed;
 mod filtered;
 mod keys;
@@ -44,6 +45,10 @@ pub use cursor::{NoRows, RowFacts, Rows};
 pub use digest::{
     DigestCard, DigestEmail, DigestLine, DigestStatement, DigestTopic, DigestView, RulePreviewLine,
     RuleView,
+};
+pub use dropdown::{
+    DropdownPill, DropdownRow, DropdownRowKind, DropdownSection, DropdownState, DropdownView, Lane,
+    Run, RunStyle,
 };
 pub use feed::{Opened, PageAnswer};
 pub use filtered::{FilteredLine, FilteredTab, FilteredView};
@@ -76,6 +81,10 @@ pub struct Capabilities {
     /// Secondary surfaces stack over each other: Linux's dialogs do, the
     /// Mac's windows replace each other (spec 009 M4).
     pub stacking: bool,
+    /// Search has its two layers: the dropdown, and the results view it
+    /// opens (spec 010 D17). The Mac has them; GTK's bar keeps spec 009's
+    /// blend until Linux adopts them (S2).
+    pub results_view: bool,
 }
 
 impl Policy {
@@ -87,6 +96,7 @@ impl Policy {
             caps: Capabilities {
                 reading_pane: linux,
                 stacking: linux,
+                results_view: !linux,
             },
         }
     }
@@ -150,6 +160,12 @@ pub enum Input {
     /// `Tab` in the bar: into the chips, and on from chip to chip. Nothing
     /// comes back when there is no chip to step into.
     BarTab,
+    /// The dropdown's arrows rest on the row with this token now: what
+    /// `ForgetRecent` forgets.
+    SearchHighlighted(u64),
+    /// `alt+BackSpace` on the dropdown's recent search with this token:
+    /// forget it.
+    SearchForget(u64),
     /// Go to the folders popover's place with this token
     /// ([`FocusController::places`]).
     OpenPlace(u64),
@@ -398,6 +414,8 @@ pub enum Intent {
     },
     /// Draw the bar's lines, whole.
     BarLines(BarView),
+    /// Draw the search dropdown, whole, in place of the bar's lines.
+    Dropdown(DropdownView),
     /// The list shows this place now: what the header strip names.
     Place {
         /// "Inbox", "Receipts".
@@ -514,6 +532,48 @@ pub enum Request {
         order: postio_search::ResultOrder,
         /// The bar's words' stamp, echoed in the answer.
         stamp: u64,
+    },
+    /// Search this machine's index for conversations: the dropdown's top
+    /// hits and the facets it narrows by (spec 010).
+    Conversations {
+        /// The words, lowered.
+        query: postio_search::ParsedQuery,
+        /// Which order they come in.
+        order: postio_search::results::ConversationOrder,
+        /// How many hits.
+        limit: u32,
+        /// The bar's words' stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// The passages of hits on screen, each where it matched.
+    Passages {
+        /// The query whose words the passages are cut around.
+        query: postio_search::ParsedQuery,
+        /// Each hit's best message, and where it matched.
+        hits: Vec<(MessageId, Vec<postio_search::results::Source>)>,
+        /// The bar's words' stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// The searches run lately, newest first.
+    RecentSearches,
+    /// Keep `query` among the searches run, with what it matched.
+    RememberSearch {
+        /// The query, as run.
+        query: String,
+        /// Conversations it matched.
+        hits: u64,
+    },
+    /// Forget a recent search; answered with the recent searches left.
+    ForgetSearch {
+        /// The query.
+        query: String,
+    },
+    /// How many each saved search matches.
+    SavedCounts {
+        /// Every saved search, as `(key, query)`.
+        searches: Vec<(String, String)>,
+        /// The day relative dates are read against.
+        today: chrono::NaiveDate,
     },
     /// A folder's newest conversations, for `in:`.
     Folder {
@@ -644,6 +704,18 @@ pub enum Request {
     },
 }
 
+impl Request {
+    /// The search lane this request is on, when it is one: a newer request
+    /// of the same lane makes the one before it waste (spec 010 D8).
+    pub fn lane(&self) -> Option<Lane> {
+        match self {
+            Request::Conversations { .. } => Some(Lane::Conversations),
+            Request::Passages { .. } => Some(Lane::Passages),
+            _ => None,
+        }
+    }
+}
+
 /// The engine's answer to a [`Request`]. A failure is carried as its
 /// sentence: the controller decides what to show, not how to recover.
 #[derive(Debug, Clone, PartialEq)]
@@ -681,6 +753,25 @@ pub enum Reply {
         /// What it found.
         answer: Result<Found, String>,
     },
+    /// The answer to [`Request::Conversations`].
+    Conversations {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// What it found, boxed: it is the largest answer by far.
+        answer: Result<Box<postio_search::results::ConversationResults>, String>,
+    },
+    /// The answer to [`Request::Passages`].
+    Passages {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// Each hit's matches, with their passages.
+        answer: Result<Vec<(MessageId, Vec<postio_search::results::Match>)>, String>,
+    },
+    /// The answer to [`Request::RecentSearches`] and
+    /// [`Request::ForgetSearch`].
+    RecentSearches(Result<Vec<postio_client::protocol::RecentSearch>, String>),
+    /// The answer to [`Request::SavedCounts`]: `(key, total, new)`.
+    SavedCounts(Result<Vec<(String, u64, u64)>, String>),
     /// The answer to [`Request::Folder`].
     Folder {
         /// The stamp it was asked under.
@@ -836,7 +927,7 @@ impl FocusController {
             cursor: cursor::Cursor::default(),
             verbs: verbs::Verbs::default(),
             surfaces: surfaces::Surfaces::default(),
-            bar: bar::Bar::new(policy.platform),
+            bar: bar::Bar::new(policy.platform, policy.caps.results_view),
             pickers: pickers::Pickers::default(),
             toast_undo: None,
             counts: None,
@@ -1017,6 +1108,10 @@ impl FocusController {
                 _,
                 reply @ (Reply::Places(_)
                 | Reply::Search { .. }
+                | Reply::Conversations { .. }
+                | Reply::Passages { .. }
+                | Reply::RecentSearches(_)
+                | Reply::SavedCounts(_)
                 | Reply::Folder { .. }
                 | Reply::RoleFolder(_)),
             ) => {
@@ -1037,6 +1132,7 @@ impl FocusController {
             }
             Input::Clock(clock) => {
                 self.pickers.clock = clock;
+                self.bar.set_clock(clock);
                 Vec::new()
             }
             Input::PickerTyped { text } => {
@@ -1132,6 +1228,8 @@ impl FocusController {
             input @ (Input::Typed { .. }
             | Input::BarRun(_)
             | Input::BarTab
+            | Input::SearchHighlighted(_)
+            | Input::SearchForget(_)
             | Input::OpenPlace(_)
             | Input::SavedSearches(_)
             | Input::SearchSaved(_)
@@ -1349,7 +1447,9 @@ impl FocusController {
     /// the selection's, `!`, and the verbs on the list. A frontend sends the
     /// rest -- a surface's commands, the composer's -- where it always did.
     pub fn answers(&self, id: CommandId) -> bool {
-        if self.surfaces.top() == Some(SurfaceKind::Bar) && bar::bar_key(id) {
+        if self.surfaces.top() == Some(SurfaceKind::Bar)
+            && bar::bar_key(id, self.policy.caps.results_view)
+        {
             return true;
         }
         if pickers::picker_key(id) {

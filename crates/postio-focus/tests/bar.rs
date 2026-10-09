@@ -59,8 +59,13 @@ impl Rows for List {
 
 const RECEIPTS: MailboxId = MailboxId::new(7);
 
+/// The Mac's controller as spec 009 built it: the bar's search half is the
+/// blend GTK draws (`results_view` off), which every test above the
+/// dropdown's section pins for GTK (spec 010 S2, D17).
 fn mac() -> FocusController {
-    FocusController::new(Policy::for_platform(Platform::Apple))
+    let mut policy = Policy::for_platform(Platform::Apple);
+    policy.caps.results_view = false;
+    FocusController::new(policy)
 }
 
 fn shown(effects: &[Effect]) -> Vec<Intent> {
@@ -1110,4 +1115,723 @@ fn the_order_row_switches_the_order_and_asks_again() {
         Some(row.token),
         "the highlight stays on it"
     );
+}
+
+// -- The search dropdown (spec 010 step 2, screens 01 and 03) ---------------
+//
+// With `results_view` on -- the Mac's policy -- the bar's search half is the
+// dropdown: empty, it lists the recent and saved searches and the cheat
+// sheet; with words, the top hits, Narrow to and Show all. Everything above
+// this section runs with it off, which is GTK's bar, unchanged.
+
+mod dropdown {
+    use super::*;
+    use chrono::{DateTime, Local, NaiveDate, TimeZone};
+    use postio_client::protocol::RecentSearch;
+    use postio_focus::{DropdownRowKind, DropdownState, DropdownView, Lane, RunStyle};
+    use postio_model::{AddressId, EmailAddress, LabelId};
+    use postio_search::facets::{Count, SearchFacets};
+    use postio_search::results::{
+        ConversationHit, ConversationKey, ConversationResults, FacetNames, Match, Passage, Source,
+    };
+
+    /// Saturday 26 September 2026, mid-afternoon, as the screens are.
+    fn today() -> DateTime<Local> {
+        Local.with_ymd_and_hms(2026, 9, 26, 15, 0, 0).unwrap()
+    }
+
+    fn mac_search() -> FocusController {
+        let mut focus = FocusController::new(Policy::for_platform(Platform::Apple));
+        assert!(
+            focus.policy().caps.results_view,
+            "the Mac draws the dropdown"
+        );
+        let _ = focus.handle(Input::Clock(Some(today())));
+        focus
+    }
+
+    /// The dropdown's last view among `effects`.
+    fn dropdown(effects: &[Effect]) -> DropdownView {
+        try_dropdown(effects).unwrap_or_else(|| panic!("no dropdown in {effects:?}"))
+    }
+
+    fn try_dropdown(effects: &[Effect]) -> Option<DropdownView> {
+        shown(effects)
+            .into_iter()
+            .rev()
+            .find_map(|intent| match intent {
+                Intent::Dropdown(view) => Some(view),
+                _ => None,
+            })
+    }
+
+    fn text(runs: &[postio_focus::Run]) -> String {
+        runs.iter().map(|run| run.text.as_str()).collect()
+    }
+
+    fn recent(query: &str, days_ago: i64, hits: u64) -> RecentSearch {
+        RecentSearch {
+            query: query.to_owned(),
+            last_run_at: (today() - chrono::TimeDelta::days(days_ago)).to_utc(),
+            hits,
+        }
+    }
+
+    /// The pinned saved searches the screens show.
+    fn saved() -> Vec<(String, String)> {
+        [
+            ("Waiting on reply", "from:juno"),
+            ("Atlas", "subject:atlas"),
+            ("Receipts this month", "in:Receipts"),
+            ("From school", "from:northfield"),
+        ]
+        .into_iter()
+        .map(|(name, query)| (name.to_owned(), query.to_owned()))
+        .collect()
+    }
+
+    /// Answer the one request among `effects` that `pick` takes.
+    fn answer(
+        focus: &mut FocusController,
+        effects: &[Effect],
+        pick: impl Fn(&Request) -> bool,
+        reply: impl FnOnce(&Request) -> Reply,
+        rows: &List,
+    ) -> Vec<Effect> {
+        let (ticket, request) = asks(effects)
+            .into_iter()
+            .rev()
+            .find(|(_, request)| pick(request))
+            .unwrap_or_else(|| panic!("no such request in {effects:?}"));
+        let reply = reply(&request);
+        focus.handle_on(Input::Reply(ticket, reply), rows)
+    }
+
+    /// `/` with the places, the recent searches and the saved counts read.
+    fn opened(focus: &mut FocusController, rows: &List) -> Vec<Effect> {
+        let _ = focus.handle(Input::SavedSearches(saved()));
+        let mut effects = bar_open(focus, CommandId::Search, rows);
+        let more = answer(
+            focus,
+            &effects,
+            |request| *request == Request::RecentSearches,
+            |_| {
+                Reply::RecentSearches(Ok(vec![
+                    recent("atlas budget", 1, 48),
+                    recent("from:ada invoice", 5, 6),
+                    recent("has:attachment in:Receipts after:2026-09-01", 5, 19),
+                    recent("harbor", 8, 3),
+                ]))
+            },
+            rows,
+        );
+        effects.extend(more);
+        let more = answer(
+            focus,
+            &effects,
+            |request| matches!(request, Request::SavedCounts { .. }),
+            |request| {
+                let Request::SavedCounts { searches, .. } = request else {
+                    unreachable!()
+                };
+                Reply::SavedCounts(Ok(searches
+                    .iter()
+                    .zip([5, 38, 19, 4])
+                    .map(|((key, _), total)| (key.clone(), total, 0))
+                    .collect()))
+            },
+            rows,
+        );
+        effects.extend(more);
+        effects
+    }
+
+    fn ada() -> EmailAddress {
+        EmailAddress::new(Some("Ada Moreno"), "ada@example.com")
+    }
+
+    fn tomas() -> EmailAddress {
+        EmailAddress::new(Some("Tom\u{e1}s Reyes"), "tomas@example.com")
+    }
+
+    fn conversation(message: i64, from: EmailAddress, subject: &str) -> ConversationHit {
+        ConversationHit {
+            key: ConversationKey::Thread(ThreadId::new(message + 400)),
+            best: MessageId::new(message),
+            mailbox_id: MailboxId::new(1),
+            subject: Some(subject.to_owned()),
+            from: Some(from),
+            newest_match: Local
+                .with_ymd_and_hms(2026, 9, 26, 9, 0, 0)
+                .unwrap()
+                .to_utc(),
+            messages: 3,
+            unread: false,
+            has_attachments: false,
+            labels: Vec::new(),
+            score: 1.0,
+            reasons: Vec::new(),
+            matches: vec![Match {
+                source: Source::Body,
+                passage: None,
+                when: None,
+            }],
+        }
+    }
+
+    /// What `atlas budget` finds on the screens: four of 48, with facets.
+    fn atlas_budget() -> ConversationResults {
+        ConversationResults {
+            hits: vec![
+                conversation(1, ada(), "Re: Atlas Q3 budget, final numbers"),
+                conversation(2, tomas(), "Atlas staffing plan for Q4"),
+                conversation(3, ada(), "Contractor invoices for September"),
+                conversation(4, ada(), "Atlas budget template v2"),
+            ],
+            total: 48,
+            capped: false,
+            messages_searched: 18_204,
+            corpus_complete: true,
+            contents_complete: true,
+            facets: SearchFacets {
+                senders: vec![
+                    Count {
+                        id: AddressId::new(1),
+                        conversations: 21,
+                    },
+                    Count {
+                        id: AddressId::new(2),
+                        conversations: 9,
+                    },
+                ],
+                labels: vec![Count {
+                    id: LabelId::new(3),
+                    conversations: 30,
+                }],
+                attachment: 12,
+                ..SearchFacets::default()
+            },
+            files: 12,
+            people: 6,
+            names: FacetNames {
+                people: vec![(AddressId::new(1), ada()), (AddressId::new(2), tomas())],
+                labels: vec![(LabelId::new(3), "Atlas".to_owned())],
+                folders: vec![(MailboxId::new(1), "Inbox".to_owned())],
+            },
+            elapsed: std::time::Duration::from_millis(38),
+        }
+    }
+
+    fn is_conversations(request: &Request) -> bool {
+        matches!(request, Request::Conversations { .. })
+    }
+
+    /// Type `words` and answer the conversation search with `results`.
+    fn searched(
+        focus: &mut FocusController,
+        words: &str,
+        results: ConversationResults,
+        rows: &List,
+    ) -> Vec<Effect> {
+        let effects = typed(focus, words, rows);
+        answer(
+            focus,
+            &effects,
+            is_conversations,
+            |request| {
+                let Request::Conversations { stamp, .. } = request else {
+                    unreachable!()
+                };
+                Reply::Conversations {
+                    stamp: *stamp,
+                    answer: Ok(Box::new(results)),
+                }
+            },
+            rows,
+        )
+    }
+
+    #[test]
+    fn the_empty_dropdown_lists_three_recents_the_saved_searches_and_the_cheat_sheet() {
+        let rows = List::of(3);
+        let mut focus = mac_search();
+        let effects = opened(&mut focus, &rows);
+        assert!(
+            !shown(&effects)
+                .iter()
+                .any(|intent| matches!(intent, Intent::BarLines(_))),
+            "the Mac draws the dropdown, not spec 009's lines"
+        );
+        let view = dropdown(&effects);
+        assert_eq!(view.state, DropdownState::Empty);
+        let titles: Vec<&str> = view.sections.iter().map(|s| s.title.as_str()).collect();
+        assert_eq!(titles, ["Recent", "Saved searches", "Search by"]);
+
+        let recent = &view.sections[0];
+        assert_eq!(recent.note.as_deref(), Some("forgets one"));
+        assert_eq!(recent.note_key.as_deref(), Some("alt+BackSpace"));
+        let said: Vec<(String, String, Option<&str>)> = recent
+            .rows
+            .iter()
+            .map(|row| (text(&row.title), text(&row.detail), row.right.as_deref()))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                (
+                    "atlas budget".into(),
+                    "48 results".into(),
+                    Some("yesterday")
+                ),
+                ("from:ada invoice".into(), "6 results".into(), Some("Mon")),
+                (
+                    "has:attachment in:Receipts after:2026-09-01".into(),
+                    "19 results".into(),
+                    Some("Mon")
+                ),
+            ],
+            "at most three, newest first"
+        );
+        assert!(
+            recent
+                .rows
+                .iter()
+                .all(|row| row.kind == DropdownRowKind::Recent && row.selectable)
+        );
+        assert_eq!(
+            recent.rows[0].title[0].style,
+            RunStyle::Plain,
+            "words read as words"
+        );
+        assert_eq!(
+            recent.rows[1].title[0].style,
+            RunStyle::Mono,
+            "a query reads as one"
+        );
+        assert_eq!(
+            view.highlight,
+            Some(recent.rows[0].token),
+            "the newest is focused"
+        );
+
+        let pills: Vec<(&str, Option<&str>, Option<&str>)> = view.sections[1]
+            .pills
+            .iter()
+            .map(|pill| {
+                (
+                    pill.label.as_str(),
+                    pill.count.as_deref(),
+                    pill.key.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            pills,
+            [
+                ("Waiting on reply", Some("5"), Some("alt+1")),
+                ("Atlas", Some("38"), Some("alt+2")),
+                ("Receipts this month", Some("19"), Some("alt+3")),
+                ("From school", Some("4"), Some("alt+4")),
+            ]
+        );
+
+        let by = &view.sections[2];
+        let sheet: Vec<(String, String)> = by
+            .rows
+            .iter()
+            .filter(|row| row.kind == DropdownRowKind::CheatSheet)
+            .map(|row| (text(&row.title), text(&row.detail)))
+            .collect();
+        assert_eq!(sheet.len(), 8);
+        assert_eq!(
+            sheet[0],
+            ("from:".to_owned(), "person or address".to_owned())
+        );
+        let example = by
+            .rows
+            .iter()
+            .find(|row| row.kind == DropdownRowKind::Example)
+            .expect("the plain-English example");
+        assert!(by.rows.iter().all(|row| !row.selectable), "nothing to run");
+        assert_eq!(
+            text(&example.title),
+            "Or just type it: invoices from ada last month"
+        );
+        assert!(
+            text(&example.detail).contains("after:2026-08-01 before:2026-09-01"),
+            "lowered live against today: {:?}",
+            text(&example.detail)
+        );
+        let hints: Vec<&str> = view.hints.iter().map(|hint| hint.label.as_str()).collect();
+        assert_eq!(hints, ["move", "run again", "saved", "commands"]);
+    }
+
+    #[test]
+    fn the_saved_counts_are_asked_for_every_saved_search() {
+        let rows = List::of(1);
+        let mut focus = mac_search();
+        let _ = focus.handle(Input::SavedSearches(saved()));
+        let effects = bar_open(&mut focus, CommandId::Search, &rows);
+        let counts = asked(&effects)
+            .into_iter()
+            .find_map(|request| match request {
+                Request::SavedCounts {
+                    searches,
+                    today: day,
+                } => Some((searches, day)),
+                _ => None,
+            })
+            .expect("the saved searches are counted as the bar opens");
+        assert_eq!(counts.0, saved(), "every one, keyed by its name");
+        assert_eq!(counts.1, NaiveDate::from_ymd_opt(2026, 9, 26).unwrap());
+    }
+
+    #[test]
+    fn words_ask_for_four_conversations_and_draw_hits_narrow_to_and_show_all() {
+        let rows = List::of(3);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let effects = typed(&mut focus, "atlas budget", &rows);
+        let request = asked(&effects)
+            .into_iter()
+            .find(is_conversations)
+            .expect("words are searched as conversations");
+        let Request::Conversations { limit, order, .. } = &request else {
+            unreachable!()
+        };
+        assert_eq!(*limit, 4, "the dropdown's top hits");
+        assert_eq!(*order, postio_search::results::ConversationOrder::BestMatch);
+        assert_eq!(request.lane(), Some(Lane::Conversations));
+
+        let effects = answer(
+            &mut focus,
+            &effects,
+            is_conversations,
+            |request| {
+                let Request::Conversations { stamp, .. } = request else {
+                    unreachable!()
+                };
+                Reply::Conversations {
+                    stamp: *stamp,
+                    answer: Ok(Box::new(atlas_budget())),
+                }
+            },
+            &rows,
+        );
+        let view = dropdown(&effects);
+        assert_eq!(view.state, DropdownState::Words);
+        let titles: Vec<&str> = view.sections.iter().map(|s| s.title.as_str()).collect();
+        assert_eq!(titles, ["Top hits", "Narrow to", ""]);
+
+        let hits = &view.sections[0].rows;
+        assert_eq!(hits.len(), 4);
+        assert_eq!(
+            text(&hits[0].title),
+            "Ada Moreno \u{b7} Re: Atlas Q3 budget, final numbers"
+        );
+        let marked: Vec<&str> = hits[0]
+            .title
+            .iter()
+            .filter(|run| run.highlighted)
+            .map(|run| run.text.as_str())
+            .collect();
+        assert_eq!(
+            marked,
+            ["Atlas", "budget"],
+            "the matched words, from the engine"
+        );
+        assert_eq!(hits[0].folder.as_deref(), Some("in:Inbox"));
+        assert_eq!(hits[0].right.as_deref(), Some("26 Sep"));
+        assert!(
+            hits.iter()
+                .all(|row| row.kind == DropdownRowKind::Hit && row.selectable)
+        );
+
+        let pills: Vec<String> = view.sections[1]
+            .pills
+            .iter()
+            .map(|pill| {
+                format!(
+                    "{} {} {}",
+                    pill.op.as_deref().unwrap_or_default(),
+                    pill.label,
+                    pill.count.as_deref().unwrap_or_default()
+                )
+            })
+            .collect();
+        assert_eq!(
+            pills,
+            [
+                "from: Ada Moreno 21",
+                "from: Tom\u{e1}s Reyes 9",
+                "has: attachment 12",
+                "label: Atlas 30",
+            ]
+        );
+
+        let show_all = &view.sections[2].rows[0];
+        assert_eq!(show_all.kind, DropdownRowKind::ShowAll);
+        assert_eq!(text(&show_all.title), "Show all 48 results");
+        assert_eq!(
+            show_all.key.as_deref(),
+            focus.keymap().binding(CommandId::ShowAllResults)
+        );
+        assert_eq!(
+            view.highlight,
+            Some(show_all.token),
+            "Show all is focused by default"
+        );
+        assert_eq!(view.count.as_deref(), Some("48 matches \u{b7} 38 ms"));
+    }
+
+    #[test]
+    fn the_hits_passages_are_read_after_the_hits_land() {
+        let rows = List::of(1);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let effects = searched(&mut focus, "atlas budget", atlas_budget(), &rows);
+        let (ticket, request) = asks(&effects)
+            .into_iter()
+            .find(|(_, request)| matches!(request, Request::Passages { .. }))
+            .expect("the four hits' passages are asked for");
+        assert_eq!(request.lane(), Some(Lane::Passages));
+        let Request::Passages { hits, stamp, .. } = request else {
+            unreachable!()
+        };
+        assert_eq!(hits.len(), 4);
+        assert_eq!(hits[1], (MessageId::new(2), vec![Source::Body]));
+        let passage = Passage {
+            text: "moves the Atlas budget up by about 9%".to_owned(),
+            ranges: vec![10..15, 16..22],
+            elided_start: false,
+            elided_end: false,
+        };
+        let effects = focus.handle(Input::Reply(
+            ticket,
+            Reply::Passages {
+                stamp,
+                answer: Ok(vec![(
+                    MessageId::new(2),
+                    vec![Match {
+                        source: Source::Body,
+                        passage: Some(passage),
+                        when: None,
+                    }],
+                )]),
+            },
+        ));
+        let view = dropdown(&effects);
+        let second = &view.sections[0].rows[1];
+        assert_eq!(
+            text(&second.detail),
+            "moves the Atlas budget up by about 9%"
+        );
+        let marked: Vec<&str> = second
+            .detail
+            .iter()
+            .filter(|run| run.highlighted)
+            .map(|run| run.text.as_str())
+            .collect();
+        assert_eq!(marked, ["Atlas", "budget"]);
+    }
+
+    #[test]
+    fn an_answer_for_words_since_changed_is_dropped() {
+        let rows = List::of(1);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let early = typed(&mut focus, "atla", &rows);
+        let _ = typed(&mut focus, "atlas", &rows);
+        let effects = answer(
+            &mut focus,
+            &early,
+            is_conversations,
+            |request| {
+                let Request::Conversations { stamp, .. } = request else {
+                    unreachable!()
+                };
+                Reply::Conversations {
+                    stamp: *stamp,
+                    answer: Ok(Box::new(atlas_budget())),
+                }
+            },
+            &rows,
+        );
+        assert_eq!(try_dropdown(&effects), None, "{effects:?}");
+    }
+
+    #[test]
+    fn tab_adds_the_first_narrow_to_pills_term_and_searches_again() {
+        let rows = List::of(1);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let _ = searched(&mut focus, "atlas budget", atlas_budget(), &rows);
+        let effects = focus.handle(Input::BarTab);
+        assert!(
+            shown(&effects).contains(&Intent::OpenBar {
+                mode: BarMode::Search,
+                text: "atlas budget from:ada@example.com".to_owned(),
+                select: None,
+            }),
+            "{effects:?}"
+        );
+        let request = asked(&effects)
+            .into_iter()
+            .find(is_conversations)
+            .expect("the panel re-runs");
+        let Request::Conversations { query, .. } = request else {
+            unreachable!()
+        };
+        assert_eq!(query.filters().count(), 1);
+    }
+
+    #[test]
+    fn tab_with_no_pill_to_add_is_the_toolkits() {
+        let rows = List::of(1);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        assert!(
+            focus.handle(Input::BarTab).is_empty(),
+            "empty: nothing to add"
+        );
+        let _ = typed(&mut focus, "atlas", &rows);
+        assert!(focus.handle(Input::BarTab).is_empty(), "no answer yet");
+    }
+
+    #[test]
+    fn alt_backspace_on_a_recent_forgets_it_and_the_next_moves_up() {
+        let rows = List::of(1);
+        let mut focus = mac_search();
+        let effects = opened(&mut focus, &rows);
+        let first = dropdown(&effects).sections[0].rows[0].token;
+        let effects = focus.handle(Input::SearchForget(first));
+        assert!(
+            asked(&effects).contains(&Request::ForgetSearch {
+                query: "atlas budget".to_owned()
+            }),
+            "{effects:?}"
+        );
+        let view = dropdown(&effects);
+        let left: Vec<String> = view.sections[0]
+            .rows
+            .iter()
+            .map(|row| text(&row.title))
+            .collect();
+        assert_eq!(
+            left,
+            [
+                "from:ada invoice",
+                "has:attachment in:Receipts after:2026-09-01",
+                "harbor"
+            ],
+            "gone at once, and the fourth moves up"
+        );
+        assert_eq!(view.highlight, Some(view.sections[0].rows[0].token));
+
+        // The key itself forgets the row the arrows rest on.
+        let second = view.sections[0].rows[1].token;
+        let _ = focus.handle(Input::SearchHighlighted(second));
+        assert!(focus.answers(CommandId::ForgetRecent));
+        let effects = run(&mut focus, CommandId::ForgetRecent, &rows);
+        assert!(asked(&effects).contains(&Request::ForgetSearch {
+            query: "has:attachment in:Receipts after:2026-09-01".to_owned()
+        }));
+        // A token that is no recent forgets nothing.
+        assert!(asked(&focus.handle(Input::SearchForget(999_999))).is_empty());
+    }
+
+    #[test]
+    fn return_on_a_hit_opens_it_and_remembers_the_query() {
+        let rows = List::of(3);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let effects = searched(&mut focus, "atlas budget", atlas_budget(), &rows);
+        let second = dropdown(&effects).sections[0].rows[1].token;
+        let effects = focus.handle_on(Input::BarRun(second), &rows);
+        assert!(asked(&effects).contains(&Request::RememberSearch {
+            query: "atlas budget".to_owned(),
+            hits: 48,
+        }));
+        assert_eq!(
+            shown(&effects),
+            vec![
+                Intent::CloseSurface(SurfaceKind::Bar),
+                Intent::OpenMessage {
+                    message: MessageId::new(2),
+                    index: 1,
+                    total: 4,
+                    host: Host::Own,
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn show_all_remembers_the_query_and_goes_to_the_first_hit() {
+        let rows = List::of(3);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let effects = searched(&mut focus, "atlas budget", atlas_budget(), &rows);
+        let first = dropdown(&effects).sections[0].rows[0].token;
+        assert!(focus.answers(CommandId::ShowAllResults));
+        let effects = run(&mut focus, CommandId::ShowAllResults, &rows);
+        assert!(asked(&effects).contains(&Request::RememberSearch {
+            query: "atlas budget".to_owned(),
+            hits: 48,
+        }));
+        assert_eq!(
+            dropdown(&effects).select,
+            Some(first),
+            "the highlight is moved there, whatever it was on"
+        );
+    }
+
+    #[test]
+    fn a_recent_search_run_puts_its_query_in_the_field() {
+        let rows = List::of(1);
+        let mut focus = mac_search();
+        let effects = opened(&mut focus, &rows);
+        let first = dropdown(&effects).sections[0].rows[1].token;
+        let effects = focus.handle_on(Input::BarRun(first), &rows);
+        assert!(shown(&effects).contains(&Intent::OpenBar {
+            mode: BarMode::Search,
+            text: "from:ada invoice".to_owned(),
+            select: None,
+        }));
+        assert!(
+            asked(&effects)
+                .into_iter()
+                .any(|request| is_conversations(&request))
+        );
+    }
+
+    #[test]
+    fn commands_and_in_keep_spec_009s_lines() {
+        let rows = List::of(1);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let effects = typed(&mut focus, ">mark", &rows);
+        assert!(try_dropdown(&effects).is_none());
+        let _ = view(&effects);
+        let effects = typed(&mut focus, "in:Rec", &rows);
+        assert!(try_dropdown(&effects).is_none());
+        let effects = typed(&mut focus, "", &rows);
+        assert_eq!(dropdown(&effects).state, DropdownState::Empty, "and back");
+    }
+
+    #[test]
+    fn the_gtk_bar_asks_nothing_of_the_dropdown() {
+        let rows = List::of(1);
+        let mut focus = FocusController::new(Policy::for_platform(Platform::Freedesktop));
+        assert!(!focus.policy().caps.results_view);
+        let effects = run(&mut focus, CommandId::Search, &rows);
+        assert_eq!(asked(&effects), [Request::Places]);
+        let effects = typed(&mut focus, "atlas budget", &rows);
+        assert!(
+            asked(&effects)
+                .iter()
+                .all(|r| matches!(r, Request::Search { .. }))
+        );
+        assert!(!focus.answers(CommandId::ShowAllResults));
+    }
 }

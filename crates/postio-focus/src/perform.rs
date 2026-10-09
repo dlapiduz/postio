@@ -141,6 +141,57 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
             stamp,
             answer: search(client, query, order).await,
         },
+        Request::Conversations {
+            query,
+            order,
+            limit,
+            stamp,
+        } => Reply::Conversations {
+            stamp,
+            answer: client
+                .conversations(postio_model::AccountScope::Unified, query, order, 0, limit)
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|found| found.ok_or_else(|| "no search index here".to_owned()))
+                .map(Box::new),
+        },
+        Request::Passages { query, hits, stamp } => Reply::Passages {
+            stamp,
+            answer: client
+                .passages(query, hits)
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::RecentSearches => Reply::RecentSearches(
+            client
+                .recent_searches()
+                .await
+                .map_err(|error| error.to_string()),
+        ),
+        Request::RememberSearch { query, hits } => {
+            if let Err(error) = client.remember_search(query, hits).await {
+                tracing::warn!(%error, "Focus could not keep a recent search");
+            }
+            Reply::Noted
+        }
+        // Answered with what is left, so the panel needs no second read.
+        Request::ForgetSearch { query } => {
+            if let Err(error) = client.forget_search(query).await {
+                tracing::warn!(%error, "Focus could not forget a recent search");
+            }
+            Reply::RecentSearches(
+                client
+                    .recent_searches()
+                    .await
+                    .map_err(|error| error.to_string()),
+            )
+        }
+        Request::SavedCounts { searches, today } => Reply::SavedCounts(
+            client
+                .saved_counts(postio_model::AccountScope::Unified, today, searches)
+                .await
+                .map_err(|error| error.to_string()),
+        ),
         Request::Folder { mailbox, stamp } => {
             let scope = ListScope::Mailbox(mailbox);
             let count = client
