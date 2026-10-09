@@ -162,6 +162,36 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .map_err(|error| error.to_string()),
         },
+        Request::ResultsPage {
+            query,
+            order,
+            offset,
+            limit,
+            stamp,
+        } => Reply::ResultsPage {
+            stamp,
+            order,
+            offset,
+            answer: client
+                .conversations(
+                    postio_model::AccountScope::Unified,
+                    query,
+                    order,
+                    offset,
+                    limit,
+                )
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|found| found.ok_or_else(|| "no search index here".to_owned()))
+                .map(Box::new),
+        },
+        Request::ResultsPassages { query, hits, stamp } => Reply::ResultsPassages {
+            stamp,
+            answer: client
+                .passages(query, hits)
+                .await
+                .map_err(|error| error.to_string()),
+        },
         Request::RecentSearches => Reply::RecentSearches(
             client
                 .recent_searches()

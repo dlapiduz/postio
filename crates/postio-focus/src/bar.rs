@@ -262,8 +262,6 @@ struct Drop {
     terms: Vec<String>,
     /// What the words found, once it has landed.
     landed: Option<Landed>,
-    /// ⌘↩ came before the answer: run it when it lands.
-    show_all: bool,
 }
 
 impl Bar {
@@ -316,7 +314,7 @@ impl Bar {
         self.clock = clock;
     }
 
-    fn now(&self) -> chrono::DateTime<chrono::Local> {
+    pub(crate) fn now(&self) -> chrono::DateTime<chrono::Local> {
         self.clock.unwrap_or_else(postio_ui::clock::now)
     }
 
@@ -327,6 +325,47 @@ impl Bar {
     /// The bindings in force, as the bar's keycaps say them.
     pub(crate) fn keymap(&self) -> &Keymap {
         &self.keymap
+    }
+
+    /// Every folder the places know, by name.
+    pub(crate) fn folders(&self) -> &[(MailboxId, String)] {
+        &self.places.folders
+    }
+
+    /// The name a correspondent is known by, for an address.
+    pub(crate) fn name_for(&self, address: &str) -> Option<String> {
+        self.places
+            .contacts
+            .iter()
+            .find(|contact| contact.address.address.eq_ignore_ascii_case(address))
+            .and_then(|contact| {
+                contact
+                    .name
+                    .clone()
+                    .or_else(|| contact.address.name.clone())
+            })
+    }
+
+    /// The words in the field, trimmed, while the bar searches: what ⌘↩
+    /// shows the results of.
+    pub(crate) fn search_words(&self) -> Option<&str> {
+        let words = self.typed.trim();
+        (self.mode == Some(BarMode::Search) && !words.is_empty()).then_some(words)
+    }
+
+    /// The query an `Intent::SaveSearch` is saving.
+    pub(crate) fn set_saving(&mut self, query: String) {
+        self.saving = Some(query);
+    }
+
+    /// Walk `hits` from a message one of them opened, as a hit opened from
+    /// the bar walks the bar's: nothing to come back to when it closes.
+    pub(crate) fn walk(&mut self, hits: Vec<(MessageId, Option<ThreadId>)>) {
+        self.found = hits
+            .into_iter()
+            .map(|(message, thread)| Hit { message, thread })
+            .collect();
+        self.held = None;
     }
 
     pub(crate) fn set_keymap(&mut self, keymap: postio_core::Keymap) {
@@ -496,7 +535,7 @@ impl Bar {
     /// and asked the forgiving way: a person searching wants "tickt" to
     /// find the ticket. A saved search keeps the words, not this, so the
     /// rules made from them stay exact (ADR 0037, as amended).
-    fn lower(&self, typed: &str) -> postio_search::ParsedQuery {
+    pub(crate) fn lower(&self, typed: &str) -> postio_search::ParsedQuery {
         postio_search::natural::lower(typed, postio_ui::clock::now().date_naive(), &|name| {
             self.names.lookup(name)
         })
@@ -997,7 +1036,11 @@ impl FocusController {
     /// somewhere; `None` when `id` is none of those.
     pub(crate) fn going(&mut self, id: CommandId, rows: &dyn Rows) -> Option<Vec<Step>> {
         let steps = match id {
-            CommandId::Search => self.open_bar(BarMode::Search, "", rows),
+            // Over the results, on their query (FR-021).
+            CommandId::Search => {
+                let query = self.results_query().unwrap_or_default();
+                self.open_bar(BarMode::Search, &query, rows)
+            }
             CommandId::CommandPalette => {
                 self.open_bar(BarMode::Commands, &finder::COMMANDS_ONLY.to_string(), rows)
             }
@@ -1026,7 +1069,7 @@ impl FocusController {
                 vec![Step::Show(Intent::SaveSearch { query })]
             }
             CommandId::BackToWords => self.bar.back_to_words(),
-            CommandId::ShowAllResults if self.bar.results_view => self.bar.show_all(),
+            CommandId::ShowAllResults if self.bar.results_view => self.show_all_results(),
             CommandId::ForgetRecent if self.bar.results_view => self.bar.forget_highlighted(),
             CommandId::ToggleResultOrder => self.bar.toggle_order(),
             CommandId::GoToInbox => self.go_inbox(),
@@ -1237,7 +1280,7 @@ impl FocusController {
     }
 
     /// Show the hit `message`, at its place among the hits.
-    fn show_hit(&mut self, message: MessageId) -> Vec<Step> {
+    pub(crate) fn show_hit(&mut self, message: MessageId) -> Vec<Step> {
         let Some(index) = self.bar.found.iter().position(|hit| hit.message == message) else {
             return Vec::new();
         };
@@ -1428,7 +1471,6 @@ impl Bar {
                 query: None,
                 terms: Vec::new(),
                 landed: None,
-                show_all: false,
             });
             return vec![self.draw(None)];
         }
@@ -1451,7 +1493,6 @@ impl Bar {
             terms: postio_search::highlight::terms(&parsed),
             query: Some(parsed.clone()),
             landed,
-            show_all: false,
         });
         let mut steps = Vec::new();
         if !(was_words && searchable) {
@@ -1636,22 +1677,18 @@ impl Bar {
         drop.landed = Some(landed);
         let query = drop.query.clone();
         let mut steps = Vec::new();
-        if std::mem::take(&mut drop.show_all) {
-            steps.extend(self.show_all());
-        } else {
-            let select = match std::mem::take(&mut self.pending) {
-                Pending::Hit(message) => self.drop.as_ref().and_then(|drop| {
-                    drop.landed
-                        .as_ref()?
-                        .hits
-                        .iter()
-                        .find(|shown| shown.hit.best == message)
-                }),
-                _ => None,
-            }
-            .map(|shown| shown.token);
-            steps.push(self.draw(select));
+        let select = match std::mem::take(&mut self.pending) {
+            Pending::Hit(message) => self.drop.as_ref().and_then(|drop| {
+                drop.landed
+                    .as_ref()?
+                    .hits
+                    .iter()
+                    .find(|shown| shown.hit.best == message)
+            }),
+            _ => None,
         }
+        .map(|shown| shown.token);
+        steps.push(self.draw(select));
         if let Some(query) = query
             && !asked.is_empty()
         {
@@ -1790,30 +1827,6 @@ impl Bar {
             })
         })
     }
-
-    /// ⌘↩, or Show all: the query is kept among the searches run. Until the
-    /// results view arrives (spec 010 step 3) the panel stays, the
-    /// highlight on the first hit, as Return on 009's search row did.
-    pub(crate) fn show_all(&mut self) -> Vec<Step> {
-        let Some(drop) = self.drop.as_mut() else {
-            return Vec::new();
-        };
-        if drop.state != DropdownState::Words {
-            return Vec::new();
-        }
-        if drop.landed.is_none() {
-            drop.show_all = drop.query.is_some();
-            return Vec::new();
-        }
-        let first = drop
-            .landed
-            .as_ref()
-            .and_then(|landed| landed.hits.first())
-            .map(|shown| shown.token);
-        let mut steps: Vec<Step> = self.remember().into_iter().collect();
-        steps.push(self.draw(first));
-        steps
-    }
 }
 
 impl FocusController {
@@ -1829,7 +1842,7 @@ impl FocusController {
                 steps.extend(self.open_hit(message));
                 steps
             }
-            Action::ShowAll => self.bar.show_all(),
+            Action::ShowAll => self.show_all_results(),
             Action::Narrow(clause) => self.bar.narrow(mode, clause),
             Action::Saved(index) => rules::SAVED
                 .get(index)

@@ -1775,22 +1775,22 @@ mod dropdown {
     }
 
     #[test]
-    fn show_all_remembers_the_query_and_goes_to_the_first_hit() {
+    fn show_all_takes_the_dropdown_down_for_the_results() {
+        // Step 3: the results view, which `tests/results.rs` drives; the
+        // query is remembered once its results land there.
         let rows = List::of(3);
         let mut focus = mac_search();
         let _ = opened(&mut focus, &rows);
-        let effects = searched(&mut focus, "atlas budget", atlas_budget(), &rows);
-        let first = dropdown(&effects).sections[0].rows[0].token;
+        let _ = searched(&mut focus, "atlas budget", atlas_budget(), &rows);
         assert!(focus.answers(CommandId::ShowAllResults));
         let effects = run(&mut focus, CommandId::ShowAllResults, &rows);
-        assert!(asked(&effects).contains(&Request::RememberSearch {
-            query: "atlas budget".to_owned(),
-            hits: 48,
-        }));
-        assert_eq!(
-            dropdown(&effects).select,
-            Some(first),
-            "the highlight is moved there, whatever it was on"
+        assert!(shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Bar)));
+        assert!(try_dropdown(&effects).is_none());
+        assert!(focus.in_results());
+        assert!(
+            asked(&effects)
+                .iter()
+                .any(|request| matches!(request, Request::ResultsPage { .. }))
         );
     }
 

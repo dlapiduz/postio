@@ -30,9 +30,11 @@ mod digest;
 mod dropdown;
 mod feed;
 mod filtered;
+mod history;
 mod keys;
 mod perform;
 mod pickers;
+mod results;
 mod states;
 mod surfaces;
 mod verbs;
@@ -58,6 +60,10 @@ pub use pickers::{
 };
 pub use postio_ui::capture::{Mode as CaptureMode, Pick as CapturePick};
 pub use postio_ui::digest::{Page as DigestPage, Schedule as RuleSchedule};
+pub use results::{
+    Chip, FilterButton, MonthBar, QueryView, ResultGroup, ResultRow, ResultsTabView, ResultsView,
+    TermEdit,
+};
 pub use states::{AccountsRead, BannerButton, BannerView};
 pub use surfaces::{Host, ReaderVerb, SurfaceKind};
 pub use verbs::{Everything, ToastKind};
@@ -166,6 +172,15 @@ pub enum Input {
     /// `alt+BackSpace` on the dropdown's recent search with this token:
     /// forget it.
     SearchForget(u64),
+    /// A filter button, a chip's ✕, a popover's check or the timeline
+    /// changed the results' query (spec 010 step 3).
+    SearchEdit(TermEdit),
+    /// A results tab was picked: ⌘1-3, or a click.
+    ResultsTab(postio_search::results::ResultsTab),
+    /// The Sort menu.
+    ResultsOrder(postio_search::results::ConversationOrder),
+    /// A click put the focus ring on this result.
+    ResultsPoint(u64),
     /// Go to the folders popover's place with this token
     /// ([`FocusController::places`]).
     OpenPlace(u64),
@@ -416,6 +431,24 @@ pub enum Intent {
     BarLines(BarView),
     /// Draw the search dropdown, whole, in place of the bar's lines.
     Dropdown(DropdownView),
+    /// The main window shows a search's results: this frame, whole; its
+    /// rows are read with [`FocusController::result_row`] (spec 010 D17).
+    ShowResults(Box<ResultsView>),
+    /// Results rows `first..first + count` changed: read them again.
+    ResultsPage {
+        /// The first row.
+        first: u64,
+        /// How many.
+        count: u64,
+    },
+    /// The focus ring is on this result: draw it there and bring it into
+    /// view.
+    ResultsCursor(u64),
+    /// The field's chips and words and the filter bar's buttons.
+    Query(QueryView),
+    /// The main window shows the inbox again; its cursor and selection
+    /// follow.
+    LeaveResults,
     /// The list shows this place now: what the header strip names.
     Place {
         /// "Inbox", "Receipts".
@@ -552,6 +585,29 @@ pub enum Request {
         /// Each hit's best message, and where it matched.
         hits: Vec<(MessageId, Vec<postio_search::results::Source>)>,
         /// The bar's words' stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// A page of the results view's conversations: its Top hits (Best
+    /// match), or its month groups' rows (Newest).
+    ResultsPage {
+        /// The query, lowered.
+        query: postio_search::ParsedQuery,
+        /// Which order.
+        order: postio_search::results::ConversationOrder,
+        /// The first conversation.
+        offset: u32,
+        /// How many.
+        limit: u32,
+        /// The results' stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// The passages of a page of results.
+    ResultsPassages {
+        /// The query whose words the passages are cut around.
+        query: postio_search::ParsedQuery,
+        /// Each hit's best message, and where it matched.
+        hits: Vec<(MessageId, Vec<postio_search::results::Source>)>,
+        /// The results' stamp, echoed in the answer.
         stamp: u64,
     },
     /// The searches run lately, newest first.
@@ -767,6 +823,24 @@ pub enum Reply {
         /// Each hit's matches, with their passages.
         answer: Result<Vec<(MessageId, Vec<postio_search::results::Match>)>, String>,
     },
+    /// The answer to [`Request::ResultsPage`].
+    ResultsPage {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// The order asked.
+        order: postio_search::results::ConversationOrder,
+        /// The offset asked.
+        offset: u32,
+        /// What it found, boxed: it is the largest answer by far.
+        answer: Result<Box<postio_search::results::ConversationResults>, String>,
+    },
+    /// The answer to [`Request::ResultsPassages`].
+    ResultsPassages {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// Each hit's matches, with their passages.
+        answer: Result<Vec<(MessageId, Vec<postio_search::results::Match>)>, String>,
+    },
     /// The answer to [`Request::RecentSearches`] and
     /// [`Request::ForgetSearch`].
     RecentSearches(Result<Vec<postio_client::protocol::RecentSearch>, String>),
@@ -914,6 +988,10 @@ pub struct FocusController {
     /// Stamps the surfaces' reads, so an answer for one since moved on is
     /// dropped.
     stamps: u64,
+    /// The main window's results, while it shows them (spec 010 D17).
+    results: Option<results::Results>,
+    /// What the main window showed before, and after (spec 010 R9).
+    history: history::History,
 }
 
 impl FocusController {
@@ -940,6 +1018,8 @@ impl FocusController {
             confirm: None,
             compose: compose::Compose::default(),
             stamps: 0,
+            results: None,
+            history: history::History::default(),
         }
     }
 
@@ -979,8 +1059,22 @@ impl FocusController {
         {
             return self.effects(steps);
         }
+        // The results are the main window's while they are up: their keys
+        // are theirs, and a verb acts on the focused result.
+        if let Input::Command(id) = &input
+            && self.surfaces.top().is_none()
+            && let Some(steps) = self.results_command(*id)
+        {
+            return self.effects(steps);
+        }
         match input {
             Input::Command(CommandId::Quit) => vec![Effect::Show(Intent::Quit)],
+            Input::Command(id @ (CommandId::HistoryBack | CommandId::HistoryForward))
+                if self.surfaces.top().is_none() =>
+            {
+                let steps = self.history_command(id).unwrap_or_default();
+                self.effects(steps)
+            }
             Input::Command(id) if self.surfaces.top().is_some() => {
                 match self.surface_command(id, rows) {
                     Some(steps) => self.effects(steps),
@@ -1061,6 +1155,14 @@ impl FocusController {
                 | Reply::DraftBehind { .. }),
             ) => {
                 let steps = self.surface_reply(reply, rows);
+                self.effects(steps)
+            }
+            // So do the results'.
+            Input::Reply(
+                _,
+                reply @ (Reply::ResultsPage { .. } | Reply::ResultsPassages { .. }),
+            ) => {
+                let steps = self.results_reply(reply);
                 self.effects(steps)
             }
             Input::Reply(ticket, _) if ticket.generation != self.generation => Vec::new(),
@@ -1225,6 +1327,13 @@ impl FocusController {
                 let steps = self.timer(token);
                 self.effects(steps)
             }
+            input @ (Input::SearchEdit(_)
+            | Input::ResultsTab(_)
+            | Input::ResultsOrder(_)
+            | Input::ResultsPoint(_)) => {
+                let steps = self.results_input(input);
+                self.effects(steps)
+            }
             input @ (Input::Typed { .. }
             | Input::BarRun(_)
             | Input::BarTab
@@ -1278,6 +1387,9 @@ impl FocusController {
 
     /// The key context in force: the top surface's, or the list's.
     pub fn key_context(&self) -> postio_ui::keymap::KeyContext {
+        if self.surfaces.top().is_none() && self.results.is_some() {
+            return postio_ui::keymap::KeyContext::Results;
+        }
         self.surfaces.key_context()
     }
 
@@ -1411,7 +1523,10 @@ impl FocusController {
                 if self.hit_facts(reading).is_some() =>
             {
                 let by = if id == CommandId::NextMessage { 1 } else { -1 };
-                self.step_hit(reading, by)
+                let mut steps = self.step_hit(reading, by)?;
+                // A message a result opened: the focus ring follows it.
+                steps.extend(self.results_follow(self.surfaces.reading()));
+                Some(steps)
             }
             // `j`/`k` step the list behind the message, and the message
             // follows the cursor; nothing closes.
@@ -1454,6 +1569,16 @@ impl FocusController {
         }
         if pickers::picker_key(id) {
             return true;
+        }
+        if self.surfaces.top().is_none() {
+            if self.results.is_some() && results::results_key(id) {
+                return true;
+            }
+            if self.policy.caps.results_view
+                && matches!(id, CommandId::HistoryBack | CommandId::HistoryForward)
+            {
+                return true;
+            }
         }
         if self.surfaces.top() == Some(SurfaceKind::Composer) {
             return Self::composer_answers(id);
