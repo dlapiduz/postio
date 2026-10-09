@@ -278,7 +278,7 @@ action, and undo through ⌘Z and Edit › Undo.
   *As built:* `ActionBarWords` holds the verbs in screen 01's order (`postio_ui::focus_dialog::BULK` less Delete, which the screen does not draw; the boundary does not export the table, so the Swift copy says so). The count is the controller's `FocusSelection.summary`. Task is left out: nothing across the boundary says yet whether capture has a vault (C9), and `ActionBarWords(vault:)` takes the answer once something does. The hints are `toggle`, `extend` and `clear`, as GTK's bulk bar words them, with caps from `KeyCapSpelling`, so they read `J K` and `⎋` where the screen draws `⇧J ⇧K` and `Esc` (C22's spelling; the shared `hints::short` is not exported). `UndoNoticeLine` draws the controller's `FocusToast` with Undo and its ⌘Z cap while the stack can take it back; in the main window completions, undos and refusals are now only the toast, and `Notice` is left for failures (`Notice.shownBesideFocusToast`), so one archive is announced once.
 - [x] T053 [US2] Compare screen 03 (FR-061): `scripts/macos-shot.sh 03 --both` against `03-inbox-has-action-filter.png`. Record in `docs/notes/<date>-focus-macos-phase-2.md`
 
-  *As built:* recorded in `docs/notes/2026-10-08-focus-macos-phase-2.md`. The state is reached with `POSTIO_DEMO_KEYS` (demo builds only), which presses keys once the list has landed: `'!'` for 03, `'x J J'` and `'x J J a'` for the bar and the undo line. Screen 03 itself shows no selection, so the bar is compared with screen 01's.
+  *As built:* recorded in `docs/archive/notes/2026-10-08-focus-macos-phase-2.md`. The state is reached with `POSTIO_DEMO_KEYS` (demo builds only), which presses keys once the list has landed: `'!'` for 03, `'x J J'` and `'x J J a'` for the bar and the undo line. Screen 03 itself shows no selection, so the bar is compared with screen 01's.
 
 ---
 
@@ -386,7 +386,7 @@ in light and dark, with main widths 1440 and 1024. Each matches its
   *As built:* `FocusIntents.surface` maps the six surface events; `MessageWindowModel` (PostioKit) holds the message window's state and reads the chrome and document off the main actor, dropping stale answers; Engine applies them. The window opens once its first document says how wide (M1), reported open once; a step replaces the content. `FocusOpenDraft` opens the compose window as drafts open now; `FocusOpenDigest` logs the kind only. Esc from the raw source returns to the message in Swift (the controller does not hear of the source); Reply, Reply all and Forward from the window answer the message shown. Opening the composer closes the message window first (M4) until the composer is a surface the controller hears of (phase 4). `[`/`]` show the message `focus_message_view` names as `earlier`/`later`, so no conversation is read in Swift.
 - [x] T071 [US3] Compare screen 04 and all nine `message-window/screens/*.png` (FR-061): capture at main width 1440 and 1024, in light and dark. Check the 1024 numbers: the window 656, the plain column 560, a paper newsletter at 0.9. Record in `docs/notes/<date>-focus-macos-phase-3.md`
 
-  *As built:* recorded in `docs/notes/2026-10-08-focus-macos-phase-3.md`. At 1024 the window is 655, the formula rounded, where the pack draws 656: a recorded decision, not a defect. The demo can now refile the opened row as the handoff's HTML bodies (`POSTIO_DEMO=small:27`, `small:28`), press Return and Escape in `POSTIO_DEMO_KEYS`, and opens in front (WebKit stops painting a web view in a window it judges covered).
+  *As built:* recorded in `docs/archive/notes/2026-10-08-focus-macos-phase-3.md`. At 1024 the window is 655, the formula rounded, where the pack draws 656: a recorded decision, not a defect. The demo can now refile the opened row as the handoff's HTML bodies (`POSTIO_DEMO=small:27`, `small:28`), press Return and Escape in `POSTIO_DEMO_KEYS`, and opens in front (WebKit stops painting a web view in a window it judges covered).
 
 ---
 
@@ -453,7 +453,7 @@ send it. It goes through the outbox, and the marker clears.
   - **Completion:** typing in a recipient field asks `ContactsSource.suggestions` (the engine with Contacts as `extra`); the list hangs under the field, ↑↓ move, Return/Tab accept (`accepted` replaces the field's text), Esc takes the list down before it closes the composer. Nothing shows until a recipient is typed.
   - **Not here:** the Labels row (the draft carries no labels across the boundary; a reply's thread labels are GTK's composer seam) and recipient chips; the list's "wrote N times"; M3's ⌘T, ⌘⇧B and ⌘⇧Q. Edit on a queued draft does not cancel its send first, as GTK's `resume` does.- [x] T080 [US4] Compare screens 05 and 06 (FR-061), recorded in `docs/notes/<date>-focus-macos-phase-4.md`. ⌘T, ⌘⇧B and ⌘⇧Q are M3 (Phase 12)
 
-  *As built:* `docs/notes/2026-10-08-focus-macos-phase-4.md`. Seeds `small:05`/`small:06` add `compose_demo`'s people and thread; keys `c g r a c` (a demo composer types into To) and `j j j E`. The shared rule completes from four letters where the design shows the list at three.
+  *As built:* `docs/archive/notes/2026-10-08-focus-macos-phase-4.md`. Seeds `small:05`/`small:06` add `compose_demo`'s people and thread; keys `c g r a c` (a demo composer types into To) and `j j j E`. The shared rule completes from four letters where the design shows the list at three.
 
 ---
 
@@ -527,7 +527,7 @@ chips, open a result, go to `in:Receipts`, and pick a label from the popover.
   - **`FocusShowFiltered`** (`g f`, or Filtered in the popover) shows the notice "Filtered is not built on the Mac yet" and logs the kind. The view is T113's.
 - [x] T087 [US5] Compare screens 07 to 10 (FR-061), recorded in `docs/notes/<date>-focus-macos-phase-5.md`
 
-  *As built:* `docs/notes/2026-10-08-focus-macos-phase-5.md`. The panel and the popover are child windows, so they are in `screencapture -l`'s picture. Demo replays gained `⌘`/`⌥` prefixes, `↓`/`↑`, `␣`, and whole words typed into the field that is up.
+  *As built:* `docs/archive/notes/2026-10-08-focus-macos-phase-5.md`. The panel and the popover are child windows, so they are in `screencapture -l`'s picture. Demo replays gained `⌘`/`⌥` prefixes, `↓`/`↑`, `␣`, and whole words typed into the field that is up.
 
 ---
 
@@ -669,7 +669,7 @@ to a folder, and undo each with the pill and ⌘Z.
   *As built:* `macos/Sources/PostioKit/UndoPill.swift`. `UndoPillWords` (5 tests, seen red against a stub) holds the controller's words, "Undo" only for an undoable completion, and the cap from `binding(for: "undo")`. The pill is a capsule filled with the primary label colour and lettered in the background's, as the pack and its default buttons draw it, so dark mode turns it over; it sits 20 pt above the window's bottom, or the action bar. A new toast replaces the one showing (`toastToken`) and restarts its timer; it fades in `Motion.current`, now on its going as well as its coming. It replaces `UndoNoticeLine`, which was mounted only in the main window, and that view is gone. `Toast.defaultSeconds` (6, 4, 2 by kind) is gone too: every `FocusToast` carries its seconds, and the FFI type's `nil` falls back to the controller's own eight (`Toast.usualSeconds`). A queued send's Undo is the ordinary `undo`.
 - [x] T094 [US6] Compare screens 11 to 15 (FR-061), recorded in `docs/notes/<date>-focus-macos-phase-6.md`
 
-  *As built:* `docs/notes/2026-10-08-focus-macos-phase-6.md`. Popovers are child windows, so `screencapture -l` takes them; the script needed nothing new. Demo replays reach a picker's highlight and fields. Found and fixed on the way: the list did not take the keyboard at launch (the window's first key view, Inbox ▾, did), and the popover was sized for its previous rows.
+  *As built:* `docs/archive/notes/2026-10-08-focus-macos-phase-6.md`. Popovers are child windows, so `screencapture -l` takes them; the script needed nothing new. Demo replays reach a picker's highlight and fields. Found and fixed on the way: the list did not take the keyboard at launch (the window's first key view, Inbox ▾, did), and the popover was sized for its previous rows.
 
 ---
 
@@ -731,7 +731,7 @@ to a folder, and undo each with the pill and ⌘Z.
   - **Not exercised live:** making a store from another build on this Mac is the ffi_suite's job. `p7-refusal` photographs the Try-again page over a demo that does not exist.
 - [x] T101 [US7] Compare screens 16 to 19 (FR-061), recorded in `docs/notes/<date>-focus-macos-phase-7.md`
 
-  *As built:* `docs/notes/2026-10-08-focus-macos-phase-7.md`. A demo never syncs, so a demo build takes `POSTIO_DEMO_STATE` (`offline`, `auth`, `first-sync`, `synced`). The new `Session.demo_state` export emits the engine events sync would have emitted for the demo's account, through the `emit_for_test` that the `demo` feature already carries. A build without demos answers `false`. Both halves were seen red first. The comparison found the stray `c` cap described under T099.
+  *As built:* `docs/archive/notes/2026-10-08-focus-macos-phase-7.md`. A demo never syncs, so a demo build takes `POSTIO_DEMO_STATE` (`offline`, `auth`, `first-sync`, `synced`). The new `Session.demo_state` export emits the engine events sync would have emitted for the demo's account, through the `emit_for_test` that the `demo` feature already carries. A build without demos answers `false`. Both halves were seen red first. The comparison found the stray `c` cap described under T099.
 
 ---
 
@@ -785,7 +785,7 @@ show the new key without a restart.
   - **Retired:** `Palette.swift`, `CheatSheetList`, `CheatSheetLayout`, `CheatSheetKeys` and `KeyCaps`, with their tests; the `cheatSheet` and `cheatSheetSections` wrappers; and Engine's `showingCheatSheet` and `dismissOverlays`. The classic Rust exports stay for their ffi_suite tests.
 - [x] T107 [US8] Compare screen 20 (FR-061), recorded in `docs/notes/<date>-focus-macos-phase-8.md`
 
-  *As built:* `docs/notes/2026-10-08-focus-macos-phase-8.md`, reached with `POSTIO_DEMO_KEYS='?'`.
+  *As built:* `docs/archive/notes/2026-10-08-focus-macos-phase-8.md`, reached with `POSTIO_DEMO_KEYS='?'`.
   - **Fixed:** keypad alternates leaked GDK names (`⌘KP_ADD`); `MenuPlan.accelerator` now draws the character the key types. The panel overflowed the window; its columns now scroll.
   - **Also fixed:** photographing a build without demos showed the store refusal page drawn under a header strip floating mid-window. The page now replaces the whole inbox.
   - **Left:** the shared sheet is longer than the pack's curated one, keys are spelled per C22, chords are shown beside letters, and the toolbar is not dimmed.
@@ -1028,7 +1028,7 @@ another app brings Postio forward on that message.
   *As built (Swift half):* the Filtering pane in `SettingsPaneView` draws `settings_filtering` as GTK's does: the switch (a switch, since it acts when flipped) and its sentence, today's count with Open Filtered and its cap, what is kept, the keys, and the two `[focus.filter]` lists, each line with its take-back as a link button. `SettingsStore` gained `filteredToday`, `filtering`, `applyFiltering(on:)` and `takeBack(_:)`, each read-change-write; Appearance's pane, `appearance`, `apply` and their binding are gone, and the window opens on the nav's first pane, Accounts. Open Filtered runs `go_to_filtered` with the main window brought forward (`Engine.runFromSettings`); the count is `focus_counts().filtered_today`, read off the main actor as the window opens. `SettingsStoreTests` (12) were seen red against stubs. `settings_appearance` and `settings_patch_appearance` now have no Swift caller; `Session::appearance` still has one (the engine's `[ui] theme`). Removing the two exports means reworking `ffi_suite/settings.rs`'s Appearance tests, and is left to a Rust session.
 - [x] T118 [US9] Compare screens 21 to 25 (FR-061), recorded in `docs/notes/<date>-focus-macos-phase-9.md`
 
-  *As built:* `docs/notes/2026-10-08-focus-macos-phase-9.md`. The demo seeds `small:22`/`small:23` add a `[focus.model]` with only `digest_summary` on, at a socket path that does not exist (C6 is enforced at the read on the Mac, and nothing can be reached), and `small:25` adds a throwaway vault (`postio_demo::demo_vault`, kept for the process); only `27`-`31` refile the opened row now (`crates/postio-ffi/src/demo.rs`, tested, seen red). Found and fixed: "‹ Summary" lacked its chevron.
+  *As built:* `docs/archive/notes/2026-10-08-focus-macos-phase-9.md`. The demo seeds `small:22`/`small:23` add a `[focus.model]` with only `digest_summary` on, at a socket path that does not exist (C6 is enforced at the read on the Mac, and nothing can be reached), and `small:25` adds a throwaway vault (`postio_demo::demo_vault`, kept for the process); only `27`-`31` refile the opened row now (`crates/postio-ffi/src/demo.rs`, tested, seen red). Found and fixed: "‹ Summary" lacked its chevron.
 
 ---
 
