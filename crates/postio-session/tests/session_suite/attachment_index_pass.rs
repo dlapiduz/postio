@@ -35,6 +35,37 @@ async fn attachments_named(connection: &Checkout, name: &str) -> Vec<AttachmentI
     .expect("attachments by name")
 }
 
+/// How an attachment's extraction went, read straight from its record.
+#[derive(Debug, PartialEq, Eq)]
+struct Extraction {
+    version: u32,
+    outcome: String,
+    units: u32,
+}
+
+async fn extraction_of(
+    connection: &Checkout,
+    attachment: AttachmentId,
+) -> postio_storage::Result<Option<Extraction>> {
+    sql::first(
+        connection,
+        "SELECT e.version, e.outcome, e.units
+           FROM attachment_extraction e
+           JOIN messages m ON m.content_id = e.content_id
+           JOIN attachments a ON a.message_id = m.id AND a.position = e.position
+          WHERE a.id = ?1",
+        [attachment.get()],
+        |row| {
+            Ok(Extraction {
+                version: u32::try_from(row.col::<i64>(0)?).unwrap_or(0),
+                outcome: row.col(1)?,
+                units: u32::try_from(row.col::<i64>(2)?).unwrap_or(0),
+            })
+        },
+    )
+    .await
+}
+
 /// Poll `check` until it holds or the patience dial runs out.
 async fn eventually<F, Fut>(mut check: F) -> bool
 where
@@ -118,7 +149,7 @@ async fn every_downloaded_attachment_of_the_search_seed_is_read_where_it_says_it
                 "{name}: expected {words:?} at {location:?}, read {text:?}"
             );
             assert_eq!(
-                index::extraction_of(&connection, id)
+                extraction_of(&connection, id)
                     .await
                     .expect("its record")
                     .map(|record| record.outcome),
@@ -133,7 +164,7 @@ async fn every_downloaded_attachment_of_the_search_seed_is_read_where_it_says_it
     for name in ["Contractor-invoices-Sep.pdf", "Invoice-2026-08.pdf"] {
         for id in attachments_named(&connection, name).await {
             assert_eq!(
-                index::extraction_of(&connection, id).await.expect("record"),
+                extraction_of(&connection, id).await.expect("record"),
                 None,
                 "{name} was never downloaded"
             );
@@ -288,7 +319,7 @@ async fn an_attachment_that_was_never_downloaded_is_never_fetched() {
             let database = database_for_check.clone();
             async move {
                 let connection = database.connect().await.expect("checkout");
-                index::extraction_of(&connection, local)
+                extraction_of(&connection, local)
                     .await
                     .expect("record")
                     .is_some()
@@ -314,9 +345,7 @@ async fn an_attachment_that_was_never_downloaded_is_never_fetched() {
     );
     let connection = database.connect().await.expect("checkout");
     assert_eq!(
-        index::extraction_of(&connection, remote[0])
-            .await
-            .expect("record"),
+        extraction_of(&connection, remote[0]).await.expect("record"),
         None,
         "nothing on this machine to read, so nothing recorded"
     );
@@ -378,7 +407,7 @@ async fn a_file_that_cannot_be_read_is_recorded_and_the_pass_moves_on() {
     let outcome = |id| {
         let connection = &connection;
         async move {
-            index::extraction_of(connection, id)
+            extraction_of(connection, id)
                 .await
                 .expect("record")
                 .map(|record| record.outcome)

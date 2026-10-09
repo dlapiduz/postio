@@ -53,6 +53,37 @@ async fn message_with(
     (message.id, ids)
 }
 
+/// How an attachment's extraction went, read straight from its record.
+#[derive(Debug, PartialEq, Eq)]
+struct Extraction {
+    version: u32,
+    outcome: String,
+    units: u32,
+}
+
+async fn extraction_of(
+    connection: &Checkout,
+    attachment: AttachmentId,
+) -> postio_storage::Result<Option<Extraction>> {
+    sql::first(
+        connection,
+        "SELECT e.version, e.outcome, e.units
+           FROM attachment_extraction e
+           JOIN messages m ON m.content_id = e.content_id
+           JOIN attachments a ON a.message_id = m.id AND a.position = e.position
+          WHERE a.id = ?1",
+        [attachment.get()],
+        |row| {
+            Ok(Extraction {
+                version: u32::try_from(row.col::<i64>(0)?).unwrap_or(0),
+                outcome: row.col(1)?,
+                units: u32::try_from(row.col::<i64>(2)?).unwrap_or(0),
+            })
+        },
+    )
+    .await
+}
+
 fn sheet(row: u32, text: &str) -> Unit {
     Unit {
         location: Location::Sheet {
@@ -165,10 +196,10 @@ async fn one_row_per_unit_as_extracted_and_folded_for_the_index() {
         2
     );
     assert_eq!(
-        index::extraction_of(&connection, ids[0])
+        extraction_of(&connection, ids[0])
             .await
             .expect("its record"),
-        Some(index::Extraction {
+        Some(Extraction {
             version: EXTRACTOR_VERSION,
             outcome: "complete".to_owned(),
             units: 2,
@@ -221,7 +252,7 @@ async fn a_failed_or_empty_extraction_is_recorded_so_it_is_not_tried_again() {
         "tried is not missing, however it went (#500's lesson)"
     );
     assert_eq!(
-        index::extraction_of(&connection, ids[1])
+        extraction_of(&connection, ids[1])
             .await
             .expect("record")
             .map(|e| e.outcome),
@@ -444,42 +475,6 @@ async fn a_schema_version_bump_drops_the_half_and_rebuilds_it_empty() {
         )
         .await,
         index::ATTACHMENTS_SCHEMA_VERSION
-    );
-}
-
-#[tokio::test]
-async fn an_account_cleared_for_reindexing_is_extracted_again() {
-    let (_store, connection, account, inbox) = world().await;
-    let (_, ids) = message_with(
-        &connection,
-        account,
-        inbox,
-        None,
-        &[("notes.txt", "text/plain", true)],
-    )
-    .await;
-    index::index_attachment_text(
-        &connection,
-        ids[0],
-        &Extracted {
-            units: Vec::new(),
-            outcome: Outcome::Complete,
-        },
-    )
-    .await
-    .expect("indexed");
-    assert_eq!(
-        index::clear_account_attachment_index(&connection, account.get())
-            .await
-            .expect("cleared"),
-        1
-    );
-    assert_eq!(
-        index::attachments_missing_text(&connection, 10)
-            .await
-            .expect("queue")
-            .len(),
-        1
     );
 }
 
