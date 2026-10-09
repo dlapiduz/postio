@@ -1,0 +1,108 @@
+# Search finds files by what is in them, and the Files tab is where they
+# are cards (specs/010-focus-search US8, FR-031, FR-044, design §3.8,
+# screen 11).
+#
+# "fy26" is written only inside Atlas-budget-template.xlsx, on sheet
+# "Summary", row 14: no subject, body or file name says it. The
+# Conversations tab finds the conversation that carries the file, tagged
+# with the file's name, and the passage says where in the file it was. The
+# Files tab is a grid of cards, four across: a preview with the matching
+# line marked, the type tile, the name, "sender · date · size", the
+# matching line from the contents, and "in ‘<subject>’". The arrows move
+# between cards, Space hands the file itself to the system's Quick Look,
+# Return opens its message, ⌘↓ saves it.
+#
+# The seed's two PDFs whose bytes were never downloaded are never fetched
+# to be indexed (FR-050): searching their contents finds nothing, and the
+# footer says contents are searched only for files on this Mac.
+#
+# The engine's half is postio-index's attachment_text and conversations
+# suites and postio-session's attachment_index_pass; the controller's is
+# postio-focus tests/results.rs (files_*).
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/010-focus-search US8" }
+seed   = "search"
+design = "11-files-tab"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "search"
+
+[[step]]
+type    = "fy26"
+
+[[step]]
+id      = "found-inside"
+command = "show_all_results"
+check   = { keyboard.region = "results" }
+expect  = "The results open on Conversations with one row: “Atlas budget template v2”. Its source tag is the file's name, “Atlas-budget-template.xlsx”, and its passage reads “Sheet ‘Summary’, row 14: Total Atlas budget FY26 …” with “FY26” marked. The tabs read Conversations 1 · Files 1 · People 1."
+
+[[step]]
+id      = "files"
+command = "results_files"
+check   = { keyboard.region = "results" }
+expect  = "⌘2 shows the Files tab: one card, ringed. Its preview is a sheet with the matching row marked in highlight yellow; the XLSX tile, “Atlas-budget-template.xlsx”, “Ada Moreno · <date> · <size>”; “Sheet ‘Summary’, row 14: Total Atlas budget FY26” with “FY26” marked; and “in ‘Atlas budget template v2’”. The header line says contents are indexed on this Mac."
+
+[[step]]
+command = "history_back"
+check   = { keyboard.region = "list" }
+
+[[step]]
+command = "search"
+
+[[step]]
+type    = "atlas budget"
+
+[[step]]
+command = "show_all_results"
+check   = { keyboard.region = "results" }
+
+[[step]]
+id      = "grid"
+command = "results_files"
+check   = { keyboard.region = "results" }
+expect  = "The Files tab for “atlas budget”: a grid of cards four across with 12 between them, the first ringed. Every file whose bytes are on this Mac and whose name or contents match has a card: the two workbooks (“Sheet ‘Q3’, row …”, “Sheet ‘Summary’, row …”), the September actuals (“Page 2: Spend to date against Atlas budget: 71%”), the memo (“Paragraph …”), the review deck (“Slide …”) and the notes (“Line …”). A file never downloaded shows by name only, with no contents line."
+
+[[step]]
+key     = "Right"
+check   = { keyboard.region = "results" }
+expect  = "→ moves the ring to the second card; nothing else changes."
+
+[[step]]
+key     = "Down"
+check   = { keyboard.region = "results" }
+expect  = "↓ moves the ring to the card below it, in the second row."
+
+[[step]]
+key     = "Up"
+check   = { keyboard.region = "results" }
+expect  = "↑ moves it back to the second card of the first row."
+
+[[step]]
+id      = "look"
+command = "quick_look"
+check   = { keyboard.region = "results" }
+expect  = "Space opens the system's Quick Look on the file itself, a copy in the app's own temporary folder: the workbook's sheet or the PDF's page, as Finder would preview it. The grid stays where it was behind it, with its ring."
+
+[[step]]
+command = "quick_look"
+check   = { keyboard.region = "results", overlay.kind = "none" }
+expect  = "Space again closes Quick Look: the grid, with the ring on the same card."
+
+[[step]]
+id      = "save"
+key     = "mod+Down"
+expect  = "⌘↓ offers to save the file: a save panel named after it, in Downloads."
+
+[[step]]
+command = "open_message"
+check   = { view = "reader" }
+expect  = "Return opens the message that carries the ringed file, scrolled to its attachments."
+
+[app.macos.step.look]
+skip = { reason = "QLPreviewPanel is the system's own window, outside the app's observation; filmed by hand until the runner can see it" }
+
+[app.macos.step.save]
+skip = { reason = "The save panel is the system's own window, outside the app's observation; filmed by hand until the runner can see it" }
