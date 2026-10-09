@@ -50,103 +50,148 @@ async fn count(
     account: AccountScope,
     query: &postio_search::ParsedQuery,
 ) -> Result<u64> {
-    let plan = Plan::build_sets(&SearchRequest {
-        account,
-        query,
-        scope: Scope::AllMail,
-        limit: 0,
-        order: postio_search::ResultOrder::Relevance,
-    });
+    Ok(counts(connection, account, std::slice::from_ref(query))
+        .await?
+        .first()
+        .copied()
+        .unwrap_or(0))
+}
+
+/// Each query's conversations, as [`count`] counts one, in **one**
+/// statement whatever their number: every query's arms in one union, each
+/// row tagged with the query it is for. What a completion's suggestions
+/// are counted with (spec 010 US7), where a statement each would spend the
+/// keystroke's budget on round trips.
+pub(super) async fn counts(
+    connection: &Connection,
+    account: AccountScope,
+    queries: &[postio_search::ParsedQuery],
+) -> Result<Vec<u64>> {
+    if queries.is_empty() {
+        return Ok(Vec::new());
+    }
     let cap = i64::try_from(TOTAL_HITS_CAP).unwrap_or(i64::MAX);
-    let conditions = plan.conditions.join(" AND ");
-    let driver = match plan.has_match {
-        true => None,
-        false => plan.sets.iter().position(|set| !set.negated),
-    };
+    let mut arms: Vec<String> = Vec::new();
     let mut params: Vec<turso::Value> = Vec::new();
-    let walk = match driver {
-        _ if plan.has_match => {
-            params.extend(plan.params_for(Form::Driven));
-            format!("{HITS_JOIN} WHERE {}", plan.where_sql(Form::Driven))
-        }
-        Some(driver) => {
-            params.extend(plan.sets[driver].params.iter().cloned());
-            params.extend(plan.params.iter().cloned());
-            format!(
-                "FROM ({}) d CROSS JOIN messages m ON m.id = d.message_id WHERE {conditions}",
-                plan.sets[driver].sql
-            )
-        }
-        None => {
-            params.extend(plan.params.iter().cloned());
-            format!("FROM messages m WHERE {conditions}")
-        }
-    };
-    // Rows, not messages: the union's two halves, so twice the cap.
-    params.push(turso::Value::Integer(cap.saturating_mul(2)));
-    let mut arms = vec![format!(
-        "SELECT * FROM (SELECT -1 AS k, m.id AS id, coalesce(m.thread_id, -m.id) AS conv,
-                                 m.content_id AS content
-                          {walk} LIMIT ?)"
-    )];
-    for (key, set) in plan.sets.iter().enumerate() {
-        if Some(key) == driver {
-            continue;
-        }
+    let mut plans = Vec::with_capacity(queries.len());
+    for (index, query) in queries.iter().enumerate() {
+        let plan = Plan::build_sets(&SearchRequest {
+            account,
+            query,
+            scope: Scope::AllMail,
+            limit: 0,
+            order: postio_search::ResultOrder::Relevance,
+        });
+        let conditions = plan.conditions.join(" AND ");
+        let driver = match plan.has_match {
+            true => None,
+            false => plan.sets.iter().position(|set| !set.negated),
+        };
+        let walk = match driver {
+            _ if plan.has_match => {
+                params.extend(plan.params_for(Form::Driven));
+                format!("{HITS_JOIN} WHERE {}", plan.where_sql(Form::Driven))
+            }
+            Some(driver) => {
+                params.extend(plan.sets[driver].params.iter().cloned());
+                params.extend(plan.params.iter().cloned());
+                format!(
+                    "FROM ({}) d CROSS JOIN messages m ON m.id = d.message_id WHERE {conditions}",
+                    plan.sets[driver].sql
+                )
+            }
+            None => {
+                params.extend(plan.params.iter().cloned());
+                format!("FROM messages m WHERE {conditions}")
+            }
+        };
+        // Rows, not messages: the union's two halves, so twice the cap.
+        params.push(turso::Value::Integer(cap.saturating_mul(2)));
         arms.push(format!(
-            "SELECT {key}, x.message_id, NULL, NULL FROM ({}) x",
-            set.sql
+            "SELECT * FROM (SELECT {index} AS q, -1 AS k, m.id AS id,
+                                     coalesce(m.thread_id, -m.id) AS conv,
+                                     m.content_id AS content
+                              {walk} LIMIT ?)"
         ));
-        params.extend(set.params.iter().cloned());
+        for (key, set) in plan.sets.iter().enumerate() {
+            if Some(key) == driver {
+                continue;
+            }
+            arms.push(format!(
+                "SELECT {index}, {key}, x.message_id, NULL, NULL FROM ({}) x",
+                set.sql
+            ));
+            params.extend(set.params.iter().cloned());
+        }
+        plans.push((plan, driver));
     }
 
-    let mut walked: Vec<(i64, i64, Option<i64>)> = Vec::new();
-    let mut sets: Vec<HashSet<i64>> = vec![HashSet::new(); plan.sets.len()];
+    let mut walked: Vec<Vec<(i64, i64, Option<i64>)>> = vec![Vec::new(); queries.len()];
+    let mut sets: Vec<Vec<HashSet<i64>>> = plans
+        .iter()
+        .map(|(plan, _)| vec![HashSet::new(); plan.sets.len()])
+        .collect();
     sql::each(connection, &arms.join(" UNION ALL "), params, |row| {
-        let key: i64 = row.col(0)?;
-        let id: i64 = row.col(1)?;
+        let query = usize::try_from(row.col::<i64>(0)?).unwrap_or(usize::MAX);
+        let key: i64 = row.col(1)?;
+        let id: i64 = row.col(2)?;
         match usize::try_from(key) {
             Ok(set) => {
-                sets[set].insert(id);
+                if let Some(ids) = sets.get_mut(query).and_then(|sets| sets.get_mut(set)) {
+                    ids.insert(id);
+                }
             }
-            Err(_) => walked.push((id, row.col(2)?, row.col(3)?)),
+            Err(_) => {
+                if let Some(rows) = walked.get_mut(query) {
+                    rows.push((id, row.col(3)?, row.col(4)?));
+                }
+            }
         }
         Ok(true)
     })
     .await?;
 
-    let holds = |id: i64| {
-        plan.sets
-            .iter()
-            .zip(&sets)
-            .enumerate()
-            .all(|(key, (set, ids))| Some(key) == driver || ids.contains(&id) != set.negated)
-    };
-    // One match per content, as `search_conversations` folds it: a message
-    // filed in two folders (#1780) is counted once, in the conversation of
-    // its earliest occurrence that holds.
-    let mut kept: HashMap<Held, (i64, i64)> = HashMap::new();
-    for (id, conversation, content) in walked {
-        if !holds(id) {
-            continue;
-        }
-        let key = content.map_or(Held::Message(id), Held::Content);
-        if let Some(earliest) = kept.get_mut(&key) {
-            if id < earliest.0 {
-                *earliest = (id, conversation);
+    Ok(plans
+        .iter()
+        .zip(sets)
+        .zip(walked)
+        .map(|(((plan, driver), sets), walked)| {
+            let holds = |id: i64| {
+                plan.sets
+                    .iter()
+                    .zip(&sets)
+                    .enumerate()
+                    .all(|(key, (set, ids))| {
+                        Some(key) == *driver || ids.contains(&id) != set.negated
+                    })
+            };
+            // One match per content, as `search_conversations` folds it: a
+            // message filed in two folders (#1780) is counted once, in the
+            // conversation of its earliest occurrence that holds.
+            let mut kept: HashMap<Held, (i64, i64)> = HashMap::new();
+            for (id, conversation, content) in walked {
+                if !holds(id) {
+                    continue;
+                }
+                let key = content.map_or(Held::Message(id), Held::Content);
+                if let Some(earliest) = kept.get_mut(&key) {
+                    if id < earliest.0 {
+                        *earliest = (id, conversation);
+                    }
+                    continue;
+                }
+                if kept.len() as u64 >= TOTAL_HITS_CAP {
+                    break;
+                }
+                kept.insert(key, (id, conversation));
             }
-            continue;
-        }
-        if kept.len() as u64 >= TOTAL_HITS_CAP {
-            break;
-        }
-        kept.insert(key, (id, conversation));
-    }
-    let conversations: HashSet<i64> = kept
-        .values()
-        .map(|(_, conversation)| *conversation)
-        .collect();
-    Ok(conversations.len() as u64)
+            let conversations: HashSet<i64> = kept
+                .values()
+                .map(|(_, conversation)| *conversation)
+                .collect();
+            conversations.len() as u64
+        })
+        .collect())
 }
 
 /// What one counted match is: its content, or the message itself when it has

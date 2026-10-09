@@ -35,8 +35,10 @@ use crate::error::Result;
 use postio_storage::Connection;
 use postio_storage::sql::{self, RowExt as _};
 
+mod completions;
 mod conversations;
 mod relaxations;
+pub use completions::completions;
 pub use conversations::{ConversationRequest, search_conversations};
 pub use relaxations::relaxation_counts;
 

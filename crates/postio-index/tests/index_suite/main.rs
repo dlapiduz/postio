@@ -20,6 +20,7 @@ mod account_scope;
 mod backfill;
 mod body_index;
 mod body_index_size;
+mod completions;
 mod content_membership;
 mod conversations;
 mod digest_matcher;

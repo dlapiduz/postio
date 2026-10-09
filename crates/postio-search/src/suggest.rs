@@ -256,6 +256,8 @@ pub struct Suggestions {
     pub lists: Vec<Completion>,
     /// File names.
     pub files: Vec<Completion>,
+    /// Folders, for `in:`.
+    pub folders: Vec<Completion>,
     /// People.
     pub people: Vec<Person>,
 }
@@ -286,9 +288,103 @@ pub struct Person {
     pub last: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+/// The words `vocabulary` holds that complete `prefix`, best first: the
+/// ones more of the mailbox holds, then the shorter, then alphabetically.
+/// The prefix itself is not a completion -- it adds nothing to what was
+/// typed -- and neither is a word that only matches it ignoring case in a
+/// way that changes its length. Each comes back as its own query, counted
+/// in documents; the executor counts the query itself before it is shown.
+pub fn rank_words<'a>(prefix: &str, vocabulary: impl Iterator<Item = Term<'a>>) -> Vec<Completion> {
+    let prefix = prefix.to_lowercase();
+    if prefix.is_empty() {
+        return Vec::new();
+    }
+    let mut found: Vec<(u64, String)> = Vec::new();
+    for term in vocabulary {
+        let text = term.text.to_lowercase();
+        if text.len() <= prefix.len() || !text.starts_with(&prefix) {
+            continue;
+        }
+        match found.iter_mut().find(|(_, held)| *held == text) {
+            Some(held) => held.0 = held.0.max(term.documents),
+            None => found.push((term.documents, text)),
+        }
+    }
+    found.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then(a.1.chars().count().cmp(&b.1.chars().count()))
+            .then(a.1.cmp(&b.1))
+    });
+    found
+        .into_iter()
+        .map(|(documents, text)| Completion {
+            query: text.clone(),
+            text,
+            count: documents,
+        })
+        .collect()
+}
+
+/// What to draw after the caret for `typed`, when `word` completes it: the
+/// rest of the word, in its own letters. `None` when it does not begin so.
+pub fn ghost(typed: &str, word: &str) -> Option<String> {
+    let typed_chars = typed.chars().count();
+    let lowered: String = word.chars().take(typed_chars).collect();
+    (lowered.to_lowercase() == typed.to_lowercase() && word.chars().count() > typed_chars)
+        .then(|| word.chars().skip(typed_chars).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn words(texts: &[(&'static str, u64)]) -> Vec<Term<'static>> {
+        texts
+            .iter()
+            .map(|(text, documents)| Term {
+                text,
+                documents: *documents,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn rank_words_offers_the_commonest_completion_first() {
+        let ranked = rank_words(
+            "at",
+            words(&[
+                ("attic", 2),
+                ("atlas", 9),
+                ("at", 40),
+                ("budget", 30),
+                ("Atlantic", 2),
+                ("atlas", 3),
+            ])
+            .into_iter(),
+        );
+        let texts: Vec<(&str, u64)> = ranked
+            .iter()
+            .map(|word| (word.text.as_str(), word.count))
+            .collect();
+        assert_eq!(
+            texts,
+            [("atlas", 9), ("attic", 2), ("atlantic", 2)],
+            "most documents first, then shorter; the prefix itself and \
+             words it does not begin are not completions; a word seen twice \
+             keeps its larger count"
+        );
+        assert_eq!(ranked[0].query, "atlas", "a word runs as itself");
+        assert!(rank_words("", words(&[("atlas", 1)]).into_iter()).is_empty());
+    }
+
+    #[test]
+    fn the_ghost_is_the_rest_of_the_word_whatever_the_case_typed() {
+        assert_eq!(ghost("at", "atlas").as_deref(), Some("las"));
+        assert_eq!(ghost("At", "atlas").as_deref(), Some("las"));
+        assert_eq!(ghost("atlas", "atlas"), None, "nothing left to add");
+        assert_eq!(ghost("bu", "atlas"), None);
+        assert_eq!(ghost("caf", "caf\u{e9}s").as_deref(), Some("\u{e9}s"));
+    }
 
     fn vocabulary() -> Vec<Term<'static>> {
         vec![
