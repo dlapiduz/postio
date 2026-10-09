@@ -86,7 +86,6 @@ set_metered                       # crates/postio-sync/src/backfill.rs:478
 set_thread                        # crates/postio-storage/src/repository/messages.rs:1136
 set_user_active                   # crates/postio-sync/src/backfill.rs:483
 suspend                           # crates/postio-sync/src/watch.rs:510
-takes_free_text                   # crates/postio-search/src/query.rs:157
 temporary_directory               # crates/postio-storage/src/blob.rs:145
 text_bytes                        # crates/postio-storage/src/repository/messages.rs:547
 thread_page                       # crates/postio-runtime/src/store/local.rs -- the threaded window under MailStore::list_page; for runtime_suite/thread_store, which measures it on purpose
