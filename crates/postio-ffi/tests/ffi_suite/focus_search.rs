@@ -350,7 +350,7 @@ async fn a_top_hit_matched_in_its_body_shows_the_bodys_passage_marked() {
     assert!(top > 0);
 
     // Passages land after their page: wait for them, a little.
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + postio_test_support::scaled(Duration::from_secs(5));
     let rows = loop {
         let rows: Vec<_> = (0..top)
             .filter_map(|position| session.focus_search_row(position))
