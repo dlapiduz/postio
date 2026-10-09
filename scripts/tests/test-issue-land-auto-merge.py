@@ -264,7 +264,7 @@ def main() -> int:
                 f"the landing failed:\n--- stdout ---\n{result.stdout}\n"
                 f"--- stderr ---\n{result.stderr}\n--- gh calls ---\n{calls}"
             )
-        if "pr merge --auto --rebase" not in calls:
+        if "pr merge --auto --squash" not in calls:
             FAILURES.append(f"auto-merge was not armed:\n{calls}")
         if "pr checks --watch" in calls:
             FAILURES.append(f"the script still watched the checks:\n{calls}")

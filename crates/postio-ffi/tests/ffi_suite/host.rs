@@ -1,4 +1,4 @@
-//! A verb issued through the boundary reaches the store (specs/005-tui-frontend
+//! A verb issued through the boundary reaches the store (docs/archive/specs/005-tui-frontend
 //! T019, ADR 0041).
 //!
 //! A session opened the ordinary way -- no bus supplied by the caller -- used

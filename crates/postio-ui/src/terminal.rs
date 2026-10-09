@@ -5,7 +5,7 @@
 //! as `Return` in a terminal that does not speak the kitty keyboard protocol
 //! -- and text from a message can carry control sequences the terminal would
 //! obey. This module answers the first; the second is `SafeText`
-//! (`specs/005-tui-frontend` research R4, R5).
+//! (`docs/archive/specs/005-tui-frontend` research R4, R5).
 
 use crate::keymap::{Chord, Key, Modifiers};
 
@@ -227,7 +227,7 @@ mod registry {
     /// Every command must have at least one binding a legacy terminal can
     /// deliver, or the terminal frontend could only reach it through the
     /// palette -- which Principle II does not accept as reachable
-    /// (`specs/005-tui-frontend` SC-001, research R4).
+    /// (`docs/archive/specs/005-tui-frontend` SC-001, research R4).
     #[test]
     fn a_legacy_terminal_is_shown_the_alternate_it_can_send() {
         // Freedesktop named rather than read off the host: on a Mac `mod` is

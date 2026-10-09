@@ -206,7 +206,7 @@ because a toast is not a place a message can be found again ten minutes
 later.
 
 What is on its way is in the **Outbox** (a view over the Drafts folder,
-`specs/003-outbox-and-reserved-mailboxes`); Drafts holds what you are
+`docs/archive/specs/003-outbox-and-reserved-mailboxes`); Drafts holds what you are
 writing, what did not go and what cannot be confirmed — a message you have
 just sent does not sit in the folder that means *unfinished* (#1491). A row
 says its state in one word (`postio_ui::row::send_state_word`), and in Focus

@@ -223,7 +223,7 @@ def test_no_default_to_the_shared_checkout(channel: str) -> None:
 def test_an_explicit_setting_is_still_honoured(channel: str) -> None:
     """A caller staking a merge on a private target directory still gets one.
 
-    `docs/engineering-notes.md` advises exactly this for a result you are
+    `docs/archive/engineering-notes.md` advises exactly this for a result you are
     staking a merge on, so dropping the default must not also drop the
     caller's ability to choose.
     """

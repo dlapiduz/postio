@@ -1,6 +1,6 @@
 //! One part of a message, fetched if it has to be, for a person who asked.
 //!
-//! Moved from the classic app (`specs/005-tui-frontend` T046): what a part's bytes
+//! Moved from the classic app (`docs/archive/specs/005-tui-frontend` T046): what a part's bytes
 //! are, and how they are waited for, is the store's owner's business, and
 //! every frontend saves and opens parts through it. The prose below is the
 //! desktop app's, and still true.

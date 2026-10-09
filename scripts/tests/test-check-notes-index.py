@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Self-test for scripts/checks/check-notes-index.py (#1130).
 
-The dated engineering-notes entries live one per file under `docs/notes/`,
-and `docs/engineering-notes.md` lists them. Two ways for that to rot, both
+The live notes are one file each under `docs/notes/`, and
+`docs/notes/README.md` lists them. Two ways for that to rot, both
 silent: a note nobody listed (written, never found) and a listing that
 names a file that is not there (a rename, a typo). The check refuses both
 and names the fix. It runs against a fixture tree, not the real one, so it
@@ -45,8 +45,8 @@ def run(root: Path) -> subprocess.CompletedProcess[str]:
 
 def tree(root: Path, index_lines: list[str], notes: dict[str, str]) -> None:
     (root / "docs" / "notes").mkdir(parents=True, exist_ok=True)
-    (root / "docs" / "engineering-notes.md").write_text(
-        "# Notes\n\n## Dated entries, one file each\n\n" + "\n".join(index_lines) + "\n",
+    (root / "docs" / "notes" / "README.md").write_text(
+        "# Notes\n\n" + "\n".join(index_lines) + "\n",
         encoding="utf-8",
     )
     for name, body in notes.items():
@@ -57,7 +57,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as raw:
         root = Path(raw)
         good = "2026-09-04-a-thing-that-happened.md"
-        tree(root, [f"- 2026-09-04 — [A thing that happened](notes/{good})"],
+        tree(root, [f"- 2026-09-04 — [A thing that happened]({good})"],
              {good: "# A thing that happened\n\nbody\n"})
         r = run(root)
         case("a listed note with a title passes", r.returncode == 0, r.stdout + r.stderr)
@@ -68,51 +68,31 @@ def main() -> int:
         case("...and is named", "2026-09-05-unlisted.md" in r.stdout + r.stderr, r.stdout + r.stderr)
         (root / "docs" / "notes" / "2026-09-05-unlisted.md").unlink()
 
-        tree(root, [f"- 2026-09-04 — [A thing that happened](notes/{good})",
-                    "- 2026-09-06 — [Gone](notes/2026-09-06-gone.md)"],
+        tree(root, [f"- 2026-09-04 — [A thing that happened]({good})",
+                    "- 2026-09-06 — [Gone](2026-09-06-gone.md)"],
              {good: "# A thing that happened\n\nbody\n"})
         r = run(root)
         case("a listing that names no file fails", r.returncode != 0, "passed with a dangling index line")
         case("...and is named", "2026-09-06-gone.md" in r.stdout + r.stderr, r.stdout + r.stderr)
 
-        tree(root, [f"- 2026-09-04 — [A thing that happened](notes/{good})"],
+        tree(root, [f"- 2026-09-04 — [A thing that happened]({good})"],
              {good: "no heading here\n"})
         r = run(root)
         case("a note without a title fails", r.returncode != 0, "passed a note with no `# ` title")
 
-        tree(root, [f"- 2026-09-04 — [A thing that happened](notes/{good})"],
+        tree(root, [f"- 2026-09-04 — [A thing that happened]({good})"],
              {good: "# A thing that happened\n", "not-dated.md": "# x\n"})
         r = run(root)
         case("a note not named by date fails", r.returncode != 0, "passed a note whose name has no date")
 
         (root / "docs" / "notes" / "not-dated.md").unlink()
 
-        # An archived note is one directory down and is still listed -- under
-        # its own heading, linked as notes/archive/<name>. Both rules follow
-        # it there: unlisted fails, dangling fails, listed passes.
-        old = "2026-08-25-a-measurement-of-the-old-engine.md"
-        tree(root, [f"- 2026-09-04 — [A thing that happened](notes/{good})",
-                    f"- 2026-08-25 — [A measurement of the old engine](notes/archive/{old})"],
-             {good: "# A thing that happened\n"})
-        archive = root / "docs" / "notes" / "archive"
-        archive.mkdir()
-        (archive / old).write_text("# A measurement of the old engine\n\nbody\n", encoding="utf-8")
-        r = run(root)
-        case("a listed archived note passes", r.returncode == 0, r.stdout + r.stderr)
-
-        (archive / "2026-08-26-archived-and-unlisted.md").write_text("# Unlisted\n", encoding="utf-8")
-        r = run(root)
-        case("an unlisted archived note fails", r.returncode != 0, "passed with an archived note missing from the index")
-        case("...and is named with its folder", "archive/2026-08-26-archived-and-unlisted.md" in r.stdout + r.stderr, r.stdout + r.stderr)
-        (archive / "2026-08-26-archived-and-unlisted.md").unlink()
-
-        tree(root, [f"- 2026-09-04 — [A thing that happened](notes/{good})",
-                    f"- 2026-08-25 — [A measurement of the old engine](notes/archive/{old})",
-                    "- 2026-08-24 — [Gone](notes/archive/2026-08-24-gone.md)"],
+        # The index itself is not a note, and an archived note is not
+        # listed: the archive is docs/archive/notes/, outside this check.
+        tree(root, [f"- 2026-09-04 — [A thing that happened]({good})"],
              {good: "# A thing that happened\n"})
         r = run(root)
-        case("an archive listing that names no file fails", r.returncode != 0, "passed with a dangling archive line")
-        case("...and is named", "archive/2026-08-24-gone.md" in r.stdout + r.stderr, r.stdout + r.stderr)
+        case("the index is not a note to list", r.returncode == 0, r.stdout + r.stderr)
 
     if FAILURES:
         print(f"\n{len(FAILURES)} case(s) failed:", file=sys.stderr)

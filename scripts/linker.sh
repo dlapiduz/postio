@@ -13,7 +13,7 @@
 #     mold      median 1.16s    maxRSS 469 MB
 #
 # The time difference is inside the noise, because there is only ~1.2s of
-# compile-and-link to contest (docs/engineering-notes.md). The memory is not:
+# compile-and-link to contest (docs/archive/engineering-notes.md). The memory is not:
 # mold's peak is ~265 MB below lld's. On a workstation where four sessions
 # link concurrently, that is the scarce resource -- it is the whole reason
 # `jobs = 2` and the linker thread cap in `.cargo/config.toml` exist.

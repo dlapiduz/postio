@@ -1,5 +1,5 @@
 //! What a frontend's first usable frame waits on, against the constitution's
-//! 500 ms (specs/005-tui-frontend SC-003, T094).
+//! 500 ms (docs/archive/specs/005-tui-frontend SC-003, T094).
 //!
 //! POSTIO-MEASUREMENT: it builds a store of five thousand messages, and its
 //! output is numbers a person reads, so it runs nightly (`.config/nextest.toml`

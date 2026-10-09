@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Self-test for scripts/measure-package-size.sh (specs/005-tui-frontend SC-004).
+"""Self-test for scripts/measure-package-size.sh (docs/archive/specs/005-tui-frontend SC-004).
 
 The terminal package must be smaller than the desktop one, form for form:
 the standalone binaries with their shared libraries under half the desktop

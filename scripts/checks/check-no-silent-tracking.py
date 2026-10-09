@@ -39,8 +39,8 @@ arriving inside a diff about something else, which is the failure mode worth
 catching: nobody adds a tracker on purpose.
 
 Consent must be per-message and deliberate. Never a setting that defaults on,
-never on render, never prefetched. See CLAUDE.md, "Privacy is a feature, not a
-setting", and docs/PRODUCT.md §21.
+never on render, never prefetched. See CLAUDE.md, "Privacy", and
+docs/PRODUCT.md §21.
 
 # Exit status
 
@@ -202,7 +202,7 @@ def main() -> int:
         "Consent must be per-message and explicit. Never a default-on\n"
         "setting, never on render, never prefetched. Prefer the `mailto:`\n"
         "form of List-Unsubscribe, which goes through the send path the user\n"
-        "can see. See CLAUDE.md, \"Privacy is a feature, not a setting\".",
+        "can see. See CLAUDE.md, \"Privacy\".",
         file=sys.stderr,
     )
     return 1

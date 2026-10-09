@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-26
 
-**Status**: Clarified and planned ([plan.md](./plan.md)); built on
+**Status**: Clarified and planned ([plan.md](plan.md)); built on
 `feature/postio-focus`. Nothing lands on `main` until the maintainer says so.
 
 **Input**: The maintainer's handoff (`Design/postio-focus-design/PROMPT.md`):
@@ -44,7 +44,7 @@ keyboard-first and private. Focus uses the same store, sync, command registry
 and budgets as every Postio app (constitution I–VII).
 
 Focus is a frontend on the engine in the terminal's shape
-(`specs/005-tui-frontend`): it runs `postio-host` in its own process and
+(`docs/archive/specs/005-tui-frontend`): it runs `postio-host` in its own process and
 reaches mail only through `postio-client` (ADR 0041). Two things set it
 apart:
 
@@ -120,7 +120,7 @@ spec raised (2026-09-26 unless dated):
 
 - Every screen is specified here against its PNG, by number, and built
   against it. Every difference between the running app and its PNG is
-  written down in [screens.md](./screens.md) with its reason (FR-095).
+  written down in [screens.md](screens.md) with its reason (FR-095).
 - Where `SPEC.md` or the handoff disagrees with a PNG, **the PNG wins on
   appearance**. Where the constitution, the handoff or the maintainer settles
   a *behaviour*, that wins over a PNG's copy. The table below records each
@@ -161,7 +161,7 @@ ids.
 | C17 | the brief | Focus's engine work is local, with no new protocol, backend or sync mode. The one new outgoing message is an RSVP, through the existing outbox |
 | C18 | 01 | The strip says "186 filtered today", the PNG's wording, not `SPEC.md`'s "186 filtered (g f)" |
 | C19 | `KEYS.md` | `X` selects every conversation in the current view as a predicate (constitution V), not just the rows on screen |
-| C20 | `KEYS.md` | One keymap for every app, `KEYS.md`'s, with the keys of commands only another app has moved out of its way (FR-081, [contracts/keymap.md](./contracts/keymap.md)) |
+| C20 | `KEYS.md` | One keymap for every app, `KEYS.md`'s, with the keys of commands only another app has moved out of its way (FR-081, [contracts/keymap.md](contracts/keymap.md)) |
 | C21 | 25, the brief | A task line's `postio://` link goes before the date: `- [ ] … [✉](postio://message/…) 📅 2026-09-30`. The Obsidian Tasks plugin reads its fields from the end of the line |
 | C22 | 01–20 | Key caps are generated from the registry and spelled by the shared hint code: the keymap's spelling (`J`, `X`, `ctrl+k`), shortened in a tight cap to `Del`, `↵` and `⇧` (`hints::short`). A literal glyph in a string is refused by `check-key-hints-are-derived.py`. Each screen's comparison records the notation |
 | C23 | 05 | Recipient suggestions open at four characters (`postio_ui::recipients::MIN_COMPLETION_PREFIX`), where 05 draws three. Whether it becomes three is a `/ux-architect` call |
@@ -2118,7 +2118,7 @@ screen, not on what a layer was handed, that each surface shows what
 - **One keymap** (Clarifications). `s` snoozes, `*` flags, `d` makes a
   digest rule and delete is the `Delete` key, `mod+z` undoes, `U`
   unsubscribes, and `g d`, `g t`, `g s` and `g f` go where `KEYS.md` sends
-  them. Every command any app offers has a key ([contracts/keymap.md](./contracts/keymap.md)).
+  them. Every command any app offers has a key ([contracts/keymap.md](contracts/keymap.md)).
 - **Plain-English search is lowered by local rules.** Correspondent names
   become `from:`/`to:`, date phrases become `after:`/`before:`, and phrases
   such as "with attachments" or "unread" become their operators; the rest

@@ -95,7 +95,7 @@ fi
 #
 # `issue-land.sh` deletes the branch as its **last** step, after the merge, so
 # a run killed in between leaves it on `origin` for ever -- and this
-# workstation kills long commands (docs/engineering-notes.md; #742 built the
+# workstation kills long commands (docs/archive/engineering-notes.md; #742 built the
 # gate cache for the same reason). Measured when this was written: 36
 # `issue-*` branches on origin, 30 of them for issues that were closed.
 #

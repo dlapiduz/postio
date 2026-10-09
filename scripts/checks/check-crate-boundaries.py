@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Enforce Postio's architectural crate boundaries.
 
-The invariants (see CLAUDE.md, "Architectural invariants"):
+The invariants (see docs/ARCHITECTURE.md; CLAUDE.md, "What the code must do"):
 
   * ``postio-core`` must not depend on ``gtk4``/``libadwaita``. It is the
     UI-agnostic runtime -- commands in, events out -- which is what makes a
@@ -41,7 +41,7 @@ The invariants (see CLAUDE.md, "Architectural invariants"):
   * ``postio-tui`` must not depend on a toolkit or WebKit. It opens the store
     itself -- one app at a time has it, the terminal or the desktop app (ADR
     0041) -- so the engine and the protocol are in its graph by design; a
-    toolkit is how it would stop being small (``specs/005-tui-frontend``
+    toolkit is how it would stop being small (``docs/archive/specs/005-tui-frontend``
     FR-051).
   * ``postio-widgets`` must not depend on the store engine, the protocol, the
     host or the desktop app. It is the GTK the desktop app draws with (ADR
@@ -160,7 +160,7 @@ NETWORK_CRATES = [
 # `libsqlite3-sys` stay listed beside the current engine: a rule keyed on a
 # dependency's *name* stops holding the moment the name changes, and the
 # point of this check is that the boundary does not depend on anyone
-# noticing (specs/004-turso-store T002).
+# noticing (docs/archive/specs/004-turso-store T002).
 INTERFACE_DIRECT = [
     "rusqlite",
     "libsqlite3-sys",
@@ -503,7 +503,7 @@ RULES: dict[str, dict[str, object]] = {
         "why": (
             "postio-tui opens the store itself when no other Postio has it "
             "(ADR 0041), so the engine and the protocol are in its graph on "
-            "purpose. It must stay small (specs/005-tui-frontend FR-051): no "
+            "purpose. It must stay small (docs/archive/specs/005-tui-frontend FR-051): no "
             "toolkit and no WebKit."
         ),
     },
@@ -548,7 +548,7 @@ RULES: dict[str, dict[str, object]] = {
             # `libsqlite3-sys` stay listed with it: a rule keyed on a
             # dependency's *name* stops holding the moment the name changes,
             # and the whole point of this check is that the boundary does not
-            # depend on anyone noticing (specs/004-turso-store T002).
+            # depend on anyone noticing (docs/archive/specs/004-turso-store T002).
             "turso",
             "turso_core",
         ],
@@ -573,7 +573,7 @@ RULES: dict[str, dict[str, object]] = {
             # `libsqlite3-sys` stay listed with it: a rule keyed on a
             # dependency's *name* stops holding the moment the name changes,
             # and the whole point of this check is that the boundary does not
-            # depend on anyone noticing (specs/004-turso-store T002).
+            # depend on anyone noticing (docs/archive/specs/004-turso-store T002).
             "turso",
             "turso_core",
         ],
@@ -638,7 +638,7 @@ RULES: dict[str, dict[str, object]] = {
             # `libsqlite3-sys` stay listed with it: a rule keyed on a
             # dependency's *name* stops holding the moment the name changes,
             # and the whole point of this check is that the boundary does not
-            # depend on anyone noticing (specs/004-turso-store T002).
+            # depend on anyone noticing (docs/archive/specs/004-turso-store T002).
             "turso",
             "turso_core",
             "gtk4",
@@ -662,7 +662,7 @@ RULES: dict[str, dict[str, object]] = {
             # `libsqlite3-sys` stay listed with it: a rule keyed on a
             # dependency's *name* stops holding the moment the name changes,
             # and the whole point of this check is that the boundary does not
-            # depend on anyone noticing (specs/004-turso-store T002).
+            # depend on anyone noticing (docs/archive/specs/004-turso-store T002).
             "turso",
             "turso_core",
             "gtk4",
@@ -689,7 +689,7 @@ RULES: dict[str, dict[str, object]] = {
             # `libsqlite3-sys` stay listed with it: a rule keyed on a
             # dependency's *name* stops holding the moment the name changes,
             # and the whole point of this check is that the boundary does not
-            # depend on anyone noticing (specs/004-turso-store T002).
+            # depend on anyone noticing (docs/archive/specs/004-turso-store T002).
             "turso",
             "turso_core",
             "gtk4",
@@ -768,7 +768,7 @@ RULES: dict[str, dict[str, object]] = {
             # `libsqlite3-sys` stay listed with it: a rule keyed on a
             # dependency's *name* stops holding the moment the name changes,
             # and the whole point of this check is that the boundary does not
-            # depend on anyone noticing (specs/004-turso-store T002).
+            # depend on anyone noticing (docs/archive/specs/004-turso-store T002).
             "turso",
             "turso_core",
             "gtk4",
@@ -960,8 +960,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if failed:
         print(
-            "\ncrate-boundary check FAILED. See CLAUDE.md "
-            '"Architectural invariants".',
+            "\ncrate-boundary check FAILED. See docs/ARCHITECTURE.md and "
+            'CLAUDE.md, "What the code must do".',
             file=sys.stderr,
         )
         return 1

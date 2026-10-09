@@ -109,7 +109,7 @@ Modified sections (1.2.0):
   mail through `postio-client`, `postio-client` taking no toolkit, WebKit,
   store engine or protocol, and `postio-tui` no toolkit or WebKit.
   Additional Constraints — Scope names the terminal frontend
-  (specs/005-tui-frontend).
+  (docs/archive/specs/005-tui-frontend).
 
 Modified sections (1.1.0):
   Development Workflow and Quality Gates — adds "Spec-driven work lands on one
@@ -300,7 +300,7 @@ that lives only in a document has already been crossed.
 **Scope.** Postio is one product with several interfaces on the same engine
 and store, one interface holding the store at a time (ADR 0041): the GTK
 interface (`postio-gtk`, the Focus design, `specs/007-postio-focus`), the
-terminal (`postio-tui`, `specs/005-tui-frontend`), and macOS (`macos/` over
+terminal (`postio-tui`, `docs/archive/specs/005-tui-frontend`), and macOS (`macos/` over
 `postio-ffi`); more may follow. v1 ships on Linux -- GTK4 and libadwaita,
 Wayland first, and the terminal. IMAP and SMTP, one provider preset table,
 OAuth in scope (ADR 0006).
@@ -327,7 +327,7 @@ explained.
 
 **One fact, one home.** A rule recorded elsewhere is cited, not restated.
 Decisions go in ADRs under `docs/decisions/`; constraints future sessions must
-respect go in `docs/notes/` and are listed in `docs/engineering-notes.md`.
+respect go in `docs/notes/` and are listed in `docs/archive/engineering-notes.md`.
 
 **Logging is `POSTIO_LOG`**, an `EnvFilter`, not `RUST_LOG`.
 

@@ -7,7 +7,7 @@ Scope note: this describes what is **built**, as of 0.4.0. Where a decision is
 made but not yet implemented it says so explicitly. `docs/decisions/` holds
 the long-form ADRs, with [an index](decisions/README.md) of where each one
 stands. The August 2026 outside review that shaped several of them is kept
-in [`docs/archive/`](archive/); every finding it raised has since landed.
+in [`docs/archive/`](archive); every finding it raised has since landed.
 
 ---
 
@@ -372,7 +372,7 @@ hide inside the thing meant to catch it.
   WebKit.** The client is the frontends' whole view of mail, and it stays
   free of what any one of them draws with; the terminal opens the store
   through the host like every app, and is held to being small
-  (`specs/005-tui-frontend` FR-051) by leaving GTK and WebKit out.
+  (`docs/archive/specs/005-tui-frontend` FR-051) by leaving GTK and WebKit out.
 - **`postio-widgets` must not depend on the database engine, the protocol,
   the crates that own the store (`postio-host`, `postio-session`,
   `postio-runtime`, `postio-storage`, `postio-sync`) or the app.** The

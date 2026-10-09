@@ -78,7 +78,7 @@ def main() -> int:
         "`postio_ui::sidebar::view_rows`, which leaves the id unassigned, and\n"
         "tell a folder from a view by what the row is rather than by the sign\n"
         "of a number.\n\n"
-        "See specs/003-outbox-and-reserved-mailboxes/contracts/sidebar-rows.md\n"
+        "See docs/archive/specs/003-outbox-and-reserved-mailboxes/contracts/sidebar-rows.md\n"
         "and docs/decisions/0036-a-sidebar-row-is-a-folder-or-a-view.md.",
         file=sys.stderr,
     )

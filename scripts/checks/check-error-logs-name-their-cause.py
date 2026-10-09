@@ -16,7 +16,7 @@ message as well, so the structured record and the readable one agree.
 This does not leak anything the log did not already hold: the same string
 is already going to journald as a field, and to stderr, where `fmt` renders
 fields inline. Logs still carry ids, counts and outcomes only — an error's
-own text is an outcome (CLAUDE.md, "Privacy is a feature").
+own text is an outcome (CLAUDE.md, "Privacy").
 
 Deliberately `error!` and not `warn!`. A warning is something the process
 carried on through, and there are 87 of those against 26 of these; this is

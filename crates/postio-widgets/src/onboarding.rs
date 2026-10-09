@@ -289,7 +289,7 @@ impl Onboarding {
         // already out. One press, one open — never on render, never
         // retried on its own, and the URL is the very one `authorize`
         // handed the opener a moment ago rather than a second one built
-        // here. See ADR 0006 Q3 and CLAUDE.md, "Privacy is a feature".
+        // here. See ADR 0006 Q3 and CLAUDE.md, "Privacy".
         gtk::UriLauncher::new(&url).launch(
             self.root().and_downcast_ref::<gtk::Window>(),
             gtk::gio::Cancellable::NONE,

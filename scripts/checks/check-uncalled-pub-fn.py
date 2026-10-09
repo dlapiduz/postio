@@ -18,7 +18,7 @@ nothing at all:
 Three is not bad luck. It is what a workspace of deliberately independent
 leaf crates produces: a crate that cannot see its callers cannot notice it
 has none, and `cargo` will not warn, because `pub` is public API by
-definition. `docs/engineering-notes.md` states the pattern directly — *a
+definition. `docs/archive/engineering-notes.md` states the pattern directly — *a
 `pub fn` in a leaf crate, fully tested, is not evidence that anything calls
 it.*
 

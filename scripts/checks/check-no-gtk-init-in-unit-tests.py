@@ -371,7 +371,7 @@ def main() -> int:
         "line like:\n\n"
         f"    // {MARKER} `<crate>` is a binary crate, so this cannot\n"
         "    // move to `tests/`. It is the only GTK-touching test here.\n\n"
-        'See CLAUDE.md, "Testing", and issue #41.',
+        'See CLAUDE.md, "Tests", and issue #41.',
         file=sys.stderr,
     )
     return 1

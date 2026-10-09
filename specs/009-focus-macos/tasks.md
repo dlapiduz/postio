@@ -6,7 +6,7 @@ description: "Task list for spec 009, Postio Focus on macOS"
 
 **Input**: `specs/009-focus-macos/` — [spec.md](spec.md), [plan.md](plan.md),
 [research.md](research.md), [data-model.md](data-model.md),
-[contracts/](contracts/), [quickstart.md](quickstart.md)
+[contracts/](contracts), [quickstart.md](quickstart.md)
 
 **Tests**: Required. The constitution (IV) makes test-first non-negotiable.
 Every implementation task is preceded by a task that writes its test and
@@ -541,7 +541,7 @@ the branch.
 
 - [ ] T125 [P] Regenerate `docs/keybindings.md` and check the "(not macOS)" annotations are gone (`crates/postio-ui/tests/ui_suite/keybindings_doc.rs`)
 - [ ] T126 [P] Update `macos/CLAUDE.md` for the Focus app: the targets, the intent applier, `macos-shot.sh`, and the no-AppKit rule in PostioKit
-- [ ] T127 [P] Add a dated note `docs/notes/<date>-focus-on-the-mac.md` listing the constraints future sessions must respect: one secondary window, the intents not the widgets, the treatment from the shared document. Add it to `docs/engineering-notes.md`
+- [ ] T127 [P] Add a dated note `docs/notes/<date>-focus-on-the-mac.md` listing the constraints future sessions must respect: one secondary window, the intents not the widgets, the treatment from the shared document. Add it to `docs/archive/engineering-notes.md`
 - [ ] T128 Run quickstart.md's scenarios table end to end on the bundle over the demo store, then on real mail (the maintainer). Record the results on the PR
 - [ ] T129 Check `specs/009-focus-macos/spec.md` success criteria SC-001 to SC-007 one by one, and write the evidence for each into the PR body
 - [ ] T130 Land `feature/focus-macos` once: rebase onto `main`, then `scripts/issue-land.sh --detach --full-suite`, with the PR labelled `interactions-unreviewed` (FR-063). The PR body says what this spec closes and that the Mac storyboard runner is spec 008's later phase

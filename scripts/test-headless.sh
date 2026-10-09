@@ -54,7 +54,7 @@ if ! running; then
         # Not Xvfb. Postio is a Wayland application and X11 is not a
         # supported configuration (maintainer, 2026-09-02), so a suite that
         # passes under XWayland has proved something we do not ship. See
-        # docs/engineering-notes.md.
+        # docs/archive/engineering-notes.md.
         exit 1
     }
     # setsid so the compositor is not in this shell's process group and
@@ -79,7 +79,7 @@ export GTK_A11Y="${GTK_A11Y:-none}"    # quiets an at-spi warning with no bus
 # is weaker than the pin was supposed to give, and this wrapper fronts every
 # `cargo test` invocation a session runs, so it is where the guarantee lives:
 # whatever the shell exports, what runs here is what rust-toolchain.toml
-# names. See docs/engineering-notes.md and issue #112.
+# names. See docs/archive/engineering-notes.md and issue #112.
 unset RUSTUP_TOOLCHAIN
 
 exec "$@"

@@ -74,7 +74,7 @@ async fn a_draft_round_trips_with_its_recipients_and_attachments() {
 
 #[tokio::test]
 async fn the_markdown_a_draft_was_written_in_survives_saving_and_can_be_dropped() {
-    // specs/005-tui-frontend data-model: the terminal reopens what was typed,
+    // docs/archive/specs/005-tui-frontend data-model: the terminal reopens what was typed,
     // and a save from a frontend that does not write Markdown clears it, so
     // the terminal then reopens from the HTML rather than stale Markdown.
     let database = test_support::memory().await;

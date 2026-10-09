@@ -7,7 +7,7 @@
   **Q6a decided 2026-08-27** ([#464](https://github.com/dlapiduz/postio/issues/464)),
   **Q6b decided 2026-08-28** ([#470](https://github.com/dlapiduz/postio/issues/470)),
   **Q6c decided 2026-08-28** ([#471](https://github.com/dlapiduz/postio/issues/471)),
-  **amended 2026-09-14 for the Turso engine** (specs/004-turso-store — the
+  **amended 2026-09-14 for the Turso engine** (docs/archive/specs/004-turso-store — the
   built table, Q3, Q5, Q7, Alternatives and Consequences). The sidebar
   shape it describes is macOS's: the desktop app has no sidebar, and its
   inbox is every enabled account's inbox at once (ADR 0043)
@@ -145,7 +145,7 @@ in it, `WritePriority::Interactive` ahead of `WritePriority::Background`, so
 a keystroke's write waits for at most one background batch however many
 passes are running.
 
-> **Amended 2026-09-14 (specs/004-turso-store):** the paragraph above
+> **Amended 2026-09-14 (docs/archive/specs/004-turso-store):** the paragraph above
 > originally said a connection pool, sized through `Database::open_with`'s
 > `max_connections`, had to be set from the account count, or "the tenth
 > account deadlocks waiting for a connection that a sync pass is holding".
@@ -1066,7 +1066,7 @@ pool, and one slow server stalling everyone. The engine is already a thread
 that owns a connection because `rusqlite::Connection` is `!Sync`; N of them is
 the cheap path, not the expensive one.
 
-> **Amended 2026-09-14 (specs/004-turso-store):** the `!Sync` reason is gone
+> **Amended 2026-09-14 (docs/archive/specs/004-turso-store):** the `!Sync` reason is gone
 > — the store is async to the bottom and a checkout could cross threads. The
 > engine stayed one sequential thread per account on purpose, and the top of
 > `crates/postio-runtime/src/engine.rs` says why; the rejection stands on

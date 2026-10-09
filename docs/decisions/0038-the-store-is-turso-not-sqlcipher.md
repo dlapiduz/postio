@@ -5,7 +5,7 @@
 - **Amends:** [ADR 0014](0014-encryption-at-rest.md) — the
   *mechanism* only. Everything 0014 decided about what encryption must
   protect, what it must not claim, and where the key lives is unchanged.
-- **Feature:** `specs/004-turso-store`
+- **Feature:** `docs/archive/specs/004-turso-store`
 - **Decision:** **The database is [Turso](https://github.com/tursodatabase/turso),
   the Rust rewrite of SQLite, with its own AES-256-GCM page encryption keyed
   from the same master key.** SQLCipher and `rusqlite` leave the graph, and
@@ -88,7 +88,7 @@ opened, so there is nothing to drain. The maintainer's instruction was explicit
 ("we can blow the current store"), and `postio_session::open_store_at` carries
 a comment where the migration call used to be.
 
-> **Amended 2026-09-14 (specs/004-turso-store):** the note this ADR wrote
+> **Amended 2026-09-14 (docs/archive/specs/004-turso-store):** the note this ADR wrote
 > into ADR 0020's status line — "bodies are plain `TEXT`" — was true for as
 > long as the body index sat on the body column itself. Once the index moved
 > to its own folded table, `message_search_bodies`, the body column was free

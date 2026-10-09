@@ -6,7 +6,7 @@
   that engine is gone — as is ADR 0020's trained-dictionary row compression
   (its status says why). The conclusion stands (pages are not compressed),
   and blob-level zstd survives as shipped (`postio-storage/src/blob.rs`).
-  **Amended 2026-09-14** (specs/004-turso-store): the contentless-FTS,
+  **Amended 2026-09-14** (docs/archive/specs/004-turso-store): the contentless-FTS,
   partial-index, pragma and re-encrypt items in Axis 3 and Axis 4 are
   annotated in place below; every measurement stands.
 - **Date:** 2026-08-26
@@ -33,7 +33,7 @@
   budget with eviction. Nothing here weakens ADR 0016: it is what makes ADR 0016
   affordable.
 
-> **Amended 2026-09-14 (specs/004-turso-store):** "the FTS5 index becomes
+> **Amended 2026-09-14 (docs/archive/specs/004-turso-store):** "the FTS5 index becomes
 > contentless" did not survive the engine. There is no contentless mode: the
 > full-text indexes are `CREATE INDEX … USING fts` over ordinary columns —
 > `search_documents_fts` over `search_documents`, `messages_body_fts` over
@@ -282,7 +282,7 @@ value:
    fair price for removing a duplicate of the whole corpus from the hot,
    encrypted, budget-gated path.
 
-   > **Amended 2026-09-14 (specs/004-turso-store):** there is no
+   > **Amended 2026-09-14 (docs/archive/specs/004-turso-store):** there is no
    > `messages_fts`, no `content=''`, no `snippet()`, `highlight()` or
    > `rebuild` on this engine. The body index is `messages_body_fts`, a
    > `USING fts` index over `message_search_bodies` — a sibling table holding
@@ -301,7 +301,7 @@ value:
    `idx_recipients_draft` alone is 6 MB, 3.9% of the database. Adding
    `WHERE draft_id IS NOT NULL` is one migration and costs nothing.
 
-   > **Amended 2026-09-14 (specs/004-turso-store):** now actively wrong.
+   > **Amended 2026-09-14 (docs/archive/specs/004-turso-store):** now actively wrong.
    > Turso's planner will not read a partial index, so that `WHERE` would
    > make the index unreadable and the query it exists for a table scan. The
    > rule is that a `WHERE` on an index in `schema.rs` must be a constraint,
@@ -545,7 +545,7 @@ with no migration and no flag day. That was the point of reserving the field in
   made before the re-encrypt migration, and the blob header must carry a
   compression field. *(The first is moot — no re-encrypt migration and no
   pragmas to choose, per the Axis 3 amendment; the second shipped.)*
-- `docs/engineering-notes.md` records the measured shape of a real mailbox —
+- `docs/archive/engineering-notes.md` records the measured shape of a real mailbox —
   90% payload by weight, 15% of messages carrying it — because every future
   sizing argument in this project will want that number and nobody should have
   to re-derive it.

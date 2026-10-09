@@ -6,8 +6,8 @@
   in the pane beside the list, and a draft may be detached to a window of its
   own (`specs/007-postio-focus` FR-050, screens.md "The composer")
 - **Date:** 2026-09-11
-- **Decision by:** the maintainer, clarifying `specs/002-compose-editor/spec.md` on 2026-09-10. Asked how many drafts may be open at once and chose *one in the pane, many detached* over one composition total.
-- **Feature:** `specs/002-compose-editor/` — FR-010, FR-011, FR-013, FR-014. Spec-driven work carries no issue (constitution 1.1.0).
+- **Decision by:** the maintainer, clarifying `docs/archive/specs/002-compose-editor/spec.md` on 2026-09-10. Asked how many drafts may be open at once and chose *one in the pane, many detached* over one composition total.
+- **Feature:** `docs/archive/specs/002-compose-editor/` — FR-010, FR-011, FR-013, FR-014. Spec-driven work carries no issue (constitution 1.1.0).
 - **Amends:** the singleton composer — `Window::composer` memoises one `Composer`, and `Composer::detach` reparents *that widget* into a window.
 - **Related:** [ADR 0004](0004-composer-document-model.md) (the draft is the record, the DOM a working copy), #957 (the `WebView` budget this spends)
 - **Decision:** **the composer stops being a singleton.** The reading pane holds at most one, every other open draft is a window of its own, and a draft is open in exactly one of them. The property that makes detaching lossless changes from *"the widget is never rebuilt"* to *"the draft is the record"*, which ADR 0004 already decided.

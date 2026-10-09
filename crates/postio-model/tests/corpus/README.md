@@ -162,7 +162,7 @@ chosen so that the zone matters: a wrong offset gives a wrong instant.
 
 ### Rendering: fidelity, legibility and hostility (spec 006)
 
-Added for `specs/006-email-rendering`. The `designed` ones have reference
+Added for `docs/archive/specs/006-email-rendering`. The `designed` ones have reference
 renders the chosen engine is compared against; the `theme-contrast` ones are
 where the dark-on-dark bug lived; the `hostile` ones are what the reader must
 survive without a connection, a crash or a hang.

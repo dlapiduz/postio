@@ -1,7 +1,7 @@
 # Data model: Postio Focus
 
 The shapes Focus adds to the store, to `config.toml` and to the types between
-them. The reasons are in [research.md](./research.md). A schema change comes
+them. The reasons are in [research.md](research.md). A schema change comes
 with a migration where one can be written, and a store no migration reaches
 starts over (R0). So everything here is either in the store, where it can be
 recomputed or re-entered, or in `config.toml`, where the user's own decisions
@@ -148,7 +148,7 @@ reads the rows with no record at the current version, newest first
 
 ## Persisted: `config.toml`
 
-The full contract is [contracts/config.md](./contracts/config.md). In short:
+The full contract is [contracts/config.md](contracts/config.md). In short:
 
 ```toml
 [focus]

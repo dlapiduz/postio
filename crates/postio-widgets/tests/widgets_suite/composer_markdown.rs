@@ -1,5 +1,5 @@
 //! A draft the desktop saves forgets the Markdown it was written in
-//! (specs/005-tui-frontend, data-model `drafts.body_markdown`).
+//! (docs/archive/specs/005-tui-frontend, data-model `drafts.body_markdown`).
 //!
 //! The terminal reopens a draft from its Markdown when there is some. Once the
 //! desktop has edited the body, that Markdown describes a message that no

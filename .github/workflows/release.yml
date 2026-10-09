@@ -536,7 +536,7 @@ jobs:
           gh release edit "$TAG" --draft=false
           echo "published $(gh release view "$TAG" --json url --jq .url)"
 
-  # SC-004 (specs/005-tui-frontend): the terminal binaries are under half the
+  # SC-004 (docs/archive/specs/005-tui-frontend): the terminal binaries are under half the
   # desktop ones, and the terminal Flatpak with its runtime under two-thirds. Beside `publish`, not in front of it: a size is not a reason
   # to withhold a working release, it is a reason the next one has to shrink,
   # and a red job on the run says so.

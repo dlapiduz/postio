@@ -1,7 +1,7 @@
 # Quickstart: validating Postio Focus
 
 How to prove the spec's acceptance scenarios, and where each proof lives. The
-contracts say what is promised ([contracts/](./contracts/)). This file is how
+contracts say what is promised ([contracts/](contracts)). This file is how
 to watch it hold.
 
 ## Prerequisites
@@ -67,13 +67,13 @@ Beyond the drawn screens it knows the row menu (26), the body treatments
 (27–31), the composer with an attachment (32), the fresh-store page (33), the
 reading pane (34–36) and Settings (40–43). It exits non-zero with `NO IMAGE
 WAS WRITTEN` when there was nothing to draw. The sizes and the compositor it
-wants are in [screens.md](./screens.md), "Rendering them".
+wants are in [screens.md](screens.md), "Rendering them".
 
 **Read every PNG back,** beside its reference in the maintainer's
 `Design/postio-focus-design/screens/` (and `Design/focus-message-dialog/` for
 the open message), in light and dark.
 
-**Record every difference** in [screens.md](./screens.md): one row per
+**Record every difference** in [screens.md](screens.md): one row per
 screen, each difference with its reason (FR-095, SC-009). The ones the spec
 decided are its table *Where the inputs disagree* (C1–C27).
 

@@ -33,7 +33,7 @@
 # Not wired into check.sh on purpose: it compiles a second copy of the
 # dependency graph, which is minutes on a cold target directory, and check.sh
 # runs on every land across every session. This belongs in CI and in the
-# reconcile pass. See docs/engineering-notes.md on cross-platform dependencies
+# reconcile pass. See docs/archive/engineering-notes.md on cross-platform dependencies
 # for the layers either side of it.
 set -uo pipefail
 

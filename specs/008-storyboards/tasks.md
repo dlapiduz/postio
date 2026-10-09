@@ -2,10 +2,10 @@
 
 **Input**: Design documents from `specs/008-storyboards/`
 
-**Prerequisites**: [plan.md](./plan.md), [spec.md](./spec.md),
-[research.md](./research.md), [data-model.md](./data-model.md),
-[contracts/](./contracts/), [quickstart.md](./quickstart.md),
-[catalogue-seed.md](./catalogue-seed.md)
+**Prerequisites**: [plan.md](plan.md), [spec.md](spec.md),
+[research.md](research.md), [data-model.md](data-model.md),
+[contracts/](contracts), [quickstart.md](quickstart.md),
+[catalogue-seed.md](catalogue-seed.md)
 
 **Tests**: **Included and non-negotiable** (constitution IV).
 - Every `[TEST]` task is written first, and must be **observed failing**
@@ -102,7 +102,7 @@ phase, so **freeze the GTK half (T022 to T032)** before that lane starts
     of the pixels.
 
   Record the results in `docs/notes/2026-10-01-what-a-storyboard-capture-costs.md` (date
-  and title) and list it in `docs/engineering-notes.md`. The note must give:
+  and title) and list it in `docs/archive/engineering-notes.md`. The note must give:
   - the median and p95 cost of one capture;
   - the sampling stride *n* this implies for a 3 s `settle_max` within SC-002;
   - which renderer is byte-deterministic.
@@ -661,7 +661,7 @@ without anyone looking for it.
 
 ## Phase 7: User Story 5 — A catalogue from what already went wrong (Priority: P2)
 
-**Goal**: every expressible row of [catalogue-seed.md](./catalogue-seed.md)
+**Goal**: every expressible row of [catalogue-seed.md](catalogue-seed.md)
 becomes a storyboard. The rest are recorded as not expressible, with the
 reason.
 

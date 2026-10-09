@@ -11,7 +11,7 @@
 # `mise.toml` already pins `gh` above this floor, but mise is optional (see
 # that file's own header) -- a session where it is not active gets whatever
 # `gh` is already on `$PATH`, which is exactly the class of gap
-# `RUSTUP_TOOLCHAIN` leaves for the Rust pin (docs/engineering-notes.md).
+# `RUSTUP_TOOLCHAIN` leaves for the Rust pin (docs/archive/engineering-notes.md).
 # This is the runtime backstop every `scripts/issue-*.sh` sources, so a gap
 # like that fails in one sentence here instead of as a stack trace three
 # layers downstream.

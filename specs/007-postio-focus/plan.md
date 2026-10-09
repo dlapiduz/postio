@@ -1,6 +1,6 @@
 # Implementation Plan: Postio Focus
 
-**Branch**: `feature/postio-focus` | **Date**: 2026-09-27 | **Spec**: [spec.md](./spec.md)
+**Branch**: `feature/postio-focus` | **Date**: 2026-09-27 | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `/specs/007-postio-focus/spec.md`
 
@@ -57,7 +57,7 @@ milestones group the work:
 3. Milestone 3: Obsidian and `postio://`.
 
 The classic three-pane app is retired in the order
-[`classic-parity.md`](./classic-parity.md) sets out; its removal waits for
+[`classic-parity.md`](classic-parity.md) sets out; its removal waits for
 the maintainer.
 
 ## Technical Context
@@ -78,10 +78,10 @@ the maintainer.
 - the filesystem only, for the vault.
 
 **Storage**: The encrypted Turso store has Focus's tables and columns
-([data-model.md](./data-model.md)). A schema change comes with a migration
+([data-model.md](data-model.md)). A schema change comes with a migration
 where one can be written, and a store no migration reaches starts over
 (R0). The user's decisions are in `config.toml` under `[focus]`
-([contracts/config.md](./contracts/config.md)).
+([contracts/config.md](contracts/config.md)).
 
 **Testing**:
 
@@ -151,8 +151,8 @@ counts:
 | Additional Constraints: One fact, one home | ADRs for rules, specs for features | **Pass.** ADR 0043 is the `postio-widgets` rule and the one-app decision. ADR 0032 records Focus's one-message view, and ADR 0025 the three promoted headers. The spec carries the reasoning. |
 | Development Workflow | Spec-driven work lands once on one feature branch | **Pass.** It lands once, when the maintainer says so. |
 
-The contracts ([engine](./contracts/engine.md), [keymap](./contracts/keymap.md),
-[config](./contracts/config.md), [surface](./contracts/focus-surface.md))
+The contracts ([engine](contracts/engine.md), [keymap](contracts/keymap.md),
+[config](contracts/config.md), [surface](contracts/focus-surface.md))
 carry commands, scopes and reads the registry and host have the shape for.
 The design adds no second query language, keymap, composer or reader.
 
@@ -245,11 +245,11 @@ docs/decisions/0043-…                   # the one desktop app, and postio-widg
 - **Everything else is an addition to a crate that already owns the
   concern.**
 
-The order of work is [tasks.md](./tasks.md).
+The order of work is [tasks.md](tasks.md).
 
 ## Defaults the maintainer may override
 
-Each is recorded in [research.md](./research.md), and each is a small change
+Each is recorded in [research.md](research.md), and each is a small change
 if overridden.
 
 - **A woken snooze comes back at the top, in every app,** through `sort_at`

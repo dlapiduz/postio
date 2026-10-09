@@ -44,11 +44,11 @@ runs:
     # single link -- 141 test binaries in the test job alone.
     #
     # It is not installed for speed. Measured on the largest binary here, mold
-    # and rust-lld are within noise of each other (docs/engineering-notes.md);
+    # and rust-lld are within noise of each other (docs/archive/engineering-notes.md);
     # what mold gives is ~265 MB lower peak RSS per link, and this job has
     # already had a debug build exhaust a runner and kill lld mid-link.
     #
-    # Ubuntu equivalents of the Fedora packages in CLAUDE.md:
+    # Ubuntu equivalents of the Fedora packages in README.md:
     #   gtk4-devel        -> libgtk-4-dev
     #   libadwaita-devel  -> libadwaita-1-dev
     #   webkitgtk6.0-devel-> libwebkitgtk-6.0-dev

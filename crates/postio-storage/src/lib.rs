@@ -12,7 +12,7 @@
 //! Message *bodies* are in the database, as `TEXT`. They were zstd blobs in a
 //! column until the engine changed: the full-text index is an index on the
 //! body column now rather than a virtual table beside it, and an index cannot
-//! tokenise compressed bytes (`specs/004-turso-store`).
+//! tokenise compressed bytes (`docs/archive/specs/004-turso-store`).
 //!
 //! The types being persisted come from [`postio_model`], which knows nothing
 //! about SQL. This crate is the only place that maps between the two.

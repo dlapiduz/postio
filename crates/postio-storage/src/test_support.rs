@@ -158,7 +158,7 @@ const SWEEP_GRACE: Duration = Duration::from_secs(60);
 
 /// A directory this old cannot belong to a test binary that is still
 /// running: nothing in this suite comes anywhere near this long, even
-/// loaded down (`docs/engineering-notes.md`). The sweep reclaims it
+/// loaded down (`docs/archive/engineering-notes.md`). The sweep reclaims it
 /// unconditionally. 30 minutes because that is what the manual sweep during
 /// the #442 incident used, and it worked.
 const SWEEP_MIN_AGE: Duration = Duration::from_secs(30 * 60);

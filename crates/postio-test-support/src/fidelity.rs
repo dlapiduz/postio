@@ -1,6 +1,6 @@
 //! Does a render look like its reference? (spec 006, SC-002)
 //!
-//! The rules are `specs/006-email-rendering/contracts/fidelity-metric.md`,
+//! The rules are `docs/archive/specs/006-email-rendering/contracts/fidelity-metric.md`,
 //! and the constants below are that contract's. They are fixed before any
 //! engine is judged by them, and are not loosened to make a fixture pass.
 //!

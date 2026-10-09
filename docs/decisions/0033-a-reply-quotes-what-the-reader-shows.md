@@ -2,8 +2,8 @@
 
 - **Status:** Accepted (2026-09-10)
 - **Date:** 2026-09-10
-- **Decision by:** the maintainer, clarifying `specs/002-compose-editor/spec.md` on 2026-09-10. Offered four options for what survives a reply to rich HTML and chose fidelity over the reduced form, with the conflict stated in the option text.
-- **Feature:** `specs/002-compose-editor/` — FR-044 to FR-047. Spec-driven work carries no issue (constitution 1.1.0).
+- **Decision by:** the maintainer, clarifying `docs/archive/specs/002-compose-editor/spec.md` on 2026-09-10. Offered four options for what survives a reply to rich HTML and chose fidelity over the reduced form, with the conflict stated in the option text.
+- **Feature:** `docs/archive/specs/002-compose-editor/` — FR-044 to FR-047. Spec-driven work carries no issue (constitution 1.1.0).
 - **Amends:** [ADR 0003](0003-rich-text-compose.md) Q3, whose quote is a `Document`; and [ADR 0004](0004-composer-document-model.md), which put that parse in `postio-body`.
 - **Related:** [ADR 0032](0032-the-conversation-is-one-document.md) (the style scoping this relies on), `ARCHITECTURE.md` §11 (nothing leaves unasked), `PRODUCT.md` §21 (privacy)
 - **Decision:** **a reply carries the sender's HTML as the reader sanitises it, not a reduction rebuilt from the closed `Document`.** The permitted set does not widen — it is the same sanitiser, the same refused declarations, the same style scoping. And the quote is always sanitised with remote images **blocked**, whatever the reader was allowed to show.

@@ -333,13 +333,13 @@ mailboxes so far, and the issue tracker is where the rough edges get filed.
 
 | For | Read |
 |---|---|
-| Installing and using Postio | the [user guide](https://dlapiduz.github.io/postio/docs/) (source in [`docs/book/`](docs/book/)) |
+| Installing and using Postio | the [user guide](https://dlapiduz.github.io/postio/docs/) (source in [`docs/book/`](docs/book)) |
 | Every key | [`docs/keybindings.md`](docs/keybindings.md) |
 | Every config key | [`docs/config.md`](docs/config.md) |
 | What Postio must do, and must not | [`docs/PRODUCT.md`](docs/PRODUCT.md) |
-| How it is put together, and why | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and the ADRs in [`docs/decisions/`](docs/decisions/) |
+| How it is put together, and why | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and the ADRs in [`docs/decisions/`](docs/decisions) |
 | The performance budgets and what was measured | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) |
-| Hard-won lessons | [`docs/engineering-notes.md`](docs/engineering-notes.md) |
+| Hard-won lessons | [`docs/archive/engineering-notes.md`](docs/archive/engineering-notes.md) |
 | Contributing, and the developer setup | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | The agent workflow and the gates | [`CLAUDE.md`](CLAUDE.md) |
 
@@ -364,7 +364,7 @@ test-driven development is mandatory; the invariants — no GTK in the engine,
 no SQL in the view layer, no message content in a log, a destructive command
 must be undoable — are scripts that run on every landing, because a rule an
 agent has to remember is a rule that drifts. Decisions are written down as
-[ADRs](docs/decisions/), in public.
+[ADRs](docs/decisions), in public.
 
 Read the code with the same scepticism you would give any codebase, and if
 you find something wrong, the [issue

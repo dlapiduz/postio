@@ -89,7 +89,7 @@ that opens its own transaction cannot be called from a rule at all, and
 discovering that after the move is a rewrite of every verb rather than of one
 signature.
 
-> **Amended 2026-09-14 (specs/004-turso-store):** as built, the seam is the
+> **Amended 2026-09-14 (docs/archive/specs/004-turso-store):** as built, the seam is the
 > one this paragraph asks for, spelled in the async store's terms. The
 > storage verbs in `crates/postio-storage/src/actions.rs` (`relocate`,
 > `set_flag`) take a `&Connection` that is already inside a transaction;

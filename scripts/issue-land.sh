@@ -364,7 +364,7 @@ echo "crates: ${CRATES:-none}"
 # gates are the run a merge is staked on, so they are the last place that
 # should share artifacts with whatever else is landing right now. A caller who
 # genuinely wants a directory of their own still gets it -- see #253 and
-# docs/engineering-notes.md.
+# docs/archive/engineering-notes.md.
 echo "target: ${CARGO_TARGET_DIR:-$TREE/target (this worktree)}"
 echo
 
@@ -451,7 +451,7 @@ fi
 # looks green. A warning in the log is weaker than the pin was supposed to
 # give, so the value is captured for the diagnostic below and then cleared:
 # every cargo invocation from here on runs on whatever rust-toolchain.toml
-# names, whatever this shell exports. See docs/engineering-notes.md and #112.
+# names, whatever this shell exports. See docs/archive/engineering-notes.md and #112.
 HOST_RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-}"
 unset RUSTUP_TOOLCHAIN
 
@@ -519,7 +519,7 @@ fi
 
 # Green gates are recorded against the exact content they proved, and a tree
 # that has not changed a byte since is not re-proven. Long commands on this
-# workstation get killed sometimes (docs/engineering-notes.md), and every
+# workstation get killed sometimes (docs/archive/engineering-notes.md), and every
 # killed landing used to re-pay clippy and the full per-crate test suite on
 # a retry that changed nothing -- #109's landing paid its app crate's gates
 # three times that way. `git write-tree` hashes the staged tree, staging
@@ -1148,10 +1148,10 @@ if [ -n "$VERIFY_LABEL" ]; then
     fi
 fi
 
-# What this branch is actually landing, recorded before the merge: `--rebase`
-# gives every commit a new hash, so "did it land" cannot be asked by ancestry
-# afterwards. Subjects survive a rebase; that is what gets checked. See the
-# verification below.
+# What this branch is actually landing, recorded before the merge. A pull
+# request lands as one squashed commit, so "did it land" is asked first of
+# the PR's own merge commit (see `squash_landed`), and only then of these
+# subjects -- which are what a merge that kept the commits would show.
 LANDING=$(git log "origin/$BASE..HEAD" --format=%s)
 
 [ "$MERGE" = 1 ] || { echo "left open at your request (--no-merge)."; exit 0; }
@@ -1188,7 +1188,7 @@ LANDING=$(git log "origin/$BASE..HEAD" --format=%s)
 arm_auto_merge() {
     local attempt=1 output=""
     while [ "$attempt" -le 3 ]; do
-        if output=$(gh pr merge --auto --rebase 2>&1); then
+        if output=$(gh pr merge --auto --squash 2>&1); then
             echo "auto-merge armed on $URL: GitHub merges it when the required checks pass."
             echo "Nothing waits here. If a check fails, your next claim will say so, and"
             if [ "$SMALL" = 1 ]; then
@@ -1236,7 +1236,7 @@ arm_auto_merge() {
                 echo "$output"
                 echo "auto-merge could not be armed: GitHub was unavailable, three times."
                 echo "The landing succeeded; $URL is open. Arm it later with:"
-                echo "    gh pr merge $URL --auto --rebase"
+                echo "    gh pr merge $URL --auto --squash"
                 return 0
                 ;;
             *)
@@ -1285,7 +1285,7 @@ fi
 # branch once the worktree it belongs to is removed, so only the remote copy
 # is left for this script to clean up, and that half never needed the local
 # checkout at all.
-gh pr merge --rebase
+gh pr merge --squash
 
 # Believe it only after checking. `gh pr merge` prints
 # "! Pull request #N was already merged" and exits **0** when there is nothing
@@ -1293,10 +1293,11 @@ gh pr merge --rebase
 # delete the remote branch, and leave the work existing nowhere but the local
 # worktree -- which the line it prints next tells you to remove. #312.
 #
-# Ancestry cannot answer this: `--rebase` rewrites every commit, so the local
-# tip is never an ancestor of the base even on complete success. Subjects
-# survive, so they are what is compared, and `main` having moved on underneath
-# is fine -- this asks whether the work arrived, not whether it is the tip.
+# The local tip's ancestry cannot answer this: a squash makes a new commit,
+# so the tip is never an ancestor of the base even on complete success. The
+# PR's merge commit is, once the base carries it; failing that, the branch's
+# subjects are compared, and `main` having moved on underneath is fine --
+# this asks whether the work arrived, not whether it is the tip.
 #
 # Asked repeatedly rather than once. `gh pr merge` returns as soon as GitHub
 # *accepts* the merge, and the fetch below can still be answered before the
@@ -1328,8 +1329,19 @@ $LANDING
 EOF_LANDING
 }
 
+# Whether the PR's merge commit -- the squash -- is on origin/$BASE.
+squash_landed() {
+    local sha
+    sha=$(gh pr view --json mergeCommit --jq '.mergeCommit.oid // empty' 2>/dev/null || true)
+    [ -n "$sha" ] && git merge-base --is-ancestor "$sha" "origin/$BASE" 2>/dev/null
+}
+
 while :; do
     git fetch -q origin "$BASE"
+    if squash_landed; then
+        MISSING=
+        break
+    fi
     MISSING=$(missing_from "$(git log "origin/$BASE" --format=%s)")
     [ -n "$MISSING" ] || break
     [ "$(date +%s)" -lt "$LANDED_DEADLINE" ] || break

@@ -131,7 +131,7 @@ def case(label: str, *, expected_status: int, expect_output: str = "", **kwargs)
 
 
 CODE = ["crates/postio-core/src/command.rs", "crates/postio-gtk/src/reader.rs"]
-PROSE = ["README.md", "docs/engineering-notes.md"]
+PROSE = ["README.md", "docs/archive/engineering-notes.md"]
 CHECK = '[{"name":"build","bucket":"pass"}]'
 FAILED_BUCKET = '[{"name":"build","bucket":"fail"}]'
 NONE = "-"

@@ -8,7 +8,7 @@ memory-safe; FR-001 makes it incapable of a connection. This check walks
 edges, features as `cargo tree` resolves them for that build, so the
 crate's own tests (a socket, `postio-test-support`) are exempt -- and
 fails when that graph could run C or reach the network
-(`specs/006-email-rendering/contracts/renderer-graph-checks.md` § 2).
+(`docs/archive/specs/006-email-rendering/contracts/renderer-graph-checks.md` § 2).
 
 It is a graph check rather than an observation because an observation only
 covers the paths a test happened to take.

@@ -16,7 +16,7 @@
 //!
 //! It was first shaped this way by necessity: the store's connection was
 //! rusqlite's, `!Sync`, so the drain's future could not be `tokio::spawn`ed
-//! at all. The store is async to the bottom now (specs/004-turso-store) and
+//! at all. The store is async to the bottom now (docs/archive/specs/004-turso-store) and
 //! a checkout could cross threads; the sequential shape is the point, and it
 //! stayed.
 //!

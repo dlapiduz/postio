@@ -3,7 +3,7 @@
 //! [`from_html`] is the terminal reader's: the reader sanitiser's output, as
 //! CommonMark a terminal can style. Only ever sanitised HTML -- converting
 //! *after* the sanitiser is what keeps every guarantee it makes
-//! (`specs/005-tui-frontend` research R5, `contracts/markdown.md`).
+//! (`docs/archive/specs/005-tui-frontend` research R5, `contracts/markdown.md`).
 //!
 //! Two things are Postio's own on the way out, because Markdown has no word
 //! for them:

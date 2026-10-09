@@ -7,7 +7,7 @@
 //!
 //! The terminal opens the store itself, in this process, as the desktop app
 //! does: one Postio at a time has it, and whichever starts second is told to
-//! close the other (specs/005-tui-frontend). Everything the terminal reads or
+//! close the other (docs/archive/specs/005-tui-frontend). Everything the terminal reads or
 //! writes still goes through a [`Client`] of a [`Host`] in this process.
 
 use std::io;

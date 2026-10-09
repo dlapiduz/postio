@@ -133,7 +133,7 @@ pub struct Aim<'a> {
 /// The one rule every frontend has to reach the same answer to (#670): moved
 /// here from the classic app once `postio-model::ListScope` gave `postio-core`
 /// something to apply the rule to. `ViewScope`'s smaller variant set stays —
-/// see `docs/engineering-notes.md`'s "Six types are called *Scope*" — this
+/// see `docs/archive/engineering-notes.md`'s "Six types are called *Scope*" — this
 /// is the function that produces it.
 pub fn view_scope(scope: ListScope, reachable: &[AccountId]) -> Option<ViewScope> {
     match scope {

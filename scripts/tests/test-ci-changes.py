@@ -94,7 +94,7 @@ def main() -> int:
     case("CLAUDE.md", "pull_request", ["CLAUDE.md"], "no", "no", "no")
     case("the README", "pull_request", ["README.md"], "no", "yes", "no")
     case("an engineering note", "pull_request", ["docs/notes/2026-09-04-waiting.md"], "no", "yes", "no")
-    case("the notes index", "pull_request", ["docs/engineering-notes.md"], "no", "yes", "no")
+    case("the notes index", "pull_request", ["docs/notes/README.md"], "no", "yes", "no")
     case("an ADR", "pull_request", ["docs/decisions/0026-x.md"], "no", "yes", "no")
     case("the book", "pull_request", ["docs/book/src/index.md"], "no", "yes", "no")
     case("a design canvas", "pull_request", ["Design/Mail Client.dc.html"], "no", "no", "no")

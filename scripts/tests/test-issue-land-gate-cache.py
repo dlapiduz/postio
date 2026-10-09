@@ -2,7 +2,7 @@
 """Self-test for issue #742: green gates are not re-run on an unchanged tree.
 
 Long commands on this workstation get killed sometimes (documented in
-docs/engineering-notes.md), and every killed `issue-land.sh` retry used to
+docs/archive/engineering-notes.md), and every killed `issue-land.sh` retry used to
 re-run the whole gate chain -- clippy and the full per-crate test suite,
 minutes each -- against a tree that had not changed a byte since the gates
 last went green. Landing #109 paid the app crate's gates three times that way.

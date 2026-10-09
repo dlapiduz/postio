@@ -13,7 +13,7 @@
   Q5's two undo stacks — the load-bearing prior decision),
   [ADR 0019](0019-macos-frontend.md) (the frontend whose compose slice this
   unblocks), [ADR 0032](0032-the-conversation-is-one-document.md),
-  `specs/002-compose-editor/` (the feature's own requirements, unchanged by
+  `docs/archive/specs/002-compose-editor/` (the feature's own requirements, unchanged by
   this)
 - **Decision:** the composer stops being a `WebView`. Its editing surface
   becomes a **native toolkit text view over `postio_body::Document`** —
@@ -211,7 +211,7 @@ rich document, not a source format.
   ("no network from compose") becomes structural.
 - **ADR 0019's deferred compose slice** becomes buildable: the Swift frontend
   implements a view over the same algebra rather than re-deriving an editor.
-- **`specs/002-compose-editor/`** is unaffected as a specification. Every FR
+- **`docs/archive/specs/002-compose-editor/`** is unaffected as a specification. Every FR
   it states is about what the editor must *do*; this changes what it is made
   of. FR-072…FR-077 (the editing shell's appearance) are re-satisfied by widget
   styling rather than by a document stylesheet, and FR-075 — "a scheme change

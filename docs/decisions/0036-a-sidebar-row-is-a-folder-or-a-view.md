@@ -7,11 +7,11 @@
 - **Numbered 0036 at merge, not at draft.** ADR 0035 paid for the other habit
   twice — drafted as 0025 while 0025 was landing, renumbered to 0027 while 0027
   was landing. A number is claimed when a branch merges. This one was left
-  unassigned in `specs/003-outbox-and-reserved-mailboxes/plan.md` until the day
+  unassigned in `docs/archive/specs/003-outbox-and-reserved-mailboxes/plan.md` until the day
   it landed, and checked against `main` immediately before.
 - **Date:** 2026-09-12
 - **Decision by:** a spec-driven session working
-  `specs/003-outbox-and-reserved-mailboxes`, on a rule the feature could not
+  `docs/archive/specs/003-outbox-and-reserved-mailboxes`, on a rule the feature could not
   be built without and that outlives it.
 - **Issue:** [#1491](https://github.com/dlapiduz/postio/issues/1491) is what
   surfaced it; the rule is not about the Outbox.

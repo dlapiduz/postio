@@ -190,7 +190,7 @@ async fn reopening_a_scope_discards_what_the_old_one_had_in_flight() {
 ///
 /// `ScopeFfi` is the wire mirror of `ListScope`, and a variant missing from
 /// it is a view the second frontend (ADR 0019) cannot ask for at all — the
-/// drift `docs/engineering-notes.md` warns about under "Six types are called
+/// drift `docs/archive/engineering-notes.md` warns about under "Six types are called
 /// *Scope*". Asserted by counting rows rather than by matching the enum: a
 /// mapping that compiled and then listed nothing would satisfy a round-trip
 /// check and still be broken.

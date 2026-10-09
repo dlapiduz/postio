@@ -36,7 +36,7 @@ rustc-wrapper = "scripts/rustc-wrapper.sh"
 # rather than merging it: measured on the app's suite, that is 162 MB of DWARF
 # per binary that the linker no longer reads, out of 232 MB. The isolated
 # link step was already only ~1.1 GB RSS when it was last measured against
-# mold (docs/engineering-notes.md, 2026-09-01), which is not pressure on this
+# mold (docs/archive/engineering-notes.md, 2026-09-01), which is not pressure on this
 # box; with the DWARF gone there is headroom to spend on threads.
 #
 # Still capped rather than left to lld's default of one thread per core:

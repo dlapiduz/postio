@@ -64,7 +64,7 @@ RULES: list[tuple[str, str]] = [
         r"git\s+reset\s+(?:[^|;&\n]*\s)?--hard",
         f"{SHARED} Refusing 'git reset --hard': it irrecoverably deletes every "
         "session's uncommitted work, not just yours. Revert your own files by "
-        "path, or commit what you have. See 'Working in parallel' in CLAUDE.md.",
+        "path, or commit what you have. See 'One machine, many sessions' in CLAUDE.md.",
     ),
     (
         # --hard is caught above with its own message. This is every other

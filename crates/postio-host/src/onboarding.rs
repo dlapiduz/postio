@@ -4,7 +4,7 @@
 //! credential update prove an account themselves -- the probe, the
 //! connection test and the browser sign-in run where the person is, with the
 //! transport and the browser opener that frontend was given -- and then hand
-//! the writes to the store's owner (`specs/005-tui-frontend` T018). The
+//! the writes to the store's owner (`docs/archive/specs/005-tui-frontend` T018). The
 //! writes are `postio_session::onboarding`'s, in its order: the credential
 //! first, then the row, rolled back if the row will not write.
 

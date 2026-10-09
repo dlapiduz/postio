@@ -22,7 +22,7 @@
 //! Loopback only: `TransportSecurity::None` is refused for any non-loopback
 //! host by `ConnectionSettings::validate`. Waits are polled with
 //! liveness-only deadlines, per the under-load doctrine in
-//! `docs/engineering-notes.md`.
+//! `docs/archive/engineering-notes.md`.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

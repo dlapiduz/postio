@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Is the terminal package small enough beside the desktop one?
-# (specs/005-tui-frontend SC-004: binaries under half, Flatpak under two-thirds)
+# (docs/archive/specs/005-tui-frontend SC-004: binaries under half, Flatpak under two-thirds)
 #
 # "Smaller" is measured form for form, from one commit (the spec's
 # Assumptions):

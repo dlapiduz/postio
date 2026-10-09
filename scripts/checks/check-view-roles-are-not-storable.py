@@ -91,7 +91,7 @@ def checked_roles(schema: str) -> set[str]:
             "check-view-roles-are-not-storable: no CHECK on `mailboxes.role` in "
             "schema.rs.\n"
             "The head schema is one constant there -- there are no migrations any\n"
-            "more (specs/004-turso-store). If the column moved, point this check\n"
+            "more (docs/archive/specs/004-turso-store). If the column moved, point this check\n"
             "at where it went — do not delete it."
         )
     return set(re.findall(r"'(\w+)'", match.group(1)))
@@ -127,7 +127,7 @@ def main() -> int:
         f"    {SCHEMA.relative_to(ROOT)}  — CHECK (role IN (...))\n\n"
         "Adding a role means deciding whether it names a folder or is a view,\n"
         "and saying so in both places. See\n"
-        "specs/003-outbox-and-reserved-mailboxes/contracts/mailbox-role.md\n"
+        "docs/archive/specs/003-outbox-and-reserved-mailboxes/contracts/mailbox-role.md\n"
         "and docs/decisions/0036-a-sidebar-row-is-a-folder-or-a-view.md.",
         file=sys.stderr,
     )

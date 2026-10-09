@@ -1,5 +1,5 @@
 //! `markdown::from_html` over the whole corpus: what the reader's sanitiser
-//! emits, as Markdown a terminal can show safely (`specs/005-tui-frontend`
+//! emits, as Markdown a terminal can show safely (`docs/archive/specs/005-tui-frontend`
 //! T005, then T040; SC-005).
 //!
 //! The promises are `contracts/markdown.md`'s `from_html` list. The input is

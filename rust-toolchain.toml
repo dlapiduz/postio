@@ -16,7 +16,7 @@
 # own. `scripts/checks/check-toolchain-pinned.py` refuses a workflow that adds one.
 #
 # One caveat it cannot enforce: RUSTUP_TOOLCHAIN in the environment *beats*
-# this file. See docs/engineering-notes.md before wondering why a pin did
+# this file. See docs/archive/engineering-notes.md before wondering why a pin did
 # nothing.
 [toolchain]
 channel = "1.99.0"

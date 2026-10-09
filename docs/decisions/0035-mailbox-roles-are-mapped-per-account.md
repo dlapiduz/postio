@@ -27,7 +27,7 @@
   [#501](https://github.com/dlapiduz/postio/issues/501) (one sidebar row
   per role), [#880](https://github.com/dlapiduz/postio/issues/880) (the
   account detail view), [#959](https://github.com/dlapiduz/postio/issues/959)
-  (the tie-break has no provider knowledge), `docs/engineering-notes.md`
+  (the tie-break has no provider knowledge), `docs/archive/engineering-notes.md`
   "Re-pointing a mailbox role relabels folders; it never moves mail"
 - **Decision:** Postio keeps a fixed set of local role mailboxes — Inbox,
   Archive, Sent, Drafts, Trash, Junk — and **each account carries its own map

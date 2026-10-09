@@ -894,12 +894,12 @@ pub enum Command {
     /// sheet and unreachable by anyone who does neither.
     InsertImage,
     /// Hand the body to the person's own editor (`$EDITOR`) and take back
-    /// what it saved (specs/005-tui-frontend FR-022). Where the body is not
+    /// what it saved (docs/archive/specs/005-tui-frontend FR-022). Where the body is not
     /// text an editor can open -- the desktop's rich editor -- the frontend
     /// says so.
     EditExternally,
     /// Show the draft as it will arrive, beside or instead of the text being
-    /// written (specs/005-tui-frontend FR-021). The desktop's composer shows
+    /// written (docs/archive/specs/005-tui-frontend FR-021). The desktop's composer shows
     /// formatting as it is written, so it has nothing to preview.
     TogglePreview,
     /// Make the selection bold, or un-bold it.

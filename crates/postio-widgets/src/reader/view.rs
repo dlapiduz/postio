@@ -653,7 +653,7 @@ impl Reader {
     ///
     /// The registry entries these answer were buttons and nothing else, so a
     /// person without a pointer could not reach them (Principle II;
-    /// `specs/005-tui-frontend` T044, T048).
+    /// `docs/archive/specs/005-tui-frontend` T044, T048).
     pub fn run_banner_command(&self, command: postio_core::CommandId) -> bool {
         use postio_core::CommandId;
         match command {

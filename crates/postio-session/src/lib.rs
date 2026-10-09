@@ -637,7 +637,7 @@ pub async fn open_store_at_reporting(
     // A store an earlier build of this engine wrote is migrated in place
     // inside `open` (`postio_storage::schema::MIGRATIONS`), saying so first.
     // One no step reaches is refused with `Remedy::StartOver`; a store the
-    // old engine wrote cannot be read at all (`specs/004-turso-store`).
+    // old engine wrote cannot be read at all (`docs/archive/specs/004-turso-store`).
     report(Opening::Store);
     let database = match Store::open_reporting(&path, &database_key, || report(Opening::Migrating))
         .await

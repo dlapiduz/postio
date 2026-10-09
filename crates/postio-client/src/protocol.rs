@@ -1,6 +1,6 @@
 //! What a frontend asks of the store's host, and what it answers.
 //!
-//! `specs/005-tui-frontend/contracts/protocol.md` is the contract. The host
+//! `docs/archive/specs/005-tui-frontend/contracts/protocol.md` is the contract. The host
 //! is in the frontend's own process (ADR 0041), so a request is a value
 //! handed over a channel and never encoded: these are the vocabulary of
 //! [`crate::Client`] and `postio-host`, nothing more.

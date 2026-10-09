@@ -65,7 +65,7 @@ pub const MAX_CONCURRENT_PASSES: usize = 4;
 ///
 /// **Both the encryption and the engine are pre-1.0 and unaudited.** That is
 /// why `store_is_unreadable_without_the_key` and `another_key_is_refused` are
-/// acceptance criteria in `specs/004-turso-store/spec.md` and tests in this
+/// acceptance criteria in `docs/archive/specs/004-turso-store/spec.md` and tests in this
 /// crate, rather than properties taken on trust.
 pub const CIPHER: &str = "aes256gcm";
 

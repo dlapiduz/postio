@@ -29,7 +29,7 @@ figure below it.
 
 ## The engine changed underneath every number below
 
-`specs/004-turso-store` replaced SQLCipher and `rusqlite` with Turso, whose
+`docs/archive/specs/004-turso-store` replaced SQLCipher and `rusqlite` with Turso, whose
 page cipher is AES-256-GCM. **Every wall-clock figure in this document was
 measured against the old engine and none has been re-measured on a real
 store** — that needs a live mailbox and a live run, which is the one
@@ -413,7 +413,7 @@ grep -E '^(VmRSS|RssAnon|RssFile):' /proc/$(pgrep -n postio)/status
 
 ### The terminal against the desktop (SC-004)
 
-`specs/005-tui-frontend` claims the terminal app holds the same mailbox in
+`docs/archive/specs/005-tui-frontend` claims the terminal app holds the same mailbox in
 under half the desktop app's memory. Measured on 2026-09-25 on the
 maintainer's real store, about 83,000 messages, with release builds of one
 commit. Each app ran alone, since only one can open the store: the desktop on
