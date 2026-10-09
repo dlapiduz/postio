@@ -1,7 +1,7 @@
 //! The search half of docs/PRODUCT.md §18's `<100 ms` budget (CLAUDE.md), gated on a
 //! corpus large enough to be honest about it: 120,000 messages, one account.
 //!
-//! Four query shapes, chosen to stress different parts of `search`:
+//! Five query shapes, chosen to stress different parts of `search`:
 //!
 //! - **simple term** — a free-text word that matches about 1% of the corpus.
 //!   The ordinary case: join `messages_fts`, rank the matches, snippet them.
@@ -14,6 +14,10 @@
 //!   contains. `messages_fts MATCH` and the `count(*)` it feeds have to walk
 //!   effectively the whole corpus; this is the shape most likely to blow the
 //!   budget if an index is missing.
+//! - **word plus a date** — the simple term with `after:`. Driven by the
+//!   word's hits, each looked up by its content; a date range in the same
+//!   `WHERE` once tempted the planner into walking the range per hit
+//!   instead, over a second on 20k messages (#1809).
 //!
 //! # Running
 //!
@@ -309,6 +313,17 @@ fn bench_composed(c: &mut Criterion) {
     assert_budget("composed", on_runtime(run(query, 50)));
 }
 
+/// The simple term inside a date range: `after:` keeps about two thirds of
+/// the corpus (it spans 2020-01-01 to late March, a message a minute), so a
+/// plan that walks the range once per hit reads tens of millions of rows.
+fn bench_word_after_date(c: &mut Criterion) {
+    let query = "quarterly after:2020-02-01";
+    c.bench_function("search_word_after_date", |b| {
+        b.iter(|| on_runtime(run(query, 50)))
+    });
+    assert_budget("word plus after:", on_runtime(run(query, 50)));
+}
+
 fn bench_common_word_worst_case(c: &mut Criterion) {
     c.bench_function("search_common_word", |b| {
         b.iter(|| on_runtime(run(COMMON_WORD, 50)))
@@ -475,6 +490,7 @@ criterion_group!(
     bench_simple_term,
     bench_operator_only,
     bench_composed,
+    bench_word_after_date,
     bench_common_word_worst_case,
     bench_facets_worst_case,
     bench_unified_common_word,
