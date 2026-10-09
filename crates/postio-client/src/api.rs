@@ -137,6 +137,7 @@ impl Req {
             Req::RememberSearch { .. } => "RememberSearch",
             Req::ForgetSearch(_) => "ForgetSearch",
             Req::SavedCounts { .. } => "SavedCounts",
+            Req::MarkSeen(_) => "MarkSeen",
             Req::StoredBody(_) => "StoredBody",
             Req::ExportMessages(_) => "ExportMessages",
             Req::Account(_) => "Account",
@@ -1040,6 +1041,12 @@ impl Client {
             },
         )
         .await
+    }
+
+    /// The saved search `key` has been viewed: what its badge counts from
+    /// is now.
+    pub async fn mark_seen(&self, key: String) -> Result<(), StoreError> {
+        self.done(Req::MarkSeen(key), "a saved search seen").await
     }
 
     /// Forget one recent search.

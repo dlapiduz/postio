@@ -141,6 +141,9 @@ pub struct PillFfi {
     pub label: String,
     /// How many it holds.
     pub count: Option<String>,
+    /// A saved search that notifies: its quiet badge ("3 new"), never a
+    /// banner (D15).
+    pub fresh: Option<String>,
     /// The key that runs it (`alt+1`), as the keymap spells it.
     pub key: Option<String>,
 }
@@ -211,6 +214,7 @@ impl From<postio_focus::DropdownView> for DropdownViewFfi {
                             op: pill.op,
                             label: pill.label,
                             count: pill.count,
+                            fresh: pill.fresh,
                             key: pill.key,
                         })
                         .collect(),

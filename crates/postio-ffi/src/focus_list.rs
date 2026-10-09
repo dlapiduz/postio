@@ -931,13 +931,16 @@ impl FocusDriver {
     /// `postio_ui::saved_search` writes one -- `[saved_searches]` alone, the
     /// rest of the file as it was -- and answer with the saved searches now,
     /// or the sentence the toast says instead.
-    fn save_search(&self, query: &str) -> Result<Vec<(String, String)>, String> {
+    fn save_search(
+        &self,
+        query: &str,
+    ) -> Result<Vec<postio_ui::saved_search::SavedSearch>, String> {
         let Some(path) = self.config_path.lock().expect("config path lock").clone() else {
             return Err(postio_ui::focus_target::NO_CONFIG_TO_SAVE.to_owned());
         };
         postio_ui::saved_search::apply(&path, postio_ui::saved_search::Verb::save(query))
             .and_then(|_| postio_config::Config::load_from_path(&path))
-            .map(|config| postio_session::focus::saved_searches(&config))
+            .map(|config| postio_ui::saved_search::pinned(&config))
             .map_err(|error| {
                 tracing::warn!(%error, "Focus could not save the search");
                 postio_ui::focus_target::SEARCH_NOT_WRITTEN.to_owned()

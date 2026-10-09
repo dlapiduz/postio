@@ -226,6 +226,12 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                     .map_err(|error| error.to_string()),
             )
         }
+        Request::MarkSeen { key } => {
+            if let Err(error) = client.mark_seen(key).await {
+                tracing::warn!(%error, "Focus could not mark a saved search seen");
+            }
+            Reply::Noted
+        }
         Request::SavedCounts { searches, today } => Reply::SavedCounts(
             client
                 .saved_counts(postio_model::AccountScope::Unified, today, searches)

@@ -57,7 +57,6 @@ is_settled                        # crates/postio-model/src/operation.rs:172
 latest_message_id                 # crates/postio-model/src/thread.rs:91
 lookup_binding                    # crates/postio-core/src/registry.rs:1067
 mark_in_flight                    # crates/postio-storage/src/repository/operations.rs:465
-mark_seen                         # crates/postio-storage/src/searches.rs:108 -- spec 010 T099 wires it (MarkSeen)
 message_page                      # crates/postio-runtime/src/store/local.rs -- the flat window under MailStore::list_page; for postio-bench store_reads and runtime_suite, which measure one window on purpose
 needing_backfill                  # crates/postio-storage/src/repository/messages.rs:1384
 normalized_subject                # crates/postio-model/src/message.rs:313
@@ -80,7 +79,6 @@ resync_strategy                   # crates/postio-account/src/imap/dispatch.rs:1
 root_message_id                   # crates/postio-model/src/thread.rs:86
 section_spec                      # crates/postio-account/src/backend/message.rs:585
 seed_backfill                     # crates/postio-runtime/src/engine.rs:671 -- a test lever: the runtime suite drives the body queue through it; the app seeds nothing itself since #1593
-seen_up_to                        # crates/postio-storage/src/searches.rs:97 -- spec 010 T099 wires it (new matches)
 send_tracked                      # crates/postio-core/src/bridge.rs:212
 set_capabilities                  # crates/postio-sync/src/watch.rs:280
 set_disk_full                     # crates/postio-sync/src/backfill.rs:499

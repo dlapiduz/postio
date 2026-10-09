@@ -195,10 +195,33 @@ pub async fn forget(
     write.await.map(|_| ()).map_err(failed)
 }
 
+/// The saved search `key` has been viewed: its badge counts from now
+/// (D15).
+pub async fn mark_seen(
+    database: &Store,
+    key: &str,
+) -> Result<(), postio_model::listing::StoreError> {
+    let write = async {
+        let (connection, _permit) = database.interactive_write().await?;
+        SearchRepository::new(&connection)
+            .mark_seen(key, postio_ui::clock::now().to_utc())
+            .await
+    };
+    write.await.map_err(failed)
+}
+
+/// The most a badge counts: past it, "99 new" is as much as a quiet badge
+/// needs to say.
+pub const NEW_CAP: u32 = 99;
+
 /// `(key, total, new)` for each saved search, in the order given. `total`
 /// is the conversations it matches, capped as a search's count is. `new`
-/// is zero until the badge lands (spec 010 step 6). A search that cannot
-/// be counted is zero rather than missing, so the row stays.
+/// is how many of them have a match received after the search was last
+/// viewed ([`mark_seen`]), up to [`NEW_CAP`]; zero for a search never
+/// viewed, which is one nobody asked to be told about. One conversation
+/// search each, newest first, read only as far as the badge needs. A
+/// search that cannot be counted is zero rather than missing, so the row
+/// stays.
 ///
 /// Also drops the seen-progress of any saved search not listed: one deleted
 /// from `config.toml` leaves an orphan, and this is the read that sees the
@@ -219,20 +242,42 @@ pub async fn saved_counts(
     if let Err(error) = sweep.await {
         tracing::warn!(%error, "could not drop a deleted saved search's progress");
     }
+    let seen = async {
+        let reader = database.read().await?;
+        let progress = SearchRepository::new(&reader);
+        let mut seen = Vec::with_capacity(keys.len());
+        for key in &keys {
+            seen.push(progress.seen_up_to(key).await?);
+        }
+        Ok::<_, postio_storage::Error>(seen)
+    };
+    let seen = seen.await.unwrap_or_else(|error| {
+        tracing::warn!(%error, "could not read how far the saved searches were seen");
+        vec![None; keys.len()]
+    });
     let mut counted = Vec::with_capacity(searches.len());
-    for (key, text) in searches {
+    for ((key, text), seen) in searches.iter().zip(seen) {
         let query = postio_search::parse(text, today);
-        let total = conversations(
+        let limit = if seen.is_some() { NEW_CAP } else { 1 };
+        let found = conversations(
             database,
             account,
             &query,
-            ConversationOrder::BestMatch,
+            ConversationOrder::Newest,
             0,
-            1,
+            limit,
         )
-        .await
-        .map_or(0, |found| found.total);
-        counted.push((key.clone(), total, 0));
+        .await;
+        let total = found.as_ref().map_or(0, |found| found.total);
+        let new = match (seen, &found) {
+            (Some(seen), Some(found)) => found
+                .hits
+                .iter()
+                .take_while(|hit| hit.newest_match > seen)
+                .count() as u64,
+            _ => 0,
+        };
+        counted.push((key.clone(), total, new));
     }
     counted
 }

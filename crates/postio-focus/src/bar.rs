@@ -25,6 +25,7 @@ use postio_search::{Instead, ResultOrder, SearchHit};
 use postio_ui::command_bar::{self as rules, BarAction, Line, Row, Run};
 use postio_ui::finder::{self, Destination, Place};
 use postio_ui::places::Entry;
+use postio_ui::saved_search::SavedSearch;
 
 use crate::cursor::{RowFacts, Rows};
 use crate::dropdown::{self, Action, DropdownState, Landed, Shown};
@@ -223,7 +224,8 @@ pub(crate) struct Bar {
     found: Vec<Hit>,
     /// The hits the results list now, with their conversations.
     walked: Vec<Hit>,
-    saved: Vec<(String, String)>,
+    /// The pinned saved searches, in order.
+    saved: Vec<SavedSearch>,
     /// The query an `Intent::SaveSearch` is saving.
     saving: Option<String>,
     keymap: Keymap,
@@ -242,8 +244,9 @@ pub(crate) struct Bar {
     drop: Option<Drop>,
     /// The searches run lately, newest first, each with its token.
     recents: Vec<(u64, postio_client::protocol::RecentSearch)>,
-    /// The saved searches' counts, by name, as last read.
-    saved_counts: Vec<(String, u64)>,
+    /// The saved searches' counts by key, as last read: `(key, total,
+    /// new)`.
+    saved_counts: Vec<(String, u64, u64)>,
     /// The saved pills' tokens, in order.
     saved_tokens: Vec<u64>,
     /// The cheat sheet's rows' tokens, and the example's.
@@ -404,7 +407,7 @@ impl Bar {
             steps.push(Step::Ask(Request::RecentSearches));
             if !self.saved.is_empty() {
                 steps.push(Step::Ask(Request::SavedCounts {
-                    searches: self.saved.clone(),
+                    searches: keyed(self.saved.iter()),
                     today: self.now().date_naive(),
                 }));
             }
@@ -646,7 +649,11 @@ impl Bar {
             editing: self.editing.map(|at| at as u32),
             lines,
             highlight,
-            saved: self.saved.iter().map(|(name, _)| name.clone()).collect(),
+            saved: self
+                .saved
+                .iter()
+                .map(|search| search.name.clone())
+                .collect(),
         }))
     }
 
@@ -1049,8 +1056,16 @@ impl FocusController {
             | CommandId::SavedSearch3
             | CommandId::SavedSearch4 => {
                 let index = rules::SAVED.iter().position(|saved| *saved == id)?;
-                match self.bar.saved.get(index).map(|(_, query)| query.clone()) {
-                    Some(query) => self.open_bar(BarMode::Search, &query, rows),
+                match self.bar.saved.get(index).cloned() {
+                    // Viewing a search that notifies is seeing it: its
+                    // badge counts from now (D15).
+                    Some(search) => {
+                        let mut steps = self.open_bar(BarMode::Search, &search.query, rows);
+                        if search.notify {
+                            steps.push(Step::Ask(Request::MarkSeen { key: search.key }));
+                        }
+                        steps
+                    }
                     None => vec![Step::Show(Intent::Toast {
                         text: postio_ui::focus_target::no_saved_search(index),
                         kind: crate::ToastKind::Notice,
@@ -1456,7 +1471,7 @@ impl Bar {
     }
 
     /// The pinned saved searches changed: their pills get new tokens.
-    fn set_saved(&mut self, saved: Vec<(String, String)>) {
+    fn set_saved(&mut self, saved: Vec<SavedSearch>) {
         self.saved = saved;
         self.saved_tokens = (0..self.saved.len()).map(|_| self.token()).collect();
     }
@@ -1520,17 +1535,24 @@ impl Bar {
                 dropdown::words(drop.landed.as_ref(), &drop.terms, &self.keymap, now)
             }
             _ => {
-                let saved: Vec<(u64, String, Option<u64>)> = self
+                let saved: Vec<dropdown::SavedPill> = self
                     .saved
                     .iter()
                     .zip(&self.saved_tokens)
-                    .map(|((name, _), token)| {
-                        let count = self
+                    .map(|(search, token)| {
+                        let counted = self
                             .saved_counts
                             .iter()
-                            .find(|(key, _)| key == name)
-                            .map(|(_, count)| *count);
-                        (*token, name.clone(), count)
+                            .find(|(key, _, _)| *key == search.key);
+                        dropdown::SavedPill {
+                            token: *token,
+                            name: search.name.clone(),
+                            count: counted.map(|(_, total, _)| *total),
+                            fresh: counted
+                                .filter(|_| search.notify)
+                                .map(|(_, _, new)| *new)
+                                .filter(|new| *new > 0),
+                        }
                     })
                     .collect();
                 dropdown::empty(dropdown::EmptyParts {
@@ -1760,14 +1782,42 @@ impl Bar {
         self.redraw_empty()
     }
 
+    /// New mail arrived: the searches that notify are counted again while
+    /// the dropdown shows their badges; the others keep their counts
+    /// (spec 010 T099).
+    pub(crate) fn heard(&self, event: &postio_core::Event) -> Vec<Step> {
+        if !matches!(event, postio_core::Event::NewMail { .. })
+            || !self.results_view
+            || !self.is_open()
+        {
+            return Vec::new();
+        }
+        let searches = keyed(self.saved.iter().filter(|search| search.notify));
+        if searches.is_empty() {
+            return Vec::new();
+        }
+        vec![Step::Ask(Request::SavedCounts {
+            searches,
+            today: self.now().date_naive(),
+        })]
+    }
+
     /// The saved searches' counts, read.
     fn saved_counted(&mut self, answer: Result<Vec<(String, u64, u64)>, String>) -> Vec<Step> {
         match answer {
+            // Merged by key: a recount of the searches that notify leaves
+            // the others' counts as they were.
             Ok(counts) => {
-                self.saved_counts = counts
-                    .into_iter()
-                    .map(|(key, total, _)| (key, total))
-                    .collect();
+                for counted in counts {
+                    match self
+                        .saved_counts
+                        .iter_mut()
+                        .find(|(key, _, _)| *key == counted.0)
+                    {
+                        Some(was) => *was = counted,
+                        None => self.saved_counts.push(counted),
+                    }
+                }
                 self.redraw_empty()
             }
             Err(error) => {
@@ -1850,4 +1900,11 @@ impl FocusController {
                 .unwrap_or_default(),
         }
     }
+}
+
+/// `(key, query)` for each saved search: what their counts are asked by.
+fn keyed<'a>(searches: impl Iterator<Item = &'a SavedSearch>) -> Vec<(String, String)> {
+    searches
+        .map(|search| (search.key.clone(), search.query.clone()))
+        .collect()
 }

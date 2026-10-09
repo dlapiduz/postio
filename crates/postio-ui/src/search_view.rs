@@ -669,6 +669,11 @@ pub fn save_name(
     }
 }
 
+/// A saved search's quiet badge (§3.9, D15): "3 new". Never a banner.
+pub fn new_badge(n: u64) -> String {
+    format!("{} new", grouped(n))
+}
+
 /// The results tabs' words, in their order (§3.2).
 pub const TABS: [&str; 3] = ["Conversations", "Files", "People"];
 

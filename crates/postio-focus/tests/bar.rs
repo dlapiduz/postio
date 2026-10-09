@@ -794,9 +794,15 @@ fn a_bar_place_that_is_an_inbox_goes_to_focus_s_inbox() {
 fn alt_numbers_open_the_saved_searches() {
     let rows = List::of(1);
     let mut focus = mac();
+    let saved = |key: &str, name: &str, query: &str| postio_ui::saved_search::SavedSearch {
+        key: key.to_owned(),
+        name: name.to_owned(),
+        query: query.to_owned(),
+        notify: false,
+    };
     let _ = focus.handle(Input::SavedSearches(vec![
-        ("Budget".to_owned(), "subject:budget".to_owned()),
-        ("Ada".to_owned(), "from:ada".to_owned()),
+        saved("budget", "Budget", "subject:budget"),
+        saved("ada", "Ada", "from:ada"),
     ]));
     let effects = run(&mut focus, CommandId::SavedSearch2, &rows);
     assert_eq!(
@@ -843,10 +849,14 @@ fn mod_s_saves_the_bars_query() {
             query: "from:ada invoice".to_owned()
         }]
     );
-    let effects = focus.handle(Input::SearchSaved(Ok(vec![(
-        "from-ada-invoice".to_owned(),
-        "from:ada invoice".to_owned(),
-    )])));
+    let effects = focus.handle(Input::SearchSaved(Ok(vec![
+        postio_ui::saved_search::SavedSearch {
+            key: "from-ada-invoice".to_owned(),
+            name: "from-ada-invoice".to_owned(),
+            query: "from:ada invoice".to_owned(),
+            notify: false,
+        },
+    ])));
     let intents = shown(&effects);
     assert!(intents.contains(&Intent::Toast {
         text: postio_ui::focus_target::search_saved("from:ada invoice"),
@@ -1178,16 +1188,32 @@ mod dropdown {
     }
 
     /// The pinned saved searches the screens show.
-    fn saved() -> Vec<(String, String)> {
+    /// Four pinned saved searches; Atlas notifies.
+    fn saved() -> Vec<postio_ui::saved_search::SavedSearch> {
         [
-            ("Waiting on reply", "from:juno"),
-            ("Atlas", "subject:atlas"),
-            ("Receipts this month", "in:Receipts"),
-            ("From school", "from:northfield"),
+            ("waiting", "Waiting on reply", "from:juno", false),
+            ("atlas", "Atlas", "subject:atlas", true),
+            ("receipts", "Receipts this month", "in:Receipts", false),
+            ("school", "From school", "from:northfield", false),
         ]
         .into_iter()
-        .map(|(name, query)| (name.to_owned(), query.to_owned()))
+        .map(
+            |(key, name, query, notify)| postio_ui::saved_search::SavedSearch {
+                key: key.to_owned(),
+                name: name.to_owned(),
+                query: query.to_owned(),
+                notify,
+            },
+        )
         .collect()
+    }
+
+    /// `(key, query)` for each, as the counts are asked.
+    fn keyed(saved: &[postio_ui::saved_search::SavedSearch]) -> Vec<(String, String)> {
+        saved
+            .iter()
+            .map(|search| (search.key.clone(), search.query.clone()))
+            .collect()
     }
 
     /// Answer the one request among `effects` that `pick` takes.
@@ -1236,8 +1262,8 @@ mod dropdown {
                 };
                 Reply::SavedCounts(Ok(searches
                     .iter()
-                    .zip([5, 38, 19, 4])
-                    .map(|((key, _), total)| (key.clone(), total, 0))
+                    .zip([(5, 0), (38, 3), (19, 0), (4, 0)])
+                    .map(|((key, _), (total, new))| (key.clone(), total, new))
                     .collect()))
             },
             rows,
@@ -1415,13 +1441,15 @@ mod dropdown {
             "the newest is focused"
         );
 
-        let pills: Vec<(&str, Option<&str>, Option<&str>)> = view.sections[1]
+        type Pill<'a> = (&'a str, Option<&'a str>, Option<&'a str>, Option<&'a str>);
+        let pills: Vec<Pill<'_>> = view.sections[1]
             .pills
             .iter()
             .map(|pill| {
                 (
                     pill.label.as_str(),
                     pill.count.as_deref(),
+                    pill.fresh.as_deref(),
                     pill.key.as_deref(),
                 )
             })
@@ -1429,11 +1457,12 @@ mod dropdown {
         assert_eq!(
             pills,
             [
-                ("Waiting on reply", Some("5"), Some("alt+1")),
-                ("Atlas", Some("38"), Some("alt+2")),
-                ("Receipts this month", Some("19"), Some("alt+3")),
-                ("From school", Some("4"), Some("alt+4")),
-            ]
+                ("Waiting on reply", Some("5"), None, Some("alt+1")),
+                ("Atlas", Some("38"), Some("3 new"), Some("alt+2")),
+                ("Receipts this month", Some("19"), None, Some("alt+3")),
+                ("From school", Some("4"), None, Some("alt+4")),
+            ],
+            "the search that notifies carries a quiet badge (D15)"
         );
 
         let by = &view.sections[2];
@@ -1483,8 +1512,82 @@ mod dropdown {
                 _ => None,
             })
             .expect("the saved searches are counted as the bar opens");
-        assert_eq!(counts.0, saved(), "every one, keyed by its name");
+        assert_eq!(counts.0, keyed(&saved()), "every one, keyed by its key");
         assert_eq!(counts.1, NaiveDate::from_ymd_opt(2026, 9, 26).unwrap());
+    }
+
+    #[test]
+    fn running_a_notify_search_marks_it_seen_and_its_badge_goes() {
+        let rows = List::of(1);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let effects = run(&mut focus, CommandId::SavedSearch2, &rows);
+        assert!(
+            asked(&effects).contains(&Request::MarkSeen {
+                key: "atlas".to_owned()
+            }),
+            "viewing it is seeing it: {:?}",
+            asked(&effects)
+        );
+
+        let _ = run(&mut focus, CommandId::Back, &rows);
+        let effects = run(&mut focus, CommandId::SavedSearch1, &rows);
+        assert!(
+            !asked(&effects)
+                .iter()
+                .any(|request| matches!(request, Request::MarkSeen { .. })),
+            "a search that does not notify has nothing to clear"
+        );
+    }
+
+    #[test]
+    fn new_mail_recounts_only_the_searches_that_notify() {
+        let rows = List::of(1);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let effects = focus.handle_on(
+            Input::Event(postio_core::Event::NewMail {
+                account: postio_model::AccountId::new(1),
+                mailbox: postio_model::MailboxId::new(1),
+                messages: vec![MessageId::new(9)],
+            }),
+            &rows,
+        );
+        let searches = asked(&effects)
+            .into_iter()
+            .find_map(|request| match request {
+                Request::SavedCounts { searches, .. } => Some(searches),
+                _ => None,
+            })
+            .expect("the badges are counted again");
+        assert_eq!(
+            searches,
+            [("atlas".to_owned(), "subject:atlas".to_owned())],
+            "only Atlas notifies"
+        );
+        let effects = answer(
+            &mut focus,
+            &effects,
+            |request| matches!(request, Request::SavedCounts { .. }),
+            |_| Reply::SavedCounts(Ok(vec![("atlas".to_owned(), 39, 4)])),
+            &rows,
+        );
+        let view = dropdown(&effects);
+        let pills: Vec<(Option<&str>, Option<&str>)> = view.sections[1]
+            .pills
+            .iter()
+            .map(|pill| (pill.count.as_deref(), pill.fresh.as_deref()))
+            .collect();
+        assert_eq!(
+            pills,
+            [
+                (Some("5"), None),
+                (Some("39"), Some("4 new")),
+                (Some("19"), None),
+                (Some("4"), None),
+            ],
+            "the others keep the counts they had"
+        );
     }
 
     #[test]
