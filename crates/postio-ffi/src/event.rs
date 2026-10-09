@@ -494,6 +494,12 @@ pub enum UiEvent {
     /// Back to the inbox: Esc's last rung, or ⌘[. The list's own cursor and
     /// selection follow.
     FocusLeaveResults,
+    /// Hang this filter popover from its button, or redraw the one open,
+    /// whole; `None` closes it (spec 010 step 4, FR-027).
+    FocusPopover {
+        /// What it draws.
+        view: Option<crate::focus_search::PopoverViewFfi>,
+    },
 }
 
 /// How a Focus toast is drawn.

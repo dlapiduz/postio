@@ -400,3 +400,122 @@ async fn a_results_label_pill_carries_the_labels_colour() {
     assert_eq!(pill.color.as_deref(), Some("#c08a2e"));
     session.shutdown();
 }
+
+/// A filter popover at the boundary (spec 010 step 4, FR-027): From opens
+/// with the people the results hold, a check previews, and Esc puts the
+/// query back: the last `FocusQuery` is the one it opened on.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_popover_closed_with_esc_puts_back_the_query_it_opened_on() {
+    use postio_ffi::FilterKindFfi;
+
+    let (session, _) = atlas_budget_results().await;
+    session.focus_search_popover(FilterKindFfi::From);
+    // From is ringed while its popover is open.
+    let opened = next(&session, 10, |event| match event {
+        UiEvent::FocusQuery { view }
+            if view
+                .buttons
+                .iter()
+                .any(|button| button.kind == FilterKindFfi::From && button.open) =>
+        {
+            Some(view.clone())
+        }
+        _ => None,
+    })
+    .await;
+    let popover = next(&session, 10, |event| match event {
+        UiEvent::FocusPopover { view: Some(view) } if !view.rows.is_empty() => Some(view.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(popover.kind, FilterKindFfi::From);
+    assert_eq!(popover.placeholder, "Filter people in these results");
+    assert!(popover.rows.iter().all(|row| !row.checked && row.count > 0));
+
+    session.focus_search_popover_toggle(popover.rows[0].token, false);
+    let checked = next(&session, 10, |event| match event {
+        UiEvent::FocusQuery { view } if !view.chips.is_empty() => Some(view.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(checked.chips[0].operator, "from:");
+
+    session.focus_search_popover_done(false);
+    next(&session, 10, |event| match event {
+        UiEvent::FocusPopover { view: None } => Some(()),
+        _ => None,
+    })
+    .await;
+    let restored = next(&session, 10, |event| match event {
+        UiEvent::FocusQuery { view } if view.chips.is_empty() => Some(view.clone()),
+        _ => None,
+    })
+    .await;
+    let mut expected = opened.clone();
+    for button in &mut expected.buttons {
+        button.open = false;
+    }
+    assert_eq!(restored, expected);
+    session.shutdown();
+}
+
+/// The timeline's months and the Date popover's words at the boundary
+/// (FR-023, FR-027): bars 9 to 11 become `after:` and `before:` chips,
+/// and "since july" in the Date popover says what it became.
+#[tokio::test(flavor = "multi_thread")]
+async fn months_and_date_words_cross_as_dates() {
+    use postio_ffi::FilterKindFfi;
+
+    let (session, view) = atlas_budget_results().await;
+    assert_eq!(
+        view.timeline_hint,
+        "Matches by month \u{b7} drag across months to narrow"
+    );
+    session.focus_search_months(9, 11);
+    let query = next(&session, 10, |event| match event {
+        UiEvent::FocusQuery { view } if view.chips.len() == 2 => Some(view.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(
+        query
+            .chips
+            .iter()
+            .map(|chip| chip.operator.as_str())
+            .collect::<Vec<_>>(),
+        ["after:", "before:"]
+    );
+    let narrowed = next(&session, 10, |event| match event {
+        UiEvent::FocusResults { view } if view.months.iter().any(|bar| bar.selected) => {
+            Some(view.clone())
+        }
+        _ => None,
+    })
+    .await;
+    assert_eq!(narrowed.months.iter().filter(|bar| bar.selected).count(), 3);
+    assert!(narrowed.timeline_step.is_some());
+
+    session.focus_search_popover(FilterKindFfi::Date);
+    let date = next(&session, 10, |event| match event {
+        UiEvent::FocusPopover { view: Some(view) } => Some(view.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(date.presets.len(), 6);
+    assert_eq!(date.presets[5].count, None, "Custom… has no count");
+    session.focus_search_date_words("since july".to_owned());
+    let date = next(&session, 10, |event| match event {
+        UiEvent::FocusPopover { view: Some(view) } if view.parsed.is_some() => Some(view.clone()),
+        _ => None,
+    })
+    .await;
+    assert!(
+        date.parsed
+            .as_deref()
+            .is_some_and(|parsed| parsed.starts_with("\u{2192} after:")),
+        "{:?}",
+        date.parsed
+    );
+    session.focus_search_popover_done(true);
+    session.shutdown();
+}
