@@ -15,12 +15,17 @@
 //!   adding `from:ada` to `from:Ada atlas` changes nothing, and adding it to
 //!   `from: atlas` fills the half-typed `from:` where it stands.
 //! * What is written is [`spell`]'s one canonical form (D13).
+//! * A popover's check of a second value of a field the query already holds
+//!   is **either**, not both (D26): `from:ada` becomes `from:{ada tomas}`
+//!   in place, and unchecking one leaves the plain clause of the other.
+//!   [`Edit::Add`] -- a typed operator, a "Narrow to" pill -- still asks
+//!   for both, as typing two clauses always has.
 //! * The result is whitespace-normalised: one space between tokens.
 
 use chrono::NaiveDate;
 
 use crate::parser::parse;
-use crate::query::{Clause, Field, Filter, TokenKind, spell};
+use crate::query::{Clause, Field, Filter, Token, TokenKind, spell};
 
 /// One change to a query, as a control asks for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,9 +45,11 @@ pub enum Edit {
         /// What it becomes.
         with: Clause,
     },
-    /// A filter button: add the filter if no positive clause of it is there,
-    /// remove every positive clause of it if one is. An exclusion of it is
-    /// turned round in place rather than contradicted.
+    /// A filter button or a popover's check: add the filter if no positive
+    /// clause holds it -- into the field's positive clause, as a set, when
+    /// the field takes one (D26) -- and take it out of every positive clause
+    /// that does. An exclusion of it is turned round rather than
+    /// contradicted.
     Toggle(Filter),
     /// The timeline and the Date popover: replaces every `after:` and
     /// `before:` (half-typed ones too), the first of each in place.
@@ -54,6 +61,9 @@ pub enum Edit {
     },
     /// Keep the free words, drop every operator, complete or half typed (D24).
     ClearFilters,
+    /// ⌥-click in a popover: [`Edit::Toggle`]'s mirror over the negated
+    /// clause.
+    Exclude(Filter),
     /// Every complete `after:` and `before:`, in place: relative to today
     /// (`after:90d`) when `rolling`, else its calendar day
     /// (`after:2026-07-01`). How a saved search keeps its dates (D14).
@@ -88,34 +98,8 @@ pub fn apply(query: &str, edit: Edit, today: NaiveDate) -> String {
                 *word = Some(spell(&with));
             }
         }
-        Edit::Toggle(filter) => {
-            let of_it = |negated: bool| {
-                (0..tokens.len())
-                    .filter(|&i| {
-                        clause_at(i)
-                            .is_some_and(|c| c.negated == negated && same(&c.filter, &filter))
-                    })
-                    .collect::<Vec<_>>()
-            };
-            let positive = of_it(false);
-            let negative = of_it(true);
-            let clause = Clause {
-                negated: false,
-                filter,
-            };
-            if !positive.is_empty() {
-                for i in positive {
-                    words[i] = None;
-                }
-            } else if let Some((&first, rest)) = negative.split_first() {
-                words[first] = Some(spell(&clause));
-                for &i in rest {
-                    words[i] = None;
-                }
-            } else {
-                add(tokens, &mut words, &clause);
-            }
-        }
+        Edit::Toggle(filter) => flip(tokens, &mut words, &filter, false),
+        Edit::Exclude(filter) => flip(tokens, &mut words, &filter, true),
         Edit::SetDates { after, before } => {
             for (field, date) in [(Field::After, after), (Field::Before, before)] {
                 let spelled = date.map(|date| {
@@ -171,11 +155,110 @@ pub fn apply(query: &str, edit: Edit, today: NaiveDate) -> String {
     join(words.into_iter().flatten())
 }
 
+/// [`Edit::Toggle`] (`negated` false) and [`Edit::Exclude`] (true): take
+/// `filter` out of every clause of this polarity that holds it; or, when
+/// none does, take it out of the other polarity's and put it in this one's
+/// -- extending a clause of its field into a set (D26), else where the
+/// other one stood, else as [`add`] would.
+fn flip(tokens: &[Token], words: &mut Vec<Option<String>>, filter: &Filter, negated: bool) {
+    let here = holders(tokens, filter, negated);
+    if !here.is_empty() {
+        for (i, clause) in here {
+            words[i] = without(clause, filter).map(|rest| spell(&rest));
+        }
+        return;
+    }
+    let mut emptied = None;
+    for (i, clause) in holders(tokens, filter, !negated) {
+        words[i] = match without(clause, filter) {
+            Some(rest) => Some(spell(&rest)),
+            None => {
+                emptied.get_or_insert(i);
+                None
+            }
+        };
+    }
+    let clause = Clause {
+        negated,
+        filter: filter.clone(),
+    };
+    let field = filter.field();
+    let joined = field
+        .takes_set()
+        .then(|| {
+            tokens
+                .iter()
+                .enumerate()
+                .find_map(|(i, token)| match &token.kind {
+                    TokenKind::Filter(held)
+                        if held.negated == negated && held.filter.field() == field =>
+                    {
+                        let mut members = held.filter.alternatives().to_vec();
+                        members.push(filter.clone());
+                        Some((i, Filter::any_of(members)?))
+                    }
+                    _ => None,
+                })
+        })
+        .flatten();
+    match (joined, emptied) {
+        (Some((i, set)), _) => {
+            words[i] = Some(spell(&Clause {
+                negated,
+                filter: set,
+            }))
+        }
+        (None, Some(i)) => words[i] = Some(spell(&clause)),
+        (None, None) => add(tokens, words, &clause),
+    }
+}
+
+/// The clauses of polarity `negated` that hold `filter`, as a value of
+/// their own or one of a set's.
+fn holders<'a>(tokens: &'a [Token], filter: &Filter, negated: bool) -> Vec<(usize, &'a Clause)> {
+    tokens
+        .iter()
+        .enumerate()
+        .filter_map(|(i, token)| match &token.kind {
+            TokenKind::Filter(clause)
+                if clause.negated == negated
+                    && clause
+                        .filter
+                        .alternatives()
+                        .iter()
+                        .any(|held| same(held, filter)) =>
+            {
+                Some((i, clause))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// `clause` without `filter` among its values: the rest, or `None` when
+/// nothing is left.
+fn without(clause: &Clause, filter: &Filter) -> Option<Clause> {
+    let rest: Vec<Filter> = clause
+        .filter
+        .alternatives()
+        .iter()
+        .filter(|held| !same(held, filter))
+        .cloned()
+        .collect();
+    Filter::any_of(rest).map(|filter| Clause {
+        negated: clause.negated,
+        filter,
+    })
+}
+
 /// [`Edit::Add`]'s rule, shared with a toggle that finds nothing to remove.
-fn add(tokens: &[crate::query::Token], words: &mut Vec<Option<String>>, clause: &Clause) {
+fn add(tokens: &[Token], words: &mut Vec<Option<String>>, clause: &Clause) {
     let already = tokens.iter().any(|token| {
         matches!(&token.kind, TokenKind::Filter(c)
-            if c.negated == clause.negated && same(&c.filter, &clause.filter))
+        if c.negated == clause.negated
+            && clause.filter.alternatives().iter().all(|wanted| {
+                c.filter.alternatives().iter().any(|held| same(held, wanted))
+            }))
     });
     if already {
         return;
@@ -196,6 +279,18 @@ fn add(tokens: &[crate::query::Token], words: &mut Vec<Option<String>>, clause: 
 /// that way.
 pub fn same(a: &Filter, b: &Filter) -> bool {
     let fold = |s: &str| s.to_lowercase();
+    if matches!(a, Filter::AnyOf(_)) || matches!(b, Filter::AnyOf(_)) {
+        // Two sets are the same when each holds every value of the other,
+        // in any order.
+        let within = |x: &Filter, y: &Filter| {
+            x.alternatives()
+                .iter()
+                .all(|v| y.alternatives().iter().any(|w| same(v, w)))
+        };
+        return matches!((a, b), (Filter::AnyOf(_), Filter::AnyOf(_)))
+            && within(a, b)
+            && within(b, a);
+    }
     match (a, b) {
         (Filter::From(x), Filter::From(y))
         | (Filter::To(x), Filter::To(y))
@@ -210,9 +305,9 @@ pub fn same(a: &Filter, b: &Filter) -> bool {
     }
 }
 
-/// The words, one space apart. A phrase left open (the person was still
-/// typing it) is closed when anything follows it, or the parser would read
-/// what follows as part of the phrase.
+/// The words, one space apart. A phrase or a set left open (the person was
+/// still typing it) is closed when anything follows it, or the parser would
+/// read what follows as part of it.
 pub(crate) fn join(words: impl Iterator<Item = String>) -> String {
     let words: Vec<String> = words.collect();
     let last = words.len().saturating_sub(1);
@@ -220,6 +315,9 @@ pub(crate) fn join(words: impl Iterator<Item = String>) -> String {
     for (i, mut word) in words.into_iter().enumerate() {
         if i < last && word.matches('"').count() % 2 == 1 {
             word.push('"');
+        }
+        if i < last && crate::parser::leaves_set_open(&word) {
+            word.push('}');
         }
         if i > 0 {
             out.push(' ');
@@ -454,6 +552,137 @@ mod tests {
             &parsed.tokens()[1].kind,
             TokenKind::Filter(clause) if clause.filter == Filter::HasAttachment
         ));
+    }
+
+    fn from(who: &str) -> Filter {
+        Filter::From(who.into())
+    }
+
+    #[test]
+    fn toggle_extends_a_held_field_into_a_set_in_place() {
+        // D26: a second person checked in one popover is either of them.
+        assert_eq!(
+            edit("atlas from:ada budget", Edit::Toggle(from("tomas"))),
+            "atlas from:{ada tomas} budget"
+        );
+        assert_eq!(
+            edit("from:{ada tomas}", Edit::Toggle(from("bo"))),
+            "from:{ada tomas bo}"
+        );
+        assert_eq!(
+            edit("x in:Inbox", Edit::Toggle(Filter::In("Old Mail".into()))),
+            r#"x in:{Inbox "Old Mail"}"#
+        );
+        assert_eq!(
+            edit(
+                "label:atlas",
+                Edit::Toggle(Filter::Label("Q3 close".into()))
+            ),
+            r#"label:{atlas "Q3 close"}"#
+        );
+        assert_eq!(
+            edit("from:ada -from:bo", Edit::Toggle(from("tomas"))),
+            "from:{ada tomas} -from:bo",
+            "the clause that holds the field positively is the one extended"
+        );
+        assert_eq!(
+            edit("is:unread", Edit::Toggle(Filter::Is(State::Flagged))),
+            "is:unread is:flagged",
+            "a field that takes no set is asked for again, as before"
+        );
+    }
+
+    #[test]
+    fn toggle_takes_one_member_out_of_a_set() {
+        assert_eq!(
+            edit("from:{ada tomas} x", Edit::Toggle(from("Tomas"))),
+            "from:ada x",
+            "a set left with one value is the plain clause"
+        );
+        assert_eq!(
+            edit("from:{ada tomas bo}", Edit::Toggle(from("tomas"))),
+            "from:{ada bo}"
+        );
+    }
+
+    #[test]
+    fn toggle_takes_a_value_out_of_a_negated_set_to_include_it() {
+        assert_eq!(
+            edit("-from:{ada tomas} x", Edit::Toggle(from("ada"))),
+            "-from:tomas x from:ada"
+        );
+        assert_eq!(
+            edit("-from:ada x", Edit::Toggle(from("ada"))),
+            "from:ada x",
+            "a plain exclusion is still turned round in place"
+        );
+    }
+
+    #[test]
+    fn exclude_mirrors_toggle_over_the_negated_clause() {
+        assert_eq!(edit("atlas", Edit::Exclude(from("ada"))), "atlas -from:ada");
+        assert_eq!(
+            edit("atlas -from:ada", Edit::Exclude(from("tomas"))),
+            "atlas -from:{ada tomas}",
+            "a second exclusion is neither"
+        );
+        assert_eq!(
+            edit("atlas -from:{ada tomas}", Edit::Exclude(from("ada"))),
+            "atlas -from:tomas",
+            "again takes it back out"
+        );
+        assert_eq!(edit("atlas -from:ada", Edit::Exclude(from("ada"))), "atlas");
+        assert_eq!(
+            edit("atlas from:ada budget", Edit::Exclude(from("ada"))),
+            "atlas -from:ada budget",
+            "an included value is excluded in place"
+        );
+        assert_eq!(
+            edit("atlas from:{ada tomas}", Edit::Exclude(from("ada"))),
+            "atlas from:tomas -from:ada"
+        );
+        assert_eq!(
+            edit("has:attach x", Edit::Exclude(Filter::HasAttachment)),
+            "-has:attachment x"
+        );
+    }
+
+    #[test]
+    fn add_asks_for_both_and_sees_into_a_set_only_to_not_repeat_it() {
+        assert_eq!(
+            edit("from:ada", Edit::Add(positive(from("tomas")))),
+            "from:ada from:tomas",
+            "a typed operator still means both"
+        );
+        assert_eq!(
+            edit("from:{ada tomas} x", Edit::Add(positive(from("Tomas")))),
+            "from:{ada tomas} x"
+        );
+    }
+
+    #[test]
+    fn a_set_left_open_is_closed_before_anything_follows_it() {
+        let edited = edit(
+            "from:{ada tomas",
+            Edit::Add(positive(Filter::HasAttachment)),
+        );
+        assert_eq!(edited, "from:{ada tomas} has:attachment");
+        let parsed = crate::parse(&edited, today());
+        assert_eq!(parsed.filters().count(), 2);
+        let edited = edit(
+            r#"label:{atlas "Q3 cl"#,
+            Edit::Add(positive(Filter::HasAttachment)),
+        );
+        assert_eq!(edited, r#"label:{atlas "Q3 cl"} has:attachment"#);
+    }
+
+    #[test]
+    fn two_sets_of_the_same_values_are_the_same_filter() {
+        let a = crate::parse("from:{ada tomas}", today());
+        let b = crate::parse("from:{Tomas ADA}", today());
+        let filter = |q: &crate::ParsedQuery| q.filters().next().unwrap().filter.clone();
+        assert!(same(&filter(&a), &filter(&b)));
+        assert!(!same(&filter(&a), &from("ada")));
     }
 
     #[test]
