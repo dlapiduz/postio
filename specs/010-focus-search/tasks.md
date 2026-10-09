@@ -392,7 +392,7 @@ the completion: `a` under 20 ms at p95.
 
 - [x] T156 [P] [US7] Write failing tests: in `crates/postio-index/tests/index_suite/completions.rs`, a label on three times `COMPLETION_COUNT_CAP` messages counts to the cap, flagged `capped`, reading no more than twice the cap's rows, and ten of them count exactly; `suggestion_count` in `crates/postio-ui/src/search_view.rs` ("1,000+", "4,512"); in `crates/postio-focus/tests/bar.rs`, a capped ghost word's row says "1,000+" and an exact label's "4,512". Red: no `capped`, no cap, no words, the row said "1000"
 - [x] T157 [US7] Add `Completion::capped`, `executor::COMPLETION_COUNT_CAP` (1,000), a cap argument to `relaxations::counts` (the relaxations keep `TOTAL_HITS_CAP`), and draw every dropdown count through `suggestion_count`. Make T156 green
-- [ ] T158 Re-run the `completions` bench shapes and record them, with the caps tried, in the step-8 note
+- [x] T158 Re-run the `completions` bench shapes and record them, with the caps tried, in the step-8 note
 
 ---
 
