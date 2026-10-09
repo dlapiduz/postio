@@ -6,9 +6,9 @@ import SwiftUI
 /// The command bar on the Mac (specs/009-focus-macos T085; screens 07 to
 /// 09; contracts/mac-surfaces.md, "Command bar").
 ///
-/// A borderless, non-activating child panel whose top meets the toolbar's
-/// bottom, its right edge on the search field's, as wide as the field or
-/// 640, whichever is wider. Nothing behind it is dimmed. The keyboard stays
+/// A borderless, non-activating child panel hung 6 below the search field,
+/// with its left edge and width: the field grows to 860 while the bar is up
+/// (specs/010-focus-search T054). Nothing behind it is dimmed. The keyboard stays
 /// in the toolbar's field: the panel can never become key, so typing,
 /// ↑/↓, Return, Tab and Escape all arrive at the field and go to
 /// `CommandBarModel` from there. Its content is `CommandBarView`.
@@ -32,7 +32,7 @@ public final class CommandBarPanel {
     public init(model: CommandBarModel, saveCap: @escaping () -> String?) {
         self.model = model
         panel = BarPanel(
-            contentRect: NSRect(x: 0, y: 0, width: CommandBarGeometry.minWidth, height: 200),
+            contentRect: NSRect(x: 0, y: 0, width: CommandBarGeometry.searchWidth, height: 200),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: true)
@@ -83,11 +83,11 @@ public final class CommandBarPanel {
 
     private func place() {
         guard let field, let parent = field.window else { return }
+        // The toolbar has just grown the field: lay it out before reading it.
+        parent.contentView?.superview?.layoutSubtreeIfNeeded()
         let fieldOnScreen = parent.convertToScreen(field.convert(field.bounds, to: nil))
-        let contentTop = parent.frame.minY + parent.contentLayoutRect.maxY
         let frame = CommandBarGeometry.frame(
-            field: fieldOnScreen, window: parent.frame, contentTop: contentTop,
-            height: CommandBarView.height(for: model))
+            field: fieldOnScreen, window: parent.frame, height: CommandBarView.height(for: model))
         panel.setFrame(frame.integral, display: true)
     }
 }

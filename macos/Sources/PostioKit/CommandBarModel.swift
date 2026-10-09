@@ -20,6 +20,13 @@ public protocol CommandBarEngine: AnyObject {
     func invoke(_ id: String)
     /// The binding in force for `command`, for its keycap.
     func binding(for command: String) -> String?
+    /// The search dropdown's arrows rest on the row `token` now
+    /// (specs/010-focus-search): what ⌥⌫ from a menu forgets.
+    func focusSearchHighlighted(_ token: UInt64)
+    /// ⌥⌫ on the dropdown's recent search `token`.
+    func focusSearchForget(_ token: UInt64)
+    /// ⌘↩ in the dropdown: every result for what is typed.
+    func focusSearchShowAll()
 }
 
 extension PostioSession: CommandBarEngine {}
@@ -116,11 +123,17 @@ public final class CommandBarModel {
     public private(set) var saved: [Saved] = []
     /// The highlighted line's token.
     public private(set) var highlighted: UInt64?
+    /// The search dropdown (specs/010-focus-search), drawn in place of the
+    /// lines while `showsDropdown`: the controller sends one or the other.
+    public let dropdown: DropdownModel
+    /// Whether the last view was the dropdown's.
+    public private(set) var showsDropdown = false
 
     @ObservationIgnored private let engine: CommandBarEngine
 
     public init(engine: CommandBarEngine) {
         self.engine = engine
+        dropdown = DropdownModel(engine: engine)
     }
 
     /// Apply `event` if it is the bar's, and say what it changed; `nil` for
@@ -137,7 +150,16 @@ public final class CommandBarModel {
             return .open(text: text, selection: selection)
         case let .focusBarLines(view):
             guard isOpen else { return nil }
+            if showsDropdown {
+                showsDropdown = false
+                dropdown.forget()
+            }
             draw(view)
+            return .lines
+        case let .focusDropdown(view):
+            guard isOpen else { return nil }
+            showsDropdown = true
+            dropdown.draw(view)
             return .lines
         case .focusCloseSurface(kind: .bar):
             guard isOpen else { return nil }
@@ -158,6 +180,7 @@ public final class CommandBarModel {
 
     /// ↑ or ↓: the next line that runs, stopping at either end.
     public func move(by delta: Int) {
+        if showsDropdown { return dropdown.move(by: delta) }
         let selectable = rows.filter(\.selectable).map(\.id)
         guard !selectable.isEmpty else { return }
         let at = highlighted.flatMap { selectable.firstIndex(of: $0) } ?? 0
@@ -167,6 +190,7 @@ public final class CommandBarModel {
 
     /// Return: run the highlighted line.
     public func runHighlighted() {
+        if isOpen, showsDropdown { return dropdown.runHighlighted() }
         guard isOpen, let highlighted else { return }
         engine.focusBarRun(highlighted)
     }
@@ -176,6 +200,22 @@ public final class CommandBarModel {
         guard isOpen, rows.contains(where: { $0.id == token && $0.selectable }) else { return }
         highlighted = token
         engine.focusBarRun(token)
+    }
+
+    /// ⌘↩: the dropdown's Show all. `false` when the lines are up, and
+    /// the key is not the bar's.
+    @discardableResult
+    public func showAll() -> Bool {
+        guard isOpen, showsDropdown else { return false }
+        dropdown.showAll()
+        return true
+    }
+
+    /// ⌥⌫: forget the dropdown's highlighted recent search. `false` leaves
+    /// the key to the field.
+    public func forgetHighlighted() -> Bool {
+        guard isOpen, showsDropdown else { return false }
+        return dropdown.forgetHighlighted()
     }
 
     /// Escape: the controller's Back, which closes the bar and says so.
@@ -244,6 +284,8 @@ public final class CommandBarModel {
         heading = nil
         saved = []
         highlighted = nil
+        showsDropdown = false
+        dropdown.forget()
     }
 
     /// `select`, which counts characters as the controller does (Rust's
@@ -269,30 +311,41 @@ extension CommandBarModel {
     }
 }
 
-/// Where the command bar's panel goes (contracts/mac-surfaces.md, "Command
-/// bar"): its right edge on the search field's, its top just under the
-/// toolbar, as wide as the field or 640, whichever is wider, and inside
-/// its window. Screen coordinates, the origin at the bottom left, as
-/// AppKit has them.
+/// Where the search field grows and the panel hangs (specs/010-focus-search
+/// T054; design §2 "Opening and layout"): while the bar is up the toolbar's
+/// field grows leftward to 860 wide, its right edge 12 from the window's,
+/// giving way to the toolbar's leading items in a narrow window; the panel
+/// hangs 6 below the field with its left edge and width, and inside its
+/// window. Screen coordinates, the origin at the bottom left, as AppKit has
+/// them.
 public enum CommandBarGeometry {
-    /// The narrowest the panel is.
-    public static let minWidth: CGFloat = 640
-    /// Between the toolbar's bottom and the panel's top.
-    public static let gap: CGFloat = 5
-    /// The least it keeps from its window's edges.
+    /// The field's width while the bar is up.
+    public static let searchWidth: CGFloat = 860
+    /// The field's width while it is not.
+    public static let restingWidth: CGFloat = 320
+    /// Between the field's right edge and the window's.
+    public static let edge: CGFloat = 12
+    /// What the toolbar keeps on the left of a grown field: the window's
+    /// buttons and Compose.
+    public static let leading: CGFloat = 160
+    /// Between the field's bottom and the panel's top.
+    public static let gap: CGFloat = 6
+    /// The least the panel keeps from its window's bottom.
     public static let margin: CGFloat = 8
 
-    /// The panel's frame for a field at `field` in a window at `window`
-    /// whose content (under the toolbar) starts at `contentTop`, wanting
-    /// `height`.
-    public static func frame(field: CGRect, window: CGRect, contentTop: CGFloat, height: CGFloat) -> CGRect {
-        let width = max(field.width, minWidth)
-        var x = field.maxX - width
-        x = max(x, window.minX + margin)
-        x = min(x, max(window.maxX - margin - width, window.minX + margin))
-        let top = contentTop - gap
+    /// The field's width while the bar is up, in a window `window` wide.
+    public static func fieldWidth(window: CGFloat) -> CGFloat {
+        max(min(searchWidth, window - edge - leading), restingWidth)
+    }
+
+    /// The panel's frame under a field at `field` in a window at `window`,
+    /// wanting `height`.
+    public static func frame(field: CGRect, window: CGRect, height: CGFloat) -> CGRect {
+        let top = field.minY - gap
         let tallest = max(top - (window.minY + margin), 0)
         let tall = min(height, tallest)
+        let x = max(field.minX, window.minX)
+        let width = min(field.width, window.maxX - x)
         return CGRect(x: x, y: top - tall, width: width, height: tall)
     }
 }

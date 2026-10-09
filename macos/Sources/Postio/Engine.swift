@@ -629,6 +629,10 @@ final class Engine {
     /// bindings change. The toolbar hands this over when it is installed.
     var keycapsChanged: (() -> Void)?
 
+    /// The bar opened (`true`) or closed: the toolbar grows its search field
+    /// to 860 wide while it is up, and back after (spec 010 T054).
+    var barShown: ((Bool) -> Void)?
+
     // MARK: the command bar and the folders popover (T085, T086)
 
     /// The command bar's state, as the controller's intents leave it.
@@ -874,6 +878,7 @@ final class Engine {
             guard let field = searchField else { return }
             field.stringValue = text
             keycapsChanged?()
+            barShown?(true)
             barPanel?.show(under: field)
             if field.currentEditor() == nil {
                 field.window?.makeFirstResponder(field)
@@ -883,6 +888,7 @@ final class Engine {
             barPanel?.relayout()
         case .close:
             barPanel?.hide()
+            barShown?(false)
             searchField?.stringValue = ""
             keycapsChanged?()
         }
@@ -905,6 +911,7 @@ final class Engine {
     func searchFieldLeft() {
         guard let bar = commandBar, bar.closedByToolkit() else { return }
         barPanel?.hide()
+        barShown?(false)
         searchField?.stringValue = ""
         keycapsChanged?()
         session?.focusSurfaceClosed(.bar)
@@ -921,9 +928,17 @@ final class Engine {
         case #selector(NSResponder.moveDown(_:)):
             bar.move(by: 1)
         case #selector(NSResponder.insertNewline(_:)):
+            // ⌘↩ is the dropdown's Show all (specs/010-focus-search).
+            if NSApp.currentEvent?.modifierFlags.contains(.command) == true, bar.showAll() {
+                return true
+            }
             bar.runHighlighted()
         case #selector(NSResponder.insertTab(_:)):
             return bar.tab()
+        case #selector(NSResponder.deleteWordBackward(_:)):
+            // ⌥⌫ on a recent search forgets it; anywhere else it is the
+            // field's own.
+            return bar.forgetHighlighted()
         case #selector(NSResponder.cancelOperation(_:)):
             bar.back()
         default:
@@ -1197,7 +1212,12 @@ final class Engine {
                 try? await Task.sleep(nanoseconds: 400_000_000)
                 guard let self, let session = self.session else { return }
                 if self.replayIntoField(key) { continue }
-                if case let .command(id) = session.key(key, in: .list, typing: false) {
+                // With the bar up, a chord is the search field's, as a press
+                // there resolves it: ⌘↩ is Show all, ⌥⌫ forgets a recent.
+                let searching = self.commandBar?.isOpen == true
+                if case let .command(id) = session.key(
+                    key, in: searching ? .search : .list, typing: searching)
+                {
                     self.run(id)
                 }
             }
