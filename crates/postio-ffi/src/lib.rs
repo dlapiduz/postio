@@ -113,7 +113,7 @@ pub use focus_search::{
     ConversationOrderFfi, DropdownRowFfi, DropdownRowKindFfi, DropdownSectionFfi, DropdownStateFfi,
     DropdownViewFfi, FilterButtonFfi, FilterKindFfi, MonthBarFfi, PillFfi, QueryChipFfi,
     QueryViewFfi, ResultGroupFfi, ResultRowFfi, ResultsTabFfi, ResultsViewFfi, RunFfi, RunStyleFfi,
-    TabFfi, TermEditFfi,
+    SearchWordsFfi, TabFfi, TermEditFfi, focus_search_checked, focus_search_words,
 };
 pub use focus_states::{
     BannerButtonFfi, BannerFfi, BannerProgressFfi, EmptyPageFfi, EmptyShortcutFfi, SyncMarkFfi,

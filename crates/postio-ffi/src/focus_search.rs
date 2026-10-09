@@ -673,6 +673,44 @@ impl From<postio_focus::ResultRow> for ResultRowFfi {
     }
 }
 
+/// The results view's chrome, in `postio-ui`'s words (§3.1-3.5): what the
+/// Mac draws around the rows that no event carries.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SearchWordsFfi {
+    /// "‹ Inbox": the toolbar's way back.
+    pub back: String,
+    /// The toolbar's Save search button.
+    pub save: String,
+    /// The quiet word before the Sort menu.
+    pub sort: String,
+    /// The Sort menu's ranked order.
+    pub best_match: String,
+    /// The Sort menu's date order.
+    pub newest: String,
+    /// The timeline's hint on its right.
+    pub timeline_hint: String,
+}
+
+/// The results view's chrome words.
+#[uniffi::export]
+pub fn focus_search_words() -> SearchWordsFfi {
+    use postio_ui::search_view as words;
+    SearchWordsFfi {
+        back: words::BACK_TO_INBOX.to_owned(),
+        save: words::SAVE_SEARCH.to_owned(),
+        sort: words::SORT.to_owned(),
+        best_match: words::BEST_MATCH.to_owned(),
+        newest: words::NEWEST.to_owned(),
+        timeline_hint: words::TIMELINE_HINT.to_owned(),
+    }
+}
+
+/// The bulk bar's count while `n` results are checked: "5 selected".
+#[uniffi::export]
+pub fn focus_search_checked(n: u64) -> String {
+    postio_ui::search_view::checked_line(n)
+}
+
 #[uniffi::export]
 impl Session {
     /// The arrows rest on the dropdown's row `token` now (the highlight is
