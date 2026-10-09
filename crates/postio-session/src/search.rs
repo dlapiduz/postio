@@ -414,24 +414,36 @@ fn body_matches(text: &str, terms: &[String]) -> Vec<Match> {
     use postio_body::quote::{Stretch, text_stretches};
 
     let stretches = text_stretches(text);
-    // The message's first line is the row's preview (D7): never the
-    // passage, in whichever kind of stretch it falls.
-    let opens_quoted = matches!(stretches.first(), Some(Stretch::Quoted(_)));
     let mut own = String::new();
     let mut quoted = String::new();
-    for stretch in stretches {
-        match stretch {
-            Stretch::Own(words) => own.push_str(words),
+    // The message's first line is the row's preview (D7): never the
+    // passage, in whichever kind of stretch it falls -- unless it was an
+    // attribution, which neither kind keeps.
+    let mut opens_own = false;
+    for (at, stretch) in stretches.iter().enumerate() {
+        match *stretch {
+            Stretch::Own(words) => {
+                // "On Fri, Ada wrote:" says who wrote the quote under it:
+                // neither the person's words nor the history (the line
+                // the reader sets apart as the attribution).
+                let words = match stretches.get(at + 1) {
+                    Some(Stretch::Quoted(_)) => postio_body::quote::without_attribution(words),
+                    _ => words,
+                };
+                opens_own |= at == 0 && !words.trim().is_empty();
+                own.push_str(words);
+            }
             Stretch::Quoted(lines) => quoted.push_str(&unquoted(lines)),
         }
     }
+    let opens_quoted = matches!(stretches.first(), Some(Stretch::Quoted(_)));
 
     let found = |words: &str| !postio_search::highlight::find(words, terms).is_empty();
     let mut matches = Vec::new();
     if found(&own) {
         matches.push(Match {
             source: Source::Body,
-            passage: postio_search::passage::cut(&own, terms, !opens_quoted),
+            passage: postio_search::passage::cut(&own, terms, opens_own),
             when: None,
         });
     }
