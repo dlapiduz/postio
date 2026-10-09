@@ -94,6 +94,7 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
     let metadata = half_version(connection, "metadata").await?;
     let bodies = half_version(connection, "bodies").await?;
     let headers = half_version(connection, "headers").await?;
+    let attachments = half_version(connection, "attachments").await?;
 
     // Nothing to do, and saying so is worth more than it looks. The batch
     // below is every object `IF NOT EXISTS`, which reads as free and is not:
@@ -113,6 +114,7 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
     if metadata == METADATA_SCHEMA_VERSION
         && bodies == BODIES_SCHEMA_VERSION
         && headers == HEADERS_SCHEMA_VERSION
+        && attachments == ATTACHMENTS_SCHEMA_VERSION
     {
         tracing::debug!("the search index schema is current");
         return Ok(());
@@ -141,11 +143,20 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
         .await?;
     }
 
+    if attachments != ATTACHMENTS_SCHEMA_VERSION {
+        // Derived from blobs, like the body half, and refilled the same
+        // way: the indexer finds every downloaded attachment with no
+        // current row and extracts it again in the background.
+        postio_storage::sql::batch(connection, DROP_ATTACHMENTS).await?;
+    }
+
     postio_storage::sql::batch(connection, SCHEMA).await?;
+    postio_storage::sql::batch(connection, ATTACHMENTS_SCHEMA).await?;
 
     set_half_version(connection, "metadata", METADATA_SCHEMA_VERSION).await?;
     set_half_version(connection, "bodies", BODIES_SCHEMA_VERSION).await?;
     set_half_version(connection, "headers", HEADERS_SCHEMA_VERSION).await?;
+    set_half_version(connection, "attachments", ATTACHMENTS_SCHEMA_VERSION).await?;
     Ok(())
 }
 
@@ -198,6 +209,20 @@ const BODIES_SCHEMA_VERSION: i64 = 3;
 /// [`messages_missing_header_rows`] finds every message that needs one.
 const HEADERS_SCHEMA_VERSION: i64 = 2;
 
+/// The attachments half's version: `attachment_passages`, its full-text
+/// index, and `attachment_extraction` (spec 010 D10).
+///
+/// **Bump this when either table changes shape** or the location encoding
+/// ([`encode_location`]) changes. A change in what the extractor produces
+/// for the same bytes is `postio_extract::EXTRACTOR_VERSION`'s to say, not
+/// this: rows record the extractor version they were made with, and an
+/// older one is simply missing again ([`attachments_missing_text`]), with
+/// no table dropped.
+///
+/// History:
+/// 1 — the half, keyed by `(content_id, position)` (#1805's content).
+pub const ATTACHMENTS_SCHEMA_VERSION: i64 = 1;
+
 /// How many rows one message may contribute to `message_headers`.
 ///
 /// ADR 0025 Q3's second cap, and the one that bounds the pathological
@@ -226,6 +251,61 @@ DROP TRIGGER IF EXISTS trg_search_documents_attachments_au;
 DROP INDEX IF EXISTS search_documents_fts;
 DROP TABLE IF EXISTS search_documents;
 DROP TABLE IF EXISTS search_documents_deferred;
+";
+
+/// Everything the attachments half is made of, for its rebuild.
+const DROP_ATTACHMENTS: &str = "DROP INDEX IF EXISTS attachment_passages_fts;
+DROP INDEX IF EXISTS idx_attachment_passages_part;
+DROP TABLE IF EXISTS attachment_passages;
+DROP TABLE IF EXISTS attachment_extraction;
+";
+
+/// The attachments half (spec 010 D10, data-model "postio-index schema").
+///
+/// **Keyed by content, not by the attachment row.** An occurrence's
+/// `attachments` rows are a projection a refetch replaces (see
+/// `MessageRepository::set_attachment_blob`), so an attachment id does not
+/// survive one, and text keyed by it would cascade away and be extracted
+/// again on every refetch. Since #1805 the immutable payload is a
+/// `message_contents` row shared by every occurrence a backend names as the
+/// same message, and its parts are numbered by `position`; the text of an
+/// attachment is a fact about that payload. So `(content_id, position)` is
+/// the key: one extraction however many folders hold the message, kept
+/// across a refetch, and gone by cascade when the last occurrence goes --
+/// the same shape `search_documents` and `message_search_bodies` have.
+///
+/// Evicting a blob does not remove its text: the text is derived, small
+/// (bounded by `Limits::max_text`), and lives in the encrypted store.
+const ATTACHMENTS_SCHEMA: &str = "\
+-- One located unit of an attachment's text: a PDF page, a sheet row, a
+-- slide, a paragraph, a table row, a line. `text` is as extracted, for
+-- passages; `text_search` is it folded (postio_model::fold), for the index,
+-- because the fold is not reversible.
+CREATE TABLE IF NOT EXISTS attachment_passages (
+    id           INTEGER PRIMARY KEY,
+    content_id   INTEGER NOT NULL REFERENCES message_contents(id) ON DELETE CASCADE,
+    position     INTEGER NOT NULL,
+    ordinal      INTEGER NOT NULL,
+    location     TEXT    NOT NULL,
+    text         TEXT    NOT NULL,
+    text_search  TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_attachment_passages_part
+    ON attachment_passages (content_id, position, ordinal);
+CREATE INDEX IF NOT EXISTS attachment_passages_fts ON attachment_passages USING fts (text_search);
+
+-- Which attachments have been tried, by which extractor, and how it went.
+-- A row's presence is the record that the part was tried -- an empty or
+-- failed extraction included -- so the indexer's queue, \"downloaded and
+-- no current row here\", never offers the same part twice (#500).
+CREATE TABLE IF NOT EXISTS attachment_extraction (
+    content_id  INTEGER NOT NULL REFERENCES message_contents(id) ON DELETE CASCADE,
+    position    INTEGER NOT NULL,
+    version     INTEGER NOT NULL,
+    outcome     TEXT    NOT NULL CHECK (outcome IN ('complete','truncated','skipped','failed')),
+    units       INTEGER NOT NULL,
+    PRIMARY KEY (content_id, position)
+);
 ";
 
 /// The recorded version of one schema half, `0` when it has never been
@@ -1076,6 +1156,335 @@ FROM messages m
 WHERE m.id = (SELECT min(id) FROM messages WHERE content_id = m.content_id)
 ON CONFLICT (content_id) DO NOTHING;
 ";
+
+// ---------------------------------------------------------------------------
+// The attachments half (spec 010 D10).
+// ---------------------------------------------------------------------------
+
+/// One downloaded attachment whose text this extractor has not read:
+/// what the indexer needs to read its blob and extract it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MissingAttachment {
+    /// One occurrence's attachment row; [`index_attachment_text`] keys the
+    /// text by its content and position, so any occurrence will do.
+    pub attachment: postio_model::AttachmentId,
+    /// The message that carries it.
+    pub message: postio_model::MessageId,
+    /// Where its bytes are, in the blob store.
+    pub blob: postio_model::BlobId,
+    /// Its declared type, parameters and all.
+    pub mime_type: String,
+    /// Its file name, when it has one.
+    pub name: Option<String>,
+}
+
+/// How one attachment's extraction went, as recorded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Extraction {
+    /// The `postio_extract::EXTRACTOR_VERSION` that made it.
+    pub version: u32,
+    /// `complete`, `truncated`, `skipped` or `failed`.
+    pub outcome: String,
+    /// How many units it wrote.
+    pub units: u32,
+}
+
+/// The queue's question, before its order, limit or message filter: an
+/// attachment of a message, its bytes on this machine, and no row from the
+/// current extractor for its content and position.
+const MISSING: &str =
+    "SELECT a.id, a.message_id, a.blob_id, a.mime_type, a.filename, m.content_id, a.position
+  FROM attachments a JOIN messages m ON m.id = a.message_id
+ WHERE a.blob_id IS NOT NULL AND m.content_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM attachment_extraction e
+                    WHERE e.content_id = m.content_id AND e.position = a.position
+                      AND e.version = ?1)";
+
+fn missing_row(row: &turso::Row) -> postio_storage::Result<(MissingAttachment, (i64, i64))> {
+    Ok((
+        MissingAttachment {
+            attachment: postio_model::AttachmentId::new(row.col(0)?),
+            message: postio_model::MessageId::new(row.col(1)?),
+            blob: postio_model::BlobId::new(row.col::<String>(2)?),
+            mime_type: row.col(3)?,
+            name: row.col(4)?,
+        },
+        (row.col(5)?, row.col(6)?),
+    ))
+}
+
+/// One of each content and position: two occurrences of one payload are
+/// one extraction.
+fn first_of_each(rows: Vec<(MissingAttachment, (i64, i64))>) -> Vec<MissingAttachment> {
+    let mut seen = std::collections::HashSet::new();
+    rows.into_iter()
+        .filter(|(_, key)| seen.insert(*key))
+        .map(|(missing, _)| missing)
+        .collect()
+}
+
+/// Up to `limit` downloaded attachments with no text from the current
+/// extractor, newest first: the indexer's catch-up queue.
+///
+/// Only attachments whose blob is on this machine (D10, FR-050): one that
+/// was never downloaded is not here, and nothing asks for its bytes to put
+/// it here. A part that was tried has a row whatever came of it, so the
+/// queue never offers it twice (#500); one made by an older extractor is
+/// missing again, which is how a version bump re-extracts everything.
+///
+/// One entry per payload part: every occurrence of the same content shares
+/// one extraction ([`ATTACHMENTS_SCHEMA`]).
+pub async fn attachments_missing_text(
+    connection: &Connection,
+    limit: u32,
+) -> Result<Vec<MissingAttachment>> {
+    // Twice the limit, then one per payload part: a page of duplicates
+    // still leaves something to do, and the next call finds the rest.
+    let rows = sql::all(
+        connection,
+        &format!("{MISSING} ORDER BY a.id DESC LIMIT ?2"),
+        (
+            i64::from(postio_extract::EXTRACTOR_VERSION),
+            i64::from(limit).saturating_mul(2),
+        ),
+        missing_row,
+    )
+    .await?;
+    let mut missing = first_of_each(rows);
+    missing.truncate(limit as usize);
+    Ok(missing)
+}
+
+/// [`attachments_missing_text`] for exactly these messages: the event
+/// path, which knows which messages just had bytes stored and does not ask
+/// the whole mailbox (#1549's lesson for bodies).
+pub async fn attachments_missing_text_of(
+    connection: &Connection,
+    messages: &[postio_model::MessageId],
+) -> Result<Vec<MissingAttachment>> {
+    if messages.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids = format!(
+        "[{}]",
+        messages
+            .iter()
+            .map(|message| message.get().to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let rows = sql::all_unbounded(
+        connection,
+        &format!("{MISSING} AND a.message_id IN (SELECT value FROM json_each(?2)) ORDER BY a.id"),
+        (i64::from(postio_extract::EXTRACTOR_VERSION), ids),
+        missing_row,
+    )
+    .await?;
+    Ok(first_of_each(rows))
+}
+
+/// Writes what the extractor read from one attachment, replacing whatever
+/// its payload part held, and records how it went.
+///
+/// One row per unit, in order, each with its location and its text as
+/// written beside the same text folded for the index
+/// ([`postio_model::fold`], as [`index_body`] folds bodies). An extraction
+/// with no units still records its outcome: that row is what takes the
+/// part off the queue.
+///
+/// `false`, and nothing written, when the attachment is not here any more
+/// -- its message was expunged, or a refetch replaced its row, between
+/// being queued and being indexed. Not an error, for [`index_body`]'s
+/// reason. Run it inside the caller's transaction: it is a delete and a
+/// statement per unit.
+pub async fn index_attachment_text(
+    connection: &Connection,
+    attachment: postio_model::AttachmentId,
+    extracted: &postio_extract::Extracted,
+) -> Result<bool> {
+    let Some((content_id, position)) = part_of(connection, attachment).await? else {
+        return Ok(false);
+    };
+    connection
+        .execute(
+            "DELETE FROM attachment_passages WHERE content_id = ?1 AND position = ?2",
+            (content_id, position),
+        )
+        .await?;
+    if !extracted.units.is_empty() {
+        let mut statement = connection
+            .prepare(
+                "INSERT INTO attachment_passages
+                     (content_id, position, ordinal, location, text, text_search)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )
+            .await?;
+        for (ordinal, unit) in extracted.units.iter().enumerate() {
+            statement
+                .execute(bind![
+                    content_id,
+                    position,
+                    ordinal as i64,
+                    encode_location(&unit.location),
+                    unit.text.as_str(),
+                    postio_model::fold::fold(&unit.text)
+                ])
+                .await?;
+        }
+    }
+    connection
+        .execute(
+            "INSERT INTO attachment_extraction (content_id, position, version, outcome, units)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (content_id, position) DO UPDATE SET
+                 version = excluded.version,
+                 outcome = excluded.outcome,
+                 units = excluded.units",
+            bind![
+                content_id,
+                position,
+                i64::from(postio_extract::EXTRACTOR_VERSION),
+                extracted.outcome.as_str(),
+                extracted.units.len() as i64
+            ],
+        )
+        .await?;
+    Ok(true)
+}
+
+/// The payload part an attachment row shows: its message's content and
+/// its position.
+async fn part_of(
+    connection: &Connection,
+    attachment: postio_model::AttachmentId,
+) -> Result<Option<(i64, i64)>> {
+    Ok(sql::first(
+        connection,
+        "SELECT m.content_id, a.position FROM attachments a JOIN messages m ON m.id = a.message_id
+          WHERE a.id = ?1 AND m.content_id IS NOT NULL",
+        [attachment.get()],
+        |row| Ok((row.col(0)?, row.col(1)?)),
+    )
+    .await?)
+}
+
+/// An attachment's text as extracted, in order, each unit with where it
+/// was: what a passage is cut from.
+pub async fn attachment_text(
+    connection: &Connection,
+    attachment: postio_model::AttachmentId,
+) -> Result<Vec<(postio_search::results::Location, String)>> {
+    let Some((content_id, position)) = part_of(connection, attachment).await? else {
+        return Ok(Vec::new());
+    };
+    // Bounded by `Limits::max_units` at the writer.
+    let rows: Vec<(String, String)> = sql::all_unbounded(
+        connection,
+        "SELECT location, text FROM attachment_passages
+          WHERE content_id = ?1 AND position = ?2 ORDER BY ordinal",
+        (content_id, position),
+        |row| Ok((row.col(0)?, row.col(1)?)),
+    )
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(location, text)| decode_location(&location).map(|location| (location, text)))
+        .collect())
+}
+
+/// How an attachment's extraction went, if it has been tried.
+pub async fn extraction_of(
+    connection: &Connection,
+    attachment: postio_model::AttachmentId,
+) -> Result<Option<Extraction>> {
+    let Some((content_id, position)) = part_of(connection, attachment).await? else {
+        return Ok(None);
+    };
+    Ok(sql::first(
+        connection,
+        "SELECT version, outcome, units FROM attachment_extraction
+          WHERE content_id = ?1 AND position = ?2",
+        (content_id, position),
+        |row| {
+            Ok(Extraction {
+                version: u32::try_from(row.col::<i64>(0)?).unwrap_or(0),
+                outcome: row.col(1)?,
+                units: u32::try_from(row.col::<i64>(2)?).unwrap_or(0),
+            })
+        },
+    )
+    .await?)
+}
+
+/// Removes `account_id`'s attachment text and records, so every downloaded
+/// attachment of the account is extracted again. Answers how many records
+/// went.
+pub async fn clear_account_attachment_index(
+    connection: &Connection,
+    account_id: i64,
+) -> Result<usize> {
+    connection
+        .execute(
+            "DELETE FROM attachment_passages
+              WHERE content_id IN (SELECT id FROM message_contents WHERE account_id = ?1)",
+            [account_id],
+        )
+        .await?;
+    Ok(connection
+        .execute(
+            "DELETE FROM attachment_extraction
+              WHERE content_id IN (SELECT id FROM message_contents WHERE account_id = ?1)",
+            [account_id],
+        )
+        .await? as usize)
+}
+
+/// A [`Location`](postio_search::results::Location) as its column holds
+/// it: `page:2`, `sheet:Summary:14`, `slide:3`, `paragraph:7`, `line:1`,
+/// `table:1:4`, `image`. A sheet's name may hold a colon, so its row is
+/// read from the right.
+pub fn encode_location(location: &postio_search::results::Location) -> String {
+    use postio_search::results::Location;
+    match location {
+        Location::Page(n) => format!("page:{n}"),
+        Location::Sheet { name, row } => format!("sheet:{name}:{row}"),
+        Location::Slide(n) => format!("slide:{n}"),
+        Location::Paragraph(n) => format!("paragraph:{n}"),
+        Location::Line(n) => format!("line:{n}"),
+        Location::Table { index, row } => format!("table:{index}:{row}"),
+        Location::ImageText => "image".to_owned(),
+    }
+}
+
+/// [`encode_location`]'s inverse; `None` for anything it did not write.
+pub fn decode_location(encoded: &str) -> Option<postio_search::results::Location> {
+    use postio_search::results::Location;
+    if encoded == "image" {
+        return Some(Location::ImageText);
+    }
+    let (kind, rest) = encoded.split_once(':')?;
+    match kind {
+        "page" => rest.parse().ok().map(Location::Page),
+        "slide" => rest.parse().ok().map(Location::Slide),
+        "paragraph" => rest.parse().ok().map(Location::Paragraph),
+        "line" => rest.parse().ok().map(Location::Line),
+        "sheet" => {
+            let (name, row) = rest.rsplit_once(':')?;
+            Some(Location::Sheet {
+                name: name.to_owned(),
+                row: row.parse().ok()?,
+            })
+        }
+        "table" => {
+            let (index, row) = rest.split_once(':')?;
+            Some(Location::Table {
+                index: index.parse().ok()?,
+                row: row.parse().ok()?,
+            })
+        }
+        _ => None,
+    }
+}
 
 #[cfg(test)]
 mod tests {

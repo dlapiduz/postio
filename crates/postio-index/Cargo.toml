@@ -15,6 +15,10 @@ chrono = { workspace = true, features = ["std"] }
 # rule about the column, and a rule enforced by the crate that holds it
 # cannot be forgotten by the next caller the way a doc comment can (#327).
 postio-body = { workspace = true }
+# `Extracted` and `EXTRACTOR_VERSION`: the attachments half stores what
+# the extractor produced and re-extracts when its version moves. A pure
+# leaf; the index never runs it, the indexer in postio-session does.
+postio-extract = { workspace = true }
 postio-model = { workspace = true }
 postio-search = { workspace = true }
 postio-storage = { workspace = true }

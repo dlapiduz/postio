@@ -17,6 +17,7 @@
 //! it will change what its neighbours see.
 
 mod account_scope;
+mod attachment_text;
 mod backfill;
 mod body_index;
 mod body_index_size;
