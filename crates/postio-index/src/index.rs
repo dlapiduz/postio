@@ -1181,7 +1181,7 @@ pub struct MissingAttachment {
 /// The queue's question, before its order, limit or message filter: an
 /// attachment of a message, its bytes on this machine, and no row from the
 /// current extractor for its content and position.
-const MISSING: &str =
+pub(crate) const MISSING: &str =
     "SELECT a.id, a.message_id, a.blob_id, a.mime_type, a.filename, m.content_id, a.position
   FROM attachments a JOIN messages m ON m.id = a.message_id
  WHERE a.blob_id IS NOT NULL AND m.content_id IS NOT NULL
@@ -1379,6 +1379,77 @@ pub async fn attachment_text(
         .into_iter()
         .filter_map(|(location, text)| decode_location(&location).map(|location| (location, text)))
         .collect())
+}
+
+/// The text of each unit `wanted` names -- an attachment and where in it
+/// -- in one read: what a page's file passages are cut from. A unit that
+/// is not there (the message went, the extractor changed) is left out.
+pub async fn attachment_units(
+    connection: &Connection,
+    wanted: &[(postio_model::AttachmentId, postio_search::results::Location)],
+) -> Result<
+    Vec<(
+        postio_model::AttachmentId,
+        postio_search::results::Location,
+        String,
+    )>,
+> {
+    if wanted.is_empty() {
+        return Ok(Vec::new());
+    }
+    // `[[id, "sheet:Summary:14"], …]`: JSON, so a sheet's name is quoted
+    // whatever it holds.
+    let pairs = format!(
+        "[{}]",
+        wanted
+            .iter()
+            .map(|(attachment, location)| format!(
+                "[{},{}]",
+                attachment.get(),
+                json_string(&encode_location(location))
+            ))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let rows: Vec<(i64, String, String)> = sql::all_unbounded(
+        connection,
+        "SELECT a.id, p.location, p.text
+           FROM json_each(?1) j
+           JOIN attachments a ON a.id = json_extract(j.value, '$[0]')
+           JOIN messages m ON m.id = a.message_id
+           JOIN attachment_passages p
+             ON p.content_id = m.content_id AND p.position = a.position
+            AND p.location = json_extract(j.value, '$[1]')",
+        [pairs],
+        |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?)),
+    )
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(attachment, location, text)| {
+            Some((
+                postio_model::AttachmentId::new(attachment),
+                decode_location(&location)?,
+                text,
+            ))
+        })
+        .collect())
+}
+
+/// `text` as a JSON string, quotes and all.
+fn json_string(text: &str) -> String {
+    let mut quoted = String::with_capacity(text.len() + 2);
+    quoted.push('"');
+    for character in text.chars() {
+        match character {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            c if u32::from(c) < 0x20 => quoted.push_str(&format!("\\u{:04x}", u32::from(c))),
+            c => quoted.push(c),
+        }
+    }
+    quoted.push('"');
+    quoted
 }
 
 /// A [`Location`](postio_search::results::Location) as its column holds

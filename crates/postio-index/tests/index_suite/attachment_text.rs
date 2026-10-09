@@ -502,3 +502,51 @@ fn a_location_survives_its_column() {
     assert_eq!(index::encode_location(&Location::Page(2)), "page:2");
     assert_eq!(index::decode_location("nonsense"), None);
 }
+
+#[tokio::test]
+async fn named_units_are_read_back_by_where_they_are_whatever_a_sheet_is_called() {
+    let (_store, connection, account, inbox) = world().await;
+    let (_, ids) = message_with(
+        &connection,
+        account,
+        inbox,
+        None,
+        &[(
+            "budget.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            true,
+        )],
+    )
+    .await;
+    let odd = Location::Sheet {
+        name: "Q3 \"final\" \\ v2".into(),
+        row: 2,
+    };
+    let extracted = Extracted {
+        units: vec![
+            sheet(1, "Atlas budget template"),
+            Unit {
+                location: odd.clone(),
+                text: "Kestrel survey".into(),
+            },
+        ],
+        outcome: Outcome::Complete,
+    };
+    index::index_attachment_text(&connection, ids[0], &extracted)
+        .await
+        .expect("indexed");
+    assert_eq!(
+        index::attachment_units(&connection, &[(ids[0], odd.clone())])
+            .await
+            .expect("read"),
+        vec![(ids[0], odd, "Kestrel survey".to_owned())],
+        "one read, by attachment and location; the sheet's name quoted whatever it holds"
+    );
+    assert!(
+        index::attachment_units(&connection, &[(ids[0], Location::Page(9))])
+            .await
+            .expect("read")
+            .is_empty(),
+        "a unit that is not there is left out"
+    );
+}

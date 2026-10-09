@@ -67,8 +67,8 @@ use postio_storage::repository::from_millis;
 use postio_storage::sql::{self, RowExt as _};
 
 use super::{
-    AGED_FROM, BODY_SCORE_WEIGHT, Candidate, Form, MILLIS_PER_YEAR, POOL_AGE_WEIGHT_PER_YEAR, Plan,
-    SearchRequest, names_a_folder, relevance_keys, scope_role,
+    AGED_FROM, BODY_SCORE_WEIGHT, Candidate, Form, HITS_JOIN_WITH_FILES, MILLIS_PER_YEAR,
+    POOL_AGE_WEIGHT_PER_YEAR, Plan, SearchRequest, names_a_folder, relevance_keys, scope_role,
 };
 use crate::error::Result;
 
@@ -152,13 +152,27 @@ pub async fn search_conversations(
     let order = order.rank(&fold, &conversations, &rows, request.query, now);
     let page: Vec<usize> = order[offset..end].to_vec();
 
+    // Where in which attachment, for the shown rows an attachment's text
+    // matched: one statement, and none when no row did.
+    let in_files: Vec<MessageId> = page
+        .iter()
+        .map(|at| &fold.found[conversations[*at].best])
+        .filter(|found| found.in_file)
+        .map(|found| MessageId::new(found.id))
+        .collect();
+    let files = if in_files.is_empty() {
+        Vec::new()
+    } else {
+        super::file_matches(connection, request.query, &in_files).await?
+    };
+
     let terms = Terms::of(request.query);
     let hits: Vec<ConversationHit> = page
         .iter()
-        .map(|at| hit(&fold, &conversations[*at], &rows, &terms, now))
+        .map(|at| hit(&fold, &conversations[*at], &rows, &files, &terms, now))
         .collect();
 
-    let (messages_searched, corpus_complete) = searched(connection, request).await?;
+    let searched = searched(connection, request).await?;
     let elapsed = start.elapsed();
     // Shape and cost, never the query: see `search_as`.
     tracing::debug!(
@@ -175,12 +189,9 @@ pub async fn search_conversations(
         hits,
         total: conversations.len() as u64,
         capped: fold.capped(),
-        messages_searched,
-        corpus_complete,
-        // Nothing reads attachment contents yet (step 9): no file's text
-        // was searched, so the search must not say it was (US6 scenario
-        // 2). Step 9 makes this "every downloaded attachment is read".
-        contents_complete: false,
+        messages_searched: searched.messages,
+        corpus_complete: searched.bodies,
+        contents_complete: searched.contents,
         facets: facets(&conversations, request.today, fold.capped()),
         files: conversations
             .iter()
@@ -217,9 +228,21 @@ struct Found {
     text: f64,
     /// Whether the body index matched it.
     in_body: bool,
+    /// Whether an attachment's text matched it.
+    in_file: bool,
     senders: Vec<i64>,
     recipients: Vec<i64>,
     labels: Vec<i64>,
+}
+
+/// One message's text scores, from whichever indexes matched it.
+#[derive(Debug, Clone, Copy, Default)]
+struct Scores {
+    /// Metadata, plus [`BODY_SCORE_WEIGHT`] of the body's and the files':
+    /// negative is better, as `bm25` was.
+    text: f64,
+    in_body: bool,
+    in_file: bool,
 }
 
 /// The match, read once.
@@ -283,15 +306,26 @@ impl Fold {
             // Both indexes are keyed by content: each match is joined to
             // every message carrying it, and the fold keeps one.
             arms.push(format!(
-                "SELECT -2, m.id, h.meta, NULL
+                "SELECT -2, m.id, h.meta, NULL, NULL
                    FROM (SELECT content_id, fts_score({META}, ?1) AS meta
                            FROM search_documents WHERE fts_match({META}, ?1)) h
                    CROSS JOIN messages m ON m.content_id = h.content_id"
             ));
             arms.push(
-                "SELECT -1, m.id, NULL, h.body
+                "SELECT -1, m.id, NULL, h.body, NULL
                    FROM (SELECT content_id, fts_score(body_search, ?2) AS body
                            FROM message_search_bodies WHERE fts_match(body_search, ?2)) h
+                   CROSS JOIN messages m ON m.content_id = h.content_id"
+                    .to_owned(),
+            );
+            // What attachments say, one row per content however many of
+            // its units match ([`HITS_JOIN_WITH_FILES`]).
+            arms.push(
+                "SELECT -3, m.id, NULL, NULL, h.file
+                   FROM (SELECT content_id, max(unit_score) AS file
+                           FROM (SELECT content_id, fts_score(text_search, ?2) AS unit_score
+                                   FROM attachment_passages WHERE fts_match(text_search, ?2))
+                          GROUP BY content_id) h
                    CROSS JOIN messages m ON m.content_id = h.content_id"
                     .to_owned(),
             );
@@ -299,13 +333,13 @@ impl Fold {
         }
         for (key, set) in plan.sets.iter().enumerate() {
             arms.push(format!(
-                "SELECT {key}, x.message_id, NULL, NULL FROM ({}) x",
+                "SELECT {key}, x.message_id, NULL, NULL, NULL FROM ({}) x",
                 set.sql
             ));
             params.extend(set.params.iter().cloned());
         }
 
-        let mut scores: HashMap<i64, (f64, bool)> = HashMap::new();
+        let mut scores: HashMap<i64, Scores> = HashMap::new();
         let mut sets: Vec<std::collections::HashSet<i64>> =
             vec![Default::default(); plan.sets.len()];
         sql::each(connection, &arms.join(" UNION ALL "), params, |row| {
@@ -320,9 +354,12 @@ impl Fold {
                 Err(_) => {
                     let meta: Option<f64> = row.col(2)?;
                     let body: Option<f64> = row.col(3)?;
-                    let entry = scores.entry(id).or_insert((0.0, false));
-                    entry.0 -= meta.unwrap_or(0.0) + BODY_SCORE_WEIGHT * body.unwrap_or(0.0);
-                    entry.1 |= body.is_some();
+                    let file: Option<f64> = row.col(4)?;
+                    let entry = scores.entry(id).or_default();
+                    entry.text -= meta.unwrap_or(0.0)
+                        + BODY_SCORE_WEIGHT * (body.unwrap_or(0.0) + file.unwrap_or(0.0));
+                    entry.in_body |= body.is_some();
+                    entry.in_file |= file.is_some();
                 }
             }
             Ok(true)
@@ -400,29 +437,29 @@ impl Fold {
     /// One row of the projection; answers whether to read on. `scores` are
     /// the message's text score and whether its body matched, when they
     /// were read apart from the row ([`Fold::walk_sets`]).
-    fn take(
-        &mut self,
-        row: &turso::Row,
-        scores: Option<(f64, bool)>,
-    ) -> postio_storage::Result<bool> {
+    fn take(&mut self, row: &turso::Row, scores: Option<Scores>) -> postio_storage::Result<bool> {
         let id: i64 = row.col(0)?;
-        let (text, in_body) = match scores {
+        let scores = match scores {
             Some(scores) => scores,
             None => {
                 let meta: Option<f64> = row.col(9)?;
                 let body: Option<f64> = row.col(10)?;
-                (
-                    meta.unwrap_or(0.0) + BODY_SCORE_WEIGHT * body.unwrap_or(0.0),
-                    body.is_some(),
-                )
+                let file: Option<f64> = row.col(16)?;
+                Scores {
+                    text: meta.unwrap_or(0.0)
+                        + BODY_SCORE_WEIGHT * (body.unwrap_or(0.0) + file.unwrap_or(0.0)),
+                    in_body: body.is_some(),
+                    in_file: file.is_some(),
+                }
             }
         };
         if let Some(at) = self.at.get(&id) {
-            // The same message from the other index: the two halves add, as
+            // The same message from another index: the halves add, as
             // `fetch_candidates` adds them.
             let found = &mut self.found[*at];
-            found.text += text;
-            found.in_body |= in_body;
+            found.text += scores.text;
+            found.in_body |= scores.in_body;
+            found.in_file |= scores.in_file;
             return Ok(true);
         }
         if self.passed.contains(&id) {
@@ -440,7 +477,12 @@ impl Fold {
                 self.passed.insert(id);
                 return Ok(true);
             }
-            self.found[at] = Self::found(row, id, self.found[at].text, self.found[at].in_body)?;
+            let held_scores = Scores {
+                text: self.found[at].text,
+                in_body: self.found[at].in_body,
+                in_file: self.found[at].in_file,
+            };
+            self.found[at] = Self::found(row, id, held_scores)?;
             self.at.remove(&held);
             self.at.insert(id, at);
             self.passed.insert(held);
@@ -457,13 +499,13 @@ impl Fold {
             self.contents.insert(content, self.found.len());
         }
         self.at.insert(id, self.found.len());
-        let found = Self::found(row, id, text, in_body)?;
+        let found = Self::found(row, id, scores)?;
         self.found.push(found);
         Ok(true)
     }
 
-    /// One projection row as a match, scored `text`.
-    fn found(row: &turso::Row, id: i64, text: f64, in_body: bool) -> postio_storage::Result<Found> {
+    /// One projection row as a match, scored as `scores` say.
+    fn found(row: &turso::Row, id: i64, scores: Scores) -> postio_storage::Result<Found> {
         let thread: Option<i64> = row.col(1)?;
         let (senders, recipients) = people(row.col::<Option<String>>(11)?.as_deref());
         Ok(Found {
@@ -479,8 +521,9 @@ impl Fold {
             flagged: row.col(6)?,
             answered: row.col(7)?,
             attachment: row.col(8)?,
-            in_body,
-            text,
+            in_body: scores.in_body,
+            in_file: scores.in_file,
+            text: scores.text,
             senders,
             recipients,
             labels: ids(row.col::<Option<String>>(12)?.as_deref()),
@@ -536,21 +579,22 @@ impl Fold {
 fn projection_sql(plan: &Plan, walk: Walk) -> String {
     let (scores, from, where_sql) = match walk {
         Walk::Matched => (
-            "-hits.meta, -hits.body",
-            plan.source_sql(Form::Driven).to_owned(),
+            ["-hits.meta, -hits.body", "-hits.file"],
+            HITS_JOIN_WITH_FILES.to_owned(),
             plan.where_sql(Form::Driven),
         ),
         Walk::Messages => (
-            "NULL, NULL",
+            ["NULL, NULL", "NULL"],
             "FROM messages m".to_owned(),
             plan.conditions.join(" AND "),
         ),
         Walk::Keyed => (
-            "NULL, NULL",
+            ["NULL, NULL", "NULL"],
             "FROM json_each(?) j CROSS JOIN messages m ON m.id = j.value".to_owned(),
             plan.conditions.join(" AND "),
         ),
     };
+    let [scores, file] = scores;
     format!(
         "SELECT m.id, m.thread_id, m.mailbox_id, m.received_at, {AGED_FROM},
                 m.seen, m.flagged, m.answered, m.has_attachments, {scores},
@@ -565,7 +609,7 @@ fn projection_sql(plan: &Plan, walk: Walk) -> String {
                 CASE WHEN m.has_attachments = 1
                      THEN (SELECT count(*) FROM attachments f WHERE f.message_id = m.id)
                      ELSE 0 END,
-                m.content_id
+                m.content_id, {file}
            {from}
           WHERE {where_sql}
           LIMIT ?",
@@ -575,7 +619,8 @@ fn projection_sql(plan: &Plan, walk: Walk) -> String {
 /// What the projection walks.
 #[derive(Debug, Clone, Copy)]
 enum Walk {
-    /// The free-text match, joined to `messages` ([`super::HITS_JOIN`]).
+    /// The free-text match, joined to `messages`
+    /// ([`super::HITS_JOIN_WITH_FILES`]).
     Matched,
     /// `messages` under the plan's conditions.
     Messages,
@@ -1051,6 +1096,7 @@ fn hit(
     fold: &Fold,
     conversation: &Conversation,
     rows: &HashMap<i64, Hydrated>,
+    files: &[super::FileMatch],
     terms: &Terms,
     now: DateTime<Utc>,
 ) -> ConversationHit {
@@ -1096,6 +1142,23 @@ fn hit(
             when,
         });
     }
+    // What its attachments say: where in each, the first unit that
+    // matched. Its passage is cut with the others (`Req::Passages`).
+    let read: Vec<&super::FileMatch> = files
+        .iter()
+        .filter(|file| file.message.get() == best.id)
+        .collect();
+    for file in &read {
+        matches.push(Match {
+            source: Source::FileContent {
+                attachment: file.attachment,
+                name: file.name.clone(),
+                location: file.location.clone(),
+            },
+            passage: None,
+            when,
+        });
+    }
 
     let mut reasons = Vec::new();
     if conversation.answered {
@@ -1110,7 +1173,8 @@ fn hit(
     if in_subject {
         reasons.push(RankReason::InSubject);
     }
-    if !named.is_empty() {
+    // A file found it, by its name or by what it says (research R3).
+    if !named.is_empty() || !read.is_empty() {
         reasons.push(RankReason::InFileName);
     }
     reasons.push(RankReason::Matches(conversation.matches));
@@ -1143,16 +1207,34 @@ fn hit(
     }
 }
 
-/// How many messages the search looked through, and whether every one of
-/// them has its body: one read of the folders in its scope, the same scope
-/// the match uses, off the counts the schema keeps (`total_count`,
-/// `bodies_owed`; see [`corpus_complete`](super::corpus_complete)).
-async fn searched(
-    connection: &Connection,
-    request: &ConversationRequest<'_>,
-) -> Result<(u64, bool)> {
+/// What a search looked through.
+struct Searched {
+    /// Messages in its scope.
+    messages: u64,
+    /// Every one of them has its body.
+    bodies: bool,
+    /// Every attachment on this machine has had its text read.
+    contents: bool,
+}
+
+/// How many messages the search looked through, whether every one of them
+/// has its body, and whether every downloaded attachment has been read:
+/// one read of the folders in its scope, the same scope the match uses,
+/// off the counts the schema keeps (`total_count`, `bodies_owed`; see
+/// [`corpus_complete`](super::corpus_complete)), with the indexer's own
+/// question about attachments ([`crate::index::attachments_missing_text`])
+/// asked once beside it.
+///
+/// The attachments are every account's, as the indexer's queue is: the
+/// search cannot say it looked inside files while any file this machine
+/// holds is still unread.
+async fn searched(connection: &Connection, request: &ConversationRequest<'_>) -> Result<Searched> {
     let mut conditions = Vec::new();
-    let mut params: Vec<turso::Value> = Vec::new();
+    // The unread attachment's version first: its `?` comes first in the
+    // statement.
+    let mut params: Vec<turso::Value> = vec![turso::Value::Integer(i64::from(
+        postio_extract::EXTRACTOR_VERSION,
+    ))];
     match request.account.account() {
         Some(id) => {
             conditions.push("account_id = ?".to_owned());
@@ -1166,16 +1248,22 @@ async fn searched(
     if let Some(role) = scope_role(Scope::AllMail, names_a_folder(request.query)) {
         conditions.push(role.to_owned());
     }
-    let (total, owed): (i64, i64) = sql::one(
+    let (total, owed, unread): (i64, i64, bool) = sql::one(
         connection,
         &format!(
-            "SELECT coalesce(sum(total_count), 0), coalesce(max(bodies_owed > 0), 0)
+            "SELECT coalesce(sum(total_count), 0), coalesce(max(bodies_owed > 0), 0),
+                    EXISTS ({})
                FROM mailboxes WHERE {}",
+            crate::index::MISSING,
             conditions.join(" AND ")
         ),
         params,
-        |row| Ok((row.col(0)?, row.col(1)?)),
+        |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?)),
     )
     .await?;
-    Ok((total.max(0) as u64, owed == 0))
+    Ok(Searched {
+        messages: total.max(0) as u64,
+        bodies: owed == 0,
+        contents: !unread,
+    })
 }
