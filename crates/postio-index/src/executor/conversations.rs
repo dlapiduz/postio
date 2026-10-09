@@ -15,9 +15,22 @@
 //! labels, whether it has an open marker). [`Fold`] takes the rows as they
 //! stream and builds the conversations; the facets are counted from those.
 //!
+//! The walk stops as soon as it holds [`TOTAL_HITS_CAP`] messages, so a word
+//! in every message of a large store reads the cap's worth of rows and no
+//! more.
+//!
+//! A filter that is a *set* of messages -- `from:`, `to:`, `subject:`,
+//! `filename:`, `list:`, `group:`, `label:`, `has:action`, a negated word --
+//! is read once, as ids, in one statement with the words' own matches, and
+//! the walk is then keyed by the messages that survive ([`Fold::walk_sets`]).
+//! Left in SQL as `m.id IN (…)`, this engine tests it per row walked at a
+//! cost that grows with the set: `from:` alone took 440 ms on 20,000
+//! messages, and takes 6 as a set.
+//!
 //! Then one hydrate for the rows that will be ranked or shown, and one read
-//! of the folders for how much was searched. Three statements, whatever the
-//! match size; `index_suite::search_statement_budget` holds that.
+//! of the folders for how much was searched. Three statements, or four with
+//! a set, whatever the match size; `index_suite::search_statement_budget`
+//! holds that.
 //!
 //! # Ranking
 //!
@@ -110,8 +123,12 @@ pub async fn search_conversations(
     now: DateTime<Utc>,
 ) -> Result<ConversationResults> {
     let start = Instant::now();
-    let plan = Plan::build(&request.as_search());
-    let fold = Fold::walk(connection, &plan).await?;
+    let plan = Plan::build_sets(&request.as_search());
+    let fold = if plan.sets.is_empty() {
+        Fold::walk(connection, &plan).await?
+    } else {
+        Fold::walk_sets(connection, &plan).await?
+    };
     let conversations = fold.conversations();
 
     let order = order(&fold, &conversations, request.order, now);
@@ -210,40 +227,195 @@ struct Fold {
 }
 
 impl Fold {
-    /// Streams the projection into a fold: the one walk of the match.
+    /// Streams the projection into a fold: the one walk of the match,
+    /// stopped once it holds the cap's worth of messages.
+    ///
+    /// Driven by the free-text match when there is one, as `count` is, and
+    /// otherwise a walk of `messages` under the plan's conditions.
     async fn walk(connection: &Connection, plan: &Plan) -> Result<Self> {
         let mut fold = Fold::default();
         let mut params = plan.params_for(Form::Driven);
         // Rows, not messages: the union hands a message back once per index
-        // it matched in, so twice the cap is enough to see the cap's worth
-        // of distinct messages.
-        params.push(turso::Value::Integer(
-            i64::try_from(TOTAL_HITS_CAP.saturating_mul(2)).unwrap_or(i64::MAX),
-        ));
-        sql::all(connection, &projection_sql(plan), params, |row| {
-            fold.take(row)?;
-            Ok(())
+        // it matched in, so twice the cap bounds the walk however it falls.
+        params.push(turso::Value::Integer(cap() * 2));
+        let source = if plan.has_match {
+            Walk::Matched
+        } else {
+            Walk::Messages
+        };
+        sql::each(connection, &projection_sql(plan, source), params, |row| {
+            fold.take(row, None)
         })
         .await?;
         Ok(fold)
     }
 
-    /// One row of the projection.
-    fn take(&mut self, row: &turso::Row) -> postio_storage::Result<()> {
+    /// [`Fold::walk`] for a plan with sets ([`Plan::build_sets`]): the free
+    /// text and every set read first, in one statement, and intersected
+    /// here; then the projection keyed by the messages that survive.
+    ///
+    /// Two statements where [`Fold::walk`] is one, and far cheaper whenever
+    /// a set is in play: `budget from:ada` reads the word's matches and
+    /// Ada's messages as two lists of ids, and walks `messages` only for the
+    /// few in both. Tested in SQL, each of the word's matches would have
+    /// been compared against every one of Ada's (see [`super::IdSet`]).
+    async fn walk_sets(connection: &Connection, plan: &Plan) -> Result<Self> {
+        // The free text is read here only when a set must also hold: then
+        // the walk is keyed by the messages in both. With refusals alone,
+        // the walk is the match itself, and a refused message is skipped as
+        // it streams past.
+        let keeps = plan.sets.iter().any(|set| !set.negated);
+        let read_text = plan.has_match && keeps;
+        let mut arms: Vec<String> = Vec::new();
+        let mut params: Vec<turso::Value> = Vec::new();
+        if read_text {
+            // The match's own two arms, with their scores: `fts_score` bare
+            // and with the match's own parameter, as `HITS_JOIN` explains.
+            arms.push(format!(
+                "SELECT -2, message_id, fts_score({META}, ?1), NULL
+                   FROM search_documents WHERE fts_match({META}, ?1)"
+            ));
+            arms.push(
+                "SELECT -1, message_id, NULL, fts_score(body_search, ?2)
+                   FROM message_search_bodies WHERE fts_match(body_search, ?2)"
+                    .to_owned(),
+            );
+            params.extend(plan.match_params(Form::Driven));
+        }
+        for (key, set) in plan.sets.iter().enumerate() {
+            arms.push(format!(
+                "SELECT {key}, x.message_id, NULL, NULL FROM ({}) x",
+                set.sql
+            ));
+            params.extend(set.params.iter().cloned());
+        }
+
+        let mut scores: HashMap<i64, (f64, bool)> = HashMap::new();
+        let mut sets: Vec<std::collections::HashSet<i64>> =
+            vec![Default::default(); plan.sets.len()];
+        sql::each(connection, &arms.join(" UNION ALL "), params, |row| {
+            let key: i64 = row.col(0)?;
+            let id: i64 = row.col(1)?;
+            match usize::try_from(key) {
+                Ok(set) => {
+                    sets[set].insert(id);
+                }
+                // A free-text arm: the score negated here, outside the
+                // projection, as `fetch_candidates` negates it.
+                Err(_) => {
+                    let meta: Option<f64> = row.col(2)?;
+                    let body: Option<f64> = row.col(3)?;
+                    let entry = scores.entry(id).or_insert((0.0, false));
+                    entry.0 -= meta.unwrap_or(0.0) + BODY_SCORE_WEIGHT * body.unwrap_or(0.0);
+                    entry.1 |= body.is_some();
+                }
+            }
+            Ok(true)
+        })
+        .await?;
+
+        let (keep, refuse): (Vec<_>, Vec<_>) = plan
+            .sets
+            .iter()
+            .zip(sets)
+            .partition(|(set, _)| !set.negated);
+        let keep: Vec<std::collections::HashSet<i64>> =
+            keep.into_iter().map(|(_, ids)| ids).collect();
+        let refuse: std::collections::HashSet<i64> =
+            refuse.into_iter().flat_map(|(_, ids)| ids).collect();
+        let wanted = |id: &i64| keep.iter().all(|set| set.contains(id)) && !refuse.contains(id);
+        // The messages to walk: the free text's matches, else the smallest
+        // set that must hold; with neither, every message, less the refused.
+        let candidates: Option<Vec<i64>> = if read_text {
+            Some(scores.keys().copied().filter(wanted).collect())
+        } else {
+            keep.iter()
+                .min_by_key(|set| set.len())
+                .map(|smallest| smallest.iter().copied().filter(wanted).collect())
+        };
+
+        let mut fold = Fold::default();
+        match candidates {
+            Some(mut ids) => {
+                if ids.is_empty() {
+                    return Ok(fold);
+                }
+                ids.sort_unstable();
+                let mut params = vec![turso::Value::Text(format!(
+                    "[{}]",
+                    ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
+                ))];
+                params.extend(plan.params.iter().cloned());
+                params.push(turso::Value::Integer(cap()));
+                sql::each(
+                    connection,
+                    &projection_sql(plan, Walk::Keyed),
+                    params,
+                    |row| {
+                        let id: i64 = row.col(0)?;
+                        fold.take(row, scores.get(&id).copied())
+                    },
+                )
+                .await?;
+            }
+            None => {
+                let (walk, mut params) = if plan.has_match {
+                    (Walk::Matched, plan.params_for(Form::Driven))
+                } else {
+                    (Walk::Messages, plan.params.clone())
+                };
+                // Twice for the union's two halves, and room for every
+                // refused row on top: the cap counts what is kept.
+                params.push(turso::Value::Integer(
+                    (cap() + refuse.len() as i64).saturating_mul(2),
+                ));
+                sql::each(connection, &projection_sql(plan, walk), params, |row| {
+                    let id: i64 = row.col(0)?;
+                    if refuse.contains(&id) {
+                        return Ok(true);
+                    }
+                    fold.take(row, None)
+                })
+                .await?;
+            }
+        }
+        Ok(fold)
+    }
+
+    /// One row of the projection; answers whether to read on. `scores` are
+    /// the message's text score and whether its body matched, when they
+    /// were read apart from the row ([`Fold::walk_sets`]).
+    fn take(
+        &mut self,
+        row: &turso::Row,
+        scores: Option<(f64, bool)>,
+    ) -> postio_storage::Result<bool> {
         let id: i64 = row.col(0)?;
-        let meta: Option<f64> = row.col(9)?;
-        let body: Option<f64> = row.col(10)?;
-        let text = meta.unwrap_or(0.0) + BODY_SCORE_WEIGHT * body.unwrap_or(0.0);
+        let (text, in_body) = match scores {
+            Some(scores) => scores,
+            None => {
+                let meta: Option<f64> = row.col(9)?;
+                let body: Option<f64> = row.col(10)?;
+                (
+                    meta.unwrap_or(0.0) + BODY_SCORE_WEIGHT * body.unwrap_or(0.0),
+                    body.is_some(),
+                )
+            }
+        };
         if let Some(at) = self.at.get(&id) {
             // The same message from the other index: the two halves add, as
             // `fetch_candidates` adds them.
             let found = &mut self.found[*at];
             found.text += text;
-            found.in_body |= body.is_some();
-            return Ok(());
+            found.in_body |= in_body;
+            return Ok(true);
         }
-        if self.found.len() as u64 >= TOTAL_HITS_CAP {
-            return Ok(());
+        if self.capped() {
+            // The cap's worth of messages is in hand. A message met in the
+            // metadata half and not yet in the body half keeps the one score
+            // it has: past the cap, the counts are floors and the order is
+            // approximate, as `search`'s is.
+            return Ok(false);
         }
         let thread: Option<i64> = row.col(1)?;
         let (senders, recipients) = people(row.col::<Option<String>>(11)?.as_deref());
@@ -261,7 +433,7 @@ impl Fold {
             flagged: row.col(6)?,
             answered: row.col(7)?,
             attachment: row.col(8)?,
-            in_body: body.is_some(),
+            in_body,
             text,
             senders,
             recipients,
@@ -269,7 +441,7 @@ impl Fold {
             action: row.col(13)?,
             files: row.col::<i64>(14)?.max(0) as u64,
         });
-        Ok(())
+        Ok(true)
     }
 
     /// Whether the match reached the cap: every count is then a floor.
@@ -316,11 +488,23 @@ impl Fold {
 ///
 /// The scores are projected bare and negated outside, for the reason
 /// [`HITS_JOIN`](super::HITS_JOIN) gives.
-fn projection_sql(plan: &Plan) -> String {
-    let scores = if plan.has_match {
-        "-hits.meta, -hits.body"
-    } else {
-        "NULL, NULL"
+fn projection_sql(plan: &Plan, walk: Walk) -> String {
+    let (scores, from, where_sql) = match walk {
+        Walk::Matched => (
+            "-hits.meta, -hits.body",
+            plan.source_sql(Form::Driven).to_owned(),
+            plan.where_sql(Form::Driven),
+        ),
+        Walk::Messages => (
+            "NULL, NULL",
+            "FROM messages m".to_owned(),
+            plan.conditions.join(" AND "),
+        ),
+        Walk::Keyed => (
+            "NULL, NULL",
+            "FROM json_each(?) j CROSS JOIN messages m ON m.id = j.value".to_owned(),
+            plan.conditions.join(" AND "),
+        ),
     };
     format!(
         "SELECT m.id, m.thread_id, m.mailbox_id, m.received_at, {AGED_FROM},
@@ -339,9 +523,26 @@ fn projection_sql(plan: &Plan) -> String {
            {from}
           WHERE {where_sql}
           LIMIT ?",
-        from = plan.source_sql(Form::Driven),
-        where_sql = plan.where_sql(Form::Driven),
     )
+}
+
+/// What the projection walks.
+#[derive(Debug, Clone, Copy)]
+enum Walk {
+    /// The free-text match, joined to `messages` ([`super::HITS_JOIN`]).
+    Matched,
+    /// `messages` under the plan's conditions.
+    Messages,
+    /// The messages a JSON array of ids names, each by its key.
+    Keyed,
+}
+
+/// The metadata index's five columns, as every `fts_match` on it names them.
+const META: &str = "sender, recipients, subject, filenames, list_id";
+
+/// [`TOTAL_HITS_CAP`], as SQL binds it.
+fn cap() -> i64 {
+    i64::try_from(TOTAL_HITS_CAP).unwrap_or(i64::MAX)
 }
 
 /// A `group_concat` of integers, read back.

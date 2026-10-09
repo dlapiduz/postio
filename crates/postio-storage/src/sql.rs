@@ -496,6 +496,36 @@ where
     Ok(mapped)
 }
 
+/// Every row, handed to `visit` as it is read, until `visit` answers `false`;
+/// answers how many rows it visited.
+///
+/// For a fold over a match too large to collect first and pointless to read
+/// past a cap: nothing is kept but what `visit` keeps, and the read stops
+/// when it has enough. Stopping drops the rows, so the connection is free
+/// for the next statement as it is after [`all`]. Counted like the rest of
+/// the seam, rows visited being the rows.
+pub async fn each<F>(
+    connection: &Connection,
+    sql: &str,
+    params: impl IntoParams,
+    mut visit: F,
+) -> Result<usize>
+where
+    F: FnMut(&Row) -> Result<bool>,
+{
+    let mut rows = statement(connection, sql).await?.query(params).await?;
+    let mut visited = 0;
+    while let Some(row) = rows.next().await? {
+        visited += 1;
+        if !visit(&row)? {
+            break;
+        }
+    }
+    drop(rows);
+    count(visited);
+    Ok(visited)
+}
+
 /// The first row, mapped, or `None` if there were none.
 ///
 /// A missing row is not an error — the repositories' `get` convention — so

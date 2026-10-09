@@ -58,6 +58,7 @@ mod seed_is_honest;
 mod seed_shapes;
 mod snoozed_due_index;
 mod sort_at;
+mod sql_each;
 mod statement_cache;
 mod store_key;
 mod sync_state;

@@ -554,3 +554,75 @@ async fn it_says_how_many_messages_it_looked_through() {
     );
     assert!(results.corpus_complete);
 }
+
+#[tokio::test]
+async fn a_filter_narrows_the_hits_without_losing_their_order() {
+    let (_database, connection, account, inbox) = store().await;
+    let about = file(
+        &connection,
+        &account,
+        inbox,
+        Mail {
+            subject: "Budget review",
+            body: "The budget, line by line: the budget for travel, the budget for tools.",
+            ago: Duration::hours(3),
+            ..Mail::default()
+        },
+    )
+    .await;
+    let passing = file(
+        &connection,
+        &account,
+        inbox,
+        Mail {
+            subject: "Weekly notes",
+            body: "Several things happened this week, among them a remark about the \
+                   budget, a long discussion of the offsite, the menu for Friday, the \
+                   parking situation, and who is bringing the projector next time.",
+            ago: Duration::hours(2),
+            ..Mail::default()
+        },
+    )
+    .await;
+    let elsewhere = file(
+        &connection,
+        &account,
+        inbox,
+        Mail {
+            from: "grace",
+            subject: "Budget",
+            body: "Grace's budget",
+            ago: Duration::hours(1),
+            ..Mail::default()
+        },
+    )
+    .await;
+    let ada = [
+        ConversationKey::Lone(about.id),
+        ConversationKey::Lone(passing.id),
+    ];
+
+    for query in [
+        "budget from:ada",
+        "budget -from:grace",
+        "from:ada budget",
+        "budget -grace",
+    ] {
+        let best = conversations(&connection, query, ConversationOrder::BestMatch, 0, 10).await;
+        assert_eq!(keys(&best), ada, "{query:?}, best match first");
+        assert_eq!(best.total, 2, "{query:?}");
+        let newest = conversations(&connection, query, ConversationOrder::Newest, 0, 10).await;
+        assert_eq!(keys(&newest), [ada[1], ada[0]], "{query:?}, newest first");
+    }
+    let only = conversations(
+        &connection,
+        "from:grace",
+        ConversationOrder::BestMatch,
+        0,
+        10,
+    )
+    .await;
+    assert_eq!(keys(&only), [ConversationKey::Lone(elsewhere.id)]);
+    let not = conversations(&connection, "-from:ada", ConversationOrder::Newest, 0, 10).await;
+    assert_eq!(keys(&not), [ConversationKey::Lone(elsewhere.id)]);
+}
