@@ -626,3 +626,63 @@ async fn a_filter_narrows_the_hits_without_losing_their_order() {
     let not = conversations(&connection, "-from:ada", ConversationOrder::Newest, 0, 10).await;
     assert_eq!(keys(&not), [ConversationKey::Lone(elsewhere.id)]);
 }
+
+/// A message filed in two folders is one content (#1780): the index holds it
+/// once, and a conversation search counts it once, as `search` does, on
+/// every walk -- the free text, a set, a refusal, the folder alone -- and
+/// so does the count a way out of no results offers.
+#[tokio::test]
+async fn a_message_filed_twice_is_one_match() {
+    let (_database, connection, account, inbox) = store().await;
+    let mut archive = postio_model::Mailbox::new(account.id, "Archive", Some('/'));
+    archive.role = postio_model::MailboxRole::Archive;
+    postio_storage::repository::MailboxRepository::new(&connection)
+        .create(&mut archive)
+        .await
+        .expect("an archive");
+    let messages = MessageRepository::new(&connection);
+    let mut first = Message::new(account.id, inbox, now() - Duration::hours(2));
+    first.from = vec![EmailAddress::new(Some("ada"), "ada@example.com".to_owned())];
+    first.subject = Some("Nebula survey".to_owned());
+    first.server.content_identity = Some(postio_model::ContentIdentity::new("jmap-email", "e-1"));
+    messages.create(&mut first).await.expect("the inbox copy");
+    let mut second = first.clone();
+    second.mailbox_id = archive.id;
+    messages
+        .create(&mut second)
+        .await
+        .expect("the archive copy");
+    postio_index::index::index_body(&connection, first.id.get(), Some("the nebula, mapped"))
+        .await
+        .expect("its body");
+
+    for query in [
+        "nebula",
+        "nebula from:ada",
+        "from:ada",
+        "nebula -from:grace",
+        "-from:grace",
+        "is:unread",
+    ] {
+        let results = conversations(&connection, query, ConversationOrder::BestMatch, 0, 10).await;
+        assert_eq!(results.total, 1, "{query:?}: {:#?}", results.hits);
+        assert_eq!(
+            keys(&results),
+            [ConversationKey::Lone(first.id)],
+            "{query:?}"
+        );
+        assert_eq!(results.hits[0].messages, 1, "{query:?}");
+        let counts = postio_index::executor::relaxation_counts(
+            &connection,
+            AccountScope::Unified,
+            &[postio_search::relax::Relaxation {
+                loosen: postio_search::relax::Loosen::Drop { token: 0 },
+                query: query.to_owned(),
+            }],
+            today(),
+        )
+        .await
+        .expect("its count");
+        assert_eq!(counts, [1], "{query:?}, counted");
+    }
+}

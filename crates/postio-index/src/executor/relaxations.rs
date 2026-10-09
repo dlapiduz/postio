@@ -7,7 +7,7 @@
 //! the sets a conversation search reads apart ([`super::IdSet`]) read apart
 //! here too, in the same statement as the walk they narrow.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use chrono::NaiveDate;
 use postio_model::AccountScope;
@@ -85,7 +85,8 @@ async fn count(
     // Rows, not messages: the union's two halves, so twice the cap.
     params.push(turso::Value::Integer(cap.saturating_mul(2)));
     let mut arms = vec![format!(
-        "SELECT * FROM (SELECT -1 AS k, m.id AS id, coalesce(m.thread_id, -m.id) AS conv
+        "SELECT * FROM (SELECT -1 AS k, m.id AS id, coalesce(m.thread_id, -m.id) AS conv,
+                                 m.content_id AS content
                           {walk} LIMIT ?)"
     )];
     for (key, set) in plan.sets.iter().enumerate() {
@@ -93,13 +94,13 @@ async fn count(
             continue;
         }
         arms.push(format!(
-            "SELECT {key}, x.message_id, NULL FROM ({}) x",
+            "SELECT {key}, x.message_id, NULL, NULL FROM ({}) x",
             set.sql
         ));
         params.extend(set.params.iter().cloned());
     }
 
-    let mut walked: Vec<(i64, i64)> = Vec::new();
+    let mut walked: Vec<(i64, i64, Option<i64>)> = Vec::new();
     let mut sets: Vec<HashSet<i64>> = vec![HashSet::new(); plan.sets.len()];
     sql::each(connection, &arms.join(" UNION ALL "), params, |row| {
         let key: i64 = row.col(0)?;
@@ -108,7 +109,7 @@ async fn count(
             Ok(set) => {
                 sets[set].insert(id);
             }
-            Err(_) => walked.push((id, row.col(2)?)),
+            Err(_) => walked.push((id, row.col(2)?, row.col(3)?)),
         }
         Ok(true)
     })
@@ -121,15 +122,37 @@ async fn count(
             .enumerate()
             .all(|(key, (set, ids))| Some(key) == driver || ids.contains(&id) != set.negated)
     };
-    let mut seen: HashSet<i64> = HashSet::new();
-    let mut conversations: HashSet<i64> = HashSet::new();
-    for (id, conversation) in walked {
-        if seen.len() as u64 >= TOTAL_HITS_CAP {
+    // One match per content, as `search_conversations` folds it: a message
+    // filed in two folders (#1780) is counted once, in the conversation of
+    // its earliest occurrence that holds.
+    let mut kept: HashMap<Held, (i64, i64)> = HashMap::new();
+    for (id, conversation, content) in walked {
+        if !holds(id) {
+            continue;
+        }
+        let key = content.map_or(Held::Message(id), Held::Content);
+        if let Some(earliest) = kept.get_mut(&key) {
+            if id < earliest.0 {
+                *earliest = (id, conversation);
+            }
+            continue;
+        }
+        if kept.len() as u64 >= TOTAL_HITS_CAP {
             break;
         }
-        if holds(id) && seen.insert(id) {
-            conversations.insert(conversation);
-        }
+        kept.insert(key, (id, conversation));
     }
+    let conversations: HashSet<i64> = kept
+        .values()
+        .map(|(_, conversation)| *conversation)
+        .collect();
     Ok(conversations.len() as u64)
+}
+
+/// What one counted match is: its content, or the message itself when it has
+/// none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Held {
+    Content(i64),
+    Message(i64),
 }
