@@ -197,29 +197,19 @@ struct Word {
     verbatim: bool,
 }
 
-/// Splits `text` at whitespace, keeping a quoted phrase in one word.
+/// Splits `text` into words as the parser does: at whitespace, keeping a
+/// quoted phrase and a set of values (`from:{ada tomas}`, D26) in one word.
 fn words(text: &str) -> Vec<Word> {
     let mut out = Vec::new();
-    let mut current = String::new();
-    let mut start = 0;
-    let mut quoted = false;
-    for (offset, c) in text.char_indices() {
-        if c == '"' {
-            quoted = !quoted;
-        }
-        if c.is_whitespace() && !quoted {
-            if !current.is_empty() {
-                out.push(word(std::mem::take(&mut current), start));
-            }
-        } else {
-            if current.is_empty() {
-                start = offset;
-            }
-            current.push(c);
-        }
-    }
-    if !current.is_empty() {
-        out.push(word(current, start));
+    let mut cursor = 0;
+    while let Some(start) = text[cursor..]
+        .char_indices()
+        .find(|(_, c)| !c.is_whitespace())
+        .map(|(offset, _)| cursor + offset)
+    {
+        let end = crate::parser::word_end(text, start);
+        out.push(word(text[start..end].to_owned(), start));
+        cursor = end;
     }
     out
 }
@@ -804,6 +794,15 @@ mod tests {
         ),
         // Punctuation is not part of a word.
         ("invoice, from Ada?", "invoice from:ada"),
+        // A set typed in the language is one word, spaces and all (D26).
+        (
+            "from:{ada@example.com tomas@example.com} budget last month",
+            "from:{ada@example.com tomas@example.com} budget after:2026-08-01 before:2026-09-01",
+        ),
+        (
+            r#"-label:{atlas "Q3 close"} invoices"#,
+            r#"-label:{atlas "Q3 close"} invoices"#,
+        ),
     ];
 
     #[test]
