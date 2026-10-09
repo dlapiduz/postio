@@ -861,7 +861,7 @@ pub fn o_is_a_letter_and_the_order_row_switches_the_results() {
             )
             .await;
         fixture
-            .write_body(dense, "report report report report report")
+            .write_searchable_body(dense, "report report report report report")
             .await;
         let (glancing, _) = fixture
             .file(
@@ -872,7 +872,7 @@ pub fn o_is_a_letter_and_the_order_row_switches_the_results() {
             )
             .await;
         fixture
-            .write_body(glancing, "One report among other things entirely")
+            .write_searchable_body(glancing, "One report among other things entirely")
             .await;
         fixture.index().await;
         let (window, _client) = fixture.open().await;

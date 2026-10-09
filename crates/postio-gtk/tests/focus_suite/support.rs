@@ -735,6 +735,19 @@ impl Fixture {
             .await
             .expect("a body");
     }
+
+    /// [`Fixture::write_body`], and the body in the search index too, as the
+    /// running app's body indexer would put it: what a search can find in it.
+    pub async fn write_searchable_body(&self, message: MessageId, text: &str) {
+        self.write_body(message, text).await;
+        let connection = self.database.connect().await.expect("a connection");
+        postio_index::index::ensure_schema(&connection)
+            .await
+            .expect("indexed");
+        postio_index::index::index_body(&connection, message.get(), Some(text))
+            .await
+            .expect("a searchable body");
+    }
 }
 
 impl Fixture {
