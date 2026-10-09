@@ -42,6 +42,17 @@ async fn heard(session: &Session, wanted: impl Fn(&UiEvent) -> bool) -> bool {
 
 /// Ask for every row of a screen, the way the table does, and wait for the
 /// pages the misses started to land.
+/// Until the session has said nothing for a quarter of a second.
+async fn quiet(session: &Session) {
+    let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(30));
+    while Instant::now() < deadline {
+        let said = tokio::time::timeout(Duration::from_millis(250), session.next_event()).await;
+        if said.is_err() {
+            return;
+        }
+    }
+}
+
 async fn draw(session: &Session, first: u32, count: u32) {
     let deadline = Instant::now() + postio_test_support::scaled(Duration::from_secs(30));
     loop {
@@ -75,6 +86,10 @@ async fn walking_ten_thousand_conversations_reads_each_page_once_and_holds_a_few
         "the inbox is counted as ten thousand conversations"
     );
     assert_eq!(session.focus_row_count() as usize, CONVERSATIONS);
+    // Let startup finish saying things. A store event re-reads every page
+    // the list holds, in place (so a delete does not blank the list), and
+    // one landing mid-walk is a refresh, not the scrolling this measures.
+    quiet(&session).await;
 
     let total = CONVERSATIONS as u32;
     let pages = total.div_ceil(PAGE_SIZE) as usize;
