@@ -319,3 +319,61 @@ fn the_results_chrome_words_cross_from_postio_ui() {
     );
     assert_eq!(postio_ffi::focus_search_checked(5), "5 selected");
 }
+
+/// The search seed's results for "atlas budget", Best match: the session
+/// and the frame, once it has groups.
+async fn atlas_budget_results() -> (std::sync::Arc<Session>, postio_ffi::ResultsViewFfi) {
+    let (database, _) = postio_demo::seeded(postio_demo::Seed::Search).await;
+    let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");
+    session.invoke("search");
+    let _ = dropdown(&session, 10, |view| view.state == DropdownStateFfi::Empty).await;
+    session.focus_bar_typed("atlas budget".to_owned());
+    let _ = dropdown(&session, 10, |view| view.footer_count.is_some()).await;
+    session.focus_search_show_all();
+    let view = next(&session, 10, |event| match event {
+        UiEvent::FocusResults { view } if !view.groups.is_empty() => Some(view.clone()),
+        _ => None,
+    })
+    .await;
+    (session, view)
+}
+
+/// Every top hit matched in its subject and its body, and shows the body's
+/// passage with the words marked (design §3.4: "every row has a
+/// passage"), not the subject again and not nothing. The seed's top hits
+/// are one-line messages whose match is in their first line.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_top_hit_matched_in_its_body_shows_the_bodys_passage_marked() {
+    let (session, view) = atlas_budget_results().await;
+    assert!(view.groups[0].top_hits);
+    let top = view.groups[0].rows;
+    assert!(top > 0);
+
+    // Passages land after their page: wait for them, a little.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let rows = loop {
+        let rows: Vec<_> = (0..top)
+            .filter_map(|position| session.focus_search_row(position))
+            .collect();
+        let landed = rows.len() as u64 == top && rows.iter().all(|row| !row.passage.is_empty());
+        if landed || std::time::Instant::now() > deadline {
+            break rows;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    for row in &rows {
+        assert!(
+            row.passage.iter().any(|run| run.highlighted),
+            "{} ({}): passage {:?}",
+            runs(&row.subject),
+            row.source_tag,
+            runs(&row.passage)
+        );
+        assert!(
+            !runs(&row.passage).contains("wrote:"),
+            "{}",
+            runs(&row.passage)
+        );
+    }
+    session.shutdown();
+}

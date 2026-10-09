@@ -95,9 +95,10 @@ pub async fn passages(
     database: &Store,
     query: &ParsedQuery,
     hits: &[(MessageId, Vec<Source>)],
+    first_line: postio_search::passage::FirstLine,
 ) -> Vec<(MessageId, Vec<Match>)> {
     match database.read().await {
-        Ok(reader) => postio_session::search::passages(&reader, query, hits).await,
+        Ok(reader) => postio_session::search::passages(&reader, query, hits, first_line).await,
         Err(error) => {
             tracing::warn!(%error, "no connection to read the passages with");
             Vec::new()

@@ -948,9 +948,13 @@ impl Inner {
                     .await
                     .map(|found| Box::new(postio_client::protocol::Conversations(found))),
             ),
-            Req::Passages { query, hits } => {
-                Resp::Passages(search::passages(&self.wiring.database, &query, &hits).await)
-            }
+            Req::Passages {
+                query,
+                hits,
+                first_line,
+            } => Resp::Passages(
+                search::passages(&self.wiring.database, &query, &hits, first_line).await,
+            ),
             Req::Relaxations {
                 account,
                 query,

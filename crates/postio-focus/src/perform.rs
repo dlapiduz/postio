@@ -9,6 +9,7 @@ use postio_client::Client;
 use postio_model::listing::{ListPage, MailStore, PageRequest};
 use postio_model::mailbox::MailboxRole;
 use postio_model::{FocusScope, ListScope, MailboxId};
+use postio_search::passage::FirstLine;
 
 use postio_core::state::{SharedState, ViewScope};
 use postio_core::{Command, MessageTarget};
@@ -155,10 +156,11 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .and_then(|found| found.ok_or_else(|| "no search index here".to_owned()))
                 .map(Box::new),
         },
+        // The dropdown's hits show their first line as the preview.
         Request::Passages { query, hits, stamp } => Reply::Passages {
             stamp,
             answer: client
-                .passages(query, hits)
+                .passages(query, hits, FirstLine::Shown)
                 .await
                 .map_err(|error| error.to_string()),
         },
@@ -185,10 +187,11 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .and_then(|found| found.ok_or_else(|| "no search index here".to_owned()))
                 .map(Box::new),
         },
+        // The results' rows show no preview (design §3.4).
         Request::ResultsPassages { query, hits, stamp } => Reply::ResultsPassages {
             stamp,
             answer: client
-                .passages(query, hits)
+                .passages(query, hits, FirstLine::Avoided)
                 .await
                 .map_err(|error| error.to_string()),
         },

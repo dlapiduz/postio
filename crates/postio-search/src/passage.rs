@@ -12,9 +12,12 @@
 //!   (a row is one line).
 //! * **Ellipses are flags**, not characters: the surface draws them, and the
 //!   ranges stay ranges into exactly the text it draws.
-//! * **Never the first line**, when the row already shows it as the preview:
-//!   the passage is cut around the first match *after* it, and when the only
-//!   match is in the first line, it is the window that follows it.
+//! * **Never the first line**, when the row already shows it as the preview
+//!   ([`FirstLine::Shown`]): the passage is cut around the first match
+//!   *after* it, and when the only match is in the first line, it is the
+//!   window that follows it. A row with no preview ([`FirstLine::Avoided`])
+//!   still prefers a match after it, and falls back to the first line's own
+//!   match rather than to a window with nothing marked.
 //! * **Ranges land on the matched words** by [`highlight::find`]'s token
 //!   rule, the index's own, as byte ranges into [`Passage::text`] -- always on
 //!   character boundaries, whatever script the text is in.
@@ -39,20 +42,45 @@ pub struct Passage {
     pub elided_end: bool,
 }
 
+/// What a passage does with its text's first line (D7).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum FirstLine {
+    /// Cut around the first match, wherever it is: the text opens with no
+    /// line the row shows (quoted history under the person's own words).
+    #[default]
+    Any,
+    /// The row shows the first line as its preview, as the dropdown's hits
+    /// do: never in the passage; the window after it when it holds the only
+    /// match.
+    Shown,
+    /// The row shows no preview, as the results view's rows do: around the
+    /// first match after the first line, or around the first line's own
+    /// match when it holds the only one -- a passage that marks what matched
+    /// rather than an unmarked one, or none.
+    Avoided,
+}
+
 /// The passage of `text` around the first place `terms` match, or `None`
-/// when they match nowhere in it (or only in a first line that is shown
-/// already, with nothing after it).
+/// when they match nowhere in it (or, with [`FirstLine::Shown`], only in a
+/// first line with nothing after it).
 ///
-/// `skip_first_line` is for a message body whose first line the row shows
-/// as its preview (D7). See the module docs for the rules.
-pub fn cut(text: &str, terms: &[String], skip_first_line: bool) -> Option<Passage> {
+/// `first_line` is what the row does with the message's first line (D7).
+/// See the module docs for the rules.
+pub fn cut(text: &str, terms: &[String], first_line: FirstLine) -> Option<Passage> {
     if highlight::find(text, terms).is_empty() {
         return None;
     }
-    let region = if skip_first_line {
-        after_first_line(text)
-    } else {
-        text
+    let region = match first_line {
+        FirstLine::Any => text,
+        FirstLine::Shown => after_first_line(text),
+        FirstLine::Avoided => {
+            let after = after_first_line(text);
+            if highlight::find(after, terms).is_empty() {
+                text
+            } else {
+                after
+            }
+        }
     };
     let flat = highlight::collapse_whitespace(region);
     if flat.is_empty() {
@@ -158,7 +186,7 @@ mod tests {
 
     #[test]
     fn a_window_of_about_120_characters_snapped_to_word_edges() {
-        let passage = cut(LONG, &terms(&["budget"]), false).expect("a match");
+        let passage = cut(LONG, &terms(&["budget"]), FirstLine::Any).expect("a match");
         let chars = passage.text.chars().count();
         assert!(
             (100..=WINDOW + 10).contains(&chars),
@@ -182,7 +210,7 @@ mod tests {
         let passage = cut(
             "The atlas budget, final.",
             &terms(&["atlas", "final"]),
-            false,
+            FirstLine::Any,
         )
         .expect("a match");
         assert_eq!(passage.text, "The atlas budget, final.");
@@ -195,7 +223,7 @@ mod tests {
         let passage = cut(
             "Hi Ada,\n\nthe atlas\n   budget is attached.\n",
             &terms(&["budget"]),
-            false,
+            FirstLine::Any,
         )
         .expect("a match");
         assert_eq!(passage.text, "Hi Ada, the atlas budget is attached.");
@@ -207,13 +235,13 @@ mod tests {
         // D7: the row's preview is the first line, so the passage is the
         // first match after it.
         let text = "Atlas budget, final numbers\nThanks for the atlas numbers, all good.";
-        let passage = cut(text, &terms(&["atlas"]), true).expect("a match");
+        let passage = cut(text, &terms(&["atlas"]), FirstLine::Shown).expect("a match");
         assert_eq!(passage.text, "Thanks for the atlas numbers, all good.");
         assert_eq!(marked(&passage), vec!["atlas"]);
         assert!(!passage.elided_start, "it starts where the line does");
 
         // Unless asked to show it.
-        let passage = cut(text, &terms(&["atlas"]), false).expect("a match");
+        let passage = cut(text, &terms(&["atlas"]), FirstLine::Any).expect("a match");
         assert!(passage.text.starts_with("Atlas budget"));
         assert_eq!(marked(&passage), vec!["Atlas", "atlas"]);
     }
@@ -221,7 +249,7 @@ mod tests {
     #[test]
     fn a_match_only_in_the_first_line_gives_the_window_after_it() {
         let text = "\n  Atlas kickoff notes\nWe met on Tuesday and agreed the plan.\nMore later.";
-        let passage = cut(text, &terms(&["atlas"]), true).expect("the window after");
+        let passage = cut(text, &terms(&["atlas"]), FirstLine::Shown).expect("the window after");
         assert_eq!(
             passage.text,
             "We met on Tuesday and agreed the plan. More later."
@@ -230,10 +258,27 @@ mod tests {
         assert!(!passage.text.contains("Atlas"));
 
         assert_eq!(
-            cut("Atlas kickoff notes", &terms(&["atlas"]), true),
+            cut("Atlas kickoff notes", &terms(&["atlas"]), FirstLine::Shown),
             None,
             "a first line and nothing after it has no passage to show"
         );
+    }
+
+    #[test]
+    fn a_row_with_no_preview_still_marks_a_match_only_in_the_first_line() {
+        // The results view draws no preview: a one-line message whose match
+        // is in that line gets the window around it, marked.
+        let text = "Sharing the draft. Two more roles move the Atlas budget up by 9%.\n";
+        let passage = cut(text, &terms(&["atlas", "budget"]), FirstLine::Avoided)
+            .expect("the first line's match");
+        assert_eq!(marked(&passage), vec!["Atlas", "budget"]);
+        assert!(passage.text.contains("move the Atlas budget"));
+
+        // A match after the first line is still preferred.
+        let text = "Atlas budget, final numbers\nThanks for the atlas numbers, all good.";
+        let passage = cut(text, &terms(&["atlas"]), FirstLine::Avoided).expect("a match");
+        assert_eq!(passage.text, "Thanks for the atlas numbers, all good.");
+        assert_eq!(marked(&passage), vec!["atlas"]);
     }
 
     #[test]
@@ -241,7 +286,7 @@ mod tests {
         let text = "Grüße aus Zürich — 東京の会議 🎉 über das Atlas-Budget für Müller, \
             mit naïve Schätzungen und café-Notizen, die wir noch einmal durchgehen \
             müssen, bevor alles an die Finanzabteilung geht und dort geprüft wird.";
-        let passage = cut(text, &terms(&["atlas", "müller"]), false).expect("a match");
+        let passage = cut(text, &terms(&["atlas", "müller"]), FirstLine::Any).expect("a match");
         assert_eq!(marked(&passage), vec!["Atlas", "Müller"]);
         for range in &passage.ranges {
             assert!(passage.text.is_char_boundary(range.start));
@@ -253,7 +298,7 @@ mod tests {
     #[test]
     fn a_long_window_into_multibyte_text_cuts_on_characters() {
         let text = "ä ".repeat(200) + "atlas " + &"ö ".repeat(200);
-        let passage = cut(&text, &terms(&["atlas"]), false).expect("a match");
+        let passage = cut(&text, &terms(&["atlas"]), FirstLine::Any).expect("a match");
         assert_eq!(marked(&passage), vec!["atlas"]);
         assert!(passage.elided_start && passage.elided_end);
         assert!((100..=WINDOW + 10).contains(&passage.text.chars().count()));
@@ -261,8 +306,8 @@ mod tests {
 
     #[test]
     fn no_match_is_no_passage() {
-        assert_eq!(cut(LONG, &terms(&["harbor"]), false), None);
-        assert_eq!(cut("", &terms(&["harbor"]), false), None);
-        assert_eq!(cut(LONG, &[], false), None);
+        assert_eq!(cut(LONG, &terms(&["harbor"]), FirstLine::Any), None);
+        assert_eq!(cut("", &terms(&["harbor"]), FirstLine::Any), None);
+        assert_eq!(cut(LONG, &[], FirstLine::Any), None);
     }
 }

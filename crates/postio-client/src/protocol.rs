@@ -309,6 +309,8 @@ pub enum Req {
         query: postio_search::ParsedQuery,
         /// Each hit's best message and where it matched.
         hits: Vec<(MessageId, Vec<postio_search::results::Source>)>,
+        /// What the asking row does with a message's first line.
+        first_line: postio_search::passage::FirstLine,
     },
     /// The ways out of a search that found nothing, each with what it would
     /// find. Cancellable.
