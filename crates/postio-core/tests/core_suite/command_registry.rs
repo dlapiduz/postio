@@ -224,7 +224,9 @@ fn bindings_do_not_collide_within_a_context() {
                     {
                         continue;
                     }
-                    if let Some(other) = seen.insert((platform == Platform::Apple, binding), spec.id) {
+                    if let Some(other) =
+                        seen.insert((platform == Platform::Apple, binding), spec.id)
+                    {
                         panic!(
                             "`{binding}` is bound to both `{other}` and `{}` in the \
                              {context} context on {platform:?}",
