@@ -4203,13 +4203,12 @@ fn focus_remembers_the_searches_it_ran_and_forgets_them_on_request() {
     let seed = SearchSeed::new();
     let ask = |request: Result<(), postio_model::listing::StoreError>| request.expect("an answer");
 
-    assert!(
-        seed.rt
-            .block_on(seed.client.recent_searches())
-            .expect("an answer")
-            .is_empty(),
-        "a new store has run nothing"
-    );
+    // The seed has screen 01's recents, all run on earlier days.
+    let seeded = seed
+        .rt
+        .block_on(seed.client.recent_searches())
+        .expect("an answer")
+        .len();
 
     ask(seed
         .rt
@@ -4229,15 +4228,21 @@ fn focus_remembers_the_searches_it_ran_and_forgets_them_on_request() {
         .iter()
         .map(|search| (search.query.as_str(), search.hits))
         .collect();
-    assert_eq!(seen, [("atlas", 5), ("from:ada", 2)], "newest run first");
+    assert_eq!(
+        seen[..2],
+        [("atlas", 5), ("from:ada", 2)],
+        "newest run first"
+    );
+    assert_eq!(recent.len(), seeded + 2, "a query run twice is one entry");
 
     ask(seed.rt.block_on(seed.client.forget_search("atlas".into())));
     let recent = seed
         .rt
         .block_on(seed.client.recent_searches())
         .expect("an answer");
-    assert_eq!(recent.len(), 1);
+    assert_eq!(recent.len(), seeded + 1);
     assert_eq!(recent[0].query, "from:ada");
+    assert!(recent.iter().all(|search| search.query != "atlas"));
     assert_eq!(seed.client.counts().of("RememberSearch"), 3);
 }
 
