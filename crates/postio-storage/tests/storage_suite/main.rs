@@ -53,6 +53,7 @@ mod operations;
 mod promoted_headers;
 mod reclaim_pages;
 mod reminders;
+mod searches;
 mod schema_fidelity;
 mod seed_is_honest;
 mod seed_shapes;

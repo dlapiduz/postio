@@ -53,6 +53,7 @@ pub mod key;
 mod perm;
 pub mod repository;
 pub mod schema;
+pub mod searches;
 #[cfg(feature = "test-support")]
 pub mod seed;
 /// Reading rows and opening transactions, for the other crate that speaks SQL.

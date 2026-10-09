@@ -1,236 +1,52 @@
-//! The schema, at head, as one constant -- and the steps that bring an
-//! earlier build's store up to it.
-//!
-//! # A new store, and an old one
-//!
-//! [`HEAD`] is the whole schema, and a new store is written from it in one
-//! batch. A store an earlier build wrote is stamped with what *that* build's
-//! `HEAD` hashed to ([`FINGERPRINT`]), and [`MIGRATIONS`] is how a stamp this
-//! build recognises is carried forward in place: snoozes, reminders, drafts,
-//! the operation queue and everything else that exists only in this file
-//! survive it. A stamp no migration leads from is refused
-//! (`Error::SchemaFromAnotherBuild`), and the way forward from there is a
-//! fresh store -- `postio_session::start_over` -- rather than a retry, which
-//! would meet the same file.
-//!
-//! # Changing the schema
-//!
-//! Edit [`HEAD`], and in the same commit:
-//!
-//! 1. copy the `HEAD` you are replacing, verbatim, to
-//!    `tests/schemas/<its fingerprint as eight hex digits>.sql`;
-//! 2. append a [`Migration`] from that fingerprint to the new one, whose
-//!    statements turn a store at the old schema into one at the new.
-//!
-//! `schema::tests::a_schema_change_comes_with_the_migration_that_reaches_it`
-//! fails until the second is done, and the storage suite's `migrations`
-//! case proves every recorded schema migrates to a store shaped exactly as a
-//! fresh one. Forward only, no down migration, and a step is never edited
-//! once a store may have run it.
-//!
-//! A store's steps and its new stamp run in one transaction, so a store cut
-//! off part-way is left at its old schema and stamp and runs them again on
-//! its next open. A step may therefore add and drop columns and copy rows,
-//! none of which can be guarded to run twice.
-//!
-//! A change no statement can express -- a column whose meaning changed, a
-//! constraint tightened under rows that break it -- does not get a step. It
-//! leaves the earlier stamp unreachable, and that store starts over. CLAUDE.md
-//! allows that ("no backwards compatibility") and still asks for the
-//! migration wherever one can be written; `docs/notes/2026-10-01-store-
-//! migrations-and-starting-over.md` has the reasoning.
-//!
-//! # What this is not the same as
-//!
-//! Four things differ from the schema the old engine held, and each is forced
-//! rather than chosen:
-//!
-//! 1. **`body_dictionaries` is gone.** Bodies were plain `TEXT` for a while,
-//!    because an index cannot tokenise compressed bytes and the body index
-//!    sat on the body column; once it moved to its own folded table (point
-//!    2), the column was free to be small again, and `crate::body_codec`
-//!    packs it per row — zstd when that is smaller, no shared dictionary.
-//! 2. **`body_search` is a sibling table** (`message_search_bodies`), not a
-//!    column: the body folded for search. The engine's
-//!    tokenizer does not remove diacritics and offers no option to, so the
-//!    fold FTS5 did inside its index is done by `postio_model::fold` before
-//!    the write.
-//! 3. **No table is `WITHOUT ROWID`.** Four were. Turso puts that behind an
-//!    experimental flag and will not build a secondary index on such a table,
-//!    which `idx_message_labels_label` and `idx_thread_links_thread` need. The
-//!    cost is one rowid per row on four narrow tables; the alternative was
-//!    losing two indexes that queries depend on.
-//! 4. **The two FTS5 virtual tables are not here.** They are indexes now, and
-//!    they live with the rest of the search schema in `postio-index`.
-//!
-//! Everything else is the schema the SQLCipher store held, transcribed by
-//! applying its twenty migrations and dumping the result rather than by
-//! retyping it. Those migrations went with that engine: a SQLCipher store
-//! cannot be read by Turso at all, so there was nothing for them to carry.
-
-/// What this schema hashes to, for `PRAGMA user_version`.
-///
-/// # Why a hash rather than a number someone maintains
-///
-/// A hand-kept version integer has to be remembered, and the failure it
-/// guards against is exactly the one where somebody did not: a column was
-/// added to [`HEAD`] and nothing else changed, so an older store went on
-/// opening and failing one statement at a time. Hashing the schema text
-/// cannot be forgotten — edit `HEAD` at all and the stamp moves with it.
-///
-/// It is deliberately *not* a version. Nothing is ordered, nothing is
-/// comparable, and there is no "newer": two builds either agree or they do
-/// not. What orders them is [`MIGRATIONS`], which names each stamp it starts
-/// from and the one it leaves.
-///
-/// FNV-1a, 32 bits, which is what `user_version` has room for. A collision
-/// would let a mismatched store through — the failure this started from
-/// rather than a new one — and 32 bits against the handful of schemas a
-/// single-user alpha sees is not worth a hashing dependency.
-pub const FINGERPRINT: i64 = fingerprint(HEAD);
-
-/// FNV-1a over the schema text, at compile time: what a store written from
-/// `schema` is stamped with.
-///
-/// Folded through `i32` because that is what `user_version` is: a signed
-/// 32-bit field. Hashing to `u32` and widening instead makes every hash above
-/// `i32::MAX` read back negative, so the stamp never equals itself and every
-/// store demands a resync on its second open.
-pub const fn fingerprint(schema: &str) -> i64 {
-    let bytes = schema.as_bytes();
-    let mut hash: u32 = 0x811c_9dc5;
-    let mut index = 0;
-    while index < bytes.len() {
-        hash ^= bytes[index] as u32;
-        hash = hash.wrapping_mul(0x0100_0193);
-        index += 1;
-    }
-    hash as i32 as i64
-}
-
-/// One step from a schema an earlier build stamped toward this one's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Migration {
-    /// The stamp of the schema this step starts from: that build's
-    /// [`FINGERPRINT`].
-    pub from: i64,
-    /// The stamp of the schema it leaves.
-    pub to: i64,
-    /// The statements, run in one transaction with the stamp (see the
-    /// module docs).
-    pub statements: &'static str,
-}
-
-/// A stamp written as the eight hex digits `tests/schemas/` names it by.
-const fn stamp(hex: u32) -> i64 {
-    hex as i32 as i64
-}
-
-/// Every step this build can take, oldest first. The last one's `to` is
-/// [`FINGERPRINT`]; a test holds it there.
-pub const MIGRATIONS: &[Migration] = &[
-    // `feature/postio-focus` at 355ac0cd, before its rebase onto `main`
-    // brought the three indexes below: the backfill's top-up and the
-    // reparse sweep seeking by `sort_at`, and the queue read by state.
-    Migration {
-        from: stamp(0x3f95_ddb1),
-        to: stamp(0xd8c1_e5df),
-        statements: "
-CREATE INDEX IF NOT EXISTS idx_messages_body_state
-    ON messages (mailbox_id, body_state, sort_at DESC, id DESC);
-
-CREATE INDEX IF NOT EXISTS idx_messages_body_problems
-    ON messages (mailbox_id, body_encoding_problems, sort_at DESC, id DESC);
-
-CREATE INDEX IF NOT EXISTS idx_operation_queue_state ON operation_queue (state, op_type);
-",
-    },
-    // `feature/postio-focus` at 33641f8e, before `main`'s macOS frontend was
-    // merged in: an account's backend location is one column whatever the
-    // backend (#1278, the Maildir backend), and a draft records whether it is
-    // being written as rich text (#1271).
-    //
-    // Neither a rename nor a new column can be guarded by `IF NOT EXISTS`;
-    // the transaction the steps run in is what keeps a store from meeting
-    // them twice.
-    Migration {
-        from: stamp(0xd8c1_e5df),
-        to: stamp(0x8151_85a3),
-        statements: "
-ALTER TABLE accounts RENAME COLUMN jmap_session_url TO backend_location;
-
-ALTER TABLE drafts ADD COLUMN rich INTEGER NOT NULL DEFAULT 0;
-",
-    },
-    // Content ownership (#1780, ADR 0046): a message's immutable payload --
-    // decoded body, header block, MIME parts and their blobs, the search
-    // documents -- moves from the mailbox occurrence to an account-scoped
-    // `message_contents` row. Every existing message gets content of its
-    // own; nothing already stored is taken as evidence that two occurrences
-    // share bytes. A backend's native identity establishes sharing on the
-    // next resync.
-    //
-    // It adds and drops columns and copies rows; the transaction the steps
-    // run in is what makes that safe to cut off.
-    Migration {
-        from: stamp(0x8151_85a3),
-        to: stamp(0xdcb8_490f),
-        statements: concat!(
-            include_str!("schema/contents.sql"),
-            include_str!("schema/migrate-content.sql"),
-            include_str!("schema/content-locations.sql"),
-            include_str!("schema/content-projection.sql"),
-        ),
-    },
-    // Spec 010, search for Focus: what the search bar remembers. Both tables
-    // are new, so a store gains them empty and nothing is backfilled.
-    Migration {
-        from: stamp(0xdcb8_490f),
-        to: stamp(0x3235_e866),
-        statements: "
-CREATE TABLE IF NOT EXISTS recent_searches (
-    query        TEXT    PRIMARY KEY,
-    last_run_at  INTEGER NOT NULL,
-    hits         INTEGER NOT NULL
+-- Payload ownership is independent of a mailbox occurrence. NULL identity
+-- allocates independent content; only an adapter guarantee permits sharing.
+CREATE TABLE message_contents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    namespace TEXT,
+    identity_key TEXT,
+    body_text TEXT,
+    body_html TEXT,
+    body_headers TEXT,
+    body_headers_truncated INTEGER NOT NULL DEFAULT 0,
+    body_encoding_problems INTEGER NOT NULL DEFAULT 0,
+    body_parsed_with INTEGER NOT NULL DEFAULT 0,
+    body_line_count INTEGER,
+    body_state TEXT NOT NULL DEFAULT 'headers_only',
+    raw_blob_id TEXT,
+    preview TEXT,
+    content_type TEXT,
+    text_part_id TEXT,
+    text_part_headers TEXT,
+    html_part_id TEXT,
+    html_part_headers TEXT,
+    text_is_flowed INTEGER NOT NULL DEFAULT 0,
+    read_receipt_requested INTEGER NOT NULL DEFAULT 0,
+    CHECK ((namespace IS NULL AND identity_key IS NULL) OR
+           (namespace IS NOT NULL AND identity_key IS NOT NULL AND
+            length(namespace) > 0 AND length(identity_key) > 0)),
+    UNIQUE (account_id, namespace, identity_key)
 );
+CREATE INDEX idx_message_contents_raw_blob ON message_contents (raw_blob_id);
 
-CREATE TABLE IF NOT EXISTS saved_search_seen (
-    key         TEXT    PRIMARY KEY,
-    seen_up_to  INTEGER NOT NULL
+-- Cached MIME structure and blob keys survive the occurrence that fetched
+-- them. The occurrence's attachment rows remain the reader/action projection.
+CREATE TABLE message_content_parts (
+    content_id INTEGER NOT NULL REFERENCES message_contents(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    filename TEXT,
+    mime_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    mime_content_id TEXT,
+    disposition TEXT NOT NULL,
+    disposition_raw TEXT,
+    part_id TEXT,
+    part_headers TEXT,
+    blob_id TEXT,
+    PRIMARY KEY (content_id, position)
 );
-",
-    },
-];
+CREATE INDEX idx_message_content_parts_blob ON message_content_parts (blob_id);
 
-/// The steps that carry a store stamped `found` to [`FINGERPRINT`], in the
-/// order they run: none for a store already there, and `None` when no
-/// recorded step leads from `found` -- a schema this build cannot carry
-/// forward, whether it is older than the first step or from a build that
-/// is not this one's ancestor.
-pub fn migrations_from(found: i64) -> Option<Vec<&'static Migration>> {
-    let mut at = found;
-    let mut path = Vec::new();
-    while at != FINGERPRINT {
-        // A cycle would be a list that names a stamp twice: never a path.
-        if path.len() >= MIGRATIONS.len() {
-            return None;
-        }
-        let step = MIGRATIONS.iter().find(|step| step.from == at)?;
-        path.push(step);
-        at = step.to;
-    }
-    Some(path)
-}
-
-/// Every table, index and trigger the store needs, in one batch.
-///
-/// Creation order is tables, then indexes, then triggers, and tables are in
-/// alphabetical order rather than dependency order — a foreign key may be
-/// declared before the table it names, which is why [`crate::store`] runs this
-/// with foreign keys off and turns them on afterwards.
-pub const HEAD: &str = concat!(
-    include_str!("schema/contents.sql"),
-    r#"
 CREATE TABLE accounts (
     id                   INTEGER PRIMARY KEY AUTOINCREMENT,
     display_name         TEXT    NOT NULL,
@@ -896,18 +712,6 @@ CREATE TABLE recipients (
     CHECK ((message_id IS NOT NULL) <> (draft_id IS NOT NULL))
 );
 
--- The searches a person ran (spec 010 D16): the results view opened, a hit
--- opened from the dropdown, or a saved search run. Never each keystroke. The
--- last 20 distinct queries are kept; older rows are deleted on insert.
-CREATE TABLE recent_searches (
-    -- Exactly as run: the one query language.
-    query        TEXT    PRIMARY KEY,
-    -- UTC ms.
-    last_run_at  INTEGER NOT NULL,
-    -- Conversations, as the footer said.
-    hits         INTEGER NOT NULL
-);
-
 -- A reminder to follow up (spec 007 US5, research R7): when nobody but the
 -- person has written in the conversation by `due_at`, the conversation
 -- comes back to the top of Focus's inbox, marked "No reply since" the day
@@ -930,16 +734,6 @@ CREATE TABLE reminders (
     cancelled_at       INTEGER,
     -- When a surfaced reminder stopped standing: a reply came after all.
     settled_at         INTEGER
-);
-
--- Per saved search, the newest message the person has seen its results up
--- to (spec 010 D15); the badge counts matches received after it. Keyed by
--- the `[saved_searches.<key>]` identity in `config.toml`, so a row whose
--- saved search was deleted is an orphan that `forget_seen_except` removes.
-CREATE TABLE saved_search_seen (
-    key         TEXT    PRIMARY KEY,
-    -- UTC ms, a `received_at`.
-    seen_up_to  INTEGER NOT NULL
 );
 
 CREATE TABLE settings (
@@ -1324,224 +1118,184 @@ BEGIN
            snoozed_count = snoozed_count + (NEW.deleted_locally = 0 AND
                NEW.snoozed_until IS NOT NULL AND NEW.snoozed_until > (strftime('%s','now') * 1000))
      WHERE id = NEW.mailbox_id;
-END;;"#,
-    include_str!("schema/content-locations.sql"),
-    include_str!("schema/content-projection.sql")
-);
+END;;CREATE INDEX idx_messages_content ON messages (content_id, id);
+CREATE INDEX idx_messages_raw_blob ON messages (raw_blob_id);
 
-/// What the schema declares, as names, without an engine.
-///
-/// A crude parse on purpose: it reads [`HEAD`] the way a reader does rather
-/// than the way an engine does, so the test below can run at the `--lib` tier
-/// in microseconds instead of opening a database.
-#[cfg(test)]
-fn declared() -> std::collections::BTreeSet<&'static str> {
-    HEAD.lines()
-        .filter_map(|line| {
-            let line = line.trim_start();
-            let rest = line
-                .strip_prefix("CREATE TABLE ")
-                .or_else(|| line.strip_prefix("CREATE INDEX "))
-                .or_else(|| line.strip_prefix("CREATE UNIQUE INDEX "))
-                .or_else(|| line.strip_prefix("CREATE TRIGGER "))?;
-            rest.trim_matches('"').split([' ', '(', '"']).next()
-        })
-        .collect()
-}
+CREATE TRIGGER trg_messages_content_ai AFTER INSERT ON messages
+WHEN new.content_id IS NULL
+BEGIN
+    INSERT INTO message_contents (account_id, namespace, identity_key, raw_blob_id, preview)
+    VALUES (new.account_id, new.content_namespace, new.content_key, new.raw_blob_id, new.preview)
+    ON CONFLICT (account_id, namespace, identity_key) DO NOTHING;
+    UPDATE messages SET content_id = (
+        SELECT id FROM message_contents
+         WHERE account_id = new.account_id
+           AND namespace IS new.content_namespace AND identity_key IS new.content_key
+         ORDER BY id DESC LIMIT 1)
+     WHERE id = new.id;
+END;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+-- Acquiring/changing a backend guarantee does not guess that the old bytes
+-- belong to it. Existing independent content may be fetched once again.
+CREATE TRIGGER trg_messages_content_identity_au
+AFTER UPDATE OF content_namespace, content_key ON messages
+WHEN old.content_namespace IS NOT new.content_namespace OR old.content_key IS NOT new.content_key
+BEGIN
+    INSERT INTO message_contents (account_id, namespace, identity_key, raw_blob_id, preview)
+    VALUES (new.account_id, new.content_namespace, new.content_key, new.raw_blob_id, new.preview)
+    ON CONFLICT (account_id, namespace, identity_key) DO NOTHING;
+    UPDATE messages SET content_id = (
+        SELECT id FROM message_contents
+         WHERE account_id = new.account_id
+           AND namespace IS new.content_namespace AND identity_key IS new.content_key
+         ORDER BY id DESC LIMIT 1)
+     WHERE id = new.id;
+    DELETE FROM message_contents WHERE id = old.content_id
+      AND NOT EXISTS (SELECT 1 FROM messages WHERE content_id = old.content_id);
+END;
 
-    /// Every object the twenty migrations built, minus the ones this engine
-    /// deliberately does without.
-    ///
-    /// Generated by applying `src/migrations/*.sql` in order and reading
-    /// `sqlite_master`, so it describes the schema as it actually was rather
-    /// than as anyone remembers it. Transcription is the risk this test
-    /// exists for: `HEAD` was assembled from a dump, and a dump that lost an
-    /// index would still be a working schema and a slow one.
-    const OLD_SCHEMA: &[&str] = &[
-        // 26 tables
-        "accounts",
-        "addresses",
-        "attachments",
-        "body_dictionaries",
-        "contact_group_members",
-        "contact_groups",
-        "contacts",
-        "cross_account_moves",
-        "drafts",
-        "egress_log",
-        "identities",
-        "labels",
-        "mailbox_role_refusals",
-        "mailbox_roles",
-        "mailboxes",
-        "message_labels",
-        "messages",
-        "operation_queue",
-        "recipients",
-        "settings",
-        "signatures",
-        "sqlite_sequence",
-        "sync_state",
-        "thread_links",
-        "threads",
-        "unsubscribe_activations",
-        // 55 indexes
-        "idx_addresses_normalized",
-        "idx_attachments_blob",
-        "idx_attachments_draft",
-        "idx_attachments_filename",
-        "idx_attachments_message",
-        "idx_contacts_account_address",
-        "idx_contacts_rank",
-        "idx_contacts_shared_address",
-        "idx_cross_account_moves_phase",
-        "idx_drafts_account_updated",
-        "idx_drafts_message",
-        "idx_drafts_state",
-        "idx_drafts_thread",
-        "idx_egress_log_at",
-        "idx_identities_account",
-        "idx_identities_one_default",
-        "idx_labels_account_name",
-        "idx_mailboxes_account_path",
-        "idx_mailboxes_account_role",
-        "idx_mailboxes_parent",
-        "idx_message_labels_label",
-        "idx_messages_account_list",
-        "idx_messages_in_reply_to",
-        "idx_messages_list",
-        "idx_messages_list_id",
-        "idx_messages_mailbox_remote_id",
-        "idx_messages_mod_seq",
-        "idx_messages_recency",
-        "idx_messages_rfc_message_id",
-        "idx_messages_send_state",
-        "idx_messages_snoozed_due",
-        "idx_messages_thread",
-        "idx_messages_thread_mailbox",
-        "idx_messages_uid",
-        "idx_operation_queue_drain",
-        "idx_operation_queue_target",
-        "idx_recipients_address",
-        "idx_recipients_draft",
-        "idx_recipients_message",
-        "idx_settings_account_key",
-        "idx_settings_global_key",
-        "idx_signatures_account",
-        "idx_signatures_name",
-        "idx_sync_state_account",
-        "idx_thread_links_lookup",
-        "idx_thread_links_thread",
-        "idx_threads_account_last_at",
-        "idx_threads_account_subject",
-        "idx_threads_last_at",
-        "idx_threads_subject",
-        "idx_unsubscribe_activations_account",
-        // 4 triggers
-        "messages_bodies_owed_update",
-        "messages_count_delete",
-        "messages_count_insert",
-        "messages_count_update",
-    ];
+CREATE TRIGGER trg_messages_content_account_bi BEFORE INSERT ON messages
+WHEN new.content_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM message_contents WHERE id = new.content_id AND account_id = new.account_id)
+BEGIN
+    SELECT RAISE(ABORT, 'content belongs to another account');
+END;
+CREATE TRIGGER trg_messages_content_account_bu BEFORE UPDATE OF content_id, account_id ON messages
+WHEN new.content_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM message_contents WHERE id = new.content_id AND account_id = new.account_id)
+BEGIN
+    SELECT RAISE(ABORT, 'content belongs to another account');
+END;
 
-    /// Gone on purpose, each with the reason it is gone.
-    ///
-    /// The list that makes this test a record rather than a rubber stamp: an
-    /// object may only leave the schema by being named here, so "we dropped
-    /// it deliberately" has to be written down at the moment it stops being
-    /// true that nothing was lost.
-    const DELIBERATELY_ABSENT: &[(&str, &str)] = &[
-        (
-            "body_dictionaries",
-            "the zstd dictionaries the bodies were compressed against. Bodies \
-             are TEXT now because the full-text index is built on the column \
-             itself, so there is nothing left to compress against.",
-        ),
-        (
-            "sqlite_sequence",
-            "the engine's own bookkeeping for AUTOINCREMENT, never declared \
-             by a migration -- it appeared in the dump because the engine \
-             creates it. Turso creates its own.",
-        ),
-    ];
+CREATE TRIGGER trg_messages_content_ad AFTER DELETE ON messages
+BEGIN
+    DELETE FROM message_contents WHERE id = old.content_id
+      AND NOT EXISTS (SELECT 1 FROM messages WHERE content_id = old.content_id);
+END;
 
-    #[test]
-    fn the_head_schema_declares_everything_the_migrations_did() {
-        let declared = declared();
-        let excused: std::collections::BTreeSet<&str> =
-            DELIBERATELY_ABSENT.iter().map(|(name, _)| *name).collect();
+CREATE TRIGGER trg_attachments_content_ai AFTER INSERT ON attachments
+WHEN new.message_id IS NOT NULL AND EXISTS (
+    SELECT 1 FROM messages WHERE id = new.message_id AND content_namespace IS NOT NULL)
+BEGIN
+    INSERT INTO message_content_parts
+        (content_id, position, filename, mime_type, size, mime_content_id,
+         disposition, disposition_raw, part_id, part_headers, blob_id)
+    SELECT content_id, new.position, new.filename, new.mime_type, new.size, new.content_id,
+           new.disposition, new.disposition_raw, new.part_id, new.part_headers, new.blob_id
+      FROM messages WHERE id = new.message_id
+    ON CONFLICT (content_id, position) DO UPDATE SET
+        filename = excluded.filename, mime_type = excluded.mime_type, size = excluded.size,
+        mime_content_id = excluded.mime_content_id, disposition = excluded.disposition,
+        disposition_raw = excluded.disposition_raw, part_id = excluded.part_id,
+        part_headers = excluded.part_headers,
+        blob_id = coalesce(excluded.blob_id, message_content_parts.blob_id);
+END;
 
-        let missing: Vec<&str> = OLD_SCHEMA
-            .iter()
-            .copied()
-            .filter(|name| !declared.contains(name) && !excused.contains(name))
-            .collect();
+CREATE TRIGGER trg_attachments_content_blob_au AFTER UPDATE OF blob_id ON attachments
+WHEN new.message_id IS NOT NULL AND new.blob_id IS NOT NULL
+BEGIN
+    UPDATE message_content_parts SET blob_id = new.blob_id
+     WHERE content_id = (SELECT content_id FROM messages WHERE id = new.message_id)
+       AND part_id = new.part_id AND blob_id IS NOT new.blob_id;
+END;
+CREATE TRIGGER trg_content_parts_blob_au AFTER UPDATE OF blob_id ON message_content_parts
+WHEN new.blob_id IS NOT old.blob_id
+BEGIN
+    UPDATE attachments SET blob_id = new.blob_id
+     WHERE message_id IN (SELECT id FROM messages WHERE content_id = new.content_id)
+       AND part_id = new.part_id AND blob_id IS NOT new.blob_id;
+END;
 
-        assert!(
-            missing.is_empty(),
-            "the head schema lost {} object(s) the migrations declared: {missing:?}\n\
-             Either transcribe them into HEAD, or name each one in \
-             DELIBERATELY_ABSENT with the reason it is gone.",
-            missing.len(),
-        );
-    }
+-- Parser repairs replace the decoded representation of immutable bytes.
+-- A missing derived row is the existing asynchronous indexer's durable queue.
+CREATE TRIGGER trg_message_contents_body_index_au
+AFTER UPDATE OF body_text, body_html ON message_contents
+WHEN old.body_text IS NOT new.body_text OR old.body_html IS NOT new.body_html
+BEGIN
+    DELETE FROM message_search_bodies WHERE content_id = new.id;
+END;
+-- Refresh the small read projection without changing location identity or flags.
+CREATE TRIGGER trg_content_projection_contents_au AFTER UPDATE ON message_contents
 
-    #[test]
-    fn nothing_is_excused_that_the_schema_still_declares() {
-        let declared = declared();
-        let contradictory: Vec<&str> = DELIBERATELY_ABSENT
-            .iter()
-            .map(|(name, _)| *name)
-            .filter(|name| declared.contains(name))
-            .collect();
-        assert!(
-            contradictory.is_empty(),
-            "DELIBERATELY_ABSENT claims {contradictory:?} were dropped, but \
-             HEAD still declares them -- the reasons recorded there are stale.",
-        );
-    }
+BEGIN
+    DELETE FROM attachments WHERE message_id IN (SELECT id FROM messages WHERE content_id = new.id)
+      AND EXISTS (SELECT 1 FROM message_contents WHERE id = new.id AND namespace IS NOT NULL AND body_state IN ('partial','full'))
+      AND position NOT IN (SELECT position FROM message_content_parts WHERE content_id = new.id);
+    INSERT INTO attachments (message_id, position, filename, mime_type, size, content_id, disposition, disposition_raw, part_id, part_headers, blob_id)
+    SELECT m.id, p.position, p.filename, p.mime_type, p.size, p.mime_content_id, p.disposition, p.disposition_raw, p.part_id, p.part_headers, p.blob_id
+      FROM messages m JOIN message_content_parts p ON p.content_id = m.content_id
+     WHERE m.content_id = new.id AND EXISTS (SELECT 1 FROM message_contents WHERE id = new.id AND namespace IS NOT NULL AND body_state IN ('partial','full'))
+       AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id AND a.position = p.position);
+    UPDATE attachments SET blob_id = (
+        SELECT p.blob_id FROM message_content_parts p
+         WHERE p.content_id = new.id AND p.position = attachments.position)
+     WHERE message_id IN (SELECT id FROM messages WHERE content_id = new.id) AND EXISTS (SELECT 1 FROM message_contents WHERE id = new.id AND namespace IS NOT NULL AND body_state IN ('partial','full'));
+    UPDATE messages SET
+        body_headers_truncated = (SELECT body_headers_truncated FROM message_contents WHERE id = new.id),
+        body_encoding_problems = (SELECT body_encoding_problems FROM message_contents WHERE id = new.id),
+        body_parsed_with = (SELECT body_parsed_with FROM message_contents WHERE id = new.id),
+        body_line_count = (SELECT body_line_count FROM message_contents WHERE id = new.id),
+        content_type = coalesce((SELECT content_type FROM message_contents WHERE id = new.id), content_type),
+        text_part_id = coalesce((SELECT text_part_id FROM message_contents WHERE id = new.id), text_part_id),
+        text_part_headers = coalesce((SELECT text_part_headers FROM message_contents WHERE id = new.id), text_part_headers),
+        html_part_id = coalesce((SELECT html_part_id FROM message_contents WHERE id = new.id), html_part_id),
+        html_part_headers = coalesce((SELECT html_part_headers FROM message_contents WHERE id = new.id), html_part_headers),
+        text_is_flowed = (SELECT text_is_flowed FROM message_contents WHERE id = new.id),
+        read_receipt_requested = (SELECT read_receipt_requested FROM message_contents WHERE id = new.id),
+        body_has_headers = (SELECT body_headers IS NOT NULL FROM message_contents WHERE id = new.id),
+        raw_blob_id = coalesce((SELECT raw_blob_id FROM message_contents WHERE id = new.id), raw_blob_id),
+        preview = coalesce(preview, (SELECT preview FROM message_contents WHERE id = new.id)),
+        has_attachments = EXISTS (SELECT 1 FROM attachments WHERE message_id = messages.id),
+        body_state = CASE
+            WHEN (SELECT body_state FROM message_contents WHERE id = new.id) IN ('partial','full')
+            THEN CASE
+                WHEN content_namespace IS NULL THEN (SELECT body_state FROM message_contents WHERE id = new.id)
+                WHEN EXISTS (SELECT 1 FROM attachments WHERE message_id = messages.id AND blob_id IS NULL) THEN 'partial'
+                ELSE 'full' END
+            WHEN content_namespace IS NOT NULL THEN 'headers_only'
+            ELSE body_state END
+     WHERE content_id = new.id;
+END;
 
-    /// A schema change without its migration is caught here, before any
-    /// store meets it: editing `HEAD` moves [`FINGERPRINT`], and until a
-    /// step names the new stamp as its `to`, every store the previous build
-    /// wrote would be refused and have to start over.
-    #[test]
-    fn a_schema_change_comes_with_the_migration_that_reaches_it() {
-        let last = MIGRATIONS.last().expect("at least one migration");
-        assert_eq!(
-            last.to,
-            FINGERPRINT,
-            "HEAD now hashes to {:08x}, and no migration leads there. Copy the \
-             HEAD you replaced to tests/schemas/{:08x}.sql and append a \
-             Migration from {:08x} to {:08x} whose statements make a store at \
-             the old schema one at the new. If you changed only a comment or \
-             spacing inside HEAD (a search-and-replace reaches them too), put \
-             it back instead: the stamp hashes the text, comments included",
-            FINGERPRINT as i32 as u32,
-            last.to as i32 as u32,
-            last.to as i32 as u32,
-            FINGERPRINT as i32 as u32,
-        );
-    }
-
-    #[test]
-    fn every_recorded_stamp_reaches_head() {
-        for step in MIGRATIONS {
-            assert!(
-                migrations_from(step.from).is_some(),
-                "a store stamped {:08x} has a first step and no way to head",
-                step.from as i32 as u32
-            );
-        }
-        assert_eq!(migrations_from(FINGERPRINT), Some(Vec::new()));
-    }
-
-    #[test]
-    fn a_stamp_nothing_leads_from_has_no_way_to_head() {
-        assert_eq!(migrations_from(1), None);
-    }
-}
+-- Refresh the small read projection without changing location identity or flags.
+CREATE TRIGGER trg_content_projection_location_au AFTER UPDATE OF content_id ON messages
+WHEN new.content_namespace IS NOT NULL
+BEGIN
+    DELETE FROM attachments WHERE message_id IN (SELECT id FROM messages WHERE id = new.id)
+      AND EXISTS (SELECT 1 FROM message_contents WHERE id = new.content_id AND namespace IS NOT NULL AND body_state IN ('partial','full'))
+      AND position NOT IN (SELECT position FROM message_content_parts WHERE content_id = new.content_id);
+    INSERT INTO attachments (message_id, position, filename, mime_type, size, content_id, disposition, disposition_raw, part_id, part_headers, blob_id)
+    SELECT m.id, p.position, p.filename, p.mime_type, p.size, p.mime_content_id, p.disposition, p.disposition_raw, p.part_id, p.part_headers, p.blob_id
+      FROM messages m JOIN message_content_parts p ON p.content_id = m.content_id
+     WHERE m.id = new.id AND EXISTS (SELECT 1 FROM message_contents WHERE id = new.content_id AND namespace IS NOT NULL AND body_state IN ('partial','full'))
+       AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id AND a.position = p.position);
+    UPDATE attachments SET blob_id = (
+        SELECT p.blob_id FROM message_content_parts p
+         WHERE p.content_id = new.content_id AND p.position = attachments.position)
+     WHERE message_id IN (SELECT id FROM messages WHERE id = new.id) AND EXISTS (SELECT 1 FROM message_contents WHERE id = new.content_id AND namespace IS NOT NULL AND body_state IN ('partial','full'));
+    UPDATE messages SET
+        body_headers_truncated = (SELECT body_headers_truncated FROM message_contents WHERE id = new.content_id),
+        body_encoding_problems = (SELECT body_encoding_problems FROM message_contents WHERE id = new.content_id),
+        body_parsed_with = (SELECT body_parsed_with FROM message_contents WHERE id = new.content_id),
+        body_line_count = (SELECT body_line_count FROM message_contents WHERE id = new.content_id),
+        content_type = coalesce((SELECT content_type FROM message_contents WHERE id = new.content_id), content_type),
+        text_part_id = coalesce((SELECT text_part_id FROM message_contents WHERE id = new.content_id), text_part_id),
+        text_part_headers = coalesce((SELECT text_part_headers FROM message_contents WHERE id = new.content_id), text_part_headers),
+        html_part_id = coalesce((SELECT html_part_id FROM message_contents WHERE id = new.content_id), html_part_id),
+        html_part_headers = coalesce((SELECT html_part_headers FROM message_contents WHERE id = new.content_id), html_part_headers),
+        text_is_flowed = (SELECT text_is_flowed FROM message_contents WHERE id = new.content_id),
+        read_receipt_requested = (SELECT read_receipt_requested FROM message_contents WHERE id = new.content_id),
+        body_has_headers = (SELECT body_headers IS NOT NULL FROM message_contents WHERE id = new.content_id),
+        raw_blob_id = coalesce((SELECT raw_blob_id FROM message_contents WHERE id = new.content_id), raw_blob_id),
+        preview = coalesce(preview, (SELECT preview FROM message_contents WHERE id = new.content_id)),
+        has_attachments = EXISTS (SELECT 1 FROM attachments WHERE message_id = messages.id),
+        body_state = CASE
+            WHEN (SELECT body_state FROM message_contents WHERE id = new.content_id) IN ('partial','full')
+            THEN CASE
+                WHEN content_namespace IS NULL THEN (SELECT body_state FROM message_contents WHERE id = new.content_id)
+                WHEN EXISTS (SELECT 1 FROM attachments WHERE message_id = messages.id AND blob_id IS NULL) THEN 'partial'
+                ELSE 'full' END
+            WHEN content_namespace IS NOT NULL THEN 'headers_only'
+            ELSE body_state END
+     WHERE id = new.id;
+END;
