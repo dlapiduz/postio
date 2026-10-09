@@ -139,8 +139,8 @@ pub struct ResultRow {
     pub reason: Option<String>,
     /// The subject, its matched words marked.
     pub subject: Vec<Run>,
-    /// Its labels' names.
-    pub labels: Vec<String>,
+    /// Its labels, as pills.
+    pub labels: Vec<LabelPill>,
     /// The paperclip.
     pub attachments: bool,
     /// The thread count, when more than one.
@@ -159,6 +159,15 @@ pub struct ResultRow {
     pub checked: bool,
     /// What a screen reader says for it (design §5).
     pub accessible: String,
+}
+
+/// A label on a result row: its name, and the colour it was given.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LabelPill {
+    /// The label's name.
+    pub name: String,
+    /// Its colour as `#rrggbb`, when it was given one: the pill's dot.
+    pub color: Option<String>,
 }
 
 /// One operator term of the query, as a chip (design §1).
@@ -1037,11 +1046,16 @@ impl Results {
                 .labels
                 .iter()
                 .filter_map(|label| {
-                    names?
-                        .labels
-                        .iter()
-                        .find(|(id, _)| id == label)
-                        .map(|(_, name)| name.clone())
+                    let names = names?;
+                    let name = names.labels.iter().find(|(id, _)| id == label)?;
+                    Some(LabelPill {
+                        name: name.1.clone(),
+                        color: names
+                            .label_colors
+                            .iter()
+                            .find(|(id, _)| id == label)
+                            .map(|(_, color)| color.clone()),
+                    })
                 })
                 .collect(),
             attachments: hit.has_attachments,

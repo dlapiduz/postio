@@ -166,7 +166,14 @@ fn best_match_gives_top_hits_then_month_groups() {
     assert!(newest.unread);
     assert_eq!(text(&newest.subject), "Atlas budget, part 0");
     assert_eq!(lit(&newest.subject), ["Atlas", "budget"]);
-    assert_eq!(newest.labels, ["Atlas"]);
+    assert_eq!(
+        newest.labels,
+        [postio_focus::LabelPill {
+            name: "Atlas".to_owned(),
+            color: Some("#c08a2e".to_owned()),
+        }],
+        "the label's colour comes with its name"
+    );
     assert!(newest.attachments);
     assert_eq!(newest.count_badge.as_deref(), Some("3"));
     assert_eq!(newest.folder, "in:Inbox");

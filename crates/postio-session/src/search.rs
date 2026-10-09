@@ -334,13 +334,21 @@ async fn names(
         },
     )
     .await?;
-    let labels = sql::all(
+    let labelled = sql::all(
         connection,
-        "SELECT l.id, l.name FROM json_each(?1) j JOIN labels l ON l.id = j.value",
+        "SELECT l.id, l.name, l.color FROM json_each(?1) j JOIN labels l ON l.id = j.value",
         [labels.as_str()],
-        |row| Ok((LabelId::new(row.int(0)?), row.text(1)?)),
+        |row| Ok((LabelId::new(row.int(0)?), row.text(1)?, row.opt_text(2)?)),
     )
     .await?;
+    let label_colors = labelled
+        .iter()
+        .filter_map(|(id, _, color)| Some((*id, color.clone()?)))
+        .collect();
+    let labels = labelled
+        .into_iter()
+        .map(|(id, name, _)| (id, name))
+        .collect();
     let folders = sql::all(
         connection,
         "SELECT m.id, m.name FROM json_each(?1) j JOIN mailboxes m ON m.id = j.value",
@@ -351,6 +359,7 @@ async fn names(
     Ok(FacetNames {
         people,
         labels,
+        label_colors,
         folders,
     })
 }
