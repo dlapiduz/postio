@@ -237,6 +237,20 @@ pub struct Match {
     pub when: Option<DateTime<Utc>>,
 }
 
+/// One match in a conversation, as Quick Look lists them (spec 010 US4):
+/// a [`Match`] with the message it is in and who wrote that message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConversationMatch {
+    /// The message it is in; `None` for the conversation's subject, which
+    /// is one match however many messages carry it.
+    pub message: Option<MessageId>,
+    /// Who wrote the words; `None` for the subject and for quoted history,
+    /// whose writer the quote does not say.
+    pub from: Option<EmailAddress>,
+    /// Where, the words around it, and when it was sent.
+    pub found: Match,
+}
+
 /// Why a conversation ranks where it does: the row's reason line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RankReason {

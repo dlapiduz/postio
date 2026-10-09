@@ -955,6 +955,9 @@ impl Inner {
             } => Resp::Passages(
                 search::passages(&self.wiring.database, &query, &hits, first_line).await,
             ),
+            Req::ConversationMatches { query, key } => Resp::Matches(
+                search::conversation_matches(&self.wiring.database, &query, key).await,
+            ),
             Req::Relaxations {
                 account,
                 query,

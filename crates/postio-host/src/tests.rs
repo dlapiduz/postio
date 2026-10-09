@@ -4095,6 +4095,48 @@ fn focus_asks_the_host_for_conversations_then_their_passages() {
     }
 }
 
+/// Quick Look's cards (spec 010 US4): every match in the first result's
+/// conversation, its own words with who wrote them, the subject once last.
+#[test]
+fn focus_asks_the_host_for_a_conversations_matches() {
+    let seed = SearchSeed::new();
+    let results = seed.conversations("atlas budget");
+    let hit = results
+        .hits
+        .iter()
+        .find(|hit| hit.messages > 1)
+        .expect("an Atlas conversation of more than one message");
+    let found = seed
+        .rt
+        .block_on(seed.client.conversation_matches(
+            postio_search::parse("atlas budget", postio_demo::today().date_naive()),
+            hit.key,
+        ))
+        .expect("an answer");
+    assert!(!found.is_empty(), "the conversation's matches");
+    let bodies: Vec<_> = found
+        .iter()
+        .filter(|each| each.found.source == postio_search::results::Source::Body)
+        .collect();
+    assert!(!bodies.is_empty(), "{found:?}");
+    for body in &bodies {
+        assert!(body.message.is_some() && body.from.is_some(), "{body:?}");
+        assert!(body.found.passage.is_some(), "{body:?}");
+    }
+    let when: Vec<_> = bodies.iter().map(|body| body.found.when).collect();
+    let mut sorted = when.clone();
+    sorted.sort();
+    assert_eq!(when, sorted, "oldest first");
+    assert!(
+        found
+            .iter()
+            .filter(|each| each.found.source == postio_search::results::Source::Subject)
+            .count()
+            <= 1,
+        "the subject is said once"
+    );
+}
+
 #[test]
 fn focus_asks_the_host_for_the_ways_out_of_no_results() {
     let seed = SearchSeed::new();

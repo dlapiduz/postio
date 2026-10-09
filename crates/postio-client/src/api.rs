@@ -74,6 +74,7 @@ impl Req {
             self,
             Req::Conversations { .. }
                 | Req::Passages { .. }
+                | Req::ConversationMatches { .. }
                 | Req::Relaxations { .. }
                 | Req::RecentSearches
                 | Req::SavedCounts { .. }
@@ -129,6 +130,7 @@ impl Req {
             Req::Facets { .. } => "Facets",
             Req::Conversations { .. } => "Conversations",
             Req::Passages { .. } => "Passages",
+            Req::ConversationMatches { .. } => "ConversationMatches",
             Req::Relaxations { .. } => "Relaxations",
             Req::RecentSearches => "RecentSearches",
             Req::RememberSearch { .. } => "RememberSearch",
@@ -969,6 +971,24 @@ impl Client {
             "the passages",
             |answer| match answer {
                 Resp::Passages(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Every match in the conversation `key` under `query`, oldest first:
+    /// Quick Look's cards.
+    pub async fn conversation_matches(
+        &self,
+        query: postio_search::ParsedQuery,
+        key: postio_search::results::ConversationKey,
+    ) -> Result<Vec<postio_search::results::ConversationMatch>, StoreError> {
+        self.read(
+            Req::ConversationMatches { query, key },
+            "a conversation's matches",
+            |answer| match answer {
+                Resp::Matches(found) => Some(found),
                 _ => None,
             },
         )
