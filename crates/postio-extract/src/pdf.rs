@@ -23,8 +23,12 @@
 //!    stop and finishes the page it is on; it cannot be killed, which is
 //!    why (1) and the input limit bound what one page can cost.
 //!
-//! If a file is ever found that still overflows the stack, the remaining
-//! answer is research R5's: extraction moves to a child process.
+//! The fourth is outside this crate: the indexer never calls this in its
+//! own process (spec 010 D28). It runs in `postio-extract-helper`, which
+//! is killed at its deadline, so a loop nobody has found yet costs a
+//! process and an overflow costs a crash of something that was about to
+//! end anyway. These three stay because they are cheap: a known-hostile
+//! page is refused at once, rather than spinning until the kill.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;

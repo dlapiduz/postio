@@ -3,9 +3,10 @@
 //! A pure leaf: bytes in, located units of text out. It opens no store,
 //! starts no runtime, reaches no network and links no toolkit (FR-052,
 //! enforced by `check-crate-boundaries.py`). The indexer in
-//! `postio-session` reads a blob that is already on this machine, calls
-//! [`extract`] on a blocking thread, folds each unit and writes it to the
-//! index; nothing here knows that.
+//! `postio-session` reads a blob that is already on this machine, hands it
+//! to `postio-extract-helper` -- [`helper::run`] in a process of its own,
+//! speaking [`wire`] -- which calls [`extract`]; the indexer folds each
+//! unit and writes it to the index. Nothing here knows that.
 //!
 //! # Hostile input is the normal case
 //!
@@ -22,10 +23,12 @@ use std::time::{Duration, Instant};
 
 pub use postio_search::results::Location;
 
+pub mod helper;
 mod limits;
 mod ooxml;
 mod pdf;
 mod text;
+pub mod wire;
 
 use limits::{Budget, Stop};
 
@@ -98,6 +101,10 @@ pub enum Skip {
     Empty,
     /// Larger than [`Limits::max_input`]; not opened.
     TooLarge,
+    /// Not read here: the format is read only in the helper process (spec
+    /// 010 D28), and the helper is missing or belongs to another build.
+    /// Recorded by the indexer, never produced by [`extract`].
+    Unavailable,
 }
 
 /// How an extraction ended.
@@ -199,6 +206,15 @@ pub fn extract(bytes: &[u8], mime_type: &str, name: Option<&str>, limits: &Limit
         units: budget.units,
         outcome,
     }
+}
+
+/// Whether [`extract`] would read these bytes as a PDF: the one format
+/// whose reader is a third-party parser that recurses on what the file
+/// says, and so the one the indexer never reads in its own process (spec
+/// 010 D28).
+pub fn is_pdf(mime_type: &str, name: Option<&str>, bytes: &[u8]) -> bool {
+    let (essence, _) = parse_mime(mime_type);
+    Format::of(&essence, name, bytes) == Some(Format::Pdf)
 }
 
 /// The formats this crate reads.
@@ -303,5 +319,18 @@ mod tests {
             Some(Format::Pdf)
         );
         assert_eq!(Format::of("image/png", Some("a.pdf"), b"%PDF-"), None);
+    }
+
+    #[test]
+    fn a_pdf_is_known_by_its_type_its_name_or_its_signature() {
+        assert!(is_pdf("Application/PDF; name=x", None, b""));
+        assert!(is_pdf("application/octet-stream", Some("scan.PDF"), b""));
+        assert!(is_pdf("application/octet-stream", None, b"%PDF-1.7"));
+        assert!(!is_pdf("text/plain", Some("notes.pdf"), b"%PDF-1.7"));
+        assert!(!is_pdf(
+            "application/octet-stream",
+            Some("budget.xlsx"),
+            b"PK"
+        ));
     }
 }

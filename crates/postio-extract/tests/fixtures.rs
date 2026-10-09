@@ -664,3 +664,46 @@ fn a_zip_that_is_not_a_zip_fails() {
         Outcome::Failed,
     );
 }
+
+// ---------------------------------------------------------------------------
+// Across a process boundary (spec 010 D28, T151): the helper's frame
+// carries exactly what an in-process extraction produces.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn every_fixture_is_answered_through_the_frame_as_it_is_in_process() {
+    use postio_extract::wire;
+
+    let cut = {
+        let whole = three_pages();
+        whole[..whole.len() / 2].to_vec()
+    };
+    let fixtures: Vec<(&str, Vec<u8>, &str)> = vec![
+        ("survey.pdf", three_pages(), PDF),
+        ("budget.xlsx", workbook(), XLSX),
+        (
+            "memo.docx",
+            docx_body(&paragraph("The Atlas budget holds")),
+            DOCX,
+        ),
+        ("deck.pptx", pptx(&["Atlas", "Where the budget went"]), PPTX),
+        ("notes.txt", utf16_text(), "text/plain"),
+        ("locked.pdf", encrypted_pdf(), PDF),
+        ("cut.pdf", cut, PDF),
+        ("loop.pdf", self_drawing_pdf(), PDF),
+        ("parent.pdf", own_parent_pdf(), PDF),
+        ("picture.png", b"\x89PNG\r\n".to_vec(), "image/png"),
+    ];
+    for (name, bytes, mime) in fixtures {
+        let limits = Limits::default();
+        let mut request = Vec::new();
+        wire::write_request(&mut request, &bytes, mime, Some(name), &limits).expect("written");
+        let mut reply = Vec::new();
+        wire::serve(&mut request.as_slice(), &mut reply).expect("served");
+        assert_eq!(
+            wire::read_reply(&reply).expect("a reply"),
+            extract(&bytes, mime, Some(name), &limits),
+            "{name}"
+        );
+    }
+}
