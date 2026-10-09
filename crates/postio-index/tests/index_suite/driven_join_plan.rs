@@ -352,3 +352,86 @@ fn joins_by_content(sql: &str) -> bool {
 fn flat(sql: &str) -> String {
     sql.split_whitespace().collect::<Vec<_>>().join(" ")
 }
+
+/// The walk reads what it needs of each matched message from that
+/// message's own row (spec 010 D30): its people, labels and attachment
+/// count are columns `messages` keeps, not lookups into `recipients`,
+/// `message_labels` and `attachments` made once per walked row. Those
+/// three were two thirds of the common word's walk; a lookup that comes
+/// back costs ten thousand seeks again, so every shape of the walk -- the
+/// match, a walk of `messages`, a walk keyed by a set -- is planned here.
+#[tokio::test]
+async fn the_walk_reads_its_people_labels_and_files_from_the_row() {
+    use crate::conversations::{Mail, file, now, store, today};
+    use chrono::Duration;
+    use postio_index::executor::{ConversationRequest, search_conversations};
+    use postio_search::results::ConversationOrder;
+
+    let (_database, connection, account, inbox) = store().await;
+    for (nth, days) in [10, 60].into_iter().enumerate() {
+        file(
+            &connection,
+            &account,
+            inbox,
+            Mail {
+                subject: ["quarterly figures", "quarterly plan"][nth],
+                body: "the quarterly report",
+                file: Some("quarterly.pdf"),
+                ago: Duration::days(days),
+                ..Mail::default()
+            },
+        )
+        .await;
+    }
+
+    for text in [
+        "quarterly",
+        "has:attachment",
+        "quarterly from:ada",
+        "from:ada",
+    ] {
+        let query = parse(text, today());
+        let request = ConversationRequest {
+            account: AccountScope::Account(account.id),
+            query: &query,
+            order: ConversationOrder::BestMatch,
+            offset: 0,
+            limit: 25,
+            today: today(),
+        };
+        counting::record();
+        let results = search_conversations(&connection, &request, now())
+            .await
+            .expect("search");
+        assert!(
+            results.total > 0,
+            "{text}: the fixture is meant to answer this"
+        );
+        let walks: Vec<String> = counting::recorded()
+            .into_keys()
+            .filter(|sql| flat(sql).contains("SELECT m.id, m.thread_id, m.mailbox_id"))
+            .collect();
+        assert!(
+            !walks.is_empty(),
+            "{text}: the walk was not recorded, so this gate cannot see its plan"
+        );
+        for sql in &walks {
+            let steps = counting::plan_steps(&connection, sql)
+                .await
+                .unwrap_or_else(|error| panic!("cannot plan {sql}: {error}"));
+            let lookups: Vec<&String> = steps
+                .iter()
+                .filter(|step| {
+                    ["recipients", "message_labels", "attachments"]
+                        .iter()
+                        .any(|table| step.contains(table))
+                })
+                .collect();
+            assert!(
+                lookups.is_empty(),
+                "{text}: the walk looks each row's people, labels or files up \
+                 ({lookups:?}) where the row's own columns hold them.\n{sql}\n{steps:#?}"
+            );
+        }
+    }
+}
