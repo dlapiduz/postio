@@ -61,8 +61,8 @@ pub use pickers::{
 pub use postio_ui::capture::{Mode as CaptureMode, Pick as CapturePick};
 pub use postio_ui::digest::{Page as DigestPage, Schedule as RuleSchedule};
 pub use results::{
-    Chip, FilterButton, LabelPill, MonthBar, PopoverRow, PopoverView, QueryView, ResultGroup,
-    ResultRow, ResultsTabView, ResultsView, TermEdit,
+    Chip, DatePresetView, FilterButton, LabelPill, MonthBar, PopoverRow, PopoverView, QueryView,
+    ResultGroup, ResultRow, ResultsTabView, ResultsView, TermEdit,
 };
 pub use states::{AccountsRead, BannerButton, BannerView};
 pub use surfaces::{Host, ReaderVerb, SurfaceKind};
@@ -188,6 +188,11 @@ pub enum Input {
     },
     /// The popover's own search field holds this now.
     PopoverFilter(String),
+    /// The Date popover's plain-words field holds this now.
+    DateWords(String),
+    /// The Date popover's preset with this
+    /// [`token`](DatePresetView::token) was picked.
+    DatePreset(u64),
     /// ↩ (`apply`), or Esc and a click away: the popover closes.
     PopoverDone {
         /// Keep what it previewed.
@@ -1353,6 +1358,8 @@ impl FocusController {
             | Input::PopoverToggle { .. }
             | Input::PopoverFilter(_)
             | Input::PopoverDone { .. }
+            | Input::DateWords(_)
+            | Input::DatePreset(_)
             | Input::ResultsTab(_)
             | Input::ResultsOrder(_)
             | Input::ResultsPoint(_)) => {

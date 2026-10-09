@@ -811,3 +811,239 @@ fn esc_closes_an_open_popover_before_anything_else() {
     let effects = focus.handle_on(Input::SearchPopover(FilterKind::Unread), &rows);
     assert_eq!(popover_view(&effects), None);
 }
+
+// Step 4: the timeline's months, ⌥←/⌥→ and the Date popover (US3
+// scenario 4, FR-023, FR-027, screen 09).
+
+fn selected_months(view: &postio_focus::ResultsView) -> Vec<usize> {
+    view.months
+        .iter()
+        .enumerate()
+        .filter(|(_, bar)| bar.selected)
+        .map(|(at, _)| at)
+        .collect()
+}
+
+#[test]
+fn months_set_after_and_before_and_come_back_marked() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let effects = search(&mut focus, "atlas budget", &rows);
+    let view = results_view(&effects).expect("the results");
+    assert!(selected_months(&view).is_empty());
+    assert_eq!(
+        view.timeline_hint,
+        "Matches by month \u{b7} drag across months to narrow"
+    );
+    assert_eq!(view.timeline_step, None);
+
+    // Bars 3 to 5 of the twelve ending with September 2026: January to
+    // March. `after:` their first day, `before:` the day after the last.
+    let effects = focus.handle_on(
+        Input::SearchEdit(TermEdit::SetMonths { first: 5, last: 3 }),
+        &rows,
+    );
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget after:2026-01-01 before:2026-04-01")
+    );
+    let query = query_view(&effects).expect("the field");
+    assert_eq!(
+        button(&query, FilterKind::Date).label,
+        "January \u{2013} March"
+    );
+    let effects = settle(&mut focus, effects, &rows);
+    let view = results_view(&effects).expect("narrowed");
+    assert_eq!(selected_months(&view), [3, 4, 5]);
+    // The bars outside the range still say what is there, so the range
+    // can be dragged wider: the months of the query without its dates.
+    assert_eq!(view.months[11].conversations, 13);
+    assert!(view.months[11].height > 0.0);
+    assert_eq!(
+        view.timeline_hint,
+        "Jan \u{2013} Mar selected \u{b7} drag to change"
+    );
+    assert_eq!(
+        view.timeline_step,
+        Some(postio_ui::hints::Hint {
+            key: "alt+Left/alt+Right".to_owned(),
+            label: "steps a month".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn alt_arrows_step_the_range_by_a_month() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    assert_eq!(focus.key_context(), KeyContext::Results);
+
+    // No range: ⌥→ has nowhere to go, ⌥← takes this month.
+    let effects = run(&mut focus, CommandId::StepRangeForward, &rows);
+    assert!(queries_asked(&effects).is_empty());
+    let effects = run(&mut focus, CommandId::StepRangeBack, &rows);
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget after:2026-09-01 before:2026-10-01")
+    );
+    let effects = settle(&mut focus, effects, &rows);
+    assert_eq!(
+        selected_months(&results_view(&effects).expect("this month")),
+        [11]
+    );
+    // Not past this month.
+    let effects = run(&mut focus, CommandId::StepRangeForward, &rows);
+    assert!(queries_asked(&effects).is_empty());
+
+    let effects = focus.handle_on(
+        Input::SearchEdit(TermEdit::SetMonths { first: 3, last: 5 }),
+        &rows,
+    );
+    let _ = settle(&mut focus, effects, &rows);
+    let effects = run(&mut focus, CommandId::StepRangeForward, &rows);
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget after:2026-02-01 before:2026-05-01"),
+        "both bounds a month later, in place"
+    );
+    let _ = settle(&mut focus, effects, &rows);
+    let _ = run(&mut focus, CommandId::StepRangeBack, &rows);
+    let effects = run(&mut focus, CommandId::StepRangeBack, &rows);
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget after:2025-12-01 before:2026-03-01")
+    );
+    let effects = settle(&mut focus, effects, &rows);
+    assert_eq!(
+        selected_months(&results_view(&effects).expect("stepped")),
+        [2, 3, 4]
+    );
+
+    // An open-ended `since` steps as the range it shows: up to this month.
+    let effects = focus.handle_on(Input::SearchEdit(TermEdit::ClearFilters), &rows);
+    let _ = settle(&mut focus, effects, &rows);
+    let effects = focus.handle_on(
+        Input::SearchEdit(TermEdit::Add {
+            field: "after".to_owned(),
+            value: "2026-07-01".to_owned(),
+            negated: false,
+        }),
+        &rows,
+    );
+    let _ = settle(&mut focus, effects, &rows);
+    let effects = run(&mut focus, CommandId::StepRangeBack, &rows);
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget after:2026-06-01 before:2026-09-01")
+    );
+}
+
+#[test]
+fn the_date_popover_turns_words_into_dates_and_its_presets_carry_counts() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let view = open_popover(&mut focus, FilterKind::Date, &rows);
+    assert_eq!(
+        view.presets
+            .iter()
+            .map(|preset| (
+                preset.label.as_str(),
+                preset.count.as_deref(),
+                preset.selected
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("Any time", Some("120"), true),
+            ("Last 7 days", Some("2"), false),
+            ("Last 30 days", Some("6"), false),
+            ("This quarter", Some("12"), false),
+            ("This year", Some("17"), false),
+            ("Custom\u{2026}", None, false),
+        ]
+    );
+    assert_eq!(
+        view.words_hint,
+        "Type a date in plain words, or drag across the months."
+    );
+    assert_eq!(view.months.len(), 12);
+    assert!(view.rows.is_empty());
+    assert_eq!(view.parsed, None);
+
+    // Plain words: the operator they became, and the preview.
+    let effects = focus.handle_on(Input::DateWords("since july".to_owned()), &rows);
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget after:2026-07-01")
+    );
+    let popover = popover_view(&effects).flatten().expect("redrawn");
+    assert_eq!(popover.words, "since july");
+    assert_eq!(popover.parsed.as_deref(), Some("\u{2192} after:2026-07-01"));
+    let effects = settle(&mut focus, effects, &rows);
+    let popover = popover_view(&effects).flatten().expect("again, counted");
+    // This quarter starts on the same day, so it is the one ringed.
+    assert_eq!(
+        popover
+            .presets
+            .iter()
+            .filter(|preset| preset.selected)
+            .map(|preset| preset.label.as_str())
+            .collect::<Vec<_>>(),
+        ["This quarter"]
+    );
+    // From the 1st of July to the 26th of September, one every two days.
+    assert_eq!(popover.result.as_deref(), Some("44 of 120"));
+    assert_eq!(popover.range.as_deref(), Some("Jul \u{2013} Sep 2026"));
+    let selected: Vec<usize> = popover
+        .months
+        .iter()
+        .enumerate()
+        .filter(|(_, bar)| bar.selected)
+        .map(|(at, _)| at)
+        .collect();
+    assert_eq!(selected, [9, 10, 11]);
+    assert!(popover.months[0..9].iter().any(|bar| bar.conversations > 0));
+    let view = results_view(&effects).expect("the preview");
+    assert_eq!(view.count_line, "44 conversations");
+    assert_eq!(
+        view.sub_line,
+        "previewing Jul \u{2013} Sep \u{b7} \u{21a9} applies"
+    );
+
+    // Words that are no date change nothing; none at all put back the
+    // dates it opened on.
+    let effects = focus.handle_on(Input::DateWords("budget".to_owned()), &rows);
+    assert!(queries_asked(&effects).is_empty());
+    assert_eq!(
+        popover_view(&effects).flatten().expect("redrawn").parsed,
+        None
+    );
+    let effects = focus.handle_on(Input::DateWords(String::new()), &rows);
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget")
+    );
+
+    // A preset is its `after:`; Any time takes the dates out; Custom… asks
+    // nothing (the field is where a custom date goes).
+    let effects = focus.handle_on(Input::DatePreset(1), &rows);
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget after:2026-09-19")
+    );
+    let effects = focus.handle_on(Input::DatePreset(0), &rows);
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget")
+    );
+    let effects = focus.handle_on(Input::DatePreset(5), &rows);
+    assert!(queries_asked(&effects).is_empty());
+
+    // Return keeps it: the button says it.
+    let _ = focus.handle_on(Input::DateWords("since july".to_owned()), &rows);
+    let effects = focus.handle_on(Input::PopoverDone { apply: true }, &rows);
+    let query = query_view(&effects).expect("the field");
+    assert_eq!(button(&query, FilterKind::Date).label, "Since July");
+    assert!(button(&query, FilterKind::Date).applied);
+}

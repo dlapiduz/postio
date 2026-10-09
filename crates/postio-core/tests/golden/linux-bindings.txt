@@ -56,6 +56,8 @@ history_forward
 results_conversations	
 results_files	
 results_people	
+step_range_back	
+step_range_forward	
 compose	c | ctrl+n
 send	ctrl+Return | alt+s | alt+Return
 schedule_send	ctrl+shift+Return | alt+S

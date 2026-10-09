@@ -1181,6 +1181,28 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
     },
+    // ⌥←/⌥→ step the timeline's range by a month (spec 010 FR-023): the
+    // results' own, and the Mac's until Linux adopts them (D25).
+    CommandSpec {
+        id: CommandId::StepRangeBack,
+        title: "Earlier month",
+        default_binding: "alt+Left",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::StepRangeForward,
+        title: "Later month",
+        default_binding: "alt+Right",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
     CommandSpec {
         id: CommandId::Compose,
         title: "Compose",
@@ -2688,6 +2710,8 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             | (ActionId::Builtin(C::ResultsConversations), Platform::Freedesktop)
             | (ActionId::Builtin(C::ResultsFiles), Platform::Freedesktop)
             | (ActionId::Builtin(C::ResultsPeople), Platform::Freedesktop)
+            | (ActionId::Builtin(C::StepRangeBack), Platform::Freedesktop)
+            | (ActionId::Builtin(C::StepRangeForward), Platform::Freedesktop)
     )
 }
 
@@ -2764,7 +2788,7 @@ mod tests {
 
     /// What only the Mac's search dropdown and results view draw, until
     /// Linux adopts them (spec 010 D23, D25).
-    const NOT_ON_LINUX_YET: [CommandId; 7] = [
+    const NOT_ON_LINUX_YET: [CommandId; 9] = [
         CommandId::ShowAllResults,
         CommandId::ForgetRecent,
         CommandId::HistoryBack,
@@ -2772,6 +2796,8 @@ mod tests {
         CommandId::ResultsConversations,
         CommandId::ResultsFiles,
         CommandId::ResultsPeople,
+        CommandId::StepRangeBack,
+        CommandId::StepRangeForward,
     ];
 
     #[test]
