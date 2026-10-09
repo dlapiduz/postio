@@ -35,6 +35,9 @@ use crate::error::Result;
 use postio_storage::Connection;
 use postio_storage::sql::{self, RowExt as _};
 
+mod conversations;
+pub use conversations::{ConversationRequest, search_conversations};
+
 /// How many candidates `search` pulls out of SQL before re-ranking in Rust,
 /// as a multiple of the requested page size.
 const CANDIDATE_POOL_MULTIPLIER: u32 = 5;
@@ -255,6 +258,115 @@ fn known(times_seen: i64) -> u8 {
     (affinity.min(1.0) * 4.0).floor().min(3.0) as u8
 }
 
+/// Where the relevance order puts one candidate, once it is scored: what
+/// [`search`] sorts its pool by, and what a conversation search sorts its
+/// pool by with the match count in between ([`RelevanceKey::order`]).
+#[derive(Debug, Clone, Copy)]
+struct RelevanceKey {
+    /// The best score of its band ([`TEXT_TIE`], or [`SAID_TIE`] among those
+    /// whose subject and sender say every word).
+    band: f64,
+    /// How much of the query its subject and sender say ([`coverage`]).
+    said: f64,
+    /// How well its sender is known, coarsely ([`known`]).
+    known: u8,
+    aged_from: DateTime<Utc>,
+    /// Its [`rank_score`].
+    score: f64,
+}
+
+impl RelevanceKey {
+    /// Better first. `between` decides what the subject and sender leave
+    /// tied, before the sender and the age do: [`search`] passes `Equal`,
+    /// a conversation search how many of each one's messages matched.
+    fn order(&self, other: &Self, between: std::cmp::Ordering) -> std::cmp::Ordering {
+        // In a band: what the subject and sender say, then how well the
+        // sender is known in coarse steps (a correspondent of eighty
+        // letters still leads a stranger, but four sightings against
+        // five is noise), then the newer.
+        self.band
+            .total_cmp(&other.band)
+            .then(other.said.total_cmp(&self.said))
+            .then(between)
+            .then(other.known.cmp(&self.known))
+            .then(other.aged_from.cmp(&self.aged_from))
+            .then(self.score.total_cmp(&other.score))
+    }
+}
+
+/// Scores each candidate ([`rank_score`] over its text band) and says where
+/// the relevance order puts it, in the candidates' own order.
+fn relevance_keys(
+    candidates: &mut [Candidate],
+    query: &ParsedQuery,
+    now: DateTime<Utc>,
+) -> Vec<RelevanceKey> {
+    let texts = text_bands(
+        &candidates
+            .iter()
+            .map(|candidate| candidate.bm25)
+            .collect::<Vec<_>>(),
+    );
+    for (candidate, text) in candidates.iter_mut().zip(texts) {
+        candidate.score = rank_score(text, candidate.aged_from, now, candidate.sender_times_seen);
+    }
+    // Scores within [`TEXT_TIE`] of each other are one band: as good
+    // an answer as each other, so within it the message whose subject
+    // and sender say more of the query leads, then the newer one.
+    // Recency and affinity are too weak to order recent mail on their
+    // own -- a week is 0.02, and a sender seen four times rather than
+    // five is 0.04 -- so a sender's own newsletters came back in no
+    // order a person could see.
+    let terms: Vec<String> = query
+        .searchable_terms()
+        .filter(|term| !term.negated)
+        .map(|term| term.value.clone())
+        .collect();
+    let said: Vec<f64> = candidates
+        .iter()
+        .map(|candidate| {
+            let said = [
+                candidate.subject.as_deref(),
+                candidate.from_name.as_deref(),
+                candidate.from_address.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ");
+            coverage(&terms, &said)
+        })
+        .collect();
+    // Those that say all of it are banded among themselves, more
+    // loosely ([`SAID_TIE`]); the rest by [`TEXT_TIE`].
+    let mut banded = vec![0.0; candidates.len()];
+    for all in [true, false] {
+        let members: Vec<usize> = (0..candidates.len())
+            .filter(|index| (said[*index] >= 1.0) == all)
+            .collect();
+        let scores: Vec<f64> = members
+            .iter()
+            .map(|index| candidates[*index].score)
+            .collect();
+        let tie = if all { SAID_TIE } else { TEXT_TIE };
+        for (index, band) in members.into_iter().zip(bands(&scores, tie)) {
+            banded[index] = band;
+        }
+    }
+    candidates
+        .iter()
+        .zip(banded)
+        .zip(said)
+        .map(|((candidate, band), said)| RelevanceKey {
+            band,
+            said,
+            known: known(candidate.sender_times_seen),
+            aged_from: candidate.aged_from,
+            score: candidate.score,
+        })
+        .collect()
+}
+
 /// How old a message is, to the ranking: its own `Date`, when that is
 /// earlier than the server's arrival date, else the arrival date.
 ///
@@ -397,82 +509,11 @@ async fn search_as(
 
     match request.order {
         postio_search::ResultOrder::Relevance => {
-            let texts = text_bands(
-                &candidates
-                    .iter()
-                    .map(|candidate| candidate.bm25)
-                    .collect::<Vec<_>>(),
-            );
-            for (candidate, text) in candidates.iter_mut().zip(texts) {
-                candidate.score =
-                    rank_score(text, candidate.aged_from, now, candidate.sender_times_seen);
-            }
-            // Scores within [`TEXT_TIE`] of each other are one band: as good
-            // an answer as each other, so within it the message whose subject
-            // and sender say more of the query leads, then the newer one.
-            // Recency and affinity are too weak to order recent mail on their
-            // own -- a week is 0.02, and a sender seen four times rather than
-            // five is 0.04 -- so a sender's own newsletters came back in no
-            // order a person could see.
-            let terms: Vec<String> = request
-                .query
-                .searchable_terms()
-                .filter(|term| !term.negated)
-                .map(|term| term.value.clone())
-                .collect();
-            let said: Vec<f64> = candidates
-                .iter()
-                .map(|candidate| {
-                    let said = [
-                        candidate.subject.as_deref(),
-                        candidate.from_name.as_deref(),
-                        candidate.from_address.as_deref(),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                    coverage(&terms, &said)
-                })
-                .collect();
-            // Those that say all of it are banded among themselves, more
-            // loosely ([`SAID_TIE`]); the rest by [`TEXT_TIE`].
-            let mut banded = vec![0.0; candidates.len()];
-            for all in [true, false] {
-                let members: Vec<usize> = (0..candidates.len())
-                    .filter(|index| (said[*index] >= 1.0) == all)
-                    .collect();
-                let scores: Vec<f64> = members
-                    .iter()
-                    .map(|index| candidates[*index].score)
-                    .collect();
-                let tie = if all { SAID_TIE } else { TEXT_TIE };
-                for (index, band) in members.into_iter().zip(bands(&scores, tie)) {
-                    banded[index] = band;
-                }
-            }
-            let mut keyed: Vec<(f64, f64, Candidate)> = banded
-                .into_iter()
-                .zip(said)
-                .zip(candidates)
-                .map(|((band, said), candidate)| (band, said, candidate))
-                .collect();
-            // In a band: what the subject and sender say, then how well the
-            // sender is known in coarse steps (a correspondent of eighty
-            // letters still leads a stranger, but four sightings against
-            // five is noise), then the newer.
-            keyed.sort_by(|(a_band, a_said, a), (b_band, b_said, b)| {
-                a_band
-                    .total_cmp(b_band)
-                    .then(b_said.total_cmp(a_said))
-                    .then(known(b.sender_times_seen).cmp(&known(a.sender_times_seen)))
-                    .then(b.aged_from.cmp(&a.aged_from))
-                    .then(a.score.total_cmp(&b.score))
-            });
-            candidates = keyed
-                .into_iter()
-                .map(|(_, _, candidate)| candidate)
-                .collect();
+            let keys = relevance_keys(&mut candidates, request.query, now);
+            let mut keyed: Vec<(RelevanceKey, Candidate)> =
+                keys.into_iter().zip(candidates).collect();
+            keyed.sort_by(|(a, _), (b, _)| a.order(b, std::cmp::Ordering::Equal));
+            candidates = keyed.into_iter().map(|(_, candidate)| candidate).collect();
             // Why the order is what it is, in numbers and ids only: the
             // text match, the age, how often the sender was seen, and what
             // they came to.

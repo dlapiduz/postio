@@ -21,6 +21,7 @@ mod backfill;
 mod body_index;
 mod body_index_size;
 mod content_membership;
+mod conversations;
 mod digest_matcher;
 mod driven_join_plan;
 mod executor;
