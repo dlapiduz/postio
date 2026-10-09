@@ -214,6 +214,46 @@ pub struct QueryView {
     pub buttons: Vec<FilterButton>,
 }
 
+/// One row of a list popover (§3.6, screen 08): a person, a folder or a
+/// label the results hold, with how many of them it holds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PopoverRow {
+    /// What [`Input::PopoverToggle`] names it by: its place among the rows
+    /// the popover opened with, whatever its own filter hides.
+    pub token: u64,
+    /// "Ada Moreno", "Inbox", "Atlas".
+    pub title: String,
+    /// The address under a person's name.
+    pub detail: Option<String>,
+    /// A person's avatar: "AM".
+    pub initials: Option<String>,
+    /// A label's colour as `#rrggbb`.
+    pub color: Option<String>,
+    /// Conversations among the results it opened on.
+    pub count: u64,
+    /// Its bar: the count, 0 to 1 of the largest.
+    pub share: f64,
+    /// The query holds it.
+    pub checked: bool,
+    /// The query excludes it (`-from:`).
+    pub excluded: bool,
+}
+
+/// A filter popover, whole (design §3.6).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PopoverView {
+    /// Which button it hangs from.
+    pub kind: FilterKind,
+    /// Its search field's placeholder: "Filter people in these results".
+    pub placeholder: String,
+    /// What its search field holds.
+    pub filter: String,
+    /// The rows its field leaves, in the order it opened with.
+    pub rows: Vec<PopoverRow>,
+    /// Its footer's keys.
+    pub hints: Vec<Hint>,
+}
+
 /// A change to the query from a control rather than the keyboard, as
 /// `postio-ffi` hands it over (contracts/ffi-search.md `TermEditFfi`): the
 /// operator's keyword and value, which Rust spells (D13).
@@ -321,6 +361,36 @@ struct Span {
     top_hits: bool,
 }
 
+/// What a popover lists from: the answer for the query it opened on, so
+/// its rows and counts hold still while its checks narrow the results.
+#[derive(Debug, Clone)]
+struct Base {
+    facets: SearchFacets,
+    names: FacetNames,
+}
+
+/// An open filter popover.
+#[derive(Debug)]
+pub(crate) struct Popover {
+    kind: FilterKind,
+    /// The query to restore on Esc (FR-027).
+    before: String,
+    /// What it lists, once the answer for `before` is known.
+    base: Option<Base>,
+    /// Its own search field.
+    filter: String,
+}
+
+/// One thing a list popover offers: the filter it is, and how it is drawn.
+struct Offer {
+    filter: Filter,
+    title: String,
+    detail: Option<String>,
+    initials: Option<String>,
+    color: Option<String>,
+    count: u64,
+}
+
 /// The results mode.
 #[derive(Debug)]
 pub(crate) struct Results {
@@ -344,6 +414,8 @@ pub(crate) struct Results {
     pub(crate) checked: Vec<MessageId>,
     /// The query has been kept among the recent searches.
     pub(crate) remembered: bool,
+    /// The filter popover that is open.
+    pub(crate) popover: Option<Popover>,
 }
 
 impl Results {
@@ -369,6 +441,7 @@ impl Results {
             cursor: None,
             checked: Vec::new(),
             remembered: false,
+            popover: None,
         }
     }
 
@@ -623,6 +696,15 @@ impl Results {
         if self.frame.is_none() {
             self.frame = Some(Frame::of(&results));
         }
+        if let Some(popover) = self.popover.as_mut()
+            && popover.base.is_none()
+            && popover.before == self.query
+        {
+            popover.base = Some(Base {
+                facets: results.facets.clone(),
+                names: results.names.clone(),
+            });
+        }
         let passages = self.passages_for(&results.hits);
         let mut landed = Landed {
             passages,
@@ -836,7 +918,10 @@ impl Results {
                 kind: *kind,
                 label: words::filter_button_label(*kind, &filters, &name_of, today),
                 applied: filters.iter().any(|filter| kind.holds(filter)),
-                open: false,
+                open: self
+                    .popover
+                    .as_ref()
+                    .is_some_and(|popover| popover.kind == *kind),
             })
             .collect();
         QueryView {
@@ -936,7 +1021,8 @@ impl Results {
             order: self.order,
             count_line: frame.map_or_else(String::new, |_| words::count_line(total, capped)),
             sub_line: frame.map_or_else(String::new, |frame| {
-                words::sub_line(frame.files, frame.people)
+                self.previewing(with)
+                    .unwrap_or_else(|| words::sub_line(frame.files, frame.people))
             }),
             months,
             groups,
@@ -953,6 +1039,190 @@ impl Results {
                 words::bulk_hints(with.keymap)
             },
         }
+    }
+
+    /// "previewing From: Ada Moreno · ↩ applies", while a popover's
+    /// changes are on screen and not yet applied.
+    fn previewing(&self, with: &Words<'_>) -> Option<String> {
+        let popover = self.popover.as_ref()?;
+        if popover.before == self.query {
+            return None;
+        }
+        let filters = self.filters();
+        let name_of = |address: &str| self.name_of(address);
+        let what =
+            words::filter_button_label(popover.kind, &filters, &name_of, with.now.date_naive());
+        Some(words::previewing(&what))
+    }
+
+    /// What the open list popover offers, in its base's order.
+    fn offers(&self, today: NaiveDate) -> Vec<Offer> {
+        let Some(popover) = self.popover.as_ref() else {
+            return Vec::new();
+        };
+        let Some(base) = popover.base.as_ref() else {
+            return Vec::new();
+        };
+        let names = &base.names;
+        let person = |count: &postio_search::facets::Count<postio_model::AddressId>,
+                      field: &str| {
+            let (_, who) = names.people.iter().find(|(id, _)| *id == count.id)?;
+            let filter = clause_of(field, who.address.as_str(), false, today)?.filter;
+            Some(Offer {
+                filter,
+                title: who
+                    .name
+                    .clone()
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| who.address.to_string()),
+                detail: Some(who.address.to_string()),
+                initials: Some(postio_ui::row::initials(Some(who))),
+                color: None,
+                count: count.conversations,
+            })
+        };
+        match popover.kind {
+            FilterKind::From => base
+                .facets
+                .senders
+                .iter()
+                .filter_map(|count| person(count, "from"))
+                .collect(),
+            FilterKind::To => base
+                .facets
+                .recipients
+                .iter()
+                .filter_map(|count| person(count, "to"))
+                .collect(),
+            FilterKind::Anywhere => base
+                .facets
+                .folders
+                .iter()
+                .filter_map(|count| {
+                    let (_, name) = names.folders.iter().find(|(id, _)| *id == count.id)?;
+                    Some(Offer {
+                        filter: clause_of("in", name, false, today)?.filter,
+                        title: name.clone(),
+                        detail: None,
+                        initials: None,
+                        color: None,
+                        count: count.conversations,
+                    })
+                })
+                .collect(),
+            FilterKind::Label => base
+                .facets
+                .labels
+                .iter()
+                .filter_map(|count| {
+                    let (_, name) = names.labels.iter().find(|(id, _)| *id == count.id)?;
+                    Some(Offer {
+                        filter: clause_of("label", name, false, today)?.filter,
+                        title: name.clone(),
+                        detail: None,
+                        initials: None,
+                        color: names
+                            .label_colors
+                            .iter()
+                            .find(|(id, _)| *id == count.id)
+                            .map(|(_, color)| color.clone()),
+                        count: count.conversations,
+                    })
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Where the query holds `filter`: its token, and whether it is
+    /// excluded there.
+    fn holding(&self, filter: &Filter) -> Option<(usize, bool)> {
+        self.parsed
+            .tokens()
+            .iter()
+            .enumerate()
+            .find_map(|(index, token)| match &token.kind {
+                TokenKind::Filter(clause) if postio_search::edit::same(&clause.filter, filter) => {
+                    Some((index, clause.negated))
+                }
+                _ => None,
+            })
+    }
+
+    /// The open popover, drawn.
+    pub(crate) fn popover_view(&self, today: NaiveDate) -> Option<PopoverView> {
+        let popover = self.popover.as_ref()?;
+        let offers = self.offers(today);
+        let largest = offers
+            .iter()
+            .map(|offer| offer.count)
+            .max()
+            .unwrap_or(0)
+            .max(1);
+        let needle = popover.filter.trim().to_lowercase();
+        let rows = offers
+            .into_iter()
+            .enumerate()
+            .filter(|(_, offer)| {
+                needle.is_empty()
+                    || offer.title.to_lowercase().contains(&needle)
+                    || offer
+                        .detail
+                        .as_ref()
+                        .is_some_and(|detail| detail.to_lowercase().contains(&needle))
+            })
+            .map(|(token, offer)| {
+                let held = self.holding(&offer.filter);
+                PopoverRow {
+                    token: token as u64,
+                    share: offer.count as f64 / largest as f64,
+                    checked: held.is_some_and(|(_, negated)| !negated),
+                    excluded: held.is_some_and(|(_, negated)| negated),
+                    title: offer.title,
+                    detail: offer.detail,
+                    initials: offer.initials,
+                    color: offer.color,
+                    count: offer.count,
+                }
+            })
+            .collect();
+        Some(PopoverView {
+            kind: popover.kind,
+            placeholder: words::popover_placeholder(popover.kind).to_owned(),
+            filter: popover.filter.clone(),
+            rows,
+            hints: words::popover_hints(popover.kind),
+        })
+    }
+
+    /// The edit a check on the popover's row `token` makes: Space toggles
+    /// it, ⌥-click excludes it, or takes its exclusion out.
+    fn popover_toggle(
+        &self,
+        token: u64,
+        exclude: bool,
+        today: NaiveDate,
+    ) -> Option<postio_search::edit::Edit> {
+        use postio_search::edit::Edit;
+        let offer = self
+            .offers(today)
+            .into_iter()
+            .nth(usize::try_from(token).ok()?)?;
+        if !exclude {
+            return Some(Edit::Toggle(offer.filter));
+        }
+        let excluded = Clause {
+            negated: true,
+            filter: offer.filter.clone(),
+        };
+        Some(match self.holding(&offer.filter) {
+            Some((token, true)) => Edit::Remove { token },
+            Some((token, false)) => Edit::Replace {
+                token,
+                with: excluded,
+            },
+            None => Edit::Add(excluded),
+        })
     }
 
     /// The query's dates: `after:` and `before:`.
@@ -1336,6 +1606,7 @@ impl FocusController {
             // ⇧X selects every conversation the query matches, as a
             // predicate: step 6 (T094).
             CommandId::SelectAll => Vec::new(),
+            CommandId::Back if results.popover.is_some() => self.popover_done(false),
             CommandId::Back => {
                 if results.checked.is_empty() {
                     let here = self.here();
@@ -1473,6 +1744,72 @@ impl FocusController {
         results.set_query(query, parsed);
         let asks = results.again(stamp);
         let mut steps = vec![Step::Show(Intent::Query(self.query_view()))];
+        steps.extend(self.draw_popover());
+        steps.extend(asks);
+        steps
+    }
+
+    /// The open popover, drawn; nothing when none is.
+    fn draw_popover(&self) -> Option<Step> {
+        let today = self.bar.now().date_naive();
+        let view = self.results.as_ref()?.popover_view(today)?;
+        Some(Step::Show(Intent::Popover(Some(Box::new(view)))))
+    }
+
+    /// A filter button with a popover was pressed: open it over the query
+    /// it will restore. Another one open closes first, as Esc would.
+    fn open_popover(&mut self, kind: FilterKind) -> Vec<Step> {
+        if !kind.has_popover() {
+            return Vec::new();
+        }
+        let mut steps = Vec::new();
+        if self
+            .results
+            .as_ref()
+            .is_some_and(|results| results.popover.is_some())
+        {
+            steps.extend(self.popover_done(false));
+        }
+        let Some(results) = self.results.as_mut() else {
+            return steps;
+        };
+        let base = results.frame.as_ref().map(|frame| Base {
+            facets: frame.facets.clone(),
+            names: frame.names.clone(),
+        });
+        results.popover = Some(Popover {
+            kind,
+            before: results.query.clone(),
+            base,
+            filter: String::new(),
+        });
+        steps.push(Step::Show(Intent::Query(self.query_view())));
+        steps.extend(self.draw_popover());
+        steps
+    }
+
+    /// ↩ keeps what the popover previewed; Esc, or a click away, puts back
+    /// the query it opened on, exactly (FR-027).
+    fn popover_done(&mut self, apply: bool) -> Vec<Step> {
+        let stamp = self.stamp();
+        let Some(results) = self.results.as_mut() else {
+            return Vec::new();
+        };
+        let Some(popover) = results.popover.take() else {
+            return Vec::new();
+        };
+        let mut steps = vec![Step::Show(Intent::Popover(None))];
+        if apply || popover.before == results.query {
+            steps.extend(self.draw_results());
+            return steps;
+        }
+        let parsed = self.bar.lower(&popover.before);
+        let Some(results) = self.results.as_mut() else {
+            return steps;
+        };
+        results.set_query(popover.before, parsed);
+        let asks = results.again(stamp);
+        steps.push(Step::Show(Intent::Query(self.query_view())));
         steps.extend(asks);
         steps
     }
@@ -1520,6 +1857,30 @@ impl FocusController {
                 Some(results) => cursor_moved(results.point(position)),
                 None => Vec::new(),
             },
+            Input::SearchPopover(kind) => self.open_popover(kind),
+            Input::PopoverToggle { token, exclude } => {
+                let today = self.bar.now().date_naive();
+                let edit = self
+                    .results
+                    .as_ref()
+                    .and_then(|results| results.popover_toggle(token, exclude, today));
+                match edit {
+                    Some(edit) => self.results_edit(edit),
+                    None => Vec::new(),
+                }
+            }
+            Input::PopoverFilter(text) => {
+                let Some(popover) = self
+                    .results
+                    .as_mut()
+                    .and_then(|results| results.popover.as_mut())
+                else {
+                    return Vec::new();
+                };
+                popover.filter = text;
+                self.draw_popover().into_iter().collect()
+            }
+            Input::PopoverDone { apply } => self.popover_done(apply),
             _ => Vec::new(),
         }
     }
@@ -1541,6 +1902,7 @@ impl FocusController {
                 let mut steps = Vec::new();
                 if landed.frame {
                     steps.extend(self.draw_results());
+                    steps.extend(self.draw_popover());
                 }
                 if let Some((first, count)) = landed.rows {
                     steps.push(Step::Show(Intent::ResultsPage { first, count }));

@@ -12,8 +12,8 @@ use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
 use postio_config::paths::Platform;
 use postio_core::CommandId;
 use postio_focus::{
-    Effect, FocusController, Input, Intent, Policy, QueryView, Reply, Request, ResultsView,
-    RowFacts, Rows, Ticket,
+    Effect, FocusController, Input, Intent, Policy, PopoverView, QueryView, Reply, Request,
+    ResultsView, RowFacts, Rows, Ticket,
 };
 use postio_model::{AddressId, EmailAddress, LabelId, MailboxId, MessageId, ThreadId};
 use postio_search::facets::{Count, MonthCount, SearchFacets, months_ending};
@@ -119,6 +119,28 @@ pub fn query_view(effects: &[Effect]) -> Option<QueryView> {
         })
 }
 
+/// The last filter popover among `effects`: `Some(None)` when it closed.
+pub fn popover_view(effects: &[Effect]) -> Option<Option<PopoverView>> {
+    shown(effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::Popover(view) => Some(view.map(|view| *view)),
+            _ => None,
+        })
+}
+
+/// The query each results read among `effects` asked for.
+pub fn queries_asked(effects: &[Effect]) -> Vec<String> {
+    asked(effects)
+        .into_iter()
+        .filter_map(|request| match request {
+            Request::ResultsPage { query, .. } => Some(query.input().to_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
 pub fn run(focus: &mut FocusController, command: CommandId, rows: &List) -> Vec<Effect> {
     focus.handle_on(Input::Command(command), rows)
 }
@@ -129,6 +151,11 @@ pub fn ada() -> EmailAddress {
 
 pub fn tomas() -> EmailAddress {
     EmailAddress::new(Some("Tom\u{e1}s Reyes"), "tomas@example.com")
+}
+
+/// Who most of the conversations were written to.
+pub fn ben() -> EmailAddress {
+    EmailAddress::new(Some("Ben Adeyemi"), "ben@example.com")
 }
 
 /// Conversations in the engine, newest first: more than a page of them.
@@ -195,14 +222,19 @@ pub fn months() -> [MonthCount; 12] {
     })
 }
 
-/// How many conversations the engine finds for `query`: a `from:` keeps
-/// Ada's, the even ones.
+/// How many conversations the engine finds for `query`: a `from:` Ada
+/// keeps hers, the even ones, and `-from:` Ada the others.
 pub fn matching(query: &postio_search::ParsedQuery) -> Vec<i64> {
-    let ada_only = query.filters().any(|clause| {
-        matches!(&clause.filter, postio_search::query::Filter::From(who) if who.contains("ada"))
-    });
+    let ada = |negated: bool| {
+        query.filters().any(|clause| {
+            clause.negated == negated
+                && matches!(&clause.filter, postio_search::query::Filter::From(who) if who.contains("ada"))
+        })
+    };
+    let (only, never) = (ada(false), ada(true));
     (0..CONVERSATIONS)
-        .filter(|n| !ada_only || n % 2 == 0)
+        .filter(|n| !only || n % 2 == 0)
+        .filter(|n| !never || n % 2 == 1)
         .collect()
 }
 
@@ -238,12 +270,28 @@ pub fn page(
                 conversations: 24,
             },
         ],
+        recipients: vec![Count {
+            id: AddressId::new(4),
+            conversations: 7,
+        }],
         labels: vec![Count {
             id: LabelId::new(3),
             conversations: 1,
         }],
+        folders: vec![
+            Count {
+                id: MailboxId::new(1),
+                conversations: 117,
+            },
+            Count {
+                id: MailboxId::new(2),
+                conversations: 3,
+            },
+        ],
         attachment: 1,
         months: months(),
+        // Last 7 days, last 30 days, this quarter, this year, any time.
+        presets: [2, 6, 12, 17, found.len() as u64],
         ..SearchFacets::default()
     };
     if found.len() as i64 != CONVERSATIONS {
@@ -269,10 +317,17 @@ pub fn page(
         files: 12,
         people: 6,
         names: FacetNames {
-            people: vec![(AddressId::new(1), ada()), (AddressId::new(2), tomas())],
+            people: vec![
+                (AddressId::new(1), ada()),
+                (AddressId::new(2), tomas()),
+                (AddressId::new(4), ben()),
+            ],
             labels: vec![(LabelId::new(3), "Atlas".to_owned())],
             label_colors: vec![(LabelId::new(3), "#c08a2e".to_owned())],
-            folders: vec![(MailboxId::new(1), "Inbox".to_owned())],
+            folders: vec![
+                (MailboxId::new(1), "Inbox".to_owned()),
+                (MailboxId::new(2), "Archive".to_owned()),
+            ],
         },
         elapsed: std::time::Duration::from_millis(41),
     }
