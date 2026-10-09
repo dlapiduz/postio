@@ -294,6 +294,12 @@ subject:invoice -in:archive
 `is:read` `is:flagged` `is:bulk` `is:automated` `before:` `after:` `larger:`
 `smaller:` `account:` `group:` `header:`
 
+An operator that names something takes either of several values in braces:
+`from:{ada tomas}` is mail from Ada or from Tomás, `label:{"Q3 close" atlas}`
+either label, and `-from:{ada tomas}` mail from neither. Two clauses still
+mean both, as typed. It is what checking a second person in a filter popover
+writes ([spec 010](../specs/010-focus-search/spec.md), D26).
+
 `header:` reaches any RFC 5322 field the envelope does not carry:
 `header:x-mailer` asks whether a message has that field at all,
 `header:x-mailer=mutt` whether its value contains `mutt`, and

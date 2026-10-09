@@ -194,6 +194,16 @@ impl Field {
     }
 }
 
+impl Field {
+    /// Whether the field takes a braced set of values, `from:{ada tomas}`
+    /// (spec 010, D26): every field whose value is a name. `header:` has a
+    /// grammar of its own inside its value, and a flag, a date or a size
+    /// asked for "either" is better asked once.
+    pub fn takes_set(&self) -> bool {
+        self.takes_free_text() && *self != Field::Header
+    }
+}
+
 /// A message flag state, for `is:`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum State {
@@ -284,6 +294,44 @@ pub enum Filter {
     Larger(u64),
     /// `smaller:1M` — size in bytes, inclusive.
     Smaller(u64),
+    /// `from:{ada tomas}` — either of several values of one field (spec
+    /// 010, D26): holds when any member does, and negated when none does.
+    AnyOf(AnyOf),
+}
+
+/// Two or more filters of one field that takes a set ([`Field::takes_set`]),
+/// none of them a set itself: what `from:{ada tomas}` asks for.
+///
+/// Its members are private and [`AnyOf::new`] is the only way in, so every
+/// reader -- the executor, the conversation search, the matcher, the chips
+/// -- can rely on one field and no nesting without checking for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnyOf {
+    members: Vec<Filter>,
+}
+
+impl AnyOf {
+    /// A set of `members`, or `None` when they are fewer than two, of
+    /// different fields, of a field that takes no set, or a set among them.
+    pub fn new(members: Vec<Filter>) -> Option<AnyOf> {
+        let field = members.first()?.field();
+        let fits = members.len() >= 2
+            && field.takes_set()
+            && members
+                .iter()
+                .all(|member| !matches!(member, Filter::AnyOf(_)) && member.field() == field);
+        fits.then_some(AnyOf { members })
+    }
+
+    /// The values, as filters, in the order they were written.
+    pub fn members(&self) -> &[Filter] {
+        &self.members
+    }
+
+    /// The one field every member is of.
+    pub fn field(&self) -> Field {
+        self.members[0].field()
+    }
 }
 
 impl Filter {
@@ -307,7 +355,29 @@ impl Filter {
             Filter::Before(_) => Field::Before,
             Filter::Larger(_) => Field::Larger,
             Filter::Smaller(_) => Field::Smaller,
+            Filter::AnyOf(set) => set.field(),
         }
+    }
+
+    /// What the filter accepts any one of: a set's members, or the filter
+    /// itself. How a reader that lists values -- highlights, chips, a
+    /// button's label -- reads a set without matching on it.
+    pub fn alternatives(&self) -> &[Filter] {
+        match self {
+            Filter::AnyOf(set) => set.members(),
+            other => std::slice::from_ref(other),
+        }
+    }
+
+    /// `members` as one filter: the member itself when there is one, a set
+    /// when there are more ([`AnyOf::new`]'s rules), `None` otherwise.
+    pub fn any_of(mut members: Vec<Filter>) -> Option<Filter> {
+        if members.len() == 1 {
+            return members
+                .pop()
+                .filter(|only| !matches!(only, Filter::AnyOf(_)));
+        }
+        AnyOf::new(members).map(Filter::AnyOf)
     }
 }
 
@@ -532,7 +602,37 @@ impl ParsedQuery {
 /// A value containing a `"` cannot be written in this language at all (a
 /// quote only ever groups), so no spelling of it round-trips.
 pub fn spell(clause: &Clause) -> String {
-    let body = match &clause.filter {
+    let body = spell_filter(&clause.filter);
+    if clause.negated {
+        format!("-{body}")
+    } else {
+        body
+    }
+}
+
+/// [`spell`] without the negation. A set is its field's keyword and its
+/// members' values in braces (D26).
+fn spell_filter(filter: &Filter) -> String {
+    match filter {
+        Filter::AnyOf(set) => {
+            let values: Vec<String> = set
+                .members()
+                .iter()
+                .map(|member| {
+                    let spelled = spell_filter(member);
+                    let (_, value) = spelled.split_once(':').unwrap_or(("", &spelled));
+                    value.to_owned()
+                })
+                .collect();
+            format!("{}:{{{}}}", set.field().keyword(), values.join(" "))
+        }
+        _ => spell_one(filter),
+    }
+}
+
+/// One value's filter, spelled.
+fn spell_one(filter: &Filter) -> String {
+    match filter {
         Filter::From(value)
         | Filter::To(value)
         | Filter::Subject(value)
@@ -542,7 +642,7 @@ pub fn spell(clause: &Clause) -> String {
         | Filter::Account(value)
         | Filter::Group(value)
         | Filter::Label(value) => {
-            format!("{}:{}", clause.filter.field().keyword(), quoted(value))
+            format!("{}:{}", filter.field().keyword(), quoted(value))
         }
         Filter::Header { name, value: None } => format!("header:{name}"),
         Filter::Header {
@@ -565,17 +665,18 @@ pub fn spell(clause: &Clause) -> String {
         Filter::Before(date) => format!("before:{}", date.format("%Y-%m-%d")),
         Filter::Larger(bytes) => format!("larger:{}", spell_size(*bytes)),
         Filter::Smaller(bytes) => format!("smaller:{}", spell_size(*bytes)),
-    };
-    if clause.negated {
-        format!("-{body}")
-    } else {
-        body
+        Filter::AnyOf(_) => spell_filter(filter),
     }
 }
 
-/// A value as typed: bare when it is one word, in quotes when it is not.
+/// A value as typed: bare when it is one word, in quotes when it is not --
+/// or when a brace in it would read as a set's (D26).
 fn quoted(value: &str) -> String {
-    if value.is_empty() || value.chars().any(char::is_whitespace) {
+    if value.is_empty()
+        || value
+            .chars()
+            .any(|c| c.is_whitespace() || c == '{' || c == '}')
+    {
         format!("\"{value}\"")
     } else {
         value.to_owned()
@@ -869,6 +970,114 @@ mod tests {
             }),
             "-from:ada"
         );
+    }
+
+    fn set(members: Vec<Filter>) -> Filter {
+        Filter::any_of(members).expect("a set of one field")
+    }
+
+    #[test]
+    fn a_set_spells_as_braces_and_one_value_as_the_plain_clause() {
+        let clause = |filter| Clause {
+            negated: false,
+            filter,
+        };
+        assert_eq!(
+            spell(&clause(set(vec![
+                Filter::From("ada@example.com".into()),
+                Filter::From("tomas@example.com".into()),
+            ]))),
+            "from:{ada@example.com tomas@example.com}"
+        );
+        assert_eq!(
+            spell(&Clause {
+                negated: true,
+                filter: set(vec![
+                    Filter::Label("Q3 close".into()),
+                    Filter::Label("atlas".into()),
+                ]),
+            }),
+            r#"-label:{"Q3 close" atlas}"#
+        );
+        assert_eq!(
+            spell(&clause(set(vec![
+                Filter::In("a}b".into()),
+                Filter::In("{x".into()),
+            ]))),
+            r#"in:{"a}b" "{x"}"#,
+            "a brace in a value is quoted"
+        );
+        assert_eq!(
+            spell(&clause(Filter::Label("{x".into()))),
+            r#"label:"{x""#,
+            "a plain value that opens with a brace is quoted too"
+        );
+    }
+
+    #[test]
+    fn every_set_spells_to_text_that_parses_back_to_it() {
+        let today = NaiveDate::from_ymd_opt(2026, 10, 8).unwrap();
+        let sets = [
+            set(vec![
+                Filter::From("ada".into()),
+                Filter::From("Tomás Reyes".into()),
+            ]),
+            set(vec![
+                Filter::To("a@example.com".into()),
+                Filter::To("b@example.com".into()),
+                Filter::To("c@example.com".into()),
+            ]),
+            set(vec![
+                Filter::Subject("budget v4".into()),
+                Filter::Subject("q3".into()),
+            ]),
+            set(vec![
+                Filter::In("Inbox".into()),
+                Filter::In("Archive".into()),
+            ]),
+            set(vec![
+                Filter::Label("Q3 close".into()),
+                Filter::Label("{odd}".into()),
+            ]),
+            set(vec![
+                Filter::List("a.example.org".into()),
+                Filter::List("b".into()),
+            ]),
+            set(vec![
+                Filter::Filename("q3.xlsx".into()),
+                Filter::Filename("v4.pdf".into()),
+            ]),
+            set(vec![
+                Filter::Account("work".into()),
+                Filter::Account("home".into()),
+            ]),
+            set(vec![
+                Filter::Group("family".into()),
+                Filter::Group("team".into()),
+            ]),
+        ];
+        for filter in sets {
+            for negated in [false, true] {
+                let clause = Clause {
+                    negated,
+                    filter: filter.clone(),
+                };
+                let text = spell(&clause);
+                let parsed = crate::parse(&text, today);
+                assert_eq!(parsed.tokens().len(), 1, "{text:?} is one token");
+                assert_eq!(
+                    parsed.tokens()[0].kind,
+                    TokenKind::Filter(clause.clone()),
+                    "{text:?} reads back as {clause:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_plain_filter_is_its_own_one_alternative() {
+        let ada = Filter::From("ada".into());
+        assert_eq!(ada.alternatives(), std::slice::from_ref(&ada));
     }
 
     #[test]

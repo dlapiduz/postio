@@ -71,19 +71,45 @@ fn next_word_start(input: &str, from: usize) -> Option<usize> {
 
 /// Byte offset just past the word starting at `start`.
 ///
-/// Whitespace ends a word, unless it sits inside quotes. An unclosed quote
-/// swallows the rest of the input, which is exactly what a user mid-phrase
-/// expects to see highlighted.
+/// Whitespace ends a word, unless it sits inside quotes or inside a set's
+/// braces (D26). An unclosed quote or set swallows the rest of the input,
+/// which is exactly what a user mid-phrase expects to see highlighted.
 fn word_end(input: &str, start: usize) -> usize {
+    scan(&input[start..])
+        .0
+        .map_or(input.len(), |end| start + end)
+}
+
+/// Where whitespace ends `word` (`None`: it runs to the end), and whether a
+/// quote and a set are still open there.
+///
+/// A `{` opens a set only straight after an operator's colon --
+/// `from:{`, `-label:{` -- so a brace anywhere else is the character it
+/// was. Inside a set a quote suspends the closing brace, as it suspends
+/// whitespace.
+fn scan(word: &str) -> (Option<usize>, bool, bool) {
     let mut in_quotes = false;
-    for (offset, ch) in input[start..].char_indices() {
-        if ch == '"' {
-            in_quotes = !in_quotes;
-        } else if !in_quotes && ch.is_whitespace() {
-            return start + offset;
+    let mut in_set = false;
+    for (offset, ch) in word.char_indices() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            '{' if !in_quotes && !in_set && opens_set(&word[..offset]) => in_set = true,
+            '}' if !in_quotes && in_set => in_set = false,
+            ch if ch.is_whitespace() && !in_quotes && !in_set => {
+                return (Some(offset), in_quotes, in_set);
+            }
+            _ => {}
         }
     }
-    input.len()
+    (None, in_quotes, in_set)
+}
+
+/// Whether `before` is a known operator and its colon, nothing else: what
+/// a `{` must follow to open a set.
+fn opens_set(before: &str) -> bool {
+    let body = before.strip_prefix('-').unwrap_or(before);
+    body.strip_suffix(':')
+        .is_some_and(|keyword| !keyword.contains([':', '"']) && Field::parse(keyword).is_some())
 }
 
 /// Turns one raw word into a token, or `None` if it carries no meaning at all
@@ -156,6 +182,12 @@ fn operator(negated: bool, field: Field, raw: &str, today: NaiveDate) -> TokenKi
     if field == Field::Header {
         return header(negated, raw);
     }
+    if raw.starts_with('{') {
+        return match set(field, raw, today) {
+            Some(filter) => TokenKind::Filter(Clause { negated, filter }),
+            None => partial(raw.to_string()),
+        };
+    }
 
     let value = unquote(raw);
     if value.is_empty() {
@@ -210,6 +242,61 @@ fn operator(negated: bool, field: Field, raw: &str, today: NaiveDate) -> TokenKi
         // its own, so it never reaches this table.
         Field::Header => unreachable!("header: is split before the value is unquoted"),
     }
+}
+
+/// `{ada tomas}` after `field:`, as a filter: one value is that value's
+/// plain filter, two or more a set (D26). `None` -- a `Partial` -- for a
+/// set still open, empty, followed by more text, holding a value that is
+/// not usable yet, or of a field that takes none.
+fn set(field: Field, raw: &str, today: NaiveDate) -> Option<Filter> {
+    if !field.takes_set() {
+        return None;
+    }
+    let inner = raw.strip_prefix('{')?.strip_suffix('}')?;
+    // The closing brace must be the set's own: `{ada}x` never gets here,
+    // and `{a} b}` is not a set.
+    if inner_closes_early(inner) {
+        return None;
+    }
+    let mut members = Vec::new();
+    let mut cursor = 0;
+    while let Some(start) = next_word_start(inner, cursor) {
+        let end = inner_word_end(inner, start);
+        cursor = end;
+        let value = &inner[start..end];
+        if value.starts_with('{') {
+            return None;
+        }
+        match operator(false, field, value, today) {
+            TokenKind::Filter(clause) => members.push(clause.filter),
+            _ => return None,
+        }
+    }
+    Filter::any_of(members)
+}
+
+/// Whether a `}` outside quotes closes the set before its last character.
+fn inner_closes_early(inner: &str) -> bool {
+    let mut in_quotes = false;
+    inner.chars().any(|ch| {
+        if ch == '"' {
+            in_quotes = !in_quotes;
+        }
+        ch == '}' && !in_quotes
+    })
+}
+
+/// A member's end inside a set: whitespace outside quotes.
+fn inner_word_end(inner: &str, start: usize) -> usize {
+    let mut in_quotes = false;
+    for (offset, ch) in inner[start..].char_indices() {
+        if ch == '"' {
+            in_quotes = !in_quotes;
+        } else if !in_quotes && ch.is_whitespace() {
+            return start + offset;
+        }
+    }
+    inner.len()
 }
 
 /// `header:name`, `header:name=value`, and every half-typed state in between.
