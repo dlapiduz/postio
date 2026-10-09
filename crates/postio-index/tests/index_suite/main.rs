@@ -27,6 +27,7 @@ mod executor;
 mod group_filter;
 mod header_index;
 mod header_index_size;
+mod label_and_action;
 mod promoted_operators;
 mod ranking_weights;
 mod schema_upgrade;
