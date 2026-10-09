@@ -1128,14 +1128,15 @@ static SPECS: &[CommandSpec] = &[
     },
     // Spec 010 step 3: the Mac's results view (R10), a mode of the main
     // window with its own context. History moves between it and the inbox
-    // the way a browser's back and forward do, and ⌘1-3 pick its tabs.
+    // the way a browser's back and forward do -- from either, so the inbox
+    // names it too -- and ⌘1-3 pick its tabs.
     // None is offered on Linux until it adopts the results view (D25).
     CommandSpec {
         id: CommandId::HistoryBack,
         title: "Back",
         default_binding: "mod+bracketleft",
         alternate_bindings: &[],
-        contexts: Context::Results.as_set(),
+        contexts: ctx(&[Context::List, Context::Results]),
         destructive: false,
         recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
@@ -1145,7 +1146,7 @@ static SPECS: &[CommandSpec] = &[
         title: "Forward",
         default_binding: "mod+bracketright",
         alternate_bindings: &[],
-        contexts: Context::Results.as_set(),
+        contexts: ctx(&[Context::List, Context::Results]),
         destructive: false,
         recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
