@@ -1230,11 +1230,44 @@ struct Plan {
     /// The same expression for the body index: each term folded the way the
     /// body text was, joined after folding. See [`Plan::match_params`].
     body_match_param: Option<turso::Value>,
+    /// The filters taken out of `conditions` as sets of message ids, when
+    /// the plan was built by [`Plan::build_sets`]; empty otherwise.
+    sets: Vec<IdSet>,
 }
+
+/// One filter as the set of messages it keeps (or, negated, refuses): the
+/// subquery that names them, and its parameters.
+///
+/// A conversation search's way round a plan this engine makes of
+/// `m.id IN (subquery)`: tested once per row walked, at a cost that grows
+/// with the subquery's size, so `budget from:ada` over a common word walked
+/// every message the word matched and compared it against every message Ada
+/// sent -- 375 ms on 20,000 messages, measured. Read once, as a set, the
+/// same filter costs about a millisecond.
+#[derive(Debug, Clone)]
+struct IdSet {
+    sql: String,
+    params: Vec<turso::Value>,
+    negated: bool,
+}
+
+/// What a negated word refuses: the messages either index says carry it.
+const NEGATED_WORD_SET: &str = "SELECT message_id FROM search_documents
+          WHERE fts_match(sender, recipients, subject, filenames, list_id, ?)
+         UNION ALL
+         SELECT message_id FROM message_search_bodies WHERE fts_match(body_search, ?)";
 
 impl Plan {
     fn build(request: &SearchRequest<'_>) -> Self {
         Self::build_near(request, &Default::default())
+    }
+
+    /// [`Plan::build`], with every filter that is a set of messages
+    /// ([`id_set`]) and every negated word taken out of `conditions` and
+    /// into [`Plan::sets`], for a caller that reads them once and applies
+    /// them itself. [`search`] never does: its plan is unchanged.
+    fn build_sets(request: &SearchRequest<'_>) -> Self {
+        Self::build_with(request, &Default::default(), true)
     }
 
     /// The plan with each word `near` names read as any of its words: the
@@ -1243,6 +1276,14 @@ impl Plan {
     fn build_near(
         request: &SearchRequest<'_>,
         near: &std::collections::HashMap<String, Vec<String>>,
+    ) -> Self {
+        Self::build_with(request, near, false)
+    }
+
+    fn build_with(
+        request: &SearchRequest<'_>,
+        near: &std::collections::HashMap<String, Vec<String>>,
+        as_sets: bool,
     ) -> Self {
         // `AccountScope::Unified` names no account, so the predicate is
         // absent rather than widened -- which is why migration 0012 exists:
@@ -1280,6 +1321,7 @@ impl Plan {
         let mut has_match = false;
         let mut match_param = None;
         let mut body_match_param = None;
+        let mut sets = Vec::new();
 
         // Negated terms are excluded across both indexes rather than folded
         // into each one's own match, and that is a correctness fix rather
@@ -1290,6 +1332,18 @@ impl Plan {
         // to be about the message, and only a condition outside the join can
         // be.
         for term in request.query.text_terms().filter(|term| term.negated) {
+            let literal = fts_literal(&term.value);
+            if as_sets {
+                sets.push(IdSet {
+                    sql: NEGATED_WORD_SET.to_string(),
+                    params: vec![
+                        turso::Value::Text(literal.clone()),
+                        turso::Value::Text(postio_model::fold::fold(&literal)),
+                    ],
+                    negated: true,
+                });
+                continue;
+            }
             conditions.push(
                 "m.content_id NOT IN (SELECT content_id FROM search_documents
                                WHERE fts_match(sender, recipients, subject,
@@ -1298,7 +1352,6 @@ impl Plan {
                                    WHERE fts_match(body_search, ?))"
                     .to_string(),
             );
-            let literal = fts_literal(&term.value);
             // The body half folded, the metadata half not -- the same rule
             // `match_params` keeps, for the same reason.
             params.push(turso::Value::Text(literal.clone()));
@@ -1374,6 +1427,14 @@ impl Plan {
         }
 
         for clause in request.query.filters() {
+            if as_sets && let Some((sql, params)) = id_set(&clause.filter) {
+                sets.push(IdSet {
+                    sql,
+                    params,
+                    negated: clause.negated,
+                });
+                continue;
+            }
             let (sql, mut values) = filter_condition(&clause.filter);
             let sql = if clause.negated {
                 format!("NOT ({sql})")
@@ -1392,6 +1453,7 @@ impl Plan {
             widened: !near.is_empty(),
             match_param,
             body_match_param,
+            sets,
         }
     }
 
@@ -2045,15 +2107,7 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
         // matches nothing, the same "never everything" rule `Account` and
         // `In` follow just above.
         Filter::Group(value) => (
-            "m.id IN (SELECT r.message_id FROM recipients r \
-             JOIN addresses a ON a.id = r.address_id \
-             WHERE r.kind IN ('from', 'to', 'cc', 'bcc') \
-               AND a.address_normalized IN ( \
-                 SELECT c.address_normalized FROM contact_group_members gm \
-                 JOIN contacts c ON c.id = gm.contact_id \
-                 JOIN contact_groups g ON g.id = gm.group_id \
-                 WHERE lower(g.name) = lower(?)))"
-                .to_string(),
+            format!("m.id IN ({GROUP_SET})"),
             vec![turso::Value::Text(value.clone())],
         ),
         // ADR 0025 Q2, and the one operator that is not an FTS `MATCH`. Header
@@ -2194,18 +2248,84 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
 /// Verified in `turso_capabilities.rs`: a column subset alone scans, and the
 /// pair uses the index.
 fn fts_column_condition(column: &str, value: &str) -> (String, Vec<turso::Value>) {
+    let (contents, params) = fts_column_contents(column, value);
+    (format!("m.content_id IN ({contents})"), params)
+}
+
+/// The messages whose `column` carries `value`: [`fts_column_condition`]'s
+/// subquery as a set of message ids. The index is keyed by content, so each
+/// content it names is joined to every message that carries it.
+fn fts_column_set(column: &str, value: &str) -> (String, Vec<turso::Value>) {
+    let (contents, params) = fts_column_contents(column, value);
+    (
+        format!(
+            "SELECT m.id AS message_id FROM ({contents}) d
+               CROSS JOIN messages m ON m.content_id = d.content_id"
+        ),
+        params,
+    )
+}
+
+/// The contents whose `column` carries `value`, asked twice as
+/// [`fts_column_condition`] explains.
+fn fts_column_contents(column: &str, value: &str) -> (String, Vec<turso::Value>) {
     let literal = fts_literal(value);
     (
         format!(
-            "m.content_id IN (SELECT content_id FROM search_documents
-                       WHERE fts_match(sender, recipients, subject, filenames, list_id, ?)
-                         AND fts_match({column}, ?))"
+            "SELECT content_id FROM search_documents
+              WHERE fts_match(sender, recipients, subject, filenames, list_id, ?)
+                AND fts_match({column}, ?)"
         ),
         vec![
             turso::Value::Text(literal.clone()),
             turso::Value::Text(literal),
         ],
     )
+}
+
+/// The messages from or to any member of a group, by name: `group:`'s
+/// subquery (ADR 0007 Q3).
+const GROUP_SET: &str = "SELECT r.message_id FROM recipients r \
+     JOIN addresses a ON a.id = r.address_id \
+     WHERE r.kind IN ('from', 'to', 'cc', 'bcc') \
+       AND a.address_normalized IN ( \
+         SELECT c.address_normalized FROM contact_group_members gm \
+         JOIN contacts c ON c.id = gm.contact_id \
+         JOIN contact_groups g ON g.id = gm.group_id \
+         WHERE lower(g.name) = lower(?))";
+
+/// A filter as the set of messages it keeps, for [`Plan::build_sets`]: the
+/// filters that are a lookup of message ids rather than a test of the
+/// message's own row. `None` for the rest, which stay conditions.
+///
+/// `label:` and `has:action` are `EXISTS` probes in [`filter_condition`],
+/// cheap per row; as sets they are one walk of `message_labels` or
+/// `markers`, which lets a conversation search walk only the messages they
+/// keep when nothing else narrows it.
+fn id_set(filter: &Filter) -> Option<(String, Vec<turso::Value>)> {
+    Some(match filter {
+        Filter::From(value) => fts_column_set("sender", value),
+        Filter::To(value) => fts_column_set("recipients", value),
+        Filter::Subject(value) => fts_column_set("subject", value),
+        Filter::Filename(value) => fts_column_set("filenames", value),
+        Filter::List(value) => fts_column_set("list_id", value),
+        Filter::Group(value) => (
+            GROUP_SET.to_string(),
+            vec![turso::Value::Text(value.clone())],
+        ),
+        Filter::Label(value) => (
+            "SELECT ml.message_id FROM labels l \
+               JOIN message_labels ml ON ml.label_id = l.id \
+              WHERE lower(l.name) = lower(?)"
+                .to_string(),
+            vec![turso::Value::Text(value.clone())],
+        ),
+        Filter::HasAction => (
+            "SELECT message_id FROM markers WHERE dismissed_at IS NULL".to_string(),
+            Vec::new(),
+        ),
+        _ => return None,
+    })
 }
 
 /// A literal for the middle of a `LIKE '%' || ? || '%' ESCAPE '\\'` pattern.
@@ -2264,6 +2384,7 @@ mod tests {
             widened: false,
             match_param: Some(turso::Value::Text("invoice".to_owned())),
             body_match_param: Some(turso::Value::Text("invoice".to_owned())),
+            sets: Vec::new(),
         }
     }
 
