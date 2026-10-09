@@ -374,6 +374,13 @@ async fn a_top_hit_matched_in_its_body_shows_the_bodys_passage_marked() {
             "{}",
             runs(&row.passage)
         );
+        // The tag is the passage's source; the subject is the first line's.
+        assert!(
+            !row.source_tag.contains("subject"),
+            "{}: tagged {:?}",
+            runs(&row.subject),
+            row.source_tag
+        );
     }
     session.shutdown();
 }

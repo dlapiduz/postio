@@ -976,11 +976,7 @@ impl Results {
             .map(postio_ui::command_bar::said_of)
             .unwrap_or_default();
         let subject = hit.subject.clone().unwrap_or_default();
-        let shown = hit
-            .matches
-            .iter()
-            .find(|each| each.passage.is_some())
-            .or_else(|| hit.matches.first());
+        let shown = words::shown_match(&hit.matches);
         let mut sources: Vec<Source> = shown.map(|each| each.source.clone()).into_iter().collect();
         sources.extend(hit.matches.iter().map(|each| each.source.clone()));
         let source_tag = words::sources_tag(&sources);

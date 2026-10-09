@@ -294,20 +294,40 @@ pub fn source_tag(source: &Source) -> String {
     }
 }
 
-/// A row's one tag for every place it matched, the passage's first: the
-/// first two that say something different, joined ("body +
-/// Atlas-Q3-budget.xlsx", screen 06).
+/// A row's tag, `sources` the passage's first and then every place it
+/// matched: where the passage came from, and a file that also matched
+/// beside a passage that is not the file's ("body +
+/// Atlas-Q3-budget.xlsx", screen 06). A subject is named only when it is
+/// the passage's source, which is when nothing else matched: otherwise the
+/// row's first line shows it, marked.
 pub fn sources_tag(sources: &[Source]) -> String {
-    let mut tags: Vec<String> = Vec::new();
-    for tag in sources.iter().map(source_tag) {
-        if !tags.contains(&tag) {
-            tags.push(tag);
-        }
-        if tags.len() == 2 {
-            break;
-        }
+    let is_file =
+        |source: &Source| matches!(source, Source::FileName { .. } | Source::FileContent { .. });
+    let Some(first) = sources.first() else {
+        return String::new();
+    };
+    let tag = source_tag(first);
+    if is_file(first) {
+        return tag;
     }
-    tags.join(" + ")
+    match sources[1..].iter().find(|source| is_file(source)) {
+        Some(file) => format!("{tag} + {}", source_tag(file)),
+        None => tag,
+    }
+}
+
+/// The match a row's second line shows: the first with a passage; until
+/// one is cut (or when none can be), the first that is not the subject,
+/// which the row's first line already draws; the subject only when nothing
+/// else matched.
+pub fn shown_match(
+    matches: &[postio_search::results::Match],
+) -> Option<&postio_search::results::Match> {
+    matches
+        .iter()
+        .find(|each| each.passage.is_some())
+        .or_else(|| matches.iter().find(|each| each.source != Source::Subject))
+        .or_else(|| matches.first())
 }
 
 /// Where in a file a passage sits, before the passage: "Page 2",
@@ -862,6 +882,54 @@ mod tests {
         );
         assert_eq!(sources_tag(&[Source::Body, Source::Body]), "body");
         assert_eq!(sources_tag(&[]), "");
+        // The tag is the passage's source: a subject that also matched is
+        // drawn by the row's first line, not named again (screen 06).
+        assert_eq!(
+            sources_tag(&[Source::Body, Source::Subject, Source::Body]),
+            "body"
+        );
+        assert_eq!(
+            sources_tag(&[Source::Quoted, Source::Subject, Source::Quoted]),
+            "quoted text"
+        );
+        // A file's passage is the file alone, whatever else matched.
+        assert_eq!(
+            sources_tag(&[
+                Source::FileName {
+                    attachment,
+                    name: "Atlas-budget-template.xlsx".into()
+                },
+                Source::Body,
+            ]),
+            "Atlas-budget-template.xlsx"
+        );
+        assert_eq!(sources_tag(&[Source::Subject]), "subject");
+    }
+
+    #[test]
+    fn a_row_shows_the_first_match_with_a_passage_and_never_tags_the_subject_over_one() {
+        use postio_search::results::Match;
+        let found = |source: Source, cut: bool| Match {
+            source,
+            passage: cut.then(postio_search::passage::Passage::default),
+            when: None,
+        };
+        let shown = |matches: &[Match]| shown_match(matches).map(|each| each.source.clone());
+        assert_eq!(
+            shown(&[found(Source::Subject, false), found(Source::Body, true)]),
+            Some(Source::Body)
+        );
+        // No passage yet, or none to cut: still where the body matched, not
+        // the subject the row already shows.
+        assert_eq!(
+            shown(&[found(Source::Subject, false), found(Source::Body, false)]),
+            Some(Source::Body)
+        );
+        assert_eq!(
+            shown(&[found(Source::Subject, false)]),
+            Some(Source::Subject)
+        );
+        assert_eq!(shown(&[]), None);
     }
 
     #[test]
