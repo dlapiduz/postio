@@ -50,7 +50,7 @@ pub use digest::{
 };
 pub use dropdown::{
     DropdownPill, DropdownRow, DropdownRowKind, DropdownSection, DropdownState, DropdownView, Lane,
-    Run, RunStyle,
+    Run, RunStyle, UnderstoodTile,
 };
 pub use feed::{Opened, PageAnswer};
 pub use filtered::{FilteredLine, FilteredTab, FilteredView};
@@ -173,6 +173,9 @@ pub enum Input {
     /// `alt+BackSpace` on the dropdown's recent search with this token:
     /// forget it.
     SearchForget(u64),
+    /// `alt+Return` on the dropdown's person, label or folder with this
+    /// token: its chip, excluded (spec 010 US7).
+    SearchExclude(u64),
     /// A filter button, a chip's ✕, a popover's check or the timeline
     /// changed the results' query (spec 010 step 3).
     SearchEdit(TermEdit),
@@ -699,6 +702,24 @@ pub enum Request {
         /// The results' stamp, echoed in the answer.
         stamp: u64,
     },
+    /// What the prefix typed could become: words, labels, lists and files,
+    /// or the operator `field`'s values (spec 010 US7).
+    Suggest {
+        /// The word, or the operator's value so far.
+        prefix: String,
+        /// The operator being typed, when one is.
+        field: Option<postio_search::query::Field>,
+        /// The bar's words' stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// The latest two conversations from `address`: the operator state's
+    /// "Latest from" the focused person (spec 010 US7).
+    LatestFrom {
+        /// Whose.
+        address: String,
+        /// The bar's words' stamp, echoed in the answer.
+        stamp: u64,
+    },
     /// The searches run lately, newest first.
     RecentSearches,
     /// Keep `query` among the searches run, with what it matched.
@@ -864,6 +885,8 @@ impl Request {
             Request::Passages { .. } => Some(Lane::Passages),
             Request::QuickLookMatches { .. } => Some(Lane::Matches),
             Request::Relaxations { .. } => Some(Lane::Relaxations),
+            Request::Suggest { .. } => Some(Lane::Suggest),
+            Request::LatestFrom { .. } => Some(Lane::Latest),
             _ => None,
         }
     }
@@ -951,6 +974,22 @@ pub enum Reply {
         stamp: u64,
         /// Each looser search with its count.
         answer: Result<Vec<(postio_search::relax::Relaxation, u64)>, String>,
+    },
+    /// The answer to [`Request::Suggest`].
+    Suggest {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// What the prefix could become.
+        answer: Result<Box<postio_search::suggest::Suggestions>, String>,
+    },
+    /// The answer to [`Request::LatestFrom`].
+    LatestFrom {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// Whose they are.
+        address: String,
+        /// Their latest conversations.
+        answer: Result<Box<postio_search::results::ConversationResults>, String>,
     },
     /// The answer to [`Request::RecentSearches`] and
     /// [`Request::ForgetSearch`].
@@ -1326,6 +1365,8 @@ impl FocusController {
                 | Reply::Search { .. }
                 | Reply::Conversations { .. }
                 | Reply::Passages { .. }
+                | Reply::Suggest { .. }
+                | Reply::LatestFrom { .. }
                 | Reply::RecentSearches(_)
                 | Reply::SavedCounts(_)
                 | Reply::Folder { .. }
@@ -1462,6 +1503,7 @@ impl FocusController {
             | Input::BarTab
             | Input::SearchHighlighted(_)
             | Input::SearchForget(_)
+            | Input::SearchExclude(_)
             | Input::OpenPlace(_)
             | Input::SavedSearches(_)
             | Input::SearchSaved(_)

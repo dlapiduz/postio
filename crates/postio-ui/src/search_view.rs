@@ -1155,6 +1155,209 @@ pub fn searched_footer(messages: u64, elapsed: Duration) -> String {
     format!("Searched {} {noun} \u{b7} {took}", grouped(messages))
 }
 
+// ---------------------------------------------------------------------------
+// Typing intelligence (spec 010 step 8, design §2, screens 02, 04, 05)
+// ---------------------------------------------------------------------------
+
+/// The short-prefix state's first section.
+pub const SUGGESTIONS: &str = "Suggestions";
+/// Its note.
+pub const SUGGESTIONS_NOTE: &str = "complete the word, or jump to a filter";
+/// After a completed word: what running it does.
+pub const AS_A_WORD: &str = "as a word";
+/// After a label suggestion.
+pub const LABEL: &str = "label";
+/// The short-prefix state's hits.
+pub const TOP_HITS_SO_FAR: &str = "Top hits so far";
+/// Their note.
+pub const TOP_HITS_SO_FAR_NOTE: &str = "update on every keystroke";
+/// The operator state's note for people.
+pub const PEOPLE_NOTE: &str = "by how often you write to each other";
+/// The "Latest from" section's note.
+pub const LATEST_NOTE: &str = "preview of the focused person";
+/// The plain-English bar's title.
+pub const UNDERSTOOD_AS: &str = "Understood as";
+/// Its note on the right.
+pub const UNDERSTOOD_NOTE: &str = "each part is a chip you can edit";
+/// The plain-English state's hits.
+pub const RESULTS: &str = "Results";
+
+/// A mailing list suggestion's detail: "mailing list · atlas-planning.example.org".
+pub fn list_detail(id: &str) -> String {
+    format!("mailing list \u{b7} {id}")
+}
+
+/// The files row's title: "Files named “at…”".
+pub fn files_named(typed: &str) -> String {
+    format!("Files named \u{201c}{typed}\u{2026}\u{201d}")
+}
+
+/// The files row's detail: the first two names, and how many more.
+pub fn files_detail(names: &[&str]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => (*one).to_owned(),
+        [one, two] => format!("{one}, {two}"),
+        [one, two, rest @ ..] => format!("{one}, {two} and {} more", grouped(rest.len() as u64)),
+    }
+}
+
+/// The operator state's first section: "People matching “ad”", or the
+/// operator's own noun while nothing is typed after it.
+pub fn matching(noun: &str, typed: &str) -> String {
+    if typed.is_empty() {
+        noun.to_owned()
+    } else {
+        format!("{noun} matching \u{201c}{typed}\u{201d}")
+    }
+}
+
+/// When a person was last written to or heard from, as their row says it:
+/// "today", "yesterday", the day within the last sixty ("19 Sep"), the
+/// month earlier this year ("June"), then the month and year.
+pub fn last_when<Tz: TimeZone>(at: DateTime<Tz>, now: DateTime<Tz>) -> String {
+    let (day, today) = (at.date_naive(), now.date_naive());
+    match (today - day).num_days() {
+        ..=0 => "today".to_owned(),
+        1 => "yesterday".to_owned(),
+        2..=60 => day.format("%-d %b").to_string(),
+        _ if day.year() == today.year() => day.format("%B").to_string(),
+        _ => day.format("%B %Y").to_string(),
+    }
+}
+
+/// A person's line under their name: "ada@example.org · 412 messages ·
+/// last today", the messages both ways (D21).
+pub fn person_detail<Tz: TimeZone>(
+    address: &str,
+    messages: u64,
+    last: Option<DateTime<Tz>>,
+    now: DateTime<Tz>,
+) -> String {
+    let mut line = format!(
+        "{address} \u{b7} {} {}",
+        grouped(messages),
+        if messages == 1 { "message" } else { "messages" }
+    );
+    if let Some(last) = last {
+        line.push_str(&format!(" \u{b7} last {}", last_when(last, now)));
+    }
+    line
+}
+
+/// The section under the people: "Latest from Ada Moreno".
+pub fn latest_from(name: &str) -> String {
+    format!("Latest from {name}")
+}
+
+/// The operator state's footer, right: what the list is drawn from.
+pub fn operator_source(keyword: &str) -> &'static str {
+    match keyword {
+        "label" => "Labels, by how many conversations carry them",
+        "in" => "Folders mail is filed in",
+        _ => "Contacts and everyone you have mail with",
+    }
+}
+
+/// Where a plain-English tile came from, as the line under it says:
+/// "from ‘last month’" -- the sentence's own words, exactly.
+pub fn origin_line(words: &str) -> String {
+    format!("from \u{2018}{words}\u{2019}")
+}
+
+/// The plain-English footer's right side: "parsed on this Mac · 3 matches ·
+/// 21 ms" -- nothing left the machine to understand it.
+pub fn parsed_footer(total: u64, elapsed: Duration, capped: bool) -> String {
+    format!(
+        "parsed on this Mac \u{b7} {}",
+        footer_count(total, elapsed, capped)
+    )
+}
+
+/// The plain-English results' note: the month the dates name, when they
+/// name one ("August 2026 · newest first"), else "newest first".
+pub fn plain_results_note(
+    after: Option<chrono::NaiveDate>,
+    before: Option<chrono::NaiveDate>,
+) -> String {
+    let month = after.zip(before).and_then(|(after, before)| {
+        let last = before.pred_opt()?;
+        ((after.year(), after.month()) == (last.year(), last.month()) && after.day() == 1)
+            .then(|| after.format("%B %Y").to_string())
+    });
+    match month {
+        Some(month) => format!("{month} \u{b7} {NEWEST_FIRST}"),
+        None => NEWEST_FIRST.to_owned(),
+    }
+}
+
+/// The short-prefix footer (screen 02): Tab completes, move, open, all
+/// results.
+pub fn prefix_hints(keymap: &Keymap) -> Vec<Hint> {
+    let mut hints = vec![
+        hints::fixed(
+            "Tab",
+            "complete",
+            "Tab in the field is the toolkit's key; the bar takes it for the ghost",
+        ),
+        arrows("move"),
+        hints::fixed(
+            "Return",
+            "open",
+            "Return runs the highlighted row: the field's own key, not a command",
+        ),
+    ];
+    hints.extend(hints::hint(
+        keymap,
+        CommandId::ShowAllResults,
+        "all results",
+    ));
+    hints
+}
+
+/// The operator footer (screen 04): Return adds the chip, the exclusion
+/// key excludes it (`-from:`), the arrows choose, Backspace goes back to
+/// words.
+pub fn operator_hints(keymap: &Keymap, keyword: &str) -> Vec<Hint> {
+    let mut hints = vec![hints::fixed(
+        "Return",
+        "add as chip",
+        "Return runs the highlighted row: the field's own key, not a command",
+    )];
+    hints.extend(hints::hint(
+        keymap,
+        CommandId::ExcludeSuggestion,
+        &format!("exclude (-{keyword}:)"),
+    ));
+    hints.push(arrows("choose"));
+    hints.push(hints::fixed(
+        "BackSpace",
+        "back to words",
+        "Backspace on an empty value is the field's own key; the bar reads the text",
+    ));
+    hints
+}
+
+/// The plain-English footer (screen 05): move, open, Tab makes chips, the
+/// words key keeps the sentence.
+pub fn plain_hints(keymap: &Keymap) -> Vec<Hint> {
+    let mut hints = vec![
+        arrows("move"),
+        hints::fixed(
+            "Return",
+            "open",
+            "Return runs the highlighted row: the field's own key, not a command",
+        ),
+        hints::fixed(
+            "Tab",
+            "edit as chips",
+            "Tab in the field is the toolkit's key; the bar takes it for the chips",
+        ),
+    ];
+    hints.extend(hints::hint(keymap, CommandId::BackToWords, "keep as words"));
+    hints
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1930,6 +2133,91 @@ mod tests {
             NO_RESULTS_BODY,
             "Each line below loosens one filter and shows how many conversations you would \
              get. Pick one, or press its number."
+        );
+    }
+
+    #[test]
+    fn the_typing_states_words_are_the_designs() {
+        use chrono::{Local, TimeZone};
+        let now = Local.with_ymd_and_hms(2026, 9, 26, 15, 0, 0).unwrap();
+        let at = |m, d| Local.with_ymd_and_hms(2026, m, d, 9, 0, 0).unwrap();
+        assert_eq!(
+            person_detail("ada@example.org", 412, Some(at(9, 26)), now),
+            "ada@example.org \u{b7} 412 messages \u{b7} last today"
+        );
+        assert_eq!(last_when(at(9, 19), now), "19 Sep");
+        assert_eq!(last_when(at(6, 2), now), "June");
+        assert_eq!(
+            last_when(Local.with_ymd_and_hms(2025, 6, 2, 9, 0, 0).unwrap(), now),
+            "June 2025"
+        );
+        assert_eq!(
+            person_detail::<Local>("admin@example.org", 9, None, now),
+            "admin@example.org \u{b7} 9 messages"
+        );
+        assert_eq!(
+            matching("People", "ad"),
+            "People matching \u{201c}ad\u{201d}"
+        );
+        assert_eq!(matching("People", ""), "People");
+        assert_eq!(latest_from("Ada Moreno"), "Latest from Ada Moreno");
+        assert_eq!(origin_line("last month"), "from \u{2018}last month\u{2019}");
+        assert_eq!(files_named("at"), "Files named \u{201c}at\u{2026}\u{201d}");
+        assert_eq!(
+            files_detail(&["Atlas-Q3-budget.xlsx", "Atlas-Sep-actuals.pdf", "a", "b"]),
+            "Atlas-Q3-budget.xlsx, Atlas-Sep-actuals.pdf and 2 more"
+        );
+        assert_eq!(files_detail(&["one.pdf"]), "one.pdf");
+        assert_eq!(
+            list_detail("atlas-planning.example.org"),
+            "mailing list \u{b7} atlas-planning.example.org"
+        );
+        assert_eq!(
+            parsed_footer(3, Duration::from_millis(21), false),
+            "parsed on this Mac \u{b7} 3 matches \u{b7} 21 ms"
+        );
+        let day = |m, d| chrono::NaiveDate::from_ymd_opt(2026, m, d).unwrap();
+        assert_eq!(
+            plain_results_note(Some(day(8, 1)), Some(day(9, 1))),
+            "August 2026 \u{b7} newest first"
+        );
+        assert_eq!(plain_results_note(Some(day(8, 1)), None), "newest first");
+        let mac = Keymap::resolve_on(
+            &postio_config::KeyBindings::default(),
+            postio_config::paths::Platform::Apple,
+        );
+        let said = |hints: Vec<Hint>| {
+            hints
+                .into_iter()
+                .map(|hint| format!("{} {}", hint.key, hint.label))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            said(operator_hints(&mac, "from")),
+            [
+                "Return add as chip",
+                "alt+Return exclude (-from:)",
+                "Up Down choose",
+                "BackSpace back to words"
+            ]
+        );
+        assert_eq!(
+            said(plain_hints(&mac)),
+            [
+                "Up Down move",
+                "Return open",
+                "Tab edit as chips",
+                "cmd+BackSpace keep as words"
+            ]
+        );
+        assert_eq!(
+            said(prefix_hints(&mac)),
+            [
+                "Tab complete",
+                "Up Down move",
+                "Return open",
+                "cmd+Return all results"
+            ]
         );
     }
 }
