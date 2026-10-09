@@ -29,4 +29,5 @@ leaves this list. Traps worth knowing before you start are in
 - 2026-10-01 — [What a storyboard capture costs, and which renderer repeats itself](2026-10-01-what-a-storyboard-capture-costs.md)
 - 2026-10-08 — [Focus on the Mac: what the next session must keep](2026-10-08-focus-on-the-mac.md)
 - 2026-10-09 — [Focus search, step 1: the engine measured against 50 ms](2026-10-09-focus-search-step-1.md)
+- 2026-10-09 — [Focus search, step 2: the dropdown against screens 01 and 03](2026-10-09-focus-search-step-2.md)
 - 2026-10-05 — [Architecture inventory: Postio, Flectar and Letter](2026-10-05-reference-codebase-architecture-inventory.md)

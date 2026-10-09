@@ -243,12 +243,14 @@ public struct DropdownView: View {
             .lineLimit(1)
             .padding(.horizontal, 10)
             .frame(height: 26)
+            // Narrow to's pills are filled capsules; a saved search's is an
+            // outlined key-like box (screens 03 and 01).
             .background(
-                RoundedRectangle(cornerRadius: 13)
+                RoundedRectangle(cornerRadius: pill.op != nil ? 13 : 6)
                     .fill(pill.op != nil ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 13)
+                RoundedRectangle(cornerRadius: pill.op != nil ? 13 : 6)
                     .strokeBorder(.separator, lineWidth: pill.op != nil ? 0 : 1)
             )
         }

@@ -150,6 +150,7 @@ searches, on the Mac.
 - [x] T054 [US1] Widen the panel to 860 and grow the field leftward with its right edge 12 from the window's in `macos/Sources/PostioAppKit/CommandBarPanel.swift` and `macos/Sources/Postio/MainWindow.swift` (field 34 tall, radius 8, accent ring and halo; panel 6 below, radius 10, the design's shadow). Test first in `macos/Tests/PostioAppKitTests/` that the panel's frame follows the field's at 1440 and 1024 widths
   - Deviation: T052–T054 landed as one commit (the routing, the keys and the geometry share `CommandBarModel.swift` and `Engine.swift`). The geometry is `CommandBarGeometry` in PostioKit, tested from `PostioAppKitTests/CommandBarGeometryTests.swift`; 009's 640-wide, right-aligned panel tests went with it. The field grows by `NSSearchToolbarItem.preferredWidthForSearchField`; its 34pt height, 8pt radius, accent ring and halo are not built (the toolbar's search field draws its own): see the step-2 note.
 - [ ] T055 [US1] Capture screens 01 and 03 (light) and write the step-2 note with every difference listed; fix or explain each
+  - Pending: `screencapture` could not create an image from this terminal (no Screen Recording grant, or the display asleep). The note `docs/notes/2026-10-09-focus-search-step-2.md` lists the differences read from the code and says how to take the two captures; tick this when they are taken and the list amended.
 - [ ] T056 Commit the phase
 
 **Checkpoint**: the dropdown's empty and words states work on the Mac;
