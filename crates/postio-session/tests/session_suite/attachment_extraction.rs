@@ -107,8 +107,7 @@ fn a_helper_that_never_answers_is_killed_at_its_deadline() {
         ("deaf", "while :; do :; done"),
         ("spin", "cat >/dev/null\nwhile :; do :; done"),
     ] {
-        let extractor =
-            Extractor::with_helper(script(dir.path(), name, body)).with_limits(limits.clone());
+        let extractor = Extractor::new(script(dir.path(), name, body), limits.clone());
         let file = seed_file("Atlas-Sep-actuals.pdf");
         let started = Instant::now();
         let isolated = extractor.extract(file.bytes.clone(), file.mime, Some(file.name));
@@ -264,10 +263,13 @@ async fn a_pass_kills_the_helper_that_hangs_and_indexes_the_next_attachment() {
              '{HELPER}' <\"$t\"; s=$?\nrm -f \"$t\"\nexit $s"
         ),
     );
-    let extractor = Extractor::with_helper(helper).with_limits(Limits {
-        max_time: Duration::from_millis(300),
-        ..Limits::default()
-    });
+    let extractor = Extractor::new(
+        helper,
+        Limits {
+            max_time: Duration::from_millis(300),
+            ..Limits::default()
+        },
+    );
 
     let captured = Captured::default();
     let subscriber = tracing_subscriber::fmt()

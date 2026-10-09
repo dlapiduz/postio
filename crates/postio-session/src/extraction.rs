@@ -161,20 +161,14 @@ impl Extractor {
 
     /// The helper at `path`, under the default limits.
     pub fn with_helper(path: impl Into<PathBuf>) -> Self {
+        Self::new(path, Limits::default())
+    }
+
+    /// The helper at `path`, under `limits`.
+    pub fn new(path: impl Into<PathBuf>, limits: Limits) -> Self {
         Self {
             inner: Arc::new(Inner {
                 helper: path.into(),
-                limits: Limits::default(),
-                warned: AtomicBool::new(false),
-            }),
-        }
-    }
-
-    /// The same helper, under `limits`.
-    pub fn with_limits(self, limits: Limits) -> Self {
-        Self {
-            inner: Arc::new(Inner {
-                helper: self.inner.helper.clone(),
                 limits,
                 warned: AtomicBool::new(false),
             }),
