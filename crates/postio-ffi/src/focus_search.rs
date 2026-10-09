@@ -499,7 +499,7 @@ impl Eq for MonthBarFfi {}
 pub struct ResultGroupFfi {
     /// "Top hits", "September 2026".
     pub title: String,
-    /// "9", tertiary after the title.
+    /// "9", tertiary after the title; empty for Top hits.
     pub count: String,
     /// "newest first", "why each one ranked is under the sender".
     pub note: Option<String>,
