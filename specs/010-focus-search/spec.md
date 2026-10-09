@@ -90,6 +90,66 @@ alternatives rejected are recorded so they are not re-argued.
 | D23 | ⌥⌫ forgets a recent search | `ForgetRecent` takes `alt+BackSpace` on the Mac; `BackToWords`' terminal alternate `alt+BackSpace` is not offered on Apple (`registry::alternate_offered_on`), and `ForgetRecent` is not offered on Freedesktop until Linux adopts the dropdown (`registry::offered_on`) | A different key: the design names ⌥⌫ |
 | D24 | ⌘⌫ on no results | With no plain English to take back, `BackToWords` in the results' zero-hit state is answered as **clear filters** (keep the free words, drop every operator), and the field's hint says so (screen 13) | A second command on the same key in the same context |
 | D25 | Results-only commands on Linux | New commands that only the results view or the dropdown uses are not offered on Freedesktop (`offered_on`) until Linux adopts, so GTK's keymap, palette and `docs/keybindings.md` rows for Linux do not change | Offering them on Linux as debt: they would be keys that do nothing on a surface GTK does not have |
+| D26 | Two values in one popover (maintainer, 2026-10-09) | Checking a second value in the From, To, Anywhere or Label popover means **either**. The language gains a braced set of values for one field, Gmail's shape: `from:{ada tomas}`, `in:{inbox archive}`, `label:{"Q3 close" atlas}`. It matches when **any** value matches; `-from:{ada tomas}` matches neither. One value in braces is the plain clause. See "D26: either of several values" below | A single-select popover: two people is an ordinary thing to ask for. Leaving AND: two `from:` clauses select nothing, which is why it was decided. A bare `OR` keyword between clauses: a precedence rule and parentheses for the language to grow, an `or` that is also a word people search for, and a chip that would have to span three tokens |
+
+### D26: either of several values
+
+**Syntax.** `field:{value value …}`, for a field whose value is a name:
+`from:` `to:` `subject:` `in:` `filename:` `list:` `account:` `group:`
+`label:`. Inside the braces values are separated by whitespace and may be
+quoted (`label:{"Q3 close" atlas}`); a quote suspends the closing brace as
+it suspends whitespace. Braces only group straight after an operator's
+colon, so `{` anywhere else is the character it was. `-` before the
+operator negates the whole set. `has:` `is:`, dates, sizes and `header:`
+take no set (`is:{unread flagged}` is a `Partial`).
+
+**Meaning.** `from:{ada tomas}` holds when `from:ada` or `from:tomas` does;
+`-from:{ada tomas}` when neither does. Each value means exactly what it
+means alone, so a set is never a second evaluator of a field. Clauses
+still AND, as typed: `from:ada from:tomas` stays the (usually empty) query
+it was.
+
+**Totality.** The parser stays total (FR-003): an unclosed `from:{ada` runs
+to the end of the input as an unclosed quote does, and is a `Partial`, as
+are `from:{}` and `from:{ada}x`. `spell` writes the plain clause for one
+value and a set for two or more, quoting a value that holds whitespace or
+a brace.
+
+**Type.** `Filter::AnyOf(AnyOf)`, one new variant. `AnyOf` holds two or
+more filters of one name-valued field, none itself a set, and can only be
+built through `AnyOf::new`, which refuses anything else, so the invariant is
+the type's rather than every reader's. Rejected: a `Vec<String>` in every
+name-valued variant (`Filter::From(Vec<String>)`), which rewrites every
+reader of nine variants, almost all of which want one value; and an
+unconstrained `Filter::Any(Vec<Filter>)`, which would let mixed fields and
+nested sets through to the executor and the matcher. Every evaluator
+answers a set the same way, by OR of what it already answers for each
+member: the SQL executor ORs the members' conditions (`filter_condition`,
+GTK's path); the conversation search reads the members' message sets as
+one union and then intersects it with the other sets (`Plan::build_sets`);
+the in-memory matcher ORs the members' column conditions, for the fields
+it already supports (D12 unchanged). `Filter::alternatives()` gives every
+reader the members, or the filter itself, so a reader that lists values
+(highlights, chips, button labels) reads a set without matching on it.
+
+**Edits.** A popover check is `Edit::Toggle`, and a second value of a
+field already held positively **extends that clause in place**
+(`from:ada` → `from:{ada tomas}`); unchecking a member removes it, and a
+set left with one value is written as the plain clause. ⌥-click is
+`Edit::Exclude`, its mirror over the negated clause. `Edit::Add` (typed
+operators, "Narrow to", the dropdown's chips) still appends: typing a
+second `from:` asks for both, as it always has, and never sees into a set
+except to not add a value it already holds.
+
+**Relaxations.** Dropping a set drops the term (one token, FR-030); a
+positive `label:{…}` also offers `in:{…}`. Dropping one value from a
+positive set *narrows* the search, so it is not offered as a relaxation;
+for a negated set it would loosen, but the whole set's drop is already
+offered and one more line per member would crowd the four the page shows.
+
+**Plain English.** "from ada or tomas" lowers to `from:{ada tomas}`, one
+token whose origin is "from ada or tomas"; `or` joins names only after a
+`from`/`to` cue, and each side must be a known name or an address.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -388,6 +448,13 @@ address, message count, last date. ↩ runs `from:<person>`.
 - **FR-005**: Matched words MUST be marked with the find highlight (light
   `rgba(255,204,0,0.38)`, dark `rgba(255,214,10,0.28)`), never the accent.
   Highlight ranges MUST come from the engine.
+- **FR-006**: A braced set of values for one name-valued field
+  (`from:{ada tomas}`) MUST match a message when any value matches, and
+  negated MUST match it when none does, identically in the SQL executor,
+  the conversation search and the in-memory matcher (D26). Checking a
+  second value in a filter popover MUST extend the field's clause into a
+  set, and the popover MUST show every member checked; its chip MUST name
+  every member ("from: Ada Moreno, Tomás Reyes").
 
 **The dropdown (screens 01–05)**
 
