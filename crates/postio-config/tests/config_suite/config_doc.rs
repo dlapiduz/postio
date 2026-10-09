@@ -646,6 +646,20 @@ fn render() -> String {
          A named, pinned search -- one table per saved search, keyed the same\n\
          way accounts are.\n\
          \n\
+         ```toml\n\
+         [saved_searches.atlas-budget]\n\
+         query = \"atlas budget from:ada@example.com after:90d\"\n\
+         name = \"Atlas budget from Ada\"\n\
+         pinned = true   # listed among saved searches; the first four take ⌥1-⌥4\n\
+         order = 4       # where it sits among the pinned ones\n\
+         notify = true   # a quiet badge with the matches new since you last looked\n\
+         ```\n\
+         \n\
+         `notify` is off unless said: the badge is a count on the saved search in\n\
+         the search dropdown, never a banner or a notification. A date that keeps\n\
+         rolling is written relative (`after:90d`, the last 90 days) and one that\n\
+         stays put as a day (`after:2026-07-01`); both are the one query language.\n\
+         \n\
          ## `[mailboxes]`\n\
          \n\
          Maps a role Postio already knows (`archive`, `sent`, `trash`, ...) to\n\
