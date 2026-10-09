@@ -1,0 +1,261 @@
+# Generated in part by `cargo hakari`: everything between the BEGIN and END
+# markers is its output, rewritten by `cargo hakari generate`. ADR 0047.
+
+[package]
+name = "postio-workspace-hack"
+description = "One feature set for the third-party crates every Postio crate shares, so building one crate does not rebuild what the workspace build already built (ADR 0047)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+### BEGIN HAKARI SECTION
+[dependencies]
+aes = { version = "0.8", default-features = false, features = ["zeroize"] }
+arrayvec = { version = "0.7" }
+base64-2b5c6dc72f624058 = { package = "base64", version = "0.23" }
+base64-3c51e837cfc5589a = { package = "base64", version = "0.22" }
+bitflags = { version = "2", default-features = false, features = ["serde", "std"] }
+block-buffer = { version = "0.12", default-features = false, features = ["zeroize"] }
+bytemuck = { version = "1", default-features = false, features = ["derive", "extern_crate_alloc", "min_const_generics"] }
+chacha20 = { version = "0.10", default-features = false, features = ["rng", "xchacha"] }
+chrono = { version = "0.4", features = ["serde"] }
+cipher = { version = "0.4", default-features = false, features = ["block-padding", "zeroize"] }
+crossbeam-epoch = { version = "0.9" }
+crossbeam-utils = { version = "0.8" }
+crypto-common-6f8ce4dd05d13bba = { package = "crypto-common", version = "0.2", default-features = false, features = ["getrandom"] }
+crypto-common-c65f7effa3be6d31 = { package = "crypto-common", version = "0.1", default-features = false, features = ["getrandom", "std"] }
+cssparser = { version = "0.37", features = ["serde"] }
+derive_more = { version = "2", features = ["add", "add_assign", "deref", "deref_mut", "from", "is_variant"] }
+either = { version = "1", features = ["use_std"] }
+event-listener = { version = "5" }
+event-listener-strategy = { version = "0.5" }
+fastrand = { version = "2" }
+foldhash = { version = "0.2", default-features = false, features = ["std"] }
+futures-core = { version = "0.3" }
+getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
+getrandom-9fbad63c4bcf4a8f = { package = "getrandom", version = "0.4", default-features = false, features = ["std", "sys_rng"] }
+hashbrown = { version = "0.17" }
+icu_locale_core = { version = "2", default-features = false, features = ["alloc", "zerovec"] }
+icu_normalizer = { version = "2", default-features = false, features = ["compiled_data", "utf16_iter", "utf8_iter"] }
+icu_properties = { version = "2", default-features = false, features = ["compiled_data"] }
+icu_provider = { version = "2", default-features = false, features = ["alloc", "baked"] }
+idna = { version = "1" }
+inout = { version = "0.1", default-features = false, features = ["block-padding"] }
+io-http = { version = "0.5", default-features = false, features = ["rustls-ring"] }
+itertools = { version = "0.14" }
+libc = { version = "0.2" }
+litemap = { version = "0.8", default-features = false, features = ["alloc"] }
+lock_api = { version = "0.4", features = ["arc_lock"] }
+log = { version = "0.4", default-features = false, features = ["std"] }
+memchr = { version = "2" }
+nom = { version = "7" }
+num-bigint = { version = "0.4" }
+num-integer = { version = "0.1", features = ["i128"] }
+num-traits = { version = "0.2", features = ["i128"] }
+once_cell = { version = "1" }
+parking_lot = { version = "0.12", features = ["arc_lock", "send_guard"] }
+percent-encoding = { version = "2" }
+phf_shared = { version = "0.13" }
+pimalaya-stream = { version = "0.3" }
+potential_utf = { version = "0.1", default-features = false, features = ["alloc", "zerovec"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+pulldown-cmark = { version = "0.13" }
+rand = { version = "0.9" }
+rand_core = { version = "0.9", default-features = false, features = ["os_rng", "std"] }
+regex = { version = "1" }
+regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
+regex-syntax = { version = "0.8" }
+secrecy = { version = "0.10", default-features = false, features = ["serde"] }
+serde = { version = "1", features = ["alloc", "derive"] }
+serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
+serde_json = { version = "1", features = ["alloc"] }
+smallvec = { version = "1", default-features = false, features = ["const_new", "union", "write"] }
+stable_deref_trait = { version = "1" }
+string_cache = { version = "0.9" }
+strum = { version = "0.28", features = ["derive"] }
+subtle = { version = "2" }
+syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
+thiserror = { version = "2" }
+tinystr = { version = "0.8", default-features = false, features = ["alloc", "zerovec"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "test-util", "tracing"] }
+toml_datetime = { version = "1", features = ["serde"] }
+toml_edit = { version = "0.25" }
+toml_parser = { version = "1" }
+toml_writer = { version = "1" }
+tracing = { version = "0.1" }
+tracing-core = { version = "0.1" }
+tracing-log = { version = "0.2" }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = { version = "2", features = ["serde"] }
+uuid = { version = "1", features = ["serde", "v4", "v5", "v7"] }
+winnow = { version = "1" }
+writeable = { version = "0.6", default-features = false, features = ["alloc"] }
+yoke = { version = "0.8", default-features = false, features = ["alloc", "derive"] }
+zerocopy = { version = "0.8", default-features = false, features = ["derive", "simd"] }
+zerofrom = { version = "0.1", default-features = false, features = ["alloc", "derive"] }
+zeroize = { version = "1", features = ["zeroize_derive"] }
+zerotrie = { version = "0.2", default-features = false, features = ["alloc", "yoke", "zerofrom"] }
+zerovec = { version = "0.11", default-features = false, features = ["alloc", "derive", "yoke"] }
+zvariant = { version = "5", features = ["enumflags2", "gvariant", "serde_bytes"] }
+
+[build-dependencies]
+aes = { version = "0.8", default-features = false, features = ["zeroize"] }
+arrayvec = { version = "0.7" }
+base64-2b5c6dc72f624058 = { package = "base64", version = "0.23" }
+base64-3c51e837cfc5589a = { package = "base64", version = "0.22" }
+bitflags = { version = "2", default-features = false, features = ["serde", "std"] }
+block-buffer = { version = "0.12", default-features = false, features = ["zeroize"] }
+bytemuck = { version = "1", default-features = false, features = ["derive", "extern_crate_alloc", "min_const_generics"] }
+cc = { version = "1", default-features = false, features = ["parallel"] }
+chacha20 = { version = "0.10", default-features = false, features = ["rng", "xchacha"] }
+chrono = { version = "0.4", features = ["serde"] }
+cipher = { version = "0.4", default-features = false, features = ["block-padding", "zeroize"] }
+crossbeam-epoch = { version = "0.9" }
+crossbeam-utils = { version = "0.8" }
+crypto-common-6f8ce4dd05d13bba = { package = "crypto-common", version = "0.2", default-features = false, features = ["getrandom"] }
+crypto-common-c65f7effa3be6d31 = { package = "crypto-common", version = "0.1", default-features = false, features = ["getrandom", "std"] }
+cssparser = { version = "0.37", features = ["serde"] }
+derive_more = { version = "2", features = ["add", "add_assign", "deref", "deref_mut", "from", "is_variant"] }
+derive_more-impl = { version = "2", features = ["add", "add_assign", "deref", "deref_mut", "from", "is_variant"] }
+either = { version = "1", features = ["use_std"] }
+event-listener = { version = "5" }
+event-listener-strategy = { version = "0.5" }
+fastrand = { version = "2" }
+foldhash = { version = "0.2", default-features = false, features = ["std"] }
+futures-core = { version = "0.3" }
+getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
+getrandom-9fbad63c4bcf4a8f = { package = "getrandom", version = "0.4", default-features = false, features = ["std", "sys_rng"] }
+hashbrown = { version = "0.17" }
+icu_locale_core = { version = "2", default-features = false, features = ["alloc", "zerovec"] }
+icu_normalizer = { version = "2", default-features = false, features = ["compiled_data", "utf16_iter", "utf8_iter"] }
+icu_properties = { version = "2", default-features = false, features = ["compiled_data"] }
+icu_provider = { version = "2", default-features = false, features = ["alloc", "baked"] }
+idna = { version = "1" }
+inout = { version = "0.1", default-features = false, features = ["block-padding"] }
+io-http = { version = "0.5", default-features = false, features = ["rustls-ring"] }
+itertools = { version = "0.14" }
+libc = { version = "0.2" }
+litemap = { version = "0.8", default-features = false, features = ["alloc"] }
+lock_api = { version = "0.4", features = ["arc_lock"] }
+log = { version = "0.4", default-features = false, features = ["std"] }
+memchr = { version = "2" }
+nom = { version = "7" }
+num-bigint = { version = "0.4" }
+num-integer = { version = "0.1", features = ["i128"] }
+num-traits = { version = "0.2", features = ["i128"] }
+once_cell = { version = "1" }
+parking_lot = { version = "0.12", features = ["arc_lock", "send_guard"] }
+percent-encoding = { version = "2" }
+phf_shared = { version = "0.13" }
+pimalaya-stream = { version = "0.3" }
+potential_utf = { version = "0.1", default-features = false, features = ["alloc", "zerovec"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+pulldown-cmark = { version = "0.13" }
+rand = { version = "0.9" }
+rand_core = { version = "0.9", default-features = false, features = ["os_rng", "std"] }
+regex = { version = "1" }
+regex-automata = { version = "0.4", default-features = false, features = ["dfa-build", "dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
+regex-syntax = { version = "0.8" }
+secrecy = { version = "0.10", default-features = false, features = ["serde"] }
+serde = { version = "1", features = ["alloc", "derive"] }
+serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
+serde_json = { version = "1", features = ["alloc"] }
+smallvec = { version = "1", default-features = false, features = ["const_new", "union", "write"] }
+stable_deref_trait = { version = "1" }
+string_cache = { version = "0.9" }
+strum = { version = "0.28", features = ["derive"] }
+subtle = { version = "2" }
+syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
+syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "full", "visit", "visit-mut"] }
+thiserror = { version = "2" }
+tinystr = { version = "0.8", default-features = false, features = ["alloc", "zerovec"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "test-util", "tracing"] }
+toml_datetime = { version = "1", features = ["serde"] }
+toml_edit = { version = "0.25" }
+toml_parser = { version = "1" }
+toml_writer = { version = "1" }
+tracing = { version = "0.1" }
+tracing-core = { version = "0.1" }
+tracing-log = { version = "0.2" }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = { version = "2", features = ["serde"] }
+uuid = { version = "1", features = ["serde", "v4", "v5", "v7"] }
+winnow = { version = "1" }
+writeable = { version = "0.6", default-features = false, features = ["alloc"] }
+yoke = { version = "0.8", default-features = false, features = ["alloc", "derive"] }
+zerocopy = { version = "0.8", default-features = false, features = ["derive", "simd"] }
+zerofrom = { version = "0.1", default-features = false, features = ["alloc", "derive"] }
+zeroize = { version = "1", features = ["zeroize_derive"] }
+zerotrie = { version = "0.2", default-features = false, features = ["alloc", "yoke", "zerofrom"] }
+zerovec = { version = "0.11", default-features = false, features = ["alloc", "derive", "yoke"] }
+zvariant = { version = "5", features = ["enumflags2", "gvariant", "serde_bytes"] }
+
+[target.x86_64-unknown-linux-gnu.dependencies]
+aho-corasick = { version = "1" }
+linux-raw-sys = { version = "0.12", default-features = false, features = ["auxvec", "elf", "errno", "general", "if_ether", "io_uring", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
+mio = { version = "1", features = ["net", "os-ext"] }
+rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
+serde_spanned = { version = "1", default-features = false, features = ["serde", "std"] }
+simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
+time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
+toml = { version = "1" }
+
+[target.x86_64-unknown-linux-gnu.build-dependencies]
+aho-corasick = { version = "1" }
+linux-raw-sys = { version = "0.12", default-features = false, features = ["auxvec", "elf", "errno", "general", "if_ether", "io_uring", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
+mio = { version = "1", features = ["net", "os-ext"] }
+rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
+serde_spanned = { version = "1", default-features = false, features = ["serde", "std"] }
+simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
+time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
+toml = { version = "1" }
+
+[target.aarch64-unknown-linux-gnu.dependencies]
+aho-corasick = { version = "1" }
+linux-raw-sys = { version = "0.12", default-features = false, features = ["auxvec", "elf", "errno", "general", "if_ether", "io_uring", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
+mio = { version = "1", features = ["net", "os-ext"] }
+rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
+serde_spanned = { version = "1", default-features = false, features = ["serde", "std"] }
+simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
+time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
+toml = { version = "1" }
+
+[target.aarch64-unknown-linux-gnu.build-dependencies]
+aho-corasick = { version = "1" }
+linux-raw-sys = { version = "0.12", default-features = false, features = ["auxvec", "elf", "errno", "general", "if_ether", "io_uring", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
+mio = { version = "1", features = ["net", "os-ext"] }
+rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
+serde_spanned = { version = "1", default-features = false, features = ["serde", "std"] }
+simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
+time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
+toml = { version = "1" }
+
+[target.aarch64-apple-darwin.dependencies]
+aho-corasick = { version = "1" }
+errno = { version = "0.3" }
+half = { version = "2" }
+libc = { version = "0.2", default-features = false, features = ["extra_traits"] }
+mio = { version = "1", features = ["net", "os-ext"] }
+objc2 = { version = "0.6", features = ["disable-encoding-assertions"] }
+rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
+simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
+time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
+
+[target.aarch64-apple-darwin.build-dependencies]
+aho-corasick = { version = "1" }
+errno = { version = "0.3" }
+half = { version = "2" }
+libc = { version = "0.2", default-features = false, features = ["extra_traits"] }
+mio = { version = "1", features = ["net", "os-ext"] }
+objc2 = { version = "0.6", features = ["disable-encoding-assertions"] }
+rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
+simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
+time = { version = "0.3", features = ["local-offset", "serde-well-known"] }
+
+### END HAKARI SECTION

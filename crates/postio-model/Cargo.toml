@@ -22,6 +22,7 @@ serde = { workspace = true }
 # The diacritic fold the search engine's tokenizer does not do. No SQL, no
 # engine -- a property of the text, which is what this crate is for.
 unicode-normalization = "0.1"
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 serde_json = { workspace = true }

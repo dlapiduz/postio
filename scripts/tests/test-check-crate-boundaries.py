@@ -69,6 +69,7 @@ def build_fixture(
     storyboard_deps: str = "",
     controller_deps: str = "",
     include_focus: bool = True,
+    hack_deps: str | None = None,
 ) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     (root / "Cargo.toml").write_text(WORKSPACE_MANIFEST)
@@ -114,6 +115,10 @@ def build_fixture(
         "postio-smtp",
     ):
         write_crate(root, "crates", bystander)
+    # The workspace-hack (ADR 0047): a crate with no code that names
+    # third-party crates for their features. Written only when a case asks.
+    if hack_deps is not None:
+        write_crate(root, "crates", "postio-workspace-hack", hack_deps)
     # Stand-ins for the real third-party crates, so nothing is fetched.
     # Both engine names: `turso` is the live rule, `rusqlite` stays banned so
     # the rule survives the rename that already happened once.
@@ -623,6 +628,34 @@ def main() -> int:
                 core_deps='tokio = { path = "../../vendor/tokio" }\n',
             ),
             expected_status=0,
+        )
+
+        # 17. The workspace-hack names tokio for its features, and every
+        #     member depends on it (ADR 0047). That edge reaches nothing a
+        #     crate could call, so it is not a path into a banned crate...
+        check_case(
+            "postio-model reaches tokio only through the workspace-hack",
+            build_fixture(
+                tmp_path / "hack-only",
+                model_deps='postio-workspace-hack = { path = "../postio-workspace-hack" }\n',
+                hack_deps='tokio = { path = "../../vendor/tokio" }\n',
+            ),
+            expected_status=0,
+        )
+        #     ...but skipping it must not hide a real path to the same crate.
+        check_case(
+            "postio-model reaches tokio through a real crate beside the hack",
+            build_fixture(
+                tmp_path / "hack-and-real",
+                model_deps=(
+                    'postio-workspace-hack = { path = "../postio-workspace-hack" }\n'
+                    'helper = { path = "../helper" }\n'
+                ),
+                helper_deps='tokio = { path = "../../vendor/tokio" }\n',
+                hack_deps='tokio = { path = "../../vendor/tokio" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-model", "tokio", "helper"),
         )
 
         # 18. And the real workspace is clean today.

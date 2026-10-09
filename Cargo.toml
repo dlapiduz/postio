@@ -33,6 +33,7 @@ members = [
     "crates/postio-storyboard",
     "crates/postio-focus",
     "crates/postio-demo",
+    "crates/postio-workspace-hack",
 ]
 # Upstream crates carried with Postio's patches applied: sources, not
 # members, so the workspace's lints and gates do not reach them.
@@ -86,6 +87,7 @@ default-members = [
     "crates/postio-storyboard",
     "crates/postio-focus",
     "crates/postio-demo",
+    "crates/postio-workspace-hack",
 ]
 
 [workspace.package]
@@ -145,6 +147,11 @@ unused_must_use = "deny"
 # it is copied from.
 let_underscore_future = "deny"
 
+[workspace.metadata.cargo-machete]
+# Every member depends on the workspace-hack for its features and never
+# names it in code (ADR 0047), which is exactly what `cargo machete` reports.
+ignored = ["postio-workspace-hack"]
+
 [workspace.dependencies]
 postio-model   = { path = "crates/postio-model" }
 postio-storage = { path = "crates/postio-storage" }
@@ -175,6 +182,9 @@ postio-vault   = { path = "crates/postio-vault" }
 postio-storyboard = { path = "crates/postio-storyboard" }
 postio-focus = { path = "crates/postio-focus" }
 postio-demo = { path = "crates/postio-demo" }
+# Every member depends on it, so `-p` builds resolve third-party features
+# the way the workspace build does (ADR 0047). Managed by `cargo hakari`.
+postio-workspace-hack = { path = "crates/postio-workspace-hack" }
 
 # Third-party crates two or more members share, so a version, a feature
 # list and a default-features decision are made once (#1498). A member

@@ -103,6 +103,7 @@ zeroize = { workspace = true }
 # than a workspace one: the shared table is for versions two or more members
 # have to agree on.
 io-maildir = { version = "0.3.1", default-features = false, features = ["client", "parser"], optional = true }
+postio-workspace-hack.workspace = true
 
 
 # `providers_toml.rs` is compiled a second time by build.rs (`#[path]`), the

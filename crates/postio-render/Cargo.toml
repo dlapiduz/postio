@@ -47,6 +47,7 @@ style = { package = "stylo", version = "0.20" }
 unicode-normalization = "0.1"
 # RenderedDocument crosses from the render thread to the UI thread (R7).
 static_assertions = "1.1"
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 # The crate's own tests, with their hooks on.

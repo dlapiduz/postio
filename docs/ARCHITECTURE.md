@@ -145,7 +145,11 @@ alternative — a second binary opening the store directly — is not a second
 frontend but a second application sharing a file.
 
 Dashed borders mark the crates whose dependency closure CI polices
-(`scripts/checks/check-crate-boundaries.py`).
+(`scripts/checks/check-crate-boundaries.py`). Not drawn: every crate also
+depends on `postio-workspace-hack`, which has no code and exists so that
+building one crate reuses the workspace build's dependencies. A boundary is
+what a crate's code can call, so the check does not walk into it
+([ADR 0047](decisions/0047-one-feature-set-for-the-workspace.md)).
 
 **One app opens the store at a time** ([ADR 0041](decisions/0041-one-app-opens-the-store-at-a-time.md)).
 The desktop app, the terminal and the macOS app each run `postio-host` inside

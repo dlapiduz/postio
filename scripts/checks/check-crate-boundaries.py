@@ -82,6 +82,9 @@ Kinds considered:
     built -- unless the rule says ``"edges": "product"``, as
     ``postio-render``'s does: its invariant is about what ships, and its
     tests need a socket;
+  * never edges into ``postio-workspace-hack``, which every member depends
+    on for its features alone (ADR 0047): a rule is about what a crate's
+    code can call, and that crate gives it nothing to call;
   * a rule's ``"direct"`` list, by contrast, is checked against the guarded
     crate's own dependencies only, dev-dependencies included: what its own
     code may reach for, when the crate stands on something that is allowed
@@ -98,6 +101,13 @@ import shutil
 import subprocess
 import sys
 from collections import deque
+
+# The workspace-hack (ADR 0047): every member depends on it, and it names
+# third-party crates only so that each is built with one feature set. It has
+# no code and re-exports nothing, so an edge into it reaches nothing a crate
+# could call; the walk does not enter it. A banned crate it names is still
+# found the moment a real dependency reaches it.
+WORKSPACE_HACK = "postio-workspace-hack"
 
 # --- The invariants ---------------------------------------------------------
 #
@@ -879,6 +889,8 @@ def find_violations(
             if pkg is None:
                 continue
             name = pkg["name"]
+            if name == WORKSPACE_HACK:
+                continue
             next_path = path + [(name, dep_kind_label(kinds))]
 
             if name in banned:

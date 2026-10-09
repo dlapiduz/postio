@@ -49,6 +49,7 @@ tracing = { workspace = true }
 tracing-journald = "0.3"
 tracing-log = "0.2"
 tracing-subscriber = { workspace = true, features = ["ansi", "env-filter"] }
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 # The application's allocator, for `body_index_memory`, which measures the heap

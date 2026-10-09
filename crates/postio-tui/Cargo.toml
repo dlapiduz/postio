@@ -63,6 +63,7 @@ tracing = { workspace = true }
 # Display width, for fitting subjects and names to columns: a CJK
 # character is two columns. Already in the graph through ratatui.
 unicode-width = "0.2"
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 # The `shot` example drives the app through the same harness the tests use.

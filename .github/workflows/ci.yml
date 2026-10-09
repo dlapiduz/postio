@@ -227,6 +227,19 @@ jobs:
       - name: Install cargo-deny
         run: scripts/install-cargo-deny.sh
 
+      # `check-workspace-hack.py` and its self-test ask `cargo hakari` whether
+      # the workspace-hack is in step with the manifests (ADR 0047); under CI
+      # a missing tool fails rather than skips (`scripts/lib/prereq.py`).
+      # Cached on the install script's hash, like the two above.
+      - name: Cache cargo-hakari
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-hakari
+          key: ${{ runner.os }}-cargo-hakari-${{ hashFiles('scripts/install-hakari.sh') }}
+
+      - name: Install cargo-hakari
+        run: scripts/install-hakari.sh
+
       - name: Run every repository invariant
         env:
           POSTIO_DENY_NAMES: ${{ secrets.POSTIO_DENY_NAMES }}
@@ -1058,6 +1071,19 @@ jobs:
 
       - name: Install cargo-deny
         run: scripts/install-cargo-deny.sh
+
+      # `check-workspace-hack.py` and its self-test ask `cargo hakari` whether
+      # the workspace-hack is in step with the manifests (ADR 0047); under CI
+      # a missing tool fails rather than skips (`scripts/lib/prereq.py`).
+      # Cached on the install script's hash, like the two above.
+      - name: Cache cargo-hakari
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-hakari
+          key: ${{ runner.os }}-cargo-hakari-${{ hashFiles('scripts/install-hakari.sh') }}
+
+      - name: Install cargo-hakari
+        run: scripts/install-hakari.sh
 
       # `--skip test-ffi-bindgen.py`, and so no `target/` in the cache above:
       # that test builds `postio-ffi`, most of the workspace, and it runs in

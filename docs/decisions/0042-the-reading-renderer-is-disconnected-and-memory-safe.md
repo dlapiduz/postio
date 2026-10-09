@@ -6,7 +6,9 @@
 - **Related:** [ADR 0032](0032-the-conversation-is-one-document.md) (whose
   one-document conversation this keeps, drawn by a different engine),
   [ADR 0003](0003-rich-text-compose.md) (whose reader statements point here
-  now)
+  now), [ADR 0047](0047-one-feature-set-for-the-workspace.md) (which says
+  what "the renderer's graph" is when every crate depends on the
+  workspace-hack)
 - **Decision:** **`postio-render` draws hostile mail in Postio's own
   process, so it may contain nothing that runs C, reaches the network or
   asks the system for fonts. Every byte it draws is handed to it; a remote
@@ -29,10 +31,15 @@ keep obeying after the feature has landed.
 ## Decision
 
 1. **No C, no native bindings.** Nothing in `postio-render`'s product graph
-   (normal and build edges, features as a product build resolves them) links
-   native code, is a `-sys` crate, or compiles C or C++ at build time. The
-   image decoders are the pure-Rust `png`, `jpeg`, `gif` and `webp` paths;
-   nothing else is enabled.
+   links native code, is a `-sys` crate, or compiles C or C++ at build time.
+   That graph is **what the renderer's code can call**: its normal and build
+   edges, without the edge into `postio-workspace-hack` -- a crate with no
+   code that names third-party crates only for their features (ADR 0047) --
+   and with every crate's features as they are actually built, including
+   any the workspace-hack switches on. The image decoders are the pure-Rust
+   `png`, `jpeg`, `gif` and `webp` paths; nothing else is enabled, and
+   `image` is kept out of the workspace-hack so that holds on every
+   platform.
 2. **No network.** No crate in that graph can open a connection:
    `blitz-dom`'s `net` feature stays off, and so does any HTTP, TLS or
    socket crate. The renderer resolves a URL from the resource table it is
@@ -55,9 +62,12 @@ keep obeying after the feature has landed.
 
 - `scripts/checks/check-renderer-is-memory-safe.py` walks the graph for
   rules 1--3 and 5 and fails naming the crate and the feature that pulled
-  it in.
+  it in. It prunes the workspace-hack from the graph and keeps its features:
+  a decoder or a `net` feature the hack switches on in a crate the renderer
+  calls is still refused.
 - `scripts/checks/check-crate-boundaries.py`'s `RULES["postio-render"]`
-  bans the network and storage crates by name, on product edges.
+  bans the network and storage crates by name, on product edges, and does
+  not walk into the workspace-hack.
 - `postio-render`'s `egress` suite holds rule 4 in both directions (the
   classic app's `gtk_reader` did too, until T256): blocked mail reaches no
   loopback listener, and the same mail reaches it once consent is given. Focus's

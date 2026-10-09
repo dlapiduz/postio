@@ -26,6 +26,7 @@ postio-model = { version = "0.4.2", path = "../postio-model" }
 serde = { workspace = true }
 # `Observation.app` carries app-specific values of any shape.
 serde_json = { workspace = true }
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 tempfile = { workspace = true }

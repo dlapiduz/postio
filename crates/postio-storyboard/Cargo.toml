@@ -17,6 +17,7 @@ thiserror = { workspace = true }
 postio-core = { workspace = true }
 postio-config = { workspace = true }
 postio-ui = { workspace = true }
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 tempfile = { workspace = true }

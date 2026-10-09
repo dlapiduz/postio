@@ -13,6 +13,13 @@ fails when that graph could run C or reach the network
 It is a graph check rather than an observation because an observation only
 covers the paths a test happened to take.
 
+The graph is what the renderer's code can call (ADR 0042 as amended by ADR
+0047), so `postio-workspace-hack` is pruned from it: that crate has no code
+and re-exports nothing, and what it names is reachable from the renderer
+only by a dependency of the renderer's own. Its *features* still count --
+`cargo tree` resolves them before it prunes -- so a decoder or a `net`
+feature it switches on in a crate the renderer does call is still refused.
+
 Exit status: 0 clean, 1 violation, 2 the check could not run.
 """
 
@@ -27,6 +34,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 CRATE = "postio-render"
+# Features without code (ADR 0047): pruned from the graph, never from its
+# feature resolution.
+HACK = "postio-workspace-hack"
 
 # `links` values used only as uniqueness markers, with nothing native behind
 # them.
@@ -56,7 +66,7 @@ def graph() -> dict[str, set[str]]:
     """Every package in the product graph, with its resolved features."""
     out = subprocess.run(
         ["cargo", "tree", "-q", "-p", CRATE, "-e", "normal,build",
-         "--target", TARGET,
+         "--target", TARGET, "--prune", HACK,
          "--prefix", "none", "--no-dedupe", "-f", "{p}|{f}"],
         cwd=ROOT, capture_output=True, text=True, check=True,
     ).stdout

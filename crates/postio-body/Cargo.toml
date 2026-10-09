@@ -25,6 +25,7 @@ postio-model = { workspace = true }
 # Markdown to the composer's document, for the terminal composer
 # (docs/archive/specs/005-tui-frontend research R6).
 pulldown-cmark = { version = "0.13", default-features = false }
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 postio-model = { workspace = true, features = ["test-corpus"] }

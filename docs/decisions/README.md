@@ -55,6 +55,7 @@ decision stands.
 | [0044](0044-every-frontend-is-observable-and-storyboarded.md) | Every frontend is observable and storyboarded | Accepted, with `specs/008-storyboards` |
 | [0045](0045-focus-behaviour-lives-in-postio-focus.md) | Focus's behaviour lives in `postio-focus`; frontends draw its intents | Accepted, with `specs/009-focus-macos` |
 | [0046](0046-content-identity-is-distinct-from-mailbox-identity.md) | Content identity is distinct from mailbox identity | Accepted, built in #1780 |
+| [0047](0047-one-feature-set-for-the-workspace.md) | One feature set for the workspace: `postio-workspace-hack`, and a boundary is what a crate can call | Built |
 
 ## Writing one
 

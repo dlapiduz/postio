@@ -49,10 +49,21 @@ def main() -> int:
     # Every directory but `vendor/`: those are upstream crates carried with
     # a patch (`patches/blitz/`), their manifests are upstream's, and
     # machete does not read the workspace's `exclude`.
+    #
+    # And every crate but the workspace-hack, whose dependencies are all
+    # unused by design: it names them for their features (ADR 0047). The
+    # other members' own line naming it is excused once, in the root
+    # manifest's `[workspace.metadata.cargo-machete]`.
     paths = sorted(
         p.name
         for p in root.iterdir()
-        if p.is_dir() and p.name not in {"vendor", "target"} and not p.name.startswith(".")
+        if p.is_dir()
+        and p.name not in {"vendor", "target", "crates"}
+        and not p.name.startswith(".")
+    ) + sorted(
+        f"crates/{p.name}"
+        for p in (root / "crates").iterdir()
+        if p.is_dir() and p.name != "postio-workspace-hack"
     )
     try:
         result = subprocess.run(

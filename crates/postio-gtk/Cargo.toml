@@ -93,6 +93,7 @@ url = { workspace = true }
 # `observe`'s app-specific fields are JSON values, and a digest's summary is
 # stored as JSON (US13).
 serde_json.workspace = true
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 # The in-process IMAP server on loopback, which `e2e` points an account at;

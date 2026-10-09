@@ -44,6 +44,7 @@ url = { workspace = true }
 # The composer's editing surface, until ADR 0039's native editor is built
 # (research R1). Nothing else here draws with WebKit.
 webkit6 = { version = "0.6", features = ["v2_50", "gtk_v4_18"] }
+postio-workspace-hack.workspace = true
 
 [build-dependencies]
 glib-build-tools = "0.22.8"

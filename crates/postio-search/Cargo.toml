@@ -11,6 +11,7 @@ repository.workspace = true
 [dependencies]
 chrono = { workspace = true, features = ["std"] }
 postio-model = { workspace = true }
+postio-workspace-hack.workspace = true
 
 [lints]
 workspace = true

@@ -33,6 +33,7 @@ postio-sync.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time"] }
 tracing = { workspace = true }
 zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
+postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 # The application's allocator, for `first_sync_memory`, which measures the
