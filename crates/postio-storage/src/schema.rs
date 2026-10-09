@@ -182,6 +182,24 @@ ALTER TABLE drafts ADD COLUMN rich INTEGER NOT NULL DEFAULT 0;
             include_str!("schema/content-projection.sql"),
         ),
     },
+    // Spec 010, search for Focus: what the search bar remembers. Both tables
+    // are new, so a store gains them empty and nothing is backfilled.
+    Migration {
+        from: stamp(0xdcb8_490f),
+        to: stamp(0x3235_e866),
+        statements: "
+CREATE TABLE IF NOT EXISTS recent_searches (
+    query        TEXT    PRIMARY KEY,
+    last_run_at  INTEGER NOT NULL,
+    hits         INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS saved_search_seen (
+    key         TEXT    PRIMARY KEY,
+    seen_up_to  INTEGER NOT NULL
+);
+",
+    },
 ];
 
 /// The steps that carry a store stamped `found` to [`FINGERPRINT`], in the
@@ -878,6 +896,18 @@ CREATE TABLE recipients (
     CHECK ((message_id IS NOT NULL) <> (draft_id IS NOT NULL))
 );
 
+-- The searches a person ran (spec 010 D16): the results view opened, a hit
+-- opened from the dropdown, or a saved search run. Never each keystroke. The
+-- last 20 distinct queries are kept; older rows are deleted on insert.
+CREATE TABLE recent_searches (
+    -- Exactly as run: the one query language.
+    query        TEXT    PRIMARY KEY,
+    -- UTC ms.
+    last_run_at  INTEGER NOT NULL,
+    -- Conversations, as the footer said.
+    hits         INTEGER NOT NULL
+);
+
 -- A reminder to follow up (spec 007 US5, research R7): when nobody but the
 -- person has written in the conversation by `due_at`, the conversation
 -- comes back to the top of Focus's inbox, marked "No reply since" the day
@@ -900,6 +930,16 @@ CREATE TABLE reminders (
     cancelled_at       INTEGER,
     -- When a surfaced reminder stopped standing: a reply came after all.
     settled_at         INTEGER
+);
+
+-- Per saved search, the newest message the person has seen its results up
+-- to (spec 010 D15); the badge counts matches received after it. Keyed by
+-- the `[saved_searches.<key>]` identity in `config.toml`, so a row whose
+-- saved search was deleted is an orphan that `forget_seen_except` removes.
+CREATE TABLE saved_search_seen (
+    key         TEXT    PRIMARY KEY,
+    -- UTC ms, a `received_at`.
+    seen_up_to  INTEGER NOT NULL
 );
 
 CREATE TABLE settings (
