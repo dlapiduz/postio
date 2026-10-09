@@ -1717,6 +1717,45 @@ impl FocusController {
 mod tests {
     use super::*;
 
+    /// The search requests name their lanes, so a driver can abort the one
+    /// a newer request of the same lane makes waste (spec 010 D8); nothing
+    /// else is on a lane, writes least of all.
+    #[test]
+    fn the_search_requests_name_their_lanes_and_nothing_else_does() {
+        let query = postio_search::ParsedQuery::default();
+        let conversations = Request::Conversations {
+            query: query.clone(),
+            order: postio_search::results::ConversationOrder::BestMatch,
+            limit: 4,
+            stamp: 1,
+        };
+        assert_eq!(conversations.lane(), Some(Lane::Conversations));
+        let passages = Request::Passages {
+            query: query.clone(),
+            hits: Vec::new(),
+            stamp: 1,
+        };
+        assert_eq!(passages.lane(), Some(Lane::Passages));
+        for request in [
+            Request::RecentSearches,
+            Request::RememberSearch {
+                query: "atlas".to_owned(),
+                hits: 3,
+            },
+            Request::ForgetSearch {
+                query: "atlas".to_owned(),
+            },
+            Request::Places,
+            Request::Search {
+                query,
+                order: postio_search::ResultOrder::default(),
+                stamp: 1,
+            },
+        ] {
+            assert_eq!(request.lane(), None, "{request:?}");
+        }
+    }
+
     /// An inbox of ten conversations, `has_action` of them marked: one
     /// with mail in it, so no empty page follows the counts.
     fn counts(has_action: u32) -> FocusCounts {

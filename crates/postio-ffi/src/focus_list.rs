@@ -442,6 +442,13 @@ pub(crate) struct FocusDriver {
     local: async_channel::Sender<UiEvent>,
     /// Pages read from the store, so a test can count what scrolling cost.
     page_reads: std::sync::atomic::AtomicUsize,
+    /// Conversation searches that ran to the end, so a test can count
+    /// what typing quickly cost (spec 010 D8).
+    search_reads: std::sync::atomic::AtomicUsize,
+    /// Each search lane's task in flight: a newer request of the lane
+    /// aborts it, which drops the client's call, and the host stops the
+    /// read when its reply channel closes (spec 010 D8, D9).
+    lanes: Mutex<std::collections::HashMap<postio_focus::Lane, tokio::task::AbortHandle>>,
     /// The `config.toml` a saved search is written to, when there is one.
     config_path: Mutex<Option<std::path::PathBuf>>,
 }
@@ -459,6 +466,8 @@ impl FocusDriver {
             runtime,
             local,
             page_reads: std::sync::atomic::AtomicUsize::new(0),
+            search_reads: std::sync::atomic::AtomicUsize::new(0),
+            lanes: Mutex::new(std::collections::HashMap::new()),
             config_path: Mutex::new(None),
         })
     }
@@ -582,6 +591,12 @@ impl FocusDriver {
     #[cfg(feature = "testing")]
     pub(crate) fn page_reads(&self) -> usize {
         self.page_reads.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// How many conversation searches ran to the end.
+    #[cfg(feature = "testing")]
+    pub(crate) fn search_reads(&self) -> usize {
+        self.search_reads.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// How many rows the window is holding.
@@ -911,9 +926,16 @@ impl FocusDriver {
             self.page_reads
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
+        let searches = matches!(request, Request::Conversations { .. });
+        let lane = request.lane();
         let driver = Arc::clone(self);
-        self.runtime.spawn(async move {
+        let task = self.runtime.spawn(async move {
             let reply = postio_focus::perform(&driver.client, request).await;
+            if searches {
+                driver
+                    .search_reads
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             let effects = driver
                 .focus
                 .lock()
@@ -921,6 +943,17 @@ impl FocusDriver {
                 .handle(Input::Reply(ticket, reply));
             driver.apply(effects);
         });
+        // The stamps keep a superseded answer off the screen; this keeps
+        // it from costing the host a read nobody will draw.
+        if let Some(lane) = lane
+            && let Some(before) = self
+                .lanes
+                .lock()
+                .expect("lanes lock")
+                .insert(lane, task.abort_handle())
+        {
+            before.abort();
+        }
     }
 
     /// Hand the controller `Input::Timer(token)` once `after` has passed,
