@@ -1850,12 +1850,34 @@ impl Transport for Local {
             }
             InOrder::Later(request) => request,
         };
-        let (answer, answered) = tokio::sync::oneshot::channel();
+        let (mut answer, answered) = tokio::sync::oneshot::channel();
         let inner = Arc::clone(&self.inner);
         let client = self.client;
-        self.inner.runtime().spawn(async move {
-            let _ = answer.send(inner.answer(client, request).await);
-        });
+        if request.cancellable() {
+            // A search whose caller has gone stops at its next await (D9):
+            // the driver drops a superseded keystroke's future, and the
+            // search that replaced it should not wait behind it for a
+            // reader. Dropping a read mid-match leaves its connection clean
+            // (`turso_capabilities.rs`, R8).
+            let family = request.family();
+            self.inner.runtime().spawn(async move {
+                let resp = tokio::select! {
+                    biased;
+                    () = answer.closed() => None,
+                    resp = inner.answer(client, request) => Some(resp),
+                };
+                match resp {
+                    Some(resp) => {
+                        let _ = answer.send(resp);
+                    }
+                    None => tracing::debug!(family, "a search was abandoned"),
+                }
+            });
+        } else {
+            self.inner.runtime().spawn(async move {
+                let _ = answer.send(inner.answer(client, request).await);
+            });
+        }
         Box::pin(async move { answered.await.map_err(|_| Disconnected) })
     }
 

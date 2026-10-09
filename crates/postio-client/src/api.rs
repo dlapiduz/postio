@@ -64,6 +64,18 @@ pub trait Transport: Send + Sync + 'static {
 }
 
 impl Req {
+    /// Whether the host may stop answering this when its caller goes:
+    /// true for Focus's search reads (spec 010 D9), which a keystroke
+    /// supersedes and whose answer nobody would read. Everything else is
+    /// answered to the end, as it always was: GTK's search keeps its path
+    /// (FR-046), and a write stopped halfway is worse than a wasted answer.
+    pub fn cancellable(&self) -> bool {
+        matches!(
+            self,
+            Req::Conversations { .. } | Req::Passages { .. } | Req::Relaxations { .. }
+        )
+    }
+
     /// The family a round trip is counted under.
     pub fn family(&self) -> &'static str {
         match self {
