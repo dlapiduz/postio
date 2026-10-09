@@ -12,6 +12,8 @@ public protocol ResultsEngine: AnyObject {
     func focusSearchRow(_ position: UInt64) -> ResultRowFfi?
     /// The Files tab's card at `position`, or `nil` past the last.
     func focusSearchFile(_ position: UInt64) -> FileCardFfi?
+    /// The People tab's row at `position`, or `nil` past the last.
+    func focusSearchPerson(_ position: UInt64) -> PersonRowFfi?
     /// A click on the result at `position`.
     func focusSearchPoint(_ position: UInt64)
     /// A tab picked by a click.
@@ -122,8 +124,16 @@ public final class ResultsModel {
     /// How many cards the grid has.
     public var cardCount: Int { isFiles ? Int(results) : 0 }
 
+    /// Whether the People tab is shown (step 10): its list is drawn in
+    /// the table's place, its rows read by position.
+    public var isPeople: Bool { isOpen && tabs.contains { $0.selected && $0.tab == .people } }
+
+    /// How many people the list has.
+    public var personCount: Int { isPeople ? Int(results) : 0 }
+
     @ObservationIgnored private var read: [UInt64: ResultRowFfi] = [:]
     @ObservationIgnored private var cards: [UInt64: FileCardFfi] = [:]
+    @ObservationIgnored private var persons: [UInt64: PersonRowFfi] = [:]
     /// Each group's header row in the table.
     @ObservationIgnored private var starts: [Int] = []
     @ObservationIgnored private let engine: ResultsEngine
@@ -168,9 +178,9 @@ public final class ResultsModel {
     // MARK: the table's shape
 
     /// How many table rows: every result and a header for each group;
-    /// none while the grid is shown.
+    /// none while the grid or the People list is shown.
     public var count: Int {
-        guard isOpen, !isFiles else { return 0 }
+        guard isOpen, !isFiles, !isPeople else { return 0 }
         return Int(results) + groups.count
     }
 
@@ -244,6 +254,28 @@ public final class ResultsModel {
         engine.invoke(ResultsCommand.open)
     }
 
+    /// The person at `position`: read once per frame, then remembered.
+    /// Where the ring is comes from `cursor`, which moves without a frame.
+    public func person(at position: UInt64) -> PersonRowFfi? {
+        if let person = persons[position] { return person }
+        guard isPeople, position < results, let person = engine.focusSearchPerson(position) else { return nil }
+        persons[position] = person
+        return person
+    }
+
+    /// A click on the person at `position`: the controller is told.
+    public func point(person position: UInt64) {
+        guard isPeople, position < results else { return }
+        engine.focusSearchPoint(position)
+    }
+
+    /// A double click on a person: the ring goes there and their mail is
+    /// searched, as ↩.
+    public func open(person position: UInt64) {
+        point(person: position)
+        engine.invoke(ResultsCommand.open)
+    }
+
     // MARK: the pointer
 
     /// A click on table row `tableRow`: the controller is told; a header
@@ -286,6 +318,7 @@ public final class ResultsModel {
         selectAll = view.selectAll.map { Hint(cap: KeyCapSpelling.cap($0.key) ?? $0.key, label: $0.label) }
         filesHeader = view.files
         cards = [:]
+        persons = [:]
         var start = 0
         starts = groups.map { group in
             defer { start += 1 + Int(group.rows) }
@@ -315,6 +348,7 @@ public final class ResultsModel {
         read = [:]
         filesHeader = nil
         cards = [:]
+        persons = [:]
     }
 }
 

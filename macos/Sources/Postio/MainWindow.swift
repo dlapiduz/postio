@@ -220,6 +220,9 @@ private struct ResultsPane: View {
             if results.isFiles, let header = results.filesHeader, let grid = engine.filesGrid {
                 FilesHeaderView(header: header)
                 FilesGridRepresentable(grid: grid)
+            } else if results.isPeople, none == nil {
+                // The People tab (step 10): its list in the rows' place.
+                PeopleListView(model: results)
             } else {
                 ResultsTableRepresentable(table: table)
                     .overlay {

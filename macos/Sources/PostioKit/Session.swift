@@ -259,6 +259,9 @@ public final class PostioSession {
     /// The Files tab's card at `position`, or `nil` past the last.
     public func focusSearchFile(_ position: UInt64) -> FileCardFfi? { inner.focusSearchFile(position: position) }
 
+    /// The People tab's row at `position`, or `nil` past the last.
+    public func focusSearchPerson(_ position: UInt64) -> PersonRowFfi? { inner.focusSearchPerson(position: position) }
+
     /// The system's Quick Look on a file, or its save panel, is gone: the
     /// copy it was handed can go too (FR-053).
     public func focusSearchFileDone() { inner.focusSearchFileDone() }

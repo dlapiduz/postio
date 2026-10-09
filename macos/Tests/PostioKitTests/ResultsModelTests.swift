@@ -30,6 +30,11 @@ struct ResultsModelTests {
             return position < 3 ? ResultsModelTests.card(position) : nil
         }
         var fileReads: [UInt64] = []
+        func focusSearchPerson(_ position: UInt64) -> PersonRowFfi? {
+            personReads.append(position)
+            return position < 2 ? ResultsModelTests.person(position) : nil
+        }
+        var personReads: [UInt64] = []
         func focusSearchPoint(_ position: UInt64) { pointed.append(position) }
         func focusSearchTab(_ tab: ResultsTabFfi) {}
         func focusSearchOrder(_ order: ConversationOrderFfi) {}
@@ -83,6 +88,52 @@ struct ResultsModelTests {
                 timelineStep: nil, groups: [], rows: 3, cursor: cursor, footerHints: [], footerRight: "",
                 selected: 0, bulk: [], selectAll: nil,
                 files: FilesHeaderFfi(title: "Files whose name or contents match", note: "contents are indexed")))
+    }
+
+    nonisolated static func person(_ position: UInt64) -> PersonRowFfi {
+        PersonRowFfi(
+            address: position == 0 ? "ada@example.com" : "tomas@example.com",
+            name: position == 0 ? "Ada Moreno" : "Tomás Reyes", initials: position == 0 ? "AM" : "TR",
+            messages: "3 messages", last: "26 Sep", focused: position == 0,
+            accessible: "Ada Moreno, ada@example.com, 3 messages, last 26 Sep")
+    }
+
+    /// Step 10: the People tab's frame, two people.
+    static func people(cursor: UInt64? = 0) -> UiEvent {
+        .focusResults(
+            view: ResultsViewFfi(
+                tabs: [
+                    TabFfi(tab: .conversations, label: "Conversations", count: "26", selected: false, key: "cmd+1"),
+                    TabFfi(tab: .people, label: "People", count: "2", selected: true, key: "cmd+3"),
+                ],
+                order: .bestMatch, countLine: "26 conversations", subLine: "2 people", months: [],
+                timelineHint: "", timelineStep: nil, groups: [], rows: 2, cursor: cursor, footerHints: [],
+                footerRight: "", selected: 0, bulk: [], selectAll: nil, files: nil))
+    }
+
+    @Test func thePeopleTabIsAListOfPeopleNotTableRows() {
+        let engine = Engine()
+        let model = ResultsModel(engine: engine)
+        model.apply(Self.results())
+        #expect(!model.isPeople)
+        #expect(model.apply(Self.people()) == .redraw)
+        #expect(model.isPeople)
+        #expect(!model.isFiles)
+        #expect(model.count == 0, "the table draws nothing under the list")
+        #expect(model.personCount == 2)
+        #expect(model.person(at: 1)?.address == "tomas@example.com")
+        #expect(model.person(at: 1)?.address == "tomas@example.com")
+        #expect(engine.personReads == [1], "read once, then remembered")
+        #expect(model.person(at: 2) == nil)
+        model.point(person: 1)
+        #expect(engine.pointed == [1])
+        model.open(person: 0)
+        #expect(engine.pointed == [1, 0])
+        #expect(engine.invoked == [ResultsCommand.open], "↩ runs from: them")
+        // Back on Conversations, the table draws again.
+        model.apply(Self.results())
+        #expect(!model.isPeople)
+        #expect(model.personCount == 0)
     }
 
     @Test func theFilesTabIsAGridOfCardsNotTableRows() {

@@ -23,6 +23,7 @@ struct FilesGridTests {
             reads.append(position)
             return FilesGridTests.card(position)
         }
+        func focusSearchPerson(_ position: UInt64) -> PersonRowFfi? { nil }
         func focusSearchPoint(_ position: UInt64) { pointed.append(position) }
         func focusSearchTab(_ tab: ResultsTabFfi) {}
         func focusSearchOrder(_ order: ConversationOrderFfi) {}
