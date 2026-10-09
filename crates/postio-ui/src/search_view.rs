@@ -609,6 +609,24 @@ pub fn tab_count(total: u64, capped: bool) -> String {
     count(total, capped)
 }
 
+/// "‹ Inbox", the results toolbar's way back (§3.1).
+pub const BACK_TO_INBOX: &str = "Inbox";
+/// The results toolbar's Save search button (§3.1).
+pub const SAVE_SEARCH: &str = "Save search";
+/// The quiet word before the Sort menu (§3.2).
+pub const SORT: &str = "Sort";
+/// The Sort menu's ranked order (§3.2).
+pub const BEST_MATCH: &str = "Best match";
+/// The Sort menu's date order (§3.2).
+pub const NEWEST: &str = "Newest";
+/// The timeline's hint on its right (§3.3).
+pub const TIMELINE_HINT: &str = "Matches by month \u{b7} drag across months to narrow";
+
+/// The bulk bar's count while results are checked (§3.5): "5 selected".
+pub fn checked_line(n: u64) -> String {
+    format!("{} selected", grouped(n))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1077,5 +1095,22 @@ mod tests {
         );
         assert_eq!(said[0].0, "j/k");
         assert_eq!(said.last().map(|(key, _)| key.as_str()), Some("Escape"));
+    }
+
+    // The results view's chrome (§3.1-3.5, screen 06): the words the Mac
+    // draws around the rows, each the design's.
+    #[test]
+    fn the_results_chrome_says_the_designs_words() {
+        assert_eq!(BACK_TO_INBOX, "Inbox");
+        assert_eq!(SAVE_SEARCH, "Save search");
+        assert_eq!(SORT, "Sort");
+        assert_eq!(BEST_MATCH, "Best match");
+        assert_eq!(NEWEST, "Newest");
+        assert_eq!(
+            TIMELINE_HINT,
+            "Matches by month \u{b7} drag across months to narrow"
+        );
+        assert_eq!(checked_line(5), "5 selected");
+        assert_eq!(checked_line(1_204), "1,204 selected");
     }
 }

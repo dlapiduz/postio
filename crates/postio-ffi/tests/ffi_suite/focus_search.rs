@@ -302,3 +302,20 @@ async fn show_all_emits_the_results_and_their_rows_read_back_marked() {
     .await;
     session.shutdown();
 }
+
+/// The results view's chrome crosses as `postio-ui` words, so the Mac has
+/// no literal of its own for any of them (§3.1-3.5).
+#[test]
+fn the_results_chrome_words_cross_from_postio_ui() {
+    let words = postio_ffi::focus_search_words();
+    assert_eq!(words.back, "Inbox");
+    assert_eq!(words.save, "Save search");
+    assert_eq!(words.sort, "Sort");
+    assert_eq!(words.best_match, "Best match");
+    assert_eq!(words.newest, "Newest");
+    assert_eq!(
+        words.timeline_hint,
+        "Matches by month \u{b7} drag across months to narrow"
+    );
+    assert_eq!(postio_ffi::focus_search_checked(5), "5 selected");
+}
