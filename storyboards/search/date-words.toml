@@ -1,0 +1,46 @@
+# The Date popover takes a date in plain words and says what it became,
+# offers its presets with counts, and previews like the others
+# (specs/010-focus-search US3, FR-027, design §3.6, screen 09).
+#
+# "since july" in its field shows "→ after:2026-07-01" beside it, the
+# results narrow while it is open, This quarter is the preset ringed (it
+# is the same date), and the line under the chart says "12 of 21" and
+# "Jul – Sep 2026". Return applies it; the Date button reads "Since July".
+#
+# The click on Date is skipped with the reason: the format has no pointer
+# input. The controller's half is postio-focus tests/results.rs
+# (the_date_popover_turns_words_into_dates_and_its_presets_carry_counts).
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/010-focus-search US3" }
+seed   = "search"
+design = "09-filter-date"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "search"
+
+[[step]]
+type    = "atlas budget"
+
+[[step]]
+command = "show_all_results"
+check   = { keyboard.region = "results" }
+
+[[step]]
+id      = "open-date"
+wait    = { ms = 300 }
+expect  = "A click on Date opens its popover, 470 wide in two columns: on the left the presets with their counts (Any time, Last 7 days, Last 30 days, This quarter, This year, Custom…); on the right a field, a 90-tall month chart and the result line."
+
+[[step]]
+type    = "since july"
+expect  = "The field says “since july” with “→ after:2026-07-01” beside it. The list behind narrows to July onwards while the popover is open; This quarter is ringed; the chart's July, August and September bars are dark and bold-labelled; the line under it reads the conversations kept “of” those it opened on, and “Jul – Sep 2026”."
+
+[[step]]
+key     = "Return"
+check   = { keyboard.region = "results", overlay.kind = "none" }
+expect  = "Return applies it: an “after:” chip in the field, the Date button solid and reading “Since July”, the timeline's band over July to September."
+
+[app.macos.step.open-date]
+skip = { reason = "A click on the Date button: the format has no pointer input; filmed by hand until it does" }
