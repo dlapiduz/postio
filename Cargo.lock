@@ -5160,6 +5160,8 @@ dependencies = [
  "postio-calendar",
  "postio-config",
  "postio-core",
+ "postio-demo",
+ "postio-extract",
  "postio-gmail",
  "postio-index",
  "postio-jmap",

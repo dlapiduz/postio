@@ -1812,6 +1812,12 @@ impl Session {
                 wiring.events.subscribe("indexer"),
                 &wiring.runtime,
             );
+            postio_session::spawn_attachment_indexer(
+                wiring.database.clone(),
+                wiring.blobs.clone(),
+                wiring.events.subscribe("attachment-indexer"),
+                &wiring.runtime,
+            );
             let session = Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
                 keymap: Mutex::new(None),
@@ -1910,6 +1916,12 @@ impl Session {
         postio_session::spawn_body_indexer(
             wiring.database.clone(),
             wiring.events.subscribe("indexer"),
+            &wiring.runtime,
+        );
+        postio_session::spawn_attachment_indexer(
+            wiring.database.clone(),
+            wiring.blobs.clone(),
+            wiring.events.subscribe("attachment-indexer"),
             &wiring.runtime,
         );
         let session = Arc::new(Session {
