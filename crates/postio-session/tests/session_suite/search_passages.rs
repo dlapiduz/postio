@@ -599,7 +599,7 @@ async fn mail_with_sheet(world: &World) -> (MessageId, postio_model::AttachmentI
         attachment,
         &postio_extract::Extracted {
             units: vec![
-                row(3, "Travel | 1,200 | 900"),
+                row(3, "Atlas travel | 1,200 | 900"),
                 row(14, "Kestrel survey | 4,500 | 4,800"),
             ],
             outcome: postio_extract::Outcome::Complete,
@@ -668,4 +668,35 @@ async fn quick_look_lists_a_match_inside_an_attachment() {
     );
     let passage = found[0].found.passage.as_ref().expect("a passage");
     assert!(passage.text.contains("Kestrel survey"), "{passage:?}");
+}
+
+/// A file whose contents match is one card, named by the file: its name
+/// matching too does not make it a second (screen 10's one card per file).
+#[tokio::test]
+async fn quick_look_says_a_file_once_when_its_contents_match() {
+    let world = world().await;
+    let (message, attachment) = mail_with_sheet(&world).await;
+    // "Atlas" is in its name and in row 3.
+    let found = conversation_matches(
+        &world,
+        "atlas",
+        postio_search::results::ConversationKey::Lone(message),
+    )
+    .await;
+    assert_eq!(
+        places(&found),
+        [(
+            Some(message),
+            Source::FileContent {
+                attachment,
+                name: "Atlas-Q3-budget.xlsx".to_owned(),
+                location: postio_search::results::Location::Sheet {
+                    name: "Summary".to_owned(),
+                    row: 3,
+                },
+            },
+            Some("Ada Moreno".to_owned())
+        )],
+        "not also the name's card"
+    );
 }

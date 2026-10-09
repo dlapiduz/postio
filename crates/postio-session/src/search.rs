@@ -844,7 +844,11 @@ async fn read_matches(
                 });
             }
         }
-        for (_, attachment, name) in files.iter().filter(|(of, _, _)| *of == member.id) {
+        // A file whose contents matched is one card, its content's, which
+        // is named by the file already.
+        for (_, attachment, name) in files.iter().filter(|(of, attachment, _)| {
+            *of == member.id && !read.iter().any(|file| file.attachment == *attachment)
+        }) {
             let marks = postio_search::highlight::find(name, &file_terms);
             if marks.is_empty() {
                 continue;
