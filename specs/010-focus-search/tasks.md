@@ -165,7 +165,7 @@ GTK's bar is unchanged.
 
 **Independent test**: US2's.
 
-- [ ] T057 [US2] Write storyboards in `storyboards/search/`: `results-enter-and-leave.toml`, `results-esc-ladder.toml`, `results-history-back-forward.toml`, `results-sort-toggles-top-hits.toml`
+- [x] T057 [US2] Write storyboards in `storyboards/search/`: `results-enter-and-leave.toml`, `results-esc-ladder.toml`, `results-history-back-forward.toml`, `results-sort-toggles-top-hits.toml`
 - [ ] T058 [P] [US2] Write failing tests in `crates/postio-core/tests/core_suite/`: `HistoryBack` (`mod+bracketleft`), `HistoryForward` (`mod+bracketright`), `ResultsConversations`/`Files`/`People` (`mod+1`–`3`) resolve on Apple in `Context::Results`; the list's verbs (j k x X a e s l m r ⌫ ↩ !) resolve in `Context::Results`; `SaveSearch` resolves there; none of the new commands is offered on Freedesktop; the keymap resolves on both platforms. Red: no context
 - [ ] T059 [US2] Add `Context::Results` (`crates/postio-core/src/context.rs`), the commands and their contexts and `offered_on` arms (`crates/postio-core/src/registry.rs`); map it in `postio_ui::keymap`'s `KeyContext`; regenerate `docs/keybindings.md`. Make T058 green
 - [ ] T060 [P] [US2] Write failing tests in a new `crates/postio-focus/tests/history.rs`: entering results pushes the inbox entry; back restores its cursor and selection; forward restores the results' query, tab, order, cursor and selection; a new search after back drops the forward list; ≤ 50 entries; back with one entry does nothing. Red: no module

@@ -1,0 +1,70 @@
+# ⌘[ and ⌘] (and the trackpad swipe) move between the inbox and the
+# results the way a browser's back and forward do (specs/010-focus-search
+# US2 scenario 4, FR-020, D17, design §3). Forward brings the results back
+# as they were left: the query, the tab, the sort, the focused row and
+# the checked ones. A new search after going back drops what was ahead.
+#
+# The Mac's own: see results-enter-and-leave.toml.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/010-focus-search US2" }
+seed   = "search"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+id      = "inbox"
+command = "search"
+
+[[step]]
+type    = "atlas budget"
+
+[[step]]
+command = "show_all_results"
+check   = { keyboard.region = "results" }
+
+[[step]]
+command = "next_message"
+
+[[step]]
+command = "toggle_selection"
+expect  = "The second result is focused and checked."
+
+[[step]]
+command = "toggle_result_order"
+check   = { keyboard.region = "results" }
+expect  = "Sort reads “Newest”; the Top hits group is gone."
+
+[[step]]
+command = "history_back"
+check   = { overlay.kind = "none", keyboard.region = "list", cursor.index = { same_as = "inbox" } }
+expect  = "⌘[ goes back to the inbox, on the row it had. Nothing was closed on the way: the results are only behind."
+
+[[step]]
+command = "history_forward"
+check   = { keyboard.region = "results" }
+expect  = "⌘] brings the results back as they were: “atlas budget”, Conversations, Sort “Newest”, the focus on the row it was on and that row still checked."
+
+[[step]]
+command = "history_back"
+check   = { keyboard.region = "list" }
+
+[[step]]
+command = "search"
+
+[[step]]
+type    = "harbor"
+
+[[step]]
+command = "show_all_results"
+check   = { keyboard.region = "results" }
+expect  = "A new search from the inbox opens its own results."
+
+[[step]]
+command = "history_back"
+check   = { keyboard.region = "list" }
+
+[[step]]
+command = "history_forward"
+check   = { keyboard.region = "results" }
+expect  = "⌘] comes back to “harbor”, not to “atlas budget”: the new search dropped what was ahead."
