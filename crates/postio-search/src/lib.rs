@@ -42,7 +42,8 @@
 //! `is:flagged` `before:` `after:` `in:` `label:` `filename:` `larger:`
 //! `smaller:` `list:` `account:` `group:` `header:`, each optionally
 //! negated with a leading `-`, each composable with the others and with free
-//! text. Dates accept ISO (`2026-01-01`), loose (`aug1`) and relative
+//! text. A name-valued operator takes either of several values in braces,
+//! `from:{ada tomas}` (spec 010, D26). Dates accept ISO (`2026-01-01`), loose (`aug1`) and relative
 //! (`yesterday`, `last week`, `3m`) forms; sizes accept `K`/`M`/`G`.
 //!
 //! # Where the FTS5 index and executor went

@@ -1090,3 +1090,130 @@ fn label_and_has_action_compose_with_the_rest() {
         ]
     );
 }
+
+// ---------------------------------------------------------------------------
+// Either of several values (spec 010, D26)
+// ---------------------------------------------------------------------------
+
+fn set(members: Vec<Filter>) -> Filter {
+    Filter::any_of(members).expect("a set of one field")
+}
+
+#[test]
+fn braces_after_an_operator_hold_either_of_several_values() {
+    let parsed = q("from:{ada tomas} budget");
+    assert_eq!(parsed.tokens().len(), 2, "the set is one token");
+    assert_eq!(parsed.tokens()[0].raw, "from:{ada tomas}");
+    assert_eq!(
+        filters("from:{ada tomas} budget"),
+        vec![set(vec![
+            Filter::From("ada".into()),
+            Filter::From("tomas".into())
+        ])]
+    );
+    assert_eq!(text("from:{ada tomas} budget"), vec!["budget"]);
+    let held = filters("from:{ada tomas}");
+    assert_eq!(held[0].field(), Field::From);
+    assert_eq!(
+        held[0].alternatives(),
+        [Filter::From("ada".into()), Filter::From("tomas".into())]
+    );
+}
+
+#[test]
+fn a_set_member_may_be_quoted() {
+    assert_eq!(
+        filters(r#"label:{"Q3 close" atlas}"#),
+        vec![set(vec![
+            Filter::Label("Q3 close".into()),
+            Filter::Label("atlas".into())
+        ])]
+    );
+    assert_eq!(
+        filters(r#"in:{"a}b" Archive}"#),
+        vec![set(vec![
+            Filter::In("a}b".into()),
+            Filter::In("Archive".into())
+        ])],
+        "a quote suspends the closing brace"
+    );
+}
+
+#[test]
+fn a_negated_set_excludes_every_value() {
+    let parsed = q("-to:{ada tomas}");
+    let clause = parsed.filters().next().expect("a filter");
+    assert!(clause.negated);
+    assert_eq!(
+        clause.filter,
+        set(vec![Filter::To("ada".into()), Filter::To("tomas".into())])
+    );
+}
+
+#[test]
+fn one_value_in_braces_is_the_plain_clause() {
+    assert_eq!(filters("from:{ada}"), vec![Filter::From("ada".into())]);
+    assert_eq!(
+        filters("label:{ \"Q3 close\" }"),
+        vec![Filter::Label("Q3 close".into())]
+    );
+}
+
+#[test]
+fn a_half_typed_set_is_a_partial() {
+    for (input, value) in [
+        ("from:{ada", "{ada"),
+        ("from:{ada tomas", "{ada tomas"),
+        ("from:{", "{"),
+        ("from:{}", "{}"),
+        ("from:{ }", "{ }"),
+        ("from:{ada}x", "{ada}x"),
+        ("is:{unread flagged}", "{unread flagged}"),
+        ("after:{jan feb}", "{jan feb}"),
+        ("from:{ada {tomas}}", "{ada {tomas}}"),
+    ] {
+        let parsed = q(input);
+        assert_eq!(parsed.tokens().len(), 1, "{input:?} is one token");
+        assert_eq!(parsed.filters().count(), 0, "{input:?} constrains nothing");
+        let partial = parsed
+            .partials()
+            .next()
+            .unwrap_or_else(|| panic!("{input:?} is a partial"));
+        assert_eq!(partial.value, value, "{input:?}");
+    }
+}
+
+#[test]
+fn an_open_set_runs_to_the_end_as_an_open_quote_does() {
+    let parsed = q("budget from:{ada tomas");
+    assert_eq!(parsed.tokens().len(), 2);
+    assert_eq!(text("budget from:{ada tomas"), vec!["budget"]);
+}
+
+#[test]
+fn a_brace_anywhere_else_is_the_character_it_was() {
+    assert_eq!(text("{ada tomas}"), vec!["{ada", "tomas}"]);
+    assert_eq!(text("foo:{ada tomas}"), vec!["foo:{ada", "tomas}"]);
+    assert_eq!(
+        filters("subject:a{b c}"),
+        vec![Filter::Subject("a{b".into())]
+    );
+}
+
+#[test]
+fn a_set_only_holds_one_name_valued_field() {
+    use postio_search::query::AnyOf;
+    assert!(AnyOf::new(vec![Filter::From("ada".into())]).is_none());
+    assert!(AnyOf::new(vec![]).is_none());
+    assert!(AnyOf::new(vec![Filter::From("ada".into()), Filter::To("bo".into())]).is_none());
+    assert!(AnyOf::new(vec![Filter::HasAttachment, Filter::HasAction]).is_none());
+    let inner = set(vec![Filter::From("a".into()), Filter::From("b".into())]);
+    assert!(AnyOf::new(vec![inner, Filter::From("c".into())]).is_none());
+    assert_eq!(
+        Filter::any_of(vec![Filter::Label("atlas".into())]),
+        Some(Filter::Label("atlas".into())),
+        "one member is that filter"
+    );
+    assert!(Field::From.takes_set() && Field::Label.takes_set() && Field::In.takes_set());
+    assert!(!Field::Is.takes_set() && !Field::Header.takes_set() && !Field::After.takes_set());
+}

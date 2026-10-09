@@ -2222,6 +2222,9 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
             "m.size <= ?".to_string(),
             vec![turso::Value::Integer(*bytes as i64)],
         ),
+        // Spec 010 D26, until T148 answers it: a set matches nothing, never
+        // everything, as an unresolvable name does above.
+        Filter::AnyOf(_) => ("0".to_string(), Vec::new()),
     }
 }
 
