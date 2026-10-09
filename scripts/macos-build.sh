@@ -55,6 +55,14 @@ fi
 # shellcheck disable=SC2086  # deliberate: see CARGO_PROFILE_ARGS above
 cargo build -p postio-ffi $CARGO_PROFILE_ARGS $FEATURE_ARGS
 
+# The attachment indexer reads every attachment in a process of its own,
+# killed at its deadline (specs/010-focus-search D28), and looks for it
+# beside the executable. `macos-bundle.sh` copies it into Contents/MacOS.
+# Without it the app still runs, and refuses to read PDFs.
+echo "--- cargo: postio-extract-helper ---"
+# shellcheck disable=SC2086  # deliberate: see CARGO_PROFILE_ARGS above
+cargo build -p postio-session --bin postio-extract-helper $CARGO_PROFILE_ARGS
+
 # The bindings are generated every time rather than tracked, so the generator
 # and the `uniffi` runtime are the same version by construction (#571). They
 # land in two targets because SwiftPM cannot have a module map and Swift
