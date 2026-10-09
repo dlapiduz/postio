@@ -456,6 +456,10 @@ pub(crate) struct Results {
     /// the bars outside a range are drawn from, so a range can be dragged
     /// wider than the one the results were narrowed to.
     undated: Option<(String, [postio_search::facets::MonthCount; 12])>,
+    /// Everyone an answer has named, kept across queries: a chip or a
+    /// button names its person while the next answer is on its way,
+    /// rather than falling back to the address and back again.
+    people: Vec<postio_model::EmailAddress>,
 }
 
 impl Results {
@@ -483,6 +487,7 @@ impl Results {
             remembered: false,
             popover: None,
             undated: None,
+            people: Vec::new(),
         }
     }
 
@@ -737,6 +742,16 @@ impl Results {
         if self.frame.is_none() {
             self.frame = Some(Frame::of(&results));
         }
+        for (_, person) in &results.names.people {
+            if person.name.is_some()
+                && !self
+                    .people
+                    .iter()
+                    .any(|known| known.address.eq_ignore_ascii_case(&person.address))
+            {
+                self.people.push(person.clone());
+            }
+        }
         if self.dates() == (None, None) {
             self.undated = Some((self.query.clone(), results.facets.months));
         }
@@ -922,19 +937,17 @@ impl Results {
             .collect()
     }
 
-    /// A person's name for an address, from the answer's people.
+    /// A person's name for an address, from the people the answers named.
     fn name_of(&self, address: &str) -> Option<String> {
-        let frame = self.frame.as_ref()?;
-        frame
-            .names
-            .people
+        self.people
             .iter()
-            .find(|(_, person)| person.address.eq_ignore_ascii_case(address))
-            .and_then(|(_, person)| person.name.clone())
+            .find(|person| person.address.eq_ignore_ascii_case(address))
+            .and_then(|person| person.name.clone())
     }
 
     /// The field's chips and words, and the filter bar's buttons.
     pub(crate) fn query_view(&self, today: NaiveDate, names: &QueryNames<'_>) -> QueryView {
+        let name_of = |address: &str| self.name_of(address).or_else(|| (names.lookup)(address));
         let mut chips = Vec::new();
         let mut plain = Vec::new();
         for (index, token) in self.parsed.tokens().iter().enumerate() {
@@ -942,10 +955,21 @@ impl Results {
                 TokenKind::Filter(clause) => {
                     let raw = token.raw.trim_start_matches('-');
                     let (operator, value) = raw.split_once(':').unwrap_or((raw, ""));
+                    let value = value.trim_matches('"');
+                    // A person reads as who they are ("from: Ada Moreno",
+                    // screen 10); the query keeps the address, and a value
+                    // nobody is named by is drawn as typed.
+                    let value = match &clause.filter {
+                        Filter::From(_) | Filter::To(_) => {
+                            name_of(value).filter(|name| !name.is_empty())
+                        }
+                        _ => None,
+                    }
+                    .unwrap_or_else(|| value.to_owned());
                     chips.push(Chip {
                         token: index as u32,
                         operator: format!("{operator}:"),
-                        value: value.trim_matches('"').to_owned(),
+                        value,
                         excluded: clause.negated,
                         focused: false,
                     });
@@ -955,7 +979,6 @@ impl Results {
             }
         }
         let filters = self.filters();
-        let name_of = |address: &str| self.name_of(address).or_else(|| (names.lookup)(address));
         let buttons = FilterKind::ALL
             .iter()
             .map(|kind| FilterButton {
