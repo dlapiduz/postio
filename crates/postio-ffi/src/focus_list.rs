@@ -859,6 +859,9 @@ impl FocusDriver {
             Intent::SavePopover(view) => self.say(UiEvent::FocusSavePopover {
                 view: view.map(|view| (*view).into()),
             }),
+            Intent::Relaxations(view) => self.say(UiEvent::FocusRelaxations {
+                view: view.map(|view| (*view).into()),
+            }),
             Intent::Place { name } => self.say(UiEvent::FocusPlace { name }),
             Intent::OpenPlaces => self.say(UiEvent::FocusOpenPlaces),
             Intent::PlacesChanged => self.say(UiEvent::FocusPlacesChanged),

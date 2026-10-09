@@ -76,7 +76,8 @@ public final class SearchQueryModel {
     public private(set) var chips: [Chip] = []
     /// The plain words after the chips.
     public private(set) var words = ""
-    /// "/ to edit".
+    /// "/ to edit", or "⌘⌫ clears filters" while nothing matches: the
+    /// controller's key spelled as its cap, then its words.
     public private(set) var hint = ""
     public private(set) var buttons: [Button] = []
 
@@ -96,7 +97,7 @@ public final class SearchQueryModel {
                 Chip(id: $0.token, op: $0.operator, value: $0.value, excluded: $0.excluded, focused: $0.focused)
             }
             words = view.words
-            hint = view.hint
+            hint = [KeyCapSpelling.cap(view.hintKey), view.hint].compactMap { $0 }.joined(separator: " ")
             buttons = view.buttons.map {
                 Button(kind: $0.kind, label: $0.label, applied: $0.applied, open: $0.open)
             }

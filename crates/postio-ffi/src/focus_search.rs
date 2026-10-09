@@ -447,8 +447,12 @@ pub struct QueryViewFfi {
     pub chips: Vec<QueryChipFfi>,
     /// The plain words, after the chips.
     pub words: String,
-    /// "/ to edit".
+    /// "/ to edit", or "clears filters" after its key while nothing
+    /// matches.
     pub hint: String,
+    /// The hint's key as the registry spells it (`cmd+BackSpace`), drawn
+    /// as a cap before it; `None` when the hint names its own.
+    pub hint_key: Option<String>,
     /// The filter bar's buttons, left to right.
     pub buttons: Vec<FilterButtonFfi>,
 }
@@ -469,6 +473,7 @@ impl From<postio_focus::QueryView> for QueryViewFfi {
                 .collect(),
             words: view.words,
             hint: view.hint,
+            hint_key: view.hint_key,
             buttons: view
                 .buttons
                 .into_iter()
@@ -885,6 +890,62 @@ impl From<postio_focus::QuickLookView> for QuickLookViewFfi {
                 })
                 .collect(),
             current: view.current,
+        }
+    }
+}
+
+/// One looser search on the no-results page (design §3.10).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RelaxationFfi {
+    /// Its number, from 1.
+    pub number: u32,
+    /// The key that runs it (`1`), for its cap; `None` when unbound.
+    pub key: Option<String>,
+    /// What it changes: "Remove “before March”".
+    pub label: String,
+    /// The query it runs, drawn monospaced.
+    pub query: String,
+    /// "4 conversations".
+    pub count: String,
+    /// Ringed: Return runs it.
+    pub focused: bool,
+}
+
+/// The page a search that found nothing shows in the rows' place (design
+/// §3.10, screen 13).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct NoResultsViewFfi {
+    /// "Nothing matches all four filters".
+    pub title: String,
+    /// The sentence under it.
+    pub body: String,
+    /// The looser searches, most first, at most four; empty while counted.
+    pub relaxations: Vec<RelaxationFfi>,
+    /// "Counting looser searches…" while their counts are on their way.
+    pub counting: Option<String>,
+    /// "Searched all 18,204 messages on this Mac."
+    pub searched: String,
+}
+
+impl From<postio_focus::NoResultsView> for NoResultsViewFfi {
+    fn from(view: postio_focus::NoResultsView) -> Self {
+        NoResultsViewFfi {
+            title: view.title,
+            body: view.body,
+            relaxations: view
+                .relaxations
+                .into_iter()
+                .map(|way| RelaxationFfi {
+                    number: way.number,
+                    key: way.key,
+                    label: way.label,
+                    query: way.query,
+                    count: way.count,
+                    focused: way.focused,
+                })
+                .collect(),
+            counting: view.counting,
+            searched: view.searched,
         }
     }
 }

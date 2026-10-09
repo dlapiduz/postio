@@ -575,3 +575,73 @@ async fn quick_look_crosses_with_its_cards_and_closes_with_none() {
     .await;
     session.shutdown();
 }
+
+/// Spec 010 step 7 (US6, FR-030, screen 13): a search the seed holds
+/// nothing for crosses as `FocusRelaxations` -- the page at once, still
+/// counting, then its ways out numbered most first with their queries --
+/// the field's hint names ⌘⌫'s key, and 1 runs the first way out, which
+/// takes the page away with `None`.
+#[tokio::test(flavor = "multi_thread")]
+async fn nothing_found_crosses_as_the_no_results_page_and_a_number_runs_a_way_out() {
+    let (database, _) = postio_demo::seeded(postio_demo::Seed::Search).await;
+    let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");
+    session.invoke("search");
+    let _ = dropdown(&session, 10, |view| view.state == DropdownStateFfi::Empty).await;
+    session.focus_bar_typed(
+        "from:ada@example.com has:attachment before:2026-08-01 subject:budget".to_owned(),
+    );
+    let _ = dropdown(&session, 10, |view| view.footer_count.is_some()).await;
+    session.focus_search_show_all();
+
+    let page = next(&session, 10, |event| match event {
+        UiEvent::FocusRelaxations { view: Some(view) } => Some(view.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(page.title, "Nothing matches all four filters");
+    assert!(
+        page.searched.starts_with("Searched all ") && page.searched.ends_with(" on this Mac."),
+        "no attachment contents claimed before step 9: {}",
+        page.searched
+    );
+    let page = if page.counting.is_some() {
+        next(&session, 30, |event| match event {
+            UiEvent::FocusRelaxations { view: Some(view) } if view.counting.is_none() => {
+                Some(view.clone())
+            }
+            _ => None,
+        })
+        .await
+    } else {
+        page
+    };
+    assert!(!page.relaxations.is_empty(), "{page:?}");
+    let numbers: Vec<u32> = page.relaxations.iter().map(|way| way.number).collect();
+    assert_eq!(numbers, (1..=numbers.len() as u32).collect::<Vec<_>>());
+    assert!(page.relaxations[0].focused);
+    assert_eq!(page.relaxations[0].key.as_deref(), Some("1"));
+    let first = page.relaxations[0].query.clone();
+
+    session.invoke("pick_relaxation_1");
+    // The page goes, the field holds the looser query with its usual
+    // hint, and the results land -- in whatever order they cross.
+    let (mut gone, mut hint, mut rows) = (false, None, 0);
+    assert!(
+        heard(&session, 30, |event| {
+            match event {
+                UiEvent::FocusRelaxations { view: None } => gone = true,
+                UiEvent::FocusQuery { view } => {
+                    hint = Some((view.hint.clone(), view.hint_key.clone()))
+                }
+                UiEvent::FocusResults { view } => rows = view.rows,
+                _ => {}
+            }
+            gone && rows > 0
+        })
+        .await,
+        "the way out never ran"
+    );
+    assert_eq!(hint, Some(("/ to edit".to_owned(), None)));
+    assert!(rows > 0, "{first} finds something");
+    session.shutdown();
+}

@@ -940,6 +940,10 @@ final class Engine {
     @ObservationIgnored private(set) var quickLook: QuickLookModel?
     @ObservationIgnored private(set) var quickLookPanel: QuickLookPanel?
 
+    /// The no-results page (step 7), in the rows' place while the results
+    /// found nothing.
+    private(set) var noResults: NoResultsModel?
+
     /// The Save popover (step 6), and what hangs it from Save search.
     @ObservationIgnored private(set) var savePopover: SavePopoverModel?
     @ObservationIgnored private(set) var savePresenter: SavePopover?
@@ -970,6 +974,7 @@ final class Engine {
         let save = SavePopoverModel(engine: session)
         savePopover = save
         savePresenter = SavePopover(model: save)
+        noResults = NoResultsModel(engine: session)
     }
 
     /// "5 selected", while results are checked.
@@ -1267,6 +1272,14 @@ final class Engine {
             quickLookPanel?.apply(change, over: mainWindow)
             return
         }
+        // The no-results page (step 7): drawn whole each time, gone with a
+        // new query or with the results. Leaving the results is also the
+        // results' event, so it is told and handed on.
+        if case .focusRelaxations = event {
+            noResults?.apply(event)
+            return
+        }
+        if case .focusLeaveResults = event { noResults?.apply(event) }
         if let change = results?.apply(event) {
             if change == .close { searchQuery?.apply(event) }
             resultsTable?.apply(change)
