@@ -1012,3 +1012,81 @@ fn fuzzing_the_parser_with_query_shaped_noise_never_errors() {
         let _ = parsed.fts_match();
     }
 }
+
+// ---------------------------------------------------------------------------
+// `label:` and `has:action` (spec 010, US3)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn label_operator() {
+    assert_eq!(filters("label:Atlas"), vec![Filter::Label("Atlas".into())]);
+    assert_eq!(
+        q("label:Atlas").tokens()[0].field(),
+        Some(Field::Label),
+        "a label chip names its own field"
+    );
+}
+
+#[test]
+fn a_quoted_label_keeps_its_spaces() {
+    assert_eq!(
+        filters(r#"label:"Q3 close" budget"#),
+        vec![Filter::Label("Q3 close".into())]
+    );
+    assert_eq!(text(r#"label:"Q3 close" budget"#), vec!["budget"]);
+}
+
+#[test]
+fn a_label_can_be_excluded() {
+    let parsed = q("-label:atlas");
+    let clause = parsed.filters().next().expect("a filter");
+    assert!(clause.negated);
+    assert_eq!(clause.filter, Filter::Label("atlas".into()));
+}
+
+#[test]
+fn label_with_no_value_yet_is_a_partial() {
+    let parsed = q("label:");
+    let partial = parsed.partials().next().expect("label: is a partial");
+    assert_eq!(partial.field, Field::Label);
+    assert_eq!(partial.value, "");
+    assert_eq!(parsed.filters().count(), 0);
+}
+
+#[test]
+fn has_action_and_has_actions_are_the_open_marker_filter() {
+    assert_eq!(filters("has:action"), vec![Filter::HasAction]);
+    assert_eq!(filters("has:actions"), vec![Filter::HasAction]);
+    assert_eq!(filters("has:Action"), vec![Filter::HasAction]);
+    assert_eq!(Filter::HasAction.field(), Field::Has);
+}
+
+#[test]
+fn has_action_can_be_excluded() {
+    let parsed = q("-has:action");
+    let clause = parsed.filters().next().expect("a filter");
+    assert!(clause.negated);
+    assert_eq!(clause.filter, Filter::HasAction);
+}
+
+#[test]
+fn a_half_typed_has_value_is_still_a_partial() {
+    let parsed = q("has:act");
+    assert_eq!(parsed.filters().count(), 0);
+    let partial = parsed.partials().next().expect("has:act is a partial");
+    assert_eq!(partial.field, Field::Has);
+    assert_eq!(partial.value, "act");
+}
+
+#[test]
+fn label_and_has_action_compose_with_the_rest() {
+    assert_eq!(
+        filters("from:ada label:atlas has:action has:attach budget"),
+        vec![
+            Filter::From("ada".into()),
+            Filter::Label("atlas".into()),
+            Filter::HasAction,
+            Filter::HasAttachment,
+        ]
+    );
+}

@@ -56,7 +56,7 @@ pub enum Field {
     To,
     /// `subject:` — subject line.
     Subject,
-    /// `has:` — a structural property, currently only `has:attach`.
+    /// `has:` — a structural property: `has:attach`, or `has:action`.
     Has,
     /// `is:` — a flag state, `is:unread`, `is:read`, `is:flagged`, or what a
     /// message's promoted headers say, `is:bulk`, `is:automated`.
@@ -96,6 +96,12 @@ pub enum Field {
     /// body arrives is promoted to an operator of its own instead — `list:`
     /// is one that was.
     Header,
+    /// `label:` — a label the message carries, by name, case-insensitively.
+    ///
+    /// Spec 010 (S2): one operator of the shared language, so it means the
+    /// same thing in every interface. A name with spaces is quoted, as a
+    /// `subject:` phrase is: `label:"Q3 close"`.
+    Label,
 }
 
 impl Field {
@@ -115,6 +121,7 @@ impl Field {
         Field::List,
         Field::Account,
         Field::Group,
+        Field::Label,
         // Last, because the popup is ordered by how often an operator is
         // reached for and this is the one you type when none of the others
         // will do.
@@ -139,6 +146,7 @@ impl Field {
             Field::Account => "account",
             Field::Group => "group",
             Field::Header => "header",
+            Field::Label => "label",
         }
     }
 
@@ -161,6 +169,7 @@ impl Field {
             "account" => Some(Field::Account),
             "group" => Some(Field::Group),
             "header" => Some(Field::Header),
+            "label" => Some(Field::Label),
             _ => None,
         }
     }
@@ -180,6 +189,7 @@ impl Field {
                 | Field::Account
                 | Field::Group
                 | Field::Header
+                | Field::Label
         )
     }
 }
@@ -255,6 +265,15 @@ pub enum Filter {
     },
     /// `has:attach`
     HasAttachment,
+    /// `label:atlas` — a label by name, unresolved.
+    ///
+    /// Text for the reason `Account` is: a saved search is the string the
+    /// user typed, and a label's id changes when it is re-created.
+    /// `postio-index` resolves it against `labels.name`, case-insensitively.
+    Label(String),
+    /// `has:action` — the message carries an open marker (an undismissed
+    /// `markers` row).
+    HasAction,
     /// `is:unread`, `is:read`, `is:flagged`, `is:bulk`, `is:automated`
     Is(State),
     /// `after:2026-01-01` — on or after this date, inclusive.
@@ -281,6 +300,8 @@ impl Filter {
             Filter::Group(_) => Field::Group,
             Filter::Header { .. } => Field::Header,
             Filter::HasAttachment => Field::Has,
+            Filter::Label(_) => Field::Label,
+            Filter::HasAction => Field::Has,
             Filter::Is(_) => Field::Is,
             Filter::After(_) => Field::After,
             Filter::Before(_) => Field::Before,
@@ -618,6 +639,8 @@ mod tests {
             (Filter::Account("a".into()), Field::Account),
             (Filter::Group("a".into()), Field::Group),
             (Filter::HasAttachment, Field::Has),
+            (Filter::Label("a".into()), Field::Label),
+            (Filter::HasAction, Field::Has),
             (Filter::Is(State::Unread), Field::Is),
             (
                 Filter::After(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap()),

@@ -2056,6 +2056,9 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
         // `messages.list_id` stores, indexed here the same way `subject` is.
         Filter::List(value) => fts_column_condition("list_id", value),
         Filter::HasAttachment => ("m.has_attachments = 1".to_string(), Vec::new()),
+        // Not answered yet (spec 010 T010): matches nothing, never
+        // everything, as an unresolvable `account:` does.
+        Filter::Label(_) | Filter::HasAction => ("0".to_string(), Vec::new()),
         Filter::Is(state) => {
             use postio_search::query::State;
             match state {
