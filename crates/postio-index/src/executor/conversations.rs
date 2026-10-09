@@ -405,13 +405,15 @@ impl Fold {
                 "SELECT -2, m.id, h.meta, NULL, NULL
                    FROM (SELECT content_id, fts_score({META}, ?1) AS meta
                            FROM search_documents WHERE fts_match({META}, ?1)) h
-                   CROSS JOIN messages m ON m.content_id = h.content_id"
+                   CROSS JOIN messages m INDEXED BY idx_messages_content
+                     ON m.content_id = h.content_id"
             ));
             arms.push(
                 "SELECT -1, m.id, NULL, h.body, NULL
                    FROM (SELECT content_id, fts_score(body_search, ?2) AS body
                            FROM message_search_bodies WHERE fts_match(body_search, ?2)) h
-                   CROSS JOIN messages m ON m.content_id = h.content_id"
+                   CROSS JOIN messages m INDEXED BY idx_messages_content
+                     ON m.content_id = h.content_id"
                     .to_owned(),
             );
             // What attachments say, one row per content however many of
@@ -422,7 +424,8 @@ impl Fold {
                            FROM (SELECT content_id, fts_score(text_search, ?2) AS unit_score
                                    FROM attachment_passages WHERE fts_match(text_search, ?2))
                           GROUP BY content_id) h
-                   CROSS JOIN messages m ON m.content_id = h.content_id"
+                   CROSS JOIN messages m INDEXED BY idx_messages_content
+                     ON m.content_id = h.content_id"
                     .to_owned(),
             );
             params.extend(plan.match_params(Form::Driven));
@@ -670,6 +673,15 @@ impl Fold {
 /// it has any. A sender is spelled negated, so one lookup answers both the
 /// From and the To facet.
 ///
+/// The attachment count compares `f.message_id` with `m.id + 0`, not
+/// `m.id`, and the `+ 0` is load-bearing. A `count(*)` correlated on a bare
+/// column pair is one the engine rewrites "group-first" (its
+/// `optimizer/unnest.rs`): every attachment in the store grouped by message
+/// once, then joined -- a walk of all of `attachments` on each search,
+/// however few messages matched. An expression on the outer side is not a
+/// column pair, so the count stays a seek on `idx_attachments_message` per
+/// message that has any. `driven_join_plan` in the index suite holds it.
+///
 /// The scores are projected bare and negated outside, for the reason
 /// [`HITS_JOIN`](super::HITS_JOIN) gives.
 fn projection_sql(plan: &Plan, walk: Walk) -> String {
@@ -703,7 +715,7 @@ fn projection_sql(plan: &Plan, walk: Walk) -> String {
                 EXISTS (SELECT 1 FROM markers k
                          WHERE k.message_id = m.id AND k.dismissed_at IS NULL),
                 CASE WHEN m.has_attachments = 1
-                     THEN (SELECT count(*) FROM attachments f WHERE f.message_id = m.id)
+                     THEN (SELECT count(*) FROM attachments f WHERE f.message_id = m.id + 0)
                      ELSE 0 END,
                 m.content_id, {file}
            {from}
