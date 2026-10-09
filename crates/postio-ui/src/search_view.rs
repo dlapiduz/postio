@@ -338,9 +338,15 @@ pub fn month_title(month: chrono::NaiveDate) -> String {
     month.format("%B %Y").to_string()
 }
 
-/// A month group's header as one line: "September 2026 · 9".
+/// A month group's header as one line: "September 2026 · 9", what a
+/// screen reader says for it.
 pub fn month_group(month: chrono::NaiveDate, n: u64) -> String {
-    format!("{} \u{b7} {}", month_title(month), grouped(n))
+    group_line(&month_title(month), n)
+}
+
+/// Any group's header as one line: "Top hits · 3", "Earlier · 120".
+pub fn group_line(title: &str, n: u64) -> String {
+    format!("{title} \u{b7} {}", grouped(n))
 }
 
 /// A count of conversations: "48 conversations", "1 conversation",
@@ -857,6 +863,7 @@ mod tests {
     fn a_month_group_is_titled_with_its_month_and_counted() {
         let september = chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap();
         assert_eq!(month_title(september), "September 2026");
+        assert_eq!(group_line("Top hits", 3), "Top hits · 3");
         assert_eq!(month_group(september, 9), "September 2026 · 9");
         assert_eq!(
             month_group(chrono::NaiveDate::from_ymd_opt(2025, 12, 1).unwrap(), 1_204),

@@ -138,6 +138,8 @@ fn best_match_gives_top_hits_then_month_groups() {
     assert_eq!(september.rows, 13);
     assert_eq!(september.count, "13");
     assert_eq!(september.note.as_deref(), Some("newest first"));
+    assert_eq!(september.accessible, "September 2026 · 13");
+    assert_eq!(top.accessible, "Top hits · 3");
     assert_eq!(view.groups[2].title, "August 2026");
     assert_eq!(view.groups[2].first, 16);
     assert_eq!(view.rows, 3 + CONVERSATIONS as u64);
