@@ -5036,6 +5036,7 @@ version = "0.4.2"
 dependencies = [
  "chrono",
  "postio-body",
+ "postio-extract",
  "postio-model",
  "postio-search",
  "postio-storage",
