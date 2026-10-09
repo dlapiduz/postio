@@ -67,7 +67,7 @@ struct ActionBarTests {
         let hints = Self.words()?.hints
         #expect(hints?.map(\.label) == ["toggle", "extend", "clear"])
         #expect(hints?.first?.caps == ["x"])
-        #expect(hints?[1].caps == ["J", "K"])
+        #expect(hints?[1].caps == ["⇧J", "⇧K"])
         #expect(hints?.last?.caps == [KeyCapSpelling.cap("Escape")!])
     }
 

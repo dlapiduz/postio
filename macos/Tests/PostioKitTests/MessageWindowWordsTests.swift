@@ -69,7 +69,7 @@ struct MessageWindowWordsTests {
         #expect(words.row.map(\.label) == [
             "Reply", "Reply all", "Forward", "Archive", "Snooze", "Remind", "Label", "Move", "Delete",
         ])
-        #expect(words.row.map(\.cap) == ["e", "E", "f", "a", "s", "h", "l", "m", "⌫"])
+        #expect(words.row.map(\.cap) == ["e", "⇧E", "f", "a", "s", "h", "l", "m", "⌫"])
         #expect(words.more == nil)
         #expect(words.folded.isEmpty)
     }
@@ -129,7 +129,7 @@ struct MessageWindowWordsTests {
         #expect(words.title == "App colours")
         #expect(words.action.label == "Show original")
         #expect(words.action.command == "switch_treatment")
-        #expect(words.action.cap == "O")
+        #expect(words.action.cap == "⇧O")
         #expect(words.always == "Always for this sender")
     }
 }

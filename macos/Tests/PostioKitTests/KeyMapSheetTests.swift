@@ -57,7 +57,7 @@ import Testing
     @Test func everyKeyIsSpelledAsTheMenusSpellItInOneCap() {
         let words = KeyMapSheetWords(Self.sheet)
         let caps = words.columns.flatMap { $0 }.flatMap(\.rows).map(\.cap)
-        #expect(caps == ["j ↓", "g g G", "⌘Z", "⌘K", "g i", nil])
+        #expect(caps == ["j ↓", "g g ⇧G", "⌘Z", "⌘K", "g i", nil])
     }
 
     @Test func theCloseKeysAreCapsWithTheControllersWords() {

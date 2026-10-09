@@ -77,7 +77,7 @@ struct FilteredModelTests {
         #expect(model.tabs.first?.on == true)
         #expect(model.rows.map(\.pill) == ["notification \u{b7} CI", "promotion", "shipping"])
         #expect(model.rows.first?.heading == "Today \u{b7} 3")
-        #expect(model.restoreCap == "R")
+        #expect(model.restoreCap == "⇧R")
         #expect(model.footer.map(\.label) == ["restore + never filter sender", "reason tabs"])
         #expect(model.focused == 0)
     }
