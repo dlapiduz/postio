@@ -12,10 +12,10 @@
 //!
 //! 20,000 messages, deterministic (fixed-seed xorshift, no clock, no OS
 //! randomness): threads of 1 to 12 messages, 40 senders with a Zipf spread,
-//! 12 labels, 30% of messages with an attachment, spread over 24 months. The
-//! plan also names 2,000 extracted attachment units; nothing reads attachment
-//! contents yet (step 9, `contents_complete` is constant), so there is no
-//! table to put them in and the corpus has none.
+//! 12 labels, 30% of messages with an attachment, spread over 24 months, and
+//! 2,000 extracted attachment units (step 9): ten pages each of 200
+//! attachments, written as the indexer writes them, one attachment in ten
+//! saying [`FILE_WORD`], which nothing in any mail says.
 //!
 //! # The shapes
 //!
@@ -317,6 +317,57 @@ async fn build() -> Corpus {
                 .expect("a correspondent");
         }
     }
+    // What the attachment indexer would have read (step 9): ten located
+    // units of each of the first 200 attachments, folded for the index as
+    // `index_attachment_text` folds them, and each part's record.
+    let parts: Vec<(i64, i64)> = postio_storage::sql::all_unbounded(
+        &connection,
+        "SELECT m.content_id, a.position FROM attachments a JOIN messages m ON m.id = a.message_id
+          ORDER BY a.id LIMIT 200",
+        (),
+        |row| {
+            use postio_storage::sql::RowExt as _;
+            Ok((row.col(0)?, row.col(1)?))
+        },
+    )
+    .await
+    .expect("the attachments");
+    for (nth, (content, position)) in parts.iter().enumerate() {
+        for page in 1..=10_i64 {
+            let mut text = format!("page {page} of the report: ");
+            for _ in 0..12 {
+                text.push_str(fillers[rng.below(fillers.len() as u64) as usize]);
+                text.push(' ');
+            }
+            if nth % 10 == 0 && page == 2 {
+                text.push_str(FILE_WORD);
+            }
+            connection
+                .execute(
+                    "INSERT INTO attachment_passages
+                         (content_id, position, ordinal, location, text, text_search)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    (
+                        *content,
+                        *position,
+                        page - 1,
+                        format!("page:{page}"),
+                        text.as_str(),
+                        postio_model::fold::fold(&text),
+                    ),
+                )
+                .await
+                .expect("a unit");
+        }
+        connection
+            .execute(
+                "INSERT INTO attachment_extraction (content_id, position, version, outcome, units)
+                 VALUES (?1, ?2, 1, 'complete', 10)",
+                (*content, *position),
+            )
+            .await
+            .expect("its record");
+    }
     connection.execute_batch("COMMIT").await.expect("commit");
 
     Corpus {
@@ -343,7 +394,12 @@ enum Kind {
     Relaxations,
     /// `completions` for the prefix typed, or for `from:`'s value (step 8).
     Completions,
+    /// `executor::files`: the Files tab's cards (step 9).
+    Files,
 }
+
+/// A word only attachments say (step 9).
+const FILE_WORD: &str = "kestrel";
 
 const SHAPES: &[Shape] = &[
     Shape {
@@ -485,6 +541,32 @@ const SHAPES: &[Shape] = &[
         query: "from:sender3 after:2026-07-01 before:2026-10-01",
         kind: Kind::Executor,
     },
+    // Step 9: a word only inside attachments, and the Files tab.
+    Shape {
+        name: "file word",
+        query: FILE_WORD,
+        kind: Kind::Executor,
+    },
+    Shape {
+        name: "e2e file word",
+        query: FILE_WORD,
+        kind: Kind::EndToEnd,
+    },
+    Shape {
+        name: "files tab, file word",
+        query: FILE_WORD,
+        kind: Kind::Files,
+    },
+    Shape {
+        name: "files tab, one word",
+        query: "quarterly",
+        kind: Kind::Files,
+    },
+    Shape {
+        name: "files tab, operator",
+        query: "from:sender3",
+        kind: Kind::Files,
+    },
     Shape {
         name: "e2e preview check a person",
         query: "quarterly from:sender3",
@@ -567,6 +649,23 @@ async fn run_once(shape: &Shape, query: &ParsedQuery) -> u64 {
                 + found.lists.len()
                 + found.files.len()
                 + found.people.len()) as u64
+        }
+        Kind::Files => {
+            let cards = postio_index::executor::files(
+                &corpus.connection,
+                &ConversationRequest {
+                    account,
+                    query,
+                    order: ConversationOrder::Newest,
+                    offset: 0,
+                    limit: 1_000,
+                    today: now.date_naive(),
+                },
+            )
+            .await
+            .expect("files");
+            std::hint::black_box(&cards);
+            cards.len() as u64
         }
         Kind::Relaxations => {
             let offered = postio_search::relax::relax(query);
