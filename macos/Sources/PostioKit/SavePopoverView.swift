@@ -48,6 +48,9 @@ public final class SavePopoverModel {
     @ObservationIgnored public var dismiss: (() -> Void)?
 
     @ObservationIgnored private let engine: SavePopoverEngine
+    /// Save was sent and the controller has not taken it down yet: Return
+    /// reaches both the field and the key monitor, and is one save.
+    @ObservationIgnored private var sent = false
 
     public init(engine: SavePopoverEngine) {
         self.engine = engine
@@ -67,6 +70,7 @@ public final class SavePopoverModel {
             return .close
         }
         view = next
+        sent = false
         name = next.name
         pin = next.pin
         notify = next.notify
@@ -76,7 +80,8 @@ public final class SavePopoverModel {
 
     /// Save ↩.
     public func save() {
-        guard view != nil else { return }
+        guard view != nil, !sent else { return }
+        sent = true
         engine.focusSearchSave(name, pin: pin, notify: notify, rolling: rolling)
     }
 
