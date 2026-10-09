@@ -661,7 +661,9 @@ async fn read_matches(
             query
                 .filters()
                 .filter(|clause| !clause.negated)
-                .filter_map(|clause| pick(&clause.filter).cloned()),
+                // Every value of a set (spec 010, D26).
+                .flat_map(|clause| clause.filter.alternatives())
+                .filter_map(|filter| pick(filter).cloned()),
         );
         terms
     };

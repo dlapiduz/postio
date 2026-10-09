@@ -88,6 +88,16 @@ const DIVIDING: &[&str] = &[
     "from:ada.norwood@example.com list:harbour",
     "from:quinn.abara@example.net -list:harbour",
     "from:example.com -from:ada.norwood@example.com",
+    // Either of several values (spec 010, D26).
+    "from:{ada.norwood@example.com quinn.abara@example.net}",
+    "from:{ada tanaka.yoko@jp.example orders@shop.example.org}",
+    "-from:{ada.norwood@example.com quinn.abara@example.net}",
+    "list:{harbour weekly.news.example.org}",
+    "to:{ada.norwood@example.com ren}",
+    "subject:{walkthrough receipt}",
+    "filename:{invite.ics badge.png}",
+    "from:{example.com example.org} -list:{harbour}",
+    "from:{ada quinn.abara@example.net} -subject:{walkthrough zeppelin}",
 ];
 
 /// Queries no fixture should answer.
@@ -99,6 +109,8 @@ const NOTHING: &[&str] = &[
     "to:nobody@example.com",
     "subject:zeppelin",
     "filename:nothing.pdf",
+    "from:{nobody@example.com francoise}",
+    "subject:{zeppelin dirigible}",
 ];
 
 fn today() -> NaiveDate {

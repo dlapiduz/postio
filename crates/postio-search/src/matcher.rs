@@ -46,7 +46,9 @@
 //! 1's sender rules), and `list:`, `to:`, `subject:` and `filename:`
 //! (milestone 2's list and query rules) -- what is known of a message as it
 //! is filed, before its body -- each possibly negated, any number of them
-//! together. Anything else is [`Unsupported`], named, so a rule that asks
+//! together, and each may be a set of values (`from:{ada tomas}`, spec 010
+//! D26), which holds when any value would. Anything else is
+//! [`Unsupported`], named, so a rule that asks
 //! more than this can be refused where it is configured rather than
 //! silently holding the wrong mail. Free text is among it: the executor
 //! also searches bodies, which filing does not have.
@@ -135,10 +137,17 @@ pub struct Matcher {
     clauses: Vec<Condition>,
 }
 
-/// One column condition, with its words worked out once.
+/// One clause: any of its column conditions, or -- negated -- none of them.
+/// A set (`from:{ada tomas}`, D26) has one per value; any other clause, one.
 #[derive(Debug, Clone)]
 struct Condition {
     negated: bool,
+    alternatives: Vec<Alternative>,
+}
+
+/// One column condition, with its words worked out once.
+#[derive(Debug, Clone)]
+struct Alternative {
     /// Which column the per-row check reads.
     column: Column,
     /// The value's words as the index holds them, with their positions.
@@ -170,19 +179,29 @@ impl Matcher {
                 let TokenKind::Filter(clause) = &token.kind else {
                     return Err(Unsupported::Token(token.raw.clone()));
                 };
-                let (column, value) = match &clause.filter {
-                    Filter::From(value) => (Column::Sender, value),
-                    Filter::To(value) => (Column::Recipients, value),
-                    Filter::Subject(value) => (Column::Subject, value),
-                    Filter::Filename(value) => (Column::Filenames, value),
-                    Filter::List(value) => (Column::ListId, value),
-                    _ => return Err(Unsupported::Token(token.raw.clone())),
-                };
+                let alternatives = clause
+                    .filter
+                    .alternatives()
+                    .iter()
+                    .map(|filter| {
+                        let (column, value) = match filter {
+                            Filter::From(value) => (Column::Sender, value),
+                            Filter::To(value) => (Column::Recipients, value),
+                            Filter::Subject(value) => (Column::Subject, value),
+                            Filter::Filename(value) => (Column::Filenames, value),
+                            Filter::List(value) => (Column::ListId, value),
+                            _ => return Err(Unsupported::Token(token.raw.clone())),
+                        };
+                        Ok(Alternative {
+                            column,
+                            phrase: indexed(value),
+                            words: scalar(value).collect(),
+                        })
+                    })
+                    .collect::<Result<_, _>>()?;
                 Ok(Condition {
                     negated: clause.negated,
-                    column,
-                    phrase: indexed(value),
-                    words: scalar(value).collect(),
+                    alternatives,
                 })
             })
             .collect::<Result<_, _>>()?;
@@ -203,6 +222,14 @@ impl Matcher {
 }
 
 impl Condition {
+    fn holds(&self, document: &Document) -> bool {
+        self.alternatives
+            .iter()
+            .any(|alternative| alternative.holds(document))
+    }
+}
+
+impl Alternative {
     fn holds(&self, document: &Document) -> bool {
         let column = match self.column {
             Column::Sender => &document.sender,
@@ -412,6 +439,43 @@ mod tests {
         // its words must be in the column: "quinn" is in the row, not in
         // the recipients.
         assert!(!matcher("to:quinn").matches_document(&minutes));
+    }
+
+    #[test]
+    fn a_set_holds_when_any_value_does_and_negated_when_none_does() {
+        // D26, on the columns the matcher already reads.
+        let ada = row(
+            "Ada Norwood ada.norwood@example.com",
+            "",
+            "harbour.example.org",
+        );
+        let grace = row("Grace Hopper grace@navy.test", "", "");
+        let quinn = row("Quinn Abara quinn.abara@example.net", "", "");
+        let either = matcher("from:{ada grace}");
+        assert!(either.matches_document(&ada));
+        assert!(either.matches_document(&grace));
+        assert!(!either.matches_document(&quinn));
+        let neither = matcher("-from:{ada grace}");
+        assert!(!neither.matches_document(&ada));
+        assert!(!neither.matches_document(&grace));
+        assert!(neither.matches_document(&quinn));
+        assert!(matcher("from:{grace quinn} -list:harbour").matches_document(&quinn));
+        assert!(!matcher("from:{ada quinn} list:{weekly nothing}").matches_document(&ada));
+        assert!(matcher(r#"from:{"Ada Norwood" zed}"#).matches_document(&ada));
+    }
+
+    #[test]
+    fn a_set_of_what_the_matcher_refuses_is_refused() {
+        for (query, refused) in [
+            ("label:{atlas harbour}", "label:{atlas harbour}"),
+            ("from:ada in:{inbox archive}", "in:{inbox archive}"),
+        ] {
+            assert_eq!(
+                Matcher::new(&parse(query, today())).err(),
+                Some(Unsupported::Token(refused.to_owned())),
+                "{query:?}"
+            );
+        }
     }
 
     #[test]

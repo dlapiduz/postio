@@ -39,3 +39,4 @@ mod search_statement_budget;
 mod startup_index_budget;
 mod suggestion;
 mod total_hits_cap;
+mod value_sets;

@@ -1027,7 +1027,9 @@ impl Terms {
                 query
                     .filters()
                     .filter(|clause| !clause.negated)
-                    .filter_map(|clause| field(&clause.filter).cloned()),
+                    // Every value of a set (D26).
+                    .flat_map(|clause| clause.filter.alternatives())
+                    .filter_map(|filter| field(filter).cloned()),
             );
             terms
         };
