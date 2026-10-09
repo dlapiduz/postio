@@ -95,8 +95,8 @@ index_suite` green; the bench reports under budget, or the stop rule fires.
 - [x] T021 [US2] Implement `executor::search_conversations` in `crates/postio-index/src/executor.rs`: `Plan::project` streaming the narrow projection (research R2) into a `Fold`; rank with `rank_score`; hydrate the page; per-page column checks for reasons and sources. `search` and `facets` untouched. Make T020 green; T003 stays green
 - [x] T022 [P] [US3] Write failing tests in a new `crates/postio-index/tests/index_suite/facets_one_pass.rs`: every sender, recipient, label, folder, attachment, action and unread count equals the conversation total of the query with that term added (SC-008); months per D4; presets; a capped match marks `capped`. Red: facets empty
 - [x] T023 [US3] Fill `SearchFacets` from the same `Fold` (correlated `group_concat` columns for recipients and labels). Make T022 green
-- [ ] T024 [P] Write failing budgets in `crates/postio-index/tests/index_suite/search_statement_budget.rs`: `search_conversations` issues ≤ 5 statements and the same number over corpora of 100 and 2,000 messages, for a word, an operator, both, and a common word. Red until the count is constant
-- [ ] T025 Make T024 green (fold any per-hit statement into the projection or the page hydrate)
+- [x] T024 [P] Write failing budgets in `crates/postio-index/tests/index_suite/search_statement_budget.rs`: `search_conversations` issues ≤ 5 statements and the same number over corpora of 100 and 2,000 messages, for a word, an operator, both, and a common word. Red until the count is constant
+- [x] T025 Make T024 green (fold any per-hit statement into the projection or the page hydrate). *Green on arrival: T021's walk already reads three statements whatever the corpus (projection, hydrate, folders); nothing to fold*
 - [ ] T026 [P] [US6] Write failing tests in a new `crates/postio-index/tests/index_suite/relaxations.rs`: `relaxation_counts` gives each variant's conversation total; ≤ 8 statements for 8 variants. Red: no function
 - [ ] T027 [US6] Implement `executor::relaxation_counts`. Make T026 green
 
