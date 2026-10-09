@@ -287,6 +287,39 @@ pub enum Req {
         /// The scope on screen.
         scope: postio_search::facets::Scope,
     },
+    /// Focus's search (spec 010): one page of conversations, with the
+    /// facets' counts and names. Cancellable: dropping the call stops it.
+    Conversations {
+        /// Which accounts.
+        account: postio_model::AccountScope,
+        /// The query, as the bar parsed it.
+        query: postio_search::ParsedQuery,
+        /// Best match or newest first.
+        order: postio_search::results::ConversationOrder,
+        /// How many conversations to skip.
+        offset: u32,
+        /// How many to return.
+        limit: u32,
+    },
+    /// The passages of the hits on screen, each body match told apart into
+    /// the person's own words and quoted history. A read of its own, after
+    /// the conversations (D7). Cancellable.
+    Passages {
+        /// The query the hits were found by.
+        query: postio_search::ParsedQuery,
+        /// Each hit's best message and where it matched.
+        hits: Vec<(MessageId, Vec<postio_search::results::Source>)>,
+    },
+    /// The ways out of a search that found nothing, each with what it would
+    /// find. Cancellable.
+    Relaxations {
+        /// Which accounts.
+        account: postio_model::AccountScope,
+        /// The query that found nothing.
+        query: postio_search::ParsedQuery,
+        /// The day dates in the variants are read against.
+        today: chrono::NaiveDate,
+    },
     /// Change an account the way the settings' account commands do.
     Account(AccountOp),
     /// Look up the servers for a new account's address.
@@ -632,6 +665,14 @@ pub enum Resp {
     Hits(Option<Box<Hits>>),
     /// A search's facet counts, or nothing when they did not run.
     Facets(Option<postio_search::facets::Facets>),
+    /// One page of a conversation search, or nothing when the store could
+    /// not be read.
+    Conversations(Option<Box<Conversations>>),
+    /// Each hit's matches with their passages, in the order asked.
+    Passages(Vec<(MessageId, Vec<postio_search::results::Match>)>),
+    /// The ways out that would find something, most first; empty when none
+    /// would, or when they could not be counted.
+    Relaxed(Vec<(postio_search::relax::Relaxation, u64)>),
     /// A message's stored words; empty when there are none here.
     StoredBody(postio_model::MessageBody),
     /// Where each exported message was written, in the order asked.
@@ -941,6 +982,15 @@ pub struct Found {
 pub struct Hits(pub postio_search::SearchResults);
 
 impl Eq for Hits {}
+
+/// What a conversation search found, as Focus's results view draws it.
+///
+/// A wrapper only for [`Resp`]'s `Eq`, as [`Hits`] is: a hit's score is an
+/// `f64`, never NaN.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Conversations(pub postio_search::results::ConversationResults);
+
+impl Eq for Conversations {}
 
 /// What recipient completion can offer an account: its groups, each with
 /// its members' addresses, and its contacts in the order the store ranks

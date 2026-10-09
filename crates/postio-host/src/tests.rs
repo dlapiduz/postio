@@ -3966,3 +3966,173 @@ fn an_address_written_to_is_offered_before_one_only_seen() {
         .expect("in the directory");
     assert_eq!(wrote.sent_count, 42, "the directory carries the letters");
 }
+
+// ---------------------------------------------------------------------------
+// Focus's search (spec 010): conversations, passages, relaxations
+// ---------------------------------------------------------------------------
+
+/// A host over the search seed, and a frontend on it.
+struct SearchSeed {
+    rt: tokio::runtime::Runtime,
+    host: Option<Host>,
+    client: Client,
+    account: postio_model::AccountId,
+    _blobs: tempfile::TempDir,
+}
+
+impl SearchSeed {
+    fn new() -> SearchSeed {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a test runtime");
+        let (database, account) = rt.block_on(postio_demo::seeded(postio_demo::Seed::Search));
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = postio_storage::BlobStore::open(
+            directory.path().to_path_buf(),
+            &test_support::blob_keys(),
+        )
+        .expect("a blob store");
+        postio_demo::store_search_blobs(&blobs).expect("the seed's files");
+        let host = Host::start(database, blobs, |wiring| {
+            wiring.with_secrets(std::sync::Arc::new(MemorySecretStore::new()))
+        })
+        .expect("a host");
+        let client = host.connect(ClientKind::Focus);
+        SearchSeed {
+            rt,
+            host: Some(host),
+            client,
+            account,
+            _blobs: directory,
+        }
+    }
+
+    fn scope(&self) -> postio_model::AccountScope {
+        postio_model::AccountScope::Account(self.account)
+    }
+
+    fn conversations(&self, text: &str) -> postio_search::results::ConversationResults {
+        self.rt
+            .block_on(self.client.conversations(
+                self.scope(),
+                postio_search::parse(text, postio_demo::today().date_naive()),
+                postio_search::results::ConversationOrder::BestMatch,
+                0,
+                20,
+            ))
+            .expect("an answer")
+            .expect("the store was read")
+    }
+}
+
+impl Drop for SearchSeed {
+    fn drop(&mut self) {
+        self.host.take();
+    }
+}
+
+#[test]
+fn focus_asks_the_host_for_conversations_then_their_passages() {
+    let seed = SearchSeed::new();
+    let results = seed.conversations("atlas budget");
+    assert!(results.total > 1, "the seed's Atlas threads are found");
+    assert!(
+        results.names.labels.iter().any(|(_, name)| name == "Atlas"),
+        "the label facet comes back named: {:?}",
+        results.names.labels
+    );
+
+    let asked: Vec<_> = results
+        .hits
+        .iter()
+        .map(|hit| {
+            (
+                hit.best,
+                hit.matches
+                    .iter()
+                    .map(|found| found.source.clone())
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    let answered = seed
+        .rt
+        .block_on(seed.client.passages(
+            postio_search::parse("atlas budget", postio_demo::today().date_naive()),
+            asked.clone(),
+        ))
+        .expect("an answer");
+    assert_eq!(
+        answered.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        asked.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        "one answer per hit, in the order asked"
+    );
+    let cut: Vec<&postio_search::passage::Passage> = answered
+        .iter()
+        .flat_map(|(_, matches)| matches)
+        .filter(|found| found.source == postio_search::results::Source::Body)
+        .filter_map(|found| found.passage.as_ref())
+        .collect();
+    assert!(!cut.is_empty(), "the bodies that matched are cut");
+    for passage in cut {
+        let marked: Vec<String> = passage
+            .ranges
+            .iter()
+            .map(|range| passage.text[range.clone()].to_lowercase())
+            .collect();
+        assert!(
+            marked
+                .iter()
+                .all(|word| word == "atlas" || word == "budget"),
+            "a passage marks the words searched for: {marked:?} in {:?}",
+            passage.text
+        );
+    }
+}
+
+#[test]
+fn focus_asks_the_host_for_the_ways_out_of_no_results() {
+    let seed = SearchSeed::new();
+    // Two ways out find something, the rest nothing, and the one that
+    // finds more is the later token: the order is the counts', not the
+    // query's.
+    let text = "budget invoice from:priya@example.com label:Atlas";
+    let today = postio_demo::today().date_naive();
+    let query = postio_search::parse(text, today);
+    assert_eq!(seed.conversations(text).total, 0, "nothing says all of it");
+
+    let offered = postio_search::relax::relax(&query);
+    let answered = seed
+        .rt
+        .block_on(seed.client.relaxations(seed.scope(), query, today))
+        .expect("an answer");
+
+    // What each way out would find, asked of the same host as a search.
+    let mut expected: Vec<(postio_search::relax::Relaxation, u64)> = offered
+        .iter()
+        .map(|relaxation| {
+            (
+                relaxation.clone(),
+                seed.conversations(&relaxation.query).total,
+            )
+        })
+        .filter(|(_, total)| *total > 0)
+        .collect();
+    expected.sort_by_key(|(_, total)| std::cmp::Reverse(*total));
+    assert!(
+        expected.len() >= 2 && expected.len() < offered.len(),
+        "the seed leaves some ways out finding nothing: {expected:?}"
+    );
+    assert_eq!(
+        answered, expected,
+        "the ways out that find something, most first"
+    );
+    let at = |relaxation: &postio_search::relax::Relaxation| {
+        offered.iter().position(|offer| offer == relaxation)
+    };
+    assert!(
+        at(&answered[0].0) > at(&answered[1].0),
+        "the more fruitful way out leads though the query names it later: {answered:?}"
+    );
+}

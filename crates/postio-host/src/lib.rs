@@ -937,6 +937,27 @@ impl Inner {
                 query,
                 scope,
             } => Resp::Facets(search::facets(&self.wiring.database, account, &query, scope).await),
+            Req::Conversations {
+                account,
+                query,
+                order,
+                offset,
+                limit,
+            } => Resp::Conversations(
+                search::conversations(&self.wiring.database, account, &query, order, offset, limit)
+                    .await
+                    .map(|found| Box::new(postio_client::protocol::Conversations(found))),
+            ),
+            Req::Passages { query, hits } => {
+                Resp::Passages(search::passages(&self.wiring.database, &query, &hits).await)
+            }
+            Req::Relaxations {
+                account,
+                query,
+                today,
+            } => Resp::Relaxed(
+                search::relaxations(&self.wiring.database, account, &query, today).await,
+            ),
             Req::StoredBody(message) => {
                 Resp::StoredBody(search::stored_body(&self.wiring.database, message).await)
             }

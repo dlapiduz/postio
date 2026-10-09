@@ -111,6 +111,9 @@ impl Req {
             Req::Search(_) => "Search",
             Req::SearchHits { .. } => "SearchHits",
             Req::Facets { .. } => "Facets",
+            Req::Conversations { .. } => "Conversations",
+            Req::Passages { .. } => "Passages",
+            Req::Relaxations { .. } => "Relaxations",
             Req::StoredBody(_) => "StoredBody",
             Req::ExportMessages(_) => "ExportMessages",
             Req::Account(_) => "Account",
@@ -900,6 +903,67 @@ impl Client {
         };
         self.read(request, "the facet counts", |answer| match answer {
             Resp::Facets(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// One page of Focus's conversation search for `query`, its facets
+    /// counted and named; `None` when the store could not be read.
+    pub async fn conversations(
+        &self,
+        account: postio_model::AccountScope,
+        query: postio_search::ParsedQuery,
+        order: postio_search::results::ConversationOrder,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Option<postio_search::results::ConversationResults>, StoreError> {
+        let request = Req::Conversations {
+            account,
+            query,
+            order,
+            offset,
+            limit,
+        };
+        self.read(request, "a search", |answer| match answer {
+            Resp::Conversations(found) => Some(found.map(|found| found.0)),
+            _ => None,
+        })
+        .await
+    }
+
+    /// The passages of `hits`' matches under `query`, in the order asked.
+    pub async fn passages(
+        &self,
+        query: postio_search::ParsedQuery,
+        hits: Vec<(MessageId, Vec<postio_search::results::Source>)>,
+    ) -> Result<Vec<(MessageId, Vec<postio_search::results::Match>)>, StoreError> {
+        self.read(
+            Req::Passages { query, hits },
+            "the passages",
+            |answer| match answer {
+                Resp::Passages(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// The ways out of `query` finding nothing that would find something,
+    /// each with its count, most first.
+    pub async fn relaxations(
+        &self,
+        account: postio_model::AccountScope,
+        query: postio_search::ParsedQuery,
+        today: chrono::NaiveDate,
+    ) -> Result<Vec<(postio_search::relax::Relaxation, u64)>, StoreError> {
+        let request = Req::Relaxations {
+            account,
+            query,
+            today,
+        };
+        self.read(request, "the ways out", |answer| match answer {
+            Resp::Relaxed(found) => Some(found),
             _ => None,
         })
         .await
