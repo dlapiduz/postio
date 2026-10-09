@@ -281,7 +281,7 @@ it understood.
 
 **Independent test**: US7's.
 
-- [ ] T108 [US7] Write storyboards `storyboards/search/ghost-completion.toml`, `from-people-autocomplete.toml`, `understood-as-tab-chips.toml`
+- [x] T108 [US7] Write storyboards `storyboards/search/ghost-completion.toml`, `from-people-autocomplete.toml`, `understood-as-tab-chips.toml`
 - [ ] T109 [P] [US7] Write failing tests in a new `crates/postio-index/tests/index_suite/completions.rs`: `completions("at")` offers "atlas" as the ghost and first word with its count, the label "Atlas", a list whose id holds it, and files whose names match; `field = Some(From)` offers people ranked by `times_seen + sent_count` (D21), ties by the latest; ≤ 4 statements; bodies are read only when metadata gives fewer than three words. Red: no function
 - [ ] T110 [US7] Implement `executor::completions` (research R1, D22) and `postio_search::suggest::rank_words`. Make T109 green
 - [ ] T111 [P] Write a failing test in `crates/postio-host/src/tests.rs` for `Req::Suggest`; add it (client, host, session, cancellable). Red: no request
