@@ -66,6 +66,9 @@ pub struct MonthBar {
     pub label: String,
     /// Conversations whose newest match fell in it.
     pub conversations: u64,
+    /// The same, as said: "9", or "9+" when the search was capped and
+    /// every count is a floor (D30).
+    pub count: String,
     /// Its height, 0 to 1 of the tallest.
     pub height: f64,
     /// Whether the query's dates take it in.
@@ -394,6 +397,9 @@ pub struct PopoverRow {
     pub color: Option<String>,
     /// Conversations among the results it opened on.
     pub count: u64,
+    /// The same, as drawn: "24", or "24+" when those results were capped
+    /// and every count is a floor (D30).
+    pub count_label: String,
     /// Its bar: the count, 0 to 1 of the largest.
     pub share: f64,
     /// The query holds it.
@@ -741,7 +747,7 @@ pub(crate) struct Results {
     /// The timeline of the query without its dates, and that query: what
     /// the bars outside a range are drawn from, so a range can be dragged
     /// wider than the one the results were narrowed to.
-    undated: Option<(String, [postio_search::facets::MonthCount; 12])>,
+    undated: Option<(String, [postio_search::facets::MonthCount; 12], bool)>,
     /// Quick Look, while it is open over the results.
     pub(crate) quick_look: Option<QuickLook>,
     /// Everyone an answer has named, kept across queries: a chip or a
@@ -1369,7 +1375,11 @@ impl Results {
             }
         }
         if self.dates() == (None, None) {
-            self.undated = Some((self.query.clone(), results.facets.months));
+            self.undated = Some((
+                self.query.clone(),
+                results.facets.months,
+                results.facets.capped,
+            ));
         }
         if let Some(popover) = self.popover.as_mut()
             && popover.base.is_none()
@@ -1781,7 +1791,8 @@ impl Results {
                     || frame.map_or(0, |frame| frame.files),
                     |files| files.len() as u64,
                 ),
-                false,
+                // Read over the same capped walk: a floor with it.
+                capped,
                 CommandId::ResultsFiles,
             ),
             tab(
@@ -1793,7 +1804,7 @@ impl Results {
                     || frame.map_or(0, |frame| frame.people),
                     |people| people.len() as u64,
                 ),
-                false,
+                capped,
                 CommandId::ResultsPeople,
             ),
         ];
@@ -1810,7 +1821,8 @@ impl Results {
                 count: if span.top_hits {
                     String::new()
                 } else {
-                    words::tab_count(span.count, false)
+                    // Past the cap a month holds more than the walk met.
+                    words::tab_count(span.count, capped)
                 },
                 note: span.note,
                 first: span.first,
@@ -1840,7 +1852,14 @@ impl Results {
                     .map_or(frame.people, |people| people.len() as u64);
                 self.previewing(with).unwrap_or_else(|| {
                     let name_of = |address: &str| self.name_of(address);
-                    words::narrowed_sub_line(&self.filters(), &name_of, today, files, people)
+                    words::narrowed_sub_line(
+                        &self.filters(),
+                        &name_of,
+                        today,
+                        files,
+                        people,
+                        frame.capped,
+                    )
                 })
             }),
             months,
@@ -2033,6 +2052,7 @@ impl Results {
             .unwrap_or(0)
             .max(1);
         let needle = popover.filter.trim().to_lowercase();
+        let capped = popover.base.as_ref().is_some_and(|base| base.facets.capped);
         let rows = offers
             .into_iter()
             .enumerate()
@@ -2055,6 +2075,7 @@ impl Results {
                     detail: offer.detail,
                     initials: offer.initials,
                     color: offer.color,
+                    count_label: words::facet_count(offer.count, capped),
                     count: offer.count,
                 }
             })
@@ -2147,8 +2168,11 @@ impl Results {
         let undated = self
             .undated
             .as_ref()
-            .filter(|(query, _)| *query == undated_query(&self.parsed));
-        let months = undated.map_or(&frame.facets.months, |(_, months)| months);
+            .filter(|(query, _, _)| *query == undated_query(&self.parsed));
+        let (months, capped) = undated.map_or(
+            (&frame.facets.months, frame.facets.capped),
+            |(_, months, capped)| (months, *capped),
+        );
         let tallest = months
             .iter()
             .map(|month| month.conversations)
@@ -2160,6 +2184,7 @@ impl Results {
             .map(|month| MonthBar {
                 label: month.month.format("%b").to_string(),
                 conversations: month.conversations,
+                count: words::facet_count(month.conversations, capped),
                 height: month.conversations as f64 / tallest as f64,
                 selected: (after.is_some() || before.is_some())
                     && after.is_none_or(|after| {

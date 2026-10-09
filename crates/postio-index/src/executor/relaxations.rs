@@ -23,6 +23,12 @@ use crate::error::Result;
 /// Each relaxation's conversation total, in the order given: what
 /// `search_conversations` would say its `total` is. Past the cap a count is
 /// a floor, as every count is.
+///
+/// Counted to [`TOTAL_HITS_CAP`], not the conversation walk's own, smaller
+/// cap (D30): this walk reads a conversation id a row, not the facets'
+/// columns, and five of them cost under 4 ms at the larger cap. A count
+/// between the two is then more exact than the search it opens, whose
+/// total says "5,000+"; the two agree, as a floor and a count do.
 pub async fn relaxation_counts(
     connection: &Connection,
     account: AccountScope,

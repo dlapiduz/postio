@@ -576,6 +576,11 @@ pub struct MonthBarFfi {
     pub height: f64,
     /// Inside the query's dates: the soft band, the bold label.
     pub selected: bool,
+    /// `conversations` as said, for VoiceOver: "9", or "9+" when the
+    /// search stopped at its walk's cap and every count is a floor (D30).
+    /// Last, with a default, so a Swift caller that builds one is unchanged.
+    #[uniffi(default = "")]
+    pub count: String,
 }
 
 // `height` is a share of the tallest bar, never NaN, so equality is total.
@@ -792,6 +797,7 @@ fn month_bars(months: Vec<postio_focus::MonthBar>) -> Vec<MonthBarFfi> {
             conversations: month.conversations,
             height: month.height,
             selected: month.selected,
+            count: month.count,
         })
         .collect()
 }
@@ -882,6 +888,11 @@ pub struct PopoverRowFfi {
     pub checked: bool,
     /// Excluded: the query holds `-` it.
     pub excluded: bool,
+    /// `count` as drawn on the row's right: "24", or "24+" when the
+    /// results it opened on were capped and every count is a floor (D30).
+    /// Last, with a default, so a Swift caller that builds one is unchanged.
+    #[uniffi(default = "")]
+    pub count_label: String,
 }
 
 // `share` is a share of the largest count, never NaN.
@@ -948,6 +959,7 @@ impl From<postio_focus::PopoverView> for PopoverViewFfi {
                     share: row.share,
                     checked: row.checked,
                     excluded: row.excluded,
+                    count_label: row.count_label,
                 })
                 .collect(),
             hints: hints(view.hints),

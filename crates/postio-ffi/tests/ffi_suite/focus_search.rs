@@ -248,6 +248,13 @@ async fn show_all_emits_the_results_and_their_rows_read_back_marked() {
     );
     assert!(view.footer_right.contains("local index"));
     assert_eq!(view.months.len(), 12);
+    assert!(
+        view.months
+            .iter()
+            .all(|bar| bar.count == bar.conversations.to_string()),
+        "a month's count crosses as said, exact below the walk's cap (D30): {:?}",
+        view.months
+    );
 
     // The rows' passages land after their pages; read every row then.
     let _ = heard(&session, 3, |event| {
@@ -447,6 +454,13 @@ async fn a_popover_closed_with_esc_puts_back_the_query_it_opened_on() {
     assert_eq!(popover.kind, FilterKindFfi::From);
     assert_eq!(popover.placeholder, "Filter people in these results");
     assert!(popover.rows.iter().all(|row| !row.checked && row.count > 0));
+    assert!(
+        popover
+            .rows
+            .iter()
+            .all(|row| row.count_label == row.count.to_string()),
+        "a row's count crosses as drawn, exact below the walk's cap (D30)"
+    );
 
     session.focus_search_popover_toggle(popover.rows[0].token, false);
     let checked = next(&session, 10, |event| match event {

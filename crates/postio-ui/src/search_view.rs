@@ -60,6 +60,12 @@ fn count(total: u64, capped: bool) -> String {
     format!("{}{}", grouped(total), if capped { "+" } else { "" })
 }
 
+/// A popover row's or a month's count (spec 010 D30): "24", or "24+" when
+/// the search stopped at its walk's cap and every count is a floor.
+pub fn facet_count(count: u64, capped: bool) -> String {
+    self::count(count, capped)
+}
+
 /// A dropdown suggestion's count on the row's right: "412", or "1,000+"
 /// when it stopped at the completion cap and is a floor (spec 010 D29).
 pub fn suggestion_count(count: u64, capped: bool) -> String {
@@ -396,15 +402,9 @@ pub fn count_line(total: u64, capped: bool) -> String {
 }
 
 /// The timeline's sub-line (§3.3): "12 files · 6 people · last 12 months".
-pub fn sub_line(files: u64, people: u64) -> String {
-    let files = match files {
-        1 => "1 file".to_owned(),
-        n => format!("{} files", grouped(n)),
-    };
-    let people = match people {
-        1 => "1 person".to_owned(),
-        n => format!("{} people", grouped(n)),
-    };
+pub fn sub_line(files: u64, people: u64, capped: bool) -> String {
+    let files = plural(files, capped, "file", "files");
+    let people = plural(people, capped, "person", "people");
     format!("{files} \u{b7} {people} \u{b7} last 12 months")
 }
 
@@ -419,6 +419,7 @@ pub fn narrowed_sub_line(
     today: chrono::NaiveDate,
     files: u64,
     people: u64,
+    capped: bool,
 ) -> String {
     let held = |kind: FilterKind| -> Vec<&Filter> {
         filters
@@ -476,20 +477,20 @@ pub fn narrowed_sub_line(
         });
     }
     if said.is_empty() {
-        return sub_line(files, people);
+        return sub_line(files, people, capped);
     }
-    let mut line = vec![said.join(" "), plural(files, "file", "files")];
+    let mut line = vec![said.join(" "), plural(files, capped, "file", "files")];
     if held(FilterKind::From).is_empty() && held(FilterKind::To).is_empty() {
-        line.push(plural(people, "person", "people"));
+        line.push(plural(people, capped, "person", "people"));
     }
     line.join(" \u{b7} ")
 }
 
-/// "1 file", "9 files", grouped.
-fn plural(n: u64, one: &str, many: &str) -> String {
-    match n {
-        1 => format!("1 {one}"),
-        n => format!("{} {many}", grouped(n)),
+/// "1 file", "9 files", grouped; "1+ files" when `capped` makes it a floor.
+fn plural(n: u64, capped: bool, one: &str, many: &str) -> String {
+    match (n, capped) {
+        (1, false) => format!("1 {one}"),
+        (n, capped) => format!("{} {many}", count(n, capped)),
     }
 }
 
@@ -2092,9 +2093,31 @@ mod tests {
         assert_eq!(count_line(48, false), "48 conversations");
         assert_eq!(count_line(1, false), "1 conversation");
         assert_eq!(count_line(10_000, true), "10,000+ conversations");
-        assert_eq!(sub_line(12, 6), "12 files · 6 people · last 12 months");
-        assert_eq!(sub_line(1, 1), "1 file · 1 person · last 12 months");
-        assert_eq!(sub_line(0, 2), "0 files · 2 people · last 12 months");
+        assert_eq!(
+            sub_line(12, 6, false),
+            "12 files · 6 people · last 12 months"
+        );
+        assert_eq!(sub_line(1, 1, false), "1 file · 1 person · last 12 months");
+        assert_eq!(sub_line(0, 2, false), "0 files · 2 people · last 12 months");
+    }
+
+    // D30: past the walk's cap every count the results draw is a floor --
+    // the total, a tab, a popover row, a month, the files and the people
+    // -- grouped as every count is.
+    #[test]
+    fn a_capped_answer_draws_every_count_as_a_floor() {
+        assert_eq!(count_line(5_000, true), "5,000+ conversations");
+        assert_eq!(tab_count(5_000, true), "5,000+");
+        assert_eq!(facet_count(1_204, true), "1,204+");
+        assert_eq!(facet_count(24, false), "24");
+        assert_eq!(
+            sub_line(1, 1, true),
+            "1+ files · 1+ people · last 12 months"
+        );
+        assert_eq!(
+            sub_line(1_204, 6, true),
+            "1,204+ files · 6+ people · last 12 months"
+        );
     }
 
     #[test]
@@ -2125,8 +2148,20 @@ mod tests {
         let date = |y, m, d| chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap();
         let today = date(2026, 9, 30);
         let line = |filters: &[Filter], files, people| {
-            narrowed_sub_line(filters, &names, today, files, people)
+            narrowed_sub_line(filters, &names, today, files, people, false)
         };
+        assert_eq!(
+            narrowed_sub_line(
+                &[Filter::Label("Atlas".into())],
+                &names,
+                today,
+                1,
+                1_204,
+                true
+            ),
+            "labelled Atlas · 1+ files · 1,204+ people",
+            "past the cap, a floor (D30)"
+        );
 
         assert_eq!(line(&[], 12, 6), "12 files · 6 people · last 12 months");
         assert_eq!(
