@@ -85,8 +85,8 @@ index_suite` green; the bench reports under budget, or the stop rule fires.
 - [x] T014 [US7] Implement `natural::lower_with_origins`, recording spans in `Lowering::step`; `lower` delegates. Make T013 green, existing `natural` tests unchanged
 - [x] T015 [P] [US6] Write failing tests in a new `crates/postio-search/src/relax.rs`: four filters give four `Drop`s; `subject:"budget v4"` also gives `Anywhere`; `label:x` gives `FolderNotLabel`; free words drop one at a time only when there are two or more; at most 8; each relaxed query differs by exactly one token. Red: no module
 - [x] T016 [US6] Implement `relax::relax`. Make T015 green
-- [ ] T017 [P] [US2] Write failing tests in a new `crates/postio-search/src/passage.rs`: a window of ~120 chars snapped to word edges; ellipsis flags; the match in the first line only → the window after the first line (D7); ranges land on the matched words in multibyte text; no match → `None`. Red: no module
-- [ ] T018 [US2] Implement `passage::cut` over `highlight::find`. Make T017 green
+- [x] T017 [P] [US2] Write failing tests in a new `crates/postio-search/src/passage.rs`: a window of ~120 chars snapped to word edges; ellipsis flags; the match in the first line only → the window after the first line (D7); ranges land on the matched words in multibyte text; no match → `None`. Red: no module
+- [x] T018 [US2] Implement `passage::cut` over `highlight::find`. Make T017 green
 - [ ] T019 [P] Write a failing test for `facets::months_ending(today)` in `crates/postio-search/src/facets.rs` (12 first-days, oldest first, crossing a year; red: no function), then add it and the result types of data-model.md to `crates/postio-search/src/{results,facets,suggest}.rs` (`Source`, `Location`, `Match`, `Passage`, `RankReason`, `ConversationKey`, `ConversationHit`, `ConversationResults`, `ConversationOrder`, `ResultsTab`, `FileHit`, `SearchFacets`, `Count`, `MonthCount`, `Suggestions`, `Completion`, `Person`) and `AddressId` to `crates/postio-model/src/ids.rs`. The types carry no behaviour of their own; their consumers' tests cover them
 
 ### Conversation search
