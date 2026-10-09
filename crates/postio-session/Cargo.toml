@@ -20,6 +20,9 @@ postio-account = { workspace = true, features = ["maildir"] }
 # An invitation's reply, written from its calendar part (spec 007 FR-102).
 # A pure leaf: no store, no toolkit, no network.
 postio-calendar.workspace = true
+# The quote detector the reader folds by, so a search passage says "quoted
+# text" for exactly what the reader would fold (spec 010 D6). A pure leaf.
+postio-body.workspace = true
 postio-jmap.workspace = true
 postio-gmail.workspace = true
 postio-index.workspace = true
@@ -68,6 +71,9 @@ postio-storage = { workspace = true, features = ["test-support"] }
 blake3 = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+# The `.eml` corpus, so a conversation search's passages are cut from mail
+# as clients actually quote it (spec 010 T028).
+postio-model = { workspace = true, features = ["test-corpus"] }
 
 [lints]
 workspace = true

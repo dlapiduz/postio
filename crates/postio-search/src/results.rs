@@ -11,7 +11,9 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use postio_model::{AttachmentId, EmailAddress, LabelId, MailboxId, MessageId, ThreadId};
+use postio_model::{
+    AddressId, AttachmentId, EmailAddress, LabelId, MailboxId, MessageId, ThreadId,
+};
 
 use crate::facets::SearchFacets;
 pub use crate::passage::Passage;
@@ -314,8 +316,27 @@ pub struct ConversationResults {
     pub files: u64,
     /// Matching people: the People tab's count.
     pub people: u64,
+    /// The names behind the facets' ids and the hits' labels. Empty from
+    /// the executor; `postio-session` reads them.
+    pub names: FacetNames,
     /// How long it took.
     pub elapsed: Duration,
+}
+
+/// What the ids a conversation search returns are called: the filter
+/// buttons' and popovers' words ("From: Ada Moreno"), and the rows' label
+/// pills.
+///
+/// Read once per kind for the counts a search returns rather than carried
+/// on each count, so a facet of fifty people costs one read, not fifty.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FacetNames {
+    /// Senders and recipients: the address, with the name its mail gave it.
+    pub people: Vec<(AddressId, EmailAddress)>,
+    /// Labels, by their names.
+    pub labels: Vec<(LabelId, String)>,
+    /// Folders, by their names.
+    pub folders: Vec<(MailboxId, String)>,
 }
 
 /// The results view's two orders.

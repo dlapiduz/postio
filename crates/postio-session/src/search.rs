@@ -13,9 +13,11 @@
 //! differently the first time either copy was edited.
 
 use chrono::Utc;
+use postio_index::executor::ConversationRequest;
 use postio_index::{SearchRequest, search};
-use postio_model::AccountScope;
+use postio_model::{AccountScope, AddressId, EmailAddress, LabelId, MailboxId, MessageId};
 use postio_search::facets::Scope;
+use postio_search::results::{ConversationOrder, ConversationResults, FacetNames, Match, Source};
 use postio_search::{ParsedQuery, ResultOrder, SearchResults};
 use postio_storage::Checkout;
 
@@ -217,4 +219,271 @@ async fn snippet_hits(
             hit.snippet = postio_search::highlight::snippet(&text, &terms);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Conversation search (spec 010): Focus's results view
+// ---------------------------------------------------------------------------
+
+/// How many values of one facet get a name: the popovers' lists.
+///
+/// The executor keeps the top fifty people already; labels and folders are
+/// held to the same, so one read per kind names everything a popover shows.
+pub const FACET_NAMES: usize = 50;
+
+/// One page of a conversation search, its facets' ids named.
+///
+/// Beside [`execute`], not instead of it: GTK's search keeps its own path
+/// (spec 010 FR-046). `None` when the query could not run, as there.
+pub async fn conversations(
+    connection: &Checkout,
+    account: AccountScope,
+    query: &ParsedQuery,
+    order: ConversationOrder,
+    offset: u32,
+    limit: u32,
+) -> Option<ConversationResults> {
+    // On the app's clock, as `execute` is, and for the same reason: a
+    // storyboard freezes it, and the months end with *its* today.
+    let started = postio_ui::clock::instant();
+    let now = postio_ui::clock::now();
+    let mut results = postio_index::executor::search_conversations(
+        connection,
+        &ConversationRequest {
+            account,
+            query,
+            order,
+            offset,
+            limit,
+            today: now.date_naive(),
+        },
+        now.with_timezone(&Utc),
+    )
+    .await
+    .map_err(|error| tracing::warn!(%error, "the conversation search did not run"))
+    .ok()?;
+
+    results.facets.labels.truncate(FACET_NAMES);
+    results.facets.folders.truncate(FACET_NAMES);
+    // A missing name is a button that says less, never a search that
+    // failed: the counts stand without them.
+    results.names = names(connection, &results)
+        .await
+        .map_err(|error| tracing::warn!(%error, "the facets' names could not be read"))
+        .unwrap_or_default();
+    results.elapsed = postio_ui::clock::instant().saturating_duration_since(started);
+    Some(results)
+}
+
+/// The names behind `results`' ids: one read per kind -- people, labels,
+/// folders -- however many there are.
+///
+/// A person's name is one their mail carried; the address row keeps only
+/// the address.
+async fn names(
+    connection: &Checkout,
+    results: &ConversationResults,
+) -> postio_storage::Result<FacetNames> {
+    use postio_storage::sql::{self, RowExt as _};
+
+    fn json(ids: impl Iterator<Item = i64>) -> String {
+        let mut ids: Vec<i64> = ids.collect();
+        ids.sort_unstable();
+        ids.dedup();
+        format!(
+            "[{}]",
+            ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
+        )
+    }
+
+    let facets = &results.facets;
+    let people = json(
+        facets
+            .senders
+            .iter()
+            .chain(&facets.recipients)
+            .map(|count| count.id.get()),
+    );
+    let labels = json(
+        facets.labels.iter().map(|count| count.id.get()).chain(
+            results
+                .hits
+                .iter()
+                .flat_map(|hit| hit.labels.iter().map(|id| id.get())),
+        ),
+    );
+    let folders = json(facets.folders.iter().map(|count| count.id.get()));
+
+    let people = sql::all(
+        connection,
+        "SELECT a.id, a.address,
+                (SELECT r.name FROM recipients r
+                  WHERE r.address_id = a.id AND r.name IS NOT NULL AND r.name <> ''
+                  LIMIT 1)
+           FROM json_each(?1) j JOIN addresses a ON a.id = j.value",
+        [people.as_str()],
+        |row| {
+            Ok((
+                AddressId::new(row.int(0)?),
+                EmailAddress {
+                    name: row.opt_text(2)?,
+                    address: row.text(1)?,
+                },
+            ))
+        },
+    )
+    .await?;
+    let labels = sql::all(
+        connection,
+        "SELECT l.id, l.name FROM json_each(?1) j JOIN labels l ON l.id = j.value",
+        [labels.as_str()],
+        |row| Ok((LabelId::new(row.int(0)?), row.text(1)?)),
+    )
+    .await?;
+    let folders = sql::all(
+        connection,
+        "SELECT m.id, m.name FROM json_each(?1) j JOIN mailboxes m ON m.id = j.value",
+        [folders.as_str()],
+        |row| Ok((MailboxId::new(row.int(0)?), row.text(1)?)),
+    )
+    .await?;
+    Ok(FacetNames {
+        people,
+        labels,
+        folders,
+    })
+}
+
+/// The passages of each hit's matches, cut from its own body, each body
+/// match told apart into the person's own words and the history they quoted
+/// (spec 010 D6, D7).
+///
+/// One body read per hit that matched in its body, and none for the rest:
+/// a subject is drawn by the row itself and a file name is its own words.
+/// The answer keeps the order of `hits` and, within each, of its sources,
+/// a body match becoming [`Source::Body`], [`Source::Quoted`] or both. A
+/// message with no local body keeps its sources without passages: the
+/// search found it by words this machine no longer has.
+///
+/// # Why quoted is decided here
+///
+/// The index does not know where a quote starts, and teaching it would mean
+/// a second indexed column and a reindex of every body. The quote detector
+/// the reader folds by, over [`postio_index::index::indexable_text`] -- the
+/// very text the index holds -- says it exactly, and only for the page on
+/// screen.
+pub async fn passages(
+    connection: &Checkout,
+    query: &ParsedQuery,
+    hits: &[(MessageId, Vec<Source>)],
+) -> Vec<(MessageId, Vec<Match>)> {
+    // What a body matched by: the words, as the index matched them.
+    let terms: Vec<String> = query
+        .searchable_terms()
+        .filter(|term| !term.negated)
+        .map(|term| term.value.clone())
+        .filter(|value| !value.is_empty())
+        .collect();
+    let mut answered = Vec::with_capacity(hits.len());
+    for (message, sources) in hits {
+        let text = if sources.contains(&Source::Body) && !terms.is_empty() {
+            let body = crate::reading::load_body(connection, *message).await;
+            postio_index::index::indexable_text(&body)
+        } else {
+            None
+        };
+        let mut matches = Vec::with_capacity(sources.len() + 1);
+        for source in sources {
+            match (source, &text) {
+                (Source::Body, Some(text)) => matches.extend(body_matches(text, &terms)),
+                (source, _) => matches.push(Match {
+                    source: source.clone(),
+                    passage: None,
+                    when: None,
+                }),
+            }
+        }
+        answered.push((*message, matches));
+    }
+    answered
+}
+
+/// A body's matches: where in the person's own words, and where in what
+/// they quoted, each with its passage.
+fn body_matches(text: &str, terms: &[String]) -> Vec<Match> {
+    use postio_body::quote::{Stretch, text_stretches};
+
+    let stretches = text_stretches(text);
+    // The message's first line is the row's preview (D7): never the
+    // passage, in whichever kind of stretch it falls.
+    let opens_quoted = matches!(stretches.first(), Some(Stretch::Quoted(_)));
+    let mut own = String::new();
+    let mut quoted = String::new();
+    for stretch in stretches {
+        match stretch {
+            Stretch::Own(words) => own.push_str(words),
+            Stretch::Quoted(lines) => quoted.push_str(&unquoted(lines)),
+        }
+    }
+
+    let found = |words: &str| !postio_search::highlight::find(words, terms).is_empty();
+    let mut matches = Vec::new();
+    if found(&own) {
+        matches.push(Match {
+            source: Source::Body,
+            passage: postio_search::passage::cut(&own, terms, !opens_quoted),
+            when: None,
+        });
+    }
+    if found(&quoted) {
+        matches.push(Match {
+            source: Source::Quoted,
+            passage: postio_search::passage::cut(&quoted, terms, opens_quoted),
+            when: None,
+        });
+    }
+    if matches.is_empty() {
+        // The index matched what the highlighter cannot point at -- a
+        // stem, a fold. Still the body; nothing to cut.
+        matches.push(Match {
+            source: Source::Body,
+            passage: None,
+            when: None,
+        });
+    }
+    matches
+}
+
+/// Quoted lines without their `>` markers: what was said, not how it was
+/// quoted.
+fn unquoted(lines: &str) -> String {
+    lines
+        .split_inclusive('\n')
+        .map(|line| line.trim_start_matches(['>', ' ', '\t']))
+        .collect()
+}
+
+/// The looser searches a query that found nothing offers, each with the
+/// conversations it would find: those that would find none left out, most
+/// first, ties in the query's own order (spec 010 US6, FR-043).
+///
+/// `None` when the counts could not be taken.
+pub async fn relaxations(
+    connection: &Checkout,
+    account: AccountScope,
+    query: &ParsedQuery,
+    today: chrono::NaiveDate,
+) -> Option<Vec<(postio_search::relax::Relaxation, u64)>> {
+    let offered = postio_search::relax::relax(query);
+    let counts = postio_index::executor::relaxation_counts(connection, account, &offered, today)
+        .await
+        .map_err(|error| tracing::warn!(%error, "the relaxations could not be counted"))
+        .ok()?;
+    let mut counted: Vec<_> = offered
+        .into_iter()
+        .zip(counts)
+        .filter(|(_, count)| *count > 0)
+        .collect();
+    counted.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+    Some(counted)
 }
