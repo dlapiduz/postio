@@ -51,6 +51,11 @@ save_search	ctrl+s
 back_to_words	ctrl+BackSpace | alt+BackSpace
 show_all_results	
 forget_recent	
+history_back	
+history_forward	
+results_conversations	
+results_files	
+results_people	
 compose	c | ctrl+n
 send	ctrl+Return | alt+s | alt+Return
 schedule_send	ctrl+shift+Return | alt+S

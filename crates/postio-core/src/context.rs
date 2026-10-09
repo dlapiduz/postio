@@ -96,6 +96,12 @@ pub enum Context {
     /// `mod+p` for the project, `alt+s` for the subject, `mod+Return` to
     /// write -- mean nothing to the list underneath.
     Capture,
+    /// The results view: the main window as a search's results, with the
+    /// list's verbs on its rows (spec 010 D17). Its own context, not
+    /// `Search`'s: the field is not focused there, so `a` archives a result
+    /// rather than typing a letter, and not `List`'s, so `mod+1` picks a tab
+    /// there and nothing in the inbox.
+    Results,
 }
 
 impl Context {
@@ -118,6 +124,9 @@ impl Context {
         Context::Digest,
         Context::Filtered,
         Context::Capture,
+        // The Mac's search results (spec 010), at the end for the same
+        // reason.
+        Context::Results,
     ];
 
     /// The stable serialized name, matching the `Deserialize` spelling.
@@ -137,6 +146,7 @@ impl Context {
             Context::Digest => "digest",
             Context::Filtered => "filtered",
             Context::Capture => "capture",
+            Context::Results => "results",
         }
     }
 

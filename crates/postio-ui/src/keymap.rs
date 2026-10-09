@@ -558,6 +558,9 @@ pub enum KeyContext {
     Filtered,
     /// The capture sheet (spec 007, milestone 3).
     Capture,
+    /// The Mac's search results, the main window's other mode (spec 010
+    /// D17).
+    Results,
 }
 
 impl KeyContext {
@@ -606,6 +609,10 @@ impl KeyContext {
             // The capture sheet sits over a message, as a picker does: a
             // letter falling through would act on the mail under it.
             Self::Capture => &[Self::Capture, Self::Global],
+            // Not layered over `List`: the results are rows of their own,
+            // and a list key that fell through would act on the inbox
+            // hidden behind them. The list's verbs name `Results` too.
+            Self::Results => &[Self::Results, Self::Global],
         }
     }
 }
@@ -633,6 +640,7 @@ impl From<Context> for KeyContext {
             Context::Digest => Self::Digest,
             Context::Filtered => Self::Filtered,
             Context::Capture => Self::Capture,
+            Context::Results => Self::Results,
         }
     }
 }
