@@ -44,10 +44,13 @@ public struct ResultRowView: View {
                     .font(.system(size: 11.5, design: .monospaced))
                     .foregroundStyle(.tertiary)
                     .frame(width: Columns.folder, alignment: .trailing)
+                // A date with its year ("22 Oct 2025") is wider than the
+                // column: it takes the room it needs rather than an ellipsis.
                 Text(row.date)
                     .font(.system(size: 12, weight: row.unread ? .bold : .regular).monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .frame(width: Columns.date, alignment: .trailing)
+                    .fixedSize()
+                    .frame(minWidth: Columns.date, alignment: .trailing)
             } else {
                 // Its page is on its way: the row's place, kept quiet.
                 Spacer()
