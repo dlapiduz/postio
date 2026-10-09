@@ -54,6 +54,13 @@ pub enum Edit {
     },
     /// Keep the free words, drop every operator, complete or half typed (D24).
     ClearFilters,
+    /// Every complete `after:` and `before:`, in place: relative to today
+    /// (`after:90d`) when `rolling`, else its calendar day
+    /// (`after:2026-07-01`). How a saved search keeps its dates (D14).
+    Dates {
+        /// Relative, or fixed.
+        rolling: bool,
+    },
 }
 
 /// `query` with `edit` applied. See the module docs for the rules.
@@ -137,6 +144,26 @@ pub fn apply(query: &str, edit: Edit, today: NaiveDate) -> String {
                 if token.field().is_some() {
                     words[i] = None;
                 }
+            }
+        }
+        Edit::Dates { rolling } => {
+            for (i, clause) in (0..tokens.len()).filter_map(|i| clause_at(i).map(|c| (i, c))) {
+                let date = match clause.filter {
+                    Filter::After(date) | Filter::Before(date) => date,
+                    _ => continue,
+                };
+                let field = if matches!(clause.filter, Filter::After(_)) {
+                    "after"
+                } else {
+                    "before"
+                };
+                let sign = if clause.negated { "-" } else { "" };
+                words[i] = Some(if rolling {
+                    let days = (today - date).num_days().max(0);
+                    format!("{sign}{field}:{days}d")
+                } else {
+                    spell(clause)
+                });
             }
         }
     }
@@ -427,5 +454,32 @@ mod tests {
             &parsed.tokens()[1].kind,
             TokenKind::Filter(clause) if clause.filter == Filter::HasAttachment
         ));
+    }
+
+    #[test]
+    fn dates_turn_rolling_or_fixed_and_nothing_else_moves() {
+        // D14: a saved search keeps its dates in the one language, relative
+        // when they roll and ISO when they stay put.
+        let today = NaiveDate::from_ymd_opt(2026, 9, 29).unwrap();
+        let rolling = |query: &str| apply(query, Edit::Dates { rolling: true }, today);
+        let fixed = |query: &str| apply(query, Edit::Dates { rolling: false }, today);
+        assert_eq!(
+            rolling("from:ada after:2026-07-01 atlas"),
+            "from:ada after:90d atlas"
+        );
+        assert_eq!(
+            fixed("from:ada after:90d atlas"),
+            "from:ada after:2026-07-01 atlas"
+        );
+        assert_eq!(fixed("atlas after:jul1"), "atlas after:2026-07-01");
+        assert_eq!(
+            rolling("before:2026-09-01 after:2026-08-01"),
+            "before:28d after:59d"
+        );
+        assert_eq!(
+            rolling("atlas budget"),
+            "atlas budget",
+            "no dates, no change"
+        );
     }
 }

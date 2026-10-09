@@ -207,6 +207,20 @@ security = "implicit-tls"
 A named, pinned search -- one table per saved search, keyed the same
 way accounts are.
 
+```toml
+[saved_searches.atlas-budget]
+query = "atlas budget from:ada@example.com after:90d"
+name = "Atlas budget from Ada"
+pinned = true   # listed among saved searches; the first four take ⌥1-⌥4
+order = 4       # where it sits among the pinned ones
+notify = true   # a quiet badge with the matches new since you last looked
+```
+
+`notify` is off unless said: the badge is a count on the saved search in
+the search dropdown, never a banner or a notification. A date that keeps
+rolling is written relative (`after:90d`, the last 90 days) and one that
+stays put as a day (`after:2026-07-01`); both are the one query language.
+
 ## `[mailboxes]`
 
 Maps a role Postio already knows (`archive`, `sent`, `trash`, ...) to
