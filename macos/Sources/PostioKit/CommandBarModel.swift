@@ -337,7 +337,7 @@ public enum CommandBarGeometry {
     public static let edge: CGFloat = 12
     /// What the toolbar keeps on the left of a grown field: the window's
     /// buttons and Compose.
-    public static let leading: CGFloat = 160
+    public static let leading: CGFloat = 168
     /// Between the field's bottom and the panel's top.
     public static let gap: CGFloat = 6
     /// The least the panel keeps from its window's bottom.
