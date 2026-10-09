@@ -602,8 +602,11 @@ pub struct ResultGroupFfi {
 pub struct ResultsViewFfi {
     /// Conversations, Files, People.
     pub tabs: Vec<TabFfi>,
-    /// The Sort menu.
+    /// The Sort menu: the order the tab shown is in.
     pub order: ConversationOrderFfi,
+    /// Whether Sort offers a choice: not on the Files tab, whose cards are
+    /// newest first.
+    pub sortable: bool,
     /// "48 conversations".
     pub count_line: String,
     /// "12 files · 6 people · last 12 months".
@@ -814,6 +817,7 @@ impl From<postio_focus::ResultsView> for ResultsViewFfi {
                 })
                 .collect(),
             order: view.order.into(),
+            sortable: view.sortable,
             count_line: view.count_line,
             sub_line: view.sub_line,
             months: month_bars(view.months),

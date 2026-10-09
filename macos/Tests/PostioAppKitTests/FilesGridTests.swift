@@ -41,7 +41,7 @@ struct FilesGridTests {
     static func files(_ count: UInt64, cursor: UInt64?) -> UiEvent {
         .focusResults(
             view: ResultsViewFfi(
-                tabs: [], order: .newest, countLine: "12 conversations", subLine: "9 files", months: [],
+                tabs: [], order: .newest, sortable: false, countLine: "12 conversations", subLine: "9 files", months: [],
                 timelineHint: "", timelineStep: nil, groups: [], rows: count, cursor: cursor, footerHints: [],
                 footerRight: "", selected: 0, bulk: [], selectAll: nil,
                 files: FilesHeaderFfi(
