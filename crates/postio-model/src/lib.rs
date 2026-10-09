@@ -91,9 +91,9 @@ pub use draft::{Draft, DraftKind, DraftState};
 pub use flag::{Flag, FlagSet};
 pub use headers::{Header, Headers};
 pub use ids::{
-    AccountId, AttachmentId, BlobId, ContactGroupId, ContactId, DeliveryId, DraftId, Generation,
-    IdentityId, LabelId, MailboxId, MessageId, ModSeq, OperationId, ReminderId, RemoteId,
-    RfcMessageId, SignatureId, ThreadId, Uid, UidValidity,
+    AccountId, AddressId, AttachmentId, BlobId, ContactGroupId, ContactId, DeliveryId, DraftId,
+    Generation, IdentityId, LabelId, MailboxId, MessageId, ModSeq, OperationId, ReminderId,
+    RemoteId, RfcMessageId, SignatureId, ThreadId, Uid, UidValidity,
 };
 pub use label::Label;
 pub use mailbox::{Mailbox, MailboxCounts, MailboxRole, RoleKind, RoleOverrides};

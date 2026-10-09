@@ -118,6 +118,13 @@ local_id!(
     LabelId
 );
 local_id!(
+    /// Identifies a row of the store's `addresses` table: one address,
+    /// however many messages name it. What search facets count people by
+    /// (spec 010), so a count names a person once whatever display names
+    /// their mail arrived under.
+    AddressId
+);
+local_id!(
     /// Identifies a [`ContactGroup`](crate::ContactGroup).
     ContactGroupId
 );
