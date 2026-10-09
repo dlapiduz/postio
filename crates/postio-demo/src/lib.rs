@@ -1272,6 +1272,22 @@ mod tests {
         .expect("a count");
         assert!(messages >= 400, "only {messages} messages");
 
+        // Screen 01's three recent searches, newest first, each with what
+        // it matched when it ran (specs/010-focus-search step 2).
+        let recent = postio_storage::searches::SearchRepository::new(&connection)
+            .recent()
+            .await
+            .expect("the recent searches");
+        let queries: Vec<&str> = recent.iter().map(|each| each.query.as_str()).collect();
+        assert_eq!(
+            queries,
+            [
+                "atlas budget",
+                "from:ada invoice",
+                "has:attachment in:Receipts after:2026-09-01"
+            ]
+        );
+
         // Twenty-four months, ending at the demo's today.
         let oldest = scalar(&connection, "SELECT min(received_at) FROM messages", ())
             .await
