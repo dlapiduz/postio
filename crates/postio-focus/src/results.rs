@@ -337,6 +337,9 @@ pub struct QueryView {
     /// The hint's key, as the registry spells it, drawn before it as a
     /// cap: `cmd+BackSpace`. `None` when the hint names its own key.
     pub hint_key: Option<String>,
+    /// The whole field carries the accent ring: nothing matches, and the
+    /// way out is in it (§3.10, screen 13).
+    pub ringed: bool,
     /// The filter bar's buttons.
     pub buttons: Vec<FilterButton>,
 }
@@ -1745,6 +1748,7 @@ impl Results {
             words: plain.join(" "),
             hint: words::TO_EDIT.to_owned(),
             hint_key: None,
+            ringed: false,
             buttons,
         }
     }
@@ -2743,10 +2747,12 @@ impl FocusController {
                 words: String::new(),
                 hint: String::new(),
                 hint_key: None,
+                ringed: false,
                 buttons: Vec::new(),
             };
         };
         let mut view = results.query_view(self.bar.now().date_naive(), &names);
+        view.ringed = results.found_nothing();
         // D24: with nothing found, ⌘⌫ clears the filters, and the field
         // says so where it says "/ to edit".
         if results.found_nothing()

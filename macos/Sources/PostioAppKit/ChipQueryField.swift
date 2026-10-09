@@ -296,13 +296,16 @@ public final class ChipAttachment: NSTextAttachment {
 /// While the dropdown is up the query is edited as text, in the bar's own
 /// search field (`editor`), laid over the chips in the same place: the
 /// controller hands the bar the query text and reads it back, so nothing
-/// here spells it.
+/// here spells it. It is ringed then, as the inbox's field is when it
+/// opens (`ToolbarSearchBox`, the same `SearchFieldChrome`), and while
+/// nothing matches (screen 13), when the hint says how to clear filters.
 @MainActor
 public final class ResultsQueryBox: NSView {
     public let field = ChipQueryField(frame: NSRect(x: 0, y: 0, width: 400, height: 34))
     public let editor = BarSearchField()
     private let hint = NSTextField(labelWithString: "")
     private let magnifier = NSImageView()
+    private let chrome = SearchFieldChrome()
 
     /// The box's height (§3.1).
     public static let height: CGFloat = 34
@@ -310,7 +313,6 @@ public final class ResultsQueryBox: NSView {
     public init() {
         super.init(frame: NSRect(x: 0, y: 0, width: 600, height: Self.height))
         wantsLayer = true
-        layer?.cornerRadius = 8
         translatesAutoresizingMaskIntoConstraints = false
         magnifier.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
         magnifier.contentTintColor = .secondaryLabelColor
@@ -319,8 +321,18 @@ public final class ResultsQueryBox: NSView {
         hint.textColor = .tertiaryLabelColor
         hint.setContentCompressionResistancePriority(.required, for: .horizontal)
         editor.isHidden = true
-        editor.font = .systemFont(ofSize: 14.5)
-        editor.controlSize = .large
+        editor.isBezeled = false
+        editor.isBordered = false
+        editor.drawsBackground = false
+        editor.focusRingType = .none
+        if let cell = editor.cell as? NSSearchFieldCell {
+            cell.usesSingleLineMode = true
+            cell.lineBreakMode = .byClipping
+            cell.isScrollable = true
+        }
+        // §2: the words 15 pt while the query is edited as text.
+        editor.textFont = .systemFont(ofSize: 15)
+        editor.frameView = self
         for view in [magnifier, field, hint, editor] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
@@ -337,8 +349,8 @@ public final class ResultsQueryBox: NSView {
             field.trailingAnchor.constraint(equalTo: hint.leadingAnchor, constant: -8),
             hint.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             hint.centerYAnchor.constraint(equalTo: centerYAnchor),
-            editor.leadingAnchor.constraint(equalTo: leadingAnchor),
-            editor.trailingAnchor.constraint(equalTo: trailingAnchor),
+            editor.leadingAnchor.constraint(equalTo: magnifier.trailingAnchor, constant: 6),
+            editor.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             editor.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         widthConstraint = width
@@ -355,10 +367,17 @@ public final class ResultsQueryBox: NSView {
         set { widthConstraint?.constant = newValue }
     }
 
-    /// Draw the query as `FocusQuery` said it, with its hint.
-    public func show(chips: [SearchQueryModel.Chip], words: String, hint: String) {
+    /// Draw the query as `FocusQuery` said it, with its hint; `nothingFound`
+    /// rings the field (screen 13).
+    public func show(chips: [SearchQueryModel.Chip], words: String, hint: String, nothingFound: Bool = false) {
         field.show(chips: chips, words: words)
         self.hint.stringValue = hint
+        self.nothingFound = nothingFound
+    }
+
+    /// Nothing matches: the field is ringed while the page is up.
+    public private(set) var nothingFound = false {
+        didSet { needsDisplay = true }
     }
 
     /// The dropdown is up: the query is edited as text in `editor`.
@@ -367,16 +386,28 @@ public final class ResultsQueryBox: NSView {
             editor.isHidden = !editing
             field.isHidden = editing
             hint.isHidden = editing
-            magnifier.isHidden = editing
             needsDisplay = true
         }
     }
 
+    /// Whether the accent ring and halo are drawn.
+    public var ringed: Bool { editing || nothingFound }
+
     public override var wantsUpdateLayer: Bool { true }
 
     public override func updateLayer() {
-        layer?.backgroundColor = editing ? NSColor.clear.cgColor : NSColor.textBackgroundColor.cgColor
-        layer?.borderColor = NSColor.separatorColor.cgColor
-        layer?.borderWidth = editing ? 0 : 1
+        chrome.apply(
+            to: layer, appearance: effectiveAppearance, ringed: ringed, radius: 8,
+            fill: .textBackgroundColor, hairline: 1)
+    }
+
+    public override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
+    public override func layout() {
+        super.layout()
+        chrome.layout(in: bounds)
     }
 }

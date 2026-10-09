@@ -511,6 +511,9 @@ pub struct QueryViewFfi {
     /// The hint's key as the registry spells it (`cmd+BackSpace`), drawn
     /// as a cap before it; `None` when the hint names its own.
     pub hint_key: Option<String>,
+    /// The whole field carries the accent ring: nothing matches (screen
+    /// 13).
+    pub ringed: bool,
     /// The filter bar's buttons, left to right.
     pub buttons: Vec<FilterButtonFfi>,
 }
@@ -532,6 +535,7 @@ impl From<postio_focus::QueryView> for QueryViewFfi {
             words: view.words,
             hint: view.hint,
             hint_key: view.hint_key,
+            ringed: view.ringed,
             buttons: view
                 .buttons
                 .into_iter()

@@ -79,6 +79,8 @@ public final class SearchQueryModel {
     /// "/ to edit", or "⌘⌫ clears filters" while nothing matches: the
     /// controller's key spelled as its cap, then its words.
     public private(set) var hint = ""
+    /// Nothing matches: the whole field carries the accent ring (screen 13).
+    public private(set) var ringed = false
     public private(set) var buttons: [Button] = []
 
     @ObservationIgnored private let engine: SearchQueryEngine
@@ -98,6 +100,7 @@ public final class SearchQueryModel {
             }
             words = view.words
             hint = [KeyCapSpelling.cap(view.hintKey), view.hint].compactMap { $0 }.joined(separator: " ")
+            ringed = view.ringed
             buttons = view.buttons.map {
                 Button(kind: $0.kind, label: $0.label, applied: $0.applied, open: $0.open)
             }
@@ -106,6 +109,7 @@ public final class SearchQueryModel {
             chips = []
             words = ""
             hint = ""
+            ringed = false
             buttons = []
             return .query
         default:

@@ -46,7 +46,8 @@ struct SearchQuerySyncTests {
         -> UiEvent
     {
         .focusQuery(
-            view: QueryViewFfi(chips: chips, words: words, hint: "/ to edit", hintKey: nil, buttons: buttons(applied)))
+            view: QueryViewFfi(
+                chips: chips, words: words, hint: "/ to edit", hintKey: nil, ringed: false, buttons: buttons(applied)))
     }
 
     static func applied(_ model: SearchQueryModel, _ kind: FilterKindFfi) -> SearchQueryModel.Button? {
@@ -149,16 +150,20 @@ struct SearchQuerySyncTests {
         #expect(engine.opened == [.from, .to, .date, .anywhere, .label])
     }
 
-    /// Screen 13 (D24): with nothing found the hint names ⌘⌫ as its cap.
+    /// Screen 13 (D24): with nothing found the hint names ⌘⌫ as its cap,
+    /// and the whole field is ringed, as the controller says.
     @Test func aHintWithAKeySpellsTheKeyAsItsCap() {
         let model = SearchQueryModel(engine: Engine())
         model.apply(
             .focusQuery(
                 view: QueryViewFfi(
-                    chips: [], words: "", hint: "clears filters", hintKey: "cmd+BackSpace", buttons: Self.buttons())))
+                    chips: [], words: "", hint: "clears filters", hintKey: "cmd+BackSpace", ringed: true,
+                    buttons: Self.buttons())))
         #expect(model.hint == "⌘⌫ clears filters")
+        #expect(model.ringed)
         model.apply(Self.query([]))
         #expect(model.hint == "/ to edit")
+        #expect(!model.ringed)
     }
 
     @Test func leavingTheResultsForgetsTheQuery() {
