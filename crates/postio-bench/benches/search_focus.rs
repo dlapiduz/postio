@@ -26,6 +26,10 @@
 //! adds the filter popovers' live preview -- the same request asked again
 //! per check, with a person, a label or a folder added or excluded -- and
 //! the timeline's and the Date popover's dates, alone and with words.
+//! Step 8 (T115) adds `completions` -- what the dropdown asks while `a`,
+//! `at`, `atl` and `from:a` are typed -- against its own 20 ms budget
+//! (SC-002), over the same corpus plus 2,000 contacts beside the 40
+//! senders, some of whom the person has written to.
 //!
 //! # Running
 //!
@@ -46,7 +50,9 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
-use postio_index::executor::{ConversationRequest, relaxation_counts, search_conversations};
+use postio_index::executor::{
+    ConversationRequest, completions, relaxation_counts, search_conversations,
+};
 use postio_model::{
     Account, AccountScope, Attachment, EmailAddress, Flag, Label, Message, MessageId, Thread,
 };
@@ -59,6 +65,14 @@ use postio_storage::{Checkout, Store};
 /// The spec's budget (FR-062): a full search, facets included, over this
 /// corpus, at the 95th percentile.
 const BUDGET: Duration = Duration::from_millis(50);
+
+/// Suggestions for a prefix (SC-002): what one keystroke of a short prefix
+/// or an operator's value asks, at the 95th percentile.
+const COMPLETIONS_BUDGET: Duration = Duration::from_millis(20);
+
+/// Contacts beyond the senders: the address book a person who has mailed
+/// for a while has.
+const CONTACTS: u64 = 2_000;
 
 const MESSAGES: u64 = 20_000;
 const SENDERS: usize = 40;
@@ -247,6 +261,62 @@ async fn build() -> Corpus {
             threads.add_message(id, message).await.expect("join");
         }
     }
+    // The address book: every sender, counted as the collector counts them,
+    // and two thousand more people, a quarter of whom were written to.
+    connection
+        .execute(
+            "INSERT INTO contacts (account_id, name, address, address_normalized,
+                                   times_seen, last_seen_at)
+             SELECT NULL, max(r.name), a.address, a.address_normalized, count(*),
+                    max(m.received_at)
+               FROM recipients r
+               JOIN addresses a ON a.id = r.address_id
+               JOIN messages m ON m.id = r.message_id
+              WHERE r.kind = 'from'
+              GROUP BY a.id",
+            (),
+        )
+        .await
+        .expect("the senders as contacts");
+    let given = [
+        "Ada", "Adam", "Adele", "Aiden", "Alex", "Amara", "Ben", "Bea", "Carmen", "Dmitri",
+        "Elena", "Farid", "Grace", "Hana", "Ivo", "Juno", "Kai", "Lena", "Mateo", "Nia",
+    ];
+    for n in 0..CONTACTS {
+        let name = format!(
+            "{} Person{n}",
+            given[rng.below(given.len() as u64) as usize]
+        );
+        let address = format!("person{n}@example.org");
+        let seen = rng.below(60) as i64;
+        let last = (first + chrono::Duration::days(rng.below(700) as i64)).timestamp_millis();
+        connection
+            .execute(
+                "INSERT INTO contacts (account_id, name, address, address_normalized,
+                                       times_seen, last_seen_at)
+                 VALUES (NULL, ?1, ?2, ?2, ?3, ?4)",
+                (name.as_str(), address.as_str(), seen, last),
+            )
+            .await
+            .expect("a contact");
+        if rng.chance(250) {
+            connection
+                .execute(
+                    "INSERT INTO addresses (address, address_normalized) VALUES (?1, ?1)",
+                    [address.as_str()],
+                )
+                .await
+                .expect("an address");
+            connection
+                .execute(
+                    "INSERT INTO correspondents (address_id, sent_count, last_sent_at)
+                     SELECT id, ?2, ?3 FROM addresses WHERE address_normalized = ?1",
+                    (address.as_str(), 1 + rng.below(40) as i64, last),
+                )
+                .await
+                .expect("a correspondent");
+        }
+    }
     connection.execute_batch("COMMIT").await.expect("commit");
 
     Corpus {
@@ -271,6 +341,8 @@ enum Kind {
     EndToEnd,
     /// `relaxation_counts` over `relax(query)`, after a search that found nothing.
     Relaxations,
+    /// `completions` for the prefix typed, or for `from:`'s value (step 8).
+    Completions,
 }
 
 const SHAPES: &[Shape] = &[
@@ -313,6 +385,26 @@ const SHAPES: &[Shape] = &[
         name: "typed atl",
         query: "atl",
         kind: Kind::Executor,
+    },
+    Shape {
+        name: "completions a",
+        query: "a",
+        kind: Kind::Completions,
+    },
+    Shape {
+        name: "completions at",
+        query: "at",
+        kind: Kind::Completions,
+    },
+    Shape {
+        name: "completions atl",
+        query: "atl",
+        kind: Kind::Completions,
+    },
+    Shape {
+        name: "completions from:a",
+        query: "from:a",
+        kind: Kind::Completions,
     },
     Shape {
         name: "zero hits, four filters",
@@ -461,6 +553,21 @@ async fn run_once(shape: &Shape, query: &ParsedQuery) -> u64 {
             std::hint::black_box(&passages);
             results.total
         }
+        Kind::Completions => {
+            let (prefix, field) = match shape.query.strip_prefix("from:") {
+                Some(value) => (value, Some(postio_search::query::Field::From)),
+                None => (shape.query, None),
+            };
+            let found = completions(&corpus.connection, account, prefix, field)
+                .await
+                .expect("completions");
+            std::hint::black_box(&found);
+            (found.words.len()
+                + found.labels.len()
+                + found.lists.len()
+                + found.files.len()
+                + found.people.len()) as u64
+        }
         Kind::Relaxations => {
             let offered = postio_search::relax::relax(query);
             let counts = relaxation_counts(&corpus.connection, account, &offered, now.date_naive())
@@ -518,13 +625,17 @@ fn main() {
             counts.statements,
             found
         );
-        if p95 >= BUDGET {
+        let budget = match shape.kind {
+            Kind::Completions => COMPLETIONS_BUDGET,
+            _ => BUDGET,
+        };
+        if p95 >= budget {
             over.push((shape.name, p95));
         }
     }
     assert!(
         over.is_empty(),
-        "over the {BUDGET:?} budget at p95: {over:?}"
+        "over budget at p95 ({BUDGET:?}, completions {COMPLETIONS_BUDGET:?}): {over:?}"
     );
 }
 
