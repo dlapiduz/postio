@@ -113,7 +113,7 @@ index_suite` green; the bench reports under budget, or the stop rule fires.
 ### Bench and report
 
 - [x] T035 Write `crates/postio-bench/benches/search_focus.rs` (and its `[[bench]]` in `crates/postio-bench/Cargo.toml`): the deterministic 20k corpus and shapes of plan.md "Performance plan", timing `search_conversations` and `relaxation_counts` and asserting the 50 ms budget as `search_budget.rs` asserts its own
-- [ ] T036 Run it on the dev Mac (`cargo bench -p postio-bench --bench search_focus`), and write `docs/notes/<date>-focus-search-step-1.md` with p50/p95 per shape and the statement counts; list it in `docs/engineering-notes.md`. **Stop rule** if over budget
+- [x] T036 Run it on the dev Mac (`cargo bench -p postio-bench --bench search_focus`), and write `docs/notes/<date>-focus-search-step-1.md` with p50/p95 per shape and the statement counts; list it in `docs/engineering-notes.md`. **Stop rule** if over budget
 - [ ] T037 Grep `crates/postio-gtk` for every changed shared name (`Filter`, `Field`, `filter_condition`, `natural::lower`); commit the phase
 
 **Checkpoint**: the engine answers a conversation search with facets,
