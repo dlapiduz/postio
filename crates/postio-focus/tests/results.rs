@@ -655,7 +655,8 @@ fn alt_click_excludes_and_again_takes_it_out() {
             .iter()
             .map(|chip| (chip.operator.as_str(), chip.value.as_str(), chip.excluded))
             .collect::<Vec<_>>(),
-        [("from:", "ada@example.com", true)]
+        [("from:", "Ada Moreno", true)],
+        "struck through, and named"
     );
     let effects = settle(&mut focus, effects, &rows);
     assert_eq!(
@@ -1060,5 +1061,57 @@ fn leaving_the_results_takes_an_open_popover_down() {
         popover_view(&effects),
         Some(None),
         "no popover is left hanging over the inbox"
+    );
+}
+
+/// A person's chip reads as the person (screen 10: "from: Ada Moreno"),
+/// named from the answer's people; the query keeps the address, and a
+/// value nobody is named by stays as typed.
+#[test]
+fn a_persons_chip_reads_as_their_name_and_the_query_keeps_the_address() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let effects = focus.handle_on(
+        Input::SearchEdit(TermEdit::Add {
+            field: "from".to_owned(),
+            value: "ada@example.com".to_owned(),
+            negated: false,
+        }),
+        &rows,
+    );
+    let effects = settle(&mut focus, effects, &rows);
+    let query = query_view(&effects).expect("the field");
+    let chips: Vec<(&str, &str)> = query
+        .chips
+        .iter()
+        .map(|chip| (chip.operator.as_str(), chip.value.as_str()))
+        .collect();
+    assert_eq!(chips, [("from:", "Ada Moreno")]);
+    assert!(
+        queries_asked(&effects)
+            .iter()
+            .all(|asked| asked == "atlas budget from:ada@example.com"),
+        "the query is the address: {:?}",
+        queries_asked(&effects)
+    );
+
+    let effects = focus.handle_on(
+        Input::SearchEdit(TermEdit::Add {
+            field: "to".to_owned(),
+            value: "nobody@example.com".to_owned(),
+            negated: false,
+        }),
+        &rows,
+    );
+    let query = query_view(&effects).expect("the field");
+    assert_eq!(
+        query
+            .chips
+            .iter()
+            .map(|chip| chip.value.as_str())
+            .collect::<Vec<_>>(),
+        ["Ada Moreno", "nobody@example.com"],
+        "no name, the value as typed"
     );
 }
