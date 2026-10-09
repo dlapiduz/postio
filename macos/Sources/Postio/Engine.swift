@@ -1310,10 +1310,12 @@ final class Engine {
     /// landed, each through the resolver and `run` as a real press would
     /// go, with a pause for what it opened to land.
     private func replayDemoKeys() {
-        guard !demoKeys.isEmpty else { return }
+        guard !demoKeys.isEmpty || DemoMode.snapshot != nil, !demoReplayed else { return }
+        demoReplayed = true
         let keys = demoKeys
         demoKeys = []
         Task { @MainActor [weak self] in
+            defer { self?.drawDemoSnapshot() }
             for key in keys {
                 try? await Task.sleep(nanoseconds: 400_000_000)
                 guard let self, let session = self.session else { return }
@@ -1327,6 +1329,22 @@ final class Engine {
                     self.run(id)
                 }
             }
+        }
+    }
+
+    @ObservationIgnored private var demoReplayed = false
+
+    /// Draw the main window, its toolbar and its children to
+    /// `DemoMode.snapshot`, once what the keys opened has landed.
+    private func drawDemoSnapshot() {
+        guard let path = DemoMode.snapshot else { return }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard let window = self?.mainWindow, let frame = window.contentView?.superview else { return }
+            frame.layoutSubtreeIfNeeded()
+            guard let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) else { return }
+            frame.cacheDisplay(in: frame.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
         }
     }
 
