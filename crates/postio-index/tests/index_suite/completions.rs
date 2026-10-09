@@ -363,3 +363,88 @@ async fn label_and_in_offer_labels_and_folders_with_their_counts() {
         "what in: that folder finds"
     );
 }
+
+#[tokio::test]
+async fn a_completion_count_stops_at_its_cap_and_says_it_is_a_floor() {
+    // D29 (maintainer, 2026-10-09): a suggestion as common as `as` is not
+    // counted to the end of the mailbox. Three times the cap of messages
+    // carry one label, each its own conversation; the count walks no
+    // further than the cap needs and says it stopped.
+    use postio_index::executor::COMPLETION_COUNT_CAP;
+    let (_database, connection, account, inbox) = store().await;
+    let mut many = postio_model::Label::new(account.id, "Atlas");
+    let many = LabelRepository::new(&connection)
+        .create(&mut many)
+        .await
+        .expect("a label");
+    let messages = 3 * COMPLETION_COUNT_CAP;
+    let ids = format!(
+        "[{}]",
+        (0..messages)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let received = now().timestamp_millis() - 86_400_000;
+    // An operator's count walks `messages` and the label's set alone, so
+    // the metadata index stands aside for the load.
+    connection.execute("BEGIN", ()).await.expect("begin");
+    postio_index::index::defer_documents(&connection)
+        .await
+        .expect("defer the index");
+    connection
+        .execute(
+            "INSERT INTO messages (account_id, mailbox_id, received_at, sort_at, seen)
+             SELECT ?1, ?2, ?3 - value, ?3 - value, 1 FROM json_each(?4)",
+            (account.id.get(), inbox.get(), received, ids),
+        )
+        .await
+        .expect("a mailbox past the cap");
+    connection
+        .execute(
+            "INSERT INTO message_labels (message_id, label_id) SELECT id, ?1 FROM messages",
+            (many.get(),),
+        )
+        .await
+        .expect("all of it labelled");
+    connection
+        .execute("DELETE FROM search_documents_deferred", ())
+        .await
+        .expect("end the deferral");
+    connection.execute("COMMIT", ()).await.expect("commit");
+
+    install(&connection);
+    let mut found = None;
+    let cost = counted_async(async || {
+        found = Some(
+            completions(&connection, AccountScope::Unified, "at", Some(Field::Label))
+                .await
+                .expect("completions"),
+        );
+    })
+    .await;
+    let found = found.expect("answered");
+    let label = found.labels.first().expect("the label");
+    assert_eq!(label.text, "Atlas");
+    assert_eq!(label.count, COMPLETION_COUNT_CAP, "the cap: {label:?}");
+    assert!(label.capped, "a count that stopped says so: {label:?}");
+    assert!(
+        cost.rows <= 2 * COMPLETION_COUNT_CAP as usize + 8,
+        "{} rows read for {messages} messages: the walk stops at the cap",
+        cost.rows
+    );
+
+    // Under the cap, the count is exact and says so.
+    connection
+        .execute(
+            "DELETE FROM message_labels WHERE message_id > (SELECT min(id) + 9 FROM messages)",
+            (),
+        )
+        .await
+        .expect("ten keep the label");
+    let found = completions(&connection, AccountScope::Unified, "at", Some(Field::Label))
+        .await
+        .expect("completions");
+    let label = found.labels.first().expect("the label");
+    assert_eq!((label.count, label.capped), (10, false));
+}

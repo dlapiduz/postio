@@ -11,7 +11,8 @@
 //!
 //! Every suggestion's count is what its query would find (US7's
 //! independent test): the conversations [`super::relaxations`] counts, all
-//! of them in one statement. So the whole answer is at most four
+//! of them in one statement -- up to [`COMPLETION_COUNT_CAP`], past which
+//! it is a floor (D29). So the whole answer is at most four
 //! statements: the documents, the bodies when needed, the labels, the
 //! counts.
 //!
@@ -56,6 +57,19 @@ const FILES: usize = 20;
 
 /// People offered.
 const PEOPLE: usize = 4;
+
+/// Where a suggestion's count stops (D29, maintainer 2026-10-09): the
+/// matches walked, as [`TOTAL_HITS_CAP`](postio_search::results::TOTAL_HITS_CAP)
+/// is the conversation search's. Past it the count is a floor -- the
+/// conversations among the matches walked -- and the row says "N+".
+///
+/// Below it the count is exact, what the suggestion's query would find
+/// (US7). A completion as common as `as`, in every message, walked the
+/// whole mailbox to the search's own cap and cost 28 ms of a 20 ms
+/// keystroke budget. On the step-1 corpus a thousand puts `a` at 4.4 ms at
+/// p95, 2,500 at 8.2 and 6,500 (what a floor of a thousand *conversations*
+/// would need there) at 18.1 (step-8 note, "Capped").
+pub const COMPLETION_COUNT_CAP: u64 = 1_000;
 
 /// The separator between a document's file names: a unit separator, which
 /// no file name carries.
@@ -201,6 +215,7 @@ async fn words_labels_lists_files(
                 filter: Filter::Filename(token),
             }),
             count: seen,
+            capped: false,
         })
         .collect();
 
@@ -324,12 +339,13 @@ fn completed(found: impl Iterator<Item = (String, Filter)>) -> Vec<Completion> {
                 filter,
             }),
             count: 0,
+            capped: false,
         })
         .collect()
 }
 
 /// Every completion in `groups` counted as its query counts, in one
-/// statement.
+/// statement, each walk stopping at [`COMPLETION_COUNT_CAP`].
 async fn count_all(
     connection: &Connection,
     account: AccountScope,
@@ -340,10 +356,14 @@ async fn count_all(
         .flat_map(|group| group.iter())
         .map(|completion| postio_search::parse(&completion.query, undated()))
         .collect();
-    let mut found = counts(connection, account, &queries).await?.into_iter();
+    let mut found = counts(connection, account, &queries, COMPLETION_COUNT_CAP)
+        .await?
+        .into_iter();
     for group in groups.iter_mut() {
         for completion in group.iter_mut() {
-            completion.count = found.next().unwrap_or(0);
+            let counted = found.next().unwrap_or_default();
+            completion.count = counted.conversations;
+            completion.capped = counted.capped;
         }
     }
     Ok(())

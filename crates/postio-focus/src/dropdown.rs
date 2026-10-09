@@ -22,6 +22,7 @@ use postio_model::{MessageId, ThreadId};
 use postio_search::highlight;
 use postio_search::query::{Clause, Filter};
 use postio_search::results::{ConversationHit, ConversationKey, ConversationResults, Passage};
+use postio_search::suggest::Completion;
 use postio_ui::hints::Hint;
 use postio_ui::search_view as words;
 
@@ -709,7 +710,7 @@ pub(crate) fn prefix_marks(text: &str, prefix: &str) -> Vec<std::ops::Range<usiz
 #[derive(Debug, Clone)]
 pub(crate) enum Offer {
     /// A word that completes the prefix.
-    Word(postio_search::suggest::Completion),
+    Word(Completion),
     /// A label.
     Label(postio_search::suggest::Completion),
     /// A mailing list.
@@ -764,7 +765,8 @@ impl Offer {
         first: bool,
         operator: bool,
     ) -> DropdownRow {
-        let count = |n: u64| Some(n.to_string());
+        // Grouped, and a floor past the completion cap (D29).
+        let count = |found: &Completion| Some(words::suggestion_count(found.count, found.capped));
         let base = DropdownRow {
             token,
             kind: DropdownRowKind::Word,
@@ -780,7 +782,7 @@ impl Offer {
             Offer::Word(word) => DropdownRow {
                 title: marked(&word.text, &prefix_marks(&word.text, typed)),
                 detail: vec![Run::plain(words::AS_A_WORD)],
-                right: count(word.count),
+                right: count(word),
                 // Tab takes the first word: the ghost's.
                 key: first.then(|| "Tab".to_owned()),
                 ..base
@@ -789,21 +791,21 @@ impl Offer {
             Offer::Label(label) if operator => DropdownRow {
                 kind: DropdownRowKind::Label,
                 title: marked(&label.text, &prefix_marks(&label.text, typed)),
-                right: count(label.count),
+                right: count(label),
                 ..base
             },
             Offer::Label(label) => DropdownRow {
                 kind: DropdownRowKind::Label,
                 title: mono_marked("label:", &label.text, typed),
                 detail: vec![Run::plain(words::LABEL)],
-                right: count(label.count),
+                right: count(label),
                 ..base
             },
             Offer::List(list) => DropdownRow {
                 kind: DropdownRowKind::List,
                 title: marked(&list.text, &prefix_marks(&list.text, typed)),
                 detail: vec![Run::plain(words::list_detail(&list.text))],
-                right: count(list.count),
+                right: count(list),
                 ..base
             },
             Offer::Files(files) => {
@@ -813,7 +815,10 @@ impl Offer {
                     kind: DropdownRowKind::File,
                     title: marked(&title, &prefix_marks(&title, typed)),
                     detail: vec![Run::plain(words::files_detail(&names))],
-                    right: count(files.iter().map(|file| file.count).sum()),
+                    right: Some(words::suggestion_count(
+                        files.iter().map(|file| file.count).sum(),
+                        false,
+                    )),
                     ..base
                 }
             }
@@ -844,7 +849,7 @@ impl Offer {
                 kind: DropdownRowKind::Folder,
                 title: marked(&folder.text, &prefix_marks(&folder.text, typed)),
                 detail: vec![Run::styled(folder.query.clone(), RunStyle::Mono)],
-                right: count(folder.count),
+                right: count(folder),
                 key: None,
                 ..base
             },

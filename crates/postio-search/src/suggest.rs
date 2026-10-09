@@ -271,6 +271,10 @@ pub struct Completion {
     pub query: String,
     /// What that query counts.
     pub count: u64,
+    /// Whether the count stopped at a cap and is a floor ("1,000+"):
+    /// a suggestion as common as `as` is not counted to the end of the
+    /// mailbox while a key is being typed (spec 010 D29).
+    pub capped: bool,
 }
 
 /// A person `from:` and `to:` complete to, ranked two-way (D21).
@@ -321,6 +325,7 @@ pub fn rank_words<'a>(prefix: &str, vocabulary: impl Iterator<Item = Term<'a>>) 
             query: text.clone(),
             text,
             count: documents,
+            capped: false,
         })
         .collect()
 }

@@ -39,7 +39,7 @@ mod completions;
 mod conversations;
 mod files;
 mod relaxations;
-pub use completions::completions;
+pub use completions::{COMPLETION_COUNT_CAP, completions};
 pub use conversations::{ConversationRequest, search_conversations};
 pub use files::{FILES_CAP, FileMatch, file_matches, files};
 pub use relaxations::relaxation_counts;
