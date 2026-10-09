@@ -706,6 +706,19 @@ pub async fn search_demo() -> (Store, AccountId) {
     postio_storage::sql::batch(&connection, "COMMIT")
         .await
         .expect("commit the bodies");
+    // Screen 01's recent searches: run yesterday, on the weekday before,
+    // and the week before that, with the counts their footers said.
+    let searches = postio_storage::searches::SearchRepository::new(&connection);
+    for (query, hits, days) in [
+        ("has:attachment in:Receipts after:2026-09-01", 19, 9),
+        ("from:ada invoice", 6, 5),
+        ("atlas budget", 48, 1),
+    ] {
+        searches
+            .remember(query, hits, today - Duration::days(days))
+            .await
+            .expect("a recent search");
+    }
     drop(connection);
     (database, account.id)
 }
