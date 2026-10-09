@@ -180,29 +180,36 @@ public struct DropdownView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize()
                 .padding(.trailing, 4)
-            ForEach(Array(model.understood.enumerated()), id: \.offset) { _, tile in
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 0) {
-                        Text(tile.op).foregroundStyle(.tertiary)
-                        Text(tile.value).foregroundStyle(.primary).fontWeight(.medium)
+            // The tiles scroll rather than widen the panel: a long sentence
+            // makes more of them than a narrow field has room for.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(Array(model.understood.enumerated()), id: \.offset) { _, tile in
+                        VStack(alignment: .leading, spacing: 1) {
+                            HStack(spacing: 0) {
+                                Text(tile.op).foregroundStyle(.tertiary)
+                                Text(tile.value).foregroundStyle(.primary).fontWeight(.medium)
+                            }
+                            .font(.system(size: 12, design: .monospaced))
+                            Text(tile.origin)
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.secondary)
+                        }
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator, lineWidth: 1))
                     }
-                    .font(.system(size: 12, design: .monospaced))
-                    Text(tile.origin)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.secondary)
                 }
-                .lineLimit(1)
-                .fixedSize()
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator, lineWidth: 1))
             }
-            Spacer(minLength: 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
             Text(Self.words.understoodNote)
                 .font(.system(size: 12))
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
+                .layoutPriority(-1)
         }
         .padding(.horizontal, 16)
         .frame(height: Metrics.understood)
