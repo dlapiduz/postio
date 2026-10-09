@@ -25,6 +25,7 @@ mod conversations;
 mod digest_matcher;
 mod driven_join_plan;
 mod executor;
+mod facets_one_pass;
 mod group_filter;
 mod header_index;
 mod header_index_size;
