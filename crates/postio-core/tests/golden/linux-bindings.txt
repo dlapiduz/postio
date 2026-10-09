@@ -66,6 +66,7 @@ pick_relaxation_1
 pick_relaxation_2	
 pick_relaxation_3	
 pick_relaxation_4	
+save_file	
 compose	c | ctrl+n
 send	ctrl+Return | alt+s | alt+Return
 schedule_send	ctrl+shift+Return | alt+S

@@ -327,6 +327,28 @@ pub enum Req {
         /// What the asking row does with a message's first line.
         first_line: postio_search::passage::FirstLine,
     },
+    /// The Files tab: a page of the attachments whose name or contents
+    /// match, each with its match (spec 010 US8). Cancellable.
+    Files {
+        /// Which accounts.
+        account: postio_model::AccountScope,
+        /// The query.
+        query: postio_search::ParsedQuery,
+        /// How many cards to skip.
+        offset: u32,
+        /// How many to answer.
+        limit: u32,
+    },
+    /// Copy an attachment's bytes, when they are on this machine, into
+    /// `dir` -- a temporary folder the frontend owns -- for the system's
+    /// Quick Look or a save (FR-053). Never fetched: an attachment whose
+    /// bytes are not here answers nothing (FR-050).
+    AttachmentCopy {
+        /// Which attachment.
+        attachment: postio_model::ids::AttachmentId,
+        /// Where the copy goes; nothing is written outside it.
+        dir: std::path::PathBuf,
+    },
     /// Every match in one conversation, oldest first, each with its
     /// passage and who wrote it: Quick Look's cards (spec 010 US4).
     /// Cancellable.
@@ -737,6 +759,10 @@ pub enum Resp {
     /// One conversation's matches, oldest first; empty when it could not be
     /// read.
     Matches(Vec<postio_search::results::ConversationMatch>),
+    /// The Files tab's cards; empty when the store could not be read.
+    Files(Vec<postio_search::results::FileHit>),
+    /// Where a copy was written, or nothing when it could not be.
+    Path(Option<std::path::PathBuf>),
     /// The ways out that would find something, most first; empty when none
     /// would, or when they could not be counted.
     Relaxed(Vec<(postio_search::relax::Relaxation, u64)>),

@@ -1240,6 +1240,135 @@ pub fn files_detail(names: &[&str]) -> String {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The Files tab (spec 010 step 9, US8, design §3.8, screen 11)
+// ---------------------------------------------------------------------------
+
+/// The Files tab's header, over the grid.
+pub const FILES_TITLE: &str = "Files whose name or contents match";
+
+/// The header's note beside it: what is searched inside, and -- while
+/// the indexer is still reading files on this Mac -- that it is not done,
+/// so a file not found yet is not taken for one that does not say it.
+/// iWork documents and the text in images are not read (step 9 note).
+pub fn files_note(contents_complete: bool) -> String {
+    if contents_complete {
+        "contents are indexed on this Mac for PDF, Office documents and text".to_owned()
+    } else {
+        "still reading the contents of files on this Mac: some may not be found yet".to_owned()
+    }
+}
+
+/// What a card's preview is drawn as: a sheet's grid, a page's lines, a
+/// deck's slide, an image, or plain lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilePreview {
+    /// Rows and columns: a spreadsheet.
+    Sheet,
+    /// Lines on a page: a PDF, a document.
+    Page,
+    /// A slide.
+    Slides,
+    /// A picture.
+    Image,
+    /// Lines of text.
+    Text,
+}
+
+/// A file's type, as its tile says it: the name's extension in capitals
+/// ("XLSX", "PDF"), or the type's own name when the name has none.
+pub fn file_kind(name: &str, mime_type: &str) -> String {
+    let extension = std::path::Path::new(name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .filter(|extension| !extension.is_empty() && extension.len() <= 7);
+    if let Some(extension) = extension {
+        return match extension.to_ascii_lowercase().as_str() {
+            "numbers" => "NUM".to_owned(),
+            "jpeg" => "JPG".to_owned(),
+            other => other.to_ascii_uppercase(),
+        };
+    }
+    let subtype = mime_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .rsplit('/')
+        .next()
+        .unwrap_or_default();
+    match subtype {
+        "pdf" => "PDF",
+        "plain" => "TXT",
+        "csv" => "CSV",
+        "jpeg" => "JPG",
+        "png" => "PNG",
+        _ => "FILE",
+    }
+    .to_owned()
+}
+
+/// How a card's preview is drawn, from its type.
+pub fn file_preview(name: &str, mime_type: &str) -> FilePreview {
+    match file_kind(name, mime_type).as_str() {
+        "XLSX" | "XLS" | "CSV" | "NUM" | "ODS" => FilePreview::Sheet,
+        "PPTX" | "PPT" | "KEY" | "ODP" => FilePreview::Slides,
+        "JPG" | "PNG" | "GIF" | "HEIC" | "WEBP" | "TIFF" => FilePreview::Image,
+        "TXT" | "MD" | "LOG" => FilePreview::Text,
+        _ => FilePreview::Page,
+    }
+}
+
+/// A card's second line: "Ada Moreno · 26 Sep · 48 KB".
+pub fn file_meta(sender: &str, date: &str, size: u64) -> String {
+    [sender, date, &crate::format::human_size(size)]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" \u{b7} ")
+}
+
+/// A card's last line: the message it came in, "in ‘Re: Atlas Q3
+/// budget’".
+pub fn file_subject(subject: &str) -> String {
+    format!("in \u{2018}{subject}\u{2019}")
+}
+
+/// What a screen reader says for a card: "Atlas-Q3-budget.xlsx, XLSX,
+/// Ada Moreno · 26 Sep · 48 KB, Sheet ‘Q3’, row 3: Total Atlas budget, in
+/// ‘Re: Atlas Q3 budget’".
+pub fn file_accessible(name: &str, kind: &str, meta: &str, line: &str, subject: &str) -> String {
+    [name, kind, meta, line, subject]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// A file whose bytes are not on this Mac cannot be previewed or saved
+/// from here: nothing is fetched to do it (FR-050).
+pub const FILE_NOT_HERE: &str = "That file isn\u{2019}t on this Mac yet: open its message to download it";
+
+/// The Files tab's footer (design §3.8): the grid's arrows, Quick Look,
+/// open the message, save, and the tabs.
+pub fn files_hints(keymap: &Keymap) -> Vec<Hint> {
+    let mut out = vec![hints::fixed(
+        "Up/Down/Left/Right",
+        "move",
+        "the arrows move the ring across the grid's columns and rows, which \
+         the collection view lays out; j and k step it as the list's do",
+    )];
+    out.extend(hints::hint(keymap, CommandId::QuickLook, "Quick Look"));
+    out.extend(hints::hint(keymap, CommandId::OpenMessage, "open the message"));
+    out.extend(hints::hint(keymap, CommandId::SaveFile, "save file"));
+    out.extend(hints::pair(
+        keymap,
+        CommandId::ResultsConversations,
+        CommandId::ResultsPeople,
+        "switch tab",
+    ));
+    out
+}
+
 /// The operator state's first section: "People matching “ad”", or the
 /// operator's own noun while nothing is typed after it.
 pub fn matching(noun: &str, typed: &str) -> String {
@@ -2201,6 +2330,29 @@ mod tests {
         assert_eq!(relaxation_count(4), "4 conversations");
         assert_eq!(relaxation_count(1), "1 conversation");
         assert_eq!(relaxation_count(18_204), "18,204 conversations");
+    }
+
+    #[test]
+    fn a_file_card_says_its_type_who_sent_it_and_where_it_came() {
+        assert_eq!(file_kind("Atlas-Q3-budget.xlsx", "application/octet-stream"), "XLSX");
+        assert_eq!(file_kind("variance-by-team.numbers", ""), "NUM");
+        assert_eq!(file_kind("scan", "application/pdf"), "PDF");
+        assert_eq!(file_kind("notes", "text/plain; charset=utf-8"), "TXT");
+        assert_eq!(file_preview("Atlas-Q3-budget.xlsx", ""), FilePreview::Sheet);
+        assert_eq!(file_preview("deck.pptx", ""), FilePreview::Slides);
+        assert_eq!(file_preview("whiteboard.jpg", ""), FilePreview::Image);
+        assert_eq!(file_preview("Atlas-Sep-actuals.pdf", ""), FilePreview::Page);
+        assert_eq!(
+            file_meta("Ada Moreno", "26 Sep", 48 * 1024),
+            "Ada Moreno \u{b7} 26 Sep \u{b7} 48 KB"
+        );
+        assert_eq!(
+            file_subject("Re: Atlas Q3 budget"),
+            "in \u{2018}Re: Atlas Q3 budget\u{2019}"
+        );
+        assert_eq!(FILES_TITLE, "Files whose name or contents match");
+        assert!(files_note(true).starts_with("contents are indexed on this Mac"));
+        assert!(files_note(false).contains("still reading"));
     }
 
     #[test]

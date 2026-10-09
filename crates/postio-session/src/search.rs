@@ -279,6 +279,33 @@ pub async fn conversations(
     Some(results)
 }
 
+/// The Files tab's cards (spec 010 US8): a page of the attachments of the
+/// mail `query` matches whose name or contents match it, newest first,
+/// each with its match. `None` when the query could not run.
+pub async fn files(
+    connection: &Checkout,
+    account: AccountScope,
+    query: &ParsedQuery,
+    offset: u32,
+    limit: u32,
+) -> Option<Vec<postio_search::results::FileHit>> {
+    let now = postio_ui::clock::now();
+    postio_index::executor::files(
+        connection,
+        &ConversationRequest {
+            account,
+            query,
+            order: ConversationOrder::Newest,
+            offset,
+            limit,
+            today: now.date_naive(),
+        },
+    )
+    .await
+    .map_err(|error| tracing::warn!(%error, "the files search did not run"))
+    .ok()
+}
+
 /// Every message of every conversation `query` matches, but those whose
 /// best message is in `except`: what ⇧X in Focus's results selects (spec
 /// 010 US5), resolved with the results' own match -- capped as their count

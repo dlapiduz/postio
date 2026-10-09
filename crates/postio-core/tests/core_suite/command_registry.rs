@@ -1013,3 +1013,20 @@ fn exclude_suggestion_is_the_dropdowns_alone() {
     assert_eq!(registry::get(id).contexts, Context::Search.as_set());
     assert_eq!(id.as_str(), "exclude_suggestion");
 }
+
+/// Spec 010 step 9 (FR-031, D25): ⌘↓ saves the file under the ring on the
+/// Files tab: the results view's alone, and the Mac's until Linux adopts
+/// it.
+#[test]
+fn saving_a_file_is_the_results_views_alone() {
+    use postio_config::paths::Platform;
+    use postio_core::ActionId;
+    let action = ActionId::Builtin(CommandId::SaveFile);
+    assert!(registry::offered_on(action, Platform::Apple));
+    assert!(!registry::offered_on(action, Platform::Freedesktop));
+    assert_eq!(
+        registry::get(CommandId::SaveFile).contexts,
+        Context::Results.as_set()
+    );
+    assert_eq!(CommandId::SaveFile.as_str(), "save_file");
+}

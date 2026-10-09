@@ -60,10 +60,12 @@ pub use pickers::{
 };
 pub use postio_ui::capture::{Mode as CaptureMode, Pick as CapturePick};
 pub use postio_ui::digest::{Page as DigestPage, Schedule as RuleSchedule};
+pub use postio_ui::search_view::FilePreview;
 pub use results::{
-    Chip, DatePresetView, FilterButton, LabelPill, MatchCard, MonthBar, NoResultsView, PopoverRow,
-    PopoverView, QueryView, QuickLookView, RelaxationView, ResultGroup, ResultRow, ResultsTabView,
-    ResultsView, SaveView, TermEdit,
+    Chip, DatePresetView, FileCard, FileCopy, FilePurpose, FilesHeader, FilterButton, LabelPill,
+    MatchCard, MonthBar, NoResultsView, PopoverRow, PopoverView, QueryView, QuickLookView,
+    RelaxationView, ResultGroup, ResultRow, ResultsTabView, ResultsView, SaveView, TermEdit,
+    file_copies,
 };
 pub use states::{AccountsRead, BannerButton, BannerView};
 pub use surfaces::{Host, ReaderVerb, SurfaceKind};
@@ -208,6 +210,9 @@ pub enum Input {
     ResultsOrder(postio_search::results::ConversationOrder),
     /// A click put the focus ring on this result.
     ResultsPoint(u64),
+    /// The system's Quick Look on a file, or its save panel, is gone: the
+    /// copy it was handed can go too (FR-053).
+    FileCopyDone,
     /// Go to the folders popover's place with this token
     /// ([`FocusController::places`]).
     OpenPlace(u64),
@@ -519,6 +524,11 @@ pub enum Intent {
     /// The results found nothing: draw this page, whole, in the rows'
     /// place; `None` takes it away (spec 010 US6, design §3.10).
     Relaxations(Option<Box<NoResultsView>>),
+    /// Hand the system this copy of a file: its Quick Look on it, or a
+    /// save panel to put it somewhere (spec 010 US8, FR-053); `None`
+    /// closes the Quick Look panel. The frontend says
+    /// [`Input::FileCopyDone`] when the panel is gone.
+    FileCopy(Option<FileCopy>),
     /// The main window shows the inbox again; its cursor and selection
     /// follow.
     LeaveResults,
@@ -683,6 +693,26 @@ pub enum Request {
         /// The results' stamp, echoed in the answer.
         stamp: u64,
     },
+    /// The Files tab's cards (spec 010 US8).
+    Files {
+        /// The results' query.
+        query: postio_search::ParsedQuery,
+        /// The results' stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// Copy a file's bytes, when they are on this machine, into
+    /// [`file_copies`]: for the system's Quick Look or a save.
+    AttachmentCopy {
+        /// Which file.
+        attachment: postio_model::AttachmentId,
+        /// What the copy is for.
+        purpose: FilePurpose,
+        /// The copy's stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// A copy handed to the system is done with: remove it, when it is
+    /// one of [`file_copies`]'s and nothing else.
+    RemoveCopy(std::path::PathBuf),
     /// Every match in the conversation Quick Look shows.
     QuickLookMatches {
         /// The results' query.
@@ -892,6 +922,7 @@ impl Request {
             Request::Conversations { .. } => Some(Lane::Conversations),
             Request::Passages { .. } => Some(Lane::Passages),
             Request::QuickLookMatches { .. } => Some(Lane::Matches),
+            Request::Files { .. } => Some(Lane::Files),
             Request::Relaxations { .. } => Some(Lane::Relaxations),
             Request::Facets { .. } => Some(Lane::Facets),
             Request::Suggest { .. } => Some(Lane::Suggest),
@@ -969,6 +1000,22 @@ pub enum Reply {
         stamp: u64,
         /// Each hit's matches, with their passages.
         answer: Result<Vec<(MessageId, Vec<postio_search::results::Match>)>, String>,
+    },
+    /// The answer to [`Request::Files`].
+    Files {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// The cards, newest first.
+        answer: Result<Vec<postio_search::results::FileHit>, String>,
+    },
+    /// The answer to [`Request::AttachmentCopy`].
+    AttachmentCopy {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// What the copy was for.
+        purpose: FilePurpose,
+        /// Where the copy is, or nothing when the bytes are not here.
+        answer: Result<Option<std::path::PathBuf>, String>,
     },
     /// The answer to [`Request::QuickLookMatches`].
     QuickLookMatches {
@@ -1329,6 +1376,8 @@ impl FocusController {
                 _,
                 reply @ (Reply::ResultsPage { .. }
                 | Reply::ResultsPassages { .. }
+                | Reply::Files { .. }
+                | Reply::AttachmentCopy { .. }
                 | Reply::QuickLookMatches { .. }
                 | Reply::Facets { .. }
                 | Reply::Relaxations { .. }),
@@ -1512,6 +1561,7 @@ impl FocusController {
             | Input::ResultsTab(_)
             | Input::ResultsOrder(_)
             | Input::ResultsPoint(_)
+            | Input::FileCopyDone
             | Input::SaveSearchAs { .. }) => {
                 let steps = self.results_input(input);
                 self.effects(steps)

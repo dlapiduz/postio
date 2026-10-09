@@ -242,6 +242,7 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::PickRelaxation2
         | C::PickRelaxation3
         | C::PickRelaxation4
+        | C::SaveFile
         | C::GoToFiltered
         | C::GoToDigestRules
         | C::ToggleHasAction

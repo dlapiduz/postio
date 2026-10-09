@@ -320,6 +320,84 @@ pub async fn raw_blob(database: &Store, message: MessageId) -> Result<Option<Blo
     Ok(read_message(database, message).await?.raw_blob_id)
 }
 
+/// A copy of `attachment`'s bytes in `dir`, when they are on this machine
+/// (spec 010 FR-050, FR-053): for the system's Quick Look, or a save from
+/// the Files tab. Never fetched -- a part whose bytes are not here is
+/// `None` -- and written only under `dir`, in a folder of the
+/// attachment's own (readable by this user alone), named as the sender
+/// named it but only by the name's last component, so a hostile name
+/// cannot climb out.
+pub async fn local_copy(
+    database: &Store,
+    blobs: &BlobStore,
+    attachment: AttachmentId,
+    dir: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::DirBuilderExt;
+    let found = async {
+        let connection = database.read().await.map_err(|error| error.to_string())?;
+        postio_storage::sql::first(
+            &connection,
+            "SELECT message_id, filename, blob_id FROM attachments
+              WHERE id = ?1 AND message_id IS NOT NULL",
+            [attachment.get()],
+            |row| {
+                use postio_storage::sql::RowExt as _;
+                Ok((
+                    MessageId::new(row.col::<i64>(0)?),
+                    row.col::<Option<String>>(1)?,
+                    row.col::<Option<String>>(2)?,
+                ))
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())
+    }
+    .await;
+    let (message, name, blob) = match found {
+        Ok(Some(found)) => found,
+        Ok(None) => return None,
+        Err(error) => {
+            tracing::warn!(%error, attachment = attachment.get(), "an attachment to copy could not be read");
+            return None;
+        }
+    };
+    let bytes = match blob {
+        Some(blob) => blobs.get(&BlobId::new(blob)).ok(),
+        // Cut from a raw message on this machine, never fetched: no engine
+        // is handed over, so a part not here stays not here.
+        None => part_bytes(database, blobs, None, message, attachment)
+            .await
+            .ok(),
+    };
+    let Some(bytes) = bytes else {
+        tracing::debug!(
+            attachment = attachment.get(),
+            "an attachment's bytes are not on this machine"
+        );
+        return None;
+    };
+    let name = name
+        .as_deref()
+        .and_then(|name| std::path::Path::new(name).file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty() && name != "." && name != "..")
+        .unwrap_or_else(|| "attachment".to_owned());
+    let folder = dir.join(attachment.get().to_string());
+    let written = std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&folder)
+        .and_then(|()| std::fs::write(folder.join(&name), bytes));
+    match written {
+        Ok(()) => Some(folder.join(name)),
+        Err(error) => {
+            tracing::warn!(%error, attachment = attachment.get(), "an attachment could not be copied");
+            None
+        }
+    }
+}
+
 /// A message's row, or a sentence saying it is gone.
 pub async fn read_message(
     database: &Store,

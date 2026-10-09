@@ -33,6 +33,13 @@ pub fn perform_now(client: &Client, request: Request) -> Result<Reply, Request> 
             client.note_removed(mailbox, messages);
             Ok(Reply::Noted)
         }
+        // A copy handed to the system's Quick Look or save panel is done
+        // with (FR-053). Only ever one of `file_copies`' own: a path from
+        // anywhere else is left alone.
+        Request::RemoveCopy(path) => {
+            crate::results::remove_copy(&path);
+            Ok(Reply::Noted)
+        }
         other => Err(other),
     }
 }
@@ -195,6 +202,34 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .map_err(|error| error.to_string()),
         },
+        Request::Files { query, stamp } => Reply::Files {
+            stamp,
+            answer: client
+                .files(
+                    postio_model::AccountScope::Unified,
+                    query,
+                    0,
+                    crate::results::FILES_READ,
+                )
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::AttachmentCopy {
+            attachment,
+            purpose,
+            stamp,
+        } => Reply::AttachmentCopy {
+            stamp,
+            purpose,
+            answer: client
+                .attachment_copy(attachment, crate::results::file_copies())
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::RemoveCopy(path) => {
+            crate::results::remove_copy(&path);
+            Reply::Noted
+        }
         Request::QuickLookMatches { query, key, stamp } => Reply::QuickLookMatches {
             stamp,
             answer: client

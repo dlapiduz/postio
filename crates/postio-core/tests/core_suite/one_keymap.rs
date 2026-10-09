@@ -321,6 +321,8 @@ const CONTRACT: &[Row] = &[
         Graphical,
         &[Context::Results],
     ),
+    // Spec 010 step 9: ⌘↓ saves the file under the ring (FR-031).
+    with("save_file", "mod+Down", &[], Graphical, &[Context::Results]),
     // Spec 010 step 4: ⌥←/⌥→ step the timeline's range a month (FR-023).
     with(
         "step_range_back",
@@ -785,4 +787,19 @@ fn exclude_suggestion_is_option_return_on_the_mac() {
     );
     assert!(linux.bindings(CommandId::ExcludeSuggestion).is_empty());
     assert!(!linux.offers(CommandId::ExcludeSuggestion));
+}
+
+/// Spec 010 step 9 (FR-031, D25): ⌘↓ saves the file on the Files tab, on
+/// the Mac; not on Linux yet.
+#[test]
+fn saving_a_file_is_command_down_on_the_mac() {
+    let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
+    let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+    assert_eq!(mac.bindings(CommandId::SaveFile), ["cmd+Down"]);
+    assert_eq!(
+        mac.command_for(Context::Results, "cmd+Down"),
+        Some(postio_core::ActionId::Builtin(CommandId::SaveFile))
+    );
+    assert!(linux.bindings(CommandId::SaveFile).is_empty());
+    assert!(!linux.offers(CommandId::SaveFile));
 }

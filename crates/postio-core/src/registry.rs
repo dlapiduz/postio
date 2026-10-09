@@ -1299,6 +1299,19 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
     },
+    // ⌘↓ saves the file under the ring on the Files tab (spec 010 FR-031,
+    // design §3.8): Finder's "open" chord, for the file a card stands for.
+    // The results' own, and the Mac's until Linux adopts them (D25).
+    CommandSpec {
+        id: CommandId::SaveFile,
+        title: "Save file",
+        default_binding: "mod+Down",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
     CommandSpec {
         id: CommandId::Compose,
         title: "Compose",
@@ -2816,6 +2829,7 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             | (ActionId::Builtin(C::PickRelaxation2), Platform::Freedesktop)
             | (ActionId::Builtin(C::PickRelaxation3), Platform::Freedesktop)
             | (ActionId::Builtin(C::PickRelaxation4), Platform::Freedesktop)
+            | (ActionId::Builtin(C::SaveFile), Platform::Freedesktop)
     )
 }
 
@@ -2892,7 +2906,7 @@ mod tests {
 
     /// What only the Mac's search dropdown and results view draw, until
     /// Linux adopts them (spec 010 D23, D25).
-    const NOT_ON_LINUX_YET: [CommandId; 17] = [
+    const NOT_ON_LINUX_YET: [CommandId; 18] = [
         CommandId::ShowAllResults,
         CommandId::ForgetRecent,
         CommandId::ExcludeSuggestion,
@@ -2910,6 +2924,7 @@ mod tests {
         CommandId::PickRelaxation2,
         CommandId::PickRelaxation3,
         CommandId::PickRelaxation4,
+        CommandId::SaveFile,
     ];
 
     #[test]

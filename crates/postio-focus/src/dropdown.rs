@@ -231,6 +231,8 @@ pub enum Lane {
     Suggest,
     /// The latest from the person the arrows rest on: a move supersedes it.
     Latest,
+    /// The Files tab's cards: a newer query supersedes them.
+    Files,
 }
 
 /// The dropdown's top hits.

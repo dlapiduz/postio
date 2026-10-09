@@ -1009,6 +1009,18 @@ impl Inner {
             Req::ConversationMatches { query, key } => Resp::Matches(
                 search::conversation_matches(&self.wiring.database, &query, key).await,
             ),
+            Req::Files {
+                account,
+                query,
+                offset,
+                limit,
+            } => Resp::Files(
+                search::files(&self.wiring.database, account, &query, offset, limit).await,
+            ),
+            Req::AttachmentCopy { attachment, dir } => Resp::Path(
+                parts::local_copy(&self.wiring.database, &self.wiring.blobs, attachment, &dir)
+                    .await,
+            ),
             Req::Relaxations {
                 account,
                 query,
