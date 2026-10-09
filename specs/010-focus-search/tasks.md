@@ -300,7 +300,7 @@ it understood.
 **Independent test**: US8's.
 
 - [x] T117 [US8] Write storyboard `storyboards/search/files-tab.toml`
-- [ ] T118 [P] [US8] Add a fixture to the test of `scripts/checks/check-crate-boundaries.py` proving a `postio-extract` that depends on `turso`, `tokio`, `reqwest` or `gtk4` fails it, then the `postio-extract` rule (FR-052). Red: no rule
+- [x] T118 [P] [US8] Add a fixture to the test of `scripts/checks/check-crate-boundaries.py` proving a `postio-extract` that depends on `turso`, `tokio`, `reqwest` or `gtk4` fails it, then the `postio-extract` rule (FR-052). Red: no rule
 - [x] T119 [US8] Create `crates/postio-extract/` (workspace `members` and `default-members` in the root `Cargo.toml`, from a worktree), depending on `postio-search`, `pdf-extract`, `zip` (`default-features = false`, `deflate-flate2`), `quick-xml`, `encoding_rs`. Run `cargo deny check licenses` and record the result in the commit body (research R5)
 - [ ] T120 [P] [US8] Write a fixture generator test in `crates/postio-extract/tests/fixtures.rs` that builds, from invented text, a 3-page PDF, a DOCX, an XLSX with sheets "Summary" and "Q3", a PPTX, a UTF-16 text file, and the hostile set (encrypted PDF, truncated PDF, zip bomb, 200k-row sheet); then failing tests: each format's units and `Location`s ("atlas" at `Sheet{Summary, 14}`, `Page(2)`); each hostile file ends in its `Outcome` within `Limits.max_time`, without a panic escaping. Red: no `extract`
 - [ ] T121 [US8] Implement `crates/postio-extract/src/{lib,pdf,ooxml,text,limits}.rs` (`catch_unwind` around `pdf-extract`). Make T120 green. If a hostile fixture overflows the stack, stop and report (research R5)
