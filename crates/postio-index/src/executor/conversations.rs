@@ -226,6 +226,12 @@ struct Found {
 struct Fold {
     found: Vec<Found>,
     at: HashMap<i64, usize>,
+    /// Each content's place in [`Fold::found`]: a message filed in two
+    /// folders is one content (#1780), and one match.
+    contents: HashMap<i64, usize>,
+    /// The occurrences another of the same content stands for, so that
+    /// their rows from the other index are passed over too.
+    passed: std::collections::HashSet<i64>,
 }
 
 impl Fold {
@@ -273,13 +279,19 @@ impl Fold {
         if read_text {
             // The match's own two arms, with their scores: `fts_score` bare
             // and with the match's own parameter, as `HITS_JOIN` explains.
+            // Both indexes are keyed by content: each match is joined to
+            // every message carrying it, and the fold keeps one.
             arms.push(format!(
-                "SELECT -2, message_id, fts_score({META}, ?1), NULL
-                   FROM search_documents WHERE fts_match({META}, ?1)"
+                "SELECT -2, m.id, h.meta, NULL
+                   FROM (SELECT content_id, fts_score({META}, ?1) AS meta
+                           FROM search_documents WHERE fts_match({META}, ?1)) h
+                   CROSS JOIN messages m ON m.content_id = h.content_id"
             ));
             arms.push(
-                "SELECT -1, message_id, NULL, fts_score(body_search, ?2)
-                   FROM message_search_bodies WHERE fts_match(body_search, ?2)"
+                "SELECT -1, m.id, NULL, h.body
+                   FROM (SELECT content_id, fts_score(body_search, ?2) AS body
+                           FROM message_search_bodies WHERE fts_match(body_search, ?2)) h
+                   CROSS JOIN messages m ON m.content_id = h.content_id"
                     .to_owned(),
             );
             params.extend(plan.match_params(Form::Driven));
@@ -412,6 +424,27 @@ impl Fold {
             found.in_body |= in_body;
             return Ok(true);
         }
+        if self.passed.contains(&id) {
+            return Ok(true);
+        }
+        // Another occurrence of a content already held: the earliest stands
+        // for it, as `search`'s `where_sql` picks it. Every row the walk
+        // hands over already passed the plan's conditions and sets, so the
+        // earliest met here is the earliest that qualifies. The text score
+        // is the content's, whichever occurrence carried it.
+        let content: Option<i64> = row.col(15)?;
+        if let Some(at) = content.and_then(|content| self.contents.get(&content).copied()) {
+            let held = self.found[at].id;
+            if id > held {
+                self.passed.insert(id);
+                return Ok(true);
+            }
+            self.found[at] = Self::found(row, id, self.found[at].text, self.found[at].in_body)?;
+            self.at.remove(&held);
+            self.at.insert(id, at);
+            self.passed.insert(held);
+            return Ok(true);
+        }
         if self.capped() {
             // The cap's worth of messages is in hand. A message met in the
             // metadata half and not yet in the body half keeps the one score
@@ -419,10 +452,20 @@ impl Fold {
             // approximate, as `search`'s is.
             return Ok(false);
         }
+        if let Some(content) = content {
+            self.contents.insert(content, self.found.len());
+        }
+        self.at.insert(id, self.found.len());
+        let found = Self::found(row, id, text, in_body)?;
+        self.found.push(found);
+        Ok(true)
+    }
+
+    /// One projection row as a match, scored `text`.
+    fn found(row: &turso::Row, id: i64, text: f64, in_body: bool) -> postio_storage::Result<Found> {
         let thread: Option<i64> = row.col(1)?;
         let (senders, recipients) = people(row.col::<Option<String>>(11)?.as_deref());
-        self.at.insert(id, self.found.len());
-        self.found.push(Found {
+        Ok(Found {
             id,
             key: match thread {
                 Some(thread) => ConversationKey::Thread(postio_model::ThreadId::new(thread)),
@@ -442,8 +485,7 @@ impl Fold {
             labels: ids(row.col::<Option<String>>(12)?.as_deref()),
             action: row.col(13)?,
             files: row.col::<i64>(14)?.max(0) as u64,
-        });
-        Ok(true)
+        })
     }
 
     /// Whether the match reached the cap: every count is then a floor.
@@ -521,7 +563,8 @@ fn projection_sql(plan: &Plan, walk: Walk) -> String {
                          WHERE k.message_id = m.id AND k.dismissed_at IS NULL),
                 CASE WHEN m.has_attachments = 1
                      THEN (SELECT count(*) FROM attachments f WHERE f.message_id = m.id)
-                     ELSE 0 END
+                     ELSE 0 END,
+                m.content_id
            {from}
           WHERE {where_sql}
           LIMIT ?",

@@ -1254,10 +1254,14 @@ struct IdSet {
 }
 
 /// What a negated word refuses: the messages either index says carry it.
-const NEGATED_WORD_SET: &str = "SELECT message_id FROM search_documents
-          WHERE fts_match(sender, recipients, subject, filenames, list_id, ?)
-         UNION ALL
-         SELECT message_id FROM message_search_bodies WHERE fts_match(body_search, ?)";
+/// The indexes are keyed by content, so each content is joined to every
+/// message that carries it, as [`HITS_JOIN`] joins its hits.
+const NEGATED_WORD_SET: &str = "SELECT m.id AS message_id FROM (
+             SELECT content_id FROM search_documents
+              WHERE fts_match(sender, recipients, subject, filenames, list_id, ?)
+             UNION ALL
+             SELECT content_id FROM message_search_bodies WHERE fts_match(body_search, ?)
+          ) d CROSS JOIN messages m ON m.content_id = d.content_id";
 
 impl Plan {
     fn build(request: &SearchRequest<'_>) -> Self {
