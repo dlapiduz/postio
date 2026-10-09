@@ -17,7 +17,9 @@ import Testing
 struct SearchQuerySyncTests {
     final class Engine: SearchQueryEngine {
         var edits: [TermEditFfi] = []
+        var opened: [FilterKindFfi] = []
         func focusSearchEdit(_ edit: TermEditFfi) { edits.append(edit) }
+        func focusSearchPopover(_ kind: FilterKindFfi) { opened.append(kind) }
     }
 
     static func button(_ kind: FilterKindFfi, _ label: String, applied: Bool = false) -> FilterButtonFfi {
@@ -132,9 +134,10 @@ struct SearchQuerySyncTests {
         ])
     }
 
-    @Test func aPopoverButtonSendsNothingUntilItsPopoverExists() {
-        // From, To, Date, Anywhere and Label open popovers (step 4); until
-        // then a click on one changes no query.
+    @Test func aPopoverButtonAsksForItsPopoverAndEditsNothing() {
+        // From, To, Date, Anywhere and Label open popovers (step 4): a
+        // click asks the controller for one, and the query changes only
+        // when something in it is checked.
         let engine = Engine()
         let model = SearchQueryModel(engine: engine)
         model.apply(Self.query([]))
@@ -142,6 +145,7 @@ struct SearchQuerySyncTests {
         for kind in [FilterKindFfi.from, .to, .date, .anywhere, .label] { model.tap(kind) }
 
         #expect(engine.edits.isEmpty)
+        #expect(engine.opened == [.from, .to, .date, .anywhere, .label])
     }
 
     @Test func leavingTheResultsForgetsTheQuery() {

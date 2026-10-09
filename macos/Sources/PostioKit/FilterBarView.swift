@@ -18,10 +18,15 @@ public struct FilterBarView: View {
     let words: SearchWordsFfi
     let pickTab: (ResultsTabFfi) -> Void
     let pickOrder: (ConversationOrderFfi) -> Void
+    /// What a button's popover hangs from, laid behind it: the AppKit
+    /// presenter's anchor (`FilterPopoverAnchor`), which this target cannot
+    /// name.
+    let anchor: (FilterKindFfi) -> AnyView
 
     public init(
         query: SearchQueryModel, tabs: [TabFfi], order: ConversationOrderFfi, words: SearchWordsFfi,
-        pickTab: @escaping (ResultsTabFfi) -> Void, pickOrder: @escaping (ConversationOrderFfi) -> Void
+        pickTab: @escaping (ResultsTabFfi) -> Void, pickOrder: @escaping (ConversationOrderFfi) -> Void,
+        anchor: @escaping (FilterKindFfi) -> AnyView = { _ in AnyView(EmptyView()) }
     ) {
         self.query = query
         self.tabs = tabs
@@ -29,6 +34,7 @@ public struct FilterBarView: View {
         self.words = words
         self.pickTab = pickTab
         self.pickOrder = pickOrder
+        self.anchor = anchor
     }
 
     /// The bar's height (§3.2).
@@ -40,6 +46,7 @@ public struct FilterBarView: View {
             Rectangle().fill(.separator).frame(width: 1, height: 18).padding(.horizontal, 6)
             ForEach(query.buttons) { button in
                 FilterButton(button: button) { query.tap(button.kind) }
+                    .background(anchor(button.kind))
             }
             Spacer(minLength: 8)
             Text(words.sort).font(.system(size: 12)).foregroundStyle(.tertiary)

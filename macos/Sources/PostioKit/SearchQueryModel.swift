@@ -10,6 +10,8 @@ import PostioFFI
 public protocol SearchQueryEngine: AnyObject {
     /// A control changed the query: a filter button, a chip's ✕.
     func focusSearchEdit(_ edit: TermEditFfi)
+    /// A filter button with a popover was pressed: open it.
+    func focusSearchPopover(_ kind: FilterKindFfi)
 }
 
 extension PostioSession: SearchQueryEngine {}
@@ -111,9 +113,12 @@ public final class SearchQueryModel {
     }
 
     /// A filter button was clicked. A toggle sends its term; the others
-    /// open popovers, which step 4 builds -- until then they change nothing.
+    /// ask for their popover (step 4), which `FocusPopover` then draws.
     public func tap(_ kind: FilterKindFfi) {
-        guard let term = kind.toggleTerm else { return }
+        guard let term = kind.toggleTerm else {
+            engine.focusSearchPopover(kind)
+            return
+        }
         engine.focusSearchEdit(.toggle(field: term.field, value: term.value))
     }
 

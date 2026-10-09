@@ -87,6 +87,11 @@ public final class ResultsModel {
     public private(set) var subLine = ""
     /// The twelve bars, oldest first.
     public private(set) var months: [MonthBarFfi] = []
+    /// The timeline's hint: "Matches by month · drag across months to
+    /// narrow", or the range selected.
+    public private(set) var timelineHint = ""
+    /// ⌥←/⌥→ "steps a month", while a range is selected.
+    public private(set) var timelineStep: KeyHintFfi?
     public private(set) var groups: [ResultGroupFfi] = []
     /// How many results.
     public private(set) var results: UInt64 = 0
@@ -231,6 +236,8 @@ public final class ResultsModel {
         countLine = view.countLine
         subLine = view.subLine
         months = view.months
+        timelineHint = view.timelineHint
+        timelineStep = view.timelineStep
         groups = view.groups
         results = view.rows
         cursor = view.cursor
@@ -253,6 +260,8 @@ public final class ResultsModel {
         countLine = ""
         subLine = ""
         months = []
+        timelineHint = ""
+        timelineStep = nil
         groups = []
         results = 0
         cursor = nil

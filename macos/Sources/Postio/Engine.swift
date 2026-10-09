@@ -919,6 +919,11 @@ final class Engine {
     /// The results table, in the inbox's place while the results are up.
     @ObservationIgnored private(set) var resultsTable: ResultsTable?
 
+    /// The filter popover that is up (step 4), and what hangs it from its
+    /// button.
+    @ObservationIgnored private(set) var filterPopover: FilterPopoverModel?
+    @ObservationIgnored private(set) var filterPopoverPresenter: FilterPopover?
+
     /// The results' chrome words, `postio-ui`'s.
     let searchWords = focusSearchWords()
 
@@ -936,6 +941,9 @@ final class Engine {
         let results = ResultsModel(engine: session)
         self.results = results
         resultsTable = ResultsTable(model: results)
+        let popover = FilterPopoverModel(engine: session)
+        filterPopover = popover
+        filterPopoverPresenter = FilterPopover(model: popover)
     }
 
     /// "5 selected", while results are checked.
@@ -1215,6 +1223,12 @@ final class Engine {
             redrawQuery()
             return
         }
+        // A filter popover (step 4): hung from its button, drawn whole, or
+        // taken down when the controller says.
+        if let change = filterPopover?.apply(event) {
+            filterPopoverPresenter?.apply(change)
+            return
+        }
         if let change = results?.apply(event) {
             if change == .close { searchQuery?.apply(event) }
             resultsTable?.apply(change)
@@ -1319,6 +1333,7 @@ final class Engine {
             for key in keys {
                 try? await Task.sleep(nanoseconds: 400_000_000)
                 guard let self, let session = self.session else { return }
+                if self.replayClick(key) { continue }
                 if self.replayIntoField(key) { continue }
                 // With the bar up, a chord is the search field's, as a press
                 // there resolves it: ⌘↩ is Show all, ⌥⌫ forgets a recent.
@@ -1344,8 +1359,45 @@ final class Engine {
             frame.layoutSubtreeIfNeeded()
             guard let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) else { return }
             frame.cacheDisplay(in: frame.bounds, to: rep)
-            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+            // The windows over it -- a filter popover, the bar's panel --
+            // are windows of their own, so a picture of the main window's
+            // views alone leaves them out: each is drawn in at its place.
+            let over = NSApp.windows.filter { other in
+                other !== window && other.isVisible && other.frame.intersects(window.frame)
+                    && other.level.rawValue >= window.level.rawValue
+            }
+            let image = NSImage(size: frame.bounds.size)
+            image.lockFocus()
+            rep.draw(in: NSRect(origin: .zero, size: frame.bounds.size))
+            for other in over.sorted(by: { $0.orderedIndex > $1.orderedIndex }) {
+                guard let view = other.contentView?.superview,
+                      let piece = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+                else { continue }
+                view.cacheDisplay(in: view.bounds, to: piece)
+                let origin = NSPoint(
+                    x: other.frame.minX - window.frame.minX, y: other.frame.minY - window.frame.minY)
+                piece.draw(
+                    in: NSRect(origin: origin, size: other.frame.size), from: .zero, operation: .sourceOver,
+                    fraction: 1, respectFlipped: true, hints: nil)
+            }
+            image.unlockFocus()
+            guard let tiff = image.tiffRepresentation, let whole = NSBitmapImageRep(data: tiff) else { return }
+            try? whole.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
         }
+    }
+
+    /// A demo's click on a filter button, named `@from`, `@to`, `@date`,
+    /// `@anywhere` or `@label` (screens 08 and 09): the format of
+    /// `POSTIO_DEMO_KEYS` has no pointer, and a popover opens from a click.
+    /// `false` for any other key.
+    private func replayClick(_ key: KeyEvent.Reduced) -> Bool {
+        guard key.name == nil, let word = key.character, word.hasPrefix("@"), word.count > 1 else { return false }
+        let kinds: [String: FilterKindFfi] = [
+            "@from": .from, "@to": .to, "@date": .date, "@anywhere": .anywhere, "@label": .label,
+        ]
+        guard let kind = kinds[word.lowercased()] else { return false }
+        searchQuery?.tap(kind)
+        return true
     }
 
     /// A replayed key, given to the bar's or the popover's field while one
@@ -1369,6 +1421,26 @@ final class Engine {
                 guard typing else { return false }
                 popover.type(text)
             // Return, Tab and Escape resolve as a press does.
+            default: return false
+            }
+            return true
+        }
+        if let model = filterPopover, let view = model.view {
+            switch key.name {
+            case "down": model.moveHighlight(by: 1)
+            case "up": model.moveHighlight(by: -1)
+            case "return": model.apply()
+            case "escape": model.cancel()
+            case nil:
+                let text = key.character ?? ""
+                if view.kind == .date {
+                    model.words(model.wordsText + text)
+                } else if text == " ", model.filterText.isEmpty {
+                    // Space toggles the highlighted row, as in the popover.
+                    model.toggleHighlighted()
+                } else {
+                    model.filter(model.filterText + text)
+                }
             default: return false
             }
             return true

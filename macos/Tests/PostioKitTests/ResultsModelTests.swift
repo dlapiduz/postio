@@ -52,7 +52,8 @@ struct ResultsModelTests {
             view: ResultsViewFfi(
                 tabs: [TabFfi(tab: .conversations, label: "Conversations", count: "26", selected: true, key: "cmd+1")],
                 order: .bestMatch, countLine: "26 conversations", subLine: "12 files · 6 people · last 12 months",
-                months: [], groups: [
+                months: [], timelineHint: "Matches by month · drag across months to narrow", timelineStep: nil,
+                groups: [
                     group("Top hits", first: 0, rows: 3, topHits: true),
                     group("September 2026", first: 3, rows: 9),
                     group("August 2026", first: 12, rows: 14),
