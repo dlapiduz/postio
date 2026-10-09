@@ -29,14 +29,16 @@ public final class ToolbarSearchBox: NSView {
     public let field = BarSearchField()
     /// The field as drawn: what the panel hangs from. It sits `inset` in
     /// from the toolbar item's edges, which leaves the halo room inside
-    /// the item and puts its right edge 12 from the window's, the toolbar
-    /// keeping 8 after its last item.
+    /// the item; on the right, whatever puts its edge 12 from the
+    /// window's, since the room a toolbar keeps after its last item is the
+    /// toolbar's (8 in a bare one, 12 in the app's window).
     public let frameView = SearchFieldFrameView()
     private let magnifier = NSImageView()
     private let cap = KeyCapView("")
     private var widthConstraint: NSLayoutConstraint?
     private var heightConstraint: NSLayoutConstraint?
     private var magnifierLeading: NSLayoutConstraint?
+    private var trailingInset: NSLayoutConstraint?
 
     /// The resting size (McList.dc.html: 320 by 28).
     public static let restingHeight: CGFloat = 28
@@ -88,10 +90,11 @@ public final class ToolbarSearchBox: NSView {
         let width = frameView.widthAnchor.constraint(equalToConstant: CommandBarGeometry.restingWidth)
         let height = frameView.heightAnchor.constraint(equalToConstant: Self.restingHeight)
         let leading = magnifier.leadingAnchor.constraint(equalTo: frameView.leadingAnchor, constant: 8)
+        let trailing = frameView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.inset)
         NSLayoutConstraint.activate([
             width, height, leading,
             frameView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.inset),
-            frameView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.inset),
+            trailing,
             frameView.topAnchor.constraint(equalTo: topAnchor, constant: Self.inset),
             frameView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.inset),
             magnifier.centerYAnchor.constraint(equalTo: frameView.centerYAnchor),
@@ -104,6 +107,7 @@ public final class ToolbarSearchBox: NSView {
         widthConstraint = width
         heightConstraint = height
         magnifierLeading = leading
+        trailingInset = trailing
         frameView.onClick = { [weak self] in
             guard let self else { return }
             self.window?.makeFirstResponder(self.field)
@@ -137,6 +141,22 @@ public final class ToolbarSearchBox: NSView {
         applyFonts()
         placeCap()
         needsLayout = true
+        keepRightEdge()
+    }
+
+    /// Put the drawn edge 12 from the window's, whatever room the toolbar
+    /// keeps after its last item: lay the toolbar out, read where it put
+    /// the item, and take up the difference inside it. The toolbar's room
+    /// does not depend on the item's width, so one correction holds.
+    public func keepRightEdge() {
+        guard let window, let trailingInset else { return }
+        let frame = window.contentView?.superview
+        frame?.layoutSubtreeIfNeeded()
+        let itemGap = window.frame.width - convert(bounds, to: nil).maxX
+        let wanted = max(CommandBarGeometry.edge - itemGap, 0)
+        guard abs(trailingInset.constant + wanted) > 0.25 else { return }
+        trailingInset.constant = -wanted
+        frame?.layoutSubtreeIfNeeded()
     }
 
     /// Typing hides the resting keycap, as a field with words has no

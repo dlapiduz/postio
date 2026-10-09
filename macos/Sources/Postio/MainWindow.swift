@@ -407,6 +407,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
         engine.keycapsChanged = { [weak self] in self?.respell() }
         engine.barShown = { [weak self] shown in self?.grow(shown) }
         engine.resultsShown = { [weak self] shown in self?.showResults(shown) }
+        layoutSearch()
         NotificationCenter.default.addObserver(
             forName: NSWindow.didResizeNotification, object: window, queue: .main
         ) { [weak self] _ in
@@ -497,7 +498,6 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
     private func layoutSearch() {
         guard !showingResults else { return }
         searchBox.open(barOpen, windowWidth: window?.frame.width ?? 0)
-        window?.contentView?.superview?.layoutSubtreeIfNeeded()
     }
 
     // MARK: NSToolbarDelegate
