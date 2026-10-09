@@ -104,6 +104,9 @@ public enum QuickLookMetrics {
     public static let header: CGFloat = 46
     /// A card's where-and-when column.
     public static let placeColumn: CGFloat = 120
+    /// The header's and a card's ground: a faint lift off the panel's
+    /// white (#f3f3f3 / #f5f5f7 in screen 10), not the window's grey.
+    public static let tint = Color.primary.opacity(0.045)
 }
 
 /// What Quick Look draws (specs/010-focus-search T091; design §3.7,
@@ -171,7 +174,7 @@ public struct QuickLookBody: View {
         .lineLimit(1)
         .padding(.horizontal, 14)
         .frame(height: QuickLookMetrics.header)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(QuickLookMetrics.tint)
         .overlay(alignment: .bottom) { Rectangle().fill(.separator).frame(height: 1) }
     }
 
@@ -248,7 +251,6 @@ struct MatchCardView: View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(card.place).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
-                    .italic(card.file)
                     .lineLimit(3)
                 if !card.when.isEmpty {
                     Text(card.when).font(.system(size: 12)).foregroundStyle(.tertiary).lineLimit(2)
@@ -264,7 +266,7 @@ struct MatchCardView: View {
         .padding(.horizontal, 14)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(current ? AnyShapeStyle(Color.accentColor.opacity(0.08)) : AnyShapeStyle(Color(nsColor: .windowBackgroundColor))))
+                .fill(current ? AnyShapeStyle(Color.accentColor.opacity(0.08)) : AnyShapeStyle(QuickLookMetrics.tint)))
         .overlay {
             if current {
                 RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: 2)

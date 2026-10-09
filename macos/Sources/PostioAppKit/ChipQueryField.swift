@@ -234,6 +234,11 @@ public final class ChipAttachment: NSTextAttachment {
         let text = NSMutableAttributedString(
             string: chip.op,
             attributes: [.font: Self.font, .foregroundColor: NSColor.tertiaryLabelColor].merging(strike) { $1 })
+        // Screen 10's "from: Ada Moreno": 4 points between the operator and
+        // its value.
+        if text.length > 0 {
+            text.addAttribute(.kern, value: 4, range: NSRange(location: text.length - 1, length: 1))
+        }
         text.append(NSAttributedString(
             string: chip.value,
             attributes: [.font: Self.valueFont, .foregroundColor: NSColor.labelColor].merging(strike) { $1 }))
