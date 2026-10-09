@@ -199,10 +199,17 @@ private struct ResultsPane: View {
         VStack(spacing: 0) {
             FilterBarView(
                 query: query, tabs: results.tabs, order: results.order, words: engine.searchWords,
-                pickTab: { results.pick($0) }, pickOrder: { results.pick($0) })
+                pickTab: { results.pick($0) }, pickOrder: { results.pick($0) },
+                anchor: { kind in
+                    guard let presenter = engine.filterPopoverPresenter else { return AnyView(EmptyView()) }
+                    return AnyView(FilterPopoverAnchor(kind: kind, presenter: presenter))
+                })
             TimelineView(
                 countLine: results.countLine, subLine: results.subLine, months: results.months,
-                hint: engine.searchWords.timelineHint)
+                hint: results.timelineHint, step: results.timelineStep,
+                onMonths: { [weak session = engine.session] first, last in
+                    session?.focusSearchMonths(first, last)
+                })
             ResultsTableRepresentable(table: table)
             SearchFooter(
                 hints: results.footerHints, right: results.footerRight, checked: engine.resultsChecked,

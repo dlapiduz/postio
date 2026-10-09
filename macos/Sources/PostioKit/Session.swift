@@ -203,6 +203,33 @@ public final class PostioSession {
     /// changes, and `FocusQuery` then `FocusResults` say how.
     public func focusSearchEdit(_ edit: TermEditFfi) { inner.focusSearchEdit(edit: edit) }
 
+    /// A filter button with a popover was pressed (specs/010-focus-search
+    /// step 4): `FocusQuery` rings it and `FocusPopover` draws it.
+    public func focusSearchPopover(_ kind: FilterKindFfi) { inner.focusSearchPopover(kind: kind) }
+
+    /// Space or a click on the open popover's row `token`; `exclude` when ⌥
+    /// was held.
+    public func focusSearchPopoverToggle(_ token: UInt64, exclude: Bool) {
+        inner.focusSearchPopoverToggle(token: token, exclude: exclude)
+    }
+
+    /// The popover's own search field.
+    public func focusSearchPopoverFilter(_ text: String) { inner.focusSearchPopoverFilter(text: text) }
+
+    /// ↩ (`apply`), or Esc and a click away: the toolkit closed it.
+    public func focusSearchPopoverDone(_ apply: Bool) { inner.focusSearchPopoverDone(apply: apply) }
+
+    /// The Date popover's plain words.
+    public func focusSearchDateWords(_ text: String) { inner.focusSearchDateWords(text: text) }
+
+    /// The Date popover's preset `token`.
+    public func focusSearchDatePreset(_ token: UInt64) { inner.focusSearchDatePreset(token: token) }
+
+    /// A drag across the timeline ended over bars `first...last`.
+    public func focusSearchMonths(_ first: UInt32, _ last: UInt32) {
+        inner.focusSearchMonths(first: first, last: last)
+    }
+
     /// A results tab picked by a click (⌘1-3 are commands).
     public func focusSearchTab(_ tab: ResultsTabFfi) { inner.focusSearchTab(tab: tab) }
 

@@ -63,11 +63,23 @@ public enum KeyCapSpelling {
         return binding.split(separator: " ").map { press in
             let press = String(press)
             if press.count == 1 { return press }
-            // A pair (`hints::pair`'s "j/k"): each key spelled on its own.
-            if press.contains("/"), !press.contains("+") {
-                return press.split(separator: "/").map { key in
+            // A pair (`hints::pair`'s "j/k", "alt+Left/alt+Right"): each key
+            // spelled on its own.
+            let halves = press.split(separator: "/")
+            if halves.count > 1 {
+                return halves.map { key in
                     key.count == 1 ? String(key) : (MenuPlan.accelerator(from: String(key)) ?? String(key))
                 }.joined(separator: "/")
+            }
+            // A popover's own keys (`popover_hints`): Space as its cap
+            // says it, a modifier held for a click as its glyph.
+            switch press.lowercased() {
+            case "space": return "Space"
+            case "alt", "option": return "⌥"
+            case "cmd", "command": return "⌘"
+            case "shift": return "⇧"
+            case "ctrl", "control": return "⌃"
+            default: break
             }
             return MenuPlan.accelerator(from: press) ?? press
         }.joined(separator: " ")
