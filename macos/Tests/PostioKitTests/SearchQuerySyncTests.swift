@@ -45,7 +45,8 @@ struct SearchQuerySyncTests {
     static func query(_ chips: [QueryChipFfi], words: String = "atlas budget", applied: [FilterKindFfi: String] = [:])
         -> UiEvent
     {
-        .focusQuery(view: QueryViewFfi(chips: chips, words: words, hint: "/ to edit", buttons: buttons(applied)))
+        .focusQuery(
+            view: QueryViewFfi(chips: chips, words: words, hint: "/ to edit", hintKey: nil, buttons: buttons(applied)))
     }
 
     static func applied(_ model: SearchQueryModel, _ kind: FilterKindFfi) -> SearchQueryModel.Button? {
@@ -146,6 +147,18 @@ struct SearchQuerySyncTests {
 
         #expect(engine.edits.isEmpty)
         #expect(engine.opened == [.from, .to, .date, .anywhere, .label])
+    }
+
+    /// Screen 13 (D24): with nothing found the hint names ⌘⌫ as its cap.
+    @Test func aHintWithAKeySpellsTheKeyAsItsCap() {
+        let model = SearchQueryModel(engine: Engine())
+        model.apply(
+            .focusQuery(
+                view: QueryViewFfi(
+                    chips: [], words: "", hint: "clears filters", hintKey: "cmd+BackSpace", buttons: Self.buttons())))
+        #expect(model.hint == "⌘⌫ clears filters")
+        model.apply(Self.query([]))
+        #expect(model.hint == "/ to edit")
     }
 
     @Test func leavingTheResultsForgetsTheQuery() {

@@ -204,13 +204,25 @@ private struct ResultsPane: View {
                     guard let presenter = engine.filterPopoverPresenter else { return AnyView(EmptyView()) }
                     return AnyView(FilterPopoverAnchor(kind: kind, presenter: presenter))
                 })
-            TimelineView(
-                countLine: results.countLine, subLine: results.subLine, months: results.months,
-                hint: results.timelineHint, step: results.timelineStep,
-                onMonths: { [weak session = engine.session] first, last in
-                    session?.focusSearchMonths(first, last)
-                })
+            // Nothing found (step 7, screen 13): no timeline, and the page
+            // over the rows' place. The table stays under it, empty, so it
+            // keeps the keyboard it had and has it when rows come back.
+            let none = engine.noResults.flatMap { $0.isOpen ? $0 : nil }
+            if none == nil {
+                TimelineView(
+                    countLine: results.countLine, subLine: results.subLine, months: results.months,
+                    hint: results.timelineHint, step: results.timelineStep,
+                    onMonths: { [weak session = engine.session] first, last in
+                        session?.focusSearchMonths(first, last)
+                    })
+            }
             ResultsTableRepresentable(table: table)
+                .overlay {
+                    if let none {
+                        NoResultsView(model: none)
+                            .background(Color(nsColor: .textBackgroundColor))
+                    }
+                }
             SearchFooter(
                 hints: results.footerHints, right: results.footerRight, checked: engine.resultsChecked,
                 bulk: results.bulk, selectAll: results.selectAll)

@@ -513,6 +513,13 @@ pub enum UiEvent {
         /// What it draws.
         view: Option<crate::focus_search::SaveViewFfi>,
     },
+    /// The results found nothing: draw this page in the rows' place,
+    /// whole; `None` takes it away (spec 010 step 7, FR-030). A way out
+    /// is run by invoking `pick_relaxation_<n>`.
+    FocusRelaxations {
+        /// What it draws.
+        view: Option<crate::focus_search::NoResultsViewFfi>,
+    },
 }
 
 /// How a Focus toast is drawn.
