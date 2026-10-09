@@ -42,6 +42,10 @@ pub struct FilterConfig {
     /// existed, so a file nobody has reordered behaves exactly as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order: Option<u32>,
+    /// Show a quiet badge with the matches that arrived since it was last
+    /// viewed (spec 010 D15). Never a banner, never a notification.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub notify: bool,
     /// Keys this version of Postio does not know, preserved verbatim.
     #[serde(flatten)]
     pub extra: Extras,
@@ -64,6 +68,44 @@ impl Config {
                 pinned: true,
                 name: None,
                 order: None,
+                notify: false,
+                extra: Extras::default(),
+            },
+        );
+        key
+    }
+
+    /// Save `query` as a new filter named `name`, pinned or not, notifying
+    /// or not: the Save popover's write (spec 010 FR-029). Pinned, it takes
+    /// the next free place after every pinned filter -- the next ⌥ number --
+    /// and the others are given the places they are shown in, as
+    /// [`Config::move_filter`] does, so "no order, by key" cannot put the
+    /// new one anywhere else. Returns its key, derived from the query.
+    pub fn save_filter_as(
+        &mut self,
+        query: &str,
+        name: Option<&str>,
+        pinned: bool,
+        notify: bool,
+    ) -> String {
+        let order = pinned.then(|| {
+            let shown = self.ordered_filter_keys();
+            for (index, key) in shown.iter().enumerate() {
+                if let Some(filter) = self.filters.get_mut(key) {
+                    filter.order = Some(index as u32);
+                }
+            }
+            shown.len() as u32
+        });
+        let key = self.unique_filter_key(query);
+        self.filters.insert(
+            key.clone(),
+            FilterConfig {
+                query: query.to_string(),
+                pinned,
+                name: name.map(str::to_owned),
+                order,
+                notify,
                 extra: Extras::default(),
             },
         );
@@ -570,5 +612,59 @@ pinned = true
             "the saved search came back changed, so it no longer names the \
              account it was pinned to: {written}"
         );
+    }
+
+    #[test]
+    fn notify_round_trips_and_defaults_to_false() {
+        let config =
+            Config::from_toml_str("[saved_searches.a]\nquery = \"atlas\"\npinned = true\n")
+                .expect("parses");
+        assert!(!config.filters["a"].notify, "off unless said");
+
+        let mut filters = config.filters.clone();
+        filters.get_mut("a").expect("a").notify = true;
+        filters.insert(
+            "b".to_owned(),
+            FilterConfig {
+                query: "harbor".to_owned(),
+                pinned: true,
+                ..FilterConfig::default()
+            },
+        );
+        let patched = patch_filters("", &filters).expect("patches");
+        assert_eq!(
+            patched.matches("notify").count(),
+            1,
+            "only the search that notifies says so:\n{patched}"
+        );
+        let read = Config::from_toml_str(&patched).expect("parses back");
+        assert!(read.filters["a"].notify);
+        assert!(!read.filters["b"].notify);
+    }
+
+    #[test]
+    fn saving_with_a_name_and_switches_takes_the_next_free_place() {
+        let mut config = Config::default();
+        config.save_filter("from:grace");
+        config.save_filter("from:ada");
+        let key = config.save_filter_as("atlas budget", Some("Atlas budget from Ada"), true, true);
+
+        let saved = &config.filters[&key];
+        assert_eq!(saved.query, "atlas budget");
+        assert_eq!(saved.name.as_deref(), Some("Atlas budget from Ada"));
+        assert!(saved.pinned && saved.notify);
+        assert_eq!(saved.order, Some(2), "after the two already pinned");
+        assert_eq!(
+            config.ordered_filter_keys(),
+            ["from-ada", "from-grace", key.as_str()],
+            "the others keep the places they were shown in (by key, unordered)"
+        );
+
+        let quiet = config.save_filter_as("harbor", None, false, false);
+        assert_eq!(
+            config.filters[&quiet].order, None,
+            "unpinned takes no place"
+        );
+        assert!(!config.ordered_filter_keys().contains(&quiet));
     }
 }

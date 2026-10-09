@@ -635,6 +635,40 @@ pub fn select_all_hint(keymap: &Keymap, total: u64, capped: bool) -> Option<Hint
     )
 }
 
+/// The name the Save popover offers for `query` (§3.9): its words,
+/// capitalised, then "from" and "to" with each person's first name --
+/// "Atlas budget from Ada". `name_of` finds an address's name. A query
+/// with no words and no people is its own name.
+pub fn save_name(
+    query: &postio_search::ParsedQuery,
+    name_of: &dyn Fn(&str) -> Option<String>,
+) -> String {
+    use postio_search::query::Filter;
+    let mut said: Vec<String> = query
+        .text_terms()
+        .filter(|term| !term.negated)
+        .map(|term| term.value.clone())
+        .collect();
+    let first_name = |address: &str| {
+        name_of(address)
+            .and_then(|name| name.split_whitespace().next().map(str::to_owned))
+            .unwrap_or_else(|| address.to_owned())
+    };
+    for clause in query.filters().filter(|clause| !clause.negated) {
+        match &clause.filter {
+            Filter::From(who) => said.push(format!("from {}", first_name(who))),
+            Filter::To(who) => said.push(format!("to {}", first_name(who))),
+            _ => {}
+        }
+    }
+    let name = said.join(" ");
+    let mut letters = name.chars();
+    match letters.next() {
+        Some(first) => first.to_uppercase().chain(letters).collect(),
+        None => query.input().trim().to_owned(),
+    }
+}
+
 /// The results tabs' words, in their order (§3.2).
 pub const TABS: [&str; 3] = ["Conversations", "Files", "People"];
 
@@ -1544,5 +1578,27 @@ mod tests {
         assert_eq!(sent_at(now), "Sat 26 Sep, 15:30");
         assert_eq!(thread_size(3), Some("thread of 3".to_owned()));
         assert_eq!(thread_size(1), None);
+    }
+
+    #[test]
+    fn a_saved_search_is_named_from_its_words_and_its_people() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 9, 26).unwrap();
+        let ada = |address: &str| (address == "ada@example.com").then(|| "Ada Moreno".to_owned());
+        let named = |query: &str| save_name(&postio_search::parse(query, today), &ada);
+        assert_eq!(
+            named("from:ada@example.com after:2026-07-01 atlas budget"),
+            "Atlas budget from Ada",
+            "screen 12"
+        );
+        assert_eq!(named("from:ada@example.com"), "From Ada");
+        assert_eq!(
+            named("invoices to:ben@example.org"),
+            "Invoices to ben@example.org"
+        );
+        assert_eq!(
+            named("has:attachment"),
+            "has:attachment",
+            "nothing to say it better"
+        );
     }
 }

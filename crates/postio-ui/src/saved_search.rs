@@ -64,6 +64,9 @@ pub struct SavedSearch {
     pub name: String,
     /// The query text this row runs when it is picked.
     pub query: String,
+    /// Whether it shows a quiet badge with the matches new since it was
+    /// last viewed (spec 010 D15).
+    pub notify: bool,
 }
 
 /// One of the four things a sidebar can do to the saved searches.
@@ -74,7 +77,10 @@ pub struct SavedSearch {
 /// same promises about the rest of the file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verb<'a> {
-    /// Keep `query` as a new pinned search, named from its own text.
+    /// Keep `query` as a new search: named `name`, or from its own text;
+    /// pinned, taking the next free place (and ⌥ number) after the others,
+    /// or not; notifying, or not; its dates as `dates` says ([`Verb::save`]
+    /// is the plain form a sidebar's Save makes).
     ///
     /// Blank does nothing: pinning an empty query pins "everything", which is
     /// not a folder anybody meant to make.
@@ -82,6 +88,14 @@ pub enum Verb<'a> {
         /// The query as it stands in the search field, not as it was last
         /// run — saving what is on screen is the gesture.
         query: &'a str,
+        /// The name it shows under; `None` shows the key.
+        name: Option<&'a str>,
+        /// Pin to saved searches.
+        pin: bool,
+        /// Notify when new mail matches: a quiet badge (D15).
+        notify: bool,
+        /// Keep the date rolling, or not (D14).
+        dates: Dates,
     },
     /// Give the search under `key` a display name of its own.
     Rename {
@@ -102,6 +116,38 @@ pub enum Verb<'a> {
         /// Which search.
         key: &'a str,
     },
+}
+
+/// How a saved query keeps its dates (spec 010 D14): both are the one
+/// language, so nothing but the string says which.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dates {
+    /// As typed.
+    AsTyped,
+    /// Relative to the day it runs, "after:90d": always the last 90 days.
+    Rolling {
+        /// The day the typed dates are read against.
+        today: chrono::NaiveDate,
+    },
+    /// Calendar dates, "after:2026-07-01": always since 1 July.
+    Fixed {
+        /// The day the typed dates are read against.
+        today: chrono::NaiveDate,
+    },
+}
+
+impl<'a> Verb<'a> {
+    /// Save `query` as a sidebar does: pinned, named from its own text, no
+    /// badge, its dates as typed.
+    pub fn save(query: &'a str) -> Self {
+        Verb::Save {
+            query,
+            name: None,
+            pin: true,
+            notify: false,
+            dates: Dates::AsTyped,
+        }
+    }
 }
 
 /// What a verb left behind.
@@ -184,6 +230,7 @@ pub fn pinned(config: &Config) -> Vec<SavedSearch> {
             Some(SavedSearch {
                 name: filter.name.clone().unwrap_or_else(|| key.clone()),
                 query: filter.query.clone(),
+                notify: filter.notify,
                 key,
             })
         })
@@ -218,9 +265,25 @@ pub fn edit(text: &str, verb: Verb<'_>) -> postio_config::Result<Edit> {
     // to remember to, and a write that would rewrite the file byte for byte
     // never happens.
     let named = match verb {
-        Verb::Save { query } => {
-            let query = query.trim();
-            (!query.is_empty()).then(|| config.save_filter(query))
+        Verb::Save {
+            query,
+            name,
+            pin,
+            notify,
+            dates,
+        } => {
+            let query = match dates {
+                Dates::AsTyped => query.trim().to_owned(),
+                Dates::Rolling { today } | Dates::Fixed { today } => postio_search::edit::apply(
+                    query,
+                    postio_search::edit::Edit::Dates {
+                        rolling: matches!(dates, Dates::Rolling { .. }),
+                    },
+                    today,
+                ),
+            };
+            let name = name.map(str::trim).filter(|name| !name.is_empty());
+            (!query.is_empty()).then(|| config.save_filter_as(&query, name, pin, notify))
         }
         Verb::Rename { key, name } => config.rename_filter(key, name).then(|| key.to_owned()),
         Verb::Move { key, direction } => config.move_filter(key, direction).then(|| key.to_owned()),
@@ -330,13 +393,7 @@ pinned = true
 
     #[test]
     fn saving_a_query_pins_it_and_names_it_from_its_own_text() {
-        let edit = edit(
-            "",
-            Verb::Save {
-                query: "is:unread from:team",
-            },
-        )
-        .expect("an empty file");
+        let edit = edit("", Verb::save("is:unread from:team")).expect("an empty file");
 
         assert_eq!(
             edit.changed.as_deref(),
@@ -349,6 +406,7 @@ pinned = true
                 key: "is-unread-from-team".to_owned(),
                 name: "is-unread-from-team".to_owned(),
                 query: "is:unread from:team".to_owned(),
+                notify: false,
             }],
             "a search nobody has renamed draws under its key"
         );
@@ -364,7 +422,7 @@ pinned = true
         // Pinning an empty query pins "everything", which is not a folder
         // anyone meant to make -- and it would still take a row in the
         // sidebar and a line in the file.
-        let edit = edit(SAMPLE, Verb::Save { query: "   " }).expect("the sample parses");
+        let edit = edit(SAMPLE, Verb::save("   ")).expect("the sample parses");
 
         assert_eq!(edit.changed, None);
         assert_eq!(edit.text, SAMPLE, "a no-op must not rewrite the file");
@@ -458,7 +516,7 @@ pinned = true
 
         // And it is durable: re-reading the patched text has to give the same
         // order, or the row springs back the next time anything reloads.
-        let reread = edit(&moved.text, Verb::Save { query: "" }).expect("the patched file parses");
+        let reread = edit(&moved.text, Verb::save("")).expect("the patched file parses");
         let keys: Vec<&str> = reread.searches.iter().map(|s| s.key.as_str()).collect();
         assert_eq!(keys, ["a", "c", "b"], "the order did not survive the write");
     }
@@ -493,7 +551,7 @@ pinned = true
         // And durable, the same as the other direction: an order that only
         // exists in the returned list springs back the next time anything
         // reloads the file.
-        let reread = edit(&moved.text, Verb::Save { query: "" }).expect("the patched file parses");
+        let reread = edit(&moved.text, Verb::save("")).expect("the patched file parses");
         let keys: Vec<&str> = reread.searches.iter().map(|s| s.key.as_str()).collect();
         assert_eq!(keys, ["b", "a", "c"], "the order did not survive the write");
     }
@@ -600,13 +658,7 @@ pinned = true
 query = \"is:unread\"
 pinned = false
 ";
-        let edit = edit(
-            text,
-            Verb::Save {
-                query: "has:attach",
-            },
-        )
-        .expect("the file parses");
+        let edit = edit(text, Verb::save("has:attach")).expect("the file parses");
 
         let keys: Vec<&str> = edit.searches.iter().map(|s| s.key.as_str()).collect();
         assert_eq!(keys, ["has-attach"]);
@@ -617,13 +669,7 @@ pinned = false
         // The reason this goes through `patch_filters` rather than
         // reserializing a `Config`: somebody's settings file is not ours to
         // reformat because they saved a search (#885).
-        let saved = edit(
-            SAMPLE,
-            Verb::Save {
-                query: "has:attach",
-            },
-        )
-        .expect("the sample parses");
+        let saved = edit(SAMPLE, Verb::save("has:attach")).expect("the sample parses");
 
         assert!(
             saved
@@ -657,13 +703,7 @@ pinned = false
         let broken = "[ui]\ndensity = 42\n\n[saved_searches.keep]\nquery = \"is:unread\"\n";
 
         assert!(
-            edit(
-                broken,
-                Verb::Save {
-                    query: "has:attach"
-                }
-            )
-            .is_err(),
+            edit(broken, Verb::save("has:attach")).is_err(),
             "a config that does not parse must not be rewritten from defaults"
         );
         assert!(edit("this is not toml {{{", Verb::Delete { key: "keep" }).is_err());
@@ -681,7 +721,7 @@ pinned = false
 
         // A machine that has never had a `config.toml` still gets its first
         // saved search.
-        let saved = apply(&path, Verb::Save { query: "is:unread" }).expect("a first save");
+        let saved = apply(&path, Verb::save("is:unread")).expect("a first save");
         assert_eq!(saved.changed.as_deref(), Some("is-unread"));
         assert_eq!(load(&path), saved.searches, "the file is the sidebar");
 
@@ -720,5 +760,64 @@ pinned = false
         );
         assert_eq!(DELETE_PROMPT.confirm, "Delete");
         assert_eq!(RENAME_PROMPT.body, None);
+    }
+
+    #[test]
+    fn saving_with_a_name_pin_and_notify_writes_all_four_and_the_next_place() {
+        let edit = edit(
+            THREE,
+            Verb::Save {
+                query: "atlas budget",
+                name: Some("Atlas budget from Ada"),
+                pin: true,
+                notify: true,
+                dates: Dates::AsTyped,
+            },
+        )
+        .expect("three parses");
+        let key = edit.changed.clone().expect("saved");
+        let saved = edit.searches.last().expect("listed");
+        assert_eq!(saved.key, key, "after the three already pinned");
+        assert_eq!(saved.name, "Atlas budget from Ada");
+        assert!(saved.notify);
+        let read = Config::from_toml_str(&edit.text).expect("parses back");
+        let filter = &read.filters[&key];
+        assert_eq!(filter.query, "atlas budget");
+        assert_eq!(filter.name.as_deref(), Some("Atlas budget from Ada"));
+        assert!(filter.pinned && filter.notify);
+        assert_eq!(filter.order, Some(3), "the next free place: ⌥4");
+    }
+
+    #[test]
+    fn a_rolling_save_keeps_its_dates_relative_and_a_fixed_one_iso() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 9, 29).unwrap();
+        let saved = |query: &str, dates| {
+            let edit = edit(
+                "",
+                Verb::Save {
+                    query,
+                    name: None,
+                    pin: true,
+                    notify: false,
+                    dates,
+                },
+            )
+            .expect("an empty file");
+            edit.searches[0].query.clone()
+        };
+        assert_eq!(
+            saved("atlas after:2026-07-01", Dates::Rolling { today }),
+            "atlas after:90d",
+            "always the last 90 days"
+        );
+        assert_eq!(
+            saved("atlas after:90d", Dates::Fixed { today }),
+            "atlas after:2026-07-01",
+            "always since 1 July"
+        );
+        assert_eq!(
+            saved("atlas after:jul1", Dates::AsTyped),
+            "atlas after:jul1"
+        );
     }
 }

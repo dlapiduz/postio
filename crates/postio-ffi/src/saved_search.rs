@@ -97,7 +97,7 @@ pub fn saved_searches(path: String) -> Vec<SavedSearchFfi> {
 /// anyone.
 #[uniffi::export]
 pub fn save_search(path: String, query: String) -> Result<SavedSearchEditFfi, SettingsError> {
-    run(&path, Verb::Save { query: &query })
+    run(&path, Verb::save(&query))
 }
 
 /// Run `verb` against the file at `path` and shape the answer for a frontend.

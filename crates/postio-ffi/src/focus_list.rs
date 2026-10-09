@@ -935,7 +935,7 @@ impl FocusDriver {
         let Some(path) = self.config_path.lock().expect("config path lock").clone() else {
             return Err(postio_ui::focus_target::NO_CONFIG_TO_SAVE.to_owned());
         };
-        postio_ui::saved_search::apply(&path, postio_ui::saved_search::Verb::Save { query })
+        postio_ui::saved_search::apply(&path, postio_ui::saved_search::Verb::save(query))
             .and_then(|_| postio_config::Config::load_from_path(&path))
             .map(|config| postio_session::focus::saved_searches(&config))
             .map_err(|error| {
