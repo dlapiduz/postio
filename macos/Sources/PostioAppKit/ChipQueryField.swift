@@ -282,3 +282,96 @@ public final class ChipAttachment: NSTextAttachment {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not from a nib") }
 }
+
+/// The results toolbar's query box (specs/010-focus-search T070; design
+/// §3.1): 34 tall, radius 8, on the text background with a hairline ring
+/// -- the magnifier, the chips and words (`ChipQueryField`), and the quiet
+/// hint on the right, "/ to edit".
+///
+/// While the dropdown is up the query is edited as text, in the bar's own
+/// search field (`editor`), laid over the chips in the same place: the
+/// controller hands the bar the query text and reads it back, so nothing
+/// here spells it.
+@MainActor
+public final class ResultsQueryBox: NSView {
+    public let field = ChipQueryField(frame: NSRect(x: 0, y: 0, width: 400, height: 34))
+    public let editor = BarSearchField()
+    private let hint = NSTextField(labelWithString: "")
+    private let magnifier = NSImageView()
+
+    /// The box's height (§3.1).
+    public static let height: CGFloat = 34
+
+    public init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: 600, height: Self.height))
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        translatesAutoresizingMaskIntoConstraints = false
+        magnifier.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
+        magnifier.contentTintColor = .secondaryLabelColor
+        magnifier.symbolConfiguration = .init(pointSize: 13, weight: .regular)
+        hint.font = .systemFont(ofSize: 12)
+        hint.textColor = .tertiaryLabelColor
+        hint.setContentCompressionResistancePriority(.required, for: .horizontal)
+        editor.isHidden = true
+        editor.font = .systemFont(ofSize: 14.5)
+        editor.controlSize = .large
+        for view in [magnifier, field, hint, editor] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(view)
+        }
+        let width = widthAnchor.constraint(equalToConstant: 600)
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: Self.height),
+            width,
+            magnifier.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            magnifier.centerYAnchor.constraint(equalTo: centerYAnchor),
+            field.leadingAnchor.constraint(equalTo: magnifier.trailingAnchor, constant: 6),
+            field.topAnchor.constraint(equalTo: topAnchor),
+            field.bottomAnchor.constraint(equalTo: bottomAnchor),
+            field.trailingAnchor.constraint(equalTo: hint.leadingAnchor, constant: -8),
+            hint.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            hint.centerYAnchor.constraint(equalTo: centerYAnchor),
+            editor.leadingAnchor.constraint(equalTo: leadingAnchor),
+            editor.trailingAnchor.constraint(equalTo: trailingAnchor),
+            editor.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        widthConstraint = width
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not from a nib") }
+
+    private var widthConstraint: NSLayoutConstraint?
+
+    /// How wide the box is: what the toolbar leaves it.
+    public var boxWidth: CGFloat {
+        get { widthConstraint?.constant ?? 0 }
+        set { widthConstraint?.constant = newValue }
+    }
+
+    /// Draw the query as `FocusQuery` said it, with its hint.
+    public func show(chips: [SearchQueryModel.Chip], words: String, hint: String) {
+        field.show(chips: chips, words: words)
+        self.hint.stringValue = hint
+    }
+
+    /// The dropdown is up: the query is edited as text in `editor`.
+    public var editing: Bool = false {
+        didSet {
+            editor.isHidden = !editing
+            field.isHidden = editing
+            hint.isHidden = editing
+            magnifier.isHidden = editing
+            needsDisplay = true
+        }
+    }
+
+    public override var wantsUpdateLayer: Bool { true }
+
+    public override func updateLayer() {
+        layer?.backgroundColor = editing ? NSColor.clear.cgColor : NSColor.textBackgroundColor.cgColor
+        layer?.borderColor = NSColor.separatorColor.cgColor
+        layer?.borderWidth = editing ? 0 : 1
+    }
+}

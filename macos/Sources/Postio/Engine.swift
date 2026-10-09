@@ -117,6 +117,7 @@ final class Engine {
             makeBar(session)
             makePicker(session)
             filtered = FilteredModel(engine: session)
+            makeResults(session)
             digest = DigestModel(engine: session, source: session)
             ruleSheet = RuleSheetModel(engine: session)
             capture = CaptureModel(engine: session)
@@ -353,6 +354,7 @@ final class Engine {
     /// is what a menu greys against.
     var mainContext: UiContext {
         if commandBar?.isOpen == true { return .search }
+        if results?.isOpen == true { return .results }
         if capture?.isOpen == true { return .capture }
         if digest?.isOpen == true { return .digest }
         if filtered?.isOpen == true { return .filtered }
@@ -521,6 +523,10 @@ final class Engine {
             }
         case let .reader(verb):
             messageWindow?.apply(verb)
+        case .keyboardHome where results?.isOpen == true:
+            // In the results, home is the results table.
+            mainWindow?.makeKeyAndOrderFront(nil)
+            resultsTable?.takeKeyboard()
         case .keyboardHome:
             guard let table = focusTable?.tableView, let window = table.window else { return }
             window.makeKeyAndOrderFront(nil)
@@ -884,6 +890,13 @@ final class Engine {
                 field.window?.makeFirstResponder(field)
             }
             field.currentEditor()?.selectedRange = selection
+            // What was typed into the results' chips before the bar was up:
+            // the bar's field takes it, as if typed there.
+            if !typedAhead.isEmpty, let editor = field.currentEditor() as? NSTextView {
+                let typed = typedAhead
+                typedAhead = ""
+                editor.insertText(typed, replacementRange: editor.selectedRange())
+            }
         case .lines:
             barPanel?.relayout()
         case .close:
@@ -891,6 +904,85 @@ final class Engine {
             barShown?(false)
             searchField?.stringValue = ""
             keycapsChanged?()
+            typedAhead = ""
+        }
+    }
+
+    // MARK: the results view (specs/010-focus-search step 3)
+
+    /// The results' query: the field's chips and the filter bar's buttons.
+    private(set) var searchQuery: SearchQueryModel?
+
+    /// The results' frame, rows and focus ring.
+    private(set) var results: ResultsModel?
+
+    /// The results table, in the inbox's place while the results are up.
+    @ObservationIgnored private(set) var resultsTable: ResultsTable?
+
+    /// The results' chrome words, `postio-ui`'s.
+    let searchWords = focusSearchWords()
+
+    /// The toolbar: the results' items or the inbox's.
+    @ObservationIgnored var resultsShown: ((Bool) -> Void)?
+
+    /// The toolbar's query box, while the results' items are up.
+    @ObservationIgnored weak var queryBox: ResultsQueryBox?
+
+    /// Typed into the chips before the bar was up, for its field to take.
+    @ObservationIgnored private var typedAhead = ""
+
+    private func makeResults(_ session: PostioSession) {
+        searchQuery = SearchQueryModel(engine: session)
+        let results = ResultsModel(engine: session)
+        self.results = results
+        resultsTable = ResultsTable(model: results)
+    }
+
+    /// "5 selected", while results are checked.
+    var resultsChecked: String? {
+        guard let selected = results?.selected, selected > 0 else { return nil }
+        return focusSearchChecked(n: selected)
+    }
+
+    /// The query box draws what the last `FocusQuery` said.
+    func redrawQuery() {
+        guard let query = searchQuery else { return }
+        queryBox?.show(chips: query.chips, words: query.words, hint: query.hint)
+    }
+
+    /// The query box asks for the dropdown: a click, or `/` in it.
+    func queryFieldFocused() {
+        guard commandBar?.isOpen != true else { return }
+        run(BarCommand.search)
+    }
+
+    /// Words typed into the query box's chips: the bar opens on the query
+    /// and its field takes them.
+    func queryFieldTyped(_ text: String) {
+        typedAhead += text
+        if let field = searchField, commandBar?.isOpen == true, let editor = field.currentEditor() as? NSTextView {
+            let typed = typedAhead
+            typedAhead = ""
+            editor.insertText(typed, replacementRange: editor.selectedRange())
+            return
+        }
+        run(BarCommand.search)
+    }
+
+    /// What the results' coming, going or moving asks of the window.
+    private func resultsMoved(_ change: ResultsModel.Change) {
+        switch change {
+        case .open:
+            resultsShown?(true)
+            redrawQuery()
+            if commandBar?.isOpen != true { resultsTable?.takeKeyboard() }
+        case .close:
+            resultsShown?(false)
+            if let table = focusTable?.tableView, let window = table.window, commandBar?.isOpen != true {
+                window.makeFirstResponder(table)
+            }
+        case .redraw, .rows, .cursor:
+            break
         }
     }
 
@@ -1113,6 +1205,20 @@ final class Engine {
         // `FocusCloseSurface(.composer)`.
         if let change = composer?.apply(event) {
             apply(change)
+            return
+        }
+        // The results view (specs/010-focus-search step 3): its query, its
+        // frame, its pages and its focus ring, and leaving it. The list's
+        // own cursor and selection follow `FocusLeaveResults` as intents.
+        if case .focusQuery = event {
+            searchQuery?.apply(event)
+            redrawQuery()
+            return
+        }
+        if let change = results?.apply(event) {
+            if change == .close { searchQuery?.apply(event) }
+            resultsTable?.apply(change)
+            resultsMoved(change)
             return
         }
         // The controller's intents: the cursor, the selection, `!`'s heading,
