@@ -84,6 +84,47 @@ are the maintainer's, and none was taken (stop rule):
 
 `from:a` is one statement over the contacts and far inside the budget.
 
+### Capped (D29): the maintainer took the first way out
+
+Decided the same day: a suggestion's count is capped and shown as a floor
+(spec D29, T156-T158). `executor::COMPLETION_COUNT_CAP` bounds the matches
+a suggestion's count walks, as `TOTAL_HITS_CAP` bounds a conversation
+search's; below it the count is exact, past it the row reads "N+"
+(`search_view::suggestion_count`), N being the conversations among the
+matches walked. The relaxations keep the search's own cap.
+
+Same corpus and machine, quieter (load average 3-7), 60 timed runs after
+5 warm-ups, `postio-bench`'s GTK dev-dependencies out for the run and put
+back, `Cargo.lock` restored:
+
+| shape | p50 ms | p95 ms | p95 ms, run 2 | stmts | the ghost's word, its count |
+|---|---:|---:|---:|---:|---|
+| completions `a` | 4.23 | **4.40** | 4.56 | 4 | `as`, 249+ |
+| completions `at` | 2.27 | 2.53 | 2.99 | 4 | `atl`, 366 (exact) |
+| completions `atl` | 3.95 | 4.49 | 4.23 | 4 | `atlas`, 297+ |
+| completions `from:a` | 1.55 | 1.57 | 1.63 | 1 | (people, uncounted) |
+
+The cap was chosen by running `a` at three:
+
+| cap (matches) | `a` p95 ms | `atl` p95 ms | `as` reads |
+|---:|---:|---:|---|
+| 1,000 | 4.40 | 4.49 | 249+ |
+| 2,500 | 8.18 | 7.75 | 429+ |
+| 6,500 | 18.09 | 14.88 | 1,061+ |
+
+A thousand leaves the keystroke three quarters of its budget under load
+like the first run's (x1.3), and the label `Atlas`, on about 1,200
+conversations, now reads 762+ rather than its exact count.
+
+**The floor is of conversations, so it is rarely the round number.** The
+corpus's threads hold 1 to 12 messages, so a thousand matches are about
+250 conversations: `as` reads "249+", not "1,000+". "1,000+" is what a
+mailbox of one-message conversations shows. A floor of a thousand
+*conversations* would have to walk until it had seen them -- 6,500
+matches here, 18 ms, the last row of the table -- which is the budget
+spent again; showing "1,000+" for 249 would not be a floor. If the
+round number matters more than the cost, that is the maintainer's call.
+
 ### Also seen
 
 - **The word offered is the best documents', not the commonest.** The
