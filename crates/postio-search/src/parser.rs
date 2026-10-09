@@ -104,6 +104,12 @@ fn scan(word: &str) -> (Option<usize>, bool, bool) {
     (None, in_quotes, in_set)
 }
 
+/// Whether `word` leaves a set open at its end: what [`crate::edit`]'s
+/// `join` closes before anything follows it.
+pub(crate) fn leaves_set_open(word: &str) -> bool {
+    scan(word).2
+}
+
 /// Whether `before` is a known operator and its colon, nothing else: what
 /// a `{` must follow to open a set.
 fn opens_set(before: &str) -> bool {
