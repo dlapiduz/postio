@@ -1,0 +1,35 @@
+# Tab in the words state adds the first "Narrow to" pill's term to the
+# query and the panel re-runs (specs/010-focus-search US1 scenario 4,
+# design section 2 "Keys in the dropdown").
+#
+# The term is written by `postio_search::edit::apply` in its canonical
+# spelling (D13), after the words typed; nothing is concatenated in Swift.
+# Spec 009's Tab stepped into the chips instead; on the Mac the dropdown
+# owns Tab now, and GTK's bar keeps the chips until Linux adopts it.
+#
+# The Mac's own: see dropdown-opens-empty.toml.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/010-focus-search US1" }
+seed   = "search"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "search"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+
+[[step]]
+type    = "atlas budget"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+expect  = "Narrow to's first pill is the top sender, `from:` and a name, with its count."
+
+[[step]]
+key     = "Tab"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
+expect  = "Tab adds that sender's `from:` term after the words; the field shows it, the panel re-runs, and the top hits are only that sender's. The keyboard stays in the field."
+
+[[step]]
+command = "back"
+check   = { overlay.kind = "none", keyboard.region = "list" }
+expect  = "Escape closes the panel, and the list has the keyboard."

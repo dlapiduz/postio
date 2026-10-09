@@ -1,0 +1,36 @@
+# Escape closes the dropdown and the list row that had the keyboard has it
+# again, with its selection (specs/010-focus-search US1 scenario 5, design
+# section 2 "Opening and layout").
+#
+# The same rung spec 009 gave the bar: the controller takes the panel
+# down and sends the keyboard home; the Mac does not echo the close back.
+#
+# The Mac's own: see dropdown-opens-empty.toml.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/010-focus-search US1" }
+seed   = "search"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "next_message"
+
+[[step]]
+id      = "row"
+command = "toggle_selection"
+check   = { cursor.index = 1 }
+
+[[step]]
+command = "search"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+
+[[step]]
+type    = "atlas"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+expect  = "The panel shows the words state for “atlas” over an inbox that is not dimmed; the selected row is still drawn selected behind it."
+
+[[step]]
+command = "back"
+check   = { overlay.kind = "none", keyboard.region = "list", cursor.index = { same_as = "row" }, selection.count = { same_as = "row" } }
+expect  = "Escape closes the panel at once. The keyboard is on the row it left, and the row is still selected."
