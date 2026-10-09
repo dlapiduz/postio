@@ -1816,8 +1816,17 @@ impl Results {
             order: self.order,
             count_line: frame.map_or_else(String::new, |_| words::count_line(total, capped)),
             sub_line: frame.map_or_else(String::new, |frame| {
+                // The tabs' own counts, once their rows are read.
+                let files = self
+                    .files
+                    .as_ref()
+                    .map_or(frame.files, |files| files.len() as u64);
+                let people = self
+                    .listed
+                    .as_ref()
+                    .map_or(frame.people, |people| people.len() as u64);
                 self.previewing(with)
-                    .unwrap_or_else(|| words::sub_line(frame.files, frame.people))
+                    .unwrap_or_else(|| words::sub_line(files, people))
             }),
             months,
             timeline_hint: range

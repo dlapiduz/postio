@@ -2557,6 +2557,11 @@ fn the_people_tab_lists_who_the_results_are_from_and_to() {
     assert_eq!(view.cursor, Some(0), "the first person ringed");
     assert!(view.groups.is_empty(), "a list, not month groups");
     assert_eq!(view.tabs[2].count, "2", "the tab counts the rows");
+    assert!(
+        view.sub_line.contains("2 people"),
+        "the line under the count agrees with the tab: {}",
+        view.sub_line
+    );
     assert!(view.tabs[2].selected);
     assert_eq!(
         view.hints

@@ -324,8 +324,8 @@ it understood.
 **Independent test**: US9's.
 
 - [x] T132 [P] [US9] Write failing tests for `executor::people` (`index_suite/conversations.rs`: the distinct correspondents of the matched messages, the user's own addresses excluded, with counts and last dates) and, in `crates/postio-focus/tests/results.rs`, ↩ on a person replaces the query with `from:<address>` and selects the Conversations tab. Red: missing
-- [ ] T133 [US9] Implement `executor::people`, `Req::People`, the tab in `results.rs`, `PersonRowFfi`/`focus_search_person`, and `macos/Sources/PostioKit/PeopleListView.swift` (avatar, name, address, count, last date). Make T132 green
-- [ ] T134 [US9] Capture the People tab at 1440×900 light; there is no PNG, so compare with design §3.11's text and the Files and Conversations rows' rhythm; note it; commit the phase
+- [x] T133 [US9] Implement `executor::people`, `Req::People`, the tab in `results.rs`, `PersonRowFfi`/`focus_search_person`, and `macos/Sources/PostioKit/PeopleListView.swift` (avatar, name, address, count, last date). Make T132 green
+- [x] T134 [US9] Capture the People tab at 1440×900 light; there is no PNG, so compare with design §3.11's text and the Files and Conversations rows' rhythm; note it; commit the phase
 
 ---
 
