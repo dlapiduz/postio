@@ -40,7 +40,10 @@ async fn content_split_preserves_existing_mail_and_does_not_infer_identity() {
         // The stamp that build wrote: what the file is named for.
         connection
             .execute(
-                &format!("PRAGMA user_version = {}", schema::fingerprint(include_str!("../schemas/815185a3.sql"))),
+                &format!(
+                    "PRAGMA user_version = {}",
+                    schema::fingerprint(include_str!("../schemas/815185a3.sql"))
+                ),
                 (),
             )
             .await
