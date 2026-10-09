@@ -54,7 +54,7 @@ public final class ResultsTable: NSObject {
         column.resizingMask = .autoresizingMask
         tableView.addTableColumn(column)
         tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
-        tableView.setAccessibilityLabel("Search results")
+        tableView.setAccessibilityLabel(focusSearchWords().resultsLabel)
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true

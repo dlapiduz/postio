@@ -56,7 +56,7 @@ public final class FilesGrid: NSObject {
         collectionView.delegate = self
         collectionView.register(FileCardItem.self, forItemWithIdentifier: Self.itemIdentifier)
         collectionView.grid = self
-        collectionView.setAccessibilityLabel("Files")
+        collectionView.setAccessibilityLabel(focusSearchWords().filesLabel)
         scrollView.documentView = collectionView
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = true

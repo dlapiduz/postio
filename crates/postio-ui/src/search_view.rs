@@ -662,6 +662,34 @@ pub fn filter_button_label(
     format!("{title}: {}{more}", value(held[0]))
 }
 
+/// The query field's name for a screen reader (design §5): a combobox.
+pub const A11Y_QUERY: &str = "Search query";
+/// The dropdown's name: the combobox's listbox.
+pub const A11Y_SUGGESTIONS: &str = "Search suggestions";
+/// The Conversations tab's table.
+pub const A11Y_RESULTS: &str = "Search results";
+/// The Files tab's grid.
+pub const A11Y_FILES: &str = "Files";
+/// The People tab's list.
+pub const A11Y_PEOPLE: &str = "People";
+
+/// What a screen reader says for a dropdown row: its words, then the
+/// folder and the date when it has them, "Atlas Q3 budget, 3 results,
+/// in:Inbox, yesterday".
+pub fn dropdown_row_accessible(
+    title: &str,
+    detail: &str,
+    folder: Option<&str>,
+    right: Option<&str>,
+) -> String {
+    [Some(title), Some(detail), folder, right]
+        .into_iter()
+        .flatten()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// What a screen reader says for a result (design §5): "Ada Moreno, Re:
 /// Atlas Q3 budget, matched in body: …, Inbox, 26 Sep". A row with no
 /// passage yet leaves the match out.
@@ -2267,6 +2295,32 @@ mod tests {
             ]
         );
         assert!(FilterKind::From.has_popover() && !FilterKind::Unread.has_popover());
+    }
+
+    #[test]
+    fn the_dropdown_and_its_neighbours_are_named_for_a_screen_reader() {
+        // Design §5: the field is a combobox over a listbox; the results
+        // are a table, and each tab's surface says what it holds.
+        assert_eq!(A11Y_QUERY, "Search query");
+        assert_eq!(A11Y_SUGGESTIONS, "Search suggestions");
+        assert_eq!(A11Y_RESULTS, "Search results");
+        assert_eq!(A11Y_FILES, "Files");
+        assert_eq!(A11Y_PEOPLE, "People");
+        // A suggestion reads its words, then where and when, skipping
+        // what it has no column for.
+        assert_eq!(
+            dropdown_row_accessible(
+                "Atlas Q3 budget",
+                "3 results",
+                Some("in:Inbox"),
+                Some("yesterday")
+            ),
+            "Atlas Q3 budget, 3 results, in:Inbox, yesterday"
+        );
+        assert_eq!(
+            dropdown_row_accessible("Show all results", "", None, None),
+            "Show all results"
+        );
     }
 
     #[test]

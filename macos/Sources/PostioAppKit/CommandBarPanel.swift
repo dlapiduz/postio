@@ -48,11 +48,18 @@ public final class CommandBarPanel {
         panel.setAccessibilityLabel("Command bar")
         hosting = FirstMouseHostingView(rootView: CommandBarView(model: model, saveCap: saveCap()))
         hosting.sizingOptions = []
+        // Design §5: the field is a combobox and this is its listbox.
+        hosting.role = .list
+        hosting.setAccessibilityLabel(focusSearchWords().suggestionsLabel)
         panel.contentView = hosting
         self.saveCap = saveCap
     }
 
     private let saveCap: () -> String?
+
+    /// The listbox the field is a combobox for, as a screen reader sees it.
+    var listAccessibilityRole: NSAccessibility.Role? { hosting.accessibilityRole() }
+    var listAccessibilityLabel: String? { hosting.accessibilityLabel() }
 
     /// Put the panel under `field`, a child of the field's window, or move
     /// it there and resize it for what the model holds now.
@@ -106,6 +113,11 @@ private final class BarPanel: NSPanel {
 /// click rather than wake the window.
 final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// The role this view answers with: SwiftUI's hosting view reports its
+    /// own, so one set with `setAccessibilityRole` would be ignored.
+    var role: NSAccessibility.Role?
+    override func accessibilityRole() -> NSAccessibility.Role? { role ?? super.accessibilityRole() }
 }
 
 /// The toolbar's search field, which says when it takes the keyboard.
@@ -122,6 +134,13 @@ public final class BarSearchField: NSSearchField {
         get { BareSearchFieldCell.self }
         set {}
     }
+
+    /// Whether the dropdown under it is up: a combobox says so.
+    public var listOpen = false
+
+    override public func accessibilityRole() -> NSAccessibility.Role? { .comboBox }
+    override public func accessibilityLabel() -> String? { focusSearchWords().queryLabel }
+    override public func isAccessibilityExpanded() -> Bool { listOpen }
 
     /// The field took the keyboard.
     public var onFocus: (() -> Void)?

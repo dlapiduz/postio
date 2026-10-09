@@ -1255,6 +1255,16 @@ pub struct SearchWordsFfi {
     pub understood_as: String,
     /// Its note on the right.
     pub understood_note: String,
+    /// The query field's name (a combobox).
+    pub query_label: String,
+    /// The dropdown's name (its listbox).
+    pub suggestions_label: String,
+    /// The Conversations table's name.
+    pub results_label: String,
+    /// The Files grid's name.
+    pub files_label: String,
+    /// The People list's name.
+    pub people_label: String,
 }
 
 /// The results view's chrome words.
@@ -1270,7 +1280,28 @@ pub fn focus_search_words() -> SearchWordsFfi {
         timeline_hint: words::TIMELINE_HINT.to_owned(),
         understood_as: words::UNDERSTOOD_AS.to_owned(),
         understood_note: words::UNDERSTOOD_NOTE.to_owned(),
+        query_label: words::A11Y_QUERY.to_owned(),
+        suggestions_label: words::A11Y_SUGGESTIONS.to_owned(),
+        results_label: words::A11Y_RESULTS.to_owned(),
+        files_label: words::A11Y_FILES.to_owned(),
+        people_label: words::A11Y_PEOPLE.to_owned(),
     }
+}
+
+/// What a screen reader says for a dropdown row.
+#[uniffi::export]
+pub fn focus_search_row_accessible(
+    title: String,
+    detail: String,
+    folder: Option<String>,
+    right: Option<String>,
+) -> String {
+    postio_ui::search_view::dropdown_row_accessible(
+        &title,
+        &detail,
+        folder.as_deref(),
+        right.as_deref(),
+    )
 }
 
 /// The bulk bar's count while `n` results are checked: "5 selected".
