@@ -213,6 +213,44 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .map_err(|error| error.to_string()),
         },
+        Request::Suggest {
+            prefix,
+            field,
+            stamp,
+        } => Reply::Suggest {
+            stamp,
+            answer: client
+                .suggest(postio_model::AccountScope::Unified, prefix, field)
+                .await
+                .map(Box::new)
+                .map_err(|error| error.to_string()),
+        },
+        // Two, newest first: the "Latest from" preview under the people.
+        Request::LatestFrom { address, stamp } => {
+            let query = postio_search::parse(
+                &postio_search::query::spell(&postio_search::query::Clause {
+                    negated: false,
+                    filter: postio_search::query::Filter::From(address.clone()),
+                }),
+                postio_ui::clock::now().date_naive(),
+            );
+            Reply::LatestFrom {
+                stamp,
+                address,
+                answer: client
+                    .conversations(
+                        postio_model::AccountScope::Unified,
+                        query,
+                        postio_search::results::ConversationOrder::Newest,
+                        0,
+                        crate::dropdown::LATEST,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())
+                    .and_then(|found| found.ok_or_else(|| "no search index here".to_owned()))
+                    .map(Box::new),
+            }
+        }
         Request::RecentSearches => Reply::RecentSearches(
             client
                 .recent_searches()
