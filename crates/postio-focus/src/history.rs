@@ -41,8 +41,11 @@ pub(crate) struct Snapshot {
     pub(crate) order: ConversationOrder,
     /// The row with the focus ring.
     pub(crate) cursor: Option<u64>,
-    /// The rows checked, by their best message.
-    pub(crate) checked: Vec<MessageId>,
+    /// The rows checked, by their best message and its conversation; with
+    /// `all`, the rows taken back out of the whole match.
+    pub(crate) checked: Vec<(MessageId, Option<postio_model::ThreadId>)>,
+    /// ⇧X: every conversation the query matches is checked.
+    pub(crate) all: bool,
 }
 
 /// What was visited behind the place shown, and what is ahead of it.

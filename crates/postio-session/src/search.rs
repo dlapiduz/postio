@@ -279,6 +279,55 @@ pub async fn conversations(
     Some(results)
 }
 
+/// Every message of every conversation `query` matches, but those whose
+/// best message is in `except`: what ⇧X in Focus's results selects (spec
+/// 010 US5), resolved with the results' own match -- capped as their count
+/// is -- so a verb on it reaches exactly what the person was shown. `None`
+/// when the match could not be walked.
+///
+/// A conversation is every message of its thread, as a verb on one row
+/// is; one on no thread is its message.
+pub async fn matching(
+    connection: &Checkout,
+    account: AccountScope,
+    query: &ParsedQuery,
+    except: &[MessageId],
+) -> Option<Vec<MessageId>> {
+    let now = postio_ui::clock::now();
+    let found = postio_index::executor::search_conversations(
+        connection,
+        &ConversationRequest {
+            account,
+            query,
+            order: ConversationOrder::Newest,
+            offset: 0,
+            limit: u32::MAX,
+            today: now.date_naive(),
+        },
+        now.with_timezone(&Utc),
+    )
+    .await
+    .map_err(|error| tracing::warn!(%error, "the match to act on could not be walked"))
+    .ok()?;
+    let threads = postio_storage::repository::ThreadRepository::new(connection);
+    let mut messages = Vec::new();
+    for hit in found.hits.iter().filter(|hit| !except.contains(&hit.best)) {
+        match hit.key {
+            ConversationKey::Thread(thread) => messages.extend(
+                threads
+                    .messages(thread, postio_storage::repository::ThreadOrder::Oldest)
+                    .await
+                    .map_err(|error| tracing::warn!(%error, "a matched thread could not be read"))
+                    .ok()?
+                    .into_iter()
+                    .map(|row| row.id),
+            ),
+            ConversationKey::Lone(message) => messages.push(message),
+        }
+    }
+    Some(messages)
+}
+
 /// The names behind `results`' ids: one read per kind -- people, labels,
 /// folders -- however many there are.
 ///

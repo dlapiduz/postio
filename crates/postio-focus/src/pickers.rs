@@ -73,6 +73,9 @@ pub enum Anchor {
     Row(u32),
     /// The open message's action row.
     OpenMessage,
+    /// A search result's row at this position: the focus ring's (spec 010
+    /// US5).
+    Result(u64),
 }
 
 /// The field a picker holds.
@@ -173,6 +176,9 @@ struct Aimed {
     message: Option<MessageId>,
     /// Whether it opened over the list, whose selection goes once it acts.
     from_list: bool,
+    /// Whether it opened over a search's results, whose checks go once it
+    /// acts.
+    from_results: bool,
 }
 
 impl Aimed {
@@ -492,6 +498,7 @@ impl FocusController {
                     Some(Everything {
                         accounts: self.cursor.accounts().to_vec(),
                         except,
+                        query: None,
                     }),
                 ),
                 Aim::Targets(aims) if aims.is_empty() => return Some(Vec::new()),
@@ -504,6 +511,7 @@ impl FocusController {
             everything,
             message: at.filter(|row| !row.digest).map(|row| row.id),
             from_list: true,
+            from_results: false,
         };
         let anchor = Anchor::Row(position.unwrap_or(0));
         Some(self.open_picker(kind, anchor, target(&selection, said), aimed))
@@ -547,9 +555,63 @@ impl FocusController {
             everything: None,
             message: Some(at.id),
             from_list: false,
+            from_results: false,
         };
         let target = target(&Selection::These(Vec::new()), said);
         Some(self.open_picker(kind, Anchor::OpenMessage, target, aimed))
+    }
+
+    /// `s`, `h`, `l` or `m` in a search's results (spec 010 US5): the
+    /// picker at the focused result, over what a verb there would aim at --
+    /// the checked conversations, the whole match under ⇧X, or the focused
+    /// one. `None` when `id` opens none.
+    pub(crate) fn picker_on_results(&mut self, id: CommandId) -> Option<Vec<Step>> {
+        let kind = PickerKind::of(id)?;
+        let results = self.results.as_ref()?;
+        let Some(aim) = results.aim() else {
+            return Some(Vec::new());
+        };
+        let position = results.cursor.unwrap_or(0);
+        let focused = results.cursor_message().map(|(message, _)| message);
+        let (aims, everything, target) = match aim {
+            crate::results::ResultsAim::Targets {
+                aims,
+                conversations,
+            } => {
+                let target = if conversations > 1 {
+                    words::target(conversations, "", "")
+                } else {
+                    self.result_row(position)
+                        .map(|row| {
+                            let subject: String =
+                                row.subject.iter().map(|run| run.text.as_str()).collect();
+                            words::target(1, &row.sender, &subject)
+                        })
+                        .unwrap_or_default()
+                };
+                (aims, None, target)
+            }
+            crate::results::ResultsAim::Matching { query, except } => {
+                let target = words::target(results.selected() as usize, "", "");
+                (
+                    Vec::new(),
+                    Some(Everything {
+                        accounts: Vec::new(),
+                        except,
+                        query: Some(query),
+                    }),
+                    target,
+                )
+            }
+        };
+        let aimed = Aimed {
+            aims,
+            everything,
+            message: focused,
+            from_list: false,
+            from_results: true,
+        };
+        Some(self.open_picker(kind, Anchor::Result(position), target, aimed))
     }
 
     /// Put the picker up, and ask for what it lists.
@@ -817,6 +879,8 @@ impl FocusController {
         };
         if open.aimed.from_list && (acted || open.kind == PickerKind::Label) {
             self.cursor.clear(self.feed.total())
+        } else if open.aimed.from_results && (acted || open.kind == PickerKind::Label) {
+            self.clear_results_checks()
         } else {
             Vec::new()
         }

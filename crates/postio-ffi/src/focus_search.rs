@@ -558,10 +558,14 @@ pub struct ResultsViewFfi {
     pub footer_hints: Vec<KeyHintFfi>,
     /// "48 conversations · local index · 41 ms".
     pub footer_right: String,
-    /// Rows checked: the footer is the bulk bar while this is above zero.
+    /// Conversations checked: the footer is the bulk bar while this is
+    /// above zero.
     pub selected: u64,
     /// The bulk bar's verbs and keys.
     pub bulk: Vec<KeyHintFfi>,
+    /// The bulk bar's right, "⇧X select all 12", while some but not every
+    /// conversation the query matches is checked.
+    pub select_all: Option<KeyHintFfi>,
 }
 
 fn month_bars(months: Vec<postio_focus::MonthBar>) -> Vec<MonthBarFfi> {
@@ -628,6 +632,10 @@ impl From<postio_focus::ResultsView> for ResultsViewFfi {
             footer_right: view.footer,
             selected: view.selected,
             bulk: hints(view.bulk),
+            select_all: view.select_all.map(|hint| KeyHintFfi {
+                key: hint.key,
+                label: hint.label,
+            }),
         }
     }
 }

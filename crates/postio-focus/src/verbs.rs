@@ -17,14 +17,20 @@ use crate::cursor::{Cursor, RowFacts, Rows};
 use crate::feed::Step;
 use crate::{Intent, Request};
 
-/// Everything the view shows, but these: a predicate the host resolves over
-/// the inboxes of `accounts`, never a list of what is on screen.
+/// Everything the view shows, but these: a predicate the host resolves,
+/// never a list of what is on screen. Over the inboxes of `accounts`; or,
+/// with `query` -- ⇧X in a search's results (spec 010 US5, the data
+/// model's `Aim::Matching`) -- over every conversation the query matches,
+/// walked as the results' own match is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Everything {
     /// The accounts Focus's inbox is made of.
     pub accounts: Vec<AccountId>,
-    /// Rows taken back out of the selection.
+    /// Rows taken back out of the selection: for a query, each row's best
+    /// message, which stands for its conversation.
     pub except: Vec<MessageId>,
+    /// The search whose every match is selected, instead of the inbox.
+    pub query: Option<postio_search::ParsedQuery>,
 }
 
 /// How a toast is drawn.
@@ -192,6 +198,7 @@ impl Verbs {
                     Some(Everything {
                         accounts: cursor.accounts().to_vec(),
                         except,
+                        query: None,
                     }),
                 ),
                 Aim::Targets(aims) if aims.is_empty() => return Vec::new(),

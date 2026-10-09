@@ -52,6 +52,12 @@ pub enum PickerAnchorFfi {
     },
     /// The open message's window, under its action row.
     OpenMessage,
+    /// A search result's row at `position`: the focus ring's (spec 010
+    /// US5). Hang it under the row, as from the list's.
+    Result {
+        /// The row.
+        position: u64,
+    },
 }
 
 impl From<postio_focus::Anchor> for PickerAnchorFfi {
@@ -59,6 +65,7 @@ impl From<postio_focus::Anchor> for PickerAnchorFfi {
         match anchor {
             postio_focus::Anchor::Row(position) => PickerAnchorFfi::Row { position },
             postio_focus::Anchor::OpenMessage => PickerAnchorFfi::OpenMessage,
+            postio_focus::Anchor::Result(position) => PickerAnchorFfi::Result { position },
         }
     }
 }

@@ -624,6 +624,17 @@ pub fn bulk_hints(keymap: &Keymap) -> Vec<Hint> {
     .collect()
 }
 
+/// The bulk bar's right while some results are checked (§3.5): "⇧X select
+/// all 12", every conversation the query matches. `None` when nothing is
+/// bound to Select all.
+pub fn select_all_hint(keymap: &Keymap, total: u64, capped: bool) -> Option<Hint> {
+    hints::hint(
+        keymap,
+        CommandId::SelectAll,
+        &format!("select all {}", count(total, capped)),
+    )
+}
+
 /// The results tabs' words, in their order (§3.2).
 pub const TABS: [&str; 3] = ["Conversations", "Files", "People"];
 

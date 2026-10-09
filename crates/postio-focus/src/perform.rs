@@ -650,6 +650,17 @@ async fn send(
     aims: Vec<MessageTarget>,
     everything: Option<crate::Everything>,
 ) -> Result<(), String> {
+    if let Some(crate::Everything {
+        query: Some(query),
+        except,
+        ..
+    }) = everything
+    {
+        return client
+            .send_matching(command, postio_model::AccountScope::Unified, query, except)
+            .await
+            .map_err(|error| error.to_string());
+    }
     if let Some(everything) = everything {
         let state = SharedState::default();
         let (sink, _) = postio_core::bridge::event_channel();
