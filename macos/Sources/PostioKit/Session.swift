@@ -197,6 +197,28 @@ public final class PostioSession {
     /// The search field's placeholder (screen 01).
     public func focusSearchPlaceholder() -> String { inner.focusSearchPlaceholder() }
 
+    // MARK: the results view (specs/010-focus-search step 3)
+
+    /// A filter button, a chip's ✕, a timeline drag: the results' query
+    /// changes, and `FocusQuery` then `FocusResults` say how.
+    public func focusSearchEdit(_ edit: TermEditFfi) { inner.focusSearchEdit(edit: edit) }
+
+    /// A results tab picked by a click (⌘1-3 are commands).
+    public func focusSearchTab(_ tab: ResultsTabFfi) { inner.focusSearchTab(tab: tab) }
+
+    /// The Sort menu.
+    public func focusSearchOrder(_ order: ConversationOrderFfi) { inner.focusSearchOrder(order: order) }
+
+    /// A click on the result at `position`: the focus ring goes there.
+    public func focusSearchPoint(_ position: UInt64) { inner.focusSearchPoint(position: position) }
+
+    /// How many rows the results table has.
+    public func focusSearchRowCount() -> UInt64 { inner.focusSearchRowCount() }
+
+    /// The result at `position`, or `nil` while its page is on its way
+    /// (read it again on `FocusResultsPage`).
+    public func focusSearchRow(_ position: UInt64) -> ResultRowFfi? { inner.focusSearchRow(position: position) }
+
     /// The folders popover's places whose names hold `filter`, read now
     /// from the last read (ask again on `FocusPlacesChanged`).
     public func focusPlaces(_ filter: String) -> [PlaceEntryFfi] { inner.focusPlaces(filter: filter) }
