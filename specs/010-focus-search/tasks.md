@@ -188,7 +188,7 @@ GTK's bar is unchanged.
 - [x] T071 [P] [US2] Write failing tests in `macos/Tests/PostioKitTests/ResultsModelTests.swift`: group headers precede their rows; Top hits rows are 66 tall and others 58; a `FocusResultsPage` re-reads only its range. Red: no model
 - [x] T072 [US2] Add `macos/Sources/PostioKit/{ResultsModel,ResultRowView,TimelineView,SearchFooter}.swift` (timeline display only) and `macos/Sources/PostioAppKit/ResultsTable.swift` (view-based `NSTableView` with group rows, the gutter, focus ring and find-yellow runs). Make T071 green
   - Wiring (`Engine.swift`, `MainWindow.swift`) landed with T070: the results pane sits over the inbox column in the window's `ZStack`, as Filtered does, so the list keeps its scroll, cursor and selection; `FocusKeyboardHome` in the results gives the results table the keyboard; `mainContext` is `.results` while they are up.
-- [ ] T073 [US2] Wire `HistoryBack`/`HistoryForward` to the trackpad swipe (`NSEvent` swipe/`scrollWheel` gesture on the main window) in `macos/Sources/Postio/MainWindow.swift`; Swift reports the gesture as the command, decides nothing
+- [x] T073 [US2] Wire `HistoryBack`/`HistoryForward` to the trackpad swipe (`NSEvent` swipe/`scrollWheel` gesture on the main window) in `macos/Sources/Postio/MainWindow.swift`; Swift reports the gesture as the command, decides nothing
 - [ ] T074 [US2] Capture screen 06 (light) and 07 (dark), list every difference in the step-3 note, fix or explain each
 - [ ] T075 Grep `crates/postio-gtk` for `KeyContext`, `Context`, `Policy`; commit the phase
 
