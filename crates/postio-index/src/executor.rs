@@ -1057,6 +1057,21 @@ const BODY_SCORE_WEIGHT: f64 = 0.5;
 /// explicit `?N` continues from `N + 1` here exactly as it does in SQLite, so
 /// the conditions that follow still number themselves — and `match_params`
 /// binds two values rather than four, in the same order.
+///
+/// # Why the lookup names its index
+///
+/// Each hit is a content id, and its messages are found through
+/// `idx_messages_content`. That has to be written down, because the planner
+/// has no statistics (never `ANALYZE`; `docs/gotchas.md`) and ranks a seek by
+/// how many key columns it binds. A `WHERE` saying `m.received_at >= ?`
+/// beside `m.account_id = ?` offers it `idx_messages_account_list` with two,
+/// against `content_id=?`'s one -- so it took the date range, and walked every
+/// message in it once per hit. A word plus `after:` went from under a
+/// millisecond to over a second on 20k messages (#1809). Before content
+/// identity the lookup was `m.id = hits.rid`, a rowid seek no index could
+/// outbid, which is why this was never needed. The sibling check in
+/// [`Plan::where_sql`] and the facet join in [`Plan::current_scope`] name it
+/// for the same reason; `driven_join_plan` in the index suite holds all three.
 const HITS_JOIN: &str = "FROM (
              SELECT content_id AS rid,
                     fts_score(sender, recipients, subject, filenames, list_id, ?1) AS meta,
@@ -1067,7 +1082,8 @@ const HITS_JOIN: &str = "FROM (
              SELECT content_id, NULL, fts_score(body_search, ?2)
                FROM message_search_bodies
               WHERE fts_match(body_search, ?2)
-          ) hits CROSS JOIN messages m ON m.content_id = hits.rid";
+          ) hits CROSS JOIN messages m INDEXED BY idx_messages_content
+                 ON m.content_id = hits.rid";
 
 /// The same match, asked one message at a time.
 ///
@@ -1367,7 +1383,7 @@ impl Plan {
         let mut conditions = vec![
             eligible,
             format!(
-                "NOT EXISTS (SELECT 1 FROM messages earlier \
+                "NOT EXISTS (SELECT 1 FROM messages earlier INDEXED BY idx_messages_content \
              WHERE earlier.content_id = m.content_id AND earlier.id < m.id \
                AND ({earlier}))"
             ),
@@ -1540,7 +1556,8 @@ impl Plan {
                  SELECT DISTINCT m.content_id {from} WHERE {where_sql} LIMIT ?
              ), matched AS (
                  SELECT m.content_id, mb.name, m.seen, m.flagged, m.has_attachments, m.size
-                   FROM capped c JOIN messages m ON m.content_id = c.content_id
+                   FROM capped c CROSS JOIN messages m INDEXED BY idx_messages_content
+                     ON m.content_id = c.content_id
                    JOIN mailboxes mb ON mb.id = m.mailbox_id
                   WHERE {eligible}
              )
@@ -1713,7 +1730,7 @@ impl Plan {
             i64::from(pool_size).saturating_mul(2),
         ));
 
-        let mut statement = connection.prepare(&sql).await?;
+        let mut statement = sql::statement(connection, &sql).await?;
         let rows = sql::mapped(&mut statement, params.clone(), |row| {
             let meta: Option<f64> = row.col(1)?;
             let body: Option<f64> = row.col(2)?;
@@ -1847,7 +1864,7 @@ impl Plan {
         }
         params.extend(ids.iter().map(|id| turso::Value::Integer(*id)));
 
-        let mut statement = connection.prepare(&sql).await?;
+        let mut statement = sql::statement(connection, &sql).await?;
         let by_id: std::collections::HashMap<i64, Candidate> =
             sql::mapped(&mut statement, params.clone(), |row| {
                 let id: i64 = row.col(0)?;
