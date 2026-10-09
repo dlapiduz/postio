@@ -152,6 +152,7 @@ searches, on the Mac.
 - [ ] T055 [US1] Capture screens 01 and 03 (light) and write the step-2 note with every difference listed; fix or explain each
   - Pending: `screencapture` could not create an image from this terminal (no Screen Recording grant, or the display asleep). The note `docs/notes/2026-10-09-focus-search-step-2.md` lists the differences read from the code and says how to take the two captures; tick this when they are taken and the list amended.
 - [ ] T056 Commit the phase
+  - Everything but T055's captures is committed and pushed. `crates/postio-gtk` names none of the changed shared names (`Capabilities`, `results_view`, the new `Request`/`Reply`/`Intent`/`Input` variants, all `#[non_exhaustive]`); it builds its policy with `Policy::for_platform`, so `results_view` is off there. Tick with T055.
 
 **Checkpoint**: the dropdown's empty and words states work on the Mac;
 GTK's bar is unchanged.
