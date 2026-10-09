@@ -558,7 +558,26 @@ impl FocusDriver {
     /// of is over the list; `None` leaves it to the caller.
     pub(crate) fn key_context(&self) -> Option<postio_ui::keymap::KeyContext> {
         let focus = self.focus.lock().expect("focus lock");
-        focus.has_surface().then(|| focus.key_context())
+        (focus.has_surface() || focus.in_results()).then(|| focus.key_context())
+    }
+
+    /// How many rows the results table has.
+    pub(crate) fn result_count(&self) -> u64 {
+        self.focus.lock().expect("focus lock").result_count()
+    }
+
+    /// The result at `position`, or `None` while its page is on its way: a
+    /// miss asks for the page, and `FocusResultsPage` says when it landed.
+    pub(crate) fn result_row(self: &Arc<Self>, position: u64) -> Option<postio_focus::ResultRow> {
+        let effects = {
+            let mut focus = self.focus.lock().expect("focus lock");
+            if let Some(row) = focus.result_row(position) {
+                return Some(row);
+            }
+            focus.results_wanted(position)
+        };
+        self.apply(effects);
+        None
     }
 
     /// The message under the cursor, once its page has landed: what a verb
@@ -820,6 +839,17 @@ impl FocusDriver {
             }),
             Intent::BarLines(view) => self.say(UiEvent::FocusBarLines { view: view.into() }),
             Intent::Dropdown(view) => self.say(UiEvent::FocusDropdown { view: view.into() }),
+            Intent::ShowResults(view) => self.say(UiEvent::FocusResults {
+                view: (*view).into(),
+            }),
+            Intent::ResultsPage { first, count } => {
+                self.say(UiEvent::FocusResultsPage { first, count });
+            }
+            Intent::ResultsCursor(position) => {
+                self.say(UiEvent::FocusResultsCursor { position });
+            }
+            Intent::Query(view) => self.say(UiEvent::FocusQuery { view: view.into() }),
+            Intent::LeaveResults => self.say(UiEvent::FocusLeaveResults),
             Intent::Place { name } => self.say(UiEvent::FocusPlace { name }),
             Intent::OpenPlaces => self.say(UiEvent::FocusOpenPlaces),
             Intent::PlacesChanged => self.say(UiEvent::FocusPlacesChanged),

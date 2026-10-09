@@ -330,7 +330,7 @@ pub(crate) struct Results {
     /// Checked rows, by their best message.
     pub(crate) checked: Vec<MessageId>,
     /// The query has been kept among the recent searches.
-    remembered: bool,
+    pub(crate) remembered: bool,
 }
 
 impl Results {
@@ -1219,6 +1219,10 @@ impl FocusController {
         let parsed = self.bar.lower(&typed);
         let query = spelled(&parsed);
         let order = Results::default_order(&parsed);
+        // Kept among the recent searches now when the dropdown has counted
+        // it, so leaving before the results land still keeps it; else once
+        // they land.
+        let remembered = self.bar.remember();
         let mut steps = self.dismiss_bar(true);
         steps.extend(self.open_results(Snapshot {
             query,
@@ -1227,6 +1231,12 @@ impl FocusController {
             cursor: None,
             checked: Vec::new(),
         }));
+        if let Some(step) = remembered {
+            if let Some(results) = self.results.as_mut() {
+                results.remembered = true;
+            }
+            steps.push(step);
+        }
         steps
     }
 

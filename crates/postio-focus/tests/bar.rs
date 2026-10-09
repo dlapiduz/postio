@@ -1792,6 +1792,12 @@ mod dropdown {
                 .iter()
                 .any(|request| matches!(request, Request::ResultsPage { .. }))
         );
+        // Counted by the dropdown already: kept now, so leaving before the
+        // results land keeps it too.
+        assert!(asked(&effects).contains(&Request::RememberSearch {
+            query: "atlas budget".to_owned(),
+            hits: 48,
+        }));
     }
 
     #[test]

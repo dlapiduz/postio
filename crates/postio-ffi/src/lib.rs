@@ -110,8 +110,10 @@ pub use focus_pickers::{
 };
 pub use focus_reader::{FocusReaderDocumentFfi, RenderModeWordsFfi, TreatmentFfi};
 pub use focus_search::{
-    DropdownRowFfi, DropdownRowKindFfi, DropdownSectionFfi, DropdownStateFfi, DropdownViewFfi,
-    PillFfi, RunFfi, RunStyleFfi,
+    ConversationOrderFfi, DropdownRowFfi, DropdownRowKindFfi, DropdownSectionFfi, DropdownStateFfi,
+    DropdownViewFfi, FilterButtonFfi, FilterKindFfi, MonthBarFfi, PillFfi, QueryChipFfi,
+    QueryViewFfi, ResultGroupFfi, ResultRowFfi, ResultsTabFfi, ResultsViewFfi, RunFfi, RunStyleFfi,
+    TabFfi, TermEditFfi,
 };
 pub use focus_states::{
     BannerButtonFfi, BannerFfi, BannerProgressFfi, EmptyPageFfi, EmptyShortcutFfi, SyncMarkFfi,
