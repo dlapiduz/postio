@@ -651,6 +651,7 @@ pub async fn search_demo() -> (Store, AccountId) {
     let files = search_files();
 
     let mut labels: std::collections::HashMap<&str, LabelId> = std::collections::HashMap::new();
+    let mut bodies: Vec<(MessageId, String)> = Vec::new();
     let mut threads = curated();
     threads.extend(generated());
     for (index, thread) in threads.iter().enumerate() {
@@ -683,12 +684,28 @@ pub async fn search_demo() -> (Store, AccountId) {
             today,
             &files,
             &stored,
+            &mut bodies,
         )
         .await;
     }
     postio_index::index::ensure_schema(&connection)
         .await
         .expect("the search index");
+    // Indexed as the body indexer would have by now: a seed whose bodies
+    // only the subject search can see shows no body passage and no quoted
+    // text until a background pass runs. After `ensure_schema`, whose first
+    // run empties the body index it creates, and in one transaction.
+    postio_storage::sql::batch(&connection, "BEGIN")
+        .await
+        .expect("begin the bodies");
+    for (message, body) in &bodies {
+        postio_index::index::index_body(&connection, message.get(), Some(body))
+            .await
+            .expect("a body indexed");
+    }
+    postio_storage::sql::batch(&connection, "COMMIT")
+        .await
+        .expect("commit the bodies");
     drop(connection);
     (database, account.id)
 }
@@ -704,6 +721,7 @@ async fn file_thread(
     today: DateTime<Utc>,
     files: &[SearchFile],
     stored: &[(&'static str, postio_model::BlobId)],
+    bodies: &mut Vec<(MessageId, String)>,
 ) {
     let count = thread.turns.len();
     let correspondent = thread
@@ -792,6 +810,7 @@ async fn file_thread(
             .thread(&message)
             .await
             .expect("threaded");
+        bodies.push((message.id, body.clone()));
         MessageRepository::new(connection)
             .set_body(
                 message.id,
