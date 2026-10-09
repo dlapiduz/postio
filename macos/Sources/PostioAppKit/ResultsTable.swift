@@ -219,7 +219,10 @@ final class ResultRowBackground: NSTableRowView {
             bounds.fill()
         }
         if isCursor {
-            NSColor.controlAccentColor.withAlphaComponent(0.07).setFill()
+            let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            NSColor.controlAccentColor
+                .withAlphaComponent(SearchRuns.focusFill(dark ? .dark : .light))
+                .setFill()
             bounds.fill()
         }
         NSColor.separatorColor.setFill()

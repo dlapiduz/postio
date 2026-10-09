@@ -87,6 +87,7 @@ public final class NoResultsModel {
 /// its ring; then how much was searched, 12.5 tertiary. Every word is the
 /// controller's (`NoResultsViewFfi`).
 public struct NoResultsView: View {
+    @Environment(\.colorScheme) private var scheme
     let model: NoResultsModel
 
     public init(model: NoResultsModel) {
@@ -180,7 +181,7 @@ public struct NoResultsView: View {
             .padding(.vertical, 8)
             .frame(minHeight: 50)
             .contentShape(Rectangle())
-            .background(way.focused ? AnyShapeStyle(Color.accentColor.opacity(0.08)) : AnyShapeStyle(.clear))
+            .background(way.focused ? AnyShapeStyle(Color.accentColor.opacity(SearchRuns.focusFill(scheme))) : AnyShapeStyle(.clear))
             .overlay {
                 if way.focused {
                     RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor, lineWidth: 2)

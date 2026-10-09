@@ -193,6 +193,12 @@ public enum SearchRuns {
         Color.yellow.opacity(scheme == .dark ? 0.28 : 0.38)
     }
 
+    /// How much of the accent tints a focused row, card or way out: the
+    /// design's `accsoft`, 8% in light and 14% in dark (screens 06, 07).
+    public static func focusFill(_ scheme: ColorScheme) -> Double {
+        scheme == .dark ? 0.14 : 0.08
+    }
+
     public static func attributed(
         _ runs: [RunFfi], size: CGFloat, weight: Font.Weight = .regular, secondary: Bool = false,
         scheme: ColorScheme

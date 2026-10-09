@@ -64,6 +64,7 @@ public struct PeopleListView: View {
 /// One person (design §3.11): the avatar, the name over the address, the
 /// count, the last date.
 public struct PersonRowView: View {
+    @Environment(\.colorScheme) private var scheme
     let row: PersonRowFfi?
     let focused: Bool
 
@@ -110,7 +111,7 @@ public struct PersonRowView: View {
         .background {
             // A result row's ground: the accent's tint under the ring,
             // never as a selection.
-            if focused { Color.accentColor.opacity(0.07) }
+            if focused { Color.accentColor.opacity(SearchRuns.focusFill(scheme)) }
         }
         .overlay(alignment: .bottom) {
             Rectangle().fill(.separator).frame(height: 1)
