@@ -143,6 +143,25 @@ pub async fn relaxations(
         .unwrap_or_default()
 }
 
+/// What a prefix could become, on one reader turn. Empty when the store
+/// could not be read: no offer is better than a wrong one.
+pub async fn suggest(
+    database: &Store,
+    account: AccountScope,
+    prefix: &str,
+    field: Option<postio_search::query::Field>,
+) -> postio_search::suggest::Suggestions {
+    match database.read().await {
+        Ok(reader) => postio_session::search::suggest(&reader, account, prefix, field)
+            .await
+            .unwrap_or_default(),
+        Err(error) => {
+            tracing::warn!(%error, "no connection to complete a prefix with");
+            postio_search::suggest::Suggestions::default()
+        }
+    }
+}
+
 fn failed(error: postio_storage::Error) -> postio_model::listing::StoreError {
     tracing::warn!(%error, "could not read or write the remembered searches");
     postio_model::listing::StoreError::new(error.to_string())

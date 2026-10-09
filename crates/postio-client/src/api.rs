@@ -76,6 +76,7 @@ impl Req {
                 | Req::Passages { .. }
                 | Req::ConversationMatches { .. }
                 | Req::Relaxations { .. }
+                | Req::Suggest { .. }
                 | Req::RecentSearches
                 | Req::SavedCounts { .. }
         )
@@ -133,6 +134,7 @@ impl Req {
             Req::Passages { .. } => "Passages",
             Req::ConversationMatches { .. } => "ConversationMatches",
             Req::Relaxations { .. } => "Relaxations",
+            Req::Suggest { .. } => "Suggest",
             Req::RecentSearches => "RecentSearches",
             Req::RememberSearch { .. } => "RememberSearch",
             Req::ForgetSearch(_) => "ForgetSearch",
@@ -1012,6 +1014,26 @@ impl Client {
         };
         self.read(request, "the ways out", |answer| match answer {
             Resp::Relaxed(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// What `prefix` could become, each offer counted: the words, labels,
+    /// lists and files it begins, or `field`'s values (spec 010 US7).
+    pub async fn suggest(
+        &self,
+        account: postio_model::AccountScope,
+        prefix: String,
+        field: Option<postio_search::query::Field>,
+    ) -> Result<postio_search::suggest::Suggestions, StoreError> {
+        let request = Req::Suggest {
+            account,
+            prefix,
+            field,
+        };
+        self.read(request, "the suggestions", |answer| match answer {
+            Resp::Suggestions(found) => Some(*found),
             _ => None,
         })
         .await
