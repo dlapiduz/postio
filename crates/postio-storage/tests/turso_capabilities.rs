@@ -630,3 +630,128 @@ async fn the_score_needs_the_same_parameter_as_the_match() {
          `HITS_JOIN` no longer needs its explicit `?1`/`?2`: {different:?}"
     );
 }
+
+/// A store with an fts index over `d.subject` and [`MATCHING`] rows that
+/// say "report" among noise: enough that a read over the match has rows
+/// left when it is abandoned.
+async fn a_matching_store() -> (tempfile::TempDir, Store) {
+    let (dir, path) = temp("abandoned.db");
+    let store = Store::open(&path, &a_key()).await.expect("open");
+    let connection = store.connect().await.expect("connect");
+    connection
+        .execute_batch(
+            "CREATE TABLE d (id INTEGER PRIMARY KEY, subject TEXT NOT NULL DEFAULT '');
+             CREATE INDEX d_fts ON d USING fts (subject);",
+        )
+        .await
+        .expect("create");
+    for index in 0..MATCHING {
+        for subject in [
+            format!("quarterly report {index}"),
+            format!("entirely unrelated subject {index}"),
+        ] {
+            connection
+                .execute("INSERT INTO d (subject) VALUES (?1)", (subject,))
+                .await
+                .expect("a row");
+        }
+    }
+    drop(connection);
+    (dir, store)
+}
+
+/// How many rows say "report" in [`a_matching_store`].
+const MATCHING: i64 = 40;
+
+const OVER_THE_MATCH: &str = "SELECT id FROM d WHERE fts_match(subject, ?1)";
+
+/// Every id the match yields on `connection`, read to the end.
+async fn the_whole_match(connection: &postio_storage::Connection) -> Vec<i64> {
+    let mut rows = connection
+        .query(OVER_THE_MATCH, (turso::Value::Text("report".to_owned()),))
+        .await
+        .expect("the match runs");
+    let mut ids = Vec::new();
+    while let Some(row) = rows.next().await.expect("a row") {
+        ids.push(*row.get_value(0).expect("id").as_integer().expect("integer"));
+    }
+    drop(rows);
+    ids
+}
+
+/// Research R8 (spec 010 D9): a search whose caller has gone is dropped at
+/// its next await, mid-read. That is only safe if a read over an fts match,
+/// dropped with rows still to come, gives its connection back clean: not
+/// still busy (`Misuse("connection is busy with another operation")`), and
+/// not handing the next read the abandoned statement's leftovers.
+///
+/// Asked through the readers' pool, which is how the host reads: the
+/// abandoned future holds a [`postio_storage::Reader`], and the next read
+/// gets the same connection back from the pool.
+#[tokio::test]
+async fn r8_a_read_dropped_mid_match_leaves_its_connection_usable() {
+    let (_dir, store) = a_matching_store().await;
+
+    let (first, got_first) = tokio::sync::oneshot::channel();
+    let abandoned = async {
+        let reader = store.read().await.expect("a turn on a reader");
+        let mut rows = reader
+            .query(OVER_THE_MATCH, (turso::Value::Text("report".to_owned()),))
+            .await
+            .expect("the match runs");
+        let row = rows.next().await.expect("a row").expect("a first row");
+        let _ = first.send(*row.get_value(0).expect("id").as_integer().expect("integer"));
+        // Holding the reader and the half-read rows, as a search does
+        // between two awaits, until it is dropped.
+        std::future::pending::<()>().await;
+    };
+    tokio::select! {
+        () = abandoned => unreachable!("the read never finishes on its own"),
+        id = got_first => assert!(id.is_ok(), "the first row arrived"),
+    }
+    // `abandoned` is gone: its rows, and its reader back in the pool.
+
+    let reader = store.read().await.expect("the turn after");
+    let ids = the_whole_match(&reader).await;
+    assert_eq!(
+        ids.len() as i64,
+        MATCHING,
+        "the next read over the match sees all of it, and nothing else"
+    );
+    assert_eq!(
+        count(&reader, "SELECT count(*) FROM d").await,
+        2 * MATCHING,
+        "and an ordinary read after it is answered too"
+    );
+}
+
+/// The same, on one connection held throughout: what a [`Reader`] is under
+/// the pool, so the answer above is the engine's and not the pool's luck in
+/// handing out another connection.
+///
+/// [`Reader`]: postio_storage::Reader
+#[tokio::test]
+async fn r8_the_same_connection_reads_on_after_a_match_is_dropped() {
+    let (_dir, store) = a_matching_store().await;
+    let connection = store.connect().await.expect("connect");
+
+    let (first, got_first) = tokio::sync::oneshot::channel();
+    let abandoned = async {
+        let mut rows = connection
+            .query(OVER_THE_MATCH, (turso::Value::Text("report".to_owned()),))
+            .await
+            .expect("the match runs");
+        let _ = first.send(rows.next().await.expect("a row").is_some());
+        std::future::pending::<()>().await;
+    };
+    tokio::select! {
+        () = abandoned => unreachable!("the read never finishes on its own"),
+        got = got_first => assert_eq!(got, Ok(true), "the first row arrived"),
+    }
+
+    assert_eq!(the_whole_match(&connection).await.len() as i64, MATCHING);
+    assert_eq!(
+        count(&connection, "SELECT count(*) FROM d").await,
+        2 * MATCHING
+    );
+}
