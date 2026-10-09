@@ -1,0 +1,68 @@
+# Space on a result looks inside it without opening it, and j/k walk the
+# results with the look still open (specs/010-focus-search US4, FR-028,
+# design §3.7, screen 10).
+#
+# Quick Look is a floating panel over the list, 780 by 470, with no
+# dimming: the results stay where they were and keep the keyboard. Its
+# header says which result of how many it is; its body the subject, the
+# sender line, how many matches the conversation holds, and one card per
+# match with where and when it was, the current one ringed. j moves the
+# results' focus ring and the panel follows in place; ] and [ move the
+# ring between the cards; Return opens the message and the panel goes;
+# Space or Esc closes it.
+#
+# The controller's half is postio-focus tests/results.rs (quick_look_*);
+# the passages are postio-session's conversation_matches.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/010-focus-search US4" }
+seed   = "search"
+design = "10-quick-look"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "search"
+
+[[step]]
+type    = "atlas budget"
+
+[[step]]
+command = "show_all_results"
+check   = { keyboard.region = "results" }
+
+[[step]]
+id      = "look"
+command = "quick_look"
+check   = { keyboard.region = "results" }
+expect  = "Space opens Quick Look over the list, 780 wide, with a deep shadow and nothing dimmed behind it. Its header reads “Quick Look · 1 of …” with “j k moves through results while it stays open”, then Open ↩, Archive a and Close Space. Under it the first result's subject in large bold type with “atlas” and “budget” marked, the sender line (name, address, recipients, date, thread size), “N matches in this conversation · ] [ jump between them”, and a card per match: where on the left (Body, Earlier reply, Subject, a file's name) with who and when under it, the passage on the right with the words marked. One card has the accent ring."
+
+[[step]]
+command = "next_message"
+check   = { keyboard.region = "results" }
+expect  = "j moves the results' focus ring to the second row, and the panel stays where it is and shows that result: “2 of …”, its subject, its sender and its own cards."
+
+[[step]]
+command = "next_match"
+check   = { keyboard.region = "results" }
+expect  = "] moves the accent ring to the next card down; nothing else in the panel changes."
+
+[[step]]
+command = "prev_match"
+check   = { keyboard.region = "results" }
+expect  = "[ moves the ring back to the card it was on."
+
+[[step]]
+command = "quick_look"
+check   = { keyboard.region = "results" }
+expect  = "Space again closes the panel: the results, with the focus ring on the second row."
+
+[[step]]
+command = "quick_look"
+check   = { keyboard.region = "results" }
+expect  = "Space opens it again on the second row."
+
+[[step]]
+command = "open_message"
+check   = { view = "reader" }
+expect  = "Return opens the second result's message, and Quick Look is gone."

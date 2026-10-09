@@ -231,7 +231,7 @@ GTK's bar is unchanged.
 
 **Independent test**: US4's.
 
-- [ ] T086 [US4] Write storyboard `storyboards/search/quick-look-walks-results.toml`
+- [x] T086 [US4] Write storyboard `storyboards/search/quick-look-walks-results.toml`
 - [ ] T087 [P] [US4] Write failing tests in `crates/postio-session/tests/session_suite/search_passages.rs`: `conversation_matches` returns every match in a conversation, oldest first, with "Earlier reply" for quoted ones and each passage. Red: no function
 - [ ] T088 [US4] Add `conversation_matches` (`crates/postio-session/src/search.rs`) and `Req::ConversationMatches` (client, host). Make T087 green
 - [ ] T089 [P] [US4] Write failing tests: `QuickLook` (`space`, Results), `NextMatch`/`PrevMatch` (`]`/`[` while Quick Look is open) in `crates/postio-core/tests/core_suite/`; in `crates/postio-focus/tests/results.rs`: Space opens it on the cursor's result; j/k move the cursor and the panel follows; ]/[ move the current card; ↩ opens the message window and closes the panel; `a` archives and the panel shows the next result, or closes when none is left; Space or Esc closes; ⌘Z restores the archived one. Red: missing
