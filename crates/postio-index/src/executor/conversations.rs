@@ -11,8 +11,9 @@
 //! capped match (D3). So the match is read **once**, as a *narrow
 //! projection* (research R2): the capped match joined to `messages`, each row
 //! a handful of integers -- its conversation, folder, dates and flags, its
-//! two text scores, and three short correlated lookups (its people, its
-//! labels, whether it has an open marker). [`Fold`] takes the rows as they
+//! text scores, its people, labels and attachment count (columns the row
+//! keeps, D30), and one short correlated lookup (whether it has an open
+//! marker). [`Fold`] takes the rows as they
 //! stream and builds the conversations; the facets are counted from those.
 //!
 //! The walk stops as soon as it holds [`TOTAL_HITS_CAP`] messages, so a word
@@ -666,21 +667,14 @@ impl Fold {
 /// The narrow projection (research R2): the capped match, one row per
 /// message per index it matched in.
 ///
-/// Every column but the scores is the message's own or one short lookup by
-/// its id: its people and labels as `group_concat`s over the
-/// `(message_id, …)` keys of `recipients` and `message_labels`, an open
-/// marker by `markers`' primary key, and its attachments, asked only when
-/// it has any. A sender is spelled negated, so one lookup answers both the
-/// From and the To facet.
-///
-/// The attachment count compares `f.message_id` with `m.id + 0`, not
-/// `m.id`, and the `+ 0` is load-bearing. A `count(*)` correlated on a bare
-/// column pair is one the engine rewrites "group-first" (its
-/// `optimizer/unnest.rs`): every attachment in the store grouped by message
-/// once, then joined -- a walk of all of `attachments` on each search,
-/// however few messages matched. An expression on the outer side is not a
-/// column pair, so the count stays a seek on `idx_attachments_message` per
-/// message that has any. `driven_join_plan` in the index suite holds it.
+/// Every column but the scores is the message's own, and one short lookup
+/// by its id: whether it has an open marker, by `markers`' primary key.
+/// Its people, labels and attachment count are columns `messages` keeps by
+/// trigger (D30, `people_ids`, `label_ids`, `attachment_count`) -- they
+/// were three lookups a row, two thirds of a broad walk's time. A sender
+/// is spelled negated, so one column answers both the From and the To
+/// facet. `driven_join_plan` in the index suite holds that no lookup comes
+/// back.
 ///
 /// The scores are projected bare and negated outside, for the reason
 /// [`HITS_JOIN`](super::HITS_JOIN) gives.
@@ -706,17 +700,10 @@ fn projection_sql(plan: &Plan, walk: Walk) -> String {
     format!(
         "SELECT m.id, m.thread_id, m.mailbox_id, m.received_at, {AGED_FROM},
                 m.seen, m.flagged, m.answered, m.has_attachments, {scores},
-                (SELECT group_concat(CASE r.kind WHEN 'from' THEN -r.address_id
-                                                 ELSE r.address_id END)
-                   FROM recipients r
-                  WHERE r.message_id = m.id AND r.kind IN ('from', 'to', 'cc', 'bcc')),
-                (SELECT group_concat(ml.label_id) FROM message_labels ml
-                  WHERE ml.message_id = m.id),
+                m.people_ids, m.label_ids,
                 EXISTS (SELECT 1 FROM markers k
                          WHERE k.message_id = m.id AND k.dismissed_at IS NULL),
-                CASE WHEN m.has_attachments = 1
-                     THEN (SELECT count(*) FROM attachments f WHERE f.message_id = m.id + 0)
-                     ELSE 0 END,
+                CASE WHEN m.has_attachments = 1 THEN m.attachment_count ELSE 0 END,
                 m.content_id, {file}
            {from}
           WHERE {where_sql}
