@@ -7,7 +7,10 @@
 //! its token, and the folders popover lists the places one read found and
 //! opens the one chosen, which the list then shows.
 
-use postio_ffi::{BarLineKindFfi, BarModeFfi, Session, SessionOptions, UiEvent};
+use postio_ffi::{
+    BarLineKindFfi, BarModeFfi, DropdownRowKindFfi, DropdownStateFfi, Session, SessionOptions,
+    UiEvent,
+};
 
 use crate::focus::{cursor_on_the_first_row, heard, inbox_of};
 
@@ -32,7 +35,7 @@ async fn lines(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn slash_opens_the_bar_and_in_lists_a_folders_conversations() {
+async fn slash_opens_the_bar_and_in_lists_the_folders_counted() {
     let session = inbox_of(&["First", "Second"]).await;
     cursor_on_the_first_row(&session).await;
 
@@ -57,27 +60,29 @@ async fn slash_opens_the_bar_and_in_lists_a_folders_conversations() {
         .await,
         "the places are read as it opens"
     );
-    session.focus_bar_typed("in:Inbox".to_owned());
-    let view = lines(&session, |view| view.heading.is_some()).await;
-    assert_eq!(
-        view.heading.as_deref(),
-        Some("Inbox \u{b7} folder \u{b7} 2 conversations \u{b7} newest first")
-    );
-    let subjects: Vec<&str> = view
-        .lines
-        .iter()
-        .filter(|line| line.kind == BarLineKindFfi::Message)
-        .map(|line| line.title.as_str())
-        .collect();
-    assert_eq!(subjects, ["First", "Second"], "newest first");
+    // Spec 010 step 8: on the Mac `in:` is the dropdown's operator state,
+    // its folders each with the conversations `in:` it would find (spec
+    // 009's folder listing stays GTK's, `postio-focus` tests/bar.rs).
+    session.focus_bar_typed("in:In".to_owned());
+    let mut folder = None;
     assert!(
-        view.lines
-            .iter()
-            .filter(|line| line.kind == BarLineKindFfi::Message)
-            .all(|line| line.selectable && line.sender.as_deref() == Some("Ada")),
-        "{:?}",
-        view.lines
+        heard(&session, 10, |event| match event {
+            UiEvent::FocusDropdown { view } if view.state == DropdownStateFfi::Operator => {
+                folder = view
+                    .sections
+                    .iter()
+                    .flat_map(|section| &section.rows)
+                    .find(|row| row.kind == DropdownRowKindFfi::Folder)
+                    .cloned();
+                folder.is_some()
+            }
+            _ => false,
+        })
+        .await,
+        "the folders `in:` completes to"
     );
+    let folder = folder.expect("seen");
+    assert_eq!(folder.right.as_deref(), Some("2"), "{folder:?}");
     session.shutdown();
 }
 
