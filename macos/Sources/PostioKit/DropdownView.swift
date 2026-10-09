@@ -45,6 +45,10 @@ public struct DropdownView: View {
         public static let folder: CGFloat = 100
         public static let right: CGFloat = 110
         public static let gap: CGFloat = 6
+        /// A row's columns: 10 in from its rounded ground, 12 apart
+        /// (`McSearchType`: `padding: 0 10px; column-gap: 12px`).
+        public static let rowPadding: CGFloat = 10
+        public static let columnGap: CGFloat = 12
         /// Columns of the cheat sheet.
         public static let sheetColumns = 4
     }
@@ -180,42 +184,56 @@ public struct DropdownView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize()
                 .padding(.trailing, 4)
-            // The tiles scroll rather than widen the panel: a long sentence
-            // makes more of them than a narrow field has room for.
-            ScrollView(.horizontal, showsIndicators: false) {
+            // With room, the tiles and then the note; without, the note
+            // gives way and the tiles scroll rather than widen the panel.
+            ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) {
-                    ForEach(Array(model.understood.enumerated()), id: \.offset) { _, tile in
-                        VStack(alignment: .leading, spacing: 1) {
-                            HStack(spacing: 0) {
-                                Text(tile.op).foregroundStyle(.tertiary)
-                                Text(tile.value).foregroundStyle(.primary).fontWeight(.medium)
-                            }
-                            .font(.system(size: 12, design: .monospaced))
-                            Text(tile.origin)
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(.secondary)
-                        }
-                        .lineLimit(1)
-                        .fixedSize()
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
-                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator, lineWidth: 1))
-                    }
+                    understoodTiles
+                    Spacer(minLength: 12)
+                    understoodNote
                 }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    understoodTiles
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Text(Self.words.understoodNote)
-                .font(.system(size: 12))
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-                .layoutPriority(-1)
         }
         .padding(.horizontal, 16)
         .frame(height: Metrics.understood)
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .bottom) { Divider() }
         .accessibilityElement(children: .combine)
+    }
+
+    private var understoodNote: some View {
+        Text(Self.words.understoodNote)
+            .font(.system(size: 12))
+            .foregroundStyle(.tertiary)
+            .lineLimit(1)
+            .fixedSize()
+    }
+
+    private var understoodTiles: some View {
+        HStack(spacing: 8) {
+            ForEach(Array(model.understood.enumerated()), id: \.offset) { _, tile in
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 0) {
+                        Text(tile.op).foregroundStyle(.tertiary)
+                        Text(tile.value).foregroundStyle(.primary).fontWeight(.medium)
+                    }
+                    .font(.system(size: 12, design: .monospaced))
+                    Text(tile.origin)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                }
+                .lineLimit(1)
+                .fixedSize()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator, lineWidth: 1))
+            }
+        }
     }
 
     // MARK: rows
@@ -264,9 +282,8 @@ public struct DropdownView: View {
 
     private func rowView(_ row: DropdownModel.Row) -> some View {
         let focused = model.highlighted == row.id
-        return HStack(spacing: 0) {
+        return HStack(spacing: Metrics.columnGap) {
             leading(row)
-                .padding(.trailing, row.kind == .person || row.kind == .word ? 10 : 0)
             Group {
                 if row.kind == .person {
                     VStack(alignment: .leading, spacing: 1) {
@@ -307,12 +324,11 @@ public struct DropdownView: View {
             .lineLimit(1)
             .frame(width: Metrics.right, alignment: .trailing)
         }
-        .padding(.leading, 6)
-        .padding(.trailing, 10)
+        .padding(.horizontal, Metrics.rowPadding)
         .frame(height: Self.rowHeight(row))
         .background(
             RoundedRectangle(cornerRadius: Metrics.rowRadius)
-                .fill(focused ? AnyShapeStyle(.tint.opacity(0.09)) : AnyShapeStyle(.clear))
+                .fill(focused ? AnyShapeStyle(.tint.opacity(SearchRuns.focusFill(scheme))) : AnyShapeStyle(.clear))
         )
         .overlay(
             RoundedRectangle(cornerRadius: Metrics.rowRadius)
