@@ -550,3 +550,193 @@ async fn named_units_are_read_back_by_where_they_are_whatever_a_sheet_is_called(
         "a unit that is not there is left out"
     );
 }
+
+/// The parts the search still owes a reading, as the index keeps them for
+/// it (`attachment_text_owed`), beside what the indexer's queue would say
+/// from scratch: every downloaded part with no row from this extractor.
+async fn owed_and_queued(connection: &Checkout) -> (Vec<(i64, i64)>, Vec<(i64, i64)>) {
+    let pairs = |row: &turso::Row| Ok((row.col(0)?, row.col(1)?));
+    let owed = sql::all(
+        connection,
+        "SELECT content_id, position FROM attachment_text_owed ORDER BY 1, 2",
+        (),
+        pairs,
+    )
+    .await
+    .expect("what is owed");
+    let queued = sql::all(
+        connection,
+        "SELECT DISTINCT m.content_id, a.position
+           FROM attachments a JOIN messages m ON m.id = a.message_id
+          WHERE a.blob_id IS NOT NULL AND m.content_id IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM attachment_extraction e
+                             WHERE e.content_id = m.content_id AND e.position = a.position
+                               AND e.version = ?1)
+          ORDER BY 1, 2",
+        [i64::from(EXTRACTOR_VERSION)],
+        pairs,
+    )
+    .await
+    .expect("what the queue holds");
+    (owed, queued)
+}
+
+async fn assert_owed_is_queued(connection: &Checkout, step: &str, expected: usize) {
+    let (owed, queued) = owed_and_queued(connection).await;
+    assert_eq!(
+        owed, queued,
+        "after {step}: the kept set drifted from the queue"
+    );
+    assert_eq!(owed.len(), expected, "after {step}: {owed:?}");
+}
+
+fn read(text: &str) -> Extracted {
+    Extracted {
+        units: vec![Unit {
+            location: Location::Line(1),
+            text: text.to_owned(),
+        }],
+        outcome: Outcome::Complete,
+    }
+}
+
+/// The search asks "is any downloaded attachment still unread?" on every
+/// query, so it cannot ask the queue -- a walk of every attachment when the
+/// answer is no. The index keeps the answer as a set the writes maintain,
+/// and every write that moves the queue must move the set the same way.
+#[tokio::test]
+async fn what_the_search_is_owed_follows_the_queue_through_every_write() {
+    let (_store, connection, account, inbox) = world().await;
+    assert_owed_is_queued(&connection, "a fresh store", 0).await;
+
+    let (first, ids) = message_with(
+        &connection,
+        account,
+        inbox,
+        None,
+        &[
+            ("here.txt", "text/plain", true),
+            ("later.txt", "text/plain", false),
+        ],
+    )
+    .await;
+    assert_owed_is_queued(&connection, "a message with one part on disk", 1).await;
+
+    index::index_attachment_text(&connection, ids[0], &read("harbor"))
+        .await
+        .expect("indexed");
+    assert_owed_is_queued(&connection, "reading it", 0).await;
+
+    MessageRepository::new(&connection)
+        .set_attachment_blob(first, "3", &BlobId::new("blob-later.txt"))
+        .await
+        .expect("downloaded");
+    assert_owed_is_queued(&connection, "downloading the second part", 1).await;
+
+    // A second occurrence of one payload owes one reading, not two.
+    let identity = Some(ContentIdentity::new("jmap-email", "email-9"));
+    let parts = [("budget.txt", "text/plain", true)];
+    let (shared, shared_ids) =
+        message_with(&connection, account, inbox, identity.clone(), &parts).await;
+    let (_, other_ids) = message_with(&connection, account, inbox, identity, &parts).await;
+    assert_owed_is_queued(&connection, "two occurrences of one payload", 2).await;
+
+    // Evicting one occurrence's bytes leaves the other's to read.
+    sql::execute(
+        &connection,
+        "UPDATE attachments SET blob_id = NULL WHERE id = ?1",
+        [shared_ids[0].get()],
+    )
+    .await
+    .expect("evict one");
+    assert_owed_is_queued(&connection, "evicting one occurrence", 2).await;
+    sql::execute(
+        &connection,
+        "UPDATE attachments SET blob_id = NULL WHERE id = ?1",
+        [other_ids[0].get()],
+    )
+    .await
+    .expect("evict the other");
+    assert_owed_is_queued(&connection, "evicting both", 1).await;
+    sql::execute(
+        &connection,
+        "UPDATE attachments SET blob_id = 'blob-budget.txt' WHERE id = ?1",
+        [shared_ids[0].get()],
+    )
+    .await
+    .expect("download again");
+    assert_owed_is_queued(&connection, "downloading it again", 2).await;
+
+    index::index_attachment_text(&connection, shared_ids[0], &read("kestrel"))
+        .await
+        .expect("indexed");
+    index::index_attachment_text(&connection, ids[1], &read("gannet"))
+        .await
+        .expect("indexed");
+    assert_owed_is_queued(&connection, "reading everything", 0).await;
+
+    // A row from an older extractor is owed again, and reading it again
+    // settles it.
+    sql::execute(
+        &connection,
+        "UPDATE attachment_extraction SET version = version - 1",
+        (),
+    )
+    .await
+    .expect("age them");
+    assert_owed_is_queued(&connection, "an older extractor's rows", 3).await;
+    index::index_attachment_text(&connection, ids[0], &read("harbor"))
+        .await
+        .expect("indexed");
+    assert_owed_is_queued(&connection, "reading one of them again", 2).await;
+
+    // A message going takes what it owed, unless another occurrence still
+    // holds the bytes.
+    sql::execute(
+        &connection,
+        "UPDATE attachments SET blob_id = 'blob-budget.txt' WHERE id = ?1",
+        [other_ids[0].get()],
+    )
+    .await
+    .expect("the other occurrence downloads too");
+    assert_owed_is_queued(&connection, "both occurrences on disk", 2).await;
+    MessageRepository::new(&connection)
+        .delete(&[shared])
+        .await
+        .expect("delete one occurrence");
+    assert_owed_is_queued(&connection, "deleting one occurrence", 2).await;
+    MessageRepository::new(&connection)
+        .delete(&[first])
+        .await
+        .expect("delete");
+    assert_owed_is_queued(&connection, "deleting the first message", 1).await;
+
+    // A half rebuilt from nothing owes everything on disk.
+    sql::execute(
+        &connection,
+        "UPDATE search_schema SET version = 0 WHERE half = 'attachments'",
+        (),
+    )
+    .await
+    .expect("an old store");
+    index::ensure_schema(&connection)
+        .await
+        .expect("schema again");
+    assert_owed_is_queued(&connection, "rebuilding the half", 1).await;
+
+    // And a store last opened by another extractor is counted again.
+    sql::execute(
+        &connection,
+        "UPDATE search_schema SET version = 0 WHERE half = 'extractor'",
+        (),
+    )
+    .await
+    .expect("another extractor");
+    sql::execute(&connection, "DELETE FROM attachment_text_owed", ())
+        .await
+        .expect("forget");
+    index::ensure_schema(&connection)
+        .await
+        .expect("schema again");
+    assert_owed_is_queued(&connection, "a new extractor", 1).await;
+}

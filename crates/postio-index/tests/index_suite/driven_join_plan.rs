@@ -233,6 +233,27 @@ async fn a_conversation_search_with_a_date_filter_seeks_each_hit_by_its_content(
                 let results = search_conversations(&connection, &request, now())
                     .await
                     .expect("search");
+                let searched = counting::recorded();
+                // Every statement the search itself issues, joined to the
+                // hits or not: the side questions -- how much was searched,
+                // whether every attachment has been read -- run on each
+                // search too, and a walk there costs what one in the match
+                // would.
+                for sql in searched.keys() {
+                    let steps = counting::plan_steps(&connection, sql)
+                        .await
+                        .unwrap_or_else(|error| panic!("cannot plan {sql}: {error}"));
+                    let walks: Vec<&String> = steps
+                        .iter()
+                        .filter(|step| walks_a_growing_table(step))
+                        .collect();
+                    assert!(
+                        walks.is_empty(),
+                        "{text}, {scope:?}, {order:?}: a statement of the search \
+                         scans {walks:?}.\n{sql}\n{steps:#?}"
+                    );
+                }
+                counting::record();
                 files(&connection, &request).await.expect("files");
                 relaxation_counts(&connection, scope, &relaxations, today())
                     .await
@@ -240,7 +261,8 @@ async fn a_conversation_search_with_a_date_filter_seeks_each_hit_by_its_content(
                 completions(&connection, scope, "quar", None)
                     .await
                     .expect("completions");
-                let statements = counting::recorded();
+                let mut statements = counting::recorded();
+                statements.extend(searched);
                 assert!(
                     results.total > 0,
                     "{text}: the fixture is meant to answer this"

@@ -95,6 +95,7 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
     let bodies = half_version(connection, "bodies").await?;
     let headers = half_version(connection, "headers").await?;
     let attachments = half_version(connection, "attachments").await?;
+    let extractor = half_version(connection, "extractor").await?;
 
     // Nothing to do, and saying so is worth more than it looks. The batch
     // below is every object `IF NOT EXISTS`, which reads as free and is not:
@@ -115,6 +116,7 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
         && bodies == BODIES_SCHEMA_VERSION
         && headers == HEADERS_SCHEMA_VERSION
         && attachments == ATTACHMENTS_SCHEMA_VERSION
+        && extractor == i64::from(postio_extract::EXTRACTOR_VERSION)
     {
         tracing::debug!("the search index schema is current");
         return Ok(());
@@ -157,6 +159,20 @@ pub async fn ensure_schema(connection: &Connection) -> Result<()> {
     set_half_version(connection, "bodies", BODIES_SCHEMA_VERSION).await?;
     set_half_version(connection, "headers", HEADERS_SCHEMA_VERSION).await?;
     set_half_version(connection, "attachments", ATTACHMENTS_SCHEMA_VERSION).await?;
+    if attachments != ATTACHMENTS_SCHEMA_VERSION
+        || extractor != i64::from(postio_extract::EXTRACTOR_VERSION)
+    {
+        // The triggers keep `attachment_text_owed` from here on; what was
+        // owed before them -- a half just rebuilt empty, or rows another
+        // extractor made -- is counted once, now.
+        set_half_version(
+            connection,
+            "extractor",
+            i64::from(postio_extract::EXTRACTOR_VERSION),
+        )
+        .await?;
+        postio_storage::sql::batch(connection, RECOUNT_OWED).await?;
+    }
     Ok(())
 }
 
@@ -221,7 +237,10 @@ const HEADERS_SCHEMA_VERSION: i64 = 2;
 ///
 /// History:
 /// 1 — the half, keyed by `(content_id, position)` (#1805's content).
-pub const ATTACHMENTS_SCHEMA_VERSION: i64 = 1;
+/// 2 — `attachment_text_owed` and the triggers that keep it, so a search
+///     asks whether anything is unread with one seek rather than a walk of
+///     every attachment.
+pub const ATTACHMENTS_SCHEMA_VERSION: i64 = 2;
 
 /// How many rows one message may contribute to `message_headers`.
 ///
@@ -254,7 +273,16 @@ DROP TABLE IF EXISTS search_documents_deferred;
 ";
 
 /// Everything the attachments half is made of, for its rebuild.
-const DROP_ATTACHMENTS: &str = "DROP INDEX IF EXISTS attachment_passages_fts;
+const DROP_ATTACHMENTS: &str = "DROP TRIGGER IF EXISTS trg_attachment_text_owed_attachments_ai;
+DROP TRIGGER IF EXISTS trg_attachment_text_owed_attachments_au;
+DROP TRIGGER IF EXISTS trg_attachment_text_owed_attachments_ad;
+DROP TRIGGER IF EXISTS trg_attachment_text_owed_messages_au;
+DROP TRIGGER IF EXISTS trg_attachment_text_owed_messages_ad;
+DROP TRIGGER IF EXISTS trg_attachment_text_owed_extraction_ai;
+DROP TRIGGER IF EXISTS trg_attachment_text_owed_extraction_au;
+DROP TRIGGER IF EXISTS trg_attachment_text_owed_extraction_ad;
+DROP TABLE IF EXISTS attachment_text_owed;
+DROP INDEX IF EXISTS attachment_passages_fts;
 DROP INDEX IF EXISTS idx_attachment_passages_part;
 DROP TABLE IF EXISTS attachment_passages;
 DROP TABLE IF EXISTS attachment_extraction;
@@ -306,6 +334,161 @@ CREATE TABLE IF NOT EXISTS attachment_extraction (
     units       INTEGER NOT NULL,
     PRIMARY KEY (content_id, position)
 );
+
+-- The parts the search still owes a reading: exactly the indexer's queue
+-- (`MISSING`) as a set of (content, position), kept by the triggers below
+-- so that \"has every downloaded attachment been read?\" -- asked on every
+-- search -- is one seek, where asking the queue walks every attachment on
+-- the machine whenever the answer is yes. ADR 0040's rule: an aggregate on
+-- a hot path is a maintained answer, not a walk.
+--
+-- \"This extractor\" is `search_schema`'s `extractor` row, which
+-- `ensure_schema` keeps at `postio_extract::EXTRACTOR_VERSION` and recounts
+-- this table against when it moves.
+CREATE TABLE IF NOT EXISTS attachment_text_owed (
+    content_id  INTEGER NOT NULL REFERENCES message_contents(id) ON DELETE CASCADE,
+    position    INTEGER NOT NULL,
+    PRIMARY KEY (content_id, position)
+);
+
+-- A part comes onto this machine: owed, unless this extractor has read it.
+CREATE TRIGGER IF NOT EXISTS trg_attachment_text_owed_attachments_ai
+AFTER INSERT ON attachments
+WHEN new.message_id IS NOT NULL AND new.blob_id IS NOT NULL
+BEGIN
+    INSERT INTO attachment_text_owed (content_id, position)
+    SELECT m.content_id, new.position FROM messages m
+     WHERE m.id = new.message_id AND m.content_id IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM attachment_extraction e
+                        WHERE e.content_id = m.content_id AND e.position = new.position
+                          AND e.version = (SELECT version FROM search_schema
+                                            WHERE half = 'extractor'))
+    ON CONFLICT DO NOTHING;
+END;
+
+-- Downloaded, or evicted. An eviction forgets the part only when no other
+-- occurrence of the payload still has its bytes here.
+CREATE TRIGGER IF NOT EXISTS trg_attachment_text_owed_attachments_au
+AFTER UPDATE OF blob_id ON attachments
+WHEN new.message_id IS NOT NULL AND (old.blob_id IS NULL) <> (new.blob_id IS NULL)
+BEGIN
+    INSERT INTO attachment_text_owed (content_id, position)
+    SELECT m.content_id, new.position FROM messages m
+     WHERE new.blob_id IS NOT NULL
+       AND m.id = new.message_id AND m.content_id IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM attachment_extraction e
+                        WHERE e.content_id = m.content_id AND e.position = new.position
+                          AND e.version = (SELECT version FROM search_schema
+                                            WHERE half = 'extractor'))
+    ON CONFLICT DO NOTHING;
+    DELETE FROM attachment_text_owed
+     WHERE new.blob_id IS NULL
+       AND content_id = (SELECT content_id FROM messages WHERE id = new.message_id)
+       AND position NOT IN (
+           SELECT a.position FROM messages m JOIN attachments a ON a.message_id = m.id
+            WHERE m.content_id = (SELECT content_id FROM messages WHERE id = new.message_id)
+              AND a.blob_id IS NOT NULL);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_attachment_text_owed_attachments_ad
+AFTER DELETE ON attachments
+WHEN old.message_id IS NOT NULL AND old.blob_id IS NOT NULL
+BEGIN
+    DELETE FROM attachment_text_owed
+     WHERE content_id = (SELECT content_id FROM messages WHERE id = old.message_id)
+       AND position NOT IN (
+           SELECT a.position FROM messages m JOIN attachments a ON a.message_id = m.id
+            WHERE m.content_id = (SELECT content_id FROM messages WHERE id = old.message_id)
+              AND a.blob_id IS NOT NULL);
+END;
+
+-- An occurrence moves to another payload: its parts on disk are owed for
+-- the new one, and the old one keeps only what another occurrence holds.
+CREATE TRIGGER IF NOT EXISTS trg_attachment_text_owed_messages_au
+AFTER UPDATE OF content_id ON messages
+WHEN old.content_id IS NOT new.content_id
+BEGIN
+    INSERT INTO attachment_text_owed (content_id, position)
+    SELECT new.content_id, a.position FROM attachments a
+     WHERE a.message_id = new.id AND a.blob_id IS NOT NULL AND new.content_id IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM attachment_extraction e
+                        WHERE e.content_id = new.content_id AND e.position = a.position
+                          AND e.version = (SELECT version FROM search_schema
+                                            WHERE half = 'extractor'))
+    ON CONFLICT DO NOTHING;
+    DELETE FROM attachment_text_owed
+     WHERE content_id = old.content_id
+       AND position NOT IN (
+           SELECT a.position FROM messages m JOIN attachments a ON a.message_id = m.id
+            WHERE m.content_id = old.content_id AND a.blob_id IS NOT NULL);
+END;
+
+-- An occurrence goes. Its attachment rows may go before or after it; by
+-- the time this runs the message is not there to be joined through, so
+-- what is left is what the other occurrences hold.
+CREATE TRIGGER IF NOT EXISTS trg_attachment_text_owed_messages_ad
+AFTER DELETE ON messages
+WHEN old.content_id IS NOT NULL
+BEGIN
+    DELETE FROM attachment_text_owed
+     WHERE content_id = old.content_id
+       AND position NOT IN (
+           SELECT a.position FROM messages m JOIN attachments a ON a.message_id = m.id
+            WHERE m.content_id = old.content_id AND a.blob_id IS NOT NULL);
+END;
+
+-- Read by this extractor: settled. By another: owed again, if its bytes are
+-- here -- a row is only ever written at the current version, so this is a
+-- store from an older build, or a test aging its rows.
+CREATE TRIGGER IF NOT EXISTS trg_attachment_text_owed_extraction_ai
+AFTER INSERT ON attachment_extraction
+BEGIN
+    DELETE FROM attachment_text_owed
+     WHERE content_id = new.content_id AND position = new.position
+       AND new.version = (SELECT version FROM search_schema WHERE half = 'extractor');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_attachment_text_owed_extraction_au
+AFTER UPDATE ON attachment_extraction
+BEGIN
+    DELETE FROM attachment_text_owed
+     WHERE content_id = new.content_id AND position = new.position
+       AND new.version = (SELECT version FROM search_schema WHERE half = 'extractor');
+    INSERT INTO attachment_text_owed (content_id, position)
+    SELECT new.content_id, new.position
+     WHERE new.version IS NOT (SELECT version FROM search_schema WHERE half = 'extractor')
+       AND EXISTS (SELECT 1 FROM messages m JOIN attachments a ON a.message_id = m.id
+                    WHERE m.content_id = new.content_id AND a.position = new.position
+                      AND a.blob_id IS NOT NULL)
+    ON CONFLICT DO NOTHING;
+END;
+
+-- A record taken away puts the part back in the queue, if it is on disk.
+CREATE TRIGGER IF NOT EXISTS trg_attachment_text_owed_extraction_ad
+AFTER DELETE ON attachment_extraction
+BEGIN
+    INSERT INTO attachment_text_owed (content_id, position)
+    SELECT old.content_id, old.position
+     WHERE EXISTS (SELECT 1 FROM messages m JOIN attachments a ON a.message_id = m.id
+                    WHERE m.content_id = old.content_id AND a.position = old.position
+                      AND a.blob_id IS NOT NULL)
+    ON CONFLICT DO NOTHING;
+END;
+";
+
+/// `attachment_text_owed` counted from scratch: everything [`MISSING`]
+/// holds, once per part. Run when the half is rebuilt and when the
+/// extractor version moves; the triggers keep it between.
+const RECOUNT_OWED: &str = "DELETE FROM attachment_text_owed;
+INSERT INTO attachment_text_owed (content_id, position)
+SELECT DISTINCT m.content_id, a.position
+  FROM attachments a JOIN messages m ON m.id = a.message_id
+ WHERE a.blob_id IS NOT NULL AND m.content_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM attachment_extraction e
+                    WHERE e.content_id = m.content_id AND e.position = a.position
+                      AND e.version = (SELECT version FROM search_schema
+                                        WHERE half = 'extractor'))
+ON CONFLICT DO NOTHING;
 ";
 
 /// The recorded version of one schema half, `0` when it has never been
