@@ -555,6 +555,24 @@ document. The rich editing surface stays in epic E10.
 
 ---
 
+### 14. Content identity is distinct from mailbox identity
+
+`messages.id` remains the mailbox occurrence used by flags, local-first
+operations and protocol addresses. `message_contents` owns decoded bodies
+and header bytes. A backend may supply a namespaced immutable content key;
+storage scopes it to the account. Gmail message IDs and JMAP Email IDs share
+content across their memberships. Ordinary IMAP and Maildir occurrences
+remain independent; an RFC Message-ID never establishes byte identity.
+
+Metadata, body and header indexes belong to content. Search selects a
+qualifying occurrence after applying folder and flag predicates, so a hit
+still addresses the mailbox in which the user searched. Availability and
+MIME parts project onto occurrences without putting a body join in mailbox
+paging. Deleting the last membership collects its content. The preceding
+schema migrates each old row independently; a native resync can establish
+sharing. [ADR 0046](decisions/0046-content-identity-is-distinct-from-mailbox-identity.md)
+records the contract and rejected alternatives.
+
 ## Known gaps
 
 Recorded rather than hidden. The August 2026 review

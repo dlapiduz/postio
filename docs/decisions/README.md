@@ -54,6 +54,7 @@ decision stands.
 | [0043](0043-focus-is-the-one-desktop-app.md) | Focus is the one desktop app, and the GTK it draws lives in `postio-widgets` | Built; the classic app was removed (T256; `specs/007-postio-focus/classic-parity.md`) |
 | [0044](0044-every-frontend-is-observable-and-storyboarded.md) | Every frontend is observable and storyboarded | Accepted, with `specs/008-storyboards` |
 | [0045](0045-focus-behaviour-lives-in-postio-focus.md) | Focus's behaviour lives in `postio-focus`; frontends draw its intents | Accepted, with `specs/009-focus-macos` |
+| [0046](0046-content-identity-is-distinct-from-mailbox-identity.md) | Content identity is distinct from mailbox identity | Accepted, built in #1780 |
 
 ## Writing one
 

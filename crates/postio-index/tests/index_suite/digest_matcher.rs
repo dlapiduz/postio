@@ -253,8 +253,10 @@ async fn the_matcher_reads_the_row_the_index_holds() {
     for (name, message) in &corpus.messages {
         let stored = postio_storage::sql::one(
             &connection,
+            // Keyed by the message's content (ADR 0046), not the occurrence.
             "SELECT sender, recipients, subject, filenames, list_id
-               FROM search_documents WHERE message_id = ?1",
+               FROM search_documents
+              WHERE content_id = (SELECT content_id FROM messages WHERE id = ?1)",
             [message.id.get()],
             |row| {
                 use postio_storage::sql::RowExt as _;

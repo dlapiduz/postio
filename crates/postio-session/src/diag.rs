@@ -137,7 +137,7 @@ impl Report {
     async fn census(&self) -> Outcome {
         let messages = self.count("SELECT count(*) FROM messages").await;
         let bodied = self
-            .count("SELECT count(*) FROM messages WHERE body_text IS NOT NULL OR body_html IS NOT NULL")
+            .count("SELECT count(*) FROM message_contents WHERE body_text IS NOT NULL OR body_html IS NOT NULL")
             .await;
         let indexed = self
             .count("SELECT count(*) FROM message_search_bodies")
@@ -173,7 +173,7 @@ impl Report {
         let body_bytes = self
             .count(
                 "SELECT coalesce(sum(length(coalesce(body_text, '')) \
-                 + length(coalesce(body_html, ''))), 0) FROM messages",
+                 + length(coalesce(body_html, ''))), 0) FROM message_contents",
             )
             .await;
         let search_bytes = self
@@ -285,7 +285,7 @@ impl Report {
     async fn encoding(&self) -> Outcome {
         let total = self.count("SELECT count(*) FROM messages").await;
         let bodied = self
-            .count("SELECT count(*) FROM messages WHERE body_text IS NOT NULL OR body_html IS NOT NULL")
+            .count("SELECT count(*) FROM message_contents WHERE body_text IS NOT NULL OR body_html IS NOT NULL")
             .await;
         let flagged = self
             .count("SELECT count(*) FROM messages WHERE body_encoding_problems = 1")
@@ -297,10 +297,11 @@ impl Report {
 
         let rows = sql::all(
             &self.connection,
-            "SELECT id, mailbox_id, text_part_id, text_part_headers, html_part_id, html_part_headers,
-                    body_text, body_html, body_parsed_with,
-                    (SELECT count(*) FROM attachments a WHERE a.message_id = messages.id)
-               FROM messages WHERE body_encoding_problems = 1 ORDER BY id LIMIT 60",
+            "SELECT m.id, m.mailbox_id, m.text_part_id, m.text_part_headers, m.html_part_id, m.html_part_headers,
+                    c.body_text, c.body_html, m.body_parsed_with,
+                    (SELECT count(*) FROM attachments a WHERE a.message_id = m.id)
+               FROM messages m JOIN message_contents c ON c.id = m.content_id
+              WHERE m.body_encoding_problems = 1 ORDER BY m.id LIMIT 60",
             (),
             |row| {
                 Ok((
@@ -361,7 +362,7 @@ impl Report {
         let (rows, body, rest): (i64, i64, i64) = sql::one(
             &self.connection,
             "SELECT count(*),
-                    coalesce(sum(length(coalesce(body_text, '')) + length(coalesce(body_html, ''))), 0),
+                    (SELECT coalesce(sum(length(coalesce(body_text, '')) + length(coalesce(body_html, ''))), 0) FROM message_contents),
                     coalesce(sum(length(coalesce(subject, '')) + length(coalesce(preview, ''))
                                + length(coalesce(rfc_message_id, '')) + 120), 0)
                FROM messages",
@@ -453,9 +454,9 @@ impl Report {
         .unwrap_or_else(|_| "n/a".to_owned());
         let unindexed = self
             .count(
-                "SELECT count(*) FROM messages m
+                "SELECT count(DISTINCT m.content_id) FROM messages m
                   WHERE m.body_state IN ('full', 'partial')
-                    AND NOT EXISTS (SELECT 1 FROM message_search_bodies b WHERE b.message_id = m.id)",
+                    AND NOT EXISTS (SELECT 1 FROM message_search_bodies b WHERE b.content_id = m.content_id)",
             )
             .await;
         say!(self, "\nowed:");

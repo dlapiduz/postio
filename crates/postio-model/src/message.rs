@@ -84,6 +84,9 @@ impl BodyState {
 /// under.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ServerIdentifiers {
+    /// An immutable account-wide content identity explicitly guaranteed by
+    /// the backend. Mailbox addressing and RFC Message-ID are not sufficient.
+    pub content_identity: Option<ContentIdentity>,
     /// Server message number within its mailbox.
     pub uid: Option<Uid>,
     /// Generation of the UID space this `uid` belongs to.
@@ -94,6 +97,28 @@ pub struct ServerIdentifiers {
     /// name for this message. IMAP adapters derive it from the generation
     /// and uid; other protocols carry their native id.
     pub remote_id: Option<RemoteId>,
+}
+
+/// Backend-guaranteed identity of immutable message content within one account.
+///
+/// The namespace distinguishes protocols' identity spaces. Adapters must leave
+/// this absent unless the key identifies the same bytes across mailboxes.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ContentIdentity {
+    /// The backend's immutable identity space, such as `jmap-email`.
+    pub namespace: String,
+    /// An opaque native identifier within that namespace and account.
+    pub key: String,
+}
+
+impl ContentIdentity {
+    /// Records a backend guarantee; it must never be inferred from mail headers.
+    pub fn new(namespace: impl Into<String>, key: impl Into<String>) -> Self {
+        Self {
+            namespace: namespace.into(),
+            key: key.into(),
+        }
+    }
 }
 
 impl ServerIdentifiers {
@@ -364,6 +389,23 @@ impl Message {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_content_identity_is_its_namespace_and_key_and_survives_serde() {
+        // Two backends may use the same key for different bytes; the
+        // namespace is what keeps them apart.
+        let jmap = ContentIdentity::new("jmap-email", "M1");
+        assert_eq!(
+            (jmap.namespace.as_str(), jmap.key.as_str()),
+            ("jmap-email", "M1")
+        );
+        assert_ne!(jmap, ContentIdentity::new("gmail-message", "M1"));
+        let json = serde_json::to_string(&jmap).expect("serialize");
+        assert_eq!(
+            serde_json::from_str::<ContentIdentity>(&json).expect("deserialize"),
+            jmap
+        );
+    }
 
     #[test]
     fn every_body_state_round_trips_through_its_stored_identifier() {

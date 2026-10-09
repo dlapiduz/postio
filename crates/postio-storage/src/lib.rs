@@ -9,10 +9,9 @@
 //! live in a content-addressed blob directory; the database stores the blob
 //! key and the metadata beside it.
 //!
-//! Message *bodies* are in the database, as `TEXT`. They were zstd blobs in a
-//! column until the engine changed: the full-text index is an index on the
-//! body column now rather than a virtual table beside it, and an index cannot
-//! tokenise compressed bytes (`docs/archive/specs/004-turso-store`).
+//! Decoded message bodies live once per content in `message_contents`,
+//! packed by [`body_codec`]. Occurrences keep bounded envelope and availability
+//! projections; the folded search corpus is owned by the same content identity.
 //!
 //! The types being persisted come from [`postio_model`], which knows nothing
 //! about SQL. This crate is the only place that maps between the two.

@@ -46,7 +46,7 @@ async fn rows(connection: &Connection, message_id: i64) -> Vec<(String, String, 
     let mut statement = connection
         .prepare(
             "SELECT name, value, ordinal FROM message_headers
-              WHERE message_id = ?1 ORDER BY ordinal",
+              WHERE content_id = (SELECT content_id FROM messages WHERE id = ?1) ORDER BY ordinal",
         )
         .await
         .expect("prepare");
@@ -319,7 +319,7 @@ async fn bumping_the_headers_half_refills_it_and_leaves_the_bodies_alone() {
 
     let bodies = postio_storage::sql::scalar(
         &connection,
-        "SELECT count(*) FROM message_search_bodies WHERE message_id = ?1",
+        "SELECT count(*) FROM message_search_bodies WHERE content_id = (SELECT content_id FROM messages WHERE id = ?1)",
         [message.id.get()],
     )
     .await

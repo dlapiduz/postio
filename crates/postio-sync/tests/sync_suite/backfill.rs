@@ -78,6 +78,61 @@ fn policy() -> BackfillPolicy {
     BackfillPolicy::default()
 }
 
+#[tokio::test]
+async fn shared_content_settles_a_queued_membership_without_another_fetch() {
+    let local = local().await;
+    let backend = server(1).await;
+    let rows = headers(&local, &backend).await;
+    let repo = MessageRepository::new(&local.connection);
+    let mut first = repo.get(rows[0].0).await.unwrap().unwrap();
+    first.server.content_identity = Some(postio_model::ContentIdentity::new("test-immutable", "1"));
+    repo.update(&mut first).await.unwrap();
+    let cancel = CancelToken::new();
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, first.id, 1, first.size),
+        None,
+        None,
+        &cancel,
+    )
+    .await
+    .unwrap();
+    let mut archive = Mailbox::new(local.inbox.account_id, "Archive", Some('/'));
+    MailboxRepository::new(&local.connection)
+        .create(&mut archive)
+        .await
+        .unwrap();
+    let mut second = repo.get(first.id).await.unwrap().unwrap();
+    second.server.content_identity = first.server.content_identity.clone();
+    second.mailbox_id = archive.id;
+    second.sync.body_state = BodyState::HeadersOnly;
+    repo.create(&mut second).await.unwrap();
+    let fetched_before = backend.calls();
+    let outcome = fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&archive, second.id, 1, second.size),
+        None,
+        None,
+        &cancel,
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome, Outcome::Stored { bytes: 0 });
+    assert_eq!(
+        backend.calls(),
+        fetched_before,
+        "a late or queued membership uses local content"
+    );
+    assert_eq!(
+        repo.body(second.id).await.unwrap().unwrap().text,
+        repo.body(first.id).await.unwrap().unwrap().text
+    );
+}
+
 /// A request for `uid`, received `uid` seconds into the fixture's timeline, so
 /// a higher UID is also the newer message.
 fn request(mailbox: &Mailbox, id: MessageId, uid: u32, size: u64) -> BodyRequest {
@@ -688,7 +743,7 @@ async fn a_cancelled_fetch_stores_nothing() {
 async fn body_is_indexed(connection: &postio_storage::Checkout, id: MessageId) -> bool {
     postio_storage::sql::exists(
         connection,
-        "SELECT 1 FROM message_search_bodies WHERE message_id = ?1",
+        "SELECT 1 FROM message_search_bodies WHERE content_id = (SELECT content_id FROM messages WHERE id = ?1)",
         bind![id.get()],
     )
     .await
@@ -704,7 +759,7 @@ async fn body_is_indexed(connection: &postio_storage::Checkout, id: MessageId) -
 async fn body_matches(connection: &postio_storage::Checkout, id: MessageId, query: &str) -> bool {
     postio_storage::sql::exists(
         connection,
-        "SELECT 1 FROM message_search_bodies WHERE message_id = ?1 AND fts_match(body_search, ?2)",
+        "SELECT 1 FROM message_search_bodies WHERE content_id = (SELECT content_id FROM messages WHERE id = ?1) AND fts_match(body_search, ?2)",
         bind![id.get(), postio_model::fold::fold(query)],
     )
     .await
@@ -1136,7 +1191,7 @@ async fn header_is_indexed(
     postio_storage::sql::one(
         connection,
         "SELECT EXISTS (SELECT 1 FROM message_headers
-                             WHERE message_id = ?1 AND name = ?2
+                             WHERE content_id = (SELECT content_id FROM messages WHERE id = ?1) AND name = ?2
                                AND value LIKE '%' || ?3 || '%')",
         bind![id.get(), name, value],
         |row| postio_storage::sql::RowExt::col::<bool>(row, 0),
@@ -2969,4 +3024,201 @@ async fn storing_a_body_costs_the_same_however_many_recipients() {
          again",
         costs[1], costs[0],
     );
+}
+
+#[tokio::test]
+async fn native_whole_fetch_preserves_parts_for_late_memberships() {
+    let raw = b"From: sender@example.test\r\nSubject: picture\r\nContent-Type: multipart/related; boundary=b\r\n\r\n--b\r\nContent-Type: text/html\r\n\r\n<p>picture<img src=\"cid:picture\"></p>\r\n--b\r\nContent-Type: image/png\r\nContent-ID: <picture>\r\nContent-Disposition: inline\r\nContent-Transfer-Encoding: base64\r\n\r\ncGljdHVyZQ=\r\n--b--\r\n";
+    let backend = MockBackend::builder()
+        .mailbox(
+            MockMailbox::new(INBOX)
+                .uid_validity(UidValidity::new(VALIDITY))
+                .message(MockMessage::new(&raw[..]).with_internal_date(at(1))),
+        )
+        .build();
+    backend.connect().await.unwrap();
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+    let repo = MessageRepository::new(&local.connection);
+    let mut first = repo.get(rows[0].0).await.unwrap().unwrap();
+    // Native adapters provide immutable identity, without IMAP BODYSTRUCTURE.
+    first.server.content_identity =
+        Some(postio_model::ContentIdentity::new("test-native", "picture"));
+    first.content_type = None;
+    first.text_part_id = None;
+    first.html_part_id = None;
+    first.attachments.clear();
+    repo.update(&mut first).await.unwrap();
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, first.id, 1, first.size),
+        None,
+        None,
+        &CancelToken::new(),
+    )
+    .await
+    .unwrap();
+    let mut archive = Mailbox::new(local.inbox.account_id, "Archive", Some('/'));
+    MailboxRepository::new(&local.connection)
+        .create(&mut archive)
+        .await
+        .unwrap();
+    let mut second = first.clone();
+    second.mailbox_id = archive.id;
+    second.sync.body_state = BodyState::HeadersOnly;
+    repo.create(&mut second).await.unwrap();
+    let stored = repo.get(second.id).await.unwrap().unwrap();
+    assert_eq!(
+        stored.attachments.len(),
+        1,
+        "the reader can resolve the CID part"
+    );
+    assert_eq!(stored.attachments[0].content_id.as_deref(), Some("picture"));
+    assert_eq!(
+        local
+            .blobs
+            .get(stored.attachments[0].blob_id.as_ref().unwrap())
+            .unwrap(),
+        b"picture"
+    );
+    let calls = backend.calls();
+    assert_eq!(
+        fetch_body(
+            &local.connection,
+            &local.blobs,
+            &backend,
+            &request(&archive, second.id, 1, second.size),
+            None,
+            None,
+            &CancelToken::new()
+        )
+        .await
+        .unwrap(),
+        Outcome::Stored { bytes: 0 }
+    );
+    assert_eq!(backend.calls(), calls);
+    let body = repo.body(first.id).await.unwrap().unwrap();
+    local
+        .blobs
+        .evict_to_fit(&local.connection, 0)
+        .await
+        .unwrap();
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, first.id, 1, first.size),
+        Some(1024),
+        None,
+        &CancelToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        repo.body(second.id).await.unwrap().unwrap().html,
+        body.html,
+        "refetching an evicted CID must retain the shared message words"
+    );
+    local
+        .blobs
+        .evict_to_fit(&local.connection, 0)
+        .await
+        .unwrap();
+    let mut payload = request(&local.inbox, first.id, 1, first.size);
+    payload.want = Want::Payloads(vec![stored.attachments[0].part_id.clone().unwrap()]);
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &payload,
+        None,
+        None,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("a native payload request can use the whole source");
+    let restored = repo.get(second.id).await.unwrap().unwrap();
+    assert_eq!(
+        local
+            .blobs
+            .get(restored.attachments[0].blob_id.as_ref().unwrap())
+            .unwrap(),
+        b"picture"
+    );
+    assert_eq!(repo.body(second.id).await.unwrap().unwrap().html, body.html);
+    let calls = backend.calls();
+    assert_eq!(
+        fetch_body(
+            &local.connection,
+            &local.blobs,
+            &backend,
+            &payload,
+            None,
+            None,
+            &CancelToken::new(),
+        )
+        .await
+        .unwrap(),
+        Outcome::Stored { bytes: 0 }
+    );
+    assert_eq!(backend.calls(), calls, "a restored payload stays local");
+}
+
+#[tokio::test]
+async fn prefetch_does_not_download_a_shared_content_twice() {
+    let backend = MockBackend::builder()
+        .mailbox(
+            MockMailbox::new(INBOX)
+                .uid_validity(UidValidity::new(VALIDITY))
+                .message(
+                    MockMessage::new(note(1))
+                        .with_structure(postio_account::backend::BodyStructure::from_parts(
+                            "text/plain",
+                            [
+                                postio_account::backend::PartNode::new("1", "text/plain", 26)
+                                    .with_charset("utf-8"),
+                            ],
+                        ))
+                        .with_part("1", &b"local shared words"[..]),
+                ),
+        )
+        .build();
+    backend.connect().await.unwrap();
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+    let repo = MessageRepository::new(&local.connection);
+    let mut first = repo.get(rows[0].0).await.unwrap().unwrap();
+    first.server.content_identity = Some(postio_model::ContentIdentity::new("test-native", "1"));
+    repo.update(&mut first).await.unwrap();
+    let request = request(&local.inbox, first.id, 1, first.size);
+    let requests = [request.clone(), request.clone()];
+    let before = backend.calls();
+    let prefetched =
+        prefetch_text_sections(&local.connection, &backend, &requests, &CancelToken::new()).await;
+    assert!(
+        prefetched.is_empty(),
+        "a shared content is only one request, not a batch"
+    );
+    assert_eq!(backend.calls(), before);
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request,
+        None,
+        None,
+        &CancelToken::new(),
+    )
+    .await
+    .unwrap();
+    let before = backend.calls();
+    let prefetched =
+        prefetch_text_sections(&local.connection, &backend, &requests, &CancelToken::new()).await;
+    assert!(
+        prefetched.is_empty(),
+        "already local words need no prefetch"
+    );
+    assert_eq!(backend.calls(), before);
 }
