@@ -304,6 +304,36 @@ async fn the_facets_ids_come_back_with_their_names() {
     );
 }
 
+/// The person searching is named among the people, and said to be them:
+/// what offers someone to narrow to leaves them out, as the People tab
+/// does, by every account's and identity's address.
+#[tokio::test]
+async fn the_facets_say_which_person_is_you() {
+    let world = world().await;
+    postio_storage::sql::execute(
+        &world.connection,
+        "UPDATE accounts SET address = 'Ada.Norwood@example.com' WHERE id = ?1",
+        [world.account.get()],
+    )
+    .await
+    .expect("Ada is the person searching");
+    let results = search(&world, "ada").await;
+    let id_of = |address: &str| {
+        results
+            .names
+            .people
+            .iter()
+            .find(|(_, person)| person.address == address)
+            .map(|(id, _)| *id)
+            .unwrap_or_else(|| panic!("{address} is among the people"))
+    };
+    assert_eq!(
+        results.names.own,
+        vec![id_of("ada.norwood@example.com")],
+        "the account's address, whatever its case; Quinn is someone else"
+    );
+}
+
 /// The line that introduces a quote ("On 21/09/2026 16:02, Ada Norwood
 /// wrote:") is neither the person's words nor the history: a passage is
 /// never cut from it, even when it holds the word searched for. "Ada" is

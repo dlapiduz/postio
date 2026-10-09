@@ -347,6 +347,11 @@ pub struct ConversationResults {
 pub struct FacetNames {
     /// Senders and recipients: the address, with the name its mail gave it.
     pub people: Vec<(AddressId, EmailAddress)>,
+    /// Which of `people` are the person searching: an account's or an
+    /// identity's address. The facets count them -- you are in every
+    /// message you sent -- but nothing offers you as someone to narrow to,
+    /// as the People tab leaves you out.
+    pub own: Vec<AddressId>,
     /// Labels, by their names.
     pub labels: Vec<(LabelId, String)>,
     /// The colours labels were given (`#rrggbb`), for the rows' pills;

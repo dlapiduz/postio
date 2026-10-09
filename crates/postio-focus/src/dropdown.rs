@@ -300,9 +300,9 @@ pub(crate) struct Landed {
     pub(crate) folders: Vec<(postio_model::MailboxId, String)>,
 }
 
-/// The pills a search's facets offer: the top senders, attachments, the
-/// top label, each only when it would keep fewer than all (it narrows),
-/// four at most.
+/// The pills a search's facets offer: the top senders but you,
+/// attachments, the top label, each only when it would keep fewer than all
+/// (it narrows), four at most.
 pub(crate) fn narrow_pills(results: &ConversationResults) -> Vec<(words::NarrowPill, Clause)> {
     let facets = &results.facets;
     let narrows = |count: u64| count > 0 && count < results.total;
@@ -314,6 +314,7 @@ pub(crate) fn narrow_pills(results: &ConversationResults) -> Vec<(words::NarrowP
         .senders
         .iter()
         .filter(|count| narrows(count.conversations))
+        .filter(|count| !results.names.own.contains(&count.id))
         .filter_map(|count| {
             let (_, person) = results
                 .names
