@@ -952,14 +952,20 @@ impl Client {
         .await
     }
 
-    /// The passages of `hits`' matches under `query`, in the order asked.
+    /// The passages of `hits`' matches under `query`, in the order asked,
+    /// for a row that does `first_line` with a message's first line.
     pub async fn passages(
         &self,
         query: postio_search::ParsedQuery,
         hits: Vec<(MessageId, Vec<postio_search::results::Source>)>,
+        first_line: postio_search::passage::FirstLine,
     ) -> Result<Vec<(MessageId, Vec<postio_search::results::Match>)>, StoreError> {
         self.read(
-            Req::Passages { query, hits },
+            Req::Passages {
+                query,
+                hits,
+                first_line,
+            },
             "the passages",
             |answer| match answer {
                 Resp::Passages(found) => Some(found),

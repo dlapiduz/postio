@@ -17,6 +17,7 @@ use postio_index::executor::ConversationRequest;
 use postio_index::{SearchRequest, search};
 use postio_model::{AccountScope, AddressId, EmailAddress, LabelId, MailboxId, MessageId};
 use postio_search::facets::Scope;
+use postio_search::passage::FirstLine;
 use postio_search::results::{ConversationOrder, ConversationResults, FacetNames, Match, Source};
 use postio_search::{ParsedQuery, ResultOrder, SearchResults};
 use postio_storage::Checkout;
@@ -356,7 +357,10 @@ async fn names(
 
 /// The passages of each hit's matches, cut from its own body, each body
 /// match told apart into the person's own words and the history they quoted
-/// (spec 010 D6, D7).
+/// (spec 010 D6, D7). `first_line` is what the asking row does with the
+/// message's first line: the dropdown shows it as the preview
+/// ([`FirstLine::Shown`]), the results view shows none
+/// ([`FirstLine::Avoided`]).
 ///
 /// One body read per hit that matched in its body, and none for the rest:
 /// a subject is drawn by the row itself and a file name is its own words.
@@ -376,6 +380,7 @@ pub async fn passages(
     connection: &Checkout,
     query: &ParsedQuery,
     hits: &[(MessageId, Vec<Source>)],
+    first_line: FirstLine,
 ) -> Vec<(MessageId, Vec<Match>)> {
     // What a body matched by: the words, as the index matched them.
     let terms: Vec<String> = query
@@ -395,7 +400,9 @@ pub async fn passages(
         let mut matches = Vec::with_capacity(sources.len() + 1);
         for source in sources {
             match (source, &text) {
-                (Source::Body, Some(text)) => matches.extend(body_matches(text, &terms)),
+                (Source::Body, Some(text)) => {
+                    matches.extend(body_matches(text, &terms, first_line));
+                }
                 (source, _) => matches.push(Match {
                     source: source.clone(),
                     passage: None,
@@ -410,8 +417,9 @@ pub async fn passages(
 
 /// A body's matches: where in the person's own words, and where in what
 /// they quoted, each with its passage.
-fn body_matches(text: &str, terms: &[String]) -> Vec<Match> {
+fn body_matches(text: &str, terms: &[String], first_line: FirstLine) -> Vec<Match> {
     use postio_body::quote::{Stretch, text_stretches};
+    use postio_search::passage::cut;
 
     let stretches = text_stretches(text);
     let mut own = String::new();
@@ -443,14 +451,30 @@ fn body_matches(text: &str, terms: &[String]) -> Vec<Match> {
     if found(&own) {
         matches.push(Match {
             source: Source::Body,
-            passage: postio_search::passage::cut(&own, terms, opens_own),
+            passage: cut(
+                &own,
+                terms,
+                if opens_own {
+                    first_line
+                } else {
+                    FirstLine::Any
+                },
+            ),
             when: None,
         });
     }
     if found(&quoted) {
         matches.push(Match {
             source: Source::Quoted,
-            passage: postio_search::passage::cut(&quoted, terms, opens_quoted),
+            passage: cut(
+                &quoted,
+                terms,
+                if opens_quoted {
+                    first_line
+                } else {
+                    FirstLine::Any
+                },
+            ),
             when: None,
         });
     }

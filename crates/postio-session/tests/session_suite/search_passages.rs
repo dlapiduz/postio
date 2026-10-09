@@ -139,8 +139,13 @@ async fn only_hit(world: &World, text: &str) -> (MessageId, Vec<Source>) {
 
 async fn passages(world: &World, text: &str, hit: (MessageId, Vec<Source>)) -> Vec<Match> {
     let id = hit.0;
-    let mut answered =
-        postio_session::search::passages(&world.connection, &parse(text), &[hit]).await;
+    let mut answered = postio_session::search::passages(
+        &world.connection,
+        &parse(text),
+        &[hit],
+        postio_search::passage::FirstLine::Shown,
+    )
+    .await;
     assert_eq!(answered.len(), 1, "one answer per hit asked about");
     let (answered_id, matches) = answered.remove(0);
     assert_eq!(answered_id, id, "answered for the hit asked about");

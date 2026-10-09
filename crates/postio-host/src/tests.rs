@@ -4063,6 +4063,8 @@ fn focus_asks_the_host_for_conversations_then_their_passages() {
         .block_on(seed.client.passages(
             postio_search::parse("atlas budget", postio_demo::today().date_naive()),
             asked.clone(),
+            // As the results view asks: its rows show no preview.
+            postio_search::passage::FirstLine::Avoided,
         ))
         .expect("an answer");
     assert_eq!(
