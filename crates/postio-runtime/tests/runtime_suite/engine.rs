@@ -1243,7 +1243,7 @@ async fn give_the_inbox_uids(
         .expect("the fixture writes");
     // A fixture that quietly matched nothing is worse than one that fails:
     // the `UPDATE` succeeds, and the test goes on to blame whatever it
-    // asked next for finding no work. `docs/engineering-notes.md` records
+    // asked next for finding no work. `docs/archive/engineering-notes.md` records
     // that shape -- a test's own observation defaulting instead of failing
     // turns schema drift into a false accusation.
     assert!(

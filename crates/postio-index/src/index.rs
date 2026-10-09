@@ -1304,7 +1304,7 @@ mod tests {
     }
 
     /// Body matches, which are an index on `messages.body_search` now (#407,
-    /// `specs/004-turso-store`) rather than a contentless table of their own.
+    /// `docs/archive/specs/004-turso-store`) rather than a contentless table of their own.
     ///
     /// The query goes through the same fold the write path applied, which is
     /// the rule `postio_model::fold` exists to keep: both sides or neither.

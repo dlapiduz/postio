@@ -10,7 +10,7 @@ Everything in [contracts/focus-surface.md](contracts/focus-surface.md) holds
 unless a row below says otherwise. The behaviour is in
 [spec.md](spec.md), the keys in [contracts/keymap.md](contracts/keymap.md),
 and the rules a terminal adds (hostile text, `NO_COLOR`, the mouse, the store
-lock) in `specs/005-tui-frontend`.
+lock) in `docs/archive/specs/005-tui-frontend`.
 
 ## What carries over and what changes
 

@@ -4,7 +4,7 @@ The short version: **claim an issue, work it test-first in a worktree of your
 own, land it, take the next one.** Hooks and checks enforce most rules at the
 moment you'd break them; this file is the part a machine can't check. The
 history and reasoning behind every rule here lives in
-`docs/engineering-notes.md` and the issues it cites.
+`docs/archive/engineering-notes.md` and the issues it cites.
 
 ## The loop
 
@@ -174,7 +174,7 @@ what changed, and re-runnable; then let CI run the rest. `--full` re-runs what
 you already ran, inside a ~25-minute chain where any unrelated flake restarts
 the whole thing.
 
-#901 is the worked example (`docs/engineering-notes.md`): three `--full`
+#901 is the worked example (`docs/archive/engineering-notes.md`): three `--full`
 runs failed on other people's bugs, and the default found the branch's one
 real defect in two minutes, through the rebase. **The rebase is what finds a
 shared type's new callers**, and `issue-land.sh` rebases on every attempt
@@ -183,7 +183,7 @@ whatever the tier.
 **A gate failure in code your diff does not touch is probably not yours.**
 Check before re-running: reproduce it alone, read the backtrace
 (`coredumpctl debug` for a segfault), search for prior art in the issues and
-in `docs/engineering-notes.md`. Three of #901's four gate failures were
+in `docs/archive/engineering-notes.md`. Three of #901's four gate failures were
 pre-existing and two of them became issues. Re-running without looking turns
 somebody else's bug into your twenty-five minutes, repeatedly.
 
@@ -263,7 +263,7 @@ landing you want to see through.
   the real display. `POSTIO_HEADLESS=0 cargo test` to watch a run;
   `scripts/test-headless.sh --stop` to stop the compositor. Headless is ~3.5x
   faster than a live display — a test that passes on the desktop and fails
-  headless usually has a real race (see `docs/engineering-notes.md`).
+  headless usually has a real race (see `docs/archive/engineering-notes.md`).
 - **The whole-workspace reconcile pass is `/steward`'s job**, not an
   ordinary session's; the skill says how to run it so one red crate cannot
   hide a thousand passing tests.
@@ -316,7 +316,7 @@ nightly and deliberately times nothing, because a shared runner cannot defend
 crate's own `sql` seam (this engine has no trace hook), `counting::scans` asks
 the planner which steps are full table scans, and those are the same numbers
 on any machine. When you touch a read path, that is the thing to add an
-assertion to; `docs/engineering-notes.md` has what the counts can and cannot
+assertion to; `docs/archive/engineering-notes.md` has what the counts can and cannot
 see.
 
 ## Invariants the checks enforce
@@ -476,7 +476,7 @@ for a stranger who can't ask follow-ups:
 | Something needing a design/architecture call an agent can make | `needs-architecture` — `/ux-architect`'s queue |
 | Something only the maintainer can decide | `needs-maintainer`, plus a comment naming the question and the options |
 | The maintainer rejects an interaction | a storyboard (or a new `expect` in one), `source = { kind = "maintainer" }`, before the branch is reviewed again |
-| A constraint future sessions must respect | a new file under `docs/notes/` (date and title), listed in `docs/engineering-notes.md` |
+| A constraint future sessions must respect | a new file under `docs/notes/` (date and title), listed in `docs/archive/engineering-notes.md` |
 | An architectural decision | an ADR in `docs/decisions/` |
 
 **Fix the small thing; file the large one** (maintainer, 2026-09-10: *"only
@@ -559,7 +559,7 @@ a kind already built there is a row in that file, not a new job.
 (filming a branch's interactions and having an independent reviewer judge
 them before the maintainer does), `/product-manager` and `/steward` (the two
 loops that watch the backlog and the execution).
-`docs/session-prompts.md` says which to run when.
+`docs/archive/session-prompts.md` says which to run when.
 
 Product truth: `docs/PRODUCT.md`. Visual truth: spec 007's `screens.md`, each
 screen against the maintainer's references (`Design/`, local, untracked) —

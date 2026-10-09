@@ -4,7 +4,7 @@ Read this before changing anything in `crates/postio-ffi/src/`.
 
 ## What happened
 
-`specs/003-outbox-and-reserved-mailboxes` changed three things on the
+`docs/archive/specs/003-outbox-and-reserved-mailboxes` changed three things on the
 boundary: `RowFfi.draft: bool` became `send_state: Option<String>`,
 `MailboxFfi` gained `flagged` and `snoozed`, and `MailboxRoleFfi` gained
 `outbox`. Every Rust gate was green — clippy, `cargo check --workspace
@@ -58,4 +58,4 @@ One pass costs a minute and collapses three CI round trips into none.
 `docs/decisions/0036-a-sidebar-row-is-a-folder-or-a-view.md` for why the
 frontends share a layer at all, and the "two things CI proves that a local run
 cannot" section of
-`specs/003-outbox-and-reserved-mailboxes/quickstart.md`.
+`docs/archive/specs/003-outbox-and-reserved-mailboxes/quickstart.md`.

@@ -27,7 +27,7 @@
 //! or deleting the case leaves an entry that matches nothing — the mute is
 //! dead, nothing says so, and the case either runs when it was meant not to or
 //! was never held out at all. Same shape as the stale `rerun-if-changed` in
-//! `docs/engineering-notes.md`: no error, just a wrong answer forever.
+//! `docs/archive/engineering-notes.md`: no error, just a wrong answer forever.
 
 use std::process::Command;
 

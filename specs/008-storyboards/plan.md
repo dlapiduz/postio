@@ -1,6 +1,6 @@
 # Implementation Plan: Storyboards — Interactions Reviewed Before They Reach the Maintainer
 
-**Branch**: `feature/storyboards` | **Date**: 2026-10-01 | **Spec**: [spec.md](./spec.md)
+**Branch**: `feature/storyboards` | **Date**: 2026-10-01 | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `specs/008-storyboards/spec.md`
 
@@ -70,7 +70,7 @@ now comes from one of three places:
 catalogue seed's timing rows need new mail or a folder change to arrive in
 the middle of a storyboard (R11).
 
-All technical unknowns are resolved in [research.md](./research.md). Two are
+All technical unknowns are resolved in [research.md](research.md). Two are
 measured rather than decided, each by the first Foundational task:
 
 - **The cost of one capture.** This decides whether settle sampling runs on
@@ -135,7 +135,7 @@ window, the clock seam, and the toast's tone and undo accessors.
 - Never build `--release` while other sessions are building.
 
 **Scale/Scope**:
-- 47 catalogue seed rows ([catalogue-seed.md](./catalogue-seed.md)), about 40
+- 47 catalogue seed rows ([catalogue-seed.md](catalogue-seed.md)), about 40
   of them expressible with keyboard and events;
 - 38 screens migrated from `screens.sh`;
 - the flows;

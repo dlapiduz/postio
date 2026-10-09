@@ -6,7 +6,7 @@
 # instrumented build is expensive enough that it must cost `cargo test
 # --workspace` nothing. Nobody building Postio builds this.
 #
-# See docs/engineering-notes.md, "Fuzzing the hostile-input pipeline", for how
+# See docs/archive/engineering-notes.md, "Fuzzing the hostile-input pipeline", for how
 # to run these and how to triage a find.
 [package]
 name = "postio-fuzz"

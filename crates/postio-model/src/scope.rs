@@ -4,7 +4,7 @@
 //! runtime that hands rows to a frontend, a frontend's own feed, and the FFI
 //! boundary a second frontend crosses — answers the same question about the
 //! same value, so it gets one type rather than a spelling per reader (#670).
-//! `docs/engineering-notes.md`'s "Six types are called *Scope*" entry has the
+//! `docs/archive/engineering-notes.md`'s "Six types are called *Scope*" entry has the
 //! full map of what does and does not belong here — in particular
 //! [`crate::AccountScope`] answers a different question ("which accounts?")
 //! and `postio_core::state::ViewScope` is deliberately *not* this type: it is

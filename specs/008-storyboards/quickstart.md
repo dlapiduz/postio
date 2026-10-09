@@ -1,9 +1,9 @@
 # Quickstart: Storyboards
 
 This guide checks the feature end to end. Each scenario names the spec story
-it proves. The commands are in [contracts/runner.md](./contracts/runner.md),
+it proves. The commands are in [contracts/runner.md](contracts/runner.md),
 and the file format is in
-[contracts/storyboard-format.md](./contracts/storyboard-format.md).
+[contracts/storyboard-format.md](contracts/storyboard-format.md).
 
 ## Prerequisites
 

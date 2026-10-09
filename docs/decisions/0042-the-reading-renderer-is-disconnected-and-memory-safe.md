@@ -1,7 +1,7 @@
 # ADR 0042 — The reading renderer is disconnected and memory-safe
 
-- **Status:** Accepted (2026-09-27), with `specs/006-email-rendering`. Built
-- **Spec:** [`specs/006-email-rendering`](../../specs/006-email-rendering/spec.md)
+- **Status:** Accepted (2026-09-27), with `docs/archive/specs/006-email-rendering`. Built
+- **Spec:** [`docs/archive/specs/006-email-rendering`](../archive/specs/006-email-rendering/spec.md)
   (FR-001, FR-023a, FR-025; research R18)
 - **Related:** [ADR 0032](0032-the-conversation-is-one-document.md) (whose
   one-document conversation this keeps, drawn by a different engine),

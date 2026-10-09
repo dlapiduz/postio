@@ -6,7 +6,7 @@
   tokenise compressed bytes, so bodies are plain `TEXT` and
   `body_dictionaries` is gone. The rows-not-blobs half — bodies in the
   database, attachments and raw `.eml` in the blob store — stands.
-  **Amended again 2026-09-14 (specs/004-turso-store):** bodies are no
+  **Amended again 2026-09-14 (docs/archive/specs/004-turso-store):** bodies are no
   longer plain `TEXT`. Once the body index moved to its own folded table
   (`message_search_bodies`), the body column was free to shrink again, and
   `crates/postio-storage/src/body_codec.rs` restored per-row zstd (level 3,

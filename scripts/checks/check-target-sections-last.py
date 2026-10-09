@@ -39,7 +39,7 @@ cannot swallow anything, because there is nothing below it to swallow.
 # What this does not do
 
 It does not check that platform-conditional code compiles for that platform --
-nothing on a Linux box can. See `docs/engineering-notes.md` on cross-platform
+nothing on a Linux box can. See `docs/archive/engineering-notes.md` on cross-platform
 dependencies for the layers that do: this check, `cargo check --target` where
 the C dependencies allow it, and a CI runner for the rest.
 """

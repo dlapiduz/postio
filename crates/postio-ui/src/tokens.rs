@@ -888,7 +888,7 @@ fn rgba((r, g, b): (u8, u8, u8), alpha: f32) -> String {
 ///
 /// For a frontend that draws with colours rather than CSS -- the terminal,
 /// which uses the accent for the selected row and the focus on a true-colour
-/// terminal (`specs/005-tui-frontend` FR-054). Parsing the generated file
+/// terminal (`docs/archive/specs/005-tui-frontend` FR-054). Parsing the generated file
 /// rather than restating `#5980a6` keeps the rule this module exists for:
 /// retuning the design system moves every frontend, or fails the build.
 pub fn accent_rgb() -> ((u8, u8, u8), (u8, u8, u8)) {

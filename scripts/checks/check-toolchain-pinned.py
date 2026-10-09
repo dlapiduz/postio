@@ -50,7 +50,7 @@ A repository check cannot police anyone's shell, so this reports the skew
 rather than failing on it: an exit status keyed to a developer's environment
 would make CI's answer depend on the runner's, which is the thing being
 fixed. ``--strict`` turns the warning into a failure for anyone who wants it
-enforced locally. See ``docs/engineering-notes.md``.
+enforced locally. See ``docs/archive/engineering-notes.md``.
 
 # Exit status
 

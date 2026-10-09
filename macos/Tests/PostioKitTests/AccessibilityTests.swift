@@ -9,7 +9,7 @@ import Testing
 /// `accessibilityLabel` reads back whatever was last set whether or not
 /// anything would ever speak it, so a test that set one and read it back would
 /// be testing AppKit's property storage — the same trap
-/// `docs/engineering-notes.md` records on the GTK side.
+/// `docs/archive/engineering-notes.md` records on the GTK side.
 @Suite struct AccessibilityTests {
     private func presentation(
         sender: String = "ada@example.com",

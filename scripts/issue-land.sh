@@ -364,7 +364,7 @@ echo "crates: ${CRATES:-none}"
 # gates are the run a merge is staked on, so they are the last place that
 # should share artifacts with whatever else is landing right now. A caller who
 # genuinely wants a directory of their own still gets it -- see #253 and
-# docs/engineering-notes.md.
+# docs/archive/engineering-notes.md.
 echo "target: ${CARGO_TARGET_DIR:-$TREE/target (this worktree)}"
 echo
 
@@ -451,7 +451,7 @@ fi
 # looks green. A warning in the log is weaker than the pin was supposed to
 # give, so the value is captured for the diagnostic below and then cleared:
 # every cargo invocation from here on runs on whatever rust-toolchain.toml
-# names, whatever this shell exports. See docs/engineering-notes.md and #112.
+# names, whatever this shell exports. See docs/archive/engineering-notes.md and #112.
 HOST_RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-}"
 unset RUSTUP_TOOLCHAIN
 
@@ -519,7 +519,7 @@ fi
 
 # Green gates are recorded against the exact content they proved, and a tree
 # that has not changed a byte since is not re-proven. Long commands on this
-# workstation get killed sometimes (docs/engineering-notes.md), and every
+# workstation get killed sometimes (docs/archive/engineering-notes.md), and every
 # killed landing used to re-pay clippy and the full per-crate test suite on
 # a retry that changed nothing -- #109's landing paid its app crate's gates
 # three times that way. `git write-tree` hashes the staged tree, staging

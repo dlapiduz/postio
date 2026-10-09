@@ -1,7 +1,7 @@
 # ADR 0041 — One app opens the store at a time; each runs the host inside it
 
 - **Status:** Accepted (2026-09-25). Built
-- **Spec:** [`specs/005-tui-frontend`](../../specs/005-tui-frontend/spec.md)
+- **Spec:** [`docs/archive/specs/005-tui-frontend`](../archive/specs/005-tui-frontend/spec.md)
   (FR-040–FR-043, User Story 6, Clarifications 2026-09-24)
 - **Related:** [ADR 0038](0038-the-store-is-turso-not-sqlcipher.md) (the engine
   whose lock this obeys), [ADR 0021](0021-exactly-once-send.md) (which this

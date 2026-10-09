@@ -1,6 +1,6 @@
 # Research: Storyboards
 
-**Feature**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Date**: 2026-10-01
+**Feature**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md) | **Date**: 2026-10-01
 
 Each decision below records what was chosen, why, and what was rejected. File
 references are to `main` at `98ba8a8e`, unless marked `focus:`, which means
@@ -40,7 +40,7 @@ reviewer must fail the first kind and pass the second (R10).
 - *Build the runner at each fix's parent commit.* The runner did not exist
   then, and back-porting it is far more work than the evidence is worth.
 - *`cargo-mutants` over the GTK crates.* It is accepted for pure crates
-  (`docs/engineering-notes.md` § Mutation testing). Over GTK it would be
+  (`docs/archive/engineering-notes.md` § Mutation testing). Over GTK it would be
   thousands of window launches, and its mutants are not the defects that
   happened.
 
@@ -97,7 +97,7 @@ listed crates, so the row is added deliberately.
   - `{ absent = true }` means the field has no value.
 - **Overrides** are `[app.<name>.step.<id>]` tables.
 
-The grammar is in [contracts/storyboard-format.md](./contracts/storyboard-format.md).
+The grammar is in [contracts/storyboard-format.md](contracts/storyboard-format.md).
 
 **Why TOML.**
 - It is already the configuration language (`[keys]` uses the command ids a
@@ -264,8 +264,8 @@ same way `focus_suite` does (focus: `focus_suite/main.rs`,
 ## R6. The observation
 
 **Decision.**
-- The fields are in [data-model.md](./data-model.md) § Observation, and the
-  per-app mapping is in [contracts/observation.md](./contracts/observation.md).
+- The fields are in [data-model.md](data-model.md) § Observation, and the
+  per-app mapping is in [contracts/observation.md](contracts/observation.md).
 - `Observation` is a plain `serde` struct in `postio_ui::observe`.
 - Each app builds it in one method from accessors it already has. The
   surveys found nearly all of them public:
@@ -384,7 +384,7 @@ The prompt tells the reviewer to read `/ux-architect`'s and `/gtk-design`'s
 `SKILL.md` and the named design screens, then every outlined frame.
 
 **The output** is `verdicts.json` in the schema in
-[contracts/review.md](./contracts/review.md).
+[contracts/review.md](contracts/review.md).
 `postio-storyboard verdicts check` rejects:
 - any verdict without storyboard, step, app, variant and frame;
 - any frame path that does not exist;

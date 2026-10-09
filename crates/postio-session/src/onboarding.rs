@@ -2,7 +2,7 @@
 //!
 //! The first-run screen's half that talks to servers and the store, with
 //! nothing a toolkit names. It was the classic app's until the terminal needed
-//! the same first run (specs/005-tui-frontend T016): the same probe options,
+//! the same first run (docs/archive/specs/005-tui-frontend T016): the same probe options,
 //! the same proof in the same order, the same sentences for the same
 //! failures, the same credential-first write. The desktop calls it; the
 //! host answers the terminal's onboarding requests with it.

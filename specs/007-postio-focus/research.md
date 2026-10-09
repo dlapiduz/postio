@@ -1,6 +1,6 @@
 # Research: Postio Focus
 
-Phase 0 for [plan.md](./plan.md). Each section is a finding that constrains
+Phase 0 for [plan.md](plan.md). Each section is a finding that constrains
 Focus's design and the decision it led to. A rejected alternative is kept
 only where it stops the question being argued again. Paths are
 repository-relative.
@@ -90,7 +90,7 @@ card, render-mode line, body, attachments and fold line scroll together.
 visible window from the outer scroller's adjustment, so tiling stays
 windowed. The cards are GTK widgets, not HTML chrome in the document, so
 their buttons stay real buttons. The frame, column and treatments are
-[screens.md](./screens.md), "The open message".
+[screens.md](screens.md), "The open message".
 
 **Highlighting a sentence (FR-035, screen 23).** `TextIndex::locate(Excerpt {
 text, offset, source_len })`, in `postio-render` beside `find`, marks a
@@ -209,7 +209,7 @@ plus Focus's markers, digests and filter decisions, written through the host.
 
 **Decision.** `KEYS.md` is the registry's defaults. The registry keeps one row
 per command; a command only another app offers keeps a key that does not
-collide. The table is [contracts/keymap.md](./contracts/keymap.md).
+collide. The table is [contracts/keymap.md](contracts/keymap.md).
 
 **Frontend availability.** `Availability.frontend: Frontend {Classic,
 Terminal, Focus, Macos}`:
@@ -376,8 +376,8 @@ message, in layers where an earlier layer's decision stands: guards,
 corrections, rules and the built-in detector, then the user's model. It has
 no send path; its boundary bans the mail transports, sync, the runtime,
 `io-imap`, `io-http` and every network crate. The output schema is in
-[data-model.md](./data-model.md) and the interface in
-[contracts/engine.md](./contracts/engine.md).
+[data-model.md](data-model.md) and the interface in
+[contracts/engine.md](contracts/engine.md).
 
 **Only while Focus runs.** At startup Focus calls `Host::enable_focus`, which
 installs:
@@ -692,7 +692,7 @@ store starts over (R0) is short-lived.
 - `[focus.model]` and `[focus.vault]`.
 
 The list reads markers with one extra batched statement per page, for Focus
-scopes only. The full shapes are in [data-model.md](./data-model.md).
+scopes only. The full shapes are in [data-model.md](data-model.md).
 
 ---
 
@@ -701,7 +701,7 @@ scopes only. The full shapes are in [data-model.md](./data-model.md).
 **Decision.** Focus's composer host implements `ComposerHost` (R1): the
 context is Composer while it is open, the dialog (or the window it is
 detached to) is the parent of file dialogs, autosave is on, and the window's
-resolver serves keys. Its frame is [screens.md](./screens.md), "The
+resolver serves keys. Its frame is [screens.md](screens.md), "The
 composer".
 
 **The draft carries `labels` and `remind_at`.** When it is sent, the host
@@ -808,7 +808,7 @@ the widget tree, and keys and clicks are delivered through GTK's own
 controllers, never by calling a handler.
 
 **Screens:** `shot` renders each screen from the demo store, in light and
-dark; [screens.md](./screens.md) records each comparison.
+dark; [screens.md](screens.md) records each comparison.
 
 **Nightly:** SC-011's first pass, at 100,000 messages, and the excerpt
 locator's floors, under `POSTIO-MEASUREMENT:` markers in

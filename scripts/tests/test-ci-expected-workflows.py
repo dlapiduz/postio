@@ -318,7 +318,7 @@ on:
                 "--base",
                 "main",
                 "README.md",
-                "docs/engineering-notes.md",
+                "docs/archive/engineering-notes.md",
             ],
             capture_output=True,
             text=True,

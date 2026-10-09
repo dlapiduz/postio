@@ -24,7 +24,7 @@
 //! # What it costs
 //!
 //! A `connect().await` and the read, both on the caller's task. The engine is
-//! async to the bottom (specs/004-turso-store), so there is no blocking
+//! async to the bottom (docs/archive/specs/004-turso-store), so there is no blocking
 //! thread and no pool: a read is a future like any other, and a slow one
 //! yields rather than tying up a worker. This was a `spawn_blocking` onto a
 //! pool of connections while the store was SQLite; the swap deleted both.

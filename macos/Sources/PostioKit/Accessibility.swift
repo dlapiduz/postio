@@ -11,7 +11,7 @@ import PostioFFI
 /// reader is built in.
 ///
 /// The decisions are here, as pure functions, for the reason
-/// `docs/engineering-notes.md` records about the GTK side: **GTK records no
+/// `docs/archive/engineering-notes.md` records about the GTK side: **GTK records no
 /// accessible properties without a live backend**, which cost a whole
 /// debugging session to learn. AppKit has the same shape of problem —
 /// `accessibilityLabel` reads back as whatever was last set, whether or not

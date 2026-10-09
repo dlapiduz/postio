@@ -80,7 +80,7 @@ def build_fixture(
     write_crate(root, "crates", "postio-model", model_deps)
     write_crate(root, "crates", "postio-config", config_deps)
     write_crate(root, "crates", "helper", helper_deps)
-    # The terminal frontend and what it stands on (specs/005-tui-frontend).
+    # The terminal frontend and what it stands on (docs/archive/specs/005-tui-frontend).
     write_crate(root, "crates", "postio-tui", tui_deps)
     write_crate(root, "crates", "postio-client", client_deps)
     write_crate(root, "crates", "postio-ui", ui_deps)
@@ -360,7 +360,7 @@ def main() -> int:
         )
 
         # 15-17. The terminal frontend links no toolkit: its size is a
-        # requirement (specs/005-tui-frontend FR-051). It does open the store
+        # requirement (docs/archive/specs/005-tui-frontend FR-051). It does open the store
         # itself -- one app at a time has it (ADR 0041) -- so the engine is
         # allowed in its graph.
         check_case(

@@ -16,10 +16,10 @@ says where and stops. It is a map as much as a specification:
 | For | Read |
 |---|---|
 | How Postio is put together, and why | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
-| A decision and the alternatives it rejected | [`decisions/`](decisions/) |
+| A decision and the alternatives it rejected | [`decisions/`](decisions) |
 | Every key, generated from the registry | [`keybindings.md`](keybindings.md) |
 | Visual detail — each screen against its reference | [`specs/007-postio-focus/screens.md`](../specs/007-postio-focus/screens.md) |
-| Hard-won lessons | [`engineering-notes.md`](engineering-notes.md) |
+| Hard-won lessons | [`engineering-notes.md`](archive/engineering-notes.md) |
 | What is planned and not yet built | the [Postio Roadmap](https://github.com/users/dlapiduz/projects/2) |
 
 ---
@@ -102,7 +102,7 @@ instead of a summary. Postio ships, downloads and starts no model (the
 constitution's Scope).
 
 **A terminal frontend uses the same store** — `postio-tui`,
-[`specs/005-tui-frontend`](../specs/005-tui-frontend/spec.md): the same
+[`docs/archive/specs/005-tui-frontend`](archive/specs/005-tui-frontend/spec.md): the same
 commands, keys and verbs in a terminal, local or over SSH, with the mouse as
 well as the keyboard, and mail read and written as Markdown. It draws the
 Focus design in character cells (spec 007, C29,
@@ -257,7 +257,7 @@ two apart by the frame's magic bytes, so there is no version column. ADR 0020
 compressed it against a *trained dictionary*, and the dictionary is gone —
 no training pass, no `body_dictionaries` table — because the engine change
 first moved the full-text index onto the column itself, where nothing could
-be compressed (`specs/004-turso-store`, ADR 0038); once the index read its own
+be compressed (`docs/archive/specs/004-turso-store`, ADR 0038); once the index read its own
 folded table instead, the column was free to be small again, and per-row
 zstd without a dictionary is what it costs nothing to have.
 
@@ -725,7 +725,7 @@ Phishing and link warnings, PGP and S/MIME are unscheduled.
 ## 22. Architecture
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md), which describes what is actually
-built and why, and [`decisions/`](decisions/) for the long-form arguments. The
+built and why, and [`decisions/`](decisions) for the long-form arguments. The
 original brief's sketch — one `postio-core` holding the domain model, search,
 commands and state — is not what the workspace became, and keeping a second
 drawing of it here would be a picture that is wrong.

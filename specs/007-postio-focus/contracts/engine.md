@@ -172,7 +172,7 @@ for every To, Cc and Bcc address.
 
 ## Commands (`crates/postio-core`)
 
-The keys are in [keymap.md](./keymap.md). Each reversible command is one
+The keys are in [keymap.md](keymap.md). Each reversible command is one
 `CommandId` with a direction or value, as `add_label` is, so its undo inverse
 is the same command and no inverse needs a registry row and key of its own.
 

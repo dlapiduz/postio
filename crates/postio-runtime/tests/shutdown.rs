@@ -7,7 +7,7 @@
 //! all. Quitting mid-backfill then meant `stop()` burned the whole
 //! [`SHUTDOWN_GRACE`], warned, and detached a thread that was still writing
 //! SQLCipher pages while `exit()` tore libcrypto down underneath it — the
-//! coredump `docs/engineering-notes.md` documents under #610/#300.
+//! coredump `docs/archive/engineering-notes.md` documents under #610/#300.
 //!
 //! One test, in a binary of its own: it asserts over everything the engine
 //! logs, and a global subscriber cannot be shared with tests that log for

@@ -153,7 +153,7 @@ that needed the thread pool. `store.rs`'s module doc has the full account.
 > builds a new pager with an empty page cache for every connection, so
 > "cheap" was true of the call and false of what followed it: every read
 > started cold over the encrypted file, and every connection held its own
-> 64 MiB cap. See `docs/notes/2026-09-23-the-engine-keeps-no-pool-a-connection-is-a-cold-cache.md`
+> 64 MiB cap. See `docs/archive/notes/2026-09-23-the-engine-keeps-no-pool-a-connection-is-a-cold-cache.md`
 > and #1602.
 
 **`PRAGMA page_size` is read-only.** The store reads it in two places for

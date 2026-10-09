@@ -1,6 +1,6 @@
 # Blitz or WebKit: the reading engine, evaluated
 
-*2026-09-26, spec 006 (`specs/006-email-rendering`), research R0.*
+*2026-09-26, spec 006 (`docs/archive/specs/006-email-rendering`), research R0.*
 
 The maintainer's question: *"we still need to evaluate whether we should use
 blitz or webkit"*. Spec 006's plan had taken Blitz from the spike (#1543), and

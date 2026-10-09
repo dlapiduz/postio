@@ -1,4 +1,4 @@
-//! Postio in the terminal (`specs/005-tui-frontend`).
+//! Postio in the terminal (`docs/archive/specs/005-tui-frontend`).
 //!
 //! A frontend like the desktop app: it opens the store in its own process --
 //! one Postio at a time has it, the terminal or the desktop app -- starts a

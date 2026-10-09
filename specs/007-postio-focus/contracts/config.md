@@ -103,7 +103,7 @@ A rule that fails validation is not applied, and the others still are
 ## `[keys]`
 
 Overrides only, by command id (`crates/postio-config/src/keys.rs`), over the
-one keymap's defaults ([keymap.md](./keymap.md)).
+one keymap's defaults ([keymap.md](keymap.md)).
 
 - **An override applies in every app that has the command.** There is no
   per-app table and no `keys.toml` (FR-081).

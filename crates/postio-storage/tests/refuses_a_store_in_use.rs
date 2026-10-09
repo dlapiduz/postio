@@ -1,7 +1,7 @@
 //! A store another process has open is refused, in a sentence that says so.
 //!
 //! Only one Postio may have the store open at a time -- the desktop app or
-//! the terminal, never both (specs/005-tui-frontend). The engine enforces
+//! the terminal, never both (docs/archive/specs/005-tui-frontend). The engine enforces
 //! that with a lock on the file; this is what the second one hears.
 //!
 //! Its own binary rather than a `storage_suite` module because it needs a

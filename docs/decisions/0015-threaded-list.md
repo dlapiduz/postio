@@ -323,7 +323,7 @@ rather than giving up the conversation view.
 
 ## Superseded by the conversation reading pane (2026-09-09)
 
-`specs/001-conversation-reading-pane/` supersedes two of the decisions above.
+`docs/archive/specs/001-conversation-reading-pane/` supersedes two of the decisions above.
 Recorded here rather than edited away, because both were reasoned and the
 reasoning is what a future session needs in order to disagree well.
 

@@ -237,7 +237,7 @@ pub fn an_edit_becomes_the_document_and_undo_walks_typing_runs() {
 
     // ── And it opens when you click it, inside a contenteditable ────────
     //
-    // `specs/002-compose-editor` T048 left this to a person at a display,
+    // `docs/archive/specs/002-compose-editor` T048 left this to a person at a display,
     // and the folded-by-default half is covered above and in
     // `postio_ui::editor::document`'s own tests. This is the other half, and
     // it is the half with a real way to fail: the fold sits *inside* the

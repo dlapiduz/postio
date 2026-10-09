@@ -2,7 +2,7 @@
 
 **The constraint:** reader layout and pixels are asserted in
 `postio-render`'s own tests, headlessly, against the snapshot the renderer
-returns. The wall [the 2026-09-09 note](2026-09-09-the-suite-cannot-see-a-laid-out-page.md)
+returns. The wall [the 2026-09-09 note](../archive/notes/2026-09-09-the-suite-cannot-see-a-laid-out-page.md)
 describes -- the test display lays nothing out, so every
 `getBoundingClientRect` is zero -- no longer applies to the reader, and a
 reader test that still skips "because this display reports no layout" is

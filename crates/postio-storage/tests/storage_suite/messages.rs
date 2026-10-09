@@ -2559,7 +2559,7 @@ async fn writing_a_repaired_block_leaves_the_body_beside_it_readable() {
     // against. Losing a message's words to a pass that was only supposed to
     // add its headers is the shape of it.
     //
-    // The columns are plain TEXT now (`specs/004-turso-store`), so there is
+    // The columns are plain TEXT now (`docs/archive/specs/004-turso-store`), so there is
     // no dictionary to get wrong. What survives is the simpler half:
     // `set_headers` writes one column and must not touch the other two. That
     // is still a real way to lose mail -- routing the repair through

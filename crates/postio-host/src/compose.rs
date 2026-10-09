@@ -1,7 +1,7 @@
 //! The store half of writing mail: saving, discarding and queueing drafts,
 //! and what the composer reads to fill itself in.
 //!
-//! Moved out of the classic app (specs/005-tui-frontend T015) so the desktop and
+//! Moved out of the classic app (docs/archive/specs/005-tui-frontend T015) so the desktop and
 //! the terminal save a draft the same way. Both reach them through the
 //! Compose [`Req`](postio_client::protocol::Req)s, and each client's draft
 //! writes go through a [`DraftWriter`] of its own, in the order it made them

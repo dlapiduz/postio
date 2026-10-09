@@ -3,7 +3,7 @@
 //!
 //! One Postio at a time has the store -- the desktop app or the terminal --
 //! and whichever starts second is told so before it takes the terminal over
-//! (specs/005-tui-frontend). `postio_tui::run::open` is the whole of that:
+//! (docs/archive/specs/005-tui-frontend). `postio_tui::run::open` is the whole of that:
 //! `run` prints what it answers and exits non-zero, before the alternate
 //! screen.
 //!

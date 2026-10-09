@@ -1,11 +1,11 @@
 # Data Model: Storyboards
 
-**Feature**: [spec.md](./spec.md) | **Research**: [research.md](./research.md)
+**Feature**: [spec.md](spec.md) | **Research**: [research.md](research.md)
 
 Every entity here is plain data. Storyboards are TOML, and runs, reviews and
 bundles are JSON. All of it lives in toolkit-free crates: `Observation` is in
 `postio-ui`, and the rest is in `postio-storyboard`. The file grammar is
-[contracts/storyboard-format.md](./contracts/storyboard-format.md).
+[contracts/storyboard-format.md](contracts/storyboard-format.md).
 
 ---
 
@@ -117,7 +117,7 @@ pass and never a failure.
 
 This lives in `postio_ui::observe`. It is the same shape for every app
 (FR-010), and is serialised as JSON in runs. Each app's mapping is
-[contracts/observation.md](./contracts/observation.md).
+[contracts/observation.md](contracts/observation.md).
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -219,7 +219,7 @@ A shared storyboard's branch runs across apps, per variant.
 
 ## Review
 
-Written as `verdicts.json`, schema in [contracts/review.md](./contracts/review.md).
+Written as `verdicts.json`, schema in [contracts/review.md](contracts/review.md).
 
 | Field | Type |
 |---|---|

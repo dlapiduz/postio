@@ -3,7 +3,7 @@
 What `crates/postio-render/tests/fidelity.rs` found when it compared the
 renderer with these WebKit references, and why. A fixture that does not match
 must be listed here as `cosmetic`, with its cause, or the test fails
-(`specs/006-email-rendering/contracts/fidelity-metric.md`).
+(`docs/archive/specs/006-email-rendering/contracts/fidelity-metric.md`).
 
 ## First run: 2026-09-26
 

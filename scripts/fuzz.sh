@@ -9,7 +9,7 @@
 #     rust-toolchain.toml, so fuzz/rust-toolchain.toml is ignored and the build
 #     fails with "the option `Z` is only accepted on the nightly compiler" --
 #     which reads like a missing toolchain and is a winning environment
-#     variable. See docs/engineering-notes.md.
+#     variable. See docs/archive/engineering-notes.md.
 #   * An unseeded corpus makes the fuzzer start from nothing, which for a MIME
 #     parser means never generating a valid boundary. scripts/fuzz-seed.sh runs
 #     first, every time; it is idempotent.

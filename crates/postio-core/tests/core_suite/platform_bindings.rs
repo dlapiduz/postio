@@ -9,7 +9,7 @@
 //! wholesale would let exactly the change it guards against slip in as a
 //! diff nobody reads. `mark_sent ctrl+shift+s` was added for #674, and the
 //! sixteen `alt+` alternates a legacy terminal can deliver for
-//! `specs/005-tui-frontend` T017, and `quit ctrl+q` for the terminal, which has
+//! `docs/archive/specs/005-tui-frontend` T017, and `quit ctrl+q` for the terminal, which has
 //! no close button (T039), and `show_images`, `always_show_images` and
 //! `unsubscribe`, which were banner buttons with no key (T044, T048).
 //!

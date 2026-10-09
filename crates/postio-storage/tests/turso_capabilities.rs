@@ -1,6 +1,6 @@
 //! What the engine can actually do, established by asking it.
 //!
-//! Two of these are the Phase 0 experiments from `specs/004-turso-store`
+//! Two of these are the Phase 0 experiments from `docs/archive/specs/004-turso-store`
 //! (**R1** and **R2**), and they are tests rather than a scratch program for
 //! one reason: their answers are written into `research.md` and three later
 //! tasks branch on them, so the answer has to stay true. A capability that was

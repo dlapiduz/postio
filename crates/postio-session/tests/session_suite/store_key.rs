@@ -226,7 +226,7 @@ async fn no_key_material_reaches_the_log_at_any_level() {
 /// in, and a store with undrained work refused rather than being migrated
 /// under it. Both are gone with their subject.
 ///
-/// There is no migration path at all now (`specs/004-turso-store`). The engine
+/// There is no migration path at all now (`docs/archive/specs/004-turso-store`). The engine
 /// changed underneath the file, so a store the old one wrote cannot be *read*,
 /// let alone rewritten — and the maintainer's instruction was explicit that it
 /// is rebuilt by resyncing rather than converted. `open_store_at` says so in a

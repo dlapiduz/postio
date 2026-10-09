@@ -59,7 +59,7 @@ pub const CONFIG_PATH_ENV: &str = "POSTIO_CONFIG";
 /// Inside a Flatpak the sandbox points every XDG variable at the app's own
 /// directory under `~/.var/app`, which would give the desktop and terminal
 /// packages a store and a config each. They share both
-/// (`specs/005-tui-frontend` FR-040, research R10): each manifest grants the
+/// (`docs/archive/specs/005-tui-frontend` FR-040, research R10): each manifest grants the
 /// host's `postio` directories, and here the host's value is read instead --
 /// `HOST_<name>`, which Flatpak sets from the host. `$HOME` is the host's
 /// inside a sandbox, so the default needs no such care.
