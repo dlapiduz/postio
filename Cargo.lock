@@ -5175,6 +5175,7 @@ dependencies = [
  "postio-test-support",
  "postio-ui",
  "postio-workspace-hack",
+ "rustix 1.1.5",
  "secrecy",
  "tempfile",
  "tokio",

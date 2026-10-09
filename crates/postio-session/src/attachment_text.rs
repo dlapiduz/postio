@@ -16,16 +16,25 @@
 //! and a blob store, and that is all they can reach (FR-050). It is indexed
 //! when something the person asked for brings it down.
 //!
+//! # It never reads a file itself
+//!
+//! Each attachment is read by `postio-extract-helper`, a process of its
+//! own that is killed at its deadline (spec 010 D28, [`Extractor`]), so a
+//! file that loops or crashes a reader costs one process and one
+//! attachment, and the pass goes on to the next.
+//!
 //! # What it logs
 //!
-//! Attachment ids, outcomes, unit counts and durations: never a file name,
-//! never a word of what was read (FR-051).
+//! Attachment ids, outcomes, the path each took ([`Via`]), unit counts and
+//! durations: never a file name, never a word of what was read (FR-051).
 
 use std::time::{Duration, Instant};
 
-use postio_extract::{Extracted, Limits, Outcome};
+use postio_extract::{Extracted, Outcome};
 use postio_index::index::MissingAttachment;
 use postio_storage::{BlobStore, Store};
+
+use crate::extraction::{Extraction, Extractor, Via};
 
 /// How long the indexer waits after a burst of arrivals before it runs,
 /// so a backfill's burst becomes one batched write.
@@ -53,7 +62,9 @@ pub fn spawn_attachment_indexer(
     runtime: &tokio::runtime::Handle,
 ) -> tokio::task::JoinHandle<()> {
     runtime.spawn(async move {
-        if let Err(error) = index_local_attachments(&database, &blobs).await {
+        // Found once: the helper does not move while the application runs.
+        let extractor = Extractor::locate();
+        if let Err(error) = index_local_attachments_with(&database, &blobs, &extractor).await {
             tracing::warn!(%error, "the attachment indexer's pass failed: {error}");
         }
         let Some(events) = events else {
@@ -81,7 +92,9 @@ pub fn spawn_attachment_indexer(
             }
             pending.sort_unstable();
             pending.dedup();
-            if let Err(error) = index_named_attachments(&database, &blobs, &pending).await {
+            if let Err(error) =
+                index_named_attachments_with(&database, &blobs, &pending, &extractor).await
+            {
                 tracing::warn!(%error, "indexing the attachments a burst named failed: {error}");
             }
         }
@@ -104,6 +117,16 @@ fn note_arrival(pending: &mut Vec<postio_model::MessageId>, event: &postio_core:
 pub async fn index_local_attachments(
     database: &Store,
     blobs: &BlobStore,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    index_local_attachments_with(database, blobs, &Extractor::locate()).await
+}
+
+/// [`index_local_attachments`], reading through `extractor`: a helper and
+/// limits of the caller's choosing.
+pub async fn index_local_attachments_with(
+    database: &Store,
+    blobs: &BlobStore,
+    extractor: &Extractor,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     let started = Instant::now();
     let mut indexed = 0usize;
@@ -129,7 +152,7 @@ pub async fn index_local_attachments(
             break;
         }
         let taken = found.len();
-        indexed += index_batch(database, blobs, found).await?;
+        indexed += index_batch(database, blobs, found, extractor).await?;
         last = ids;
         if taken < INDEX_ATTACHMENT_BATCH as usize {
             break;
@@ -154,6 +177,15 @@ pub async fn index_named_attachments(
     blobs: &BlobStore,
     messages: &[postio_model::MessageId],
 ) -> Result<usize, Box<dyn std::error::Error>> {
+    index_named_attachments_with(database, blobs, messages, &Extractor::locate()).await
+}
+
+async fn index_named_attachments_with(
+    database: &Store,
+    blobs: &BlobStore,
+    messages: &[postio_model::MessageId],
+    extractor: &Extractor,
+) -> Result<usize, Box<dyn std::error::Error>> {
     if messages.is_empty() {
         return Ok(0);
     }
@@ -164,7 +196,7 @@ pub async fn index_named_attachments(
         let found = postio_index::index::attachments_missing_text_of(&connection, chunk).await?;
         drop(connection);
         for batch in found.chunks(INDEX_ATTACHMENT_BATCH as usize) {
-            indexed += index_batch(database, blobs, batch.to_vec()).await?;
+            indexed += index_batch(database, blobs, batch.to_vec(), extractor).await?;
             tokio::time::sleep(INDEX_ATTACHMENT_BREATHER).await;
         }
     }
@@ -184,6 +216,7 @@ async fn index_batch(
     database: &Store,
     blobs: &BlobStore,
     batch: Vec<MissingAttachment>,
+    extractor: &Extractor,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     // Extract first, outside any transaction: a PDF can take its whole time
     // limit, and the write lock must not be held through it.
@@ -191,16 +224,31 @@ async fn index_batch(
     for missing in batch {
         let attachment = missing.attachment;
         let blobs = blobs.clone();
+        let reader = extractor.clone();
         let started = Instant::now();
-        let result = tokio::task::spawn_blocking(move || extract_one(&blobs, &missing))
+        let Extraction {
+            extracted: result,
+            via,
+        } = tokio::task::spawn_blocking(move || extract_one(&blobs, &missing, &reader))
             .await
-            .unwrap_or(Extracted {
-                units: Vec::new(),
-                outcome: Outcome::Failed,
+            .unwrap_or(Extraction {
+                extracted: Extracted {
+                    units: Vec::new(),
+                    outcome: Outcome::Failed,
+                },
+                via: Via::Crashed,
             });
+        if via.helper_unavailable() && extractor.first_warning() {
+            tracing::warn!(
+                helper = crate::extraction::HELPER_NAME,
+                "the extraction helper is missing or from another build: PDFs are \
+                 recorded as skipped and not read, other formats are read in-process"
+            );
+        }
         tracing::debug!(
             attachment = attachment.get(),
             outcome = result.outcome.as_str(),
+            via = via.as_str(),
             units = result.units.len(),
             elapsed_ms = started.elapsed().as_millis() as u64,
             "extracted an attachment"
@@ -237,24 +285,26 @@ async fn index_batch(
 ///
 /// A blob larger than the input limit is not read at all: the extractor
 /// would refuse it, and reading it first would hold all of it in memory.
-fn extract_one(blobs: &BlobStore, missing: &MissingAttachment) -> Extracted {
-    let limits = Limits::default();
+fn extract_one(
+    blobs: &BlobStore,
+    missing: &MissingAttachment,
+    extractor: &Extractor,
+) -> Extraction {
+    let not_read = |outcome| Extraction {
+        extracted: Extracted {
+            units: Vec::new(),
+            outcome,
+        },
+        via: Via::Helper,
+    };
     if blobs
         .len_of(&missing.blob)
-        .is_ok_and(|length| length > limits.max_input)
+        .is_ok_and(|length| length > extractor.limits().max_input)
     {
-        return Extracted {
-            units: Vec::new(),
-            outcome: Outcome::Skipped(postio_extract::Skip::TooLarge),
-        };
+        return not_read(Outcome::Skipped(postio_extract::Skip::TooLarge));
     }
     match blobs.get(&missing.blob) {
-        Ok(bytes) => {
-            postio_extract::extract(&bytes, &missing.mime_type, missing.name.as_deref(), &limits)
-        }
-        Err(_) => Extracted {
-            units: Vec::new(),
-            outcome: Outcome::Failed,
-        },
+        Ok(bytes) => extractor.extract(bytes, &missing.mime_type, missing.name.as_deref()),
+        Err(_) => not_read(Outcome::Failed),
     }
 }
