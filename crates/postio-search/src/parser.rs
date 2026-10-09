@@ -171,10 +171,12 @@ fn operator(negated: bool, field: Field, raw: &str, today: NaiveDate) -> TokenKi
         Field::List => filter(Filter::List(value)),
         Field::Account => filter(Filter::Account(value)),
         Field::Group => filter(Filter::Group(value)),
+        Field::Label => filter(Filter::Label(value)),
         Field::Has => match value.to_ascii_lowercase().as_str() {
             "attach" | "attachment" | "attachments" | "file" | "files" => {
                 filter(Filter::HasAttachment)
             }
+            "action" | "actions" => filter(Filter::HasAction),
             _ => partial(value),
         },
         Field::Is => match value.to_ascii_lowercase().as_str() {

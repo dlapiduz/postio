@@ -69,8 +69,8 @@ index_suite` green; the bench reports under budget, or the stop rule fires.
 
 ### Operators
 
-- [ ] T004 [P] [US3] Write failing tests in `crates/postio-search/tests/parse.rs`: `label:Atlas`, `label:"Q3 close"`, `-label:atlas`, `label:` (a `Partial`), `has:action`, `has:actions`, `-has:action`, `has:act` (a `Partial`); every existing case unchanged. Red: `label:` parses as free text, `has:action` as a partial
-- [ ] T005 [US3] Add `Field::Label`, `Filter::Label(String)`, `Filter::HasAction` in `crates/postio-search/src/query.rs` (keyword, `parse`, `takes_free_text`, `field()`), and the `has:` values in `crates/postio-search/src/parser.rs`. Update the crate doc's operator list in `lib.rs`. Make T004 green
+- [x] T004 [P] [US3] Write failing tests in `crates/postio-search/tests/parse.rs`: `label:Atlas`, `label:"Q3 close"`, `-label:atlas`, `label:` (a `Partial`), `has:action`, `has:actions`, `-has:action`, `has:act` (a `Partial`); every existing case unchanged. Red: `label:` parses as free text, `has:action` as a partial
+- [x] T005 [US3] Add `Field::Label`, `Filter::Label(String)`, `Filter::HasAction` in `crates/postio-search/src/query.rs` (keyword, `parse`, `takes_free_text`, `field()`), and the `has:` values in `crates/postio-search/src/parser.rs`. Update the crate doc's operator list in `lib.rs`. Make T004 green
 - [ ] T006 [P] Write failing tests in `crates/postio-search/src/query.rs` for `spell(&Clause)` (D13): every filter, negated or not, spells to a form `parse` reads back to the same clause; `has:attachment`, `label:"Q3 close"`, ISO dates. Red: no `spell`
 - [ ] T007 Add `query::spell`. Make T006 green
 - [ ] T008 [P] Write a guard case in `crates/postio-index/tests/index_suite/digest_matcher.rs`: `Matcher::new` refuses `label:atlas` and `has:action` with `Unsupported::Token` naming the token (D12). Green on arrival after T005 (the matcher's `_` arm already refuses filters it does not know); it pins the refusal so a later matcher change cannot answer at filing time
