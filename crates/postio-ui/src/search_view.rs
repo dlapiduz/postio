@@ -580,6 +580,21 @@ pub fn results_hints(keymap: &Keymap) -> Vec<Hint> {
     out
 }
 
+/// The bulk bar's verbs while results are checked (§3.5): Archive, Label,
+/// Move, Mark read, Snooze, each with its key.
+pub fn bulk_hints(keymap: &Keymap) -> Vec<Hint> {
+    [
+        (CommandId::Archive, "Archive"),
+        (CommandId::AddLabel, "Label"),
+        (CommandId::Move, "Move"),
+        (CommandId::ToggleRead, "Mark read"),
+        (CommandId::Snooze, "Snooze"),
+    ]
+    .into_iter()
+    .filter_map(|(id, label)| hints::hint(keymap, id, label))
+    .collect()
+}
+
 /// The results tabs' words, in their order (§3.2).
 pub const TABS: [&str; 3] = ["Conversations", "Files", "People"];
 
@@ -1009,6 +1024,32 @@ mod tests {
                 "25 Sep"
             ),
             "Priya Nair, Contractor invoices, Inbox, 25 Sep"
+        );
+    }
+
+    #[test]
+    fn the_bulk_bar_names_the_lists_verbs_and_their_keys() {
+        let keymap = postio_core::Keymap::resolve_on(
+            &postio_config::KeyBindings::default(),
+            postio_config::paths::Platform::Apple,
+        );
+        let said: Vec<(String, String)> = bulk_hints(&keymap)
+            .into_iter()
+            .map(|hint| (hint.key, hint.label))
+            .collect();
+        let said: Vec<(&str, &str)> = said
+            .iter()
+            .map(|(key, label)| (key.as_str(), label.as_str()))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                ("a", "Archive"),
+                ("l", "Label"),
+                ("m", "Move"),
+                ("r", "Mark read"),
+                ("s", "Snooze"),
+            ]
         );
     }
 

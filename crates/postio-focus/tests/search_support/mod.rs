@@ -1,0 +1,371 @@
+//! A Mac controller, an inbox and a search engine that answers the results
+//! view's reads from a fixed set of conversations: what `results.rs` and
+//! `history.rs` drive (spec 010 step 3).
+//!
+//! The engine is the shape the host's is: a page of conversations in the
+//! order asked, every answer carrying the same totals and facets, months
+//! counted by each conversation's newest match (D4).
+
+#![allow(dead_code)]
+
+use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
+use postio_config::paths::Platform;
+use postio_core::CommandId;
+use postio_focus::{
+    Effect, FocusController, Input, Intent, Policy, QueryView, Reply, Request, ResultsView,
+    RowFacts, Rows, Ticket,
+};
+use postio_model::{AddressId, EmailAddress, LabelId, MailboxId, MessageId, ThreadId};
+use postio_search::facets::{Count, MonthCount, SearchFacets, months_ending};
+use postio_search::results::{
+    ConversationHit, ConversationKey, ConversationOrder, ConversationResults, FacetNames, Match,
+    Passage, RankReason, Source,
+};
+
+/// An inbox of `len` conversations.
+pub struct List {
+    pub rows: Vec<RowFacts>,
+}
+
+impl List {
+    pub fn of(len: i64) -> Self {
+        List {
+            rows: (0..len)
+                .map(|at| RowFacts {
+                    id: MessageId::new(100 + at),
+                    digest: false,
+                    threads: vec![ThreadId::new(500 + at)],
+                    writes: false,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl Rows for List {
+    fn len(&self) -> u32 {
+        self.rows.len() as u32
+    }
+    fn facts(&self, position: u32) -> Option<RowFacts> {
+        self.rows.get(position as usize).cloned()
+    }
+    fn position_of(&self, message: MessageId) -> Option<u32> {
+        self.rows
+            .iter()
+            .position(|row| row.id == message)
+            .map(|at| at as u32)
+    }
+}
+
+/// Saturday 26 September 2026, mid-afternoon, as the screens are.
+pub fn today() -> DateTime<Local> {
+    Local.with_ymd_and_hms(2026, 9, 26, 15, 0, 0).unwrap()
+}
+
+/// The Mac's controller, its clock stopped on the screens' day.
+pub fn mac() -> FocusController {
+    let mut focus = FocusController::new(Policy::for_platform(Platform::Apple));
+    assert!(focus.policy().caps.results_view);
+    let _ = focus.handle(Input::Clock(Some(today())));
+    focus
+}
+
+pub fn shown(effects: &[Effect]) -> Vec<Intent> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Show(intent) => Some(intent.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+pub fn asks(effects: &[Effect]) -> Vec<(Ticket, Request)> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Ask(ticket, request) => Some((*ticket, request.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+pub fn asked(effects: &[Effect]) -> Vec<Request> {
+    asks(effects)
+        .into_iter()
+        .map(|(_, request)| request)
+        .collect()
+}
+
+/// The last results view among `effects`.
+pub fn results_view(effects: &[Effect]) -> Option<ResultsView> {
+    shown(effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::ShowResults(view) => Some(*view),
+            _ => None,
+        })
+}
+
+/// The last query view among `effects`.
+pub fn query_view(effects: &[Effect]) -> Option<QueryView> {
+    shown(effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::Query(view) => Some(view),
+            _ => None,
+        })
+}
+
+pub fn run(focus: &mut FocusController, command: CommandId, rows: &List) -> Vec<Effect> {
+    focus.handle_on(Input::Command(command), rows)
+}
+
+pub fn ada() -> EmailAddress {
+    EmailAddress::new(Some("Ada Moreno"), "ada@example.com")
+}
+
+pub fn tomas() -> EmailAddress {
+    EmailAddress::new(Some("Tom\u{e1}s Reyes"), "tomas@example.com")
+}
+
+/// Conversations in the engine, newest first: more than a page of them.
+pub const CONVERSATIONS: i64 = 120;
+
+/// When conversation `n` (0 the newest) last matched: one every two days
+/// back from the 26th of September, so the 120 span September to February.
+pub fn when(n: i64) -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap() - chrono::TimeDelta::days(n * 2)
+}
+
+/// Conversation `n`: its best message is `1000 + n`.
+pub fn conversation(n: i64) -> ConversationHit {
+    let from = if n % 2 == 0 { ada() } else { tomas() };
+    ConversationHit {
+        key: ConversationKey::Thread(ThreadId::new(2000 + n)),
+        best: MessageId::new(1000 + n),
+        mailbox_id: MailboxId::new(1),
+        subject: Some(format!("Atlas budget, part {n}")),
+        from: Some(from),
+        newest_match: when(n),
+        messages: if n == 0 { 3 } else { 1 },
+        unread: n == 0,
+        has_attachments: n == 0,
+        labels: if n == 0 {
+            vec![LabelId::new(3)]
+        } else {
+            Vec::new()
+        },
+        score: n as f64,
+        reasons: match n {
+            7 => vec![RankReason::Replied, RankReason::Matches(3)],
+            2 => vec![RankReason::Flagged, RankReason::Matches(2)],
+            30 => vec![RankReason::FrequentSender, RankReason::InFileName],
+            _ => vec![RankReason::Matches(1)],
+        },
+        matches: vec![Match {
+            source: if n == 4 { Source::Quoted } else { Source::Body },
+            passage: None,
+            when: None,
+        }],
+    }
+}
+
+/// The order the engine ranks them by Best match: 7, 2 and 30 first.
+pub fn best_match() -> Vec<i64> {
+    let mut order = vec![7, 2, 30];
+    order.extend((0..CONVERSATIONS).filter(|n| ![7, 2, 30].contains(n)));
+    order
+}
+
+/// The timeline the engine counts: each conversation in the month of its
+/// newest match (D4).
+pub fn months() -> [MonthCount; 12] {
+    let firsts = months_ending(today().date_naive());
+    firsts.map(|month| MonthCount {
+        month,
+        conversations: (0..CONVERSATIONS)
+            .filter(|n| {
+                let day = when(*n).date_naive();
+                day >= month && day < month.checked_add_months(chrono::Months::new(1)).unwrap()
+            })
+            .count() as u64,
+    })
+}
+
+/// How many conversations the engine finds for `query`: a `from:` keeps
+/// Ada's, the even ones.
+pub fn matching(query: &postio_search::ParsedQuery) -> Vec<i64> {
+    let ada_only = query.filters().any(|clause| {
+        matches!(&clause.filter, postio_search::query::Filter::From(who) if who.contains("ada"))
+    });
+    (0..CONVERSATIONS)
+        .filter(|n| !ada_only || n % 2 == 0)
+        .collect()
+}
+
+/// The engine's answer to a page of `query` in `order`.
+pub fn page(
+    query: &postio_search::ParsedQuery,
+    order: ConversationOrder,
+    offset: u32,
+    limit: u32,
+) -> ConversationResults {
+    let found = matching(query);
+    let ranked: Vec<i64> = match order {
+        ConversationOrder::Newest => found.clone(),
+        _ => best_match()
+            .into_iter()
+            .filter(|n| found.contains(n))
+            .collect(),
+    };
+    let hits = ranked
+        .iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .map(|n| conversation(*n))
+        .collect();
+    let mut facets = SearchFacets {
+        senders: vec![
+            Count {
+                id: AddressId::new(1),
+                conversations: 24,
+            },
+            Count {
+                id: AddressId::new(2),
+                conversations: 24,
+            },
+        ],
+        labels: vec![Count {
+            id: LabelId::new(3),
+            conversations: 1,
+        }],
+        attachment: 1,
+        months: months(),
+        ..SearchFacets::default()
+    };
+    if found.len() as i64 != CONVERSATIONS {
+        facets.months = months_ending(today().date_naive()).map(|month| MonthCount {
+            month,
+            conversations: found
+                .iter()
+                .filter(|n| {
+                    let day = when(**n).date_naive();
+                    day >= month && day < month.checked_add_months(chrono::Months::new(1)).unwrap()
+                })
+                .count() as u64,
+        });
+    }
+    ConversationResults {
+        hits,
+        total: found.len() as u64,
+        capped: false,
+        messages_searched: 18_204,
+        corpus_complete: true,
+        contents_complete: true,
+        facets,
+        files: 12,
+        people: 6,
+        names: FacetNames {
+            people: vec![(AddressId::new(1), ada()), (AddressId::new(2), tomas())],
+            labels: vec![(LabelId::new(3), "Atlas".to_owned())],
+            folders: vec![(MailboxId::new(1), "Inbox".to_owned())],
+        },
+        elapsed: std::time::Duration::from_millis(41),
+    }
+}
+
+/// A passage for `message`, with "atlas" and "budget" marked.
+pub fn passage_for(message: MessageId) -> Passage {
+    let text = format!("the final numbers for the Atlas budget, message {message}");
+    let start = text.find("Atlas").unwrap();
+    Passage {
+        ranges: vec![start..start + 5, start + 6..start + 12],
+        text,
+        elided_start: true,
+        elided_end: false,
+    }
+}
+
+/// The engine's answer to one results request, if it is one.
+pub fn reply_to(request: &Request) -> Option<Reply> {
+    match request {
+        Request::ResultsPage {
+            query,
+            order,
+            offset,
+            limit,
+            stamp,
+        } => Some(Reply::ResultsPage {
+            stamp: *stamp,
+            order: *order,
+            offset: *offset,
+            answer: Ok(Box::new(page(query, *order, *offset, *limit))),
+        }),
+        Request::ResultsPassages { hits, stamp, .. } => Some(Reply::ResultsPassages {
+            stamp: *stamp,
+            answer: Ok(hits
+                .iter()
+                .map(|(message, sources)| {
+                    (
+                        *message,
+                        sources
+                            .iter()
+                            .map(|source| Match {
+                                source: source.clone(),
+                                passage: Some(passage_for(*message)),
+                                when: None,
+                            })
+                            .collect(),
+                    )
+                })
+                .collect()),
+        }),
+        _ => None,
+    }
+}
+
+/// Answer every results read among `effects`, and the reads those answers
+/// ask, until none is left: the effects of it all, `effects` first.
+pub fn settle(focus: &mut FocusController, effects: Vec<Effect>, rows: &List) -> Vec<Effect> {
+    let mut all = effects.clone();
+    let mut waiting = effects;
+    loop {
+        let mut next = Vec::new();
+        for (ticket, request) in asks(&waiting) {
+            if let Some(reply) = reply_to(&request) {
+                next.extend(focus.handle_on(Input::Reply(ticket, reply), rows));
+            }
+        }
+        if next.is_empty() {
+            return all;
+        }
+        all.extend(next.clone());
+        waiting = next;
+    }
+}
+
+/// `/`, `words` typed, then ⌘↩: the results asked for, not yet answered.
+pub fn show_all(focus: &mut FocusController, words: &str, rows: &List) -> Vec<Effect> {
+    let _ = run(focus, CommandId::Search, rows);
+    let _ = focus.handle_on(
+        Input::Typed {
+            text: words.to_owned(),
+        },
+        rows,
+    );
+    run(focus, CommandId::ShowAllResults, rows)
+}
+
+/// `/`, `words`, ⌘↩, and every read answered.
+pub fn search(focus: &mut FocusController, words: &str, rows: &List) -> Vec<Effect> {
+    let effects = show_all(focus, words, rows);
+    settle(focus, effects, rows)
+}
+
+/// The first day of a month, for the group titles.
+pub fn month(year: i32, month: u32) -> NaiveDate {
+    NaiveDate::from_ymd_opt(year, month, 1).unwrap()
+}

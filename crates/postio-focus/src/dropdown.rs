@@ -59,7 +59,7 @@ pub struct Run {
 }
 
 impl Run {
-    fn plain(text: impl Into<String>) -> Self {
+    pub(crate) fn plain(text: impl Into<String>) -> Self {
         Run::styled(text, RunStyle::Plain)
     }
 
@@ -280,7 +280,7 @@ pub(crate) fn narrow_pills(results: &ConversationResults) -> Vec<(words::NarrowP
 }
 
 /// `text` as runs, the stretches `ranges` names highlighted.
-fn marked(text: &str, ranges: &[std::ops::Range<usize>]) -> Vec<Run> {
+pub(crate) fn marked(text: &str, ranges: &[std::ops::Range<usize>]) -> Vec<Run> {
     let mut runs = Vec::new();
     let mut at = 0;
     for range in ranges {
@@ -305,7 +305,7 @@ fn marked(text: &str, ranges: &[std::ops::Range<usize>]) -> Vec<Run> {
 }
 
 /// A passage as runs, with its ellipses.
-fn passage(passage: &Passage) -> Vec<Run> {
+pub(crate) fn passage(passage: &Passage) -> Vec<Run> {
     let mut runs = Vec::new();
     if passage.elided_start {
         runs.push(Run::plain("\u{2026}"));
