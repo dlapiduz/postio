@@ -739,7 +739,7 @@ CREATE TABLE messages (
     -- The message's decoded text. TEXT, and stored as it reads.
     --
     -- These were zstd BLOBs against a shared dictionary until the engine
-    -- changed (docs/archive/specs/004-turso-store). The compression is gone and it is not
+    -- changed (specs/004-turso-store). The compression is gone and it is not
     -- a size decision: the full-text index is now an index *on this column*,
     -- and an index cannot tokenise compressed bytes. Under FTS5 the tokens
     -- lived in a virtual table of their own, so the column beside it was free
