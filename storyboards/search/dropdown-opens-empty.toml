@@ -1,0 +1,44 @@
+# `/` on the Mac opens the search dropdown on an empty field: the last
+# three searches run, the pinned saved searches with their ⌥ numbers and
+# counts, and the cheat sheet with one plain-English example lowered live
+# (specs/010-focus-search US1 scenario 1, FR-012, design screen 01).
+#
+# The inbox behind is not dimmed and keeps its cursor. ⌥⌫ on a focused
+# recent search forgets it and the next one moves up (scenario 2, D23).
+#
+# The Mac's own: `apps = ["macos"]`, because GTK's bar keeps spec 009's
+# blend until Linux adopts the dropdown (S2, D17), and the Mac runner is
+# out of scope (009 FR-063). Written before the dropdown was built, so it
+# is the acceptance its review is held to.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/010-focus-search US1" }
+seed   = "search"
+design = "01-typing-empty"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+id      = "row"
+command = "next_message"
+check   = { cursor.index = 1 }
+
+[[step]]
+command = "search"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
+expect  = "The field grows left to 860 wide with the placeholder “Search mail, people and files, or type > for commands”. The panel hangs 6 below it: Recent (three searches, newest first, each with its count and when, and “⌥⌫ forgets one” on the right), Saved searches as pills with counts and ⌥1–⌥4, and Search by: eight operators and “Or just type it” with an example and what it becomes. The first recent row is focused. The inbox is not dimmed and its second row keeps the cursor."
+
+[[step]]
+key     = "Down"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+expect  = "↓ moves the focus ring to the second recent search; headers and the cheat sheet are never focused."
+
+[[step]]
+key     = "alt+BackSpace"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+expect  = "⌥⌫ forgets the focused recent search: it is gone from Recent, the third moves up, and the focus stays on the row now in its place."
+
+[[step]]
+command = "back"
+check   = { overlay.kind = "none", keyboard.region = "list", cursor.index = { same_as = "row" } }
+expect  = "Escape closes the panel, and the keyboard is back on the second row."

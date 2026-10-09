@@ -128,7 +128,7 @@ searches, on the Mac.
 
 **Independent test**: US1's.
 
-- [ ] T038 [US1] Write storyboards in `storyboards/search/`: `dropdown-opens-empty.toml` (recents, saved, cheat sheet), `dropdown-words-show-all.toml` (top hits, narrow to, Show all focused), `dropdown-esc-returns-to-row.toml`, `dropdown-tab-narrows.toml`
+- [x] T038 [US1] Write storyboards in `storyboards/search/`: `dropdown-opens-empty.toml` (recents, saved, cheat sheet), `dropdown-words-show-all.toml` (top hits, narrow to, Show all focused), `dropdown-esc-returns-to-row.toml`, `dropdown-tab-narrows.toml`
 - [ ] T039 [P] [US1] Write failing tests in a new `crates/postio-storage/tests/storage_suite/searches.rs`: `remember` upserts by query and trims to 20; `recent` is newest first; `forget` deletes; `seen_up_to`/`mark_seen`; `forget_seen_except`. Red: no tables
 - [ ] T040 [US1] Add `recent_searches` and `saved_search_seen` to `HEAD` in `crates/postio-storage/src/schema.rs`, copy the old `HEAD` to `crates/postio-storage/tests/schemas/<fingerprint>.sql`, append the `Migration`, and add `crates/postio-storage/src/searches.rs`. Make T039 and the schema tests green
 - [ ] T041 [P] Write a failing test in `crates/postio-host/src/tests.rs` for `RecentSearches`, `RememberSearch`, `ForgetSearch` and `SavedCounts` (totals; "new" is zero until step 6). Red: no requests

@@ -1,0 +1,38 @@
+# Typing words reshapes the dropdown on every keystroke into the words
+# state: up to four top hits with their passage, folder and date, up to
+# four "Narrow to" pills with counts, and "Show all N results ⌘↩" focused
+# by default; the footer says how many matched and how long the search
+# took (specs/010-focus-search US1 scenarios 3, FR-013, FR-014, design
+# screen 03).
+#
+# An answer for an earlier keystroke never replaces the panel for a later
+# one (D8): the controller drops it by its stamp, and the driver aborts
+# the superseded read.
+#
+# The Mac's own: see dropdown-opens-empty.toml.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/010-focus-search US1" }
+seed   = "search"
+design = "03-typing-words"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "search"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+
+[[step]]
+type    = "atlas budget"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
+expect  = "Top hits lists up to four messages, “Sender · Subject” with the matched words in the find highlight, a passage, `in:` folder and date. Narrow to shows up to four pills (top senders, has: attachment, the top label) with counts. “Show all 48 results” is the last row and has the focus ring. The footer reads “48 matches · N ms” with the real time."
+
+[[step]]
+command = "show_all_results"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+expect  = "⌘↩ runs the query as a search: it joins Recent. Until the results view arrives (step 3) the panel stays, with the focus on the first top hit."
+
+[[step]]
+key     = "Return"
+check   = { overlay.kind = "message" }
+expect  = "↩ on a top hit opens that message in its window."
