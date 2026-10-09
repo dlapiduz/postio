@@ -10,6 +10,8 @@ import PostioFFI
 public protocol ResultsEngine: AnyObject {
     /// The result at `position`, or `nil` while its page is on its way.
     func focusSearchRow(_ position: UInt64) -> ResultRowFfi?
+    /// The Files tab's card at `position`, or `nil` past the last.
+    func focusSearchFile(_ position: UInt64) -> FileCardFfi?
     /// A click on the result at `position`.
     func focusSearchPoint(_ position: UInt64)
     /// A tab picked by a click.
@@ -110,7 +112,18 @@ public final class ResultsModel {
     /// Bumped on every frame, so a view that draws the rows knows to.
     public private(set) var frame = 0
 
+    /// The Files tab's header, while it is the tab shown (step 9): the
+    /// grid is drawn in the table's place, its cards read by position.
+    public private(set) var filesHeader: FilesHeaderFfi?
+
+    /// Whether the Files tab is shown.
+    public var isFiles: Bool { filesHeader != nil }
+
+    /// How many cards the grid has.
+    public var cardCount: Int { isFiles ? Int(results) : 0 }
+
     @ObservationIgnored private var read: [UInt64: ResultRowFfi] = [:]
+    @ObservationIgnored private var cards: [UInt64: FileCardFfi] = [:]
     /// Each group's header row in the table.
     @ObservationIgnored private var starts: [Int] = []
     @ObservationIgnored private let engine: ResultsEngine
@@ -154,9 +167,10 @@ public final class ResultsModel {
 
     // MARK: the table's shape
 
-    /// How many table rows: every result and a header for each group.
+    /// How many table rows: every result and a header for each group;
+    /// none while the grid is shown.
     public var count: Int {
-        guard isOpen else { return 0 }
+        guard isOpen, !isFiles else { return 0 }
         return Int(results) + groups.count
     }
 
@@ -209,6 +223,27 @@ public final class ResultsModel {
         return row
     }
 
+    /// The card at `position`: read once per frame, then remembered.
+    public func card(at position: UInt64) -> FileCardFfi? {
+        if let card = cards[position] { return card }
+        guard isOpen, isFiles, position < results, let card = engine.focusSearchFile(position) else { return nil }
+        cards[position] = card
+        return card
+    }
+
+    /// A click on the card at `position`: the controller is told.
+    public func point(card position: UInt64) {
+        guard isFiles, position < results else { return }
+        engine.focusSearchPoint(position)
+    }
+
+    /// A double click on a card: the ring goes there and its message
+    /// opens, as ↩.
+    public func open(card position: UInt64) {
+        point(card: position)
+        engine.invoke(ResultsCommand.open)
+    }
+
     // MARK: the pointer
 
     /// A click on table row `tableRow`: the controller is told; a header
@@ -249,6 +284,8 @@ public final class ResultsModel {
         selected = view.selected
         bulk = view.bulk.map { Hint(cap: KeyCapSpelling.cap($0.key) ?? $0.key, label: $0.label) }
         selectAll = view.selectAll.map { Hint(cap: KeyCapSpelling.cap($0.key) ?? $0.key, label: $0.label) }
+        filesHeader = view.files
+        cards = [:]
         var start = 0
         starts = groups.map { group in
             defer { start += 1 + Int(group.rows) }
@@ -276,6 +313,8 @@ public final class ResultsModel {
         selectAll = nil
         starts = []
         read = [:]
+        filesHeader = nil
+        cards = [:]
     }
 }
 
