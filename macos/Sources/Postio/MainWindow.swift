@@ -62,8 +62,18 @@ struct MainWindow: View {
             if let filtered = engine.filtered, filtered.isOpen {
                 FilteredView(model: filtered)
             }
+            // The results (specs/010-focus-search step 3): a mode of the
+            // window, in the inbox's place, the inbox kept under it -- its
+            // scroll, cursor and selection are where they were on the way
+            // back, as Filtered's are.
+            if let results = engine.results, results.isOpen, let table = engine.resultsTable,
+               let query = engine.searchQuery
+            {
+                ResultsPane(engine: engine, results: results, query: query, table: table)
+            }
         }
         .animation(nil, value: engine.filtered?.isOpen)
+        .animation(nil, value: engine.results?.isOpen)
         // The command bar is a panel dropping from the toolbar's field
         // (`CommandBarPanel`, T085), a child window rather than an overlay.
         .background(MainToolbarInstaller(engine: engine))
@@ -173,6 +183,35 @@ struct MainWindow: View {
     }
 }
 
+/// The results view's body, under the toolbar (design §3.2-3.5, screens 06
+/// and 07): the filter bar, the timeline, the grouped rows and the footer.
+/// Every word is the controller's; the toolbar's back, query and save are
+/// `MainToolbar`'s.
+private struct ResultsPane: View {
+    let engine: Engine
+    let results: ResultsModel
+    let query: SearchQueryModel
+    let table: ResultsTable
+
+    var body: some View {
+        VStack(spacing: 0) {
+            FilterBarView(
+                query: query, tabs: results.tabs, order: results.order, words: engine.searchWords,
+                pickTab: { results.pick($0) }, pickOrder: { results.pick($0) })
+            TimelineView(
+                countLine: results.countLine, subLine: results.subLine, months: results.months,
+                hint: engine.searchWords.timelineHint)
+            ResultsTableRepresentable(table: table)
+            SearchFooter(
+                hints: results.footerHints, right: results.footerRight, checked: engine.resultsChecked,
+                bulk: results.bulk)
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(results.countLine)
+    }
+}
+
 /// A failure Postio has to report: a sentence where the eye already is,
 /// gone on its own. `Notice` decides; this draws. Completions, undos and
 /// refusals are the controller's toast in this window (`UndoPill`),
@@ -261,6 +300,21 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
     static let compose = NSToolbarItem.Identifier("postio.compose")
     static let sync = NSToolbarItem.Identifier("postio.sync")
     static let search = NSToolbarItem.Identifier("postio.search")
+    // The results' (specs/010-focus-search §3.1): ‹ Inbox, the query, Save.
+    static let back = NSToolbarItem.Identifier("postio.results.back")
+    static let query = NSToolbarItem.Identifier("postio.results.query")
+    static let save = NSToolbarItem.Identifier("postio.results.save")
+
+    /// The inbox's items, and the results'.
+    static let inboxItems: [NSToolbarItem.Identifier] = [compose, .flexibleSpace, sync, search]
+    static let resultsItems: [NSToolbarItem.Identifier] = [back, query, save]
+
+    /// Whether the results' items are up.
+    private var showingResults = false
+    /// The results' query box, kept while the inbox's items are up.
+    private lazy var queryBox: ResultsQueryBox = makeQueryBox()
+    private lazy var backView = NSHostingView(rootView: ResultsBackButton(engine: engine))
+    private lazy var saveView = NSHostingView(rootView: SaveSearchButton(engine: engine))
 
     init(engine: Engine) {
         self.engine = engine
@@ -292,12 +346,71 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
         engine.searchField = field
         engine.keycapsChanged = { [weak self] in self?.respell() }
         engine.barShown = { [weak self] shown in self?.grow(shown) }
+        engine.resultsShown = { [weak self] shown in self?.showResults(shown) }
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didResizeNotification, object: window, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.layoutQuery() }
+        }
         respell()
     }
+
+    /// The results are up, or gone: the toolbar's items follow (§3.1).
+    /// The search field the bar edits in is the query box's while they are
+    /// up, so `/` drops the dropdown from it.
+    private func showResults(_ shown: Bool) {
+        guard shown != showingResults else { return }
+        showingResults = shown
+        let items = shown ? Self.resultsItems : Self.inboxItems
+        while !toolbar.items.isEmpty { toolbar.removeItem(at: 0) }
+        for (index, identifier) in items.enumerated() {
+            toolbar.insertItem(withItemIdentifier: identifier, at: index)
+        }
+        engine.queryBox = shown ? queryBox : nil
+        engine.searchField = shown ? queryBox.editor : field
+        if shown {
+            engine.redrawQuery()
+            layoutQuery()
+        } else {
+            queryBox.editing = false
+        }
+        respell()
+    }
+
+    private func makeQueryBox() -> ResultsQueryBox {
+        let box = ResultsQueryBox()
+        box.field.onFocus = { [weak self] in self?.engine.queryFieldFocused() }
+        box.field.onType = { [weak self] text in self?.engine.queryFieldTyped(text) }
+        box.field.onRemove = { [weak self] token in self?.engine.searchQuery?.remove(token) }
+        box.editor.delegate = self
+        box.editor.sendsSearchStringImmediately = false
+        box.editor.sendsWholeSearchString = true
+        box.editor.onFocus = { [weak self] in self?.engine.searchFieldFocused() }
+        return box
+    }
+
+    /// The query box fills what the toolbar leaves it: the window less the
+    /// window's buttons, ‹ Inbox, Save search and the gaps between.
+    private func layoutQuery() {
+        guard showingResults, let window else { return }
+        let taken = Self.lights + backView.fittingSize.width + saveView.fittingSize.width
+            + Self.gaps + CommandBarGeometry.edge
+        queryBox.boxWidth = max(window.frame.width - taken, 240)
+    }
+
+    /// The window's buttons and the toolbar's leading inset.
+    private static let lights: CGFloat = 86
+    /// The toolbar's spacing between the results' three items.
+    private static let gaps: CGFloat = 32
 
     /// The field grows leftward to 860 while the bar is up, its right edge
     /// where it was, and goes back after (specs/010-focus-search T054).
     private func grow(_ shown: Bool) {
+        if showingResults {
+            // The query is edited as text in the box's own place.
+            queryBox.editing = shown
+            return
+        }
         guard let item = searchItem else { return }
         let width = shown
             ? CommandBarGeometry.fieldWidth(window: window?.frame.width ?? 0)
@@ -314,7 +427,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar)
+        Self.inboxItems + Self.resultsItems
     }
 
     func toolbar(
@@ -355,8 +468,23 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
                 cap.centerYAnchor.constraint(equalTo: field.centerYAnchor),
             ])
             self.field = field
-            engine.searchField = field
+            if !showingResults { engine.searchField = field }
             respell()
+            return item
+        case Self.back:
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.view = backView
+            item.label = engine.searchWords.back
+            return item
+        case Self.query:
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.view = queryBox
+            item.label = "Search"
+            return item
+        case Self.save:
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.view = saveView
+            item.label = engine.searchWords.save
             return item
         default:
             return nil
@@ -376,6 +504,8 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
     /// The keycap in the field and the compose tip, from the bindings in
     /// force: at install, when a session opens, and when `[keys]` changes.
     private func respell() {
+        backView.rootView = ResultsBackButton(engine: engine)
+        saveView.rootView = SaveSearchButton(engine: engine)
         let palette = KeyCapSpelling.cap(engine.session?.binding(for: BarCommand.palette))
         cap.text = palette ?? ""
         cap.isHidden = palette == nil || !(field?.stringValue.isEmpty ?? true)
@@ -394,13 +524,63 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
     }
 
     func controlTextDidChange(_ obj: Notification) {
-        let text = field?.stringValue ?? ""
-        cap.isHidden = cap.text.isEmpty || !text.isEmpty
+        // The inbox's field, or the results' query box's editor.
+        let text = (obj.object as? NSSearchField)?.stringValue ?? field?.stringValue ?? ""
+        cap.isHidden = cap.text.isEmpty || !(field?.stringValue.isEmpty ?? true)
         engine.searchFieldTyped(text)
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
         engine.searchFieldCommand(selector)
+    }
+}
+
+/// ‹ Inbox with its Esc keycap (§3.1): Back, as Escape is.
+private struct ResultsBackButton: View {
+    let engine: Engine
+
+    var body: some View {
+        Button { engine.run(ResultsCommand.back) } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold))
+                Text(engine.searchWords.back).font(.system(size: 13, weight: .semibold))
+                if let cap = KeyCapSpelling.cap(engine.session?.binding(for: ResultsCommand.back)) {
+                    KeyCap(cap)
+                }
+            }
+            .padding(.leading, 4)
+            .padding(.trailing, 6)
+            .frame(height: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .accessibilityLabel(engine.searchWords.back)
+    }
+}
+
+/// Save search with its ⌘S keycap (§3.1). Inert until step 6 builds the
+/// save popover (specs/010-focus-search T070).
+private struct SaveSearchButton: View {
+    let engine: Engine
+
+    var body: some View {
+        Button {} label: {
+            HStack(spacing: 6) {
+                Image(systemName: "bookmark").font(.system(size: 12))
+                Text(engine.searchWords.save).font(.system(size: 13, weight: .semibold))
+                if let cap = KeyCapSpelling.cap(engine.session?.binding(for: BarCommand.saveSearch)) {
+                    KeyCap(cap)
+                }
+            }
+            .padding(.leading, 10)
+            .padding(.trailing, 8)
+            .frame(height: 30)
+            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(.separator, lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
     }
 }
 
