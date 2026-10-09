@@ -4197,3 +4197,70 @@ fn a_search_whose_caller_has_gone_stops_on_the_host() {
         "the host searches on after an abandoned one"
     );
 }
+
+#[test]
+fn focus_remembers_the_searches_it_ran_and_forgets_them_on_request() {
+    let seed = SearchSeed::new();
+    let ask = |request: Result<(), postio_model::listing::StoreError>| request.expect("an answer");
+
+    assert!(
+        seed.rt
+            .block_on(seed.client.recent_searches())
+            .expect("an answer")
+            .is_empty(),
+        "a new store has run nothing"
+    );
+
+    ask(seed
+        .rt
+        .block_on(seed.client.remember_search("atlas".into(), 4)));
+    ask(seed
+        .rt
+        .block_on(seed.client.remember_search("from:ada".into(), 2)));
+    ask(seed
+        .rt
+        .block_on(seed.client.remember_search("atlas".into(), 5)));
+
+    let recent = seed
+        .rt
+        .block_on(seed.client.recent_searches())
+        .expect("an answer");
+    let seen: Vec<_> = recent
+        .iter()
+        .map(|search| (search.query.as_str(), search.hits))
+        .collect();
+    assert_eq!(seen, [("atlas", 5), ("from:ada", 2)], "newest run first");
+
+    ask(seed.rt.block_on(seed.client.forget_search("atlas".into())));
+    let recent = seed
+        .rt
+        .block_on(seed.client.recent_searches())
+        .expect("an answer");
+    assert_eq!(recent.len(), 1);
+    assert_eq!(recent[0].query, "from:ada");
+    assert_eq!(seed.client.counts().of("RememberSearch"), 3);
+}
+
+#[test]
+fn focus_counts_each_saved_search_and_none_is_new_yet() {
+    let seed = SearchSeed::new();
+    let today = postio_demo::today().date_naive();
+    let counts = seed
+        .rt
+        .block_on(seed.client.saved_counts(
+            seed.scope(),
+            today,
+            vec![
+                ("budget".into(), "atlas budget".into()),
+                ("nothing".into(), "zzzqxv".into()),
+            ],
+        ))
+        .expect("an answer");
+
+    assert_eq!(counts.len(), 2, "one count per saved search, in order");
+    assert_eq!(counts[0].0, "budget");
+    assert_eq!(counts[0].1, seed.conversations("atlas budget").total);
+    assert!(counts[0].1 > 0);
+    assert_eq!(counts[0].2, 0, "nothing is new before step 6");
+    assert_eq!(counts[1], ("nothing".to_string(), 0, 0));
+}
