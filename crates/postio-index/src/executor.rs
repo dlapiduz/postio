@@ -36,7 +36,9 @@ use postio_storage::Connection;
 use postio_storage::sql::{self, RowExt as _};
 
 mod conversations;
+mod relaxations;
 pub use conversations::{ConversationRequest, search_conversations};
+pub use relaxations::relaxation_counts;
 
 /// How many candidates `search` pulls out of SQL before re-ranking in Rust,
 /// as a multiple of the requested page size.
