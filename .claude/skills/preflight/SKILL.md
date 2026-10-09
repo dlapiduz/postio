@@ -10,15 +10,14 @@ fails — a partial picture is what sends sessions chasing the wrong problem.
 
 ## 1. Gates
 
-This is the deliberate full sweep — the *only* place `--workspace` belongs.
-Do not run it as an inner loop; use `cargo test -p <crate>` while working and
-`scripts/issue-land.sh` before committing. A workspace test compiles all nine crates including
-GTK and serialises on the shared target directory, so running it habitually is
-the largest wall-clock cost in this project.
+This is the deliberate full sweep, the same one `/steward` runs. Do not run
+it as an inner loop: use `scripts/test-fast.sh` while working and let
+`scripts/issue-land.sh` gate the landing. The hook refuses a whole-workspace
+test run unless `POSTIO_WORKSPACE_TESTS=1` says it is meant.
 
 ```bash
 cargo build --workspace
-cargo test --workspace --no-fail-fast
+POSTIO_WORKSPACE_TESTS=1 cargo test --workspace --no-fail-fast
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 scripts/check.sh
@@ -44,7 +43,7 @@ of this repo somewhere else. `CARGO_MANIFEST_DIR` is baked in at compile time,
 so tests that read files from disk look for a directory that no longer exists.
 
 ```bash
-cargo test --workspace --no-fail-fast 2>&1 | grep -o '/scratchpad/[^ ]*' | head
+POSTIO_WORKSPACE_TESTS=1 cargo test --workspace --no-fail-fast 2>&1 | grep -o '/scratchpad/[^ ]*' | head
 ```
 
 Any hit means stale artifacts, not a regression. Fix with
