@@ -1,0 +1,33 @@
+[package]
+name = "postio-extract"
+description = "The text inside an attachment, located: PDF pages, sheet rows, slides, paragraphs, lines (spec 010 D10). A pure leaf."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+# A pure leaf (FR-052, `check-crate-boundaries.py`): no store engine, no
+# async runtime, no network, no toolkit, no inference engine. Bytes in,
+# located text out; the indexer in `postio-session` is what reads a blob
+# and writes the rows.
+[dependencies]
+# Text per page. Pure Rust over `lopdf`; it panics on some malformed
+# files, which is why every call is under `catch_unwind` (research R5).
+pdf-extract = "0.12.1"
+# `Location` is the search crate's, so a unit says where it was in the
+# same words a match does. Both are pure leaves.
+postio-search = { workspace = true }
+# OOXML packages are zips. No default features: those pull bzip2, zstd,
+# lzma and AES, none of which an Office file uses; deflate through
+# flate2's Rust backend is all a .docx/.xlsx/.pptx needs.
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }
+# 0.41, the version already in the graph (through `wayland-scanner`), so
+# the workspace holds one copy; 0.42 adds nothing these walkers use.
+quick-xml = "0.41.0"
+# A `text/*` part in whatever charset it declares, and UTF-16 by its BOM.
+encoding_rs = "0.8.42"
+
+[lints]
+workspace = true
