@@ -1736,6 +1736,14 @@ mod dropdown {
         assert!(asked(&effects).contains(&Request::ForgetSearch {
             query: "has:attachment in:Receipts after:2026-09-01".to_owned()
         }));
+        // Unmoved, the key forgets the row focused by default: the newest.
+        let mut fresh = mac_search();
+        let effects = opened(&mut fresh, &rows);
+        assert!(!dropdown(&effects).sections[0].rows.is_empty());
+        let effects = run(&mut fresh, CommandId::ForgetRecent, &rows);
+        assert!(asked(&effects).contains(&Request::ForgetSearch {
+            query: "atlas budget".to_owned()
+        }));
         // A token that is no recent forgets nothing.
         assert!(asked(&focus.handle(Input::SearchForget(999_999))).is_empty());
     }
