@@ -213,6 +213,22 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .map_err(|error| error.to_string()),
         },
+        // The facets alone: no hit is read.
+        Request::Facets { query, stamp } => Reply::Facets {
+            stamp,
+            answer: client
+                .conversations(
+                    postio_model::AccountScope::Unified,
+                    query,
+                    postio_search::results::ConversationOrder::Newest,
+                    0,
+                    0,
+                )
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|found| found.ok_or_else(|| "no search index here".to_owned()))
+                .map(Box::new),
+        },
         Request::Suggest {
             prefix,
             field,

@@ -559,6 +559,10 @@ pub(crate) struct Popover {
     before: String,
     /// What it lists, once the answer for `before` is known.
     base: Option<Base>,
+    /// The stamp of the facets read that fills `base`, when the query
+    /// holds the popover's own field and the results' facets would list
+    /// only what it already names (D27).
+    own: Option<u64>,
     /// Its own search field.
     filter: String,
     /// The Date popover's plain words.
@@ -1052,6 +1056,7 @@ impl Results {
         }
         if let Some(popover) = self.popover.as_mut()
             && popover.base.is_none()
+            && popover.own.is_none()
             && popover.before == self.query
         {
             popover.base = Some(Base {
@@ -1096,6 +1101,34 @@ impl Results {
             landed.rows = Some(span);
         }
         landed
+    }
+
+    /// The facets read for the open popover's own field landed (D27): they
+    /// are what it lists. Whether it did.
+    pub(crate) fn facets_landed(
+        &mut self,
+        stamp: u64,
+        answer: Result<Box<ConversationResults>, String>,
+    ) -> bool {
+        let Some(popover) = self.popover.as_mut() else {
+            return false;
+        };
+        if popover.own != Some(stamp) || popover.base.is_some() {
+            return false;
+        }
+        match answer {
+            Ok(results) => {
+                popover.base = Some(Base {
+                    facets: results.facets,
+                    names: results.names,
+                });
+                true
+            }
+            Err(error) => {
+                tracing::debug!(%error, "a popover's facets could not be read");
+                false
+            }
+        }
     }
 
     /// The pages furthest from `page` go when more than [`RESIDENT`] are
@@ -3000,19 +3033,43 @@ impl FocusController {
         let Some(results) = self.results.as_mut() else {
             return steps;
         };
-        let base = results.frame.as_ref().map(|frame| Base {
-            facets: frame.facets.clone(),
-            names: frame.names.clone(),
+        // A field already in the query would list only what the query
+        // names, so its popover reads the facets of the query without it.
+        let field = own_field(kind).filter(|field| {
+            results
+                .parsed
+                .filters()
+                .any(|clause| clause.filter.field() == *field)
         });
+        let base = match field {
+            Some(_) => None,
+            None => results.frame.as_ref().map(|frame| Base {
+                facets: frame.facets.clone(),
+                names: frame.names.clone(),
+            }),
+        };
+        let before = results.query.clone();
+        let rest = field.map(|field| without_field(&results.parsed, field));
+        let own = rest.as_ref().map(|_| self.stamp());
+        let Some(results) = self.results.as_mut() else {
+            return steps;
+        };
         results.popover = Some(Popover {
             kind,
-            before: results.query.clone(),
+            before,
             base,
+            own,
             filter: String::new(),
             words: String::new(),
         });
         steps.push(Step::Show(Intent::Query(self.query_view())));
         steps.extend(self.draw_popover());
+        if let (Some(query), Some(stamp)) = (rest, own) {
+            steps.push(Step::Ask(Request::Facets {
+                query: self.bar.lower(&query),
+                stamp,
+            }));
+        }
         steps
     }
 
@@ -3229,6 +3286,13 @@ impl FocusController {
                     Vec::new()
                 }
             }
+            Reply::Facets { stamp, answer } => {
+                if results.facets_landed(stamp, answer) {
+                    self.draw_popover().into_iter().collect()
+                } else {
+                    Vec::new()
+                }
+            }
             Reply::Relaxations { stamp, answer } => {
                 if !results.ways_out_landed(stamp, answer) {
                     return Vec::new();
@@ -3268,6 +3332,30 @@ fn undated_query(parsed: &ParsedQuery) -> String {
         .tokens()
         .iter()
         .filter(|token| !matches!(token.field(), Some(Field::After | Field::Before)))
+        .map(|token| token.raw.as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The field a list popover narrows by: what its own facet counts.
+fn own_field(kind: FilterKind) -> Option<postio_search::query::Field> {
+    use postio_search::query::Field;
+    match kind {
+        FilterKind::From => Some(Field::From),
+        FilterKind::To => Some(Field::To),
+        FilterKind::Anywhere => Some(Field::In),
+        FilterKind::Label => Some(Field::Label),
+        _ => None,
+    }
+}
+
+/// `parsed` without a term of `field`, whatever its sign: what the field's
+/// own popover is listed from (D27).
+fn without_field(parsed: &ParsedQuery, field: postio_search::query::Field) -> String {
+    parsed
+        .tokens()
+        .iter()
+        .filter(|token| token.field() != Some(field))
         .map(|token| token.raw.as_str())
         .collect::<Vec<_>>()
         .join(" ")
