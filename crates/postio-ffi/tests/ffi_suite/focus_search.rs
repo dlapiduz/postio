@@ -782,3 +782,73 @@ async fn the_files_tab_crosses_as_cards_and_space_hands_over_a_copy() {
     assert!(gone.await, "the copy is removed when the panel is gone");
     session.shutdown();
 }
+
+/// Spec 010 step 10 (US9, FR-032, design §3.11): over the search seed,
+/// ⌘3 shows the People tab -- its rows read back with
+/// `focus_search_person`, you never among them -- and ↩ on a person runs
+/// `from:` them on the Conversations tab.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_people_tab_crosses_as_rows_and_return_searches_their_mail() {
+    let (database, _) = postio_demo::seeded(postio_demo::Seed::Search).await;
+    let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");
+    session.invoke("search");
+    let _ = dropdown(&session, 10, |view| view.state == DropdownStateFfi::Empty).await;
+    session.focus_bar_typed("atlas".to_owned());
+    let _ = dropdown(&session, 10, |view| view.footer_count.is_some()).await;
+    session.focus_search_show_all();
+    let _ = next(&session, 10, |event| match event {
+        UiEvent::FocusResults { view } if !view.groups.is_empty() => Some(()),
+        _ => None,
+    })
+    .await;
+
+    session.invoke("results_people");
+    let view = next(&session, 10, |event| match event {
+        UiEvent::FocusResults { view } if view.tabs[2].selected && view.rows > 0 => {
+            Some(view.clone())
+        }
+        _ => None,
+    })
+    .await;
+    assert!(view.groups.is_empty());
+    assert_eq!(view.tabs[2].count, view.rows.to_string());
+    let people: Vec<postio_ffi::PersonRowFfi> = (0..view.rows)
+        .map(|at| session.focus_search_person(at).expect("a person"))
+        .collect();
+    assert!(session.focus_search_person(view.rows).is_none());
+    assert!(people[0].focused);
+    assert!(
+        people
+            .iter()
+            .all(|person| person.address != "you@example.com"),
+        "never yourself: {people:?}"
+    );
+    let ada = people
+        .iter()
+        .find(|person| person.address == "ada@example.com")
+        .expect("Ada wrote about Atlas");
+    assert_eq!(ada.name, "Ada Moreno");
+    assert_eq!(ada.initials, "AM");
+    assert!(ada.messages.ends_with("messages"), "{}", ada.messages);
+    assert!(!ada.last.is_empty());
+
+    let at = people
+        .iter()
+        .position(|person| person.address == "ada@example.com")
+        .unwrap();
+    session.focus_search_point(at as u64);
+    session.invoke("open_message");
+    let query = next(&session, 10, |event| match event {
+        UiEvent::FocusQuery { view } if !view.chips.is_empty() => Some(view.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(query.chips.len(), 1);
+    assert_eq!(query.chips[0].operator, "from:");
+    let _ = next(&session, 10, |event| match event {
+        UiEvent::FocusResults { view } if view.tabs[0].selected && view.rows > 0 => Some(()),
+        _ => None,
+    })
+    .await;
+    session.shutdown();
+}

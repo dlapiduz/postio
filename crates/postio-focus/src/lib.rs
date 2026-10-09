@@ -63,9 +63,9 @@ pub use postio_ui::digest::{Page as DigestPage, Schedule as RuleSchedule};
 pub use postio_ui::search_view::FilePreview;
 pub use results::{
     Chip, DatePresetView, FileCard, FileCopy, FilePurpose, FilesHeader, FilterButton, LabelPill,
-    MatchCard, MonthBar, NoResultsView, PopoverRow, PopoverView, QueryView, QuickLookView,
-    RelaxationView, ResultGroup, ResultRow, ResultsTabView, ResultsView, SaveView, TermEdit,
-    file_copies,
+    MatchCard, MonthBar, NoResultsView, PersonRow, PopoverRow, PopoverView, QueryView,
+    QuickLookView, RelaxationView, ResultGroup, ResultRow, ResultsTabView, ResultsView, SaveView,
+    TermEdit, file_copies,
 };
 pub use states::{AccountsRead, BannerButton, BannerView};
 pub use surfaces::{Host, ReaderVerb, SurfaceKind};
@@ -700,6 +700,13 @@ pub enum Request {
         /// The results' stamp, echoed in the answer.
         stamp: u64,
     },
+    /// The People tab's rows (spec 010 US9).
+    People {
+        /// The results' query.
+        query: postio_search::ParsedQuery,
+        /// The results' stamp, echoed in the answer.
+        stamp: u64,
+    },
     /// Copy a file's bytes, when they are on this machine, into
     /// [`file_copies`]: for the system's Quick Look or a save.
     AttachmentCopy {
@@ -923,6 +930,7 @@ impl Request {
             Request::Passages { .. } => Some(Lane::Passages),
             Request::QuickLookMatches { .. } => Some(Lane::Matches),
             Request::Files { .. } => Some(Lane::Files),
+            Request::People { .. } => Some(Lane::People),
             Request::Relaxations { .. } => Some(Lane::Relaxations),
             Request::Facets { .. } => Some(Lane::Facets),
             Request::Suggest { .. } => Some(Lane::Suggest),
@@ -1007,6 +1015,13 @@ pub enum Reply {
         stamp: u64,
         /// The cards, newest first.
         answer: Result<Vec<postio_search::results::FileHit>, String>,
+    },
+    /// The answer to [`Request::People`].
+    People {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// The rows, most messages first.
+        answer: Result<Vec<postio_search::suggest::Person>, String>,
     },
     /// The answer to [`Request::AttachmentCopy`].
     AttachmentCopy {
@@ -1377,6 +1392,7 @@ impl FocusController {
                 reply @ (Reply::ResultsPage { .. }
                 | Reply::ResultsPassages { .. }
                 | Reply::Files { .. }
+                | Reply::People { .. }
                 | Reply::AttachmentCopy { .. }
                 | Reply::QuickLookMatches { .. }
                 | Reply::Facets { .. }

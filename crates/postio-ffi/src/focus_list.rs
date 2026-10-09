@@ -566,6 +566,14 @@ impl FocusDriver {
         self.focus.lock().expect("focus lock").result_count()
     }
 
+    /// The People tab's row at `position`, drawn.
+    pub(crate) fn result_person(&self, position: u64) -> Option<postio_focus::PersonRow> {
+        self.focus
+            .lock()
+            .expect("focus lock")
+            .result_person(position)
+    }
+
     /// The Files tab's card at `position`; `None` past the last.
     pub(crate) fn result_file(&self, position: u64) -> Option<postio_focus::FileCard> {
         self.focus.lock().expect("focus lock").result_file(position)

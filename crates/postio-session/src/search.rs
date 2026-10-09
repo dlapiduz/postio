@@ -306,6 +306,33 @@ pub async fn files(
     .ok()
 }
 
+/// The People tab's rows (spec 010 US9): who the mail `query` matches is
+/// from and to, the person's own addresses left out, a page of them, most
+/// messages first. `None` when the query could not run.
+pub async fn people(
+    connection: &Checkout,
+    account: AccountScope,
+    query: &ParsedQuery,
+    offset: u32,
+    limit: u32,
+) -> Option<Vec<postio_search::suggest::Person>> {
+    let now = postio_ui::clock::now();
+    postio_index::executor::people(
+        connection,
+        &ConversationRequest {
+            account,
+            query,
+            order: ConversationOrder::Newest,
+            offset,
+            limit,
+            today: now.date_naive(),
+        },
+    )
+    .await
+    .map_err(|error| tracing::warn!(%error, "the people search did not run"))
+    .ok()
+}
+
 /// Every message of every conversation `query` matches, but those whose
 /// best message is in `except`: what ⇧X in Focus's results selects (spec
 /// 010 US5), resolved with the results' own match -- capped as their count

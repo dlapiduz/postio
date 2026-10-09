@@ -122,6 +122,26 @@ pub async fn conversation_matches(
     }
 }
 
+/// The People tab's rows, on one reader turn. Empty when the store could
+/// not be read.
+pub async fn people(
+    database: &Store,
+    account: AccountScope,
+    query: &ParsedQuery,
+    offset: u32,
+    limit: u32,
+) -> Vec<postio_search::suggest::Person> {
+    match database.read().await {
+        Ok(reader) => postio_session::search::people(&reader, account, query, offset, limit)
+            .await
+            .unwrap_or_default(),
+        Err(error) => {
+            tracing::warn!(%error, "no connection to read the people with");
+            Vec::new()
+        }
+    }
+}
+
 /// The Files tab's cards, on one reader turn. Empty when the store could
 /// not be read.
 pub async fn files(

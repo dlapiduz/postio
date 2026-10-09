@@ -339,6 +339,19 @@ pub enum Req {
         /// How many to answer.
         limit: u32,
     },
+    /// The People tab: who the matched mail is from and to, the person's
+    /// own addresses left out, each with how many matched messages and the
+    /// newest (spec 010 US9). Cancellable.
+    People {
+        /// Which accounts.
+        account: postio_model::AccountScope,
+        /// The query.
+        query: postio_search::ParsedQuery,
+        /// How many people to skip.
+        offset: u32,
+        /// How many to answer.
+        limit: u32,
+    },
     /// Copy an attachment's bytes, when they are on this machine, into
     /// `dir` -- a temporary folder the frontend owns -- for the system's
     /// Quick Look or a save (FR-053). Never fetched: an attachment whose
@@ -761,6 +774,8 @@ pub enum Resp {
     Matches(Vec<postio_search::results::ConversationMatch>),
     /// The Files tab's cards; empty when the store could not be read.
     Files(Vec<postio_search::results::FileHit>),
+    /// The People tab's rows; empty when the store could not be read.
+    People(Vec<postio_search::suggest::Person>),
     /// Where a copy was written, or nothing when it could not be.
     Path(Option<std::path::PathBuf>),
     /// The ways out that would find something, most first; empty when none

@@ -76,6 +76,7 @@ impl Req {
                 | Req::Passages { .. }
                 | Req::ConversationMatches { .. }
                 | Req::Files { .. }
+                | Req::People { .. }
                 | Req::Relaxations { .. }
                 | Req::Suggest { .. }
                 | Req::RecentSearches
@@ -135,6 +136,7 @@ impl Req {
             Req::Passages { .. } => "Passages",
             Req::ConversationMatches { .. } => "ConversationMatches",
             Req::Files { .. } => "Files",
+            Req::People { .. } => "People",
             Req::AttachmentCopy { .. } => "AttachmentCopy",
             Req::Relaxations { .. } => "Relaxations",
             Req::Suggest { .. } => "Suggest",
@@ -1019,6 +1021,29 @@ impl Client {
         };
         self.read(request, "the files", |answer| match answer {
             Resp::Files(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// The People tab: who the mail `query` matches is from and to, the
+    /// person's own addresses left out, a page of them, most messages
+    /// first (spec 010 US9).
+    pub async fn people(
+        &self,
+        account: postio_model::AccountScope,
+        query: postio_search::ParsedQuery,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<postio_search::suggest::Person>, StoreError> {
+        let request = Req::People {
+            account,
+            query,
+            offset,
+            limit,
+        };
+        self.read(request, "the people", |answer| match answer {
+            Resp::People(found) => Some(found),
             _ => None,
         })
         .await

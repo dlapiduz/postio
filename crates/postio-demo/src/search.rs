@@ -643,6 +643,13 @@ pub async fn search_demo() -> (Store, AccountId) {
     let database = postio_storage::test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
+    // The mail "You" wrote is sent as one of the account's own addresses:
+    // an identity, so search knows it is the person's own (the People tab
+    // leaves it out, and what you sent counts as sent).
+    postio_storage::repository::IdentityRepository::new(&connection)
+        .create(&mut postio_model::Identity::new(account.id, address(None)))
+        .await
+        .expect("your identity");
     let mut folders: Vec<(&'static str, MailboxId)> = vec![("INBOX", inbox)];
     for folder in ["Archive", "Receipts"] {
         let made = postio_storage::test_support::mailbox(&connection, &account, folder).await;

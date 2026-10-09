@@ -234,6 +234,8 @@ pub enum Lane {
     Latest,
     /// The Files tab's cards: a newer query supersedes them.
     Files,
+    /// The People tab's rows: a newer query supersedes them.
+    People,
 }
 
 /// The dropdown's top hits.
