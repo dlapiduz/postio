@@ -197,7 +197,11 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::Quit => Some(G::GoAndFind),
 
         // ── In search ───────────────────────────────────────────────────
-        C::SaveSearch | C::BackToWords | C::ToggleResultOrder => Some(G::InSearch),
+        C::SaveSearch
+        | C::BackToWords
+        | C::ToggleResultOrder
+        | C::ShowAllResults
+        | C::ForgetRecent => Some(G::InSearch),
 
         // ── Digests and filtering ───────────────────────────────────────
         C::DigestRule

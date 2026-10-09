@@ -270,6 +270,11 @@ fn every_registry_binding_resolves_in_every_context_it_claims() {
     let mut resolver = resolver();
 
     for spec in postio_core::registry::all() {
+        // The resolver here is Linux's; the Mac's search dropdown has no
+        // keys on it yet (spec 010 D25).
+        if !postio_core::registry::offered_on(spec.id.into(), Platform::Freedesktop) {
+            continue;
+        }
         for context in Context::ALL {
             if !spec.available_in(*context) {
                 continue;
