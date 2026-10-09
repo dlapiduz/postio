@@ -130,6 +130,13 @@ fn best_match_gives_top_hits_then_month_groups() {
         (top.title.as_str(), top.first, top.rows),
         ("Top hits", 0, 3)
     );
+    // Screen 06: "Top hits  why each one ranked is under the sender", no
+    // count drawn; a screen reader still hears how many.
+    assert_eq!(top.count, "");
+    assert_eq!(
+        top.note.as_deref(),
+        Some("why each one ranked is under the sender")
+    );
     let september = &view.groups[1];
     assert_eq!(september.title, "September 2026");
     assert_eq!(september.first, 3);

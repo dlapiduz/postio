@@ -76,7 +76,8 @@ pub struct MonthBar {
 pub struct ResultGroup {
     /// "Top hits", "September 2026", "Earlier".
     pub title: String,
-    /// Its count, grouped: "9".
+    /// Its count, grouped: "9"; empty for Top hits, which the design
+    /// draws without one.
     pub count: String,
     /// The tertiary note after the count: "newest first".
     pub note: Option<String>,
@@ -916,7 +917,13 @@ impl Results {
             .into_iter()
             .map(|span| ResultGroup {
                 title: span.title,
-                count: words::tab_count(span.count, false),
+                // Top hits is at most three and says why instead: screen
+                // 06 draws no count beside it.
+                count: if span.top_hits {
+                    String::new()
+                } else {
+                    words::tab_count(span.count, false)
+                },
                 note: span.note,
                 first: span.first,
                 rows: span.rows,
