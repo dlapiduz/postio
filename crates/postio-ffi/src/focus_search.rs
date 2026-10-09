@@ -509,6 +509,8 @@ pub struct ResultGroupFfi {
     pub rows: u64,
     /// Top hits: rows 66 tall, not 58.
     pub top_hits: bool,
+    /// What VoiceOver says for the header: "September 2026 · 9".
+    pub accessible: String,
 }
 
 /// The results view's frame: everything but the rows, which
@@ -588,6 +590,7 @@ impl From<postio_focus::ResultsView> for ResultsViewFfi {
                     first: group.first,
                     rows: group.rows,
                     top_hits: group.top_hits,
+                    accessible: group.accessible,
                 })
                 .collect(),
             rows: view.rows,

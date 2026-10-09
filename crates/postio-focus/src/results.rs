@@ -86,6 +86,8 @@ pub struct ResultGroup {
     pub rows: u64,
     /// Whether it is Top hits, whose rows are taller.
     pub top_hits: bool,
+    /// What a screen reader says for its header: "September 2026 · 9".
+    pub accessible: String,
 }
 
 /// The results view's frame: everything but the rows, which are read one
@@ -301,6 +303,7 @@ pub(crate) struct Words<'a> {
 /// One group, as positions.
 struct Span {
     title: String,
+    accessible: String,
     count: u64,
     note: Option<String>,
     first: u64,
@@ -458,6 +461,7 @@ impl Results {
         let top = self.top_len();
         if top > 0 {
             spans.push(Span {
+                accessible: words::group_line(words::TOP_HITS, top),
                 title: words::TOP_HITS.to_owned(),
                 count: top,
                 note: Some(words::TOP_HITS_RESULTS_NOTE.to_owned()),
@@ -479,6 +483,7 @@ impl Results {
             }
             let newest = spans.iter().all(|span: &Span| span.top_hits);
             spans.push(Span {
+                accessible: words::month_group(month.month, month.conversations),
                 title: words::month_title(month.month),
                 count: month.conversations,
                 note: newest.then(|| words::NEWEST_FIRST.to_owned()),
@@ -492,6 +497,7 @@ impl Results {
         let earlier = frame.total.saturating_sub(counted);
         if earlier > 0 {
             spans.push(Span {
+                accessible: words::group_line(words::EARLIER, earlier),
                 title: words::EARLIER.to_owned(),
                 count: earlier,
                 note: None,
@@ -906,6 +912,7 @@ impl Results {
                 first: span.first,
                 rows: span.rows,
                 top_hits: span.top_hits,
+                accessible: span.accessible,
             })
             .collect();
         ResultsView {
