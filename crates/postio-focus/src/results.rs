@@ -27,7 +27,7 @@ use postio_search::query::{Clause, Filter, TokenKind};
 use postio_search::relax::{Loosen, Relaxation};
 use postio_search::results::{
     ConversationHit, ConversationKey, ConversationMatch, ConversationOrder, ConversationResults,
-    FacetNames, Match, ResultsTab, Source,
+    FacetNames, FileHit, Location, Match, ResultsTab, Source,
 };
 use postio_ui::hints::Hint;
 use postio_ui::search_view::{self as words, FilterKind};
@@ -128,6 +128,92 @@ pub struct ResultsView {
     /// The bulk bar's right: "⇧X select all 12", while some but not every
     /// conversation the query matches is checked.
     pub select_all: Option<Hint>,
+    /// The Files tab's header, while it is the tab shown.
+    pub files: Option<FilesHeader>,
+}
+
+/// The Files tab's header over the grid (design §3.8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilesHeader {
+    /// "Files whose name or contents match".
+    pub title: String,
+    /// What is searched inside files, and whether it is done.
+    pub note: String,
+}
+
+/// One card of the Files tab (design §3.8, screen 11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileCard {
+    /// The file.
+    pub attachment: postio_model::AttachmentId,
+    /// The message it came in: what ↩ opens.
+    pub message: MessageId,
+    /// Its type tile: "XLSX", "PDF".
+    pub kind: String,
+    /// How its preview is drawn.
+    pub preview: postio_ui::search_view::FilePreview,
+    /// Which of the preview's lines is marked as the matching one, from
+    /// the top; `None` when the file matched by its name alone.
+    pub marked: Option<u32>,
+    /// Its name, the matched words marked.
+    pub name: Vec<Run>,
+    /// "Ada Moreno · 26 Sep · 48 KB".
+    pub meta: String,
+    /// The matching line from its contents, where it is first: "Sheet
+    /// ‘Q3’, row 3: Total Atlas budget"; empty when only its name matched.
+    pub line: Vec<Run>,
+    /// "in ‘Re: Atlas Q3 budget’".
+    pub subject: String,
+    /// Whether the focus ring is on it.
+    pub focused: bool,
+    /// What a screen reader says for it.
+    pub accessible: String,
+}
+
+/// What a copy of a file handed to the system is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilePurpose {
+    /// The system's Quick Look on the file (Space).
+    Preview,
+    /// A save panel, to put it somewhere (⌘↓).
+    Save,
+}
+
+/// A copy of a file, for the system to show or save (FR-053).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileCopy {
+    /// The copy, in [`file_copies`].
+    pub path: std::path::PathBuf,
+    /// The file's own name: what a save panel offers.
+    pub name: String,
+    /// What it is for.
+    pub purpose: FilePurpose,
+}
+
+/// The cards the Files tab reads at once: every one, up to the engine's
+/// cap, so the grid's count is what the tab says.
+pub(crate) const FILES_READ: u32 = 1_000;
+
+/// Where copies handed to the system are written: a folder of this
+/// app's own under the user's temporary directory, which on the Mac is
+/// the app's (FR-053). Nothing else is ever removed from or written to by
+/// the Files tab.
+pub fn file_copies() -> std::path::PathBuf {
+    std::env::temp_dir().join("postio-files")
+}
+
+/// Remove a copy, and the folder made for it, when it is under
+/// [`file_copies`]; anything else is left alone.
+pub(crate) fn remove_copy(path: &std::path::Path) {
+    let root = file_copies();
+    if !path.starts_with(&root) || path == root {
+        tracing::debug!("a copy outside the app's folder was not removed");
+        return;
+    }
+    let _ = std::fs::remove_file(path);
+    if let Some(folder) = path.parent().filter(|folder| *folder != root) {
+        let _ = std::fs::remove_dir(folder);
+    }
 }
 
 /// One result row (design §3.4).
@@ -633,6 +719,24 @@ pub(crate) struct Results {
     people: Vec<postio_model::EmailAddress>,
     /// The search found nothing: its ways out (US6).
     none: Option<NoResults>,
+    /// The Files tab's cards, once read for this query.
+    files: Option<Vec<FileHit>>,
+    /// Whether they have been asked for under this stamp.
+    files_asked: bool,
+    /// The card with the focus ring.
+    file_cursor: Option<u64>,
+    /// A copy of a file asked for, or handed to the system.
+    pub(crate) copy: Option<PendingCopy>,
+}
+
+/// A copy of a file, asked for or handed to the system.
+#[derive(Debug)]
+pub(crate) struct PendingCopy {
+    purpose: FilePurpose,
+    stamp: u64,
+    name: String,
+    /// Where it is, once written.
+    path: Option<std::path::PathBuf>,
 }
 
 impl Results {
@@ -664,6 +768,10 @@ impl Results {
             quick_look: None,
             people: Vec::new(),
             none: None,
+            files: None,
+            files_asked: false,
+            file_cursor: None,
+            copy: None,
         }
     }
 
@@ -691,7 +799,99 @@ impl Results {
             }));
         }
         steps.extend(self.ask_page(0));
+        steps.extend(self.ask_files());
         steps
+    }
+
+    /// The Files tab's cards, when it is shown and they are not read.
+    fn ask_files(&mut self) -> Option<Step> {
+        if self.tab != ResultsTab::Files || self.files.is_some() || self.files_asked {
+            return None;
+        }
+        self.files_asked = true;
+        Some(Step::Ask(Request::Files {
+            query: self.parsed.clone(),
+            stamp: self.stamp,
+        }))
+    }
+
+    /// The cards landed, asked under `stamp`: whether they are this
+    /// query's.
+    pub(crate) fn files_landed(
+        &mut self,
+        stamp: u64,
+        answer: Result<Vec<FileHit>, String>,
+    ) -> bool {
+        if stamp != self.stamp {
+            return false;
+        }
+        self.files_asked = false;
+        let found = match answer {
+            Ok(found) => found,
+            Err(error) => {
+                tracing::debug!(%error, "the files could not be read");
+                Vec::new()
+            }
+        };
+        self.file_cursor = match self.file_cursor {
+            Some(at) if !found.is_empty() => Some(at.min(found.len() as u64 - 1)),
+            _ if !found.is_empty() => Some(0),
+            _ => None,
+        };
+        self.files = Some(found);
+        true
+    }
+
+    /// The card under the focus ring.
+    fn cursor_file(&self) -> Option<&FileHit> {
+        self.files.as_ref()?.get(self.file_cursor? as usize)
+    }
+
+    /// The card at `position`, drawn.
+    pub(crate) fn file_card(&self, position: u64, with: &Words<'_>) -> Option<FileCard> {
+        let hit = self.files.as_ref()?.get(usize::try_from(position).ok()?)?;
+        let sender = hit
+            .from
+            .as_ref()
+            .map(postio_ui::command_bar::said_of)
+            .unwrap_or_default();
+        let date = words::hit_date(hit.received_at.with_timezone(&Local), with.now);
+        let meta = words::file_meta(&sender, &date, hit.size);
+        let name_terms: Vec<String> = self.terms.clone();
+        let name = dropdown::marked(
+            &hit.name,
+            &postio_search::highlight::find(&hit.name, &name_terms),
+        );
+        let (line, marked) = match &hit.matched {
+            Some(Match {
+                source: Source::FileContent { location, .. },
+                passage,
+                ..
+            }) => {
+                let mut line = vec![Run::plain(format!("{}: ", words::location(location)))];
+                if let Some(cut) = passage {
+                    line.extend(dropdown::passage(cut));
+                }
+                (line, Some(marked_line(location)))
+            }
+            _ => (Vec::new(), None),
+        };
+        let kind = words::file_kind(&hit.name, &hit.mime_type);
+        let subject = words::file_subject(hit.subject.as_deref().unwrap_or_default());
+        let line_text: String = line.iter().map(|run| run.text.as_str()).collect();
+        Some(FileCard {
+            attachment: hit.attachment,
+            message: hit.message,
+            preview: words::file_preview(&hit.name, &hit.mime_type),
+            marked,
+            accessible: words::file_accessible(&hit.name, &kind, &meta, &line_text, &subject),
+            kind,
+            name,
+            meta,
+            line,
+            subject,
+            focused: self.file_cursor == Some(position),
+        })
     }
 
     fn ask_page(&mut self, page: u32) -> Option<Step> {
@@ -716,6 +916,8 @@ impl Results {
         self.top = None;
         self.pages.clear();
         self.asked.clear();
+        self.files = None;
+        self.files_asked = false;
         let mut steps = Vec::new();
         if self.none.take().is_some() {
             steps.push(Step::Show(Intent::Relaxations(None)));
@@ -850,6 +1052,7 @@ impl Results {
         self.parsed = parsed;
         self.clear_checked();
         self.cursor = None;
+        self.file_cursor = None;
         self.remembered = false;
     }
 
@@ -872,6 +1075,7 @@ impl Results {
             (Some(frame), ResultsTab::Conversations) if self.ready() => {
                 self.top_len() + frame.total
             }
+            (_, ResultsTab::Files) => self.files.as_ref().map_or(0, |files| files.len() as u64),
             _ => 0,
         }
     }
@@ -939,7 +1143,7 @@ impl Results {
 
     /// The hit at `position`, its group, and whether it is a top hit.
     fn hit_at(&self, position: u64) -> Option<(&ConversationHit, u32, bool)> {
-        if position >= self.rows() {
+        if self.tab != ResultsTab::Conversations || position >= self.rows() {
             return None;
         }
         let group = self
@@ -1229,19 +1433,30 @@ impl Results {
         if rows == 0 {
             return None;
         }
-        let at = self.cursor.map_or(0, |at| at as i64);
+        let ring = self.ring();
+        let at = ring.map_or(0, |at| at as i64);
         let next = (at + by).clamp(0, rows as i64 - 1) as u64;
-        if Some(next) == self.cursor {
+        if Some(next) == *ring {
             return None;
         }
-        self.cursor = Some(next);
+        *ring = Some(next);
         Some(next)
+    }
+
+    /// The focus ring of the tab shown: the conversations' or the cards'.
+    fn ring(&mut self) -> &mut Option<u64> {
+        match self.tab {
+            ResultsTab::Files => &mut self.file_cursor,
+            _ => &mut self.cursor,
+        }
     }
 
     /// Put the focus ring on `position`.
     pub(crate) fn point(&mut self, position: u64) -> Option<u64> {
-        (position < self.rows() && self.cursor != Some(position)).then(|| {
-            self.cursor = Some(position);
+        let rows = self.rows();
+        let ring = self.ring();
+        (position < rows && *ring != Some(position)).then(|| {
+            *ring = Some(position);
             position
         })
     }
@@ -1445,7 +1660,12 @@ impl Results {
             tab(
                 ResultsTab::Files,
                 words::TABS[1],
-                frame.map_or(0, |frame| frame.files),
+                // The cards once read are the count; until then the
+                // search's own.
+                self.files.as_ref().map_or_else(
+                    || frame.map_or(0, |frame| frame.files),
+                    |files| files.len() as u64,
+                ),
                 false,
                 CommandId::ResultsFiles,
             ),
@@ -1496,9 +1716,14 @@ impl Results {
                 .and_then(|_| words::timeline_step(with.keymap)),
             groups,
             rows: self.rows(),
-            cursor: self.cursor.filter(|_| self.ready()),
+            cursor: match self.tab {
+                ResultsTab::Files => self.file_cursor,
+                _ => self.cursor.filter(|_| self.ready()),
+            },
             hints: if self.found_nothing() {
                 words::no_results_hints(with.keymap, self.ways_out().len())
+            } else if self.tab == ResultsTab::Files {
+                words::files_hints(with.keymap)
             } else {
                 words::results_hints(with.keymap)
             },
@@ -1518,6 +1743,10 @@ impl Results {
             select_all: (self.any_checked() && self.selected() < total)
                 .then(|| words::select_all_hint(with.keymap, total, capped))
                 .flatten(),
+            files: (self.tab == ResultsTab::Files).then(|| FilesHeader {
+                title: words::FILES_TITLE.to_owned(),
+                note: words::files_note(frame.is_none_or(|frame| frame.contents_complete)),
+            }),
         }
     }
 
@@ -2261,7 +2490,7 @@ pub(crate) fn show(view: ResultsView) -> Step {
 }
 
 /// The commands the results answer while nothing is over them.
-const RESULTS_KEYS: [CommandId; 25] = [
+const RESULTS_KEYS: [CommandId; 26] = [
     CommandId::NextMessage,
     CommandId::PrevMessage,
     CommandId::FirstMessage,
@@ -2287,6 +2516,7 @@ const RESULTS_KEYS: [CommandId; 25] = [
     CommandId::PickRelaxation2,
     CommandId::PickRelaxation3,
     CommandId::PickRelaxation4,
+    CommandId::SaveFile,
 ];
 
 /// Whether the results, up, answer `id` themselves: their own keys, and
@@ -2323,6 +2553,13 @@ impl FocusController {
     pub fn result_row(&self, position: u64) -> Option<ResultRow> {
         let words = self.results_words();
         self.results.as_ref()?.row(position, &words)
+    }
+
+    /// The Files tab's card at `position`, drawn; `None` past the last,
+    /// or before the cards are read.
+    pub fn result_file(&self, position: u64) -> Option<FileCard> {
+        let words = self.results_words();
+        self.results.as_ref()?.file_card(position, &words)
     }
 
     /// A row the table wants and [`result_row`](Self::result_row) could
@@ -2538,6 +2775,9 @@ impl FocusController {
     /// A command while the results are up and nothing is over them;
     /// `None` hands it on to the list's table (`/`, `c`, `?`, the palette).
     pub(crate) fn results_command(&mut self, id: CommandId) -> Option<Vec<Step>> {
+        if let Some(steps) = self.files_command(id) {
+            return Some(steps);
+        }
         if let Some(steps) = self.quick_look_command(id) {
             return Some(steps);
         }
@@ -2919,14 +3159,15 @@ impl FocusController {
 
     /// Close Quick Look, when it is open.
     pub(crate) fn close_quick_look(&mut self) -> Vec<Step> {
-        match self
-            .results
-            .as_mut()
-            .and_then(|results| results.quick_look.take())
+        // A file handed to the system goes with whatever closes the
+        // results' own Quick Look: a new query, a tab, leaving.
+        let mut steps = self.close_file_copy();
+        if let Some(results) = self.results.as_mut()
+            && results.quick_look.take().is_some()
         {
-            Some(_) => vec![Step::Show(Intent::QuickLook(None))],
-            None => Vec::new(),
+            steps.push(Step::Show(Intent::QuickLook(None)));
         }
+        steps
     }
 
     /// Open the focused result, among the others its `j`/`k` walk.
@@ -2961,11 +3202,162 @@ impl FocusController {
             return Vec::new();
         }
         results.tab = tab;
-        // The Files and People tabs list their own (steps 9 and 10); the
-        // frame says which is shown.
+        // The Files tab reads its cards when it is first shown for a query
+        // (step 9); People lists its own in step 10. The frame says which
+        // is shown.
+        let ask = results.ask_files();
         let mut steps = self.close_quick_look();
         steps.extend(self.draw_results());
+        steps.extend(ask);
         steps
+    }
+
+    /// A key on the Files tab (design §3.8): j/k step the ring, Space
+    /// hands a copy of the file to the system's Quick Look and closes it,
+    /// ⌘↓ hands one to a save panel, ↩ opens the message it came in. A
+    /// verb on mail has no mail here. `None` hands `id` on, to the
+    /// results' own keys (the tabs, history, Esc).
+    fn files_command(&mut self, id: CommandId) -> Option<Vec<Step>> {
+        let results = self.results.as_mut()?;
+        if results.tab != ResultsTab::Files {
+            return None;
+        }
+        let steps = match id {
+            CommandId::NextMessage | CommandId::PrevMessage => {
+                cursor_moved(results.step(if id == CommandId::NextMessage { 1 } else { -1 }))
+            }
+            CommandId::FirstMessage => cursor_moved(results.step(i64::MIN / 2)),
+            CommandId::LastMessage => cursor_moved(results.step(i64::MAX / 2)),
+            CommandId::QuickLook => {
+                let previewing = results
+                    .copy
+                    .as_ref()
+                    .is_some_and(|copy| copy.purpose == FilePurpose::Preview);
+                if previewing {
+                    self.close_file_copy()
+                } else {
+                    self.copy_file(FilePurpose::Preview)
+                }
+            }
+            CommandId::SaveFile => self.copy_file(FilePurpose::Save),
+            CommandId::OpenMessage => {
+                let Some(message) = results.cursor_file().map(|file| file.message) else {
+                    return Some(Vec::new());
+                };
+                let walk = results
+                    .files
+                    .iter()
+                    .flatten()
+                    .map(|file| (file.message, None))
+                    .collect();
+                let mut steps = self.close_file_copy();
+                self.bar.walk(walk);
+                steps.extend(self.show_hit(message));
+                steps
+            }
+            CommandId::Back if results.copy.is_some() => self.close_file_copy(),
+            CommandId::ToggleSelection
+            | CommandId::SelectAll
+            | CommandId::NextMatch
+            | CommandId::PrevMatch => Vec::new(),
+            _ if matches!(
+                postio_ui::focus_target::dispatch(id),
+                Some(postio_ui::focus_target::Dispatch::OnMail(_))
+            ) || crate::pickers::opens_picker(id) =>
+            {
+                Vec::new()
+            }
+            _ => return None,
+        };
+        Some(steps)
+    }
+
+    /// Ask for a copy of the card under the ring, for `purpose`; one
+    /// already handed over goes first.
+    fn copy_file(&mut self, purpose: FilePurpose) -> Vec<Step> {
+        let mut steps = self.close_file_copy();
+        let stamp = self.stamp();
+        let Some(results) = self.results.as_mut() else {
+            return steps;
+        };
+        let Some(file) = results.cursor_file() else {
+            return steps;
+        };
+        let attachment = file.attachment;
+        results.copy = Some(PendingCopy {
+            purpose,
+            stamp,
+            name: file.name.clone(),
+            path: None,
+        });
+        steps.push(Step::Ask(Request::AttachmentCopy {
+            attachment,
+            purpose,
+            stamp,
+        }));
+        steps
+    }
+
+    /// The copy handed to the system is done with: its Quick Look closed
+    /// when it is open, and the copy removed (FR-053). Nothing when there
+    /// is none.
+    pub(crate) fn close_file_copy(&mut self) -> Vec<Step> {
+        let Some(copy) = self
+            .results
+            .as_mut()
+            .and_then(|results| results.copy.take())
+        else {
+            return Vec::new();
+        };
+        let mut steps = Vec::new();
+        if let Some(path) = copy.path {
+            if copy.purpose == FilePurpose::Preview {
+                steps.push(Step::Show(Intent::FileCopy(None)));
+            }
+            steps.push(Step::Ask(Request::RemoveCopy(path)));
+        }
+        steps
+    }
+
+    /// A copy landed: handed to the system for what it was asked for, or
+    /// -- the bytes not on this Mac -- a word saying so. One that lands
+    /// for a copy no longer wanted is removed at once.
+    fn file_copied(
+        &mut self,
+        stamp: u64,
+        purpose: FilePurpose,
+        answer: Result<Option<std::path::PathBuf>, String>,
+    ) -> Vec<Step> {
+        let path = answer
+            .map_err(|error| tracing::debug!(%error, "a file could not be copied"))
+            .ok()
+            .flatten();
+        let wanted = self.results.as_mut().and_then(|results| {
+            results.copy.as_mut().filter(|copy| {
+                copy.stamp == stamp && copy.purpose == purpose && copy.path.is_none()
+            })
+        });
+        match (wanted, path) {
+            (Some(copy), Some(path)) => {
+                copy.path = Some(path.clone());
+                vec![Step::Show(Intent::FileCopy(Some(FileCopy {
+                    path,
+                    name: copy.name.clone(),
+                    purpose,
+                })))]
+            }
+            (Some(_), None) => {
+                if let Some(results) = self.results.as_mut() {
+                    results.copy = None;
+                }
+                vec![Step::Show(Intent::Toast {
+                    text: words::FILE_NOT_HERE.to_owned(),
+                    kind: crate::ToastKind::Notice,
+                })]
+            }
+            (None, Some(path)) => vec![Step::Ask(Request::RemoveCopy(path))],
+            (None, None) => Vec::new(),
+        }
     }
 
     fn results_order(&mut self, order: ConversationOrder) -> Vec<Step> {
@@ -3228,6 +3620,16 @@ impl FocusController {
                 self.draw_popover().into_iter().collect()
             }
             Input::PopoverDone { apply } => self.popover_done(apply),
+            // The system's panel is gone already: only the copy goes.
+            Input::FileCopyDone => match self
+                .results
+                .as_mut()
+                .and_then(|results| results.copy.take())
+                .and_then(|copy| copy.path)
+            {
+                Some(path) => vec![Step::Ask(Request::RemoveCopy(path))],
+                None => Vec::new(),
+            },
             Input::DateWords(text) => self.date_words(text),
             Input::DatePreset(token) => self.date_preset(token),
             _ => Vec::new(),
@@ -3279,6 +3681,18 @@ impl FocusController {
                 .map(|(first, count)| Step::Show(Intent::ResultsPage { first, count }))
                 .into_iter()
                 .collect(),
+            Reply::Files { stamp, answer } => {
+                if results.files_landed(stamp, answer) {
+                    self.draw_results()
+                } else {
+                    Vec::new()
+                }
+            }
+            Reply::AttachmentCopy {
+                stamp,
+                purpose,
+                answer,
+            } => self.file_copied(stamp, purpose, answer),
             Reply::QuickLookMatches { stamp, answer } => {
                 if results.matches_landed(stamp, answer) {
                     self.draw_quick_look()
@@ -3410,4 +3824,16 @@ fn dates_of(parsed: &ParsedQuery) -> (Option<NaiveDate>, Option<NaiveDate>) {
         }
     }
     (after, before)
+}
+
+/// Which of a card's preview lines is the matching one: a sheet's row or a
+/// text's line where it falls among the six drawn, a page's or a slide's
+/// middle.
+fn marked_line(location: &Location) -> u32 {
+    const DRAWN: u32 = 6;
+    match location {
+        Location::Sheet { row, .. } | Location::Table { row, .. } => row.saturating_sub(1) % DRAWN,
+        Location::Line(n) | Location::Paragraph(n) => n.saturating_sub(1) % DRAWN,
+        Location::Page(_) | Location::Slide(_) | Location::ImageText => 3,
+    }
 }

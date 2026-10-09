@@ -218,7 +218,8 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::PickRelaxation1
         | C::PickRelaxation2
         | C::PickRelaxation3
-        | C::PickRelaxation4 => Some(G::InSearch),
+        | C::PickRelaxation4
+        | C::SaveFile => Some(G::InSearch),
 
         // ── Digests and filtering ───────────────────────────────────────
         C::DigestRule

@@ -122,6 +122,26 @@ pub async fn conversation_matches(
     }
 }
 
+/// The Files tab's cards, on one reader turn. Empty when the store could
+/// not be read.
+pub async fn files(
+    database: &Store,
+    account: AccountScope,
+    query: &ParsedQuery,
+    offset: u32,
+    limit: u32,
+) -> Vec<postio_search::results::FileHit> {
+    match database.read().await {
+        Ok(reader) => postio_session::search::files(&reader, account, query, offset, limit)
+            .await
+            .unwrap_or_default(),
+        Err(error) => {
+            tracing::warn!(%error, "no connection to read the files with");
+            Vec::new()
+        }
+    }
+}
+
 /// The ways out of a search that found nothing, counted on one reader turn.
 /// Empty when none would find anything, or when they could not be counted:
 /// an offer that cannot be made is not made.

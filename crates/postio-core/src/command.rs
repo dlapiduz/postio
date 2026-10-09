@@ -204,6 +204,8 @@ command_ids! {
     PickRelaxation3 => "pick_relaxation_3",
     /// Run the fourth looser search.
     PickRelaxation4 => "pick_relaxation_4",
+    /// Save the file under the ring on the results' Files tab.
+    SaveFile => "save_file",
     /// Start a new message.
     Compose => "compose",
     /// Send what is in the composer.
@@ -840,6 +842,8 @@ pub enum Command {
     PickRelaxation3,
     /// Run the fourth looser search.
     PickRelaxation4,
+    /// Save the file under the ring on the results' Files tab.
+    SaveFile,
 
     // -- Compose ---------------------------------------------------------
     /// Start a new message, optionally from an existing draft.
@@ -1313,6 +1317,7 @@ impl Command {
             Command::PickRelaxation2 => CommandId::PickRelaxation2,
             Command::PickRelaxation3 => CommandId::PickRelaxation3,
             Command::PickRelaxation4 => CommandId::PickRelaxation4,
+            Command::SaveFile => CommandId::SaveFile,
             Command::Compose { .. } => CommandId::Compose,
             Command::Send => CommandId::Send,
             Command::ScheduleSend => CommandId::ScheduleSend,
@@ -1507,6 +1512,7 @@ impl Command {
             CommandId::PickRelaxation2 => Command::PickRelaxation2,
             CommandId::PickRelaxation3 => Command::PickRelaxation3,
             CommandId::PickRelaxation4 => Command::PickRelaxation4,
+            CommandId::SaveFile => Command::SaveFile,
             CommandId::Compose => Command::Compose { draft: None },
             CommandId::Send => Command::Send,
             CommandId::ScheduleSend => Command::ScheduleSend,

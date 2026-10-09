@@ -2244,3 +2244,284 @@ fn the_ways_out_are_a_lane_of_their_own() {
         .expect("asked");
     assert_eq!(request.lane(), Some(postio_focus::Lane::Relaxations));
 }
+
+// ---------------------------------------------------------------------------
+// The Files tab (spec 010 step 9, US8, FR-031, design §3.8, screen 11)
+// ---------------------------------------------------------------------------
+
+fn files_asked(effects: &[Effect]) -> usize {
+    asked(effects)
+        .iter()
+        .filter(|request| matches!(request, Request::Files { .. }))
+        .count()
+}
+
+fn copies_asked(
+    effects: &[Effect],
+) -> Vec<(postio_model::AttachmentId, postio_focus::FilePurpose)> {
+    asked(effects)
+        .into_iter()
+        .filter_map(|request| match request {
+            Request::AttachmentCopy {
+                attachment,
+                purpose,
+                ..
+            } => Some((attachment, purpose)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn copies_shown(effects: &[Effect]) -> Vec<Option<postio_focus::FileCopy>> {
+    shown(effects)
+        .into_iter()
+        .filter_map(|intent| match intent {
+            Intent::FileCopy(copy) => Some(copy),
+            _ => None,
+        })
+        .collect()
+}
+
+fn removed(effects: &[Effect]) -> Vec<std::path::PathBuf> {
+    asked(effects)
+        .into_iter()
+        .filter_map(|request| match request {
+            Request::RemoveCopy(path) => Some(path),
+            _ => None,
+        })
+        .collect()
+}
+
+/// "atlas budget", then ⌘2: the Files tab, its cards read.
+fn on_the_files_tab(focus: &mut FocusController, rows: &List) -> Vec<Effect> {
+    let _ = search(focus, "atlas budget", rows);
+    let effects = run(focus, CommandId::ResultsFiles, rows);
+    assert_eq!(
+        files_asked(&effects),
+        1,
+        "the cards are read when the tab opens"
+    );
+    settle(focus, effects, rows)
+}
+
+#[test]
+fn the_files_tab_reads_its_cards_and_draws_them() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let effects = on_the_files_tab(&mut focus, &rows);
+    let view = results_view(&effects).expect("the frame, with the cards counted");
+    assert_eq!(view.rows, 3);
+    assert_eq!(view.cursor, Some(0), "the first card ringed");
+    assert!(view.groups.is_empty(), "a grid, not month groups");
+    assert_eq!(view.tabs[1].count, "3", "the tab counts the cards");
+    assert!(view.tabs[1].selected);
+    let header = view.files.as_ref().expect("the Files tab's header");
+    assert_eq!(header.title, "Files whose name or contents match");
+    assert!(
+        header.note.starts_with("contents are indexed on this Mac"),
+        "{}",
+        header.note
+    );
+    assert_eq!(
+        view.hints
+            .iter()
+            .map(|hint| hint.label.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "move",
+            "Quick Look",
+            "open the message",
+            "save file",
+            "switch tab"
+        ]
+    );
+
+    let card = focus.result_file(0).expect("the first card");
+    assert_eq!(card.kind, "XLSX");
+    assert_eq!(card.preview, postio_focus::FilePreview::Sheet);
+    assert_eq!(text(&card.name), "Atlas-Q3-budget.xlsx");
+    assert_eq!(lit(&card.name), ["Atlas", "budget"]);
+    assert_eq!(
+        text(&card.line),
+        "Sheet \u{2018}Q3\u{2019}, row 3: Total Atlas budget 1,240,000"
+    );
+    assert_eq!(lit(&card.line), ["Atlas", "budget"]);
+    assert_eq!(
+        card.subject,
+        "in \u{2018}Re: Atlas Q3 budget, final numbers\u{2019}"
+    );
+    assert!(card.focused);
+    let pdf = focus.result_file(1).expect("the second");
+    assert_eq!(pdf.kind, "PDF");
+    assert_eq!(pdf.preview, postio_focus::FilePreview::Page);
+    assert_eq!(pdf.meta, "Ada Moreno \u{b7} 4 Sep \u{b7} 212 KB");
+    assert!(text(&pdf.line).starts_with("Page 2: "));
+    let named = focus.result_file(2).expect("the third");
+    assert!(
+        named.line.is_empty(),
+        "matched by its name only: no contents line"
+    );
+    assert_eq!(focus.result_file(3), None);
+}
+
+#[test]
+fn the_keys_move_the_ring_over_the_cards() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = on_the_files_tab(&mut focus, &rows);
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    assert!(shown(&effects).contains(&Intent::ResultsCursor(1)));
+    // The grid's arrows say where the ring goes (four across).
+    let effects = focus.handle_on(Input::ResultsPoint(2), &rows);
+    assert!(shown(&effects).contains(&Intent::ResultsCursor(2)));
+    assert!(focus.result_file(2).is_some_and(|card| card.focused));
+    let effects = run(&mut focus, CommandId::PrevMessage, &rows);
+    assert!(shown(&effects).contains(&Intent::ResultsCursor(1)));
+    // And back on Conversations, its own ring where it was.
+    let effects = run(&mut focus, CommandId::ResultsConversations, &rows);
+    assert_eq!(results_view(&effects).and_then(|view| view.cursor), Some(0));
+}
+
+#[test]
+fn space_hands_a_copy_of_the_file_to_quick_look_and_removes_it_after() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = on_the_files_tab(&mut focus, &rows);
+    let effects = run(&mut focus, CommandId::QuickLook, &rows);
+    assert_eq!(
+        copies_asked(&effects),
+        [(
+            postio_model::AttachmentId::new(71),
+            postio_focus::FilePurpose::Preview
+        )]
+    );
+    assert!(
+        quick_look_view(&effects).is_none(),
+        "not the results' own Quick Look: the system's, on the file"
+    );
+    let effects = settle(&mut focus, effects, &rows);
+    let copy = copy_of(postio_model::AttachmentId::new(71));
+    assert_eq!(
+        copies_shown(&effects),
+        [Some(postio_focus::FileCopy {
+            path: copy.clone(),
+            name: "Atlas-Q3-budget.xlsx".to_owned(),
+            purpose: postio_focus::FilePurpose::Preview,
+        })]
+    );
+
+    // Space again closes it, and the copy goes (FR-053).
+    let effects = run(&mut focus, CommandId::QuickLook, &rows);
+    assert_eq!(copies_shown(&effects), [None]);
+    assert_eq!(removed(&effects), std::slice::from_ref(&copy));
+
+    // Closed by the panel itself: the same.
+    let asked_for = run(&mut focus, CommandId::QuickLook, &rows);
+    let effects = settle(&mut focus, asked_for, &rows);
+    assert_eq!(copies_shown(&effects).len(), 1);
+    let effects = focus.handle_on(Input::FileCopyDone, &rows);
+    assert_eq!(removed(&effects), [copy]);
+    assert!(
+        copies_shown(&effects).is_empty(),
+        "the panel is already gone"
+    );
+}
+
+#[test]
+fn command_down_saves_the_file_and_return_opens_its_message() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = on_the_files_tab(&mut focus, &rows);
+    let effects = run(&mut focus, CommandId::SaveFile, &rows);
+    assert_eq!(
+        copies_asked(&effects),
+        [(
+            postio_model::AttachmentId::new(71),
+            postio_focus::FilePurpose::Save
+        )]
+    );
+    let effects = settle(&mut focus, effects, &rows);
+    assert!(matches!(
+        copies_shown(&effects).as_slice(),
+        [Some(postio_focus::FileCopy {
+            purpose: postio_focus::FilePurpose::Save,
+            ..
+        })]
+    ));
+    // The save panel copied it, or was cancelled: the copy goes.
+    let effects = focus.handle_on(Input::FileCopyDone, &rows);
+    assert_eq!(removed(&effects).len(), 1);
+
+    let _ = focus.handle_on(Input::ResultsPoint(1), &rows);
+    let effects = run(&mut focus, CommandId::OpenMessage, &rows);
+    assert!(
+        shown(&effects).iter().any(|intent| matches!(
+            intent,
+            Intent::OpenMessage { message, .. } if *message == MessageId::new(1030)
+        )),
+        "{:?}",
+        shown(&effects)
+    );
+}
+
+#[test]
+fn a_file_not_on_this_mac_is_not_previewed_and_says_so() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = on_the_files_tab(&mut focus, &rows);
+    let effects = run(&mut focus, CommandId::QuickLook, &rows);
+    let (ticket, request) = asks(&effects)
+        .into_iter()
+        .find(|(_, request)| matches!(request, Request::AttachmentCopy { .. }))
+        .expect("a copy asked for");
+    let Request::AttachmentCopy { stamp, purpose, .. } = request else {
+        unreachable!()
+    };
+    let effects = focus.handle_on(
+        Input::Reply(
+            ticket,
+            postio_focus::Reply::AttachmentCopy {
+                stamp,
+                purpose,
+                answer: Ok(None),
+            },
+        ),
+        &rows,
+    );
+    assert!(copies_shown(&effects).is_empty());
+    assert!(
+        shown(&effects)
+            .iter()
+            .any(|intent| matches!(intent, Intent::Toast { .. })),
+        "{:?}",
+        shown(&effects)
+    );
+}
+
+#[test]
+fn a_new_query_reads_the_cards_again_and_leaving_removes_a_copy() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = on_the_files_tab(&mut focus, &rows);
+    let asked_for = run(&mut focus, CommandId::QuickLook, &rows);
+    let effects = settle(&mut focus, asked_for, &rows);
+    assert_eq!(copies_shown(&effects).len(), 1);
+    let effects = focus.handle_on(
+        Input::SearchEdit(TermEdit::Toggle {
+            field: "has".to_owned(),
+            value: "attachment".to_owned(),
+        }),
+        &rows,
+    );
+    assert_eq!(
+        files_asked(&effects),
+        1,
+        "the tab shown reads its cards again"
+    );
+    assert_eq!(
+        copies_shown(&effects),
+        [None],
+        "the preview goes with the query"
+    );
+    assert_eq!(removed(&effects).len(), 1);
+}

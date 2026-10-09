@@ -75,6 +75,7 @@ impl Req {
             Req::Conversations { .. }
                 | Req::Passages { .. }
                 | Req::ConversationMatches { .. }
+                | Req::Files { .. }
                 | Req::Relaxations { .. }
                 | Req::Suggest { .. }
                 | Req::RecentSearches
@@ -133,6 +134,8 @@ impl Req {
             Req::Conversations { .. } => "Conversations",
             Req::Passages { .. } => "Passages",
             Req::ConversationMatches { .. } => "ConversationMatches",
+            Req::Files { .. } => "Files",
+            Req::AttachmentCopy { .. } => "AttachmentCopy",
             Req::Relaxations { .. } => "Relaxations",
             Req::Suggest { .. } => "Suggest",
             Req::RecentSearches => "RecentSearches",
@@ -996,6 +999,43 @@ impl Client {
                 _ => None,
             },
         )
+        .await
+    }
+
+    /// The Files tab: a page of the attachments whose name or contents
+    /// match `query`, newest first (spec 010 US8).
+    pub async fn files(
+        &self,
+        account: postio_model::AccountScope,
+        query: postio_search::ParsedQuery,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<postio_search::results::FileHit>, StoreError> {
+        let request = Req::Files {
+            account,
+            query,
+            offset,
+            limit,
+        };
+        self.read(request, "the files", |answer| match answer {
+            Resp::Files(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Copy `attachment`'s bytes into `dir`, when they are on this
+    /// machine: where the copy is, or nothing (FR-050, FR-053).
+    pub async fn attachment_copy(
+        &self,
+        attachment: postio_model::ids::AttachmentId,
+        dir: std::path::PathBuf,
+    ) -> Result<Option<std::path::PathBuf>, StoreError> {
+        let request = Req::AttachmentCopy { attachment, dir };
+        self.read(request, "a copy of a file", |answer| match answer {
+            Resp::Path(path) => Some(path),
+            _ => None,
+        })
         .await
     }
 

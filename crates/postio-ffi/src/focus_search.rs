@@ -633,6 +633,114 @@ pub struct ResultsViewFfi {
     /// The bulk bar's right, "⇧X select all 12", while some but not every
     /// conversation the query matches is checked.
     pub select_all: Option<KeyHintFfi>,
+    /// The Files tab's header, while it is the tab shown; its cards are
+    /// `focus_search_file`'s, `rows` of them.
+    pub files: Option<FilesHeaderFfi>,
+}
+
+/// The Files tab's header over the grid (design §3.8).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FilesHeaderFfi {
+    /// "Files whose name or contents match".
+    pub title: String,
+    /// What is searched inside files, and whether it is done.
+    pub note: String,
+}
+
+/// How a file card's preview is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FilePreviewFfi {
+    /// A sheet's grid.
+    Sheet,
+    /// A page's lines.
+    Page,
+    /// A slide.
+    Slides,
+    /// A picture.
+    Image,
+    /// Lines of text.
+    Text,
+}
+
+impl From<postio_focus::FilePreview> for FilePreviewFfi {
+    fn from(preview: postio_focus::FilePreview) -> Self {
+        match preview {
+            postio_focus::FilePreview::Sheet => FilePreviewFfi::Sheet,
+            postio_focus::FilePreview::Page => FilePreviewFfi::Page,
+            postio_focus::FilePreview::Slides => FilePreviewFfi::Slides,
+            postio_focus::FilePreview::Image => FilePreviewFfi::Image,
+            postio_focus::FilePreview::Text => FilePreviewFfi::Text,
+        }
+    }
+}
+
+/// One card of the Files tab (design §3.8, screen 11).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FileCardFfi {
+    /// The file.
+    pub attachment: i64,
+    /// The message it came in.
+    pub message: i64,
+    /// The type tile: "XLSX".
+    pub kind: String,
+    /// How the preview is drawn.
+    pub preview: FilePreviewFfi,
+    /// Which of the preview's lines is marked, from the top; none when
+    /// only the name matched.
+    pub marked: Option<u32>,
+    /// The name, matched words in the find highlight.
+    pub name: Vec<RunFfi>,
+    /// "Ada Moreno · 26 Sep · 48 KB".
+    pub meta: String,
+    /// "Sheet ‘Q3’, row 3: Total Atlas budget …", matched words in the
+    /// find highlight; empty when only the name matched.
+    pub line: Vec<RunFfi>,
+    /// "in ‘Re: Atlas Q3 budget’".
+    pub subject: String,
+    /// The focus ring is on it.
+    pub focused: bool,
+    /// What VoiceOver reads.
+    pub accessible: String,
+}
+
+impl From<postio_focus::FileCard> for FileCardFfi {
+    fn from(card: postio_focus::FileCard) -> Self {
+        FileCardFfi {
+            attachment: card.attachment.get(),
+            message: card.message.get(),
+            kind: card.kind,
+            preview: card.preview.into(),
+            marked: card.marked,
+            name: runs(card.name),
+            meta: card.meta,
+            line: runs(card.line),
+            subject: card.subject,
+            focused: card.focused,
+            accessible: card.accessible,
+        }
+    }
+}
+
+/// A copy of a file for the system: Quick Look on it, or a save panel
+/// (FR-053). The path is in the app's own temporary folder.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FileCopyFfi {
+    /// The copy.
+    pub path: String,
+    /// The file's own name, for a save panel.
+    pub name: String,
+    /// A save panel, rather than Quick Look.
+    pub save: bool,
+}
+
+impl From<postio_focus::FileCopy> for FileCopyFfi {
+    fn from(copy: postio_focus::FileCopy) -> Self {
+        FileCopyFfi {
+            path: copy.path.to_string_lossy().into_owned(),
+            name: copy.name,
+            save: copy.purpose == postio_focus::FilePurpose::Save,
+        }
+    }
 }
 
 fn month_bars(months: Vec<postio_focus::MonthBar>) -> Vec<MonthBarFfi> {
@@ -702,6 +810,10 @@ impl From<postio_focus::ResultsView> for ResultsViewFfi {
             select_all: view.select_all.map(|hint| KeyHintFfi {
                 key: hint.key,
                 label: hint.label,
+            }),
+            files: view.files.map(|header| FilesHeaderFfi {
+                title: header.title,
+                note: header.note,
             }),
         }
     }
@@ -1254,6 +1366,20 @@ impl Session {
     /// again. Synchronous; what the table calls for every visible row.
     pub fn focus_search_row(&self, position: u64) -> Option<ResultRowFfi> {
         self.focus_driver().result_row(position).map(Into::into)
+    }
+
+    /// The Files tab's card at `position`, or `None` past the last.
+    /// Synchronous; what the grid calls for every visible card.
+    pub fn focus_search_file(&self, position: u64) -> Option<FileCardFfi> {
+        self.focus_driver().result_file(position).map(Into::into)
+    }
+
+    /// The system's Quick Look on a file, or its save panel, is gone --
+    /// closed by the person, or the save done or cancelled: the copy it
+    /// was handed is removed (FR-053). A panel the controller closed
+    /// (`FocusFileCopy` with none) needs no report.
+    pub fn focus_search_file_done(&self) {
+        self.focus_driver().input(postio_focus::Input::FileCopyDone);
     }
 
     /// The field's placeholder while it is empty (screen 01).

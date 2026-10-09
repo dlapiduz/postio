@@ -1756,6 +1756,67 @@ fn saving_every_part_writes_each_and_counts_what_could_not_be() {
     assert_eq!(client.counts().of("SaveParts"), 1, "one call for the batch");
 }
 
+/// Spec 010 FR-053, FR-050 (T128): a file card's copy, for the system's
+/// Quick Look or a save, is written into the folder asked and nowhere
+/// else, and only from bytes already on this machine.
+#[test]
+fn an_attachment_copy_lands_in_the_folder_asked_and_nowhere_else() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Focus);
+    let blobs = postio_storage::BlobStore::open(world.blob_dir.clone(), &test_support::blob_keys())
+        .expect("the same blob store");
+    let blob = blobs.put(b"PK the workbook").expect("stored");
+    let message = another_message(&world, |message| {
+        let mut sheet = postio_model::Attachment::new(
+            MessageId::UNASSIGNED,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            15,
+        );
+        // A hostile name: only its last component is ever used.
+        sheet.filename = Some("../../Atlas-Q3-budget.xlsx".into());
+        sheet.part_id = Some("2".into());
+        sheet.blob_id = Some(blob);
+        message.attachments.push(sheet);
+        let mut remote =
+            postio_model::Attachment::new(MessageId::UNASSIGNED, "application/pdf", 900);
+        remote.filename = Some("never-downloaded.pdf".into());
+        remote.part_id = Some("3".into());
+        message.attachments.push(remote);
+    });
+    let parts = world.rt.block_on(client.parts(message)).expect("the parts");
+    let (sheet, remote) = (parts[0].id, parts[1].id);
+    let outside = tempfile::tempdir().unwrap();
+    let dir = outside.path().join("previews");
+
+    let copy = world
+        .rt
+        .block_on(client.attachment_copy(sheet, dir.clone()))
+        .expect("an answer")
+        .expect("its bytes are here");
+    assert!(copy.starts_with(&dir), "{copy:?} is under {dir:?}");
+    assert_eq!(
+        copy.file_name().and_then(|name| name.to_str()),
+        Some("Atlas-Q3-budget.xlsx")
+    );
+    assert_eq!(std::fs::read(&copy).unwrap(), b"PK the workbook");
+    // Nothing beside the folder asked: the hostile name climbed nowhere.
+    let written: Vec<_> = std::fs::read_dir(outside.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(written, [std::ffi::OsString::from("previews")]);
+
+    // Bytes never downloaded are not fetched for a preview.
+    assert_eq!(
+        world
+            .rt
+            .block_on(client.attachment_copy(remote, dir.clone()))
+            .expect("an answer"),
+        None
+    );
+    assert_eq!(client.counts().of("AttachmentCopy"), 2);
+}
+
 /// A message in the fixture's inbox whose body says `body`, indexed the way
 /// the backfill indexes it.
 fn an_indexed_message(world: &World, subject: &str, body: &str) -> MessageId {

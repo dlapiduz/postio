@@ -204,6 +204,44 @@ pub async fn search_conversations(
     })
 }
 
+/// One message the match holds, as the Files tab reads it.
+pub(super) struct Carrier {
+    /// The message.
+    pub(super) id: MessageId,
+    /// Whether an attachment's text matched it.
+    pub(super) in_file: bool,
+}
+
+/// The messages the request's match holds that carry attachments: the
+/// same walk [`search_conversations`] makes, capped as it is, one
+/// occurrence per content.
+pub(super) async fn carriers(
+    connection: &Connection,
+    request: &ConversationRequest<'_>,
+) -> Result<Vec<Carrier>> {
+    let plan = Plan::build_sets(&request.as_search());
+    let fold = if plan.sets.is_empty() {
+        Fold::walk(connection, &plan).await?
+    } else {
+        Fold::walk_sets(connection, &plan).await?
+    };
+    Ok(fold
+        .found
+        .iter()
+        .filter(|found| found.files > 0)
+        .map(|found| Carrier {
+            id: MessageId::new(found.id),
+            in_file: found.in_file,
+        })
+        .collect())
+}
+
+/// The words a file's name is checked for: the free text and every
+/// `filename:` value; empty when the query names no word for a file.
+pub(super) fn file_terms(query: &ParsedQuery) -> Vec<String> {
+    Terms::of(query).files
+}
+
 // ---------------------------------------------------------------------------
 // The walk
 // ---------------------------------------------------------------------------

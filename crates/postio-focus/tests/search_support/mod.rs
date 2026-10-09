@@ -490,6 +490,19 @@ pub fn reply_to(request: &Request) -> Option<Reply> {
             stamp: *stamp,
             answer: Ok(conversation_matches(*key)),
         }),
+        Request::Files { stamp, .. } => Some(Reply::Files {
+            stamp: *stamp,
+            answer: Ok(files()),
+        }),
+        Request::AttachmentCopy {
+            attachment,
+            purpose,
+            stamp,
+        } => Some(Reply::AttachmentCopy {
+            stamp: *stamp,
+            purpose: *purpose,
+            answer: Ok(Some(copy_of(*attachment))),
+        }),
         _ => None,
     }
 }
@@ -535,4 +548,93 @@ pub fn search(focus: &mut FocusController, words: &str, rows: &List) -> Vec<Effe
 /// The first day of a month, for the group titles.
 pub fn month(year: i32, month: u32) -> NaiveDate {
     NaiveDate::from_ymd_opt(year, month, 1).unwrap()
+}
+
+/// Where the engine's copy of `attachment` would be.
+pub fn copy_of(attachment: postio_model::AttachmentId) -> std::path::PathBuf {
+    std::env::temp_dir()
+        .join("postio-files")
+        .join(attachment.get().to_string())
+        .join("copy")
+}
+
+/// The Files tab's cards for "atlas budget" (screen 11): a sheet matched
+/// inside, a PDF matched inside, and a file matched by its name only.
+pub fn files() -> Vec<postio_search::results::FileHit> {
+    use postio_model::AttachmentId;
+    use postio_search::results::{FileHit, Location};
+    let atlas_budget = |text: &str| {
+        let ranges = ["Atlas", "budget"]
+            .iter()
+            .filter_map(|word| text.find(word).map(|at| at..at + word.len()))
+            .collect();
+        Passage {
+            text: text.to_owned(),
+            ranges,
+            elided_start: false,
+            elided_end: false,
+        }
+    };
+    vec![
+        FileHit {
+            attachment: AttachmentId::new(71),
+            message: MessageId::new(1002),
+            name: "Atlas-Q3-budget.xlsx".to_owned(),
+            mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                .to_owned(),
+            size: 48 * 1024,
+            from: Some(ada()),
+            received_at: when(0),
+            subject: Some("Re: Atlas Q3 budget, final numbers".to_owned()),
+            matched: Some(Match {
+                source: Source::FileContent {
+                    attachment: AttachmentId::new(71),
+                    name: "Atlas-Q3-budget.xlsx".to_owned(),
+                    location: Location::Sheet {
+                        name: "Q3".to_owned(),
+                        row: 3,
+                    },
+                },
+                passage: Some(atlas_budget("Total Atlas budget 1,240,000")),
+                when: Some(when(0)),
+            }),
+        },
+        FileHit {
+            attachment: AttachmentId::new(72),
+            message: MessageId::new(1030),
+            name: "Atlas-Sep-actuals.pdf".to_owned(),
+            mime_type: "application/pdf".to_owned(),
+            size: 212 * 1024,
+            from: Some(ada()),
+            received_at: when(11),
+            subject: Some("Atlas September actuals".to_owned()),
+            matched: Some(Match {
+                source: Source::FileContent {
+                    attachment: AttachmentId::new(72),
+                    name: "Atlas-Sep-actuals.pdf".to_owned(),
+                    location: Location::Page(2),
+                },
+                passage: Some(atlas_budget("Spend to date against budget: 71%")),
+                when: Some(when(11)),
+            }),
+        },
+        FileHit {
+            attachment: AttachmentId::new(73),
+            message: MessageId::new(1004),
+            name: "budget-notes.pdf".to_owned(),
+            mime_type: "application/pdf".to_owned(),
+            size: 88 * 1024,
+            from: Some(tomas()),
+            received_at: when(20),
+            subject: Some("Notes".to_owned()),
+            matched: Some(Match {
+                source: Source::FileName {
+                    attachment: AttachmentId::new(73),
+                    name: "budget-notes.pdf".to_owned(),
+                },
+                passage: Some(atlas_budget("budget-notes.pdf")),
+                when: Some(when(20)),
+            }),
+        },
+    ]
 }

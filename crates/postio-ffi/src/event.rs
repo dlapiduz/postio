@@ -520,6 +520,14 @@ pub enum UiEvent {
         /// What it draws.
         view: Option<crate::focus_search::NoResultsViewFfi>,
     },
+    /// Hand the system this copy of a file: Quick Look on it, or a save
+    /// panel to put it somewhere (spec 010 step 9, FR-031, FR-053); `None`
+    /// closes the Quick Look panel. Say `focus_search_file_done` when the
+    /// person closes the panel, or the save is done or cancelled.
+    FocusFileCopy {
+        /// The copy.
+        copy: Option<crate::focus_search::FileCopyFfi>,
+    },
 }
 
 /// How a Focus toast is drawn.

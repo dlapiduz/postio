@@ -41,7 +41,7 @@ mod files;
 mod relaxations;
 pub use completions::completions;
 pub use conversations::{ConversationRequest, search_conversations};
-pub use files::{FileMatch, file_matches};
+pub use files::{FILES_CAP, FileMatch, file_matches, files};
 pub use relaxations::relaxation_counts;
 
 /// How many candidates `search` pulls out of SQL before re-ranking in Rust,

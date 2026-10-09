@@ -109,7 +109,27 @@ fn open(name: &str) -> Result<Arc<Session>, SessionError> {
     {
         *kept = Some(vault);
     }
-    Session::open(crate::SessionOptions::in_memory_with(database).with_config_for_test(&config))
+    let options = crate::SessionOptions::in_memory_with(database).with_config_for_test(&config);
+    // The search seed's files have their bytes on this machine, so the
+    // attachment indexer the session starts reads them (spec 010 step 9):
+    // its rows name the blobs a store under the test keys gives the bytes.
+    let options = if seed == postio_demo::Seed::Search {
+        let scratch = tempfile::tempdir().map_err(|error| SessionError::StoreUnavailable {
+            message: format!("The demo's files could not be stored: {error}"),
+        })?;
+        let blobs = postio_storage::BlobStore::open(
+            scratch.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .and_then(|blobs| postio_demo::store_search_blobs(&blobs).map(|_| blobs))
+        .map_err(|error| SessionError::StoreUnavailable {
+            message: format!("The demo's files could not be stored: {error}"),
+        })?;
+        options.with_blobs_for_test(blobs, scratch)
+    } else {
+        options
+    };
+    Session::open(options)
 }
 
 /// A model on this computer that nothing answers at: a socket path that

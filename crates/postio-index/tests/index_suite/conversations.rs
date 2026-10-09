@@ -901,3 +901,143 @@ async fn gtk_search_does_not_reach_attachment_contents() {
     .expect("GTK's search");
     assert!(found.hits.is_empty(), "{:#?}", found.hits);
 }
+
+// ---------------------------------------------------------------------------
+// The Files tab (spec 010 step 9, US8, T128)
+// ---------------------------------------------------------------------------
+
+async fn files(connection: &Connection, query: &str) -> Vec<postio_search::results::FileHit> {
+    let parsed = parse(query, today());
+    postio_index::executor::files(
+        connection,
+        &ConversationRequest {
+            account: AccountScope::Unified,
+            query: &parsed,
+            order: ConversationOrder::Newest,
+            offset: 0,
+            limit: 50,
+            today: today(),
+        },
+    )
+    .await
+    .expect("the files")
+}
+
+#[tokio::test]
+async fn the_files_tab_has_one_card_per_matching_attachment_with_its_match() {
+    let (_database, connection, account, inbox) = store().await;
+    // The sheet says "kestrel" on row 14 of "Summary".
+    let (sheet_mail, sheet) = mail_with_budget_sheet(&connection, &account, inbox).await;
+    postio_index::index::index_attachment_text(&connection, sheet, &budget_sheet())
+        .await
+        .expect("index its text");
+    // A file whose name says it, never downloaded: a card by its name.
+    let plan_mail = file(
+        &connection,
+        &account,
+        inbox,
+        Mail {
+            from: "grace",
+            subject: "The plan",
+            body: "Attached.",
+            file: Some("kestrel-plan.pdf"),
+            ago: Duration::days(1),
+            ..Mail::default()
+        },
+    )
+    .await;
+    let plan = attachment_named(&connection, plan_mail.id, "kestrel-plan.pdf").await;
+    // The body says it, the file does not: the mail matches, the file is
+    // no card.
+    file(
+        &connection,
+        &account,
+        inbox,
+        Mail {
+            subject: "Field notes",
+            body: "A kestrel over the car park again.",
+            file: Some("notes.pdf"),
+            ago: Duration::days(3),
+            ..Mail::default()
+        },
+    )
+    .await;
+
+    let found = files(&connection, "kestrel").await;
+    assert_eq!(
+        found
+            .iter()
+            .map(|hit| (hit.attachment, hit.message, hit.name.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (plan, plan_mail.id, "kestrel-plan.pdf"),
+            (sheet, sheet_mail.id, "Atlas-Q3-budget.xlsx"),
+        ],
+        "newest first; the file whose mail only says it in the body is not a card"
+    );
+
+    let by_name = &found[0];
+    assert_eq!(by_name.subject.as_deref(), Some("The plan"));
+    assert_eq!(
+        by_name.from.as_ref().map(|from| from.address.as_str()),
+        Some("grace@example.com")
+    );
+    assert_eq!(by_name.size, 2048);
+    let matched = by_name.matched.as_ref().expect("its name matched");
+    assert_eq!(
+        matched.source,
+        Source::FileName {
+            attachment: plan,
+            name: "kestrel-plan.pdf".to_owned()
+        }
+    );
+
+    let by_contents = &found[1];
+    assert!(by_contents.mime_type.contains("spreadsheetml"));
+    let matched = by_contents.matched.as_ref().expect("its contents matched");
+    assert_eq!(
+        matched.source,
+        Source::FileContent {
+            attachment: sheet,
+            name: "Atlas-Q3-budget.xlsx".to_owned(),
+            location: postio_search::results::Location::Sheet {
+                name: "Summary".to_owned(),
+                row: 14,
+            },
+        }
+    );
+    let passage = matched.passage.as_ref().expect("the matching line");
+    assert!(passage.text.starts_with("Kestrel survey"), "{passage:?}");
+    assert_eq!(
+        passage
+            .ranges
+            .iter()
+            .map(|range| passage.text[range.clone()].to_lowercase())
+            .collect::<Vec<_>>(),
+        ["kestrel"]
+    );
+}
+
+#[tokio::test]
+async fn with_no_words_every_attachment_of_the_matched_mail_is_a_card() {
+    let (_database, connection, account, inbox) = store().await;
+    let (_, sheet) = mail_with_budget_sheet(&connection, &account, inbox).await;
+    file(
+        &connection,
+        &account,
+        inbox,
+        Mail {
+            from: "grace",
+            subject: "Not hers",
+            file: Some("other.pdf"),
+            ..Mail::default()
+        },
+    )
+    .await;
+    let found = files(&connection, "from:ada").await;
+    assert_eq!(
+        found.iter().map(|hit| hit.attachment).collect::<Vec<_>>(),
+        [sheet]
+    );
+    assert_eq!(found[0].matched, None, "no word to have matched");
+}

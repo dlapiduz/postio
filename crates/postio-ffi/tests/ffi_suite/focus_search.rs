@@ -643,9 +643,16 @@ async fn nothing_found_crosses_as_the_no_results_page_and_a_number_runs_a_way_ou
     })
     .await;
     assert_eq!(page.title, "Nothing matches all four filters");
+    // Attachment contents are claimed only once the indexer has been
+    // through every file on this machine (step 9), which here races the
+    // search: either sentence is the truth at the moment it is said.
     assert!(
-        page.searched.starts_with("Searched all ") && page.searched.ends_with(" on this Mac."),
-        "no attachment contents claimed before step 9: {}",
+        page.searched.starts_with("Searched all ")
+            && (page.searched.ends_with(" on this Mac.")
+                || page
+                    .searched
+                    .ends_with(" on this Mac, including attachment contents.")),
+        "{}",
         page.searched
     );
     let page = if page.counting.is_some() {
@@ -687,5 +694,91 @@ async fn nothing_found_crosses_as_the_no_results_page_and_a_number_runs_a_way_ou
     );
     assert_eq!(hint, Some(("/ to edit".to_owned(), None)));
     assert!(rows > 0, "{first} finds something");
+    session.shutdown();
+}
+
+/// Spec 010 step 9 (US8, FR-031, FR-053): over the search seed with its
+/// files on this machine, ⌘2 shows the Files tab -- its header and cards
+/// read back with `focus_search_file` -- and Space on a workbook hands
+/// `FocusFileCopy` a copy in the app's own temporary folder, which
+/// `focus_search_file_done` removes.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_files_tab_crosses_as_cards_and_space_hands_over_a_copy() {
+    let (database, _) = postio_demo::seeded(postio_demo::Seed::Search).await;
+    let scratch = tempfile::tempdir().expect("scratch");
+    let blobs = postio_storage::BlobStore::open(
+        scratch.path().to_path_buf(),
+        &postio_storage::test_support::blob_keys(),
+    )
+    .expect("a blob store");
+    postio_demo::store_search_blobs(&blobs).expect("the seed's files");
+    let session =
+        Session::open(SessionOptions::in_memory_with(database).with_blobs_for_test(blobs, scratch))
+            .expect("a session");
+    session.invoke("search");
+    let _ = dropdown(&session, 10, |view| view.state == DropdownStateFfi::Empty).await;
+    session.focus_bar_typed("atlas budget".to_owned());
+    let _ = dropdown(&session, 10, |view| view.footer_count.is_some()).await;
+    session.focus_search_show_all();
+    let _ = next(&session, 10, |event| match event {
+        UiEvent::FocusResults { view } if !view.groups.is_empty() => Some(()),
+        _ => None,
+    })
+    .await;
+
+    session.invoke("results_files");
+    let view = next(&session, 10, |event| match event {
+        UiEvent::FocusResults { view } if view.files.is_some() && view.rows > 0 => {
+            Some(view.clone())
+        }
+        _ => None,
+    })
+    .await;
+    let header = view.files.expect("the Files tab's header");
+    assert_eq!(header.title, "Files whose name or contents match");
+    assert!(view.groups.is_empty());
+    let cards: Vec<postio_ffi::FileCardFfi> = (0..view.rows)
+        .map(|at| session.focus_search_file(at).expect("a card"))
+        .collect();
+    assert!(session.focus_search_file(view.rows).is_none());
+    assert!(cards[0].focused);
+    let workbook = cards
+        .iter()
+        .position(|card| card.kind == "XLSX")
+        .expect("a workbook among the cards");
+    assert!(runs(&cards[workbook].name).to_lowercase().contains("atlas"));
+    assert!(cards[workbook].subject.starts_with("in \u{2018}"));
+
+    session.focus_search_point(workbook as u64);
+    session.invoke("quick_look");
+    let copy = next(&session, 10, |event| match event {
+        UiEvent::FocusFileCopy { copy: Some(copy) } => Some(copy.clone()),
+        _ => None,
+    })
+    .await;
+    assert!(!copy.save);
+    let path = std::path::PathBuf::from(&copy.path);
+    assert!(path.starts_with(postio_focus::file_copies()), "{path:?}");
+    assert!(path.exists(), "the copy is there for Quick Look");
+    assert_eq!(
+        copy.name,
+        cards[workbook]
+            .name
+            .iter()
+            .map(|run| run.text.as_str())
+            .collect::<String>()
+    );
+
+    session.focus_search_file_done();
+    let gone = async {
+        for _ in 0..100 {
+            if !path.exists() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        false
+    };
+    assert!(gone.await, "the copy is removed when the panel is gone");
     session.shutdown();
 }

@@ -566,6 +566,11 @@ impl FocusDriver {
         self.focus.lock().expect("focus lock").result_count()
     }
 
+    /// The Files tab's card at `position`; `None` past the last.
+    pub(crate) fn result_file(&self, position: u64) -> Option<postio_focus::FileCard> {
+        self.focus.lock().expect("focus lock").result_file(position)
+    }
+
     /// The result at `position`, or `None` while its page is on its way: a
     /// miss asks for the page, and `FocusResultsPage` says when it landed.
     pub(crate) fn result_row(self: &Arc<Self>, position: u64) -> Option<postio_focus::ResultRow> {
@@ -861,6 +866,9 @@ impl FocusDriver {
             }),
             Intent::Relaxations(view) => self.say(UiEvent::FocusRelaxations {
                 view: view.map(|view| (*view).into()),
+            }),
+            Intent::FileCopy(copy) => self.say(UiEvent::FocusFileCopy {
+                copy: copy.map(Into::into),
             }),
             Intent::Place { name } => self.say(UiEvent::FocusPlace { name }),
             Intent::OpenPlaces => self.say(UiEvent::FocusOpenPlaces),
