@@ -60,6 +60,7 @@
 //! [`facets`] and [`highlight`].
 
 pub mod date;
+pub mod edit;
 pub mod facets;
 pub mod highlight;
 pub mod matcher;
