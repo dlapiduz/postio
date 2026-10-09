@@ -71,4 +71,5 @@ mod threads;
 mod unified_threads;
 mod upsert_identity_cost;
 mod wal_ceiling;
+mod walk_columns;
 mod write_gate;
