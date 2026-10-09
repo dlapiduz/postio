@@ -298,3 +298,39 @@ async fn the_facets_ids_come_back_with_their_names() {
         "the one folder, by the name the store gave it"
     );
 }
+
+/// The line that introduces a quote ("On 21/09/2026 16:02, Ada Norwood
+/// wrote:") is neither the person's words nor the history: a passage is
+/// never cut from it, even when it holds the word searched for. "Ada" is
+/// in Quinn's greeting, in that line and in the quote's signature.
+#[tokio::test]
+async fn a_passage_is_never_the_line_that_introduces_a_quote() {
+    let world = world().await;
+    let results = search(&world, "ada").await;
+    let hit = results
+        .hits
+        .iter()
+        .find(|hit| hit.best == world.reply)
+        .expect("the top-posted reply says Ada");
+    let asked = (
+        hit.best,
+        hit.matches
+            .iter()
+            .map(|found| found.source.clone())
+            .collect(),
+    );
+
+    let matches = passages(&world, "ada", asked).await;
+    let cut: Vec<&str> = matches
+        .iter()
+        .filter_map(|found| found.passage.as_ref())
+        .map(|passage| passage.text.as_str())
+        .collect();
+    assert!(!cut.is_empty(), "{matches:?}");
+    for text in cut {
+        assert!(
+            !text.contains("wrote:"),
+            "cut from the quote's attribution: {text:?}"
+        );
+    }
+}
