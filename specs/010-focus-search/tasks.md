@@ -65,7 +65,7 @@ index_suite` green; the bench reports under budget, or the stop rule fires.
 
 - [x] T001 [P] Write a failing test in `crates/postio-demo/src/lib.rs` (tests module): `Seed::from_id("search")` round-trips, and the seed holds ≥ 400 messages over 24 months, threads of 1–12, the senders, labels (Atlas, Harbor, Receipts…), two open markers, and attachments with stored blobs (one each of PDF, XLSX, DOCX, PPTX, text) whose names and contents mention "atlas budget". Red: no such seed
 - [x] T002 Add `Seed::Search` to `crates/postio-demo/src/lib.rs`: invented mail in the shape of screens 01–13 (names as the design invents them, every address `@example.com`, and no other real name the PNGs show), its attachment blobs built in memory. Make T001 green
-- [ ] T003 [P] Write a guard test in `crates/postio-index/tests/index_suite/executor.rs`, `gtk_search_path_is_pinned`: a fixed corpus and twelve queries (no `label:`/`has:action`) through `executor::search` and `executor::facets`, their ids, order, totals and refinements recorded inline. Green on arrival; it must stay green through every phase (FR-046)
+- [x] T003 [P] Write a guard test in `crates/postio-index/tests/index_suite/executor.rs`, `gtk_search_path_is_pinned`: a fixed corpus and twelve queries (no `label:`/`has:action`) through `executor::search` and `executor::facets`, their ids, order, totals and refinements recorded inline. Green on arrival; it must stay green through every phase (FR-046)
 
 ### Operators
 
