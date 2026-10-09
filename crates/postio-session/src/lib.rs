@@ -42,6 +42,7 @@
 
 pub mod actions;
 pub mod attaching;
+mod attachment_text;
 pub mod blocking;
 pub mod checkup;
 pub mod diag;
@@ -183,6 +184,9 @@ pub fn backfill_policy(sync: &postio_config::SyncConfig) -> postio_runtime::Back
     }
 }
 
+pub use attachment_text::{
+    index_local_attachments, index_named_attachments, spawn_attachment_indexer,
+};
 pub use postio_storage::key::STORE_KEY_ENTRY;
 
 /// The master key this installation's store is encrypted under, minting one

@@ -16,6 +16,7 @@
 //! checked rather than assumed. A test that grows one has to move back out, or
 //! it will change what its neighbours see.
 
+mod attachment_index_pass;
 mod backfill_policy;
 mod body_index_pass;
 mod cid_scoping;

@@ -23,6 +23,9 @@ postio-calendar.workspace = true
 # The quote detector the reader folds by, so a search passage says "quoted
 # text" for exactly what the reader would fold (spec 010 D6). A pure leaf.
 postio-body.workspace = true
+# Text out of attachments already on this machine, for search (spec 010
+# D10). A pure leaf; the indexer here runs it on the blocking pool.
+postio-extract.workspace = true
 postio-jmap.workspace = true
 postio-gmail.workspace = true
 postio-index.workspace = true
@@ -71,6 +74,11 @@ postio-storage = { workspace = true, features = ["test-support"] }
 blake3 = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+# The search seed, with its attachments' bytes, for the attachment
+# indexer's pass over files that say "Atlas budget" (spec 010 T124).
+postio-demo = { workspace = true }
+# `Location`, as the indexer's tests read it back.
+postio-extract = { workspace = true }
 # The `.eml` corpus, so a conversation search's passages are cut from mail
 # as clients actually quote it (spec 010 T028).
 postio-model = { workspace = true, features = ["test-corpus"] }
