@@ -22,7 +22,10 @@
 //! One word (about 1% of messages), two words, an operator alone, an operator
 //! with words, a common word (most messages), zero hits with four filters
 //! (the relaxation path), and what the search bar sends while `a`, `at`, `atl` are typed (the words as typed: the
-//! dropdown's Conversations read; `completions` is step 8's, T115).
+//! dropdown's Conversations read; `completions` is step 8's, T115). Step 4
+//! adds the filter popovers' live preview -- the same request asked again
+//! per check, with a person, a label or a folder added or excluded -- and
+//! the timeline's and the Date popover's dates, alone and with words.
 //!
 //! # Running
 //!
@@ -346,6 +349,60 @@ const SHAPES: &[Shape] = &[
         query: "atl",
         kind: Kind::EndToEnd,
     },
+    // Step 4's live preview (T084): a popover's check asks the same
+    // request again with one term added, per toggle, and Esc asks the
+    // query it opened on once more; the timeline and the Date popover ask
+    // the words with `after:` and `before:`.
+    Shape {
+        name: "preview check a person",
+        query: "quarterly from:sender3",
+        kind: Kind::Executor,
+    },
+    Shape {
+        name: "preview exclude a person",
+        query: "quarterly -from:sender3",
+        kind: Kind::Executor,
+    },
+    Shape {
+        name: "preview check a label",
+        query: "quarterly label:atlas",
+        kind: Kind::Executor,
+    },
+    Shape {
+        name: "preview check a folder",
+        query: "quarterly in:inbox",
+        kind: Kind::Executor,
+    },
+    Shape {
+        name: "timeline range + word",
+        query: "quarterly after:2026-07-01 before:2026-10-01",
+        kind: Kind::Executor,
+    },
+    Shape {
+        name: "date words since + word",
+        query: "quarterly after:2026-07-01",
+        kind: Kind::Executor,
+    },
+    Shape {
+        name: "timeline range alone",
+        query: "after:2026-07-01 before:2026-10-01",
+        kind: Kind::Executor,
+    },
+    Shape {
+        name: "timeline range + operator",
+        query: "from:sender3 after:2026-07-01 before:2026-10-01",
+        kind: Kind::Executor,
+    },
+    Shape {
+        name: "e2e preview check a person",
+        query: "quarterly from:sender3",
+        kind: Kind::EndToEnd,
+    },
+    Shape {
+        name: "e2e timeline range + word",
+        query: "quarterly after:2026-07-01 before:2026-10-01",
+        kind: Kind::EndToEnd,
+    },
 ];
 
 /// Runs the shape once; returns the conversations it found.
@@ -393,7 +450,14 @@ async fn run_once(shape: &Shape, query: &ParsedQuery) -> u64 {
                     )
                 })
                 .collect();
-            let passages = postio_session::search::passages(&corpus.connection, query, &page).await;
+            // Results avoid the first line, which the row shows (D7).
+            let passages = postio_session::search::passages(
+                &corpus.connection,
+                query,
+                &page,
+                postio_search::passage::FirstLine::Avoided,
+            )
+            .await;
             std::hint::black_box(&passages);
             results.total
         }
