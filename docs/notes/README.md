@@ -36,4 +36,5 @@ leaves this list. Traps worth knowing before you start are in
 - 2026-10-09 — [Focus search, step 6: selection, the bulk bar and Save search against screen 12](2026-10-09-focus-search-step-6.md)
 - 2026-10-09 — [Focus search, step 7: no results and its ways out against screen 13](2026-10-09-focus-search-step-7.md)
 - 2026-10-09 — [Focus search, step 8: typing intelligence against screens 02, 04 and 05](2026-10-09-focus-search-step-8.md)
+- 2026-10-09 — [Focus search, step 9: attachment contents and the Files tab against screen 11](2026-10-09-focus-search-step-9.md)
 - 2026-10-05 — [Architecture inventory: Postio, Flectar and Letter](2026-10-05-reference-codebase-architecture-inventory.md)
