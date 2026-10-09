@@ -180,6 +180,14 @@ impl Extractor {
         &self.inner.helper
     }
 
+    /// Whether there is a file where the helper is looked for: what lets
+    /// the indexer try again the PDFs it skipped while there was not. A
+    /// file from another build passes this and is refused at the first
+    /// extraction, which records those PDFs `unavailable` again.
+    pub(crate) fn helper_present(&self) -> bool {
+        self.inner.helper.is_file()
+    }
+
     /// The limits every extraction runs under.
     pub fn limits(&self) -> &Limits {
         &self.inner.limits

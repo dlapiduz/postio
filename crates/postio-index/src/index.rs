@@ -240,7 +240,9 @@ const HEADERS_SCHEMA_VERSION: i64 = 2;
 /// 2 — `attachment_text_owed` and the triggers that keep it, so a search
 ///     asks whether anything is unread with one seek rather than a walk of
 ///     every attachment.
-pub const ATTACHMENTS_SCHEMA_VERSION: i64 = 2;
+/// 3 — `unavailable` as an outcome of its own, so a part skipped for want
+///     of the extraction helper can be told from one skipped for good.
+pub const ATTACHMENTS_SCHEMA_VERSION: i64 = 3;
 
 /// How many rows one message may contribute to `message_headers`.
 ///
@@ -330,7 +332,12 @@ CREATE TABLE IF NOT EXISTS attachment_extraction (
     content_id  INTEGER NOT NULL REFERENCES message_contents(id) ON DELETE CASCADE,
     position    INTEGER NOT NULL,
     version     INTEGER NOT NULL,
-    outcome     TEXT    NOT NULL CHECK (outcome IN ('complete','truncated','skipped','failed')),
+    -- `unavailable` is a skip that is not final: the part was not read
+    -- because the reader it needs was missing (`Skip::Unavailable`), and
+    -- the indexer takes the row away once it is there
+    -- ([`requeue_unavailable`]).
+    outcome     TEXT    NOT NULL
+                CHECK (outcome IN ('complete','truncated','skipped','unavailable','failed')),
     units       INTEGER NOT NULL,
     PRIMARY KEY (content_id, position)
 );
@@ -1516,12 +1523,39 @@ pub async fn index_attachment_text(
                 content_id,
                 position,
                 i64::from(postio_extract::EXTRACTOR_VERSION),
-                extracted.outcome.as_str(),
+                recorded(extracted.outcome),
                 extracted.units.len() as i64
             ],
         )
         .await?;
     Ok(true)
+}
+
+/// An outcome as `attachment_extraction` records it: its own word, except
+/// that a part skipped for want of its reader is `unavailable` rather than
+/// `skipped`, because that skip is not final ([`requeue_unavailable`]).
+fn recorded(outcome: postio_extract::Outcome) -> &'static str {
+    match outcome {
+        postio_extract::Outcome::Skipped(postio_extract::Skip::Unavailable) => "unavailable",
+        other => other.as_str(),
+    }
+}
+
+/// Put every part recorded `unavailable` back in the indexer's queue: the
+/// reader it was skipped for is here now. Answers how many.
+///
+/// The row is what kept the part off the queue, so that a pass with no
+/// helper ends (#500); taking it away is what lets the next pass read it.
+/// Called by the indexer before a pass when it can see the helper, not by
+/// the queue itself -- a queue that offered these parts while the helper
+/// was missing would offer them for ever.
+pub async fn requeue_unavailable(connection: &Connection) -> Result<u64> {
+    Ok(sql::execute(
+        connection,
+        "DELETE FROM attachment_extraction WHERE outcome = 'unavailable'",
+        (),
+    )
+    .await?)
 }
 
 /// The payload part an attachment row shows: its message's content and

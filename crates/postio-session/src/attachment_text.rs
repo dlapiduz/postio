@@ -113,7 +113,9 @@ fn note_arrival(pending: &mut Vec<postio_model::MessageId>, event: &postio_core:
 ///
 /// Safe on every start: on a caught-up store it is one query that finds
 /// nothing. A part that fails is recorded as failed and not tried again,
-/// so the pass always ends.
+/// so the pass always ends. A PDF recorded `unavailable` -- skipped because
+/// the helper was missing -- is tried again by the first pass that finds
+/// the helper in place.
 pub async fn index_local_attachments(
     database: &Store,
     blobs: &BlobStore,
@@ -129,6 +131,9 @@ pub async fn index_local_attachments_with(
     extractor: &Extractor,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     let started = Instant::now();
+    if extractor.helper_present() {
+        requeue_unavailable(database).await?;
+    }
     let mut indexed = 0usize;
     let mut last: Vec<postio_model::AttachmentId> = Vec::new();
     loop {
@@ -167,6 +172,25 @@ pub async fn index_local_attachments_with(
         );
     }
     Ok(indexed)
+}
+
+/// Put the PDFs skipped while the helper was missing back in the queue,
+/// now that it is here. Without this a skip for want of the helper was as
+/// final as one for an encrypted file, until an extractor version moved.
+async fn requeue_unavailable(database: &Store) -> Result<(), Box<dyn std::error::Error>> {
+    let connection = database.connect_background().await?;
+    let _permit = connection
+        .write_gate()
+        .acquire(postio_storage::WritePriority::Background)
+        .await;
+    let requeued = postio_index::index::requeue_unavailable(&connection).await?;
+    if requeued > 0 {
+        tracing::info!(
+            requeued,
+            "the extraction helper is here: reading what it skipped"
+        );
+    }
+    Ok(())
 }
 
 /// Extract the downloaded, unextracted attachments of exactly these
