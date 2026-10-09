@@ -28,6 +28,7 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2
 quick-xml = "0.41.0"
 # A `text/*` part in whatever charset it declares, and UTF-16 by its BOM.
 encoding_rs = "0.8.42"
+postio-workspace-hack.workspace = true
 
 # Platform sections at the foot, after every plain table
 # (`check-target-sections-last.py`).
