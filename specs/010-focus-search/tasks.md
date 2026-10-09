@@ -362,6 +362,26 @@ rows are checked, the list is either's mail; Esc restores the query.
 
 ---
 
+## Phase 13: Extraction in a child process (D28)
+
+**Goal**: no attachment, however hostile, can leave a thread spinning in
+the app or take it down: `pdf-extract` and the other readers run in a
+short-lived helper process that the indexer kills at its deadline.
+
+**Independent test**: a helper that never answers is killed at
+`Limits::max_time` plus the grace, the attachment is recorded `truncated`,
+and the next attachment in the same pass is indexed; the demo bundle
+(`POSTIO_DEMO=search`) indexes its attachments through the helper in
+`Contents/MacOS`.
+
+- [ ] T151 [P] [US8] Write failing tests in `crates/postio-extract/src/wire.rs` and `tests/fixtures.rs`: a request and a reply round-trip (every `Location`, every `Outcome`); a reply that is cut short, has the wrong magic, a wrong wire version or bytes after its end is an error, and one from another `EXTRACTOR_VERSION` is told apart; `serve` over the T120 fixture set answers exactly what `extract` answers. Red: no wire
+- [ ] T152 [US8] Implement `postio_extract::wire`, `serve`, `helper::run` (no core file, a CPU ceiling, address space on Linux), `is_pdf` and `Skip::Unavailable`, and the `postio-extract-helper` binary as a `src/bin/` of `postio-session` (one line over `helper::run`, so its integration tests get `CARGO_BIN_EXE_postio-extract-helper`). Make T151 green
+- [ ] T153 [P] [US8] Write failing tests in a new `crates/postio-session/tests/session_suite/attachment_extraction.rs`: the real helper answers the search seed's files exactly as in-process extraction does; a helper that never answers is killed at `max_time` plus the grace and the pass records `truncated` and indexes the next attachment; a helper that aborts records `failed`, and so does one that answers garbage; with no helper a PDF is recorded `skipped` and never read in-process while a text file is still read; the log carries attachment ids and outcomes only. Red: no runner
+- [ ] T154 [US8] Implement the runner in `crates/postio-session/src/extraction.rs` (one process per attachment, stdin writer and stdout reader threads, killed at the deadline; the helper found by `POSTIO_EXTRACT_HELPER`, then beside the executable, then above a test binary's `deps/`) and use it from `attachment_text.rs`. Make T153 green; T124's suite stays green
+- [ ] T155 [US8] Package the helper: `scripts/macos-build.sh` builds it, `scripts/macos-bundle.sh` copies it into `Postio.app/Contents/MacOS` and signs it with the app's identity before the bundle; the flatpak manifests install it beside the binary. Prove it with a demo bundle (`POSTIO_DEMO=search`, `POSTIO_LOG=postio_session=debug`): attachments are extracted through the bundled helper
+
+---
+
 ## Dependencies
 
 - Phase 1 blocks everything. Phases 2 → 3 → 4 are in order (the dropdown,
@@ -369,7 +389,7 @@ rows are checked, the list is either's mail; Esc restores the query.
   Phase 3 and may run in any order. Phase 8 needs Phase 2. Phase 9 needs
   Phase 3 (the Files tab) and Phase 1 (the search arm). Phase 10 needs
   Phase 3. Phase 12 needs Phase 4 (the popovers) and Phase 7 (relaxations).
-  Phase 11 last.
+  Phase 13 needs Phase 9 (the extractor and its indexer). Phase 11 last.
 - Within a phase, a test task precedes its implementation; `[P]` test tasks
   in one phase can be written together.
 - The brief's order is kept for building and screenshots (FR-060); the

@@ -147,6 +147,9 @@ Every licence above is in `deny.toml`'s allow list.
   unwinds; only `release-tui` aborts). A stack overflow cannot be caught: if
   the corpus fixture of hostile files shows one, extraction moves to a child
   process (`postio-extract` as a binary), and that is reported, not hidden.
+  *Taken (maintainer, 2026-10-09): spec D28, tasks T151–T155. Two
+  hostile files were found (T121); extraction now runs in a helper process
+  that is killed at its deadline.*
 
 **Shape.** A new crate `postio-extract`: `extract(bytes, mime, name,
 &Limits) -> Extracted { units: Vec<Unit{location, text}>, outcome }`. Pure,
