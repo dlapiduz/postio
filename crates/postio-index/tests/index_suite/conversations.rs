@@ -553,12 +553,9 @@ async fn it_says_how_many_messages_it_looked_through() {
         "every message the search could have found, matched or not"
     );
     assert!(results.corpus_complete);
-    // Nothing reads an attachment's text yet (spec 010 step 9), so the
-    // search cannot say it looked inside them (US6 scenario 2).
-    assert!(
-        !results.contents_complete,
-        "no attachment contents are searched before step 9"
-    );
+    // No attachment is on this machine, so none is left unread (step 9;
+    // `contents_are_incomplete_while_a_downloaded_attachment_is_unread`).
+    assert!(results.contents_complete);
 }
 
 #[tokio::test]
@@ -691,4 +688,216 @@ async fn a_message_filed_twice_is_one_match() {
         .expect("its count");
         assert_eq!(counts, [1], "{query:?}, counted");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Attachment contents (spec 010 step 9, US8, T126)
+// ---------------------------------------------------------------------------
+
+/// Gives `message`'s attachment named `name` its bytes on this machine, as
+/// a download would: the indexer's queue now holds it.
+pub(crate) async fn downloaded(
+    connection: &Connection,
+    message: MessageId,
+    name: &str,
+    mime: &str,
+) {
+    connection
+        .execute(
+            "UPDATE attachments SET blob_id = ?1, mime_type = ?2
+              WHERE message_id = ?3 AND filename = ?4",
+            (format!("blob-{name}"), mime, message.get(), name),
+        )
+        .await
+        .expect("the blob is stored");
+}
+
+/// The attachment of `message` named `name`.
+pub(crate) async fn attachment_named(
+    connection: &Connection,
+    message: MessageId,
+    name: &str,
+) -> postio_model::AttachmentId {
+    postio_storage::sql::one(
+        connection,
+        "SELECT id FROM attachments WHERE message_id = ?1 AND filename = ?2",
+        (message.get(), name),
+        |row| {
+            use postio_storage::sql::RowExt as _;
+            Ok(postio_model::AttachmentId::new(row.col(0)?))
+        },
+    )
+    .await
+    .expect("the attachment")
+}
+
+/// What the extractor read from a budget sheet: "kestrel" only on row 14 of
+/// "Summary", nowhere in the mail itself.
+pub(crate) fn budget_sheet() -> postio_extract::Extracted {
+    let row = |row: u32, text: &str| postio_extract::Unit {
+        location: postio_extract::Location::Sheet {
+            name: "Summary".to_owned(),
+            row,
+        },
+        text: text.to_owned(),
+    };
+    postio_extract::Extracted {
+        units: vec![
+            row(1, "Line item | Q3 | Q4"),
+            row(3, "Travel | 1,200 | 900"),
+            row(14, "Kestrel survey | 4,500 | 4,800"),
+        ],
+        outcome: postio_extract::Outcome::Complete,
+    }
+}
+
+/// A mail whose only mention of "kestrel" is in its spreadsheet, read.
+pub(crate) async fn mail_with_budget_sheet(
+    connection: &Connection,
+    account: &Account,
+    inbox: MailboxId,
+) -> (Message, postio_model::AttachmentId) {
+    let message = file(
+        connection,
+        account,
+        inbox,
+        Mail {
+            subject: "Q3 numbers",
+            body: "The sheet is attached, as promised.",
+            file: Some("Atlas-Q3-budget.xlsx"),
+            ago: Duration::days(2),
+            ..Mail::default()
+        },
+    )
+    .await;
+    downloaded(
+        connection,
+        message.id,
+        "Atlas-Q3-budget.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    .await;
+    let attachment = attachment_named(connection, message.id, "Atlas-Q3-budget.xlsx").await;
+    (message, attachment)
+}
+
+#[tokio::test]
+async fn a_word_only_inside_an_attachment_finds_its_conversation_where_it_is() {
+    let (_database, connection, account, inbox) = store().await;
+    let (message, attachment) = mail_with_budget_sheet(&connection, &account, inbox).await;
+    assert!(
+        postio_index::index::index_attachment_text(&connection, attachment, &budget_sheet())
+            .await
+            .expect("index its text"),
+        "the attachment is there to index"
+    );
+
+    let results = conversations(&connection, "kestrel", ConversationOrder::BestMatch, 0, 10).await;
+    assert_eq!(
+        keys(&results),
+        [ConversationKey::Lone(message.id)],
+        "the word is only in the sheet, and the sheet finds its mail"
+    );
+    let hit = &results.hits[0];
+    assert_eq!(
+        hit.matches
+            .iter()
+            .map(|found| found.source.clone())
+            .collect::<Vec<_>>(),
+        [Source::FileContent {
+            attachment,
+            name: "Atlas-Q3-budget.xlsx".to_owned(),
+            location: postio_search::results::Location::Sheet {
+                name: "Summary".to_owned(),
+                row: 14,
+            },
+        }],
+        "where in the file: the sheet and the row"
+    );
+    assert!(
+        hit.reasons.contains(&RankReason::InFileName),
+        "a file found it: {:?}",
+        hit.reasons
+    );
+    assert!(
+        results.contents_complete,
+        "every downloaded attachment has been read"
+    );
+
+    // Newest finds it too: the arm is the match's, not the ranking's.
+    let newest = conversations(&connection, "kestrel", ConversationOrder::Newest, 0, 10).await;
+    assert_eq!(keys(&newest), [ConversationKey::Lone(message.id)]);
+    // And beside a set, which walks the match apart from `messages`.
+    let narrowed = conversations(
+        &connection,
+        "kestrel from:ada",
+        ConversationOrder::BestMatch,
+        0,
+        10,
+    )
+    .await;
+    assert_eq!(keys(&narrowed), [ConversationKey::Lone(message.id)]);
+}
+
+#[tokio::test]
+async fn contents_are_incomplete_while_a_downloaded_attachment_is_unread() {
+    let (_database, connection, account, inbox) = store().await;
+    let (_, attachment) = mail_with_budget_sheet(&connection, &account, inbox).await;
+
+    let before = conversations(&connection, "numbers", ConversationOrder::BestMatch, 0, 10).await;
+    assert!(
+        !before.contents_complete,
+        "a downloaded sheet nobody has read yet: the search cannot say it looked inside"
+    );
+
+    postio_index::index::index_attachment_text(&connection, attachment, &budget_sheet())
+        .await
+        .expect("index its text");
+    let after = conversations(&connection, "numbers", ConversationOrder::BestMatch, 0, 10).await;
+    assert!(after.contents_complete, "read now");
+}
+
+#[tokio::test]
+async fn an_attachment_never_downloaded_leaves_the_contents_complete() {
+    let (_database, connection, account, inbox) = store().await;
+    // The file is named, its bytes are on the server: nothing here can read
+    // it, and nothing asks for it (FR-050).
+    file(
+        &connection,
+        &account,
+        inbox,
+        Mail {
+            subject: "Q3 numbers",
+            file: Some("Atlas-Q3-budget.xlsx"),
+            ..Mail::default()
+        },
+    )
+    .await;
+    let results = conversations(&connection, "numbers", ConversationOrder::BestMatch, 0, 10).await;
+    assert!(results.contents_complete);
+}
+
+#[tokio::test]
+async fn gtk_search_does_not_reach_attachment_contents() {
+    // D11: the old path keeps its corpus until Linux adopts this search.
+    let (_database, connection, account, inbox) = store().await;
+    let (_, attachment) = mail_with_budget_sheet(&connection, &account, inbox).await;
+    postio_index::index::index_attachment_text(&connection, attachment, &budget_sheet())
+        .await
+        .expect("index its text");
+    let parsed = parse("kestrel", today());
+    let found = postio_index::executor::search(
+        &connection,
+        &postio_index::SearchRequest {
+            account: AccountScope::Unified,
+            query: &parsed,
+            scope: postio_search::facets::Scope::AllMail,
+            limit: 50,
+            order: postio_search::ResultOrder::Relevance,
+        },
+        now(),
+    )
+    .await
+    .expect("GTK's search");
+    assert!(found.hits.is_empty(), "{:#?}", found.hits);
 }

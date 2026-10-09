@@ -515,3 +515,127 @@ async fn a_message_on_its_own_is_a_conversation_of_one() {
         "{found:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Attachment contents (spec 010 step 9, US8, T126)
+// ---------------------------------------------------------------------------
+
+/// A mail whose spreadsheet, downloaded and read, is the only place it says
+/// "kestrel": row 14 of "Summary".
+async fn mail_with_sheet(world: &World) -> (MessageId, postio_model::AttachmentId) {
+    use postio_storage::sql::{self, RowExt as _};
+    let mut message = postio_model::Message::new(world.account, world.inbox, chrono::Utc::now());
+    message.subject = Some("Q3 numbers".to_owned());
+    message.from = vec![postio_model::EmailAddress::new(
+        Some("Ada Moreno"),
+        "ada@example.com",
+    )];
+    let mut sheet = postio_model::Attachment::new(
+        MessageId::UNASSIGNED,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        9_000,
+    );
+    sheet.filename = Some("Atlas-Q3-budget.xlsx".to_owned());
+    sheet.blob_id = Some(postio_model::BlobId::new("blob-atlas"));
+    message.attachments.push(sheet);
+    MessageRepository::new(&world.connection)
+        .create(&mut message)
+        .await
+        .expect("create");
+    postio_index::index::index_body(
+        &world.connection,
+        message.id.get(),
+        Some("The sheet is attached, as promised."),
+    )
+    .await
+    .expect("index the body");
+    let attachment = sql::one(
+        &world.connection,
+        "SELECT id FROM attachments WHERE message_id = ?1",
+        [message.id.get()],
+        |row| Ok(postio_model::AttachmentId::new(row.col(0)?)),
+    )
+    .await
+    .expect("its attachment");
+    let row = |row: u32, text: &str| postio_extract::Unit {
+        location: postio_extract::Location::Sheet {
+            name: "Summary".to_owned(),
+            row,
+        },
+        text: text.to_owned(),
+    };
+    postio_index::index::index_attachment_text(
+        &world.connection,
+        attachment,
+        &postio_extract::Extracted {
+            units: vec![
+                row(3, "Travel | 1,200 | 900"),
+                row(14, "Kestrel survey | 4,500 | 4,800"),
+            ],
+            outcome: postio_extract::Outcome::Complete,
+        },
+    )
+    .await
+    .expect("index its text");
+    (message.id, attachment)
+}
+
+fn in_the_sheet(attachment: postio_model::AttachmentId) -> Source {
+    Source::FileContent {
+        attachment,
+        name: "Atlas-Q3-budget.xlsx".to_owned(),
+        location: postio_search::results::Location::Sheet {
+            name: "Summary".to_owned(),
+            row: 14,
+        },
+    }
+}
+
+#[tokio::test]
+async fn a_word_inside_an_attachment_has_the_located_unit_as_its_passage() {
+    let world = world().await;
+    let (message, attachment) = mail_with_sheet(&world).await;
+    let hit = only_hit(&world, "kestrel").await;
+    assert_eq!(hit, (message, vec![in_the_sheet(attachment)]));
+
+    let found = passages(&world, "kestrel", hit).await;
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].source, in_the_sheet(attachment));
+    let passage = found[0].passage.as_ref().expect("cut from the sheet's row");
+    assert!(
+        passage.text.contains("Kestrel survey | 4,500"),
+        "the row's own words: {:?}",
+        passage.text
+    );
+    assert_eq!(highlighted(&found[0]), ["kestrel"]);
+    // The words for where it is are postio-ui's.
+    assert_eq!(
+        postio_ui::search_view::location(&postio_search::results::Location::Sheet {
+            name: "Summary".to_owned(),
+            row: 14,
+        }),
+        "Sheet \u{2018}Summary\u{2019}, row 14"
+    );
+}
+
+#[tokio::test]
+async fn quick_look_lists_a_match_inside_an_attachment() {
+    let world = world().await;
+    let (message, attachment) = mail_with_sheet(&world).await;
+    let found = conversation_matches(
+        &world,
+        "kestrel",
+        postio_search::results::ConversationKey::Lone(message),
+    )
+    .await;
+    assert_eq!(
+        places(&found),
+        [(
+            Some(message),
+            in_the_sheet(attachment),
+            Some("Ada Moreno".to_owned())
+        )]
+    );
+    let passage = found[0].found.passage.as_ref().expect("a passage");
+    assert!(passage.text.contains("Kestrel survey"), "{passage:?}");
+}

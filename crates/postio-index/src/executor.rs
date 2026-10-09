@@ -37,9 +37,11 @@ use postio_storage::sql::{self, RowExt as _};
 
 mod completions;
 mod conversations;
+mod files;
 mod relaxations;
 pub use completions::completions;
 pub use conversations::{ConversationRequest, search_conversations};
+pub use files::{FileMatch, file_matches};
 pub use relaxations::relaxation_counts;
 
 /// How many candidates `search` pulls out of SQL before re-ranking in Rust,
@@ -1129,6 +1131,38 @@ const HITS_JOIN: &str = "FROM (
               WHERE fts_match(body_search, ?2)
           ) hits CROSS JOIN messages m INDEXED BY idx_messages_content
                  ON m.content_id = hits.rid";
+
+/// [`HITS_JOIN`] with a third arm: what attachments say (spec 010 D11).
+///
+/// The conversation search's own, and only its: GTK's [`search`] keeps
+/// [`HITS_JOIN`]'s corpus until Linux adopts this search, so the two are
+/// separate strings. **Keep the first two arms and the join in step with
+/// [`HITS_JOIN`]**: a change to how a hit is joined to its messages there
+/// is owed here too.
+///
+/// The arm is grouped by content: a spreadsheet whose every row says the
+/// word is one hit for its message, not thousands, so the walk's `LIMIT`
+/// counts messages as it does for the other two. Its score is the best
+/// unit's, read bare inside and aggregated outside, for the reason
+/// [`HITS_JOIN`] gives about arithmetic around `fts_score`. The attachment
+/// text is folded as the body is, so it is matched by the body's `?2`.
+const HITS_JOIN_WITH_FILES: &str = "FROM (
+             SELECT content_id AS rid,
+                    fts_score(sender, recipients, subject, filenames, list_id, ?1) AS meta,
+                    NULL AS body, NULL AS file
+               FROM search_documents
+              WHERE fts_match(sender, recipients, subject, filenames, list_id, ?1)
+             UNION ALL
+             SELECT content_id, NULL, fts_score(body_search, ?2), NULL
+               FROM message_search_bodies
+              WHERE fts_match(body_search, ?2)
+             UNION ALL
+             SELECT content_id, NULL, NULL, max(unit_score)
+               FROM (SELECT content_id, fts_score(text_search, ?2) AS unit_score
+                       FROM attachment_passages
+                      WHERE fts_match(text_search, ?2))
+              GROUP BY content_id
+          ) hits CROSS JOIN messages m ON m.content_id = hits.rid";
 
 /// The same match, asked one message at a time.
 ///

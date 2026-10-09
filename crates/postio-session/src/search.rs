@@ -425,6 +425,9 @@ async fn names(
 ///
 /// One body read per hit that matched in its body, and none for the rest:
 /// a subject is drawn by the row itself and a file name is its own words.
+/// What attachments say is one read for the whole page: each unit the
+/// executor located ([`Source::FileContent`]), its passage cut from the
+/// unit's text.
 /// The answer keeps the order of `hits` and, within each, of its sources,
 /// a body match becoming [`Source::Body`], [`Source::Quoted`] or both. A
 /// message with no local body keeps its sources without passages: the
@@ -450,6 +453,26 @@ pub async fn passages(
         .map(|term| term.value.clone())
         .filter(|value| !value.is_empty())
         .collect();
+    let wanted: Vec<_> = hits
+        .iter()
+        .flat_map(|(_, sources)| sources)
+        .filter_map(|source| match source {
+            Source::FileContent {
+                attachment,
+                location,
+                ..
+            } => Some((*attachment, location.clone())),
+            _ => None,
+        })
+        .collect();
+    let units = if wanted.is_empty() || terms.is_empty() {
+        Vec::new()
+    } else {
+        postio_index::index::attachment_units(connection, &wanted)
+            .await
+            .map_err(|error| tracing::warn!(%error, "attachment passages could not be read"))
+            .unwrap_or_default()
+    };
     let mut answered = Vec::with_capacity(hits.len());
     for (message, sources) in hits {
         let text = if sources.contains(&Source::Body) && !terms.is_empty() {
@@ -464,6 +487,23 @@ pub async fn passages(
                 (Source::Body, Some(text)) => {
                     matches.extend(body_matches(text, &terms, first_line));
                 }
+                (
+                    Source::FileContent {
+                        attachment,
+                        location,
+                        ..
+                    },
+                    _,
+                ) => matches.push(Match {
+                    source: source.clone(),
+                    passage: units
+                        .iter()
+                        .find(|(unit, at, _)| unit == attachment && at == location)
+                        .and_then(|(_, _, text)| {
+                            postio_search::passage::cut(text, &terms, FirstLine::Any)
+                        }),
+                    when: None,
+                }),
                 (source, _) => matches.push(Match {
                     source: source.clone(),
                     passage: None,
@@ -691,6 +731,20 @@ async fn read_matches(
     } else {
         file_names(connection, members.iter().map(|member| member.id)).await?
     };
+    // What the attachments say: each one's first unit the words match.
+    let read = if words.is_empty() {
+        Vec::new()
+    } else {
+        let ids: Vec<MessageId> = members.iter().map(|member| member.id).collect();
+        // Quick Look keeps the conversation's other matches if the
+        // files' cannot be read.
+        postio_index::executor::file_matches(connection, query, &ids)
+            .await
+            .map_err(
+                |error| tracing::warn!(%error, "a conversation's file matches could not be read"),
+            )
+            .unwrap_or_default()
+    };
 
     let mut found = Vec::new();
     for (at, member) in members.iter().enumerate() {
@@ -733,6 +787,21 @@ async fn read_matches(
                         name: name.clone(),
                     },
                     passage: Some(whole(name, marks)),
+                    when,
+                },
+            });
+        }
+        for file in read.iter().filter(|file| file.message == member.id) {
+            found.push(ConversationMatch {
+                message: Some(member.id),
+                from: member.from.clone(),
+                found: Match {
+                    source: Source::FileContent {
+                        attachment: file.attachment,
+                        name: file.name.clone(),
+                        location: file.location.clone(),
+                    },
+                    passage: postio_search::passage::cut(&file.text, &words, FirstLine::Any),
                     when,
                 },
             });

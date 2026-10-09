@@ -309,8 +309,9 @@ async fn the_facets_walk_the_match_once_per_scope() {
 
 /// A corpus of `size` messages for the conversation search's budget: every
 /// one says "update" (the common word), one in five "budget", four senders
-/// take turns, three messages make a thread, and one in four carries the
-/// Atlas label. Loaded with the metadata index deferred and written once,
+/// take turns, three messages make a thread, one in four carries the
+/// Atlas label, and one in ten a spreadsheet whose text, read, says
+/// "kestrel" and nothing in the mail does (step 9). Loaded with the metadata index deferred and written once,
 /// which is what keeps two thousand messages to a second or two.
 async fn conversation_corpus(size: usize) -> (postio_storage::Store, postio_storage::Checkout) {
     let database = test_support::memory().await;
@@ -344,6 +345,15 @@ async fn conversation_corpus(size: usize) -> (postio_storage::Store, postio_stor
         )];
         message.to = vec![EmailAddress::new(Some("Me"), "me@example.com")];
         message.subject = Some(format!("Weekly report {nth}"));
+        if nth % 10 == 0 {
+            let mut sheet = postio_model::Attachment::new(
+                postio_model::MessageId::UNASSIGNED,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                4_000,
+            );
+            sheet.filename = Some(format!("sheet-{nth}.xlsx"));
+            message.attachments.push(sheet);
+        }
         messages.create(&mut message).await.expect("create message");
         if nth % 3 == 0 {
             let mut created = postio_model::Thread::new(account.id);
@@ -372,6 +382,38 @@ async fn conversation_corpus(size: usize) -> (postio_storage::Store, postio_stor
     postio_index::index::write_documents(&connection, &ids)
         .await
         .expect("index the documents");
+    let sheets: Vec<i64> = postio_storage::sql::all_unbounded(
+        &connection,
+        "SELECT id FROM attachments ORDER BY id",
+        (),
+        |row| {
+            use postio_storage::sql::RowExt as _;
+            row.col(0)
+        },
+    )
+    .await
+    .expect("the sheets");
+    for sheet in sheets {
+        let unit = |row: u32, text: String| postio_extract::Unit {
+            location: postio_extract::Location::Sheet {
+                name: "Summary".to_owned(),
+                row,
+            },
+            text,
+        };
+        postio_index::index::index_attachment_text(
+            &connection,
+            postio_model::AttachmentId::new(sheet),
+            &postio_extract::Extracted {
+                units: (1..=20)
+                    .map(|row| unit(row, format!("kestrel survey line {row}")))
+                    .collect(),
+                outcome: postio_extract::Outcome::Complete,
+            },
+        )
+        .await
+        .expect("index the sheet's text");
+    }
     connection.execute("COMMIT", ()).await.expect("commit");
     (database, connection)
 }
@@ -381,13 +423,16 @@ async fn a_conversation_search_costs_the_same_statements_whatever_the_corpus() {
     use postio_index::executor::{ConversationRequest, search_conversations};
     use postio_search::results::ConversationOrder;
 
-    const SHAPES: [&str; 6] = [
+    const SHAPES: [&str; 8] = [
         "budget",
         "from:sender1",
         "from:sender1 budget",
         "update",
         "label:atlas budget",
         "budget -sender2",
+        // Only in attachments: the page's file matches are read (step 9).
+        "kestrel",
+        "kestrel from:sender0",
     ];
     let now = Utc.with_ymd_and_hms(2026, 8, 21, 12, 0, 0).unwrap();
     let mut costs: Vec<Vec<usize>> = Vec::new();
