@@ -11,7 +11,10 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use postio_model::{EmailAddress, MailboxId, MessageId, ThreadId};
+use postio_model::{AttachmentId, EmailAddress, LabelId, MailboxId, MessageId, ThreadId};
+
+use crate::facets::SearchFacets;
+pub use crate::passage::Passage;
 
 /// Which order a result set comes back in.
 ///
@@ -159,6 +162,215 @@ pub struct Instead {
 /// "how broad is this" signal for the planner, and a cap for the display.
 /// FTS5 offers no cheap count, which is what makes that hard.
 pub const TOTAL_HITS_CAP: u64 = 10_000;
+
+// ---------------------------------------------------------------------------
+// Conversation search (spec 010)
+// ---------------------------------------------------------------------------
+
+/// Where in a message a match was found: the row's source tag.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Source {
+    /// The subject line.
+    Subject,
+    /// The body, the person's own words.
+    Body,
+    /// The body's quoted history.
+    Quoted,
+    /// An attachment's file name.
+    FileName {
+        /// The attachment.
+        attachment: AttachmentId,
+        /// Its file name.
+        name: String,
+    },
+    /// What an attachment says.
+    FileContent {
+        /// The attachment.
+        attachment: AttachmentId,
+        /// Its file name.
+        name: String,
+        /// Where in it.
+        location: Location,
+    },
+}
+
+/// Where in an attachment a passage sits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Location {
+    /// A PDF page, 1-based.
+    Page(u32),
+    /// A spreadsheet row, 1-based, in a named sheet.
+    Sheet {
+        /// The sheet's name.
+        name: String,
+        /// The row, 1-based.
+        row: u32,
+    },
+    /// A presentation slide, 1-based.
+    Slide(u32),
+    /// A document paragraph, 1-based.
+    Paragraph(u32),
+    /// A line of plain text, 1-based.
+    Line(u32),
+    /// Reserved: a row of a table in a document.
+    Table {
+        /// Which table, 1-based.
+        index: u32,
+        /// The row, 1-based.
+        row: u32,
+    },
+    /// Reserved: text read from an image.
+    ImageText,
+}
+
+/// One place a message matched, and the words around it once they are cut.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Match {
+    /// Where.
+    pub source: Source,
+    /// The words around it; `None` until `Req::Passages` fills it, or when
+    /// there is no local text to cut it from.
+    pub passage: Option<Passage>,
+    /// When the matching message arrived.
+    pub when: Option<DateTime<Utc>>,
+}
+
+/// Why a conversation ranks where it does: the row's reason line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RankReason {
+    /// The person replied in it.
+    Replied,
+    /// The person flagged it.
+    Flagged,
+    /// From someone the person often hears from.
+    FrequentSender,
+    /// The words are in the subject.
+    InSubject,
+    /// The words are in an attachment's name.
+    InFileName,
+    /// How many of its messages matched; always last.
+    Matches(u32),
+}
+
+/// What one result row stands for: a thread, or a message threading never
+/// joined to one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ConversationKey {
+    /// A thread.
+    Thread(ThreadId),
+    /// A message on its own.
+    Lone(MessageId),
+}
+
+/// One conversation that matched.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConversationHit {
+    /// Which conversation.
+    pub key: ConversationKey,
+    /// The message the row shows and opens: its best match.
+    pub best: MessageId,
+    /// The best message's folder.
+    pub mailbox_id: MailboxId,
+    /// The best message's subject.
+    pub subject: Option<String>,
+    /// The best message's sender.
+    pub from: Option<EmailAddress>,
+    /// When its newest matching message arrived: decides its month (D4).
+    pub newest_match: DateTime<Utc>,
+    /// Messages in the conversation: the count badge.
+    pub messages: u32,
+    /// Anything in it unread.
+    pub unread: bool,
+    /// Anything in it with an attachment.
+    pub has_attachments: bool,
+    /// Its labels.
+    pub labels: Vec<LabelId>,
+    /// Lower is better, as [`SearchHit::score`].
+    pub score: f64,
+    /// Why it ranks here; `Matches` always last.
+    pub reasons: Vec<RankReason>,
+    /// Where it matched; passages filled by a read of their own.
+    pub matches: Vec<Match>,
+}
+
+/// What one conversation search produced.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConversationResults {
+    /// This page.
+    pub hits: Vec<ConversationHit>,
+    /// Conversations that match, up to the cap.
+    pub total: u64,
+    /// Whether `total` is a floor.
+    pub capped: bool,
+    /// Messages the search looked through: "Searched all 18,204 messages".
+    pub messages_searched: u64,
+    /// Every message's body is indexed (as [`SearchResults::corpus_complete`]).
+    pub corpus_complete: bool,
+    /// Every downloaded attachment's text is extracted.
+    pub contents_complete: bool,
+    /// The filter buttons' and timeline's counts.
+    pub facets: SearchFacets,
+    /// Matching files: the Files tab's count.
+    pub files: u64,
+    /// Matching people: the People tab's count.
+    pub people: u64,
+    /// How long it took.
+    pub elapsed: Duration,
+}
+
+/// The results view's two orders.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ConversationOrder {
+    /// Ranked, with Top hits first.
+    #[default]
+    BestMatch,
+    /// Newest first, in month groups only.
+    Newest,
+}
+
+impl From<ConversationOrder> for ResultOrder {
+    fn from(order: ConversationOrder) -> Self {
+        match order {
+            ConversationOrder::BestMatch => ResultOrder::Relevance,
+            ConversationOrder::Newest => ResultOrder::Newest,
+        }
+    }
+}
+
+/// The results view's tabs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ResultsTab {
+    /// Conversations.
+    #[default]
+    Conversations,
+    /// Files.
+    Files,
+    /// People.
+    People,
+}
+
+/// One attachment that matched: a card on the Files tab.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileHit {
+    /// The attachment.
+    pub attachment: AttachmentId,
+    /// The message carrying it.
+    pub message: MessageId,
+    /// Its file name.
+    pub name: String,
+    /// Its MIME type.
+    pub mime_type: String,
+    /// Its size in bytes.
+    pub size: u64,
+    /// Who sent it.
+    pub from: Option<EmailAddress>,
+    /// When it arrived.
+    pub received_at: DateTime<Utc>,
+    /// The message's subject.
+    pub subject: Option<String>,
+    /// Where it matched: its name, or a located passage of its content.
+    pub matched: Option<Match>,
+}
 
 #[cfg(test)]
 mod tests {

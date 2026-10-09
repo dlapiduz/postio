@@ -243,6 +243,49 @@ pub fn near<'a>(
         .collect()
 }
 
+/// What the dropdown offers for a prefix (spec 010, step 8).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Suggestions {
+    /// The rest of the best word, drawn after the caret: "las" after "at".
+    pub ghost: Option<String>,
+    /// Vocabulary words.
+    pub words: Vec<Completion>,
+    /// Labels.
+    pub labels: Vec<Completion>,
+    /// Mailing lists.
+    pub lists: Vec<Completion>,
+    /// File names.
+    pub files: Vec<Completion>,
+    /// People.
+    pub people: Vec<Person>,
+}
+
+/// One completion, and how much it would find.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Completion {
+    /// What the row says.
+    pub text: String,
+    /// The query it runs.
+    pub query: String,
+    /// What that query counts.
+    pub count: u64,
+}
+
+/// A person `from:` and `to:` complete to, ranked two-way (D21).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Person {
+    /// Their name, when their mail gives one.
+    pub name: Option<String>,
+    /// Their address.
+    pub address: String,
+    /// Messages from them.
+    pub received: u64,
+    /// Messages to them.
+    pub sent: u64,
+    /// The newest message either way.
+    pub last: Option<chrono::DateTime<chrono::Utc>>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
