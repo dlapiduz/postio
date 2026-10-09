@@ -106,4 +106,17 @@ import Testing
         #expect(typed == [" q3"])
         #expect(field.words == "atlas budget")
     }
+
+    /// Screen 13: while nothing matches the whole field is ringed, and the
+    /// query edited as text is ringed as the inbox's opened field is.
+    @Test func theQueryBoxIsRingedWhileNothingMatchesOrWhileEdited() {
+        let box = ResultsQueryBox()
+        box.show(chips: [Self.chip(5, "from:", "ada")], words: "", hint: "⌘⌫ clears filters", nothingFound: true)
+        #expect(box.ringed)
+        box.show(chips: [Self.chip(5, "from:", "ada")], words: "", hint: "/ to edit")
+        #expect(!box.ringed)
+        box.editing = true
+        #expect(box.ringed)
+        #expect(box.editor.frameView === box, "the panel hangs from the box")
+    }
 }

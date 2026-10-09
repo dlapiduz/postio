@@ -2029,6 +2029,9 @@ fn nothing_found_shows_the_page_at_once_and_asks_for_the_ways_out() {
     let field = query_view(&effects).expect("the field");
     assert_eq!(field.hint, "clears filters", "D24");
     assert_eq!(field.hint_key.as_deref(), Some("cmd+BackSpace"));
+    // Screen 13: the whole field carries the accent ring while the page
+    // is up, whether or not a key is bound to say in its hint.
+    assert!(field.ringed);
     assert!(focus.answers(CommandId::BackToWords));
 }
 
@@ -2144,6 +2147,7 @@ fn a_number_runs_its_way_out_and_return_runs_the_focused_one() {
     let field = query_view(&effects).expect("the field");
     assert_eq!(field.hint, "/ to edit");
     assert_eq!(field.hint_key, None);
+    assert!(!field.ringed, "found something: the field rests");
 
     let mut focus = mac();
     nothing_found(&mut focus, NOTHING, &[0, 0, 0, 7, 3], &rows);

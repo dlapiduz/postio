@@ -1003,7 +1003,7 @@ final class Engine {
     /// The query box draws what the last `FocusQuery` said.
     func redrawQuery() {
         guard let query = searchQuery else { return }
-        queryBox?.show(chips: query.chips, words: query.words, hint: query.hint)
+        queryBox?.show(chips: query.chips, words: query.words, hint: query.hint, nothingFound: query.ringed)
     }
 
     /// The query box asks for the dropdown: a click, or `/` in it.
