@@ -12,7 +12,8 @@ mod search_support;
 use postio_config::paths::Platform;
 use postio_core::CommandId;
 use postio_focus::{
-    Effect, FilterButton, FocusController, Input, Intent, Policy, Request, SurfaceKind, TermEdit,
+    Effect, FilterButton, FocusController, Input, Intent, Policy, PopoverView, Request,
+    SurfaceKind, TermEdit,
 };
 use postio_model::MessageId;
 use postio_search::results::ConversationOrder;
@@ -485,4 +486,328 @@ fn gtk_never_enters_the_results() {
     assert!(results_view(&effects).is_none());
     assert!(!focus.in_results());
     assert!(!focus.answers(CommandId::HistoryBack));
+}
+
+// Step 4: the filter popovers (US3, FR-027, design §3.6, screens 08 and 09).
+
+fn open_popover(focus: &mut FocusController, kind: FilterKind, rows: &List) -> PopoverView {
+    let effects = focus.handle_on(Input::SearchPopover(kind), rows);
+    let query = query_view(&effects).expect("the buttons say which is open");
+    assert!(button(&query, kind).open, "{kind:?} is ringed while open");
+    popover_view(&effects)
+        .flatten()
+        .unwrap_or_else(|| panic!("the {kind:?} popover"))
+}
+
+fn titles(view: &PopoverView) -> Vec<(String, u64)> {
+    view.rows
+        .iter()
+        .map(|row| (row.title.clone(), row.count))
+        .collect()
+}
+
+#[test]
+fn from_lists_the_people_in_the_results_with_their_counts() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let view = open_popover(&mut focus, FilterKind::From, &rows);
+    assert_eq!(view.kind, FilterKind::From);
+    assert_eq!(view.placeholder, "Filter people in these results");
+    assert_eq!(
+        titles(&view),
+        [
+            ("Ada Moreno".to_owned(), 24),
+            ("Tom\u{e1}s Reyes".to_owned(), 24)
+        ],
+        "only the senders the results' facets hold"
+    );
+    let ada = &view.rows[0];
+    assert_eq!(ada.detail.as_deref(), Some("ada@example.com"));
+    assert_eq!(ada.initials.as_deref(), Some("AM"));
+    assert!((ada.share - 1.0).abs() < f64::EPSILON);
+    assert!(!ada.checked && !ada.excluded);
+    assert_eq!(
+        view.hints
+            .iter()
+            .map(|hint| (hint.key.as_str(), hint.label.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("space", "toggle"),
+            ("alt", "-click excludes"),
+            ("Return", "apply")
+        ]
+    );
+}
+
+#[test]
+fn checking_a_person_previews_live_and_esc_restores_the_query_exactly() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let view = open_popover(&mut focus, FilterKind::From, &rows);
+    let ada = view.rows[0].token;
+
+    let effects = focus.handle_on(
+        Input::PopoverToggle {
+            token: ada,
+            exclude: false,
+        },
+        &rows,
+    );
+    assert!(!queries_asked(&effects).is_empty());
+    assert!(
+        queries_asked(&effects)
+            .iter()
+            .all(|query| query == "atlas budget from:ada@example.com"),
+        "{:?}",
+        queries_asked(&effects)
+    );
+    let query = query_view(&effects).expect("the field follows the check");
+    assert!(button(&query, FilterKind::From).applied);
+    assert!(button(&query, FilterKind::From).open);
+    let effects = settle(&mut focus, effects, &rows);
+    // The list, the counts and the timeline follow while it is open.
+    let view = results_view(&effects).expect("the preview");
+    assert_eq!(view.count_line, "60 conversations");
+    assert_eq!(
+        view.sub_line,
+        "previewing From: Ada Moreno \u{b7} \u{21a9} applies"
+    );
+    let popover = popover_view(&effects).flatten().expect("redrawn");
+    assert!(popover.rows[0].checked);
+    assert_eq!(
+        titles(&popover),
+        [
+            ("Ada Moreno".to_owned(), 24),
+            ("Tom\u{e1}s Reyes".to_owned(), 24)
+        ],
+        "the people it listed stay, with the counts it opened with"
+    );
+
+    // Esc: the query it opened on, exactly, and the results again.
+    let effects = focus.handle_on(Input::PopoverDone { apply: false }, &rows);
+    assert_eq!(popover_view(&effects), Some(None), "the popover closes");
+    let query = query_view(&effects).expect("the field restored");
+    assert!(query.chips.is_empty());
+    assert!(!button(&query, FilterKind::From).applied);
+    assert!(!button(&query, FilterKind::From).open);
+    assert!(
+        queries_asked(&effects)
+            .iter()
+            .all(|query| query == "atlas budget")
+    );
+    let effects = settle(&mut focus, effects, &rows);
+    let view = results_view(&effects).expect("as before");
+    assert_eq!(view.count_line, "120 conversations");
+    assert_eq!(
+        view.sub_line,
+        "12 files \u{b7} 6 people \u{b7} last 12 months"
+    );
+}
+
+#[test]
+fn return_keeps_the_previewed_query() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let view = open_popover(&mut focus, FilterKind::From, &rows);
+    let effects = focus.handle_on(
+        Input::PopoverToggle {
+            token: view.rows[0].token,
+            exclude: false,
+        },
+        &rows,
+    );
+    let _ = settle(&mut focus, effects, &rows);
+    let effects = focus.handle_on(Input::PopoverDone { apply: true }, &rows);
+    assert_eq!(popover_view(&effects), Some(None));
+    assert!(queries_asked(&effects).is_empty(), "nothing to ask again");
+    let query = query_view(&effects).expect("the field");
+    assert!(button(&query, FilterKind::From).applied);
+    assert!(!button(&query, FilterKind::From).open);
+    let view = results_view(&effects).expect("the frame, no longer a preview");
+    assert_eq!(
+        view.sub_line,
+        "12 files \u{b7} 6 people \u{b7} last 12 months"
+    );
+    assert_eq!(view.count_line, "60 conversations");
+}
+
+#[test]
+fn alt_click_excludes_and_again_takes_it_out() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let view = open_popover(&mut focus, FilterKind::From, &rows);
+    let ada = view.rows[0].token;
+    let effects = focus.handle_on(
+        Input::PopoverToggle {
+            token: ada,
+            exclude: true,
+        },
+        &rows,
+    );
+    let query = query_view(&effects).expect("the field");
+    assert_eq!(
+        query
+            .chips
+            .iter()
+            .map(|chip| (chip.operator.as_str(), chip.value.as_str(), chip.excluded))
+            .collect::<Vec<_>>(),
+        [("from:", "ada@example.com", true)]
+    );
+    let effects = settle(&mut focus, effects, &rows);
+    assert_eq!(
+        results_view(&effects).expect("the preview").count_line,
+        "60 conversations"
+    );
+    let row = &popover_view(&effects).flatten().expect("redrawn").rows[0];
+    assert!(row.excluded && !row.checked);
+
+    // A check on an excluded person includes them instead.
+    let effects = focus.handle_on(
+        Input::PopoverToggle {
+            token: ada,
+            exclude: false,
+        },
+        &rows,
+    );
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget from:ada@example.com")
+    );
+    // And ⌥-click on an included one excludes them in place.
+    let effects = focus.handle_on(
+        Input::PopoverToggle {
+            token: ada,
+            exclude: true,
+        },
+        &rows,
+    );
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget -from:ada@example.com")
+    );
+    let effects = focus.handle_on(
+        Input::PopoverToggle {
+            token: ada,
+            exclude: true,
+        },
+        &rows,
+    );
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget")
+    );
+}
+
+#[test]
+fn the_popovers_own_filter_narrows_its_rows_without_asking() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let _ = open_popover(&mut focus, FilterKind::From, &rows);
+    let effects = focus.handle_on(Input::PopoverFilter("TOM".to_owned()), &rows);
+    assert!(
+        asked(&effects).is_empty(),
+        "narrowed here, not by the engine"
+    );
+    let view = popover_view(&effects).flatten().expect("redrawn");
+    assert_eq!(view.filter, "TOM");
+    assert_eq!(titles(&view), [("Tom\u{e1}s Reyes".to_owned(), 24)]);
+    // By address too, and its token is still the one it opened with.
+    let effects = focus.handle_on(Input::PopoverFilter("ada@".to_owned()), &rows);
+    let view = popover_view(&effects).flatten().expect("redrawn");
+    assert_eq!(titles(&view), [("Ada Moreno".to_owned(), 24)]);
+    let effects = focus.handle_on(
+        Input::PopoverToggle {
+            token: view.rows[0].token,
+            exclude: false,
+        },
+        &rows,
+    );
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget from:ada@example.com")
+    );
+}
+
+#[test]
+fn to_anywhere_and_label_list_their_own_facets() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+
+    let to = open_popover(&mut focus, FilterKind::To, &rows);
+    assert_eq!(titles(&to), [("Ben Adeyemi".to_owned(), 7)]);
+    assert_eq!(to.placeholder, "Filter people in these results");
+    let _ = focus.handle_on(Input::PopoverDone { apply: false }, &rows);
+
+    let anywhere = open_popover(&mut focus, FilterKind::Anywhere, &rows);
+    assert_eq!(
+        titles(&anywhere),
+        [("Inbox".to_owned(), 117), ("Archive".to_owned(), 3)]
+    );
+    assert_eq!(anywhere.placeholder, "Filter folders");
+    assert_eq!(anywhere.rows[0].initials, None);
+    let effects = focus.handle_on(
+        Input::PopoverToggle {
+            token: anywhere.rows[1].token,
+            exclude: false,
+        },
+        &rows,
+    );
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget in:Archive")
+    );
+    let effects = focus.handle_on(Input::PopoverDone { apply: false }, &rows);
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget")
+    );
+    let _ = settle(&mut focus, effects, &rows);
+
+    let label = open_popover(&mut focus, FilterKind::Label, &rows);
+    assert_eq!(titles(&label), [("Atlas".to_owned(), 1)]);
+    assert_eq!(label.rows[0].color.as_deref(), Some("#c08a2e"));
+    assert_eq!(label.placeholder, "Filter labels");
+    let effects = focus.handle_on(
+        Input::PopoverToggle {
+            token: label.rows[0].token,
+            exclude: false,
+        },
+        &rows,
+    );
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget label:Atlas")
+    );
+}
+
+#[test]
+fn esc_closes_an_open_popover_before_anything_else() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget", &rows);
+    let view = open_popover(&mut focus, FilterKind::From, &rows);
+    let _ = focus.handle_on(
+        Input::PopoverToggle {
+            token: view.rows[0].token,
+            exclude: false,
+        },
+        &rows,
+    );
+    let effects = run(&mut focus, CommandId::Back, &rows);
+    assert_eq!(popover_view(&effects), Some(None));
+    assert!(focus.in_results(), "the popover's rung, and only it");
+    assert!(
+        queries_asked(&effects)
+            .iter()
+            .all(|query| query == "atlas budget")
+    );
+    // A toggle button is not a popover.
+    let effects = focus.handle_on(Input::SearchPopover(FilterKind::Unread), &rows);
+    assert_eq!(popover_view(&effects), None);
 }

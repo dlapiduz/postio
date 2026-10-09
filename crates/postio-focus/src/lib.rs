@@ -61,8 +61,8 @@ pub use pickers::{
 pub use postio_ui::capture::{Mode as CaptureMode, Pick as CapturePick};
 pub use postio_ui::digest::{Page as DigestPage, Schedule as RuleSchedule};
 pub use results::{
-    Chip, FilterButton, LabelPill, MonthBar, QueryView, ResultGroup, ResultRow, ResultsTabView,
-    ResultsView, TermEdit,
+    Chip, FilterButton, LabelPill, MonthBar, PopoverRow, PopoverView, QueryView, ResultGroup,
+    ResultRow, ResultsTabView, ResultsView, TermEdit,
 };
 pub use states::{AccountsRead, BannerButton, BannerView};
 pub use surfaces::{Host, ReaderVerb, SurfaceKind};
@@ -175,6 +175,24 @@ pub enum Input {
     /// A filter button, a chip's ✕, a popover's check or the timeline
     /// changed the results' query (spec 010 step 3).
     SearchEdit(TermEdit),
+    /// A filter button with a popover was pressed: open it (spec 010 step
+    /// 4, FR-027). A toggle button's kind opens nothing.
+    SearchPopover(postio_ui::search_view::FilterKind),
+    /// A check on the open popover's row `token`: Space or a click
+    /// toggles it, ⌥-click (`exclude`) excludes it.
+    PopoverToggle {
+        /// The row's [`PopoverRow::token`].
+        token: u64,
+        /// ⌥ was held.
+        exclude: bool,
+    },
+    /// The popover's own search field holds this now.
+    PopoverFilter(String),
+    /// ↩ (`apply`), or Esc and a click away: the popover closes.
+    PopoverDone {
+        /// Keep what it previewed.
+        apply: bool,
+    },
     /// A results tab was picked: ⌘1-3, or a click.
     ResultsTab(postio_search::results::ResultsTab),
     /// The Sort menu.
@@ -446,6 +464,9 @@ pub enum Intent {
     ResultsCursor(u64),
     /// The field's chips and words and the filter bar's buttons.
     Query(QueryView),
+    /// Draw the filter popover, whole, hung from its button; `None` closes
+    /// it.
+    Popover(Option<Box<PopoverView>>),
     /// The main window shows the inbox again; its cursor and selection
     /// follow.
     LeaveResults,
@@ -1328,6 +1349,10 @@ impl FocusController {
                 self.effects(steps)
             }
             input @ (Input::SearchEdit(_)
+            | Input::SearchPopover(_)
+            | Input::PopoverToggle { .. }
+            | Input::PopoverFilter(_)
+            | Input::PopoverDone { .. }
             | Input::ResultsTab(_)
             | Input::ResultsOrder(_)
             | Input::ResultsPoint(_)) => {

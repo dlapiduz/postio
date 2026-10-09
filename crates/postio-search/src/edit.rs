@@ -167,7 +167,7 @@ fn add(tokens: &[crate::query::Token], words: &mut Vec<Option<String>>, clause: 
 /// whatever its case -- `from:Ada` is `from:ada`, `label:atlas` is
 /// `label:Atlas` -- because every executor arm that reads one compares it
 /// that way.
-fn same(a: &Filter, b: &Filter) -> bool {
+pub fn same(a: &Filter, b: &Filter) -> bool {
     let fold = |s: &str| s.to_lowercase();
     match (a, b) {
         (Filter::From(x), Filter::From(y))

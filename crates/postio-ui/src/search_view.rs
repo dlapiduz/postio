@@ -644,6 +644,40 @@ pub const NEWEST: &str = "Newest";
 /// The timeline's hint on its right (§3.3).
 pub const TIMELINE_HINT: &str = "Matches by month \u{b7} drag across months to narrow";
 
+/// A list popover's own search field (§3.6): what it says while empty.
+/// The Date popover has none.
+pub fn popover_placeholder(kind: FilterKind) -> &'static str {
+    match kind {
+        FilterKind::From | FilterKind::To => "Filter people in these results",
+        FilterKind::Anywhere => "Filter folders",
+        FilterKind::Label => "Filter labels",
+        _ => "",
+    }
+}
+
+/// A popover's footer (§3.6, screen 08): Space toggles, ⌥-click
+/// excludes, ↩ applies; the Date popover only applies. The keys are the
+/// popover's own, not commands, spelled as the registry spells keys.
+pub fn popover_hints(kind: FilterKind) -> Vec<Hint> {
+    let hint = |key: &str, label: &str| Hint {
+        key: key.to_owned(),
+        label: label.to_owned(),
+    };
+    let mut out = Vec::new();
+    if kind != FilterKind::Date {
+        out.push(hint("space", "toggle"));
+        out.push(hint("alt", "-click excludes"));
+    }
+    out.push(hint("Return", "apply"));
+    out
+}
+
+/// The timeline's sub-line while a popover previews a change (screen
+/// 09): "previewing Jul – Sep · ↩ applies".
+pub fn previewing(what: &str) -> String {
+    format!("previewing {what} \u{b7} \u{21a9} applies")
+}
+
 /// The bulk bar's count while results are checked (§3.5): "5 selected".
 pub fn checked_line(n: u64) -> String {
     format!("{} selected", grouped(n))
