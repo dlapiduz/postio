@@ -58,6 +58,7 @@ pub mod row;
 pub mod saved_search;
 pub mod schedule;
 pub mod search;
+pub mod search_view;
 pub mod selection;
 pub mod sending;
 pub mod settings;
