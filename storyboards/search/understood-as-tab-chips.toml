@@ -1,0 +1,57 @@
+# Plain English says what it understood (specs/010-focus-search US7
+# scenario 1, design §1 "Plain English", §2, screen 05).
+#
+# A sentence the Mac lowers into operators shows "Understood as" at the
+# top of the panel: one tile per term, the term in SF Mono and under it,
+# small, the exact words of the sentence it came from ("from ‘last
+# month’"); "each part is a chip you can edit" on the right. Then the
+# results and "Show all N results". Tab turns the parse into chips; ⌘⌫
+# keeps the sentence as words. The footer's right says "parsed on this
+# Mac · N matches · N ms": nothing left the machine.
+#
+# Running the tiles returns what typing those operators returns
+# (constitution III): the tiles are `natural::lower_with_origins`' query.
+#
+# The controller's half is postio-focus tests/bar.rs (plain_english_*).
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/010-focus-search US7" }
+seed   = "search"
+design = "05-typing-plain-english"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "search"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+
+[[step]]
+id      = "understood"
+type    = "invoices from ada last month"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
+expect  = "A grey band tops the panel: “Understood as”, then four tiles -- “invoices” from “invoices”, “from:” Ada from “from ada”, “after:” the first of last month and “before:” the first of this one, both from “last month” -- and “each part is a chip you can edit” on the right. Below, “Results” with Ada's invoices of last month, newest first, the first ringed, and “Show all N results”. The footer: “↑↓ move · ↩ open · Tab edit as chips · ⌘⌫ keep as words”, and “parsed on this Mac · N matches · N ms”."
+
+[[step]]
+key     = "Tab"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
+expect  = "Tab turns the parse into chips: the field holds `invoices from:… after:… before:…` as chips, the band is gone, and the panel shows the same conversations."
+
+[[step]]
+command = "back"
+check   = { overlay.kind = "none", keyboard.region = "list" }
+
+[[step]]
+command = "search"
+
+[[step]]
+type    = "invoices from ada last month"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
+
+[[step]]
+command = "back_to_words"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
+expect  = "⌘⌫ keeps it as words: the field still says the sentence, the band is gone, and the panel searches the words as typed, without operators."
+
+[[step]]
+command = "back"
+check   = { overlay.kind = "none", keyboard.region = "list" }
