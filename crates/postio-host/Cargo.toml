@@ -58,5 +58,8 @@ postio-account = { workspace = true, features = ["imap", "test-server"] }
 postio-storage = { workspace = true, features = ["test-support"] }
 serde-xml-rs = { workspace = true }
 postio-test-support.workspace = true
+# The search seed (spec 010), so Focus's search requests are asked of a
+# store in the shape of the design's screens.
+postio-demo.workspace = true
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
