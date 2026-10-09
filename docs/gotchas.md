@@ -46,6 +46,8 @@ The store is Turso (ADR 0038). Its planner and defaults are not SQLite's, and mo
 
 **Without statistics the planner takes the seek that binds more columns, even inside a join.** A per-row lookup on a one-column key, such as `idx_messages_content (content_id=?)`, loses to any two-column range the same `WHERE` offers, such as `idx_messages_account_list (account_id=? AND received_at<=?)`, and the range is then walked once per outer row. Only a rowid seek is never outbid. When a join has to look rows up through a secondary index, name it with `INDEXED BY`, as `HITS_JOIN` in `crates/postio-index/src/executor.rs` does (#1809).
 
+**A correlated `count(*)`, `min`, `max`, `avg` or `total` on a bare column pair may be rewritten "group-first".** The engine (`optimizer/unnest.rs`) groups the whole inner table by the correlated column once and joins the groups, so `(SELECT count(*) FROM attachments f WHERE f.message_id = m.id)` in a statement driven by search hits read every attachment in the store, however few rows the outer query has. The plan says `SEARCH scalar_subquery_tN USING INDEX ephemeral_subquery_tN` beside a `SCAN` of the inner table. To keep it a per-row seek, make the outer side an expression (`f.message_id = m.id + 0`), as the conversation search's projection in `crates/postio-index/src/executor/conversations.rs` does.
+
 **A bench only sees a cost shaped like `rows × other_table` if both tables are seeded.** Populate both at real-mailbox scale.
 
 **Never run `ANALYZE`.** With statistics, the planner turns hot sync statements into scans. Fix a plan with an index the planner cannot misjudge. `crates/postio-sync/tests/sync_suite/scan_audit.rs` asserts that the store has no `sqlite_stat1`.

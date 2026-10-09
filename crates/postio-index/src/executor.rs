@@ -1148,6 +1148,12 @@ const HITS_JOIN: &str = "FROM (
 /// unit's, read bare inside and aggregated outside, for the reason
 /// [`HITS_JOIN`] gives about arithmetic around `fts_score`. The attachment
 /// text is folded as the body is, so it is matched by the body's `?2`.
+///
+/// The join names `idx_messages_content` for the reason [`HITS_JOIN`] gives
+/// (#1809), and so does every other statement here that looks messages up
+/// by content: the set path's arms in `conversations.rs`, a negated word's
+/// set ([`NEGATED_WORD_SET`]), a column's set (`fts_column_set`), the Files
+/// tab's passages. `driven_join_plan` in the index suite holds them.
 const HITS_JOIN_WITH_FILES: &str = "FROM (
              SELECT content_id AS rid,
                     fts_score(sender, recipients, subject, filenames, list_id, ?1) AS meta,
@@ -1164,7 +1170,8 @@ const HITS_JOIN_WITH_FILES: &str = "FROM (
                        FROM attachment_passages
                       WHERE fts_match(text_search, ?2))
               GROUP BY content_id
-          ) hits CROSS JOIN messages m ON m.content_id = hits.rid";
+          ) hits CROSS JOIN messages m INDEXED BY idx_messages_content
+                 ON m.content_id = hits.rid";
 
 /// The same match, asked one message at a time.
 ///
@@ -1299,7 +1306,8 @@ const NEGATED_WORD_SET: &str = "SELECT m.id AS message_id FROM (
               WHERE fts_match(sender, recipients, subject, filenames, list_id, ?)
              UNION ALL
              SELECT content_id FROM message_search_bodies WHERE fts_match(body_search, ?)
-          ) d CROSS JOIN messages m ON m.content_id = d.content_id";
+          ) d CROSS JOIN messages m INDEXED BY idx_messages_content
+                 ON m.content_id = d.content_id";
 
 impl Plan {
     fn build(request: &SearchRequest<'_>) -> Self {
@@ -2318,7 +2326,8 @@ fn fts_column_set(column: &str, value: &str) -> (String, Vec<turso::Value>) {
     (
         format!(
             "SELECT m.id AS message_id FROM ({contents}) d
-               CROSS JOIN messages m ON m.content_id = d.content_id"
+               CROSS JOIN messages m INDEXED BY idx_messages_content
+                 ON m.content_id = d.content_id"
         ),
         params,
     )

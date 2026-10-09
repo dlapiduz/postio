@@ -76,7 +76,8 @@ pub async fn file_matches(
         "SELECT m.id, a.id, coalesce(a.filename, ''), p.location, p.text
            FROM (SELECT content_id, position, ordinal, location, text
                    FROM attachment_passages WHERE fts_match(text_search, ?1)) p
-           CROSS JOIN messages m ON m.content_id = p.content_id
+           CROSS JOIN messages m INDEXED BY idx_messages_content
+             ON m.content_id = p.content_id
            JOIN attachments a ON a.message_id = m.id AND a.position = p.position
           WHERE m.id IN (SELECT value FROM json_each(?2))
           ORDER BY m.id, a.position, p.ordinal",
