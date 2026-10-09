@@ -73,7 +73,7 @@ public struct FileCardView: View {
             RoundedRectangle(cornerRadius: Metrics.radius)
                 .fill(
                     focused
-                        ? AnyShapeStyle(Color.accentColor.opacity(0.08))
+                        ? AnyShapeStyle(Color.accentColor.opacity(SearchRuns.focusFill(scheme)))
                         : AnyShapeStyle(Color(nsColor: .windowBackgroundColor))))
         .overlay(
             RoundedRectangle(cornerRadius: Metrics.radius)

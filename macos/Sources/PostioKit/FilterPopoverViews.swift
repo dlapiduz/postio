@@ -108,6 +108,7 @@ struct ListPopoverView: View {
 
 /// One person, folder or label in a list popover.
 struct PopoverRowView: View {
+    @Environment(\.colorScheme) private var scheme
     let row: PopoverRowFfi
     let kind: FilterKindFfi
     let highlighted: Bool
@@ -142,7 +143,7 @@ struct PopoverRowView: View {
         .frame(height: FilterPopoverMetrics.rowHeight)
         .background(
             RoundedRectangle(cornerRadius: 7)
-                .fill(highlighted ? AnyShapeStyle(Color.accentColor.opacity(0.08)) : AnyShapeStyle(.clear))
+                .fill(highlighted ? AnyShapeStyle(Color.accentColor.opacity(SearchRuns.focusFill(scheme))) : AnyShapeStyle(.clear))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 7)

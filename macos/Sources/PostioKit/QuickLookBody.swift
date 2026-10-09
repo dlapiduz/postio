@@ -266,7 +266,7 @@ struct MatchCardView: View {
         .padding(.horizontal, 14)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(current ? AnyShapeStyle(Color.accentColor.opacity(0.08)) : AnyShapeStyle(QuickLookMetrics.tint)))
+                .fill(current ? AnyShapeStyle(Color.accentColor.opacity(SearchRuns.focusFill(scheme))) : AnyShapeStyle(QuickLookMetrics.tint)))
         .overlay {
             if current {
                 RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: 2)
