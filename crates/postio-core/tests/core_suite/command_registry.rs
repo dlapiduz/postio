@@ -331,8 +331,9 @@ fn contexts_round_trip_through_strings() {
     // `every_context_fits_the_set` derives it from the integer itself, so
     // this is only the deliberate-act tripwire. Postio Focus's picker, digest
     // and Filtered view (spec 007) make thirteen, and its capture sheet
-    // (milestone 3) fourteen.
-    assert_eq!(Context::ALL.len(), 14);
+    // (milestone 3) fourteen, and the Mac's search results (spec 010 D17)
+    // fifteen.
+    assert_eq!(Context::ALL.len(), 15);
 }
 
 #[test]
@@ -889,4 +890,29 @@ fn the_search_bar_s_new_commands_are_the_macs_until_linux_adopts_them() {
         "alt+BackSpace",
         Platform::Freedesktop
     ));
+}
+
+/// Spec 010 step 3 (R10, D25): the results view's commands are the Mac's
+/// until Linux adopts the results view, and reachable in it.
+#[test]
+fn the_results_views_commands_are_the_macs_until_linux_adopts_them() {
+    use postio_config::paths::Platform;
+    use postio_core::ActionId;
+    for id in [
+        CommandId::HistoryBack,
+        CommandId::HistoryForward,
+        CommandId::ResultsConversations,
+        CommandId::ResultsFiles,
+        CommandId::ResultsPeople,
+    ] {
+        let action = ActionId::Builtin(id);
+        assert!(registry::offered_on(action, Platform::Apple), "{id}");
+        assert!(!registry::offered_on(action, Platform::Freedesktop), "{id}");
+        assert!(registry::get(id).available_in(Context::Results), "{id}");
+        assert_eq!(
+            registry::get(id).contexts,
+            Context::Results.as_set(),
+            "{id} is the results view's alone"
+        );
+    }
 }

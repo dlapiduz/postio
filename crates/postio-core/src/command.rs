@@ -173,6 +173,17 @@ command_ids! {
     ShowAllResults => "show_all_results",
     /// Forget the recent search the dropdown has highlighted.
     ForgetRecent => "forget_recent",
+    /// Back through the search history: the results to the inbox, or the
+    /// results before.
+    HistoryBack => "history_back",
+    /// Forward through the search history.
+    HistoryForward => "history_forward",
+    /// The results' Conversations tab.
+    ResultsConversations => "results_conversations",
+    /// The results' Files tab.
+    ResultsFiles => "results_files",
+    /// The results' People tab.
+    ResultsPeople => "results_people",
     /// Start a new message.
     Compose => "compose",
     /// Send what is in the composer.
@@ -776,6 +787,16 @@ pub enum Command {
     ShowAllResults,
     /// Forget the highlighted recent search.
     ForgetRecent,
+    /// Back through the search history.
+    HistoryBack,
+    /// Forward through the search history.
+    HistoryForward,
+    /// The results' Conversations tab.
+    ResultsConversations,
+    /// The results' Files tab.
+    ResultsFiles,
+    /// The results' People tab.
+    ResultsPeople,
 
     // -- Compose ---------------------------------------------------------
     /// Start a new message, optionally from an existing draft.
@@ -1234,6 +1255,11 @@ impl Command {
             Command::BackToWords => CommandId::BackToWords,
             Command::ShowAllResults => CommandId::ShowAllResults,
             Command::ForgetRecent => CommandId::ForgetRecent,
+            Command::HistoryBack => CommandId::HistoryBack,
+            Command::HistoryForward => CommandId::HistoryForward,
+            Command::ResultsConversations => CommandId::ResultsConversations,
+            Command::ResultsFiles => CommandId::ResultsFiles,
+            Command::ResultsPeople => CommandId::ResultsPeople,
             Command::Compose { .. } => CommandId::Compose,
             Command::Send => CommandId::Send,
             Command::ScheduleSend => CommandId::ScheduleSend,
@@ -1413,6 +1439,11 @@ impl Command {
             CommandId::BackToWords => Command::BackToWords,
             CommandId::ShowAllResults => Command::ShowAllResults,
             CommandId::ForgetRecent => Command::ForgetRecent,
+            CommandId::HistoryBack => Command::HistoryBack,
+            CommandId::HistoryForward => Command::HistoryForward,
+            CommandId::ResultsConversations => Command::ResultsConversations,
+            CommandId::ResultsFiles => Command::ResultsFiles,
+            CommandId::ResultsPeople => Command::ResultsPeople,
             CommandId::Compose => Command::Compose { draft: None },
             CommandId::Send => Command::Send,
             CommandId::ScheduleSend => Command::ScheduleSend,

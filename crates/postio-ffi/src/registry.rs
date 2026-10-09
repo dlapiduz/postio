@@ -63,6 +63,9 @@ pub enum UiContext {
     Filtered,
     /// The capture sheet: Postio Focus's (spec 007, milestone 3).
     Capture,
+    /// The Mac's search results, the main window's other mode (spec 010
+    /// D17).
+    Results,
 }
 
 impl From<postio_core::Context> for UiContext {
@@ -83,6 +86,7 @@ impl From<postio_core::Context> for UiContext {
             Context::Digest => UiContext::Digest,
             Context::Filtered => UiContext::Filtered,
             Context::Capture => UiContext::Capture,
+            Context::Results => UiContext::Results,
         }
     }
 }
@@ -112,6 +116,7 @@ impl From<UiContext> for postio_core::Context {
             UiContext::Digest => Context::Digest,
             UiContext::Filtered => Context::Filtered,
             UiContext::Capture => Context::Capture,
+            UiContext::Results => Context::Results,
         }
     }
 }

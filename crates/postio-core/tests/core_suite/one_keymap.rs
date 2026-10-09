@@ -238,6 +238,44 @@ const CONTRACT: &[Row] = &[
         Graphical,
         &[Context::Search],
     ),
+    // Spec 010 step 3: the Mac's results view (R10). History and the tabs
+    // are its own; none is offered on Freedesktop until Linux adopts it
+    // (D25).
+    with(
+        "history_back",
+        "mod+bracketleft",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
+    with(
+        "history_forward",
+        "mod+bracketright",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
+    with(
+        "results_conversations",
+        "mod+1",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
+    with(
+        "results_files",
+        "mod+2",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
+    with(
+        "results_people",
+        "mod+3",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
     // -- Pickers --------------------------------------------------------
     with("picker_choose_1", "1", &[], Focus, &[Context::Picker]),
     with("picker_choose_2", "2", &[], Focus, &[Context::Picker]),
@@ -552,4 +590,56 @@ fn the_search_bar_s_new_keys_resolve_on_the_mac_and_not_on_linux() {
         linux.bindings(CommandId::BackToWords),
         ["ctrl+BackSpace", "alt+BackSpace"]
     );
+}
+
+/// Spec 010 step 3 (R10, D25): the results view's own keys are the Mac's,
+/// and the list's verbs reach a result as they reach a row.
+#[test]
+fn the_results_views_keys_resolve_on_the_mac_and_not_on_linux() {
+    let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
+    let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+
+    for (id, key) in [
+        (CommandId::HistoryBack, "cmd+bracketleft"),
+        (CommandId::HistoryForward, "cmd+bracketright"),
+        (CommandId::ResultsConversations, "cmd+1"),
+        (CommandId::ResultsFiles, "cmd+2"),
+        (CommandId::ResultsPeople, "cmd+3"),
+    ] {
+        assert_eq!(mac.bindings(id), [key], "{id} on the Mac");
+        assert!(registry::get(id).available_in(Context::Results), "{id}");
+        assert!(linux.bindings(id).is_empty(), "{id} has a key on Linux");
+        assert!(!linux.offers(id), "{id} is offered on Linux");
+    }
+
+    // The list's verbs, by the key the Mac spells them with: a result is a
+    // row to them (design §3.5's footer and bulk bar).
+    for (id, key) in [
+        (CommandId::NextMessage, "j"),
+        (CommandId::PrevMessage, "k"),
+        (CommandId::ToggleSelection, "x"),
+        (CommandId::SelectAll, "X"),
+        (CommandId::Archive, "a"),
+        (CommandId::Reply, "e"),
+        (CommandId::Snooze, "s"),
+        (CommandId::AddLabel, "l"),
+        (CommandId::Move, "m"),
+        (CommandId::ToggleRead, "r"),
+        (CommandId::Delete, "BackSpace"),
+        (CommandId::OpenMessage, "Return"),
+        (CommandId::ToggleHasAction, "!"),
+        (CommandId::SaveSearch, "cmd+s"),
+        (CommandId::ToggleResultOrder, "alt+o"),
+        (CommandId::Search, "/"),
+    ] {
+        assert!(
+            registry::get(id).available_in(Context::Results),
+            "`{id}` is not reachable in the results"
+        );
+        assert!(
+            mac.bindings(id).iter().any(|bound| bound == key),
+            "`{id}` is not on `{key}` on the Mac: {:?}",
+            mac.bindings(id)
+        );
+    }
 }

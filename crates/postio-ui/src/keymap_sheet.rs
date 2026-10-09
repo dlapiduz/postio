@@ -72,7 +72,8 @@ impl Group {
 
 /// The contexts the key map describes: Focus's window and what opens over
 /// it -- the list, the reading dialog, search, the pickers, a digest and
-/// Filtered.
+/// Filtered -- and the Mac's search results (spec 010), whose own keys only
+/// the Mac offers.
 ///
 /// Not the compose dialog, which teaches its own keys on its buttons and its
 /// footer (contracts/focus-surface.md, "Compose"), and not the command bar,
@@ -85,6 +86,7 @@ pub const KEY_MAP_CONTEXTS: &[Context] = &[
     Context::Digest,
     Context::Filtered,
     Context::Capture,
+    Context::Results,
 ];
 
 /// The group Focus's key map draws `command` in, or `None` for a command it
@@ -201,7 +203,12 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::BackToWords
         | C::ToggleResultOrder
         | C::ShowAllResults
-        | C::ForgetRecent => Some(G::InSearch),
+        | C::ForgetRecent
+        | C::HistoryBack
+        | C::HistoryForward
+        | C::ResultsConversations
+        | C::ResultsFiles
+        | C::ResultsPeople => Some(G::InSearch),
 
         // ── Digests and filtering ───────────────────────────────────────
         C::DigestRule
