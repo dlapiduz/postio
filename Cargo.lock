@@ -5060,6 +5060,7 @@ dependencies = [
  "chrono",
  "mimalloc",
  "postio-account",
+ "postio-body",
  "postio-calendar",
  "postio-config",
  "postio-core",

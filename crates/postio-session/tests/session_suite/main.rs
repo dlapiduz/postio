@@ -31,5 +31,6 @@ mod reachability;
 mod reading_cost;
 mod reclaim;
 mod reindex_account;
+mod search_passages;
 mod store_key;
 mod watch_policy;

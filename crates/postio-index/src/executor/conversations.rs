@@ -59,8 +59,8 @@ use postio_search::ParsedQuery;
 use postio_search::facets::{Count, MonthCount, Scope, SearchFacets, months_ending, preset_starts};
 use postio_search::query::Filter;
 use postio_search::results::{
-    ConversationHit, ConversationKey, ConversationOrder, ConversationResults, Match, RankReason,
-    Source, TOTAL_HITS_CAP,
+    ConversationHit, ConversationKey, ConversationOrder, ConversationResults, FacetNames, Match,
+    RankReason, Source, TOTAL_HITS_CAP,
 };
 use postio_storage::Connection;
 use postio_storage::repository::from_millis;
@@ -186,6 +186,8 @@ pub async fn search_conversations(
             .map(|conversation| conversation.files)
             .sum(),
         people: people_in(&conversations),
+        // Names are the session's to read, for the counts it keeps.
+        names: FacetNames::default(),
         elapsed,
     })
 }

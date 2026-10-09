@@ -102,8 +102,8 @@ index_suite` green; the bench reports under budget, or the stop rule fires.
 
 ### Session, client, host
 
-- [ ] T028 [P] [US2] Write failing tests in a new `crates/postio-session/tests/session_suite/search_passages.rs` over the `.eml` corpus: a word only in quoted history → `Source::Quoted` with its passage; only in the body → `Body`; in the subject → `Subject`; a message with no local body → sources without passages. Red: no `passages`
-- [ ] T029 [US2] Add `conversations` and `passages` to `crates/postio-session/src/search.rs` (`indexable_text`, `postio_body::quote::text_stretches`, `passage::cut`); resolve facet ids to names (≤ 50 per facet, one read per kind). Make T028 green
+- [x] T028 [P] [US2] Write failing tests in a new `crates/postio-session/tests/session_suite/search_passages.rs` over the `.eml` corpus: a word only in quoted history → `Source::Quoted` with its passage; only in the body → `Body`; in the subject → `Subject`; a message with no local body → sources without passages. Red: no `passages`
+- [x] T029 [US2] Add `conversations` and `passages` to `crates/postio-session/src/search.rs` (`indexable_text`, `postio_body::quote::text_stretches`, `passage::cut`); resolve facet ids to names (≤ 50 per facet, one read per kind). Make T028 green
 - [ ] T030 [P] Write a failing test in `crates/postio-host/src/tests.rs`: over the search seed, `Client::conversations` and `Client::passages` answer; `Client::relaxations` drops zero counts and sorts. Red: no requests
 - [ ] T031 Add `Req::{Conversations, Passages, Relaxations}`, their `Resp`s, `family()` names and `Client` methods in `crates/postio-client/src/{protocol,api}.rs`; route them in `crates/postio-host/src/lib.rs` `answer` through new wrappers in `crates/postio-host/src/search.rs`. Make T030 green
 - [ ] T032 [P] Write a capability test in `crates/postio-storage/tests/turso_capabilities.rs`: a read future over an fts match dropped after its first row leaves the connection usable and the next read correct. Observe its result before relying on it (research R8)
