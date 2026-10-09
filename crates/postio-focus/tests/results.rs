@@ -780,6 +780,86 @@ fn checking_a_second_person_is_either_of_them() {
     assert!(query_view(&effects).expect("restored").chips.is_empty());
 }
 
+/// The facets reads among `effects`: the query each asks for.
+fn facets_asked(effects: &[Effect]) -> Vec<(postio_focus::Ticket, String)> {
+    asks(effects)
+        .into_iter()
+        .filter_map(|(ticket, request)| match request {
+            Request::Facets { query, .. } => Some((ticket, query.input().to_owned())),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_popover_lists_without_its_own_fields_terms() {
+    // D27: with `from:ada` applied the From popover still lists everyone
+    // the rest of the query finds, so a second person can be checked.
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = search(&mut focus, "atlas budget from:ada@example.com", &rows);
+
+    // Another field's popover has its facets already: no read.
+    let effects = focus.handle_on(Input::SearchPopover(FilterKind::To), &rows);
+    assert!(facets_asked(&effects).is_empty(), "To is not applied");
+    let _ = focus.handle_on(Input::PopoverDone { apply: false }, &rows);
+
+    let effects = focus.handle_on(Input::SearchPopover(FilterKind::From), &rows);
+    let reads = facets_asked(&effects);
+    assert_eq!(reads.len(), 1, "one read for the applied field");
+    assert_eq!(reads[0].1, "atlas budget", "the query without its from:");
+    let ticket = reads[0].0;
+    let request = asked(&effects)
+        .into_iter()
+        .find(|request| matches!(request, Request::Facets { .. }))
+        .expect("asked");
+    assert_eq!(request.lane(), Some(postio_focus::Lane::Facets));
+    let view = popover_view(&effects).flatten().expect("open at once");
+    assert!(view.rows.is_empty(), "nothing is listed until it is read");
+
+    // The read lands: everyone, counted without the from:, Ada checked.
+    let reply = reply_to(&request).expect("answered");
+    let effects = focus.handle_on(Input::Reply(ticket, reply), &rows);
+    let view = popover_view(&effects).flatten().expect("redrawn");
+    assert_eq!(
+        titles(&view),
+        [
+            ("Ada Moreno".to_owned(), 24),
+            ("Tom\u{e1}s Reyes".to_owned(), 24)
+        ],
+        "counts without the from: term"
+    );
+    assert!(view.rows[0].checked && !view.rows[1].checked);
+
+    // Checking Tomás makes it either, and the list holds still.
+    let effects = focus.handle_on(
+        Input::PopoverToggle {
+            token: view.rows[1].token,
+            exclude: false,
+        },
+        &rows,
+    );
+    assert_eq!(
+        queries_asked(&effects).first().map(String::as_str),
+        Some("atlas budget from:{ada@example.com tomas@example.com}")
+    );
+    let effects = settle(&mut focus, effects, &rows);
+    let view = popover_view(&effects).flatten().expect("redrawn");
+    assert!(view.rows[0].checked && view.rows[1].checked);
+    assert_eq!(view.rows.len(), 2);
+
+    // Esc: exactly the query it opened on.
+    let effects = focus.handle_on(Input::PopoverDone { apply: false }, &rows);
+    assert_eq!(popover_view(&effects), Some(None));
+    assert!(
+        queries_asked(&effects)
+            .iter()
+            .all(|query| query == "atlas budget from:ada@example.com"),
+        "{:?}",
+        queries_asked(&effects)
+    );
+}
+
 #[test]
 fn a_set_applied_opens_with_every_member_checked() {
     let rows = List::of(3);
@@ -789,7 +869,11 @@ fn a_set_applied_opens_with_every_member_checked() {
         "atlas budget from:{ada@example.com tomas@example.com}",
         &rows,
     );
-    let view = open_popover(&mut focus, FilterKind::From, &rows);
+    let effects = focus.handle_on(Input::SearchPopover(FilterKind::From), &rows);
+    let effects = settle(&mut focus, effects, &rows);
+    let view = popover_view(&effects)
+        .flatten()
+        .expect("the From popover, once its facets are read");
     assert!(view.rows.iter().all(|row| row.checked && !row.excluded));
 }
 

@@ -224,6 +224,9 @@ pub enum Lane {
     /// The counts of a search that found nothing's ways out: slow, and
     /// waste once the query changes.
     Relaxations,
+    /// The facets a filter popover lists when its own field is applied: a
+    /// newer popover, or a closed one, supersedes them.
+    Facets,
     /// What a prefix could become: each keystroke supersedes the last.
     Suggest,
     /// The latest from the person the arrows rest on: a move supersedes it.

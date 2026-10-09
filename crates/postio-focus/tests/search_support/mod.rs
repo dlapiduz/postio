@@ -347,17 +347,32 @@ pub fn page(
         .take(limit as usize)
         .map(|n| conversation(*n))
         .collect();
+    // A facet counts what the query finds, its own `from:` included: with
+    // one applied, only the people it names are left to list, and every one
+    // of them is all of what the query finds (D27).
+    let named: Vec<&str> = query
+        .filters()
+        .filter(|clause| !clause.negated)
+        .flat_map(|clause| clause.filter.alternatives())
+        .filter_map(|filter| match filter {
+            postio_search::query::Filter::From(who) => Some(who.as_str()),
+            _ => None,
+        })
+        .collect();
+    let senders: Vec<Count<AddressId>> = [(1, "ada"), (2, "tomas")]
+        .into_iter()
+        .filter(|(_, who)| named.is_empty() || named.iter().any(|name| name.contains(who)))
+        .map(|(id, _)| Count {
+            id: AddressId::new(id),
+            conversations: if named.is_empty() {
+                24
+            } else {
+                found.len() as u64
+            },
+        })
+        .collect();
     let mut facets = SearchFacets {
-        senders: vec![
-            Count {
-                id: AddressId::new(1),
-                conversations: 24,
-            },
-            Count {
-                id: AddressId::new(2),
-                conversations: 24,
-            },
-        ],
+        senders,
         recipients: vec![Count {
             id: AddressId::new(4),
             conversations: 7,
@@ -447,6 +462,10 @@ pub fn reply_to(request: &Request) -> Option<Reply> {
             order: *order,
             offset: *offset,
             answer: Ok(Box::new(page(query, *order, *offset, *limit))),
+        }),
+        Request::Facets { query, stamp } => Some(Reply::Facets {
+            stamp: *stamp,
+            answer: Ok(Box::new(page(query, ConversationOrder::Newest, 0, 0))),
         }),
         Request::ResultsPassages { hits, stamp, .. } => Some(Reply::ResultsPassages {
             stamp: *stamp,

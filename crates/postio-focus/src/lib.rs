@@ -702,6 +702,14 @@ pub enum Request {
         /// The results' stamp, echoed in the answer.
         stamp: u64,
     },
+    /// The facets of a query, and nothing else: what a filter popover lists
+    /// when its own field is already in the query (spec 010 D27).
+    Facets {
+        /// The query without the popover's field, lowered.
+        query: postio_search::ParsedQuery,
+        /// The popover's stamp, echoed in the answer.
+        stamp: u64,
+    },
     /// What the prefix typed could become: words, labels, lists and files,
     /// or the operator `field`'s values (spec 010 US7).
     Suggest {
@@ -885,6 +893,7 @@ impl Request {
             Request::Passages { .. } => Some(Lane::Passages),
             Request::QuickLookMatches { .. } => Some(Lane::Matches),
             Request::Relaxations { .. } => Some(Lane::Relaxations),
+            Request::Facets { .. } => Some(Lane::Facets),
             Request::Suggest { .. } => Some(Lane::Suggest),
             Request::LatestFrom { .. } => Some(Lane::Latest),
             _ => None,
@@ -974,6 +983,14 @@ pub enum Reply {
         stamp: u64,
         /// Each looser search with its count.
         answer: Result<Vec<(postio_search::relax::Relaxation, u64)>, String>,
+    },
+    /// The answer to [`Request::Facets`]: the facets alone, in the
+    /// results' shape.
+    Facets {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// What the query finds, hits left out.
+        answer: Result<Box<postio_search::results::ConversationResults>, String>,
     },
     /// The answer to [`Request::Suggest`].
     Suggest {
@@ -1313,6 +1330,7 @@ impl FocusController {
                 reply @ (Reply::ResultsPage { .. }
                 | Reply::ResultsPassages { .. }
                 | Reply::QuickLookMatches { .. }
+                | Reply::Facets { .. }
                 | Reply::Relaxations { .. }),
             ) => {
                 let steps = self.results_reply(reply);

@@ -459,6 +459,50 @@ async fn a_popover_closed_with_esc_puts_back_the_query_it_opened_on() {
     session.shutdown();
 }
 
+/// D27 end to end: with a person applied, reopening From lists everyone the
+/// rest of the query finds, the applied person checked -- the real engine
+/// answers the facets-only read.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_popover_reopened_with_its_field_applied_still_lists_everyone() {
+    use postio_ffi::FilterKindFfi;
+
+    let (session, _) = atlas_budget_results().await;
+    session.focus_search_popover(FilterKindFfi::From);
+    let first = next(&session, 10, |event| match event {
+        UiEvent::FocusPopover { view: Some(view) } if !view.rows.is_empty() => Some(view.clone()),
+        _ => None,
+    })
+    .await;
+    assert!(first.rows.len() >= 2, "a second person to check");
+
+    session.focus_search_popover_toggle(first.rows[0].token, false);
+    next(&session, 10, |event| match event {
+        UiEvent::FocusQuery { view } if !view.chips.is_empty() => Some(()),
+        _ => None,
+    })
+    .await;
+    session.focus_search_popover_done(true);
+    next(&session, 10, |event| match event {
+        UiEvent::FocusPopover { view: None } => Some(()),
+        _ => None,
+    })
+    .await;
+
+    session.focus_search_popover(FilterKindFfi::From);
+    let again = next(&session, 10, |event| match event {
+        UiEvent::FocusPopover { view: Some(view) } if !view.rows.is_empty() => Some(view.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(
+        again.rows.len(),
+        first.rows.len(),
+        "everyone the query without from: finds"
+    );
+    assert_eq!(again.rows.iter().filter(|row| row.checked).count(), 1);
+    session.shutdown();
+}
+
 /// The timeline's months and the Date popover's words at the boundary
 /// (FR-023, FR-027): bars 9 to 11 become `after:` and `before:` chips,
 /// and "since july" in the Date popover says what it became.
