@@ -289,7 +289,7 @@ it understood.
 - [x] T113 [US7] Implement those states in `crates/postio-focus/src/bar.rs`, `ExcludeSuggestion` (`alt+Return`, Search, Apple only) in `crates/postio-core/src/registry.rs` (test first in `core_suite`), and `origin_line` in `postio_ui::search_view`. Make T112 green
 - [x] T114 [US7] Add `focus_search_highlighted`, `focus_search_exclude`, the ghost and understood tiles to `DropdownViewFfi` (`crates/postio-ffi`), and draw them in `macos/Sources/PostioKit/DropdownView.swift` and `ChipQueryField.swift` (ghost in tertiary after the caret; SF Mono 14 while an operator is typed). Extend `DropdownKeyboardTests.swift` first: ⌥↩ calls `focusSearchExclude`; moving the highlight onto a person calls `focusSearchHighlighted`; Tab with a ghost calls `focusBarTab`
 - [x] T115 Extend `search_focus.rs` with `completions` for `a`, `at`, `atl` and `from:a`; run it and record it in `docs/notes/<date>-focus-search-step-8.md`. **Stop rule** for 20 ms; a vocabulary table (D22) only after asking *Recorded: `a` misses it (28 ms p95, 35 under load), `atl` is at it under load; the cost is the exact count of a common completion, not finding the words. Stopped: the ways out are the maintainer's (step-8 note).*
-- [ ] T116 [US7] Capture screens 02, 04 and 05, list every difference in the step-8 note; commit the phase
+- [x] T116 [US7] Capture screens 02, 04 and 05, list every difference in the step-8 note; commit the phase *The toolbar's search field stays 327 wide (step 2's T054 does not hold: `NSSearchToolbarItem` ignores the preferred width), so every row is cut; owed before T137 (step-8 note).*
 
 ---
 
