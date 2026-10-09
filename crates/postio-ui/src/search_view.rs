@@ -168,9 +168,21 @@ pub fn hit_date<Tz: TimeZone>(at: DateTime<Tz>, now: DateTime<Tz>) -> String {
     }
 }
 
+/// What a folder is called where search names it: the store's name, but
+/// "Inbox" for the inbox, which IMAP names INBOX in any case (RFC 3501
+/// §5.1) and the place list calls Inbox (`places::place_name`).
+pub fn folder_name(name: &str) -> String {
+    if name.eq_ignore_ascii_case("inbox") {
+        "Inbox".to_owned()
+    } else {
+        name.to_owned()
+    }
+}
+
 /// A hit's folder column, as the operator that would find it there:
 /// `in:Inbox`, quoted when the name has a space.
 pub fn in_folder(name: &str) -> String {
+    let name = folder_name(name);
     if name.contains(char::is_whitespace) {
         format!("in:\"{name}\"")
     } else {
@@ -1870,6 +1882,11 @@ mod tests {
     fn a_hits_folder_is_written_as_its_operator() {
         assert_eq!(in_folder("Inbox"), "in:Inbox");
         assert_eq!(in_folder("Q3 close"), "in:\"Q3 close\"");
+        // IMAP names the inbox INBOX in any case (RFC 3501 §5.1); the
+        // app calls it Inbox, as the place list does (screen 03).
+        assert_eq!(in_folder("INBOX"), "in:Inbox");
+        assert_eq!(folder_name("inbox"), "Inbox");
+        assert_eq!(folder_name("Receipts"), "Receipts");
     }
 
     #[test]
