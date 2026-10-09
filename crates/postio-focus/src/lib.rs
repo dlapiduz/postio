@@ -922,6 +922,20 @@ pub enum Request {
 }
 
 impl Request {
+    /// What a request for passages does with a message's first line (D7):
+    /// `None` for any other request.
+    pub fn first_line(&self) -> Option<postio_search::passage::FirstLine> {
+        match self {
+            // Neither the dropdown's hits (screen 03) nor the results' rows
+            // (design §3.4) show a preview: a match after the first line,
+            // or the first line's own when it holds the only one.
+            Request::Passages { .. } | Request::ResultsPassages { .. } => {
+                Some(postio_search::passage::FirstLine::Avoided)
+            }
+            _ => None,
+        }
+    }
+
     /// The search lane this request is on, when it is one: a newer request
     /// of the same lane makes the one before it waste (spec 010 D8).
     pub fn lane(&self) -> Option<Lane> {
