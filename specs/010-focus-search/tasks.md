@@ -236,7 +236,7 @@ GTK's bar is unchanged.
 - [x] T088 [US4] Add `conversation_matches` (`crates/postio-session/src/search.rs`) and `Req::ConversationMatches` (client, host). Make T087 green
 - [x] T089 [P] [US4] Write failing tests: `QuickLook` (`space`, Results), `NextMatch`/`PrevMatch` (`]`/`[` while Quick Look is open) in `crates/postio-core/tests/core_suite/`; in `crates/postio-focus/tests/results.rs`: Space opens it on the cursor's result; j/k move the cursor and the panel follows; ]/[ move the current card; ↩ opens the message window and closes the panel; `a` archives and the panel shows the next result, or closes when none is left; Space or Esc closes; ⌘Z restores the archived one. Red: missing
 - [x] T090 [US4] Add the commands and `QuickLook` state (`crates/postio-core/src/registry.rs`, `crates/postio-focus/src/results.rs`); `QuickLookViewFfi` and `UiEvent::FocusQuickLook` in `crates/postio-ffi`. Make T089 green
-- [ ] T091 [US4] Add `macos/Sources/PostioAppKit/QuickLookPanel.swift` (floating `NSPanel`, 780×470, radius 14, no dimming) and `macos/Sources/PostioKit/QuickLookBody.swift` (header, subject 22/28, sender line, cards with the current one ringed). Test first in `macos/Tests/PostioKitTests/` that a new view keeps the panel and changes only its content
+- [x] T091 [US4] Add `macos/Sources/PostioAppKit/QuickLookPanel.swift` (floating `NSPanel`, 780×470, radius 14, no dimming) and `macos/Sources/PostioKit/QuickLookBody.swift` (header, subject 22/28, sender line, cards with the current one ringed). Test first in `macos/Tests/PostioKitTests/` that a new view keeps the panel and changes only its content
 - [ ] T092 [US4] Capture screen 10, list every difference in the step-5 note; commit the phase
 
 ---
