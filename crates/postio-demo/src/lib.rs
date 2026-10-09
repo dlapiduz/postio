@@ -15,6 +15,12 @@
 
 #![allow(missing_docs)]
 
+mod files;
+mod search;
+
+pub use files::{SearchFile, search_files};
+pub use search::{search_demo, store_search_blobs};
+
 /// A condition of the store, named as every app names it
 /// (specs/008-storyboards R11): something no step can produce, such as
 /// thirty conversations or a draft left over from yesterday.
@@ -46,11 +52,15 @@ pub enum Seed {
     /// The small seed with a backfill in flight, said through the host's
     /// events as the engine says it.
     Backfilling,
+    /// Two years of invented mail for the search design's screens: about
+    /// five hundred messages in conversations of one to twelve, labels,
+    /// folders, two open asks, and files with stored blobs (specs/010-focus-search).
+    Search,
 }
 
 impl Seed {
     /// Every seed Focus can build.
-    pub const ALL: [Seed; 9] = [
+    pub const ALL: [Seed; 10] = [
         Seed::Small,
         Seed::Empty,
         Seed::LongNewsletter,
@@ -60,6 +70,7 @@ impl Seed {
         Seed::Outbox,
         Seed::DraftLeftOver,
         Seed::Backfilling,
+        Seed::Search,
     ];
 
     /// The name a storyboard uses.
@@ -74,6 +85,7 @@ impl Seed {
             Seed::Outbox => "outbox",
             Seed::DraftLeftOver => "draft-left-over",
             Seed::Backfilling => "backfilling",
+            Seed::Search => "search",
         }
     }
 
@@ -90,6 +102,7 @@ impl Seed {
 pub async fn seeded(seed: Seed) -> (Store, AccountId) {
     match seed {
         Seed::Empty => empty_demo().await,
+        Seed::Search => search_demo().await,
         Seed::LongThread | Seed::ThirtyThreads => {
             let shape = if seed == Seed::LongThread {
                 postio_storage::seed::LONG_THREAD
@@ -1233,6 +1246,170 @@ mod tests {
             .to_lowercase();
         let config = super::config();
         assert!(config.contains(&format!("day = \"{day}\"")), "{config}");
+    }
+
+    /// Spec 010 T001: the search seed is a two-year mailbox in the shape of
+    /// the search design's screens, with the files the Files tab and the
+    /// attachment indexer need.
+    #[tokio::test]
+    async fn the_search_seed_is_two_years_of_invented_mail() {
+        use postio_storage::sql::{all, scalar};
+
+        assert_eq!(Seed::from_id("search"), Some(Seed::Search));
+        assert_eq!(Seed::Search.id(), "search");
+        assert!(Seed::ALL.contains(&Seed::Search));
+
+        let (database, account) = seeded(Seed::Search).await;
+        let connection = database.connect().await.expect("a connection");
+        let account = account.get();
+
+        let messages = scalar(
+            &connection,
+            "SELECT count(*) FROM messages WHERE account_id = ?1",
+            postio_storage::sql::bind![account],
+        )
+        .await
+        .expect("a count");
+        assert!(messages >= 400, "only {messages} messages");
+
+        // Twenty-four months, ending at the demo's today.
+        let oldest = scalar(&connection, "SELECT min(received_at) FROM messages", ())
+            .await
+            .expect("oldest");
+        let newest = scalar(&connection, "SELECT max(received_at) FROM messages", ())
+            .await
+            .expect("newest");
+        let unit = if newest > 100_000_000_000 { 1000 } else { 1 };
+        let days = (newest - oldest) / unit / 86_400;
+        assert!((700..=740).contains(&days), "spans {days} days");
+        let today = today().timestamp();
+        let age = (today - newest / unit) / 3_600;
+        assert!((0..=24).contains(&age), "newest is {age} hours old");
+
+        // Threads of one to twelve messages, and both ends are present.
+        let sizes: Vec<i64> = all(
+            &connection,
+            "SELECT count(*) FROM messages WHERE thread_id IS NOT NULL GROUP BY thread_id",
+            (),
+            |row| postio_storage::sql::RowExt::int(row, 0),
+        )
+        .await
+        .expect("thread sizes");
+        assert!(
+            sizes.iter().all(|size| (1..=12).contains(size)),
+            "{sizes:?}"
+        );
+        assert!(sizes.contains(&1) && sizes.contains(&12), "{sizes:?}");
+
+        // Every address is on a reserved domain.
+        let outside = scalar(
+            &connection,
+            "SELECT count(*) FROM contacts WHERE address NOT LIKE '%@example.com'",
+            (),
+        )
+        .await
+        .expect("contacts");
+        assert_eq!(outside, 0, "an address off @example.com");
+
+        for label in ["Atlas", "Harbor", "Receipts"] {
+            let tagged = scalar(
+                &connection,
+                "SELECT count(*) FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+                  WHERE l.name = ?1",
+                postio_storage::sql::bind![label],
+            )
+            .await
+            .expect("labelled");
+            assert!(tagged > 0, "nothing labelled {label}");
+        }
+        for folder in ["INBOX", "Archive", "Receipts"] {
+            let filed = scalar(
+                &connection,
+                "SELECT count(*) FROM messages m JOIN mailboxes b ON b.id = m.mailbox_id
+                  WHERE b.path = ?1",
+                postio_storage::sql::bind![folder],
+            )
+            .await
+            .expect("filed");
+            assert!(filed > 0, "nothing in {folder}");
+        }
+
+        let open = scalar(
+            &connection,
+            "SELECT count(*) FROM markers WHERE dismissed_at IS NULL",
+            (),
+        )
+        .await
+        .expect("markers");
+        assert_eq!(open, 2, "two open markers");
+
+        // Five kinds of file, each with bytes in a blob store, each saying
+        // "atlas budget" in its name's words and in its contents.
+        let files = search_files();
+        let blobs_dir = tempfile::tempdir().expect("scratch");
+        let blobs = postio_storage::BlobStore::open(
+            blobs_dir.path().to_path_buf(),
+            &postio_storage::test_support::blob_keys(),
+        )
+        .expect("a blob store");
+        let stored = store_search_blobs(&blobs).expect("stored");
+        assert_eq!(stored.len(), files.len());
+        for extension in ["pdf", "xlsx", "docx", "pptx", "txt"] {
+            let file = files
+                .iter()
+                .find(|file| file.name.ends_with(extension))
+                .unwrap_or_else(|| panic!("no .{extension} file"));
+            assert!(
+                file.name.to_lowercase().contains("atlas"),
+                "{} is not about Atlas",
+                file.name
+            );
+            let (_, blob) = stored
+                .iter()
+                .find(|(name, _)| *name == file.name)
+                .expect("its blob");
+            let bytes = blobs.get(blob).expect("the bytes");
+            assert_eq!(bytes, file.bytes);
+            let text = readable_text(extension, &bytes).to_lowercase();
+            assert!(text.contains("atlas budget"), "{}: {text}", file.name);
+            // The database knows the blob.
+            let rows = scalar(
+                &connection,
+                "SELECT count(*) FROM attachments WHERE filename = ?1 AND blob_id = ?2",
+                postio_storage::sql::bind![file.name, blob.as_str()],
+            )
+            .await
+            .expect("attachment rows");
+            assert!(rows > 0, "{} has no stored blob in the store", file.name);
+        }
+        // And one attachment is left undownloaded, for the indexer to skip.
+        let undownloaded = scalar(
+            &connection,
+            "SELECT count(*) FROM attachments WHERE blob_id IS NULL",
+            (),
+        )
+        .await
+        .expect("undownloaded");
+        assert!(undownloaded > 0);
+    }
+
+    /// The words a file's bytes hold, as a reader of the format would see
+    /// them: the stored zip entries' text for OOXML, the content streams for
+    /// a PDF, the bytes for plain text.
+    fn readable_text(extension: &str, bytes: &[u8]) -> String {
+        match extension {
+            // Stored entries, so the XML is in the zip's bytes as written.
+            "xlsx" | "docx" | "pptx" => {
+                assert_eq!(&bytes[..4], b"PK\x03\x04");
+                String::from_utf8_lossy(bytes).into_owned()
+            }
+            "pdf" => {
+                assert!(bytes.starts_with(b"%PDF-"));
+                assert!(bytes.ends_with(b"%%EOF\n"));
+                String::from_utf8_lossy(bytes).into_owned()
+            }
+            _ => String::from_utf8_lossy(bytes).into_owned(),
+        }
     }
 
     use super::*;

@@ -17,5 +17,8 @@ serde_json = { workspace = true }
 tempfile = { workspace = true }
 postio-workspace-hack.workspace = true
 
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
 [lints]
 workspace = true
