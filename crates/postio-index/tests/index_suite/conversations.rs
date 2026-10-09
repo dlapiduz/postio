@@ -553,6 +553,12 @@ async fn it_says_how_many_messages_it_looked_through() {
         "every message the search could have found, matched or not"
     );
     assert!(results.corpus_complete);
+    // Nothing reads an attachment's text yet (spec 010 step 9), so the
+    // search cannot say it looked inside them (US6 scenario 2).
+    assert!(
+        !results.contents_complete,
+        "no attachment contents are searched before step 9"
+    );
 }
 
 #[tokio::test]
