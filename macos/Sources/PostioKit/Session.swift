@@ -256,6 +256,13 @@ public final class PostioSession {
     /// (read it again on `FocusResultsPage`).
     public func focusSearchRow(_ position: UInt64) -> ResultRowFfi? { inner.focusSearchRow(position: position) }
 
+    /// The Files tab's card at `position`, or `nil` past the last.
+    public func focusSearchFile(_ position: UInt64) -> FileCardFfi? { inner.focusSearchFile(position: position) }
+
+    /// The system's Quick Look on a file, or its save panel, is gone: the
+    /// copy it was handed can go too (FR-053).
+    public func focusSearchFileDone() { inner.focusSearchFileDone() }
+
     /// The folders popover's places whose names hold `filter`, read now
     /// from the last read (ask again on `FocusPlacesChanged`).
     public func focusPlaces(_ filter: String) -> [PlaceEntryFfi] { inner.focusPlaces(filter: filter) }

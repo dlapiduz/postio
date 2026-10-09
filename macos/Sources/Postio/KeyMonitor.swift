@@ -88,6 +88,9 @@ final class KeyMonitor {
         // The field's own editing, before anything resolves it -- see
         // `KeyDisposition.belongsToText`.
         if KeyDisposition.belongsToText(reduced, typing: typing) { return false }
+        // The Files tab's arrows are its grid's -- see `belongsToGrid`.
+        let grid = NSApp.keyWindow?.firstResponder is FilesCollectionView
+        if KeyDisposition.belongsToGrid(reduced, gridFocused: grid) { return false }
         let outcome = resolve(reduced, context(), typing)
         var acted = false
         switch outcome {

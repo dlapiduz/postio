@@ -524,9 +524,10 @@ final class Engine {
         case let .reader(verb):
             messageWindow?.apply(verb)
         case .keyboardHome where results?.isOpen == true:
-            // In the results, home is the results table.
+            // In the results, home is the results table, or the Files
+            // tab's grid.
             mainWindow?.makeKeyAndOrderFront(nil)
-            resultsTable?.takeKeyboard()
+            if results?.isFiles == true { filesGrid?.takeKeyboard() } else { resultsTable?.takeKeyboard() }
         case .keyboardHome:
             guard let table = focusTable?.tableView, let window = table.window else { return }
             window.makeKeyAndOrderFront(nil)
@@ -937,6 +938,11 @@ final class Engine {
     /// The results table, in the inbox's place while the results are up.
     @ObservationIgnored private(set) var resultsTable: ResultsTable?
 
+    /// The Files tab's grid (step 9), in the table's place while it is the
+    /// tab shown, and the system's Quick Look or save panel over a file.
+    @ObservationIgnored private(set) var filesGrid: FilesGrid?
+    @ObservationIgnored private(set) var filePreview: FilePreview?
+
     /// The filter popover that is up (step 4), and what hangs it from its
     /// button.
     @ObservationIgnored private(set) var filterPopover: FilterPopoverModel?
@@ -971,6 +977,11 @@ final class Engine {
         let results = ResultsModel(engine: session)
         self.results = results
         resultsTable = ResultsTable(model: results)
+        let grid = FilesGrid(model: results)
+        let preview = FilePreview(done: { [weak session] in session?.focusSearchFileDone() })
+        grid.preview = preview
+        filesGrid = grid
+        filePreview = preview
         let popover = FilterPopoverModel(engine: session)
         filterPopover = popover
         filterPopoverPresenter = FilterPopover(model: popover)
@@ -1026,7 +1037,25 @@ final class Engine {
             if let table = focusTable?.tableView, let window = table.window, commandBar?.isOpen != true {
                 window.makeFirstResponder(table)
             }
-        case .redraw, .rows, .cursor:
+        case .redraw:
+            // A tab changed under the keyboard: the grid or the table has
+            // it, whichever is shown. After SwiftUI has swapped them in --
+            // the view being left takes the keyboard with it, to the next
+            // key view (a tab button) -- and never from a field.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.commandBar?.isOpen != true, self.results?.isOpen == true,
+                      let window = self.mainWindow, !(window.firstResponder is NSText)
+                else { return }
+                let responder = window.firstResponder
+                if self.results?.isFiles == true, !(responder is FilesCollectionView) {
+                    self.filesGrid?.takeKeyboard()
+                } else if self.results?.isFiles != true, responder is FilesCollectionView
+                    || responder === window
+                {
+                    self.resultsTable?.takeKeyboard()
+                }
+            }
+        case .rows, .cursor:
             break
         }
     }
@@ -1294,9 +1323,17 @@ final class Engine {
             return
         }
         if case .focusLeaveResults = event { noResults?.apply(event) }
+        // A file handed to the system (step 9): its Quick Look, from the
+        // grid that drives it, or a save panel.
+        if case let .focusFileCopy(copy) = event {
+            if copy?.save == false { filesGrid?.takeKeyboard() }
+            filePreview?.apply(copy, over: mainWindow)
+            return
+        }
         if let change = results?.apply(event) {
             if change == .close { searchQuery?.apply(event) }
             resultsTable?.apply(change)
+            filesGrid?.apply(change)
             resultsMoved(change)
             return
         }

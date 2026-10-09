@@ -54,4 +54,17 @@ public enum KeyDisposition {
         else { return false }
         return ["a", "c", "v", "x", "z"].contains(character)
     }
+
+    /// Whether `key` is a bare arrow for the Files tab's grid while it has
+    /// the keyboard (spec 010 T130, design §3.8): ← → move a card, ↑ ↓ a
+    /// row of four, as any collection view's do, and the grid says where
+    /// the ring went. The resolver would read ↓ as the list's next and →
+    /// as open, which on a grid are the wrong two things. A chord still
+    /// resolves: ⌘↓ saves the file, ⌥← steps the timeline.
+    public static func belongsToGrid(_ key: KeyEvent.Reduced, gridFocused: Bool) -> Bool {
+        guard gridFocused, let name = key.name else { return false }
+        let modifiers = key.modifiers
+        guard !modifiers.command, !modifiers.control, !modifiers.option, !modifiers.shift else { return false }
+        return ["left", "right", "up", "down"].contains(name.lowercased())
+    }
 }

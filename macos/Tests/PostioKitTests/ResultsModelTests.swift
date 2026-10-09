@@ -25,6 +25,11 @@ struct ResultsModelTests {
             reads.append(position)
             return pending.contains(position) ? nil : ResultsModelTests.row(position)
         }
+        func focusSearchFile(_ position: UInt64) -> FileCardFfi? {
+            fileReads.append(position)
+            return position < 3 ? ResultsModelTests.card(position) : nil
+        }
+        var fileReads: [UInt64] = []
         func focusSearchPoint(_ position: UInt64) { pointed.append(position) }
         func focusSearchTab(_ tab: ResultsTabFfi) {}
         func focusSearchOrder(_ order: ConversationOrderFfi) {}
@@ -59,7 +64,46 @@ struct ResultsModelTests {
                     group("August 2026", first: 12, rows: 14),
                 ],
                 rows: 26, cursor: cursor, footerHints: [], footerRight: "26 conversations · local index · 41 ms",
-                selected: 0, bulk: [], selectAll: nil))
+                selected: 0, bulk: [], selectAll: nil, files: nil))
+    }
+
+    nonisolated static func card(_ position: UInt64) -> FileCardFfi {
+        FileCardFfi(
+            attachment: Int64(position) + 70, message: Int64(position) + 1000, kind: "PDF", preview: .page,
+            marked: nil, name: [RunFfi(text: "notes.pdf", highlighted: false, style: .plain)], meta: "", line: [],
+            subject: "in ‘Notes’", focused: false, accessible: "notes.pdf")
+    }
+
+    /// Step 9: the Files tab's frame, three cards.
+    static func files(cursor: UInt64? = 0) -> UiEvent {
+        .focusResults(
+            view: ResultsViewFfi(
+                tabs: [TabFfi(tab: .files, label: "Files", count: "3", selected: true, key: "cmd+2")],
+                order: .newest, countLine: "26 conversations", subLine: "3 files", months: [], timelineHint: "",
+                timelineStep: nil, groups: [], rows: 3, cursor: cursor, footerHints: [], footerRight: "",
+                selected: 0, bulk: [], selectAll: nil,
+                files: FilesHeaderFfi(title: "Files whose name or contents match", note: "contents are indexed")))
+    }
+
+    @Test func theFilesTabIsAGridOfCardsNotTableRows() {
+        let engine = Engine()
+        let model = ResultsModel(engine: engine)
+        model.apply(Self.results())
+        #expect(!model.isFiles)
+        #expect(model.apply(Self.files()) == .redraw)
+        #expect(model.isFiles)
+        #expect(model.filesHeader?.title == "Files whose name or contents match")
+        #expect(model.count == 0, "the table draws nothing under the grid")
+        #expect(model.cardCount == 3)
+        #expect(model.card(at: 1)?.attachment == 71)
+        #expect(model.card(at: 1)?.attachment == 71)
+        #expect(engine.fileReads == [1], "read once, then remembered")
+        #expect(model.card(at: 3) == nil)
+        // A new frame reads the cards again.
+        model.apply(Self.files(cursor: 1))
+        _ = model.card(at: 1)
+        #expect(engine.fileReads == [1, 1])
+        #expect(model.cursor == 1)
     }
 
     @Test func groupHeadersPrecedeTheirRows() {

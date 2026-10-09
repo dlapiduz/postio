@@ -216,13 +216,19 @@ private struct ResultsPane: View {
                         session?.focusSearchMonths(first, last)
                     })
             }
-            ResultsTableRepresentable(table: table)
-                .overlay {
-                    if let none {
-                        NoResultsView(model: none)
-                            .background(Color(nsColor: .textBackgroundColor))
+            // The Files tab (step 9): its header and grid in the rows' place.
+            if results.isFiles, let header = results.filesHeader, let grid = engine.filesGrid {
+                FilesHeaderView(header: header)
+                FilesGridRepresentable(grid: grid)
+            } else {
+                ResultsTableRepresentable(table: table)
+                    .overlay {
+                        if let none {
+                            NoResultsView(model: none)
+                                .background(Color(nsColor: .textBackgroundColor))
+                        }
                     }
-                }
+            }
             SearchFooter(
                 hints: results.footerHints, right: results.footerRight, checked: engine.resultsChecked,
                 bulk: results.bulk, selectAll: results.selectAll)
