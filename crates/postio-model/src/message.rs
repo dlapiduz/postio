@@ -391,6 +391,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_content_identity_is_its_namespace_and_key_and_survives_serde() {
+        // Two backends may use the same key for different bytes; the
+        // namespace is what keeps them apart.
+        let jmap = ContentIdentity::new("jmap-email", "M1");
+        assert_eq!(
+            (jmap.namespace.as_str(), jmap.key.as_str()),
+            ("jmap-email", "M1")
+        );
+        assert_ne!(jmap, ContentIdentity::new("gmail-message", "M1"));
+        let json = serde_json::to_string(&jmap).expect("serialize");
+        assert_eq!(
+            serde_json::from_str::<ContentIdentity>(&json).expect("deserialize"),
+            jmap
+        );
+    }
+
+    #[test]
     fn every_body_state_round_trips_through_its_stored_identifier() {
         for state in [
             BodyState::NotFetched,

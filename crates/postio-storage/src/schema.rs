@@ -28,9 +28,10 @@
 //! fresh one. Forward only, no down migration, and a step is never edited
 //! once a store may have run it.
 //!
-//! Every statement in a step is safe to run twice (`IF NOT EXISTS`, or a
-//! guard of its own): the stamp is written after the steps, so a store cut
-//! off between the two runs them again on its next open.
+//! A store's steps and its new stamp run in one transaction, so a store cut
+//! off part-way is left at its old schema and stamp and runs them again on
+//! its next open. A step may therefore add and drop columns and copy rows,
+//! none of which can be guarded to run twice.
 //!
 //! A change no statement can express -- a column whose meaning changed, a
 //! constraint tightened under rows that break it -- does not get a step. It
@@ -115,7 +116,8 @@ pub struct Migration {
     pub from: i64,
     /// The stamp of the schema it leaves.
     pub to: i64,
-    /// The statements, each safe to run twice (see the module docs).
+    /// The statements, run in one transaction with the stamp (see the
+    /// module docs).
     pub statements: &'static str,
 }
 
@@ -148,13 +150,9 @@ CREATE INDEX IF NOT EXISTS idx_operation_queue_state ON operation_queue (state, 
     // backend (#1278, the Maildir backend), and a draft records whether it is
     // being written as rich text (#1271).
     //
-    // The one step whose statements are not safe to run twice: SQL has no
-    // `IF NOT EXISTS` for a column, and neither a rename nor a new column can
-    // be guarded inside a batch. Both are single DDL statements, so the only
-    // store that meets this twice is one cut off in the instant between the
-    // second and the stamp. That store fails to open on the repeated
-    // statement, and `postio-store reset` starts it over -- what it would
-    // have met without the step.
+    // Neither a rename nor a new column can be guarded by `IF NOT EXISTS`;
+    // the transaction the steps run in is what keeps a store from meeting
+    // them twice.
     Migration {
         from: stamp(0xd8c1_e5df),
         to: stamp(0x8151_85a3),
@@ -172,10 +170,8 @@ ALTER TABLE drafts ADD COLUMN rich INTEGER NOT NULL DEFAULT 0;
     // share bytes. A backend's native identity establishes sharing on the
     // next resync.
     //
-    // Like the step above, not safe to run twice: it adds and drops columns
-    // and copies rows, none of which can be guarded inside a batch. A store
-    // cut off before the stamp fails to open on the repeated statement and
-    // starts over, which is what it would have met without the step.
+    // It adds and drops columns and copies rows; the transaction the steps
+    // run in is what makes that safe to cut off.
     Migration {
         from: stamp(0x8151_85a3),
         to: stamp(0xdcb8_490f),
@@ -1482,7 +1478,7 @@ mod tests {
             "HEAD now hashes to {:08x}, and no migration leads there. Copy the \
              HEAD you replaced to tests/schemas/{:08x}.sql and append a \
              Migration from {:08x} to {:08x} whose statements make a store at \
-             the old schema one at the new (each safe to run twice)",
+             the old schema one at the new",
             FINGERPRINT as i32 as u32,
             last.to as i32 as u32,
             last.to as i32 as u32,
