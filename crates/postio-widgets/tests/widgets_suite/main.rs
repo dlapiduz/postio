@@ -114,7 +114,11 @@ mod widgets_css;
 /// the case needs. A name here still runs when asked for explicitly, and still
 /// appears in `--list`, exactly as an ignored libtest case does. Say in a
 /// comment beside the name which issue or task takes it back.
-const IGNORED: &[&str] = &[]; // nothing held out
+const IGNORED: &[&str] = &[
+    // Failed on CI in two places that do not touch this crate; held out
+    // by scripts/quarantine-flakes.py until #1810 finds the race.
+    "composer_inline_image::a_pasted_image_becomes_an_inline_attachment_and_renders_at_the_caret",
+];
 
 const CASES: &[(&str, fn())] = &[
     (
