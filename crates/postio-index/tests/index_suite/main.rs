@@ -32,6 +32,7 @@ mod header_index_size;
 mod label_and_action;
 mod promoted_operators;
 mod ranking_weights;
+mod relaxations;
 mod schema_upgrade;
 mod search_statement_budget;
 mod startup_index_budget;
