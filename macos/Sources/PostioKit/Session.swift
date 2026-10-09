@@ -185,6 +185,18 @@ public final class PostioSession {
     /// `Tab` in the bar's field; `false` leaves the key to the toolkit.
     public func focusBarTab() -> Bool { inner.focusBarTab() }
 
+    /// The search dropdown's arrows rest on `token` (specs/010-focus-search).
+    public func focusSearchHighlighted(_ token: UInt64) { inner.focusSearchHighlighted(token: token) }
+
+    /// ⌥⌫ on the dropdown's recent search `token`.
+    public func focusSearchForget(_ token: UInt64) { inner.focusSearchForget(token: token) }
+
+    /// ⌘↩ in the dropdown.
+    public func focusSearchShowAll() { inner.focusSearchShowAll() }
+
+    /// The search field's placeholder (screen 01).
+    public func focusSearchPlaceholder() -> String { inner.focusSearchPlaceholder() }
+
     /// The folders popover's places whose names hold `filter`, read now
     /// from the last read (ask again on `FocusPlacesChanged`).
     public func focusPlaces(_ filter: String) -> [PlaceEntryFfi] { inner.focusPlaces(filter: filter) }

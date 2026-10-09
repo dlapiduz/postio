@@ -254,6 +254,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
     private let engine: Engine
     private let toolbar = NSToolbar(identifier: "PostioFocusMain")
     private weak var field: BarSearchField?
+    private weak var searchItem: NSSearchToolbarItem?
     private weak var window: NSWindow?
     private let cap = KeyCapView("")
 
@@ -290,7 +291,20 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
         // controller's words in it and gives it the keyboard.
         engine.searchField = field
         engine.keycapsChanged = { [weak self] in self?.respell() }
+        engine.barShown = { [weak self] shown in self?.grow(shown) }
         respell()
+    }
+
+    /// The field grows leftward to 860 while the bar is up, its right edge
+    /// where it was, and goes back after (specs/010-focus-search T054).
+    private func grow(_ shown: Bool) {
+        guard let item = searchItem else { return }
+        let width = shown
+            ? CommandBarGeometry.fieldWidth(window: window?.frame.width ?? 0)
+            : CommandBarGeometry.restingWidth
+        guard item.preferredWidthForSearchField != width else { return }
+        item.preferredWidthForSearchField = width
+        window?.contentView?.superview?.layoutSubtreeIfNeeded()
     }
 
     // MARK: NSToolbarDelegate
@@ -328,8 +342,9 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
             let field = BarSearchField()
             field.onFocus = { [weak self] in self?.engine.searchFieldFocused() }
             item.searchField = field
-            item.preferredWidthForSearchField = 320
-            field.placeholderString = "Search mail or run a command"
+            item.preferredWidthForSearchField = CommandBarGeometry.restingWidth
+            searchItem = item
+            field.placeholderString = engine.session?.focusSearchPlaceholder() ?? ""
             field.delegate = self
             field.sendsSearchStringImmediately = false
             field.sendsWholeSearchString = true
@@ -364,6 +379,9 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
         let palette = KeyCapSpelling.cap(engine.session?.binding(for: BarCommand.palette))
         cap.text = palette ?? ""
         cap.isHidden = palette == nil || !(field?.stringValue.isEmpty ?? true)
+        if let placeholder = engine.session?.focusSearchPlaceholder() {
+            field?.placeholderString = placeholder
+        }
         for item in toolbar.items where item.itemIdentifier == Self.compose {
             item.toolTip = composeTip()
         }

@@ -39,6 +39,9 @@ struct CommandBarModelTests {
         }
         func invoke(_ id: String) { invoked.append(id) }
         func binding(for command: String) -> String? { bindings[command] }
+        func focusSearchHighlighted(_ token: UInt64) {}
+        func focusSearchForget(_ token: UInt64) {}
+        func focusSearchShowAll() {}
     }
 
     static func line(
@@ -295,33 +298,8 @@ struct CommandBarModelTests {
         #expect(engine.invoked == ["saved_search_2"], "nothing pinned there")
     }
 
-    // -- Where the panel goes ----------------------------------------------
-
-    @Test func thePanelHangsUnderTheFieldAsWideAsItOr640() {
-        // A 1440 × 900 window at the screen's origin; the 320 field ends 12
-        // short of its right edge, and the toolbar is 52 tall.
-        let window = CGRect(x: 0, y: 0, width: 1440, height: 900)
-        let field = CGRect(x: 1108, y: 856, width: 320, height: 28)
-        let frame = CommandBarGeometry.frame(field: field, window: window, contentTop: 848, height: 400)
-        #expect(frame.width == 640)
-        #expect(frame.maxX == field.maxX, "its right edge is the field's")
-        #expect(frame.maxY == 848 - CommandBarGeometry.gap)
-        #expect(frame.height == 400)
-
-        let wide = CGRect(x: 400, y: 856, width: 900, height: 28)
-        #expect(CommandBarGeometry.frame(field: wide, window: window, contentTop: 848, height: 400).width == 900)
-    }
-
-    @Test func thePanelStaysInsideItsWindow() {
-        // A narrow window: the panel is pushed right of its left edge, and
-        // shortened to end above its bottom.
-        let window = CGRect(x: 100, y: 100, width: 700, height: 400)
-        let field = CGRect(x: 300, y: 456, width: 320, height: 28)
-        let frame = CommandBarGeometry.frame(field: field, window: window, contentTop: 448, height: 900)
-        #expect(frame.minX >= window.minX + CommandBarGeometry.margin)
-        #expect(frame.minY >= window.minY + CommandBarGeometry.margin)
-        #expect(frame.width == 640)
-    }
+    // Where the panel goes: `PostioAppKitTests/CommandBarGeometryTests`
+    // (spec 010 T054 replaced 009's 640-wide panel on the field's right edge).
 
     @Test func theCommandsTheBarRunsByNameAreRealCommands() {
         // A literal that no longer matches the registry is a key that does
