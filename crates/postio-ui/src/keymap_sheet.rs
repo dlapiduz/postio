@@ -203,6 +203,7 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::BackToWords
         | C::ToggleResultOrder
         | C::ShowAllResults
+        | C::ExcludeSuggestion
         | C::ForgetRecent
         | C::HistoryBack
         | C::HistoryForward

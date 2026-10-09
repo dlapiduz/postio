@@ -173,6 +173,8 @@ command_ids! {
     ShowAllResults => "show_all_results",
     /// Forget the recent search the dropdown has highlighted.
     ForgetRecent => "forget_recent",
+    /// The dropdown: exclude the focused person, label or folder.
+    ExcludeSuggestion => "exclude_suggestion",
     /// Back through the search history: the results to the inbox, or the
     /// results before.
     HistoryBack => "history_back",
@@ -805,6 +807,9 @@ pub enum Command {
     ShowAllResults,
     /// Forget the highlighted recent search.
     ForgetRecent,
+    /// Exclude the dropdown's focused person, label or folder: its chip,
+    /// negated (spec 010 US7).
+    ExcludeSuggestion,
     /// Back through the search history.
     HistoryBack,
     /// Forward through the search history.
@@ -1293,6 +1298,7 @@ impl Command {
             Command::BackToWords => CommandId::BackToWords,
             Command::ShowAllResults => CommandId::ShowAllResults,
             Command::ForgetRecent => CommandId::ForgetRecent,
+            Command::ExcludeSuggestion => CommandId::ExcludeSuggestion,
             Command::HistoryBack => CommandId::HistoryBack,
             Command::HistoryForward => CommandId::HistoryForward,
             Command::ResultsConversations => CommandId::ResultsConversations,
@@ -1486,6 +1492,7 @@ impl Command {
             CommandId::BackToWords => Command::BackToWords,
             CommandId::ShowAllResults => Command::ShowAllResults,
             CommandId::ForgetRecent => Command::ForgetRecent,
+            CommandId::ExcludeSuggestion => Command::ExcludeSuggestion,
             CommandId::HistoryBack => Command::HistoryBack,
             CommandId::HistoryForward => Command::HistoryForward,
             CommandId::ResultsConversations => Command::ResultsConversations,

@@ -51,6 +51,7 @@ save_search	ctrl+s
 back_to_words	ctrl+BackSpace | alt+BackSpace
 show_all_results	
 forget_recent	
+exclude_suggestion	
 history_back	
 history_forward	
 results_conversations	
