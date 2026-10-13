@@ -1155,14 +1155,14 @@ impl Client {
         .await
     }
 
-    /// `(key, total, new)` for each of `searches` (`(key, query text)`), in
-    /// the order asked. Keys not listed lose their seen-progress.
+    /// Each of `searches` (`(key, query text)`) counted, in the order
+    /// asked. Keys not listed lose their seen-progress.
     pub async fn saved_counts(
         &self,
         account: postio_model::AccountScope,
         today: chrono::NaiveDate,
         searches: Vec<(String, String)>,
-    ) -> Result<Vec<(String, u64, u64)>, StoreError> {
+    ) -> Result<Vec<crate::protocol::SavedCount>, StoreError> {
         let request = Req::SavedCounts {
             account,
             today,

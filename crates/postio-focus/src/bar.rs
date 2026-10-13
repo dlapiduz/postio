@@ -19,6 +19,7 @@
 //! however many accounts there are.
 
 use chrono::{DateTime, Utc};
+use postio_client::protocol::SavedCount;
 use postio_core::{ActionId, CommandId, Context, Frontend, Keymap};
 use postio_model::{Contact, FocusScope, ListScope, MailboxId, MailboxRole, MessageId, ThreadId};
 use postio_search::{Instead, ResultOrder, SearchHit};
@@ -250,7 +251,7 @@ pub(crate) struct Bar {
     recents: Vec<(u64, postio_client::protocol::RecentSearch)>,
     /// The saved searches' counts by key, as last read: `(key, total,
     /// new)`.
-    saved_counts: Vec<(String, u64, u64)>,
+    saved_counts: Vec<SavedCount>,
     /// The saved pills' tokens, in order.
     saved_tokens: Vec<u64>,
     /// The cheat sheet's rows' tokens, and the example's.
@@ -1893,15 +1894,15 @@ impl Bar {
                         let counted = self
                             .saved_counts
                             .iter()
-                            .find(|(key, _, _)| *key == search.key);
+                            .find(|counted| counted.key == search.key);
                         dropdown::SavedPill {
                             token: *token,
                             name: search.name.clone(),
-                            count: counted.map(|(_, total, _)| *total),
+                            count: counted.map(|counted| counted.total),
                             fresh: counted
                                 .filter(|_| search.notify)
-                                .map(|(_, _, new)| *new)
-                                .filter(|new| *new > 0),
+                                .map(|counted| counted.new)
+                                .filter(|new| new.conversations > 0),
                         }
                     })
                     .collect();
@@ -2380,7 +2381,7 @@ impl Bar {
     }
 
     /// The saved searches' counts, read.
-    fn saved_counted(&mut self, answer: Result<Vec<(String, u64, u64)>, String>) -> Vec<Step> {
+    fn saved_counted(&mut self, answer: Result<Vec<SavedCount>, String>) -> Vec<Step> {
         match answer {
             // Merged by key: a recount of the searches that notify leaves
             // the others' counts as they were.
@@ -2389,7 +2390,7 @@ impl Bar {
                     match self
                         .saved_counts
                         .iter_mut()
-                        .find(|(key, _, _)| *key == counted.0)
+                        .find(|was| was.key == counted.key)
                     {
                         Some(was) => *was = counted,
                         None => self.saved_counts.push(counted),

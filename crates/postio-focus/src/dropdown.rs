@@ -21,7 +21,9 @@ use postio_core::{CommandId, Keymap};
 use postio_model::{MessageId, ThreadId};
 use postio_search::highlight;
 use postio_search::query::{Clause, Filter};
-use postio_search::results::{ConversationHit, ConversationKey, ConversationResults, Passage};
+use postio_search::results::{
+    ConversationHit, ConversationKey, ConversationResults, Counted, Passage,
+};
 use postio_search::suggest::Completion;
 use postio_ui::hints::Hint;
 use postio_ui::search_view as words;
@@ -171,8 +173,8 @@ pub struct DropdownPill {
 pub(crate) struct SavedPill {
     pub(crate) token: u64,
     pub(crate) name: String,
-    pub(crate) count: Option<u64>,
-    pub(crate) fresh: Option<u64>,
+    pub(crate) count: Option<Counted>,
+    pub(crate) fresh: Option<Counted>,
 }
 
 /// One section: its title, its note, and its rows or pills.
@@ -474,8 +476,12 @@ pub(crate) fn empty(parts: EmptyParts<'_>) -> DropdownView {
                 token: pill.token,
                 op: None,
                 label: pill.name.clone(),
-                count: pill.count.map(|count| count.to_string()),
-                fresh: pill.fresh.map(|new| words::new_badge(new, false)),
+                count: pill
+                    .count
+                    .map(|total| words::saved_count(total.conversations, total.capped)),
+                fresh: pill
+                    .fresh
+                    .map(|new| words::new_badge(new.conversations, new.capped)),
                 key: postio_ui::command_bar::SAVED
                     .get(index)
                     .and_then(|id| postio_ui::hints::key(parts.keymap, *id)),

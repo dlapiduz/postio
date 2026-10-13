@@ -790,9 +790,8 @@ pub enum Resp {
     Suggestions(Box<postio_search::suggest::Suggestions>),
     /// The remembered searches, newest first.
     Recent(Vec<RecentSearch>),
-    /// `(key, total, new)` for each saved search asked, in the order asked.
-    /// `total` is capped at the search's hit limit.
-    SavedCounts(Vec<(String, u64, u64)>),
+    /// Each saved search asked, counted, in the order asked.
+    SavedCounts(Vec<SavedCount>),
     /// A message's stored words; empty when there are none here.
     StoredBody(postio_model::MessageBody),
     /// Where each exported message was written, in the order asked.
@@ -1114,6 +1113,18 @@ pub struct RecentSearch {
     pub last_run_at: chrono::DateTime<chrono::Utc>,
     /// Conversations it matched, as the footer said.
     pub hits: u64,
+}
+
+/// What a saved search's pill and quiet badge count (spec 010 D15, D30).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedCount {
+    /// Its `[saved_searches.<key>]` key.
+    pub key: String,
+    /// The conversations it matches; a floor past the walk's cap.
+    pub total: postio_search::results::Counted,
+    /// How many of them have a match received since it was last viewed;
+    /// zero before it was first viewed, and a floor past the badge's cap.
+    pub new: postio_search::results::Counted,
 }
 
 /// A wrapper only for [`Resp`]'s `Eq`, as [`Hits`] is: a hit's score is an

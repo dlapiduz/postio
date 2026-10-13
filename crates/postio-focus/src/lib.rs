@@ -1093,8 +1093,8 @@ pub enum Reply {
     /// The answer to [`Request::RecentSearches`] and
     /// [`Request::ForgetSearch`].
     RecentSearches(Result<Vec<postio_client::protocol::RecentSearch>, String>),
-    /// The answer to [`Request::SavedCounts`]: `(key, total, new)`.
-    SavedCounts(Result<Vec<(String, u64, u64)>, String>),
+    /// The answer to [`Request::SavedCounts`].
+    SavedCounts(Result<Vec<postio_client::protocol::SavedCount>, String>),
     /// The answer to [`Request::Folder`].
     Folder {
         /// The stamp it was asked under.

@@ -4516,11 +4516,29 @@ fn focus_counts_each_saved_search_and_nothing_is_new_before_it_is_seen() {
         .expect("an answer");
 
     assert_eq!(counts.len(), 2, "one count per saved search, in order");
-    assert_eq!(counts[0].0, "budget");
-    assert_eq!(counts[0].1, seed.conversations("atlas budget").total);
-    assert!(counts[0].1 > 0);
-    assert_eq!(counts[0].2, 0, "nothing is new before it was first seen");
-    assert_eq!(counts[1], ("nothing".to_string(), 0, 0));
+    assert_eq!(counts[0].key, "budget");
+    let found = seed.conversations("atlas budget");
+    assert_eq!(
+        counts[0].total,
+        Counted {
+            conversations: found.total,
+            capped: found.capped,
+        }
+    );
+    assert!(counts[0].total.conversations > 0);
+    assert_eq!(
+        counts[0].new,
+        Counted::default(),
+        "nothing is new before it was first seen"
+    );
+    assert_eq!(
+        counts[1],
+        postio_client::protocol::SavedCount {
+            key: "nothing".to_owned(),
+            total: Counted::default(),
+            new: Counted::default(),
+        }
+    );
 }
 
 #[test]
@@ -4660,7 +4678,7 @@ fn a_saved_search_counts_what_arrived_since_it_was_seen_and_viewing_clears_it() 
         .expect("marked");
     let before = counts();
     assert_eq!(
-        before[0].2, 0,
+        before[0].new.conversations, 0,
         "everything that matches was there when seen"
     );
 
@@ -4690,15 +4708,90 @@ fn a_saved_search_counts_what_arrived_since_it_was_seen_and_viewing_clears_it() 
             .expect("a message");
     });
     let after = counts();
-    assert_eq!(after[0].1, before[0].1 + 1, "it matches");
-    assert_eq!(after[0].2, 1, "and it is new since the search was seen");
-    assert_eq!(after[1].2, 0, "a search never seen has no badge");
+    assert_eq!(
+        after[0].total.conversations,
+        before[0].total.conversations + 1,
+        "it matches"
+    );
+    assert_eq!(
+        after[0].new,
+        Counted {
+            conversations: 1,
+            capped: false,
+        },
+        "and it is new since the search was seen"
+    );
+    assert_eq!(
+        after[1].new.conversations, 0,
+        "a search never seen has no badge"
+    );
 
     postio_model::clock::freeze(seen + chrono::TimeDelta::minutes(2));
     seed.rt
         .block_on(seed.client.mark_seen("budget".to_owned()))
         .expect("marked");
     postio_model::clock::thaw();
-    assert_eq!(counts()[0].2, 0, "viewing it clears the badge");
+    assert_eq!(
+        counts()[0].new.conversations,
+        0,
+        "viewing it clears the badge"
+    );
     assert_eq!(seed.client.counts().of("MarkSeen"), 2);
+}
+
+#[test]
+fn a_badge_that_stopped_at_its_cap_says_it_is_a_floor() {
+    // D30: the badge reads at most NEW_CAP conversations, and when every
+    // one it read is new there may be more behind them -- "99+ new".
+    let seed = SearchSeed::new();
+    let today = postio_demo::today().date_naive();
+    let seen = (postio_demo::today() + chrono::TimeDelta::hours(1)).with_timezone(&chrono::Local);
+    postio_model::clock::freeze(seen);
+    seed.rt
+        .block_on(seed.client.mark_seen("budget".to_owned()))
+        .expect("marked");
+    postio_model::clock::thaw();
+    let inbox = seed
+        .rt
+        .block_on(postio_model::listing::MailStore::mailboxes(
+            &seed.client,
+            seed.account,
+        ))
+        .expect("the folders")
+        .into_iter()
+        .find(|folder| folder.role == postio_model::MailboxRole::Inbox)
+        .expect("an inbox")
+        .id;
+    let arrivals = i64::from(crate::search::NEW_CAP) + 1;
+    seed.rt.block_on(async {
+        let connection = seed.database.connect().await.expect("a connection");
+        for minute in 1..=arrivals {
+            let mut message = Message::new(
+                seed.account,
+                inbox,
+                (seen + chrono::TimeDelta::minutes(minute)).to_utc(),
+            );
+            message.subject = Some(format!("Atlas budget, line {minute}"));
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .await
+                .expect("a message");
+        }
+    });
+    let counted = seed
+        .rt
+        .block_on(seed.client.saved_counts(
+            seed.scope(),
+            today,
+            vec![("budget".to_owned(), "atlas budget".to_owned())],
+        ))
+        .expect("an answer");
+    assert_eq!(
+        counted[0].new,
+        Counted {
+            conversations: u64::from(crate::search::NEW_CAP),
+            capped: true,
+        }
+    );
+    assert!(!counted[0].total.capped, "the total is counted to the end");
 }

@@ -10,10 +10,11 @@
 //! user's words, or anything it matched.
 
 use chrono::NaiveDate;
+use postio_client::protocol::SavedCount;
 use postio_model::{AccountScope, MessageId};
 use postio_search::facets::{Facets, Scope};
 use postio_search::relax::Relaxation;
-use postio_search::results::{ConversationOrder, ConversationResults, Match, Source};
+use postio_search::results::{ConversationOrder, ConversationResults, Counted, Match, Source};
 use postio_search::{ParsedQuery, ResultOrder, SearchResults};
 use postio_session::search::{HIT_LIMIT, execute_with_snippets};
 use postio_storage::Store;
@@ -170,7 +171,7 @@ pub async fn relaxations(
     account: AccountScope,
     query: &ParsedQuery,
     today: NaiveDate,
-) -> Vec<(Relaxation, postio_search::results::Counted)> {
+) -> Vec<(Relaxation, Counted)> {
     let reader = match database.read().await {
         Ok(reader) => reader,
         Err(error) => {
@@ -273,11 +274,12 @@ pub async fn mark_seen(
 /// needs to say.
 pub const NEW_CAP: u32 = 99;
 
-/// `(key, total, new)` for each saved search, in the order given. `total`
-/// is the conversations it matches, capped as a search's count is. `new`
-/// is how many of them have a match received after the search was last
-/// viewed ([`mark_seen`]), up to [`NEW_CAP`]; zero for a search never
-/// viewed, which is one nobody asked to be told about. One conversation
+/// Each saved search counted, in the order given. `total` is the
+/// conversations it matches, capped as a search's count is and a floor
+/// past it. `new` is how many of them have a match received after the
+/// search was last viewed ([`mark_seen`]), up to [`NEW_CAP`] and a floor
+/// when every one read was new (D30); zero for a search never viewed,
+/// which is one nobody asked to be told about. One conversation
 /// search each, newest first, read only as far as the badge needs. A
 /// search that cannot be counted is zero rather than missing, so the row
 /// stays.
@@ -290,7 +292,7 @@ pub async fn saved_counts(
     account: AccountScope,
     today: NaiveDate,
     searches: &[(String, String)],
-) -> Vec<(String, u64, u64)> {
+) -> Vec<SavedCount> {
     let keys: Vec<&str> = searches.iter().map(|(key, _)| key.as_str()).collect();
     let sweep = async {
         let (connection, _permit) = database.interactive_write().await?;
@@ -327,16 +329,35 @@ pub async fn saved_counts(
             limit,
         )
         .await;
-        let total = found.as_ref().map_or(0, |found| found.total);
+        let total = found
+            .as_ref()
+            .map_or_else(Counted::default, |found| Counted {
+                conversations: found.total,
+                capped: found.capped,
+            });
         let new = match (seen, &found) {
-            (Some(seen), Some(found)) => found
-                .hits
-                .iter()
-                .take_while(|hit| hit.newest_match > seen)
-                .count() as u64,
-            _ => 0,
+            (Some(seen), Some(found)) => {
+                let fresh = found
+                    .hits
+                    .iter()
+                    .take_while(|hit| hit.newest_match > seen)
+                    .count() as u64;
+                // Every one read was new, and there are more than were
+                // read: the badge stopped, and says so.
+                let stopped = fresh == u64::from(NEW_CAP)
+                    && (found.capped || found.total > u64::from(NEW_CAP));
+                Counted {
+                    conversations: fresh,
+                    capped: stopped,
+                }
+            }
+            _ => Counted::default(),
         };
-        counted.push((key.clone(), total, new));
+        counted.push(SavedCount {
+            key: key.clone(),
+            total,
+            new,
+        });
     }
     counted
 }

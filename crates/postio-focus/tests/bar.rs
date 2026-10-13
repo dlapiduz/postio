@@ -1143,13 +1143,14 @@ fn the_order_row_switches_the_order_and_asks_again() {
 mod dropdown {
     use super::*;
     use chrono::{DateTime, Local, NaiveDate, TimeZone};
-    use postio_client::protocol::RecentSearch;
+    use postio_client::protocol::{RecentSearch, SavedCount};
     use postio_focus::{DropdownRowKind, DropdownState, DropdownView, Lane, RunStyle};
     use postio_model::{AddressId, EmailAddress, LabelId};
     use postio_search::facets::{Count, SearchFacets};
     use postio_search::query::Field;
     use postio_search::results::{
-        ConversationHit, ConversationKey, ConversationResults, FacetNames, Match, Passage, Source,
+        ConversationHit, ConversationKey, ConversationResults, Counted, FacetNames, Match, Passage,
+        Source,
     };
     use postio_search::suggest::{Completion, Person, Suggestions};
 
@@ -1271,13 +1272,28 @@ mod dropdown {
                 Reply::SavedCounts(Ok(searches
                     .iter()
                     .zip([(5, 0), (38, 3), (19, 0), (4, 0)])
-                    .map(|((key, _), (total, new))| (key.clone(), total, new))
+                    .map(|((key, _), (total, new))| exact(key, total, new))
                     .collect()))
             },
             rows,
         );
         effects.extend(more);
         effects
+    }
+
+    /// A saved search's counts, every one counted to the end.
+    fn exact(key: &str, total: u64, new: u64) -> SavedCount {
+        SavedCount {
+            key: key.to_owned(),
+            total: Counted {
+                conversations: total,
+                capped: false,
+            },
+            new: Counted {
+                conversations: new,
+                capped: false,
+            },
+        }
     }
 
     fn ada() -> EmailAddress {
@@ -1592,7 +1608,7 @@ mod dropdown {
             &mut focus,
             &effects,
             |request| matches!(request, Request::SavedCounts { .. }),
-            |_| Reply::SavedCounts(Ok(vec![("atlas".to_owned(), 39, 4)])),
+            |_| Reply::SavedCounts(Ok(vec![exact("atlas", 39, 4)])),
             &rows,
         );
         let view = dropdown(&effects);
@@ -1611,6 +1627,46 @@ mod dropdown {
             ],
             "the others keep the counts they had"
         );
+    }
+
+    /// A saved search's total past the walk's cap, and a badge past its
+    /// own, are floors where they are drawn (D30): "5,000+", "99+ new".
+    #[test]
+    fn a_saved_search_past_its_caps_draws_its_count_and_badge_as_floors() {
+        let rows = List::of(1);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let effects = focus.handle_on(
+            Input::Event(postio_core::Event::NewMail {
+                account: postio_model::AccountId::new(1),
+                mailbox: postio_model::MailboxId::new(1),
+                messages: vec![MessageId::new(9)],
+            }),
+            &rows,
+        );
+        let effects = answer(
+            &mut focus,
+            &effects,
+            |request| matches!(request, Request::SavedCounts { .. }),
+            |_| {
+                Reply::SavedCounts(Ok(vec![SavedCount {
+                    key: "atlas".to_owned(),
+                    total: Counted {
+                        conversations: 5_000,
+                        capped: true,
+                    },
+                    new: Counted {
+                        conversations: 99,
+                        capped: true,
+                    },
+                }]))
+            },
+            &rows,
+        );
+        let view = dropdown(&effects);
+        let atlas = &view.sections[1].pills[1];
+        assert_eq!(atlas.count.as_deref(), Some("5,000+"));
+        assert_eq!(atlas.fresh.as_deref(), Some("99+ new"));
     }
 
     #[test]
