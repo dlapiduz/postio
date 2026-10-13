@@ -1477,4 +1477,9 @@ impl Session {
     pub fn focus_search_placeholder(&self) -> String {
         postio_ui::search_view::PLACEHOLDER.to_owned()
     }
+
+    /// The field's placeholder at rest in the toolbar, before it opens.
+    pub fn focus_search_resting_placeholder(&self) -> String {
+        postio_ui::search_view::RESTING_PLACEHOLDER.to_owned()
+    }
 }

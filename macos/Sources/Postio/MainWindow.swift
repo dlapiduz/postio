@@ -534,6 +534,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
             // A click into it opens the bar, as `/` does.
             field.onFocus = { [weak self] in self?.engine.searchFieldFocused() }
             searchBox.placeholder = engine.session?.focusSearchPlaceholder() ?? ""
+            searchBox.restingPlaceholder = engine.session?.focusSearchRestingPlaceholder() ?? ""
             field.delegate = self
             field.sendsSearchStringImmediately = false
             field.sendsWholeSearchString = true
@@ -582,6 +583,9 @@ final class MainToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
         searchBox.openCap = KeyCapSpelling.cap("Escape")
         if let placeholder = engine.session?.focusSearchPlaceholder() {
             searchBox.placeholder = placeholder
+        }
+        if let resting = engine.session?.focusSearchRestingPlaceholder() {
+            searchBox.restingPlaceholder = resting
         }
         for item in toolbar.items where item.itemIdentifier == Self.compose {
             item.toolTip = composeTip()

@@ -200,6 +200,8 @@ public final class PostioSession {
 
     /// The search field's placeholder (screen 01).
     public func focusSearchPlaceholder() -> String { inner.focusSearchPlaceholder() }
+    /// The search field's placeholder at rest in the toolbar.
+    public func focusSearchRestingPlaceholder() -> String { inner.focusSearchRestingPlaceholder() }
 
     // MARK: the results view (specs/010-focus-search step 3)
 

@@ -56,8 +56,10 @@ public final class ToolbarSearchBox: NSView {
     public var restingCap: String? { didSet { placeCap() } }
     public var openCap: String? { didSet { placeCap() } }
 
-    /// The placeholder, as the controller words it.
+    /// The placeholder while open, as the controller words it (screen 01).
     public var placeholder: String = "" { didSet { applyFonts() } }
+    /// The placeholder at rest, shorter for the 320 field (McList.dc.html).
+    public var restingPlaceholder: String = "" { didSet { applyFonts() } }
 
     public init() {
         super.init(frame: NSRect(
@@ -171,7 +173,7 @@ public final class ToolbarSearchBox: NSView {
         magnifier.symbolConfiguration = .init(pointSize: ringed ? 14 : 13, weight: .regular)
         magnifier.contentTintColor = ringed ? .secondaryLabelColor : .tertiaryLabelColor
         field.placeholderAttributedString = NSAttributedString(
-            string: placeholder,
+            string: ringed ? placeholder : restingPlaceholder,
             attributes: [
                 .font: NSFont.systemFont(ofSize: ringed ? 14 : 13),
                 .foregroundColor: NSColor.tertiaryLabelColor,

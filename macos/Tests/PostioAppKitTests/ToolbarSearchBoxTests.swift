@@ -73,6 +73,21 @@ import Testing
         return window.convertToScreen(box.convert(box.bounds, to: nil))
     }
 
+    /// At rest the field says the short placeholder (McList.dc.html);
+    /// opened, the long one (screen 01).
+    @Test func atRestTheFieldSaysLessThanOpened() {
+        let box = ToolbarSearchBox()
+        box.restingPlaceholder = "Search mail or run a command"
+        box.placeholder = "Search mail, people and files, or type > for commands"
+        #expect(box.field.placeholderAttributedString?.string == "Search mail or run a command")
+        box.open(true, windowWidth: 1440)
+        #expect(
+            box.field.placeholderAttributedString?.string
+                == "Search mail, people and files, or type > for commands")
+        box.open(false, windowWidth: 1440)
+        #expect(box.field.placeholderAttributedString?.string == "Search mail or run a command")
+    }
+
     @Test(arguments: [CGFloat(1440), CGFloat(1024)])
     func openedTheFieldGrowsLeftwardWithItsRightEdge12FromTheWindows(width: CGFloat) {
         let (window, delegate) = Self.window(width: width)

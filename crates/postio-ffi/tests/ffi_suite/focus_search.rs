@@ -88,6 +88,14 @@ async fn the_empty_bar_emits_a_dropdown_with_recents_and_saved_searches() {
         .iter()
         .map(|section| section.title.as_str())
         .collect();
+    assert_eq!(
+        session.focus_search_resting_placeholder(),
+        "Search mail or run a command"
+    );
+    assert_eq!(
+        session.focus_search_placeholder(),
+        "Search mail, people and files, or type > for commands"
+    );
     assert_eq!(titles, ["Recent", "Saved searches", "Search by"]);
     let recent: Vec<String> = view.sections[0]
         .rows

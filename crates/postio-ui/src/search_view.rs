@@ -130,6 +130,8 @@ pub fn show_all(total: u64, capped: bool, typed: Option<&str>) -> String {
 
 /// The field's placeholder while it is empty (screen 01).
 pub const PLACEHOLDER: &str = "Search mail, people and files, or type > for commands";
+/// The field's placeholder at rest, 320 wide in the toolbar (McList.dc.html).
+pub const RESTING_PLACEHOLDER: &str = "Search mail or run a command";
 /// The empty dropdown's first section: the searches run lately.
 pub const RECENT: &str = "Recent";
 /// What the Recent section's note says after its key: "⌥⌫ forgets one".
@@ -1926,6 +1928,15 @@ mod tests {
         assert_eq!(local_index(18_204), "local index \u{b7} 18,204 messages");
         assert_eq!(local_index(1), "local index \u{b7} 1 message");
         assert_eq!(local_index(0), "local index \u{b7} 0 messages");
+    }
+
+    #[test]
+    fn the_field_at_rest_says_less_than_the_field_opened() {
+        assert_eq!(RESTING_PLACEHOLDER, "Search mail or run a command");
+        assert_eq!(
+            PLACEHOLDER,
+            "Search mail, people and files, or type > for commands"
+        );
     }
 
     #[test]
