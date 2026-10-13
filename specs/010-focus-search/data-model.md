@@ -244,7 +244,7 @@ pub struct ConversationRequest<'a> {
     pub today: NaiveDate,        // months (D4)
 }
 pub async fn executor::search_conversations(&Connection, &ConversationRequest<'_>, now: DateTime<Utc>) -> Result<ConversationResults>;
-pub async fn executor::relaxation_counts(&Connection, AccountScope, &[Relaxation], today) -> Result<Vec<u64>>;
+pub async fn executor::relaxation_counts(&Connection, AccountScope, &[Relaxation], today) -> Result<Vec<Counted>>; // a floor past TOTAL_HITS_CAP (D30)
 pub async fn executor::completions(&Connection, AccountScope, prefix: &str, field: Option<Field>) -> Result<Suggestions>;
 pub async fn executor::files(&Connection, &ConversationRequest<'_>) -> Result<Vec<FileHit>>;
 pub async fn executor::people(&Connection, &ConversationRequest<'_>) -> Result<Vec<Person>>;

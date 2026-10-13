@@ -34,12 +34,17 @@ benchmarks after steps 1, 4 and 8.
   `postio-session`, `postio-host`, `postio-client`, `postio-focus`,
   `postio-ui`, `postio-core`, `postio-ffi` (UniFFI 0.32). New:
   `postio-extract` with `pdf-extract` 0.12, `zip` 8 (no default features,
-  `deflate-flate2`), `quick-xml` 0.42, `encoding_rs` (research R5).
+  `deflate-flate2`), `quick-xml` 0.41 (the copy already in the graph),
+  `encoding_rs` (research R5), and `rustix` on unix for the helper's
+  limits (D28).
 - **Swift:** AppKit, SwiftUI, Quartz (`QLPreviewPanel`), QuickLookThumbnailing
   (file previews from the temp copy).
 
-**Storage**: the one Turso store. Two new store tables (`recent_searches`,
-`saved_search_seen`) with a migration in `postio-storage/src/schema.rs`; a
+**Storage**: the one Turso store. Three migrations in
+`postio-storage/src/schema.rs`: two new tables (`recent_searches`,
+`saved_search_seen`); the walk's columns on `messages` (`people_ids`,
+`label_ids`, `attachment_count`) and the triggers that keep them
+(`schema/walk-columns.sql`, D30); and `recent_searches.capped` (D30). A
 new versioned half in `postio-index/src/index.rs` (`attachment_passages`,
 `attachment_extraction`). `config.toml` gains `notify` per saved search.
 
@@ -60,7 +65,10 @@ new versioned half in `postio-index/src/index.rs` (`attachment_passages`,
 
 **Performance Goals**: full search with facets and months < 50 ms p95 on
 20k messages; suggestions < 20 ms; a screen of passages < 50 ms after
-results; a keystroke < 16 ms on the main thread (spec SC-001–SC-004).
+results; a keystroke < 16 ms on the main thread (spec SC-001–SC-004). Met
+by capping two walks, each count past its cap shown as a floor: a
+suggestion's count at `COMPLETION_COUNT_CAP` (D29) and the conversation
+walk at `CONVERSATION_WALK_CAP` over maintained columns (D30).
 
 **Constraints**:
 - GTK's search path untouched (FR-046); this Mac cannot build `postio-gtk`.
@@ -92,10 +100,12 @@ and blobs in `postio-session`.
 
 ## No ADR
 
-The decisions D1–D25 are this feature's and live in spec.md. Nothing here
-is a rule other work must obey beyond what ADRs 0037, 0041 and 0045 already
-say, except the `postio-extract` boundary, which is a line in the boundary
-script and its fixture, as `postio-calendar`'s is.
+The decisions D1–D30 are this feature's and live in spec.md. Nothing here
+is a rule other work must obey beyond what ADRs 0037, 0040 (D30's
+maintained columns are its "an aggregate on a hot path is a maintained
+answer"), 0041 and 0045 already say, except the `postio-extract`
+boundary, which is a line in the boundary script and its fixture, as
+`postio-calendar`'s is.
 
 ## Design by crate
 
@@ -126,15 +136,22 @@ script and its fixture, as `postio-calendar`'s is.
   - `filter_condition` (line ~1889) gains `Label` (EXISTS over
     `message_labels` joined to `labels` by name, lowercased) and `HasAction`
     (EXISTS over `markers` with `dismissed_at IS NULL`). Both paths use it.
-  - `search_conversations` (new): reuses `Plan::build` for the match and
-    count; a new `Plan::project` streams the narrow projection (research
-    R2) into a `Fold` that builds conversations, facets and months; ranks
-    the pool with `rank_score`; hydrates the page; learns per-page which
-    columns matched (for `InSubject`/`InFileName` and `Source`).
+  - `search_conversations` (new, `executor/conversations.rs`): reuses
+    `Plan::build` for the match; `projection_sql` walks the narrow
+    projection (research R2) -- a matched message's people, labels and
+    attachment count read as the columns `messages` keeps (D30) -- into a
+    `Fold` that builds conversations, facets and months, stopping at
+    `CONVERSATION_WALK_CAP` and saying so (`capped`); ranks the best
+    `CONVERSATION_POOL` with `rank_score`; hydrates the page; learns
+    per-page which columns matched (for `InSubject`/`InFileName` and
+    `Source`).
   - Attachment content: a third arm in the match union for the new request
     only, `attachment_passages_fts` over `text_search`, joined back to
     `message_id`, weighted like the body (`BODY_SCORE_WEIGHT`).
-  - `relaxation_counts`, `completions`, `files`, `people` (new).
+  - `relaxation_counts` (`executor/relaxations.rs`, each a
+    `postio_search::results::Counted`, a floor past `TOTAL_HITS_CAP`),
+    `completions` (`COMPLETION_COUNT_CAP`, D29), `files`, `people` (new,
+    one module each under `executor/`).
 - `index.rs`: `ATTACHMENTS_SCHEMA_VERSION` and the new half in
   `ensure_schema`; `index_attachment_text`, `attachments_missing_text`,
   `clear_account_attachment_index`.
@@ -147,7 +164,9 @@ script and its fixture, as `postio-calendar`'s is.
 
 - `schema.rs`: `recent_searches`, `saved_search_seen` in `HEAD`; the old
   `HEAD` copied to `tests/schemas/<fingerprint>.sql`; a `Migration` creating
-  both (`IF NOT EXISTS`).
+  both (`IF NOT EXISTS`). Then D30's two: the walk's columns and their
+  triggers (`schema/walk-columns.sql`, filled from the rows a store holds),
+  and `recent_searches.capped`.
 - `searches.rs` (new): `recent`, `remember`, `forget`, `seen_up_to`,
   `mark_seen`, `forget_seen_except(keys)`.
 
@@ -155,8 +174,11 @@ script and its fixture, as `postio-calendar`'s is.
 
 `src/lib.rs` (`extract`, `Limits`, `Extracted`, `Outcome`),
 `src/pdf.rs`, `src/ooxml.rs` (docx, xlsx, pptx walkers), `src/text.rs`,
-`src/limits.rs`. Depends on `postio-search` (for `Location`), `pdf-extract`,
-`zip`, `quick-xml`, `encoding_rs`. Tests over fixtures in
+`src/limits.rs`, and for D28's child process `src/wire.rs` (the
+versioned, length-prefixed request and reply) and `src/helper.rs` (`run`:
+lower the process's own limits, then `serve` stdin to stdout). Depends on
+`postio-search` (for `Location`), `pdf-extract`, `zip`, `quick-xml`,
+`encoding_rs`, and `rustix` on unix. Tests over fixtures in
 `crates/postio-extract/tests/fixtures/` (made by a script in the crate's
 `tests/`, invented content, reserved-domain names), including hostile files
 (encrypted PDF, zip bomb, 200k-row sheet, truncated PDF).
@@ -164,9 +186,14 @@ script and its fixture, as `postio-calendar`'s is.
 ### `postio-session`
 
 - `search.rs`: `conversations`, `passages`, `conversation_matches`,
-  `suggest`, `relaxations`, `files`, `people`, `saved_counts`, beside
-  today's functions, which do not change.
-- `attachment_text.rs` (new) and `spawn_attachment_indexer` in `lib.rs`.
+  `suggest`, `relaxations`, `files`, `people`, `matching` (⇧X's predicate),
+  beside today's functions, which do not change. (The saved searches'
+  counts are the host's, `postio-host/src/search.rs`, over `conversations`.)
+- `attachment_text.rs` (new) and `spawn_attachment_indexer` in `lib.rs`;
+  `extraction.rs` (new, D28), the runner that starts one
+  `postio-extract-helper` per attachment and kills it at its deadline; the
+  helper itself is `src/bin/postio-extract-helper.rs`, one line over
+  `postio_extract::helper::run`, bundled beside the app's executable.
 
 ### `postio-client` and `postio-host`
 
@@ -218,10 +245,10 @@ previous task of a lane (D8). Tests in `tests/ffi_suite/focus_search.rs`.
 
 | Target | New or changed |
 |---|---|
-| `PostioKit` | `SearchQueryModel.swift` (chips and buttons from `QueryViewFfi`), `DropdownModel.swift` (sections, highlight walk), `DropdownView.swift`, `ResultsModel.swift`, `FilterBarView.swift`, `TimelineView.swift`, `ResultRowView.swift`, `FilterPopoverViews.swift`, `QuickLookBody.swift`, `SavePopoverView.swift`, `NoResultsView.swift`, `FileCardView.swift`, `PeopleListView.swift`, `SearchFooter.swift`; `CommandBarModel.swift` and `CommandBarView.swift` route search mode to the dropdown; `FocusIntents.swift` gains the new events |
-| `PostioAppKit` | `ChipQueryField.swift`, `CommandBarPanel.swift` (860 wide, field growth), `ResultsTable.swift` (group rows), `FilesGrid.swift`, `FilterPopover.swift`, `QuickLookPanel.swift`, `FilePreview.swift` (`QLPreviewPanel` data source) |
+| `PostioKit` | `SearchQueryModel.swift` (chips and buttons from `QueryViewFfi`), `DropdownModel.swift` (sections, highlight walk), `DropdownView.swift`, `ResultsModel.swift`, `FilterBarView.swift`, `TimelineView.swift`, `ResultRowView.swift`, `FilterPopoverModel.swift`, `FilterPopoverViews.swift`, `QuickLookBody.swift`, `SavePopoverView.swift`, `NoResultsView.swift`, `FileCardView.swift`, `PeopleListView.swift`, `SearchFooter.swift`; `CommandBarModel.swift` and `CommandBarView.swift` route search mode to the dropdown; `FocusIntents.swift` gains the new events |
+| `PostioAppKit` | `ChipQueryField.swift`, `ToolbarSearchBox.swift` (the toolbar's own field: 320×28 at rest, 860×34 open, T054), `CommandBarPanel.swift` (860 wide), `ResultsTable.swift` (group rows), `FilesGrid.swift`, `FilterPopover.swift`, `SavePopover.swift`, `QuickLookPanel.swift`, `FilePreview.swift` (`QLPreviewPanel` data source), `HistorySwipe.swift` |
 | `Postio` | `MainWindow.swift` (results toolbar, swipe → History), `Engine.swift` (events) |
-| Tests | `PostioKitTests/SearchQuerySyncTests.swift`, `DropdownKeyboardTests.swift`, `ResultsModelTests.swift`, `TimelineTests.swift`; `PostioAppKitTests/ChipQueryFieldTests.swift`, `ResultsTableTests.swift` |
+| Tests | `PostioKitTests/SearchQuerySyncTests.swift`, `DropdownKeyboardTests.swift`, `ResultsModelTests.swift`, `TimelineTests.swift`; `PostioAppKitTests/ChipQueryFieldTests.swift`, `CommandBarGeometryTests.swift`, `ToolbarSearchBoxTests.swift`, `FilesGridTests.swift`, `QuickLookPanelTests.swift`, `HistorySwipeTests.swift`, `SearchAccessibilityTests.swift`. The results table's grouping is tested through `ResultsModelTests` (T071), so there is no `ResultsTableTests` |
 
 ## Threading and cancellation
 
@@ -289,7 +316,7 @@ crates/
 ├── postio-search/src/{query,parser,natural,facets,results,suggest}.rs + edit.rs, relax.rs, passage.rs
 ├── postio-index/src/{executor,index}.rs, tests/index_suite/…
 ├── postio-storage/src/{schema.rs, searches.rs}, tests/schemas/<fp>.sql
-├── postio-extract/                       # NEW
+├── postio-extract/                       # NEW (and its helper, D28)
 ├── postio-session/src/{search.rs, attachment_text.rs, lib.rs}
 ├── postio-client/src/{protocol,api}.rs
 ├── postio-host/src/{lib,search}.rs

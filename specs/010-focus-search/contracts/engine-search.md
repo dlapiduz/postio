@@ -18,17 +18,17 @@ see is `label:` and `has:action` in `filter_condition` (S2).
 | `Passages { query: ParsedQuery, hits: Vec<(MessageId, Vec<Source>)> }` | `Passages(Vec<(MessageId, Vec<Match>)>)` | `passages(..)` | `postio_session::search::passages`: body via `indexable_text`, quote stretches, `passage::cut`; attachment passages from `attachment_passages` |
 | `ConversationMatches { key: ConversationKey, query }` | `Matches(Vec<Match>)` | `conversation_matches(..)` | every match in one conversation, for Quick Look |
 | `Suggest { account, prefix: String, field: Option<Field> }` | `Suggestions(Box<Suggestions>)` | `suggest(..)` | `executor::completions` |
-| `Relaxations { account, query, today }` | `Relaxed(Vec<(Relaxation, u64)>)` | `relaxations(..)` | `postio_search::relax` + `executor::relaxation_counts`, zero counts dropped, sorted |
+| `Relaxations { account, query, today }` | `Relaxed(Vec<(Relaxation, Counted)>)` | `relaxations(..)` | `postio_search::relax` + `executor::relaxation_counts`, zero counts dropped, sorted; a count past `TOTAL_HITS_CAP` is `capped` (D30) |
 | `Files { account, query, offset, limit }` | `Files(Vec<FileHit>)` | `files(..)` | `executor::files` |
 | `People { account, query, offset, limit }` | `People(Vec<Person>)` | `people(..)` | `executor::people` |
 | `RecentSearches` | `Recent(Vec<RecentSearch>)` | `recent_searches()` | `postio_storage` `recent_searches`, newest first, ≤ 20 |
-| `RememberSearch { query, hits }` | `Done` | `remember_search(..)` | upsert, trim to 20 |
+| `RememberSearch { query, hits, capped }` | `Done` | `remember_search(..)` | upsert, trim to 20 |
 | `ForgetSearch(String)` | `Done` | `forget_search(..)` | delete |
-| `SavedCounts(Vec<(String /*key*/, String /*query*/)>)` | `SavedCounts(Vec<(String, u64 /*total*/, u64 /*new*/)>)` | `saved_counts(..)` | one capped count each, and "new" since `seen_up_to` |
+| `SavedCounts(Vec<(String /*key*/, String /*query*/)>)` | `SavedCounts(Vec<SavedCount>)` | `saved_counts(..)` | `SavedCount { key, total: Counted, new: Counted }`: one count each, a floor past the walk's cap, and "new" since `seen_up_to`, a floor past `NEW_CAP` (D30) |
 | `MarkSeen(String)` | `Done` | `mark_seen(..)` | `seen_up_to = now` |
 | `AttachmentCopy(AttachmentId)` | `Path(Option<PathBuf>)` | `attachment_copy(..)` | blob → the app's temp dir, for system Quick Look and ⌘↓ |
 
-`RecentSearch { query, last_run_at, hits }`.
+`RecentSearch { query, last_run_at, hits, capped }`; `Counted { conversations, capped }` is `postio_search::results`' (D30).
 
 `Req::family()` gains each name, so `postio-client/src/counting.rs` counts
 them and the ffi_suite can assert how many reads a keystroke makes.

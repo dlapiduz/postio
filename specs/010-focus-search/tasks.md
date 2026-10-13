@@ -150,9 +150,9 @@ searches, on the Mac.
 - [x] T054 [US1] Widen the panel to 860 and grow the field leftward with its right edge 12 from the window's in `macos/Sources/PostioAppKit/CommandBarPanel.swift` and `macos/Sources/Postio/MainWindow.swift` (field 34 tall, radius 8, accent ring and halo; panel 6 below, radius 10, the design's shadow). Test first in `macos/Tests/PostioAppKitTests/` that the panel's frame follows the field's at 1440 and 1024 widths
   - Deviation: T052–T054 landed as one commit (the routing, the keys and the geometry share `CommandBarModel.swift` and `Engine.swift`). The geometry is `CommandBarGeometry` in PostioKit, tested from `PostioAppKitTests/CommandBarGeometryTests.swift`; 009's 640-wide, right-aligned panel tests went with it. The field first grew by `NSSearchToolbarItem.preferredWidthForSearchField`, which the item ignored (it stayed ~327 wide, step 8's note). Fixed in the polish pass: the field is Postio's own `ToolbarSearchBox` (PostioAppKit) in a plain `NSToolbarItem` -- 320×28 at rest, 860×34 open with the accent ring and halo, its drawn edge 4 inside the item so the toolbar's 8 becomes the design's 12 -- tested in a real unified toolbar at 1440 and 1024 (`ToolbarSearchBoxTests`); `CommandBarGeometry.leading` is 168, measured. Not animated (≤100 ms or absent). The sync label leaves the toolbar while the field is grown.
 - [x] T055 [US1] Capture screens 01 and 03 (light) and write the step-2 note with every difference listed; fix or explain each
-  - Pending: `screencapture` could not create an image from this terminal (no Screen Recording grant, or the display asleep). The note `docs/notes/2026-10-09-focus-search-step-2.md` lists the differences read from the code and says how to take the two captures; tick this when they are taken and the list amended.
+  - The step-2 note listed the differences read from the code, `screencapture` having no grant then; the real captures were taken in T137's final sweep, and what was open here is settled in the final note (`docs/notes/2026-10-09-focus-search-final.md`, "Carried from steps 2 to 10").
 - [x] T056 Commit the phase
-  - Everything but T055's captures is committed and pushed. `crates/postio-gtk` names none of the changed shared names (`Capabilities`, `results_view`, the new `Request`/`Reply`/`Intent`/`Input` variants, all `#[non_exhaustive]`); it builds its policy with `Policy::for_platform`, so `results_view` is off there. Tick with T055.
+  - Committed and pushed. `crates/postio-gtk` names none of the changed shared names (`Capabilities`, `results_view`, the new `Request`/`Reply`/`Intent`/`Input` variants, all `#[non_exhaustive]`); it builds its policy with `Policy::for_platform`, so `results_view` is off there.
 
 **Checkpoint**: the dropdown's empty and words states work on the Mac;
 GTK's bar is unchanged.
@@ -190,7 +190,7 @@ GTK's bar is unchanged.
   - Wiring (`Engine.swift`, `MainWindow.swift`) landed with T070: the results pane sits over the inbox column in the window's `ZStack`, as Filtered does, so the list keeps its scroll, cursor and selection; `FocusKeyboardHome` in the results gives the results table the keyboard; `mainContext` is `.results` while they are up.
 - [x] T073 [US2] Wire `HistoryBack`/`HistoryForward` to the trackpad swipe (`NSEvent` swipe/`scrollWheel` gesture on the main window) in `macos/Sources/Postio/MainWindow.swift`; Swift reports the gesture as the command, decides nothing
 - [x] T074 [US2] Capture screen 06 (light) and 07 (dark), list every difference in the step-3 note, fix or explain each
-  - Captured with the demo's own `POSTIO_DEMO_SNAPSHOT` (`screencapture` still has no grant here); the note lists 23 differences. Owed to the Rust side before the review: passages over the search seed are empty or the quoted header rather than the match's window (14), Top hits' group count (13), label pill colours at the boundary (18). A capture with the grant should be taken before the review.
+  - Captured with the demo's own `POSTIO_DEMO_SNAPSHOT` (`screencapture` still has no grant here); the note lists 23 differences. What it left open (passages over the search seed, Top hits' group count, label pill colours) is settled in the final note's "Carried from steps 2 to 10", over T137's real captures.
 - [x] T075 Grep `crates/postio-gtk` for `KeyContext`, `Context`, `Policy`; commit the phase
   - `crates/postio-gtk` matches no `KeyContext`/`Context` exhaustively and builds its policy with `Policy::for_platform`; step 3's Swift, the `postio-ui` words and the two FFI exports are additive.
 
@@ -207,7 +207,7 @@ GTK's bar is unchanged.
 - [x] T076 [US3] Write storyboards `storyboards/search/popover-preview-and-restore.toml`, `timeline-drag-narrows.toml`, `date-words.toml`
 - [x] T077 [P] [US3] Write failing tests in `crates/postio-focus/tests/results.rs`: opening From records the query; checking a person re-asks with `from:` added and the list, counts and timeline update; Esc restores the recorded query exactly; ↩ keeps it; ⌥-click adds `-from:`; the popover's own filter narrows its rows locally; From/To list only people in the current facets; Anywhere and Label the same with folders and labels. Red: no popovers
 - [x] T078 [US3] Implement popovers in `crates/postio-focus/src/results.rs`. Make T077 green
-  - A row is checked by its own input, `Input::PopoverToggle { token, exclude }`, not a `TermEdit` from Swift: the controller decides what a check and a ⌥-click write (toggle; exclude, turn round, or take out). The rows and counts are the facets of the query the popover opened on (held still while its checks narrow the results). Closing is `Intent::Popover(None)`. Two people checked are two `from:` clauses, which the query language ANDs: an open question for the maintainer, recorded in the step-4 note.
+  - A row is checked by its own input, `Input::PopoverToggle { token, exclude }`, not a `TermEdit` from Swift: the controller decides what a check and a ⌥-click write (toggle; exclude, turn round, or take out). The rows and counts are the facets of the query the popover opened on (held still while its checks narrow the results). Closing is `Intent::Popover(None)`. Two people checked were two ANDed `from:` clauses, an open question then; the maintainer's answer is D26 (`from:{ada tomas}`, Phase 12).
 - [x] T079 [P] [US3] Write failing tests: `StepRangeBack`/`StepRangeForward` (`alt+Left`/`alt+Right`, Results) in `crates/postio-core/tests/core_suite/`; in `crates/postio-focus/tests/results.rs`, `focus_search_months(3, 5)` sets `after:`/`before:` per US3 scenario 4, ⌥←/⌥→ shift both bounds by a month, and the selected months come back marked; the Date popover's words "since july" show "→ after:2026-07-01" and its presets carry counts. Red: missing
 - [x] T080 [US3] Add the commands (`crates/postio-core/src/registry.rs`), the months edit and date words (`results.rs`, through `edit::SetDates` and `natural`), and `postio_ui::search_view::date_presets`. Make T079 green
   - The timeline's bars are the months of the query **without** its dates when the controller has seen them (the last frame of the same query undated), so a range can be dragged or stepped wider than what it narrowed to; a query that arrives dated draws only its own months until the undated one has been asked. Group positions still come from the dated answer. ⌥← with no range selects this month; an open `since` is closed at this month before it steps; nothing steps past this month. A preset writes ISO `after:` (D14 rolling is the Save popover's). `Input::DateWords`/`Input::DatePreset` are the Date popover's inputs.
@@ -219,7 +219,7 @@ GTK's bar is unchanged.
 - [x] T084 Re-run the bench with the preview pattern (the same request re-asked per check) and record it in `docs/notes/<date>-focus-search-step-4.md`. **Stop rule** if over budget
   - **Over budget, stop rule applied, nothing worked round**: every word with `after:` (timeline range 97.7 ms, Date "since" 88.5 ms, relaxations 2.5 s) is #1809 (since #1805); the common word (50.9) and `at` (50.2) are #1809's "few ms slower" on every free-text shape. The preview pattern itself (a person, label or folder checked) is 1-7 ms. Table in docs/notes/2026-10-09-focus-search-step-4.md.
 - [x] T085 [US3] Capture screens 08 and 09, list every difference in the step-4 note, fix or explain each; commit the phase
-  - Captured with the demo snapshot, which now composites the popover window and takes `@from`/`@date` as clicks; the note lists 19 differences (2 fixed: the previewing line's width, the Date chart's cut labels). Open for the maintainer: two people checked are two ANDed `from:` clauses; "You" among the senders. A capture with the Screen Recording grant (popover material and arrow) is still owed before the review.
+  - Captured with the demo snapshot, which now composites the popover window and takes `@from`/`@date` as clicks; the note lists 19 differences (2 fixed: the previewing line's width, the Date chart's cut labels). The two open questions were answered since: two people checked is D26 (Phase 12), and "You" among the senders is fixed (final note). T137's real captures show the popover's material and arrow.
 
 **Checkpoint**: filters, popovers and the timeline narrow live.
 
@@ -289,7 +289,7 @@ it understood.
 - [x] T113 [US7] Implement those states in `crates/postio-focus/src/bar.rs`, `ExcludeSuggestion` (`alt+Return`, Search, Apple only) in `crates/postio-core/src/registry.rs` (test first in `core_suite`), and `origin_line` in `postio_ui::search_view`. Make T112 green
 - [x] T114 [US7] Add `focus_search_highlighted`, `focus_search_exclude`, the ghost and understood tiles to `DropdownViewFfi` (`crates/postio-ffi`), and draw them in `macos/Sources/PostioKit/DropdownView.swift` and `ChipQueryField.swift` (ghost in tertiary after the caret; SF Mono 14 while an operator is typed). Extend `DropdownKeyboardTests.swift` first: ⌥↩ calls `focusSearchExclude`; moving the highlight onto a person calls `focusSearchHighlighted`; Tab with a ghost calls `focusBarTab`
 - [x] T115 Extend `search_focus.rs` with `completions` for `a`, `at`, `atl` and `from:a`; run it and record it in `docs/notes/<date>-focus-search-step-8.md`. **Stop rule** for 20 ms; a vocabulary table (D22) only after asking *Recorded: `a` misses it (28 ms p95, 35 under load), `atl` is at it under load; the cost is the exact count of a common completion, not finding the words. Stopped: the ways out are the maintainer's (step-8 note). Decided: D29, a capped count shown as a floor (Phase 14).*
-- [x] T116 [US7] Capture screens 02, 04 and 05, list every difference in the step-8 note; commit the phase *The toolbar's search field stays 327 wide (step 2's T054 does not hold: `NSSearchToolbarItem` ignores the preferred width), so every row is cut; owed before T137 (step-8 note).*
+- [x] T116 [US7] Capture screens 02, 04 and 05, list every difference in the step-8 note; commit the phase *The toolbar's search field stayed 327 wide then (`NSSearchToolbarItem` ignores the preferred width), cutting every row; fixed by `ToolbarSearchBox` (T054's polish, `ca9f2bff`, `e9e652a2`) before T137's sweep.*
 
 ---
 
@@ -303,7 +303,7 @@ it understood.
 - [x] T118 [P] [US8] Add a fixture to the test of `scripts/checks/check-crate-boundaries.py` proving a `postio-extract` that depends on `turso`, `tokio`, `reqwest` or `gtk4` fails it, then the `postio-extract` rule (FR-052). Red: no rule
 - [x] T119 [US8] Create `crates/postio-extract/` (workspace `members` and `default-members` in the root `Cargo.toml`, from a worktree), depending on `postio-search`, `pdf-extract`, `zip` (`default-features = false`, `deflate-flate2`), `quick-xml`, `encoding_rs`. Run `cargo deny check licenses` and record the result in the commit body (research R5)
 - [x] T120 [P] [US8] Write a fixture generator test in `crates/postio-extract/tests/fixtures.rs` that builds, from invented text, a 3-page PDF, a DOCX, an XLSX with sheets "Summary" and "Q3", a PPTX, a UTF-16 text file, and the hostile set (encrypted PDF, truncated PDF, zip bomb, 200k-row sheet); then failing tests: each format's units and `Location`s ("atlas" at `Sheet{Summary, 14}`, `Page(2)`); each hostile file ends in its `Outcome` within `Limits.max_time`, without a panic escaping. Red: no `extract`
-- [x] T121 [US8] Implement `crates/postio-extract/src/{lib,pdf,ooxml,text,limits}.rs` (`catch_unwind` around `pdf-extract`). Make T120 green. If a hostile fixture overflows the stack, stop and report (research R5) *Found two: a form XObject that draws itself overflows `pdf-extract` 0.12.1's stack (process abort), and a page tree whose `Parent` loops spins it for ever. Both are refused by a scan before each page (`pdf.rs`), and PDF runs on its own thread with a deadline; a third unguarded loop would still cost a spinning thread. The child process R5 names is the complete answer; reported, not taken.*
+- [x] T121 [US8] Implement `crates/postio-extract/src/{lib,pdf,ooxml,text,limits}.rs` (`catch_unwind` around `pdf-extract`). Make T120 green. If a hostile fixture overflows the stack, stop and report (research R5) *Found two: a form XObject that draws itself overflows `pdf-extract` 0.12.1's stack (process abort), and a page tree whose `Parent` loops spins it for ever. Both are refused by a scan before each page (`pdf.rs`), and PDF runs on its own thread with a deadline; a third unguarded loop would still cost a spinning thread. The child process R5 names is the complete answer; reported then, and taken since as D28 (Phase 13).*
 - [x] T122 [P] [US8] Write failing tests in a new `crates/postio-index/tests/index_suite/attachment_text.rs`: the `attachments` half creates its tables; `index_attachment_text` writes one row per unit, folded; deleting the message cascades; a version bump drops and rebuilds; `attachments_missing_text` lists only attachments with a `blob_id` and no current row. Red: no half
 - [x] T123 [US8] Add the half to `crates/postio-index/src/index.rs`. Make T122 green
 - [x] T124 [P] [US8] Write failing tests in a new `crates/postio-session/tests/session_suite/attachment_index_pass.rs`: the indexer extracts every downloaded attachment of the search seed; an attachment with no blob is never fetched (the mock backend sees no request); a failed extraction is recorded and the pass moves on; a blob stored later is indexed on the event that says so. Red: no indexer
@@ -335,8 +335,8 @@ it understood.
 - [x] T136 [P] Add the search vocabulary (term, chip, relaxation, passage, facet, results view) to `CONTEXT.md`, citing this spec
 - [x] T137 Final sweep: capture all 13 screens at 1440×900 light, and 06 and 07 dark, against their PNGs; every difference listed in `docs/notes/<date>-focus-search-final.md`, none unexplained (SC-005)
 - [ ] T138 Final bench run on the dev Mac recorded in the same note (SC-001–SC-003)
-- [ ] T139 Run `/speckit-analyze` over spec.md, plan.md and tasks.md and fix what it finds
-- [ ] T140 Rebase onto `main` (after #1803 lands), confirm `docs/keybindings.md` regenerates clean and T003 is green, and land with `scripts/issue-land.sh --detach --full-suite` (the Linux CI run is what proves GTK); label the PR `interactions-unreviewed`
+- [x] T139 Run `/speckit-analyze` over spec.md, plan.md and tasks.md and fix what it finds
+- [ ] T140 *Not done here: the landing is the lead's, after review. #1803 has landed and the branch is rebased onto `main` (2026-10-13); the rest of this task is the pull request itself.* Rebase onto `main` (after #1803 lands), confirm `docs/keybindings.md` regenerates clean and T003 is green, and land with `scripts/issue-land.sh --detach --full-suite` (the Linux CI run is what proves GTK); label the PR `interactions-unreviewed`
 
 ---
 
@@ -412,8 +412,23 @@ budget (50 ms a search, 20 ms a completion); a search past the cap reads
 - [x] T162 [US3] Make the walk (`executor::conversations::projection_sql`) read the columns. Make T161 green; every conversation, facet, People and Files test stays green
 - [x] T163 Measure the sync path's write cost with and without the walk's triggers (`postio-sync`'s `insert_cost_curve`) and record it in D30
 - [x] T164 [P] [US3] Write failing tests: in `crates/postio-index/tests/index_suite/facets_one_pass.rs`, a match past `CONVERSATION_WALK_CAP` stops at 5,000, flagged `capped`, reading no more than twice the cap's rows, while GTK's `search` counts the same mailbox past it; in `crates/postio-ui/src/search_view.rs`, `facet_count` and a capped sub-line ("1+ files · 1+ people", "1,204+ people") are floors; in `crates/postio-focus/tests/results.rs`, a capped answer's count line, footer, three tabs, sub-line, months, month groups and From popover rows say "5,000+", "12+", "24+"; in the FFI suite, a month's and a popover row's count cross as said. Red: no cap, no `facet_count`, no `count_label`, the rows were numbers
-- [x] T165 [US3] Add `postio_search::results::CONVERSATION_WALK_CAP` (5,000) and walk to it (`TOTAL_HITS_CAP` keeps GTK's plan thresholds and the relaxations' cheaper count); `MonthBar::count`, `PopoverRow::count_label` (and `MonthBarFfi::count`, `PopoverRowFfi::count_label`, last and defaulted so Swift callers compile unchanged) as `facet_count`; the Files and People tabs, the month groups and the sub-line floors when capped. Make T164 green. *Owed to the Mac: `FilterPopoverViews.swift` draws `row.count` and `TimelineView.swift` says `month.conversations`; reading `countLabel` and `count` instead is what shows the floor there.*
+- [x] T165 [US3] Add `postio_search::results::CONVERSATION_WALK_CAP` (5,000) and walk to it (`TOTAL_HITS_CAP` keeps GTK's plan thresholds and the relaxations' cheaper count); `MonthBar::count`, `PopoverRow::count_label` (and `MonthBarFfi::count`, `PopoverRowFfi::count_label`, last and defaulted so Swift callers compile unchanged) as `facet_count`; the Files and People tabs, the month groups and the sub-line floors when capped. Make T164 green. *The Mac read the numbers at first; it draws `countLabel` and `count` since `fbe65981`, so the floors show there too.*
 - [x] T166 Re-run the full `search_focus` bench and record it in the final note's Bench section
+
+---
+
+## Phase 16: Floors everywhere a capped count shows (D30)
+
+**Goal**: no capped count is drawn as if it were exact, wherever it is
+drawn.
+
+**Independent test**: a way out counted past `TOTAL_HITS_CAP` reads
+"10,000+ conversations"; a saved search's pill past the walk's cap reads
+"5,000+" and its badge past `NEW_CAP` "99+ new"; a capped search's Recent
+row reads "5,000+ results"; a capped search's Narrow to pills end in "+".
+
+- [x] T167 [P] [US1] [US6] Write failing tests: `relaxation_count`, `saved_count`, `new_badge`, `results_count` and `narrow_pill` floors in `crates/postio-ui/src/search_view.rs`; `relaxation_counts` past `TOTAL_HITS_CAP` flagged `capped` (`index_suite/relaxations.rs`); a badge that stopped at `NEW_CAP` (`postio-host/src/tests.rs`); `remember` keeps `capped` (`storage_suite/searches.rs`); in `crates/postio-focus/tests/{bar,results}.rs`, a capped way out, saved pill, badge, Recent row and Narrow to pills drawn as floors. Red: no flag past the index or the host, the words took none
+- [x] T168 [US1] [US6] Add `postio_search::results::Counted` and carry it through the relaxations and the saved searches' counts (`postio_client::protocol::SavedCount`); `recent_searches.capped` by a migration from `72d32a05`, through `RememberSearch` and `RecentSearch`; the words above take the flag. Make T167 green
 
 ---
 
@@ -425,7 +440,8 @@ budget (50 ms a search, 20 ms a completion); a search past the cap reads
   Phase 3 (the Files tab) and Phase 1 (the search arm). Phase 10 needs
   Phase 3. Phase 12 needs Phase 4 (the popovers) and Phase 7 (relaxations).
   Phase 13 needs Phase 9 (the extractor and its indexer). Phase 14 needs
-  Phase 8. Phase 15 needs Phases 3, 9 and 10 (the walk and its tabs).
+  Phase 8. Phase 15 needs Phases 3, 9 and 10 (the walk and its tabs). Phase 16
+  needs Phases 2, 6, 7 and 15.
   Phase 11 last.
 - Within a phase, a test task precedes its implementation; `[P]` test tasks
   in one phase can be written together.
