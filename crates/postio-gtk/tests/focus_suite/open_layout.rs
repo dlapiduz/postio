@@ -299,6 +299,43 @@ fn same(seen: [u8; 3], want: [u8; 3]) -> bool {
     seen.iter().zip(want).all(|(a, b)| a.abs_diff(b) <= 2)
 }
 
+/// Bare recipient addresses cannot turn the centered reader into a
+/// full-window sheet, even when their combined unbroken width is large.
+pub fn recipient_addresses_keep_the_reader_centered() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let message = fixture
+            .file_addressed(
+                ("Ada", "ada@example.com"),
+                &[
+                    ("", "engineering.accounts.team@example.com"),
+                    ("", "operations.accounts.team@example.org"),
+                    ("", "procurement.accounts.team@example.net"),
+                ],
+                &[],
+                "Addressed",
+                postio_ui::clock::now().with_timezone(&chrono::Utc),
+            )
+            .await;
+        fixture.write_body(message, "A short message.").await;
+        let window = opened_at(&fixture, 1, NARROW).await;
+        let reading = window.reading().expect("open");
+        let content = reading.dialog().child().expect("reader content");
+        assert_eq!(
+            (content.width(), content.height()),
+            fitted(&window),
+            "recipient addresses expanded the reader past its window-based frame"
+        );
+        assert!(
+            content.width() < window.width(),
+            "the reader hides the whole inbox"
+        );
+    });
+}
+
 /// T205: the list behind the dialog is dimmed by black at 20% in light
 /// and 45% in dark, measured on a pixel of the list beside the dialog.
 pub fn the_list_behind_is_dimmed_by_black_at_20_and_45_percent() {

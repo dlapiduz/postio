@@ -1,0 +1,21 @@
+apps = ["focus"]
+source = { kind = "issue", ref = "#1821" }
+proof = "base"
+seed = "bare-recipients"
+vary = { scheme = ["light", "dark"], width = ["wide", "narrow"] }
+
+[[step]]
+wait = { until = { cursor.index = 0 } }
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+
+[[step]]
+command = "open_message"
+check = { view = "reader", reading.id = "90" }
+expect = "The message reader stays centered with the inbox visible on both sides. Three bare recipient addresses wrap within the same column as the subject and body, each keeping its domain visible; they do not widen the dialog."

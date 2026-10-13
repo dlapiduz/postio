@@ -1032,6 +1032,10 @@ const CASES: &[(&str, fn())] = &[
         open_layout::the_dialog_is_sized_by_the_window_and_never_by_the_message as fn(),
     ),
     (
+        "open_layout::recipient_addresses_keep_the_reader_centered",
+        open_layout::recipient_addresses_keep_the_reader_centered as fn(),
+    ),
+    (
         "open_layout::the_list_behind_is_dimmed_by_black_at_20_and_45_percent",
         open_layout::the_list_behind_is_dimmed_by_black_at_20_and_45_percent as fn(),
     ),

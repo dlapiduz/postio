@@ -106,6 +106,8 @@ The store is Turso (ADR 0038). Its planner and defaults are not SQLite's, and mo
 
 **To move a surface, reparent it and then restore its focus.** Unparent from the actual parent. Inside `close-request`, call `destroy()`, not `close()`, which emits the signal again.
 
+**A Clamp cannot override a child's minimum width.** Several unbroken addresses in a horizontal box add their minimum widths together, widening the reading column and then its dialog. Wrap recipient fields inside the column; prove the dialog's allocated size with long bare addresses, not only display names.
+
 **Whether a surface is open and whether it has the keyboard are separate questions.** A surface left open while focus is elsewhere pins the resolver's context and silently drops bare keys.
 
 **Cursor, selection and activation are three facts.** State which one a surface follows. A verb with an empty selection acts on the cursor row. `SingleSelection` autoselects row 0, which is not the user landing there. Push state into `AppState` through `postio_core::aim::mirror`, not with a signal.
