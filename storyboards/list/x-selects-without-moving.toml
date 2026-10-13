@@ -7,9 +7,8 @@
 # reading. The rule is the shared controller's (postio-focus), so the Mac
 # and Linux apps cannot disagree on it.
 apps   = ["focus"]
-# Red on the GTK app until it drives this flow through postio-focus (#1807):
-# the catalogue expects it to fail there and says when it starts passing.
-proof  = "open"
+# The demo's second row is a digest; use a message for bulk actions.
+proof  = "pinned"
 source = { kind = "flow", ref = "x selects without moving" }
 
 [[step]]
@@ -24,15 +23,24 @@ expect  = "The first row is selected and the cursor ring stays on it; the bulk b
 
 [[step]]
 command = "next_message"
-check   = { cursor.index = 1, selection.count = 1 }
+check   = { cursor.index = 1, cursor.subject = "Newsletters", selection.count = 1 }
 expect  = "j moves the ring to the second row and selects nothing: the first row is still the only one selected."
 
 [[step]]
 command = "toggle_selection"
-check   = { cursor.index = 1, selection.count = 2 }
-expect  = "x adds the second row. The cursor has not moved; the bar counts two."
+check   = { cursor.index = 1, cursor.subject = "Newsletters", selection.count = 1 }
+expect  = "The digest stays out of the selection: it groups messages rather than being one message to act on. The first message remains selected."
+
+[[step]]
+command = "next_message"
+check   = { cursor.index = 2, selection.count = 1 }
 
 [[step]]
 command = "toggle_selection"
-check   = { cursor.index = 1, selection.count = 1 }
-expect  = "x again takes the second row back out. The ring stays on it, drawn as the cursor and not as a selected row."
+check   = { cursor.index = 2, selection.count = 2 }
+expect  = "x adds the third row's message. The cursor has not moved; the bar counts two."
+
+[[step]]
+command = "toggle_selection"
+check   = { cursor.index = 2, selection.count = 1 }
+expect  = "x again takes the third row back out. The ring stays on it, drawn as the cursor and not as a selected row."

@@ -7,9 +7,8 @@
 # are typed, and Return snoozes until that date. The row leaves the inbox,
 # the toast offers Undo, and Undo puts it back where it was.
 apps   = ["focus"]
-# Red on the GTK app until it drives this flow through postio-focus (#1807):
-# the catalogue expects it to fail there and says when it starts passing.
-proof  = "open"
+# The demo's second row is a digest; use a message for bulk actions.
+proof  = "pinned"
 source = { kind = "spec", ref = "specs/009-focus-macos US6" }
 
 [[step]]
@@ -17,13 +16,17 @@ wait    = { until = { cursor.index = 0 } }
 check   = { keyboard.region = "list", overlay.kind = "none" }
 
 [[step]]
+command = "next_message"
+check   = { cursor.index = 1, cursor.subject = "Newsletters" }
+
+[[step]]
 id      = "row"
 command = "next_message"
-check   = { cursor.index = 1 }
+check   = { cursor.index = 2 }
 
 [[step]]
 command = "snooze"
-check   = { overlay.kind = "picker", keyboard.region = "picker", cursor.index = 1 }
+check   = { overlay.kind = "picker", keyboard.region = "picker", cursor.index = 2 }
 expect  = "\"Snooze until\" hangs from the cursor's row at the subject column, naming the row's sender and subject on the right. It lists Later today, Tomorrow morning, Monday morning and Next week, each with its time and its number key 1 to 4, the first highlighted. Under them the date field says \"Or type a date\" and \"Tab to type\", and the footnote says where snoozed mail goes."
 
 [[step]]
