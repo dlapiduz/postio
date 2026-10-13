@@ -572,6 +572,7 @@ async fn places(client: &Client) -> Result<PlacesRead, String> {
     let mut owners = Vec::new();
     for account in &enabled {
         for mailbox in client.mailboxes(account.id).await.unwrap_or_default() {
+            read.messages += searched(&mailbox);
             owners.push((mailbox.id, account.address.address.clone()));
             read.folders.push((mailbox.id, rules::place_name(&mailbox)));
             read.places.push(rules::mailbox_place(&mailbox));
@@ -624,6 +625,17 @@ async fn places(client: &Client) -> Result<PlacesRead, String> {
         read.owners = owners;
     }
     Ok(read)
+}
+
+/// The messages of `mailbox` a search looks through: its maintained total
+/// (ADR 0040), for every folder but drafts, junk and trash, which the
+/// search's All mail leaves out (#1523) as the results' "Searched 18,204
+/// messages" does.
+fn searched(mailbox: &postio_model::Mailbox) -> u64 {
+    match mailbox.role {
+        MailboxRole::Drafts | MailboxRole::Junk | MailboxRole::Trash => 0,
+        _ => u64::from(mailbox.counts.total),
+    }
 }
 
 /// Search this machine's index for the bar: one row per conversation, and
@@ -857,6 +869,23 @@ mod tests {
         match pin!(future).poll(&mut Context::from_waker(Waker::noop())) {
             Poll::Ready(output) => output,
             Poll::Pending => panic!("a scripted answer is ready on the first poll"),
+        }
+    }
+
+    #[test]
+    fn the_index_holds_what_all_mail_searches_by_the_folders_totals() {
+        let held = |role: MailboxRole| {
+            let mut mailbox =
+                postio_model::Mailbox::new(postio_model::AccountId::new(1), "Folder", None);
+            mailbox.role = role;
+            mailbox.counts.total = 40;
+            super::searched(&mailbox)
+        };
+        assert_eq!(held(MailboxRole::Inbox), 40);
+        assert_eq!(held(MailboxRole::Sent), 40);
+        assert_eq!(held(MailboxRole::Regular), 40);
+        for left_out in [MailboxRole::Drafts, MailboxRole::Junk, MailboxRole::Trash] {
+            assert_eq!(held(left_out), 0, "{left_out:?} is not searched (#1523)");
         }
     }
 

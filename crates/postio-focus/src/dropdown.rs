@@ -417,6 +417,8 @@ pub(crate) struct EmptyParts<'a> {
     pub(crate) saved: &'a [SavedPill],
     pub(crate) sheet: &'a [u64],
     pub(crate) example: String,
+    /// The messages the index holds, once the places are read.
+    pub(crate) messages: Option<u64>,
     pub(crate) keymap: &'a Keymap,
     pub(crate) now: DateTime<Local>,
 }
@@ -526,7 +528,7 @@ pub(crate) fn empty(parts: EmptyParts<'_>) -> DropdownView {
         highlight,
         select: None,
         hints: words::empty_hints(parts.keymap),
-        count: None,
+        count: parts.messages.map(words::local_index),
     }
 }
 

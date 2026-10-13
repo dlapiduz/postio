@@ -154,6 +154,10 @@ pub struct PlacesRead {
     pub owners: Vec<(MailboxId, String)>,
     /// Every correspondent, for `@` and for a name typed.
     pub contacts: Vec<Contact>,
+    /// The messages a search looks through, off the folders' maintained
+    /// totals (ADR 0040): the empty dropdown's "local index · 18,204
+    /// messages".
+    pub messages: u64,
 }
 
 /// Where the highlight goes once results are drawn.
@@ -1906,6 +1910,7 @@ impl Bar {
                     saved: &saved,
                     sheet: &self.sheet,
                     example: self.example(),
+                    messages: (self.places_read > 0).then_some(self.places.messages),
                     keymap: &self.keymap,
                     now,
                 })

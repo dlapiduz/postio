@@ -236,6 +236,13 @@ pub fn empty_hints(keymap: &Keymap) -> Vec<Hint> {
     hints
 }
 
+/// The empty dropdown's footer on the right (screen 01): what the search
+/// will look through, "local index · 18,204 messages".
+pub fn local_index(messages: u64) -> String {
+    let noun = if messages == 1 { "message" } else { "messages" };
+    format!("local index \u{b7} {} {noun}", grouped(messages))
+}
+
 /// The words dropdown's footer (screen 03): move, open the highlighted
 /// message, all results, and Tab for the first filter.
 pub fn words_hints(keymap: &Keymap) -> Vec<Hint> {
@@ -1912,6 +1919,13 @@ mod tests {
                 (">", "commands"),
             ]
         );
+    }
+
+    #[test]
+    fn the_empty_dropdowns_footer_says_how_many_messages_the_index_holds() {
+        assert_eq!(local_index(18_204), "local index \u{b7} 18,204 messages");
+        assert_eq!(local_index(1), "local index \u{b7} 1 message");
+        assert_eq!(local_index(0), "local index \u{b7} 0 messages");
     }
 
     #[test]

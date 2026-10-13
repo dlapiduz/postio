@@ -166,6 +166,7 @@ fn places() -> PlacesRead {
             .collect(),
         owners: Vec::new(),
         contacts: Vec::new(),
+        messages: 18_204,
     }
 }
 
@@ -1384,6 +1385,20 @@ mod dropdown {
             },
             rows,
         )
+    }
+
+    #[test]
+    fn the_empty_dropdowns_footer_says_how_many_messages_the_index_holds() {
+        let rows = List::of(3);
+        let mut focus = mac_search();
+        let effects = opened(&mut focus, &rows);
+        let view = dropdown(&effects);
+        assert_eq!(view.state, DropdownState::Empty);
+        assert_eq!(
+            view.count.as_deref(),
+            Some("local index \u{b7} 18,204 messages"),
+            "the places' maintained total, not a count per open"
+        );
     }
 
     #[test]
