@@ -1718,8 +1718,8 @@ impl Results {
                             .iter()
                             .filter_map(|member| match member {
                                 Filter::From(who) | Filter::To(who) => Some(person(who)),
+                                Filter::In(name) => Some(words::folder_name(name)),
                                 Filter::Subject(text)
-                                | Filter::In(text)
                                 | Filter::Filename(text)
                                 | Filter::List(text)
                                 | Filter::Account(text)
@@ -1729,6 +1729,8 @@ impl Results {
                             })
                             .collect::<Vec<_>>()
                             .join(", "),
+                        // The inbox reads Inbox; the query keeps the name.
+                        Filter::In(_) => words::folder_name(value),
                         _ => value.to_owned(),
                     };
                     chips.push(Chip {
@@ -2335,7 +2337,7 @@ impl Results {
                 &subject,
                 &source_tag,
                 &passage_text,
-                &folder_name,
+                &words::folder_name(&folder_name),
                 &date,
             ),
             unread: hit.unread,

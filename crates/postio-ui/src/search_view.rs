@@ -672,7 +672,8 @@ pub fn filter_button_label(
     }
     let value = |filter: &Filter| match filter {
         Filter::From(who) | Filter::To(who) => name_of(who).unwrap_or_else(|| who.clone()),
-        Filter::In(name) | Filter::Label(name) => name.clone(),
+        Filter::In(name) => folder_name(name),
+        Filter::Label(name) => name.clone(),
         _ => String::new(),
     };
     let more = match held.len() {
@@ -2370,6 +2371,11 @@ mod tests {
         assert_eq!(
             label(FilterKind::Anywhere, &[Filter::In("Archive".into())]),
             "In: Archive"
+        );
+        assert_eq!(
+            label(FilterKind::Anywhere, &[Filter::In("INBOX".into())]),
+            "In: Inbox",
+            "IMAP's INBOX is the inbox, as every search surface calls it"
         );
         assert_eq!(
             label(FilterKind::Label, &[Filter::Label("Atlas".into())]),

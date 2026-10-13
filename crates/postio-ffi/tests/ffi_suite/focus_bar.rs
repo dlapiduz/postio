@@ -85,6 +85,13 @@ async fn slash_opens_the_bar_and_in_lists_the_folders_counted() {
     );
     let folder = folder.expect("seen");
     assert_eq!(folder.right.as_deref(), Some("2"), "{folder:?}");
+    let said =
+        |runs: &[postio_ffi::RunFfi]| runs.iter().map(|run| run.text.as_str()).collect::<String>();
+    assert_eq!(
+        (said(&folder.title), said(&folder.detail)),
+        ("Inbox".to_owned(), "in:Inbox".to_owned()),
+        "IMAP's INBOX reads Inbox here too"
+    );
     assert_eq!(
         operator.as_deref(),
         Some("in:"),

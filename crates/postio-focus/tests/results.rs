@@ -302,6 +302,23 @@ fn passages_are_asked_for_a_page_after_it_lands_and_fill_it() {
 }
 
 #[test]
+fn an_in_chip_calls_the_inbox_inbox() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let effects = search(&mut focus, "atlas in:INBOX -in:inbox", &rows);
+    let query = query_view(&effects).expect("the field");
+    assert_eq!(
+        query
+            .chips
+            .iter()
+            .map(|chip| (chip.operator.as_str(), chip.value.as_str()))
+            .collect::<Vec<_>>(),
+        [("in:", "Inbox"), ("in:", "Inbox")],
+        "the chip says the folder's name; the query keeps the store's"
+    );
+}
+
+#[test]
 fn a_filter_button_edits_the_query_and_asks_again() {
     let rows = List::of(3);
     let mut focus = mac();

@@ -871,14 +871,23 @@ impl Offer {
                     ..base
                 }
             }
-            Offer::Folder(folder) => DropdownRow {
-                kind: DropdownRowKind::Folder,
-                title: marked(&folder.text, &prefix_marks(&folder.text, typed)),
-                detail: vec![Run::styled(folder.query.clone(), RunStyle::Mono)],
-                right: count(folder),
-                key: None,
-                ..base
-            },
+            Offer::Folder(folder) => {
+                // The inbox reads Inbox, as every search surface says it.
+                let name = words::folder_name(&folder.text);
+                let query = if name == folder.text {
+                    folder.query.clone()
+                } else {
+                    words::in_folder(&folder.text)
+                };
+                DropdownRow {
+                    kind: DropdownRowKind::Folder,
+                    title: marked(&name, &prefix_marks(&name, typed)),
+                    detail: vec![Run::styled(query, RunStyle::Mono)],
+                    right: count(folder),
+                    key: None,
+                    ..base
+                }
+            }
         }
     }
 }
