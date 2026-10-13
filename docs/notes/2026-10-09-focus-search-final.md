@@ -7,6 +7,94 @@ time is in one statement: the walk that feeds the facets.
 
 ## Bench
 
+### Final run (T138): every shape under budget, SC-001 to SC-003 met
+
+The last full run, on the branch as it goes for review (`b358cb6a` plus
+the bench change below), after everything that touched a read path since
+the run under "After D30": the dropdown's message count (`125f0d8b`,
+which costs no statement: it sums the folder rows the places read already
+loads), Quick Look's To lines (`190ddf9f`, one more statement for all
+the members) and D30's floors (no read changed). Same bench, corpus,
+method and machine as below. `uptime` load 9.3-11.2 at the start of the
+run and 7.7-10.7 at its end (other sessions building), higher than any
+run below, so these are if anything pessimistic.
+
+Two changes to the bench, both in `search_focus.rs`. **The corpus now
+stores each body as well as indexing it.** It used to index the text
+only, so `load_body` read nothing, and the `e2e` shapes' passages and any
+Quick Look read found no words to cut: they timed the reads and not the
+cut. With the bodies stored the passages are cut from real text, which
+is what SC-003 asks about. **A `quick look matches` shape** times what
+Space asks for: `conversation_matches` over the best conversation of
+`quarterly`, its To lines included.
+
+| shape | query | p50 ms | p95 ms | stmts | found |
+|---|---|---:|---:|---:|---:|
+| one word | `quarterly` | 2.17 | 2.52 | 3 | 203 |
+| two words | `quarterly forecast` | 0.68 | 0.69 | 3 | 7 |
+| operator only | `from:sender3` | 4.86 | 5.63 | 4 | 479 |
+| operator + words | `from:sender3 regarding` | 15.00 | 16.30 | 4 | 460 |
+| common word | `regarding` | 13.52 | 14.56 | 3 | 880 |
+| typed `a` | `a` | 9.23 | 9.94 | 3 | 775 |
+| typed `at` | `at` | 13.48 | 14.59 | 3 | 876 |
+| typed `atl` | `atl` | 2.89 | 2.93 | 3 | 366 |
+| completions | `a` | 4.27 | 5.28 | 4 | 2 |
+| completions | `at` | 2.33 | 2.84 | 4 | 2 |
+| completions | `atl` | 4.00 | 4.30 | 4 | 2 |
+| completions | `from:a` | 1.54 | 1.60 | 1 | 4 |
+| zero hits, four filters | (step 1's) | 0.94 | 0.99 | 2 | 0 |
+| relaxations of that | five variants | 3.51 | 3.83 | 5 | 1 variant |
+| e2e one word | `quarterly` | 3.87 | 4.34 | 56 | 203 |
+| e2e two words | `quarterly forecast` | 1.05 | 1.06 | 13 | 7 |
+| e2e operator + words | `from:sender3 regarding` | 16.59 | 18.40 | 57 | 460 |
+| **e2e common word** | `regarding` | 15.75 | **16.29** | 56 | 880 |
+| e2e typed `atl` | `atl` | 4.77 | 4.97 | 56 | 366 |
+| preview check a person | `quarterly from:sender3` | 1.99 | 2.18 | 4 | 9 |
+| preview exclude a person | `quarterly -from:sender3` | 3.59 | 3.94 | 4 | 194 |
+| preview check a label | `quarterly label:atlas` | 1.15 | 1.33 | 4 | 21 |
+| preview check a folder | `quarterly in:inbox` | 2.18 | 2.83 | 3 | 203 |
+| timeline range + word | `quarterly after:… before:…` | 0.99 | 1.15 | 3 | 24 |
+| date words since + word | `quarterly after:…` | 0.91 | 0.92 | 3 | 24 |
+| timeline range alone | `after:… before:…` | 5.01 | 5.47 | 3 | 352 |
+| timeline range + operator | `from:sender3 after:… before:…` | 2.56 | 2.95 | 4 | 66 |
+| file word | `kestrel` | 0.89 | 0.91 | 4 | 20 |
+| e2e file word | `kestrel` | 1.36 | 1.48 | 8 | 20 |
+| Files tab, file word | `kestrel` | 0.43 | 0.44 | 3 | 20 |
+| Files tab, one word | `quarterly` | 0.92 | 0.93 | 2 | 0 |
+| Files tab, operator | `from:sender3` | 4.36 | 4.85 | 3 | 350 |
+| e2e preview check a person | `quarterly from:sender3` | 2.38 | 2.70 | 16 | 9 |
+| e2e timeline range + word | `quarterly after:… before:…` | 1.82 | 2.10 | 30 | 24 |
+| quick look matches | `quarterly`, best conversation | 0.64 | 0.65 | 16 | 2 matches |
+
+Against the spec's success criteria:
+
+- **SC-001 (full search with facets and months under 50 ms at p95, its
+  statement count constant in the match size): met.** The worst search
+  is `e2e operator + words` at 18.4 ms and the worst executor shape
+  `operator + words` at 16.3; the common word is 14.6 (16.3 end to end).
+  The executor's statements are 2-4 whatever the match: 3 for `quarterly`
+  (203 conversations) and for `regarding` (880, capped), the constancy
+  `search_statement_budget.rs` gates on CI at 100 and 2,000 messages.
+  The `e2e` shapes add three name reads and one body read per hit on the
+  page, bounded by the page (step 1's note).
+- **SC-002 (suggestions under 20 ms at p95): met.** The worst is `a` at
+  5.3 ms, capped by D29.
+- **SC-003 (a screen's passages within 50 ms of the results): met.** The
+  passages are the `e2e` shapes less their executor shape, for a page of
+  50 conversations, more than the 20 a screen shows: 1.8 ms for
+  `quarterly` (4.34 - 2.52), 1.7 for `regarding` (16.29 - 14.56), 2.1 for
+  `from:sender3 regarding`, 2.0 for `atl`. A keystroke to a filled screen
+  is then under 19 ms here, inside the constitution's 100 ms. Quick Look's
+  matches, read when Space opens it, are 0.65 ms.
+
+Against the run under "After D30" the shapes are within its spread
+(e2e one word 3.69 → 4.34 and e2e typed `atl` 5.10 → 4.97, now that the
+passages cut real text). `found` for the capped words moves by a few
+between runs (`regarding` 904 below, 875 and 880 in two runs today):
+which 5,000 matches a capped walk reads first is the index's order, and
+the conversations among them follow it. It is a floor, and says so
+("880+"); every uncapped count is the same in every run.
+
 ### After D30: every shape under budget
 
 Options 1, 2 and 3 below were taken (maintainer, 2026-10-09: "do both",

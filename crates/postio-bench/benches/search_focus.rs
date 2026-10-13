@@ -238,16 +238,27 @@ async fn build() -> Corpus {
             if rng.chance(50) {
                 body.push_str(&format!("{SECOND_WORD} numbers "));
             }
-            postio_index::index::index_body(&connection, message.id.get(), Some(&body))
-                .await
-                .expect("body");
-            connection
-                .execute(
-                    "UPDATE messages SET body_state = 'full' WHERE id = ?1",
-                    [message.id.get()],
+            // The body stored, then indexed (storing one drops its index
+            // row for the indexer to write again), so the passages the
+            // results ask for and Quick Look's matches are cut from text
+            // rather than read as nothing (SC-003).
+            messages
+                .set_body(
+                    message.id,
+                    &postio_storage::repository::StoredBody {
+                        text: Some(body.clone()),
+                        html: None,
+                        headers: None,
+                        headers_truncated: false,
+                        encoding_problems: false,
+                    },
+                    postio_model::BodyState::Full,
                 )
                 .await
                 .expect("body present");
+            postio_index::index::index_body(&connection, message.id.get(), Some(&body))
+                .await
+                .expect("body");
             for _ in 0..rng.below(3) {
                 let label = label_ids[rng.below(LABELS as u64) as usize];
                 labels.attach(message.id, label).await.expect("attach");
@@ -396,6 +407,10 @@ enum Kind {
     Completions,
     /// `executor::files`: the Files tab's cards (step 9).
     Files,
+    /// The session's `conversation_matches` for the query's best
+    /// conversation: what Quick Look reads as it opens (T090), the To
+    /// lines included. The conversation is found once, untimed.
+    QuickLook,
 }
 
 /// A word only attachments say (step 9).
@@ -577,7 +592,16 @@ const SHAPES: &[Shape] = &[
         query: "quarterly after:2026-07-01 before:2026-10-01",
         kind: Kind::EndToEnd,
     },
+    Shape {
+        name: "quick look matches",
+        query: "quarterly",
+        kind: Kind::QuickLook,
+    },
 ];
+
+/// The conversation the Quick Look shape opens: the best match of its
+/// query, found on its first run.
+static QUICK_LOOK: OnceLock<postio_search::results::ConversationKey> = OnceLock::new();
 
 /// Runs the shape once; returns the conversations it found.
 async fn run_once(shape: &Shape, query: &ParsedQuery) -> u64 {
@@ -667,12 +691,38 @@ async fn run_once(shape: &Shape, query: &ParsedQuery) -> u64 {
             std::hint::black_box(&cards);
             cards.len() as u64
         }
+        Kind::QuickLook => {
+            let key = match QUICK_LOOK.get() {
+                Some(key) => *key,
+                None => {
+                    let best = postio_session::search::conversations(
+                        &corpus.connection,
+                        account,
+                        query,
+                        ConversationOrder::BestMatch,
+                        0,
+                        1,
+                    )
+                    .await
+                    .expect("conversations")
+                    .hits
+                    .first()
+                    .expect("a conversation to look at")
+                    .key;
+                    *QUICK_LOOK.get_or_init(|| best)
+                }
+            };
+            let found =
+                postio_session::search::conversation_matches(&corpus.connection, query, key).await;
+            std::hint::black_box(&found);
+            found.len() as u64
+        }
         Kind::Relaxations => {
             let offered = postio_search::relax::relax(query);
             let counts = relaxation_counts(&corpus.connection, account, &offered, now.date_naive())
                 .await
                 .expect("relaxations");
-            counts.iter().filter(|c| **c > 0).count() as u64
+            counts.iter().filter(|c| c.conversations > 0).count() as u64
         }
     }
 }
