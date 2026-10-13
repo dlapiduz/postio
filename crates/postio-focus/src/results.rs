@@ -529,6 +529,8 @@ impl QuickLook {
                     when: found.when.or(Some(self.hit.newest_match)),
                     ..found.clone()
                 },
+                // Not on the row: the conversation's read says it.
+                to: Vec::new(),
             })
             .collect();
         // The subject is one card, last, as the conversation's are.
@@ -546,6 +548,7 @@ impl QuickLook {
                     passage: None,
                     when: None,
                 },
+                to: Vec::new(),
             });
         }
         row
@@ -2466,12 +2469,15 @@ impl Results {
         }
         // When the row's own message was sent, once its card says; until
         // then when the conversation last matched.
-        let sent = matches
-            .iter()
-            .find(|each| each.message == Some(hit.best))
+        let own = matches.iter().find(|each| each.message == Some(hit.best));
+        let sent = own
             .and_then(|each| each.found.when)
             .unwrap_or(hit.newest_match);
-        let tail: Vec<String> = std::iter::once(words::sent_at(sent.with_timezone(&Local)))
+        // Who it went to, once the conversation's read says (screen 10).
+        let tail: Vec<String> = own
+            .and_then(|each| words::sent_to(&each.to))
+            .into_iter()
+            .chain(std::iter::once(words::sent_at(sent.with_timezone(&Local))))
             .chain(words::thread_size(hit.messages))
             .collect();
         let tail = tail.join(" \u{b7} ");

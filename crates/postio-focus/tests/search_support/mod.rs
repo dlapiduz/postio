@@ -173,6 +173,7 @@ pub fn conversation_matches(key: ConversationKey) -> Vec<ConversationMatch> {
                 passage: Some(passage_for(MessageId::new(500 + n))),
                 when: Some(when(n) - chrono::TimeDelta::days(1)),
             },
+            to: Vec::new(),
         },
         ConversationMatch {
             message: Some(best.best),
@@ -182,6 +183,16 @@ pub fn conversation_matches(key: ConversationKey) -> Vec<ConversationMatch> {
                 passage: Some(passage_for(best.best)),
                 when: Some(when(n)),
             },
+            to: vec![
+                postio_search::results::Addressee {
+                    address: EmailAddress::new(Some("Finance team"), "finance@example.com"),
+                    own: false,
+                },
+                postio_search::results::Addressee {
+                    address: EmailAddress::new(Some("Sam Doe"), "sam@example.com"),
+                    own: true,
+                },
+            ],
         },
         ConversationMatch {
             message: None,
@@ -196,6 +207,7 @@ pub fn conversation_matches(key: ConversationKey) -> Vec<ConversationMatch> {
                 }),
                 when: None,
             },
+            to: Vec::new(),
         },
     ]
 }

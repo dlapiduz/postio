@@ -264,6 +264,18 @@ pub struct ConversationMatch {
     pub from: Option<EmailAddress>,
     /// Where, the words around it, and when it was sent.
     pub found: Match,
+    /// Who its message was sent to, the To line in order; empty for the
+    /// subject. Quick Look's sender line says it ("to you, Finance team").
+    pub to: Vec<Addressee>,
+}
+
+/// One person a message was sent to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Addressee {
+    /// Their address, with the name the header gave it.
+    pub address: EmailAddress,
+    /// An account's or an identity's address: the person searching.
+    pub own: bool,
 }
 
 /// Why a conversation ranks where it does: the row's reason line.

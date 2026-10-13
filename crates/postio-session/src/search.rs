@@ -19,8 +19,8 @@ use postio_model::{AccountScope, AddressId, EmailAddress, LabelId, MailboxId, Me
 use postio_search::facets::Scope;
 use postio_search::passage::FirstLine;
 use postio_search::results::{
-    ConversationKey, ConversationMatch, ConversationOrder, ConversationResults, FacetNames, Match,
-    Source,
+    Addressee, ConversationKey, ConversationMatch, ConversationOrder, ConversationResults,
+    FacetNames, Match, Source,
 };
 use postio_search::{ParsedQuery, ResultOrder, SearchResults};
 use postio_storage::Checkout;
@@ -817,14 +817,21 @@ async fn read_matches(
             .unwrap_or_default()
     };
 
+    let addressed = sent_to(connection, members.iter().map(|member| member.id)).await?;
     let mut found = Vec::new();
     for (at, member) in members.iter().enumerate() {
         let when = Some(member.received_at);
+        let to: Vec<Addressee> = addressed
+            .iter()
+            .filter(|(of, _)| *of == member.id)
+            .map(|(_, each)| each.clone())
+            .collect();
         if let Some(body) = &told[at] {
             if let Some(mut own) = body.own_match(&words, FirstLine::Avoided) {
                 own.when = when;
                 found.push(ConversationMatch {
                     message: Some(member.id),
+                    to: to.clone(),
                     from: member.from.clone(),
                     found: own,
                 });
@@ -839,6 +846,7 @@ async fn read_matches(
             if let Some(quoted) = quoted {
                 found.push(ConversationMatch {
                     message: Some(member.id),
+                    to: to.clone(),
                     from: None,
                     found: quoted,
                 });
@@ -855,6 +863,7 @@ async fn read_matches(
             }
             found.push(ConversationMatch {
                 message: Some(member.id),
+                to: to.clone(),
                 from: member.from.clone(),
                 found: Match {
                     source: Source::FileName {
@@ -869,6 +878,7 @@ async fn read_matches(
         for file in read.iter().filter(|file| file.message == member.id) {
             found.push(ConversationMatch {
                 message: Some(member.id),
+                to: to.clone(),
                 from: member.from.clone(),
                 found: Match {
                     source: Source::FileContent {
@@ -890,6 +900,7 @@ async fn read_matches(
     if let Some(subject) = subject {
         found.push(ConversationMatch {
             message: None,
+            to: Vec::new(),
             from: None,
             found: Match {
                 source: Source::Subject,
@@ -928,6 +939,49 @@ fn whole(text: &str, marks: Vec<std::ops::Range<usize>>) -> postio_search::resul
 }
 
 /// The named attachments of `messages`: each one's message, id and name.
+/// Who each of `messages` was sent to: its To line in order, each marked
+/// when it is the person's own address (the People tab's notion of you).
+/// One read, on `idx_recipients_message`.
+async fn sent_to(
+    connection: &Checkout,
+    messages: impl Iterator<Item = MessageId>,
+) -> postio_storage::Result<Vec<(MessageId, Addressee)>> {
+    use postio_storage::sql::{self, RowExt as _};
+    let ids = format!(
+        "[{}]",
+        messages
+            .map(|id| id.get().to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    sql::all(
+        connection,
+        &format!(
+            "SELECT r.message_id, a.address, r.name,
+                    a.address_normalized IN ({})
+               FROM json_each(?1) j
+               JOIN recipients r ON r.message_id = j.value AND r.kind = 'to'
+               JOIN addresses a ON a.id = r.address_id
+              ORDER BY r.message_id, r.position",
+            postio_index::executor::OWN_ADDRESSES
+        ),
+        [ids.as_str()],
+        |row| {
+            Ok((
+                MessageId::new(row.int(0)?),
+                Addressee {
+                    address: EmailAddress {
+                        name: row.opt_text(2)?,
+                        address: row.text(1)?,
+                    },
+                    own: row.int(3)? != 0,
+                },
+            ))
+        },
+    )
+    .await
+}
+
 async fn file_names(
     connection: &Checkout,
     messages: impl Iterator<Item = MessageId>,

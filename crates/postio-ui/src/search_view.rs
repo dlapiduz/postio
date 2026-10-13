@@ -1114,6 +1114,35 @@ where
     at.format("%a %-d %b, %H:%M").to_string()
 }
 
+/// Who a message went to, on Quick Look's sender line: "to you, Finance
+/// team". You first, then each by the name the header gave them (else the
+/// address), three at most and how many more. `None` when nobody is known.
+pub fn sent_to(to: &[postio_search::results::Addressee]) -> Option<String> {
+    const NAMED: usize = 3;
+    let you = to.iter().any(|each| each.own);
+    let said: Vec<String> = you
+        .then(|| "you".to_owned())
+        .into_iter()
+        .chain(to.iter().filter(|each| !each.own).map(|each| {
+            each.address
+                .name
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .unwrap_or(&each.address.address)
+                .to_owned()
+        }))
+        .collect();
+    if said.is_empty() {
+        return None;
+    }
+    let named = said[..said.len().min(NAMED)].join(", ");
+    Some(match said.len().saturating_sub(NAMED) {
+        0 => format!("to {named}"),
+        more => format!("to {named} and {more} more"),
+    })
+}
+
 /// A conversation's size on the sender line, when it is more than one
 /// message: "thread of 3".
 pub fn thread_size(messages: u32) -> Option<String> {
@@ -2603,6 +2632,39 @@ mod tests {
         assert_eq!(sent_at(now), "Sat 26 Sep, 15:30");
         assert_eq!(thread_size(3), Some("thread of 3".to_owned()));
         assert_eq!(thread_size(1), None);
+    }
+
+    #[test]
+    fn quick_looks_sender_line_says_who_it_went_to() {
+        use postio_search::results::Addressee;
+        let to = |name: Option<&str>, address: &str, own: bool| Addressee {
+            address: postio_model::EmailAddress::new(name, address),
+            own,
+        };
+        let you = to(Some("Sam Doe"), "sam@example.com", true);
+        let finance = to(Some("Finance team"), "finance@example.com", false);
+        assert_eq!(
+            sent_to(&[finance.clone(), you.clone()]).as_deref(),
+            Some("to you, Finance team"),
+            "you first, as one says it"
+        );
+        assert_eq!(
+            sent_to(&[to(None, "tomas@example.com", false)]).as_deref(),
+            Some("to tomas@example.com"),
+            "no name, the address"
+        );
+        let many = [
+            you,
+            finance,
+            to(Some("Ben Adeyemi"), "ben@example.com", false),
+            to(Some("Lena Park"), "lena@example.com", false),
+            to(Some("Priya Nair"), "priya@example.com", false),
+        ];
+        assert_eq!(
+            sent_to(&many).as_deref(),
+            Some("to you, Finance team, Ben Adeyemi and 2 more")
+        );
+        assert_eq!(sent_to(&[]), None);
     }
 
     #[test]

@@ -1455,6 +1455,14 @@ fn quick_look_opens_on_the_focused_result_and_reads_its_matches() {
     );
     assert_eq!(lit(&view.cards[1].passage), ["Atlas", "budget"]);
     assert_eq!(view.current, Some(1), "the result's own message");
+    // Read with them: who the row's message went to (screen 10).
+    assert!(
+        text(&view.sender).starts_with(
+            "Tom\u{e1}s Reyes tomas@example.com \u{b7} to you, Finance team \u{b7} Sat 12 Sep, "
+        ),
+        "{}",
+        text(&view.sender)
+    );
 }
 
 #[test]

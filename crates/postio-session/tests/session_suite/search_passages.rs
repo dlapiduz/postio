@@ -454,6 +454,26 @@ async fn a_conversations_matches_come_oldest_first_each_with_its_passage() {
         assert_eq!(highlighted(&each.found), ["subscriber"]);
         assert!(each.found.when.is_some(), "when it was said");
     }
+    // Who Ada's went to, for Quick Look's sender line.
+    let to: Vec<(Option<String>, String, bool)> = found[0]
+        .to
+        .iter()
+        .map(|each| {
+            (
+                each.address.name.clone(),
+                each.address.address.clone(),
+                each.own,
+            )
+        })
+        .collect();
+    assert_eq!(
+        to,
+        [(
+            Some("Harbour redevelopment engineering".to_owned()),
+            "harbour-dev@lists.example.org".to_owned(),
+            false
+        )]
+    );
     let quinn = &found[1].found.passage.as_ref().expect("a passage").text;
     assert!(
         quinn.contains("Pure subscriber means we need"),
