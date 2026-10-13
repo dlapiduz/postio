@@ -133,7 +133,8 @@ struct PopoverRowView: View {
                 .fill(.tertiary)
                 .frame(width: max(6, 60 * row.share), height: 3)
                 .frame(width: 60, alignment: .trailing)
-            Text(String(row.count))
+            // "5,000+" past the walk's cap (D30): the controller's words.
+            Text(row.countLabel)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .monospacedDigit()

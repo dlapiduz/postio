@@ -88,6 +88,12 @@ public struct MonthChart: View {
         self.drag = drag
     }
 
+    /// What VoiceOver says for a bar: "Jul, 9", or "Jul, 9+" when the
+    /// count is a floor (D30) -- the controller's words, not the number.
+    static func spoken(_ month: MonthBarFfi) -> String {
+        "\(month.label), \(month.count)"
+    }
+
     private var anySelected: Bool { months.contains(where: \.selected) || drag.band != nil }
 
     private func selected(_ at: Int, _ month: MonthBarFfi) -> Bool {
@@ -111,7 +117,7 @@ public struct MonthChart: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: barHeight)
                         .accessibilityElement()
-                        .accessibilityLabel("\(month.label), \(month.conversations)")
+                        .accessibilityLabel(Self.spoken(month))
                     }
                 }
                 .contentShape(Rectangle())

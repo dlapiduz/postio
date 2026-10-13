@@ -17,6 +17,14 @@ struct TimelineTests {
     /// Twelve bars across 120 points: ten points a bar.
     static let width = 120.0
 
+    /// A month past the walk's cap says its count is a floor, as the
+    /// controller words it (D30), not the bare number it counted to.
+    @Test func aMonthSaysItsCountAsTheControllerWordsIt() {
+        let month = MonthBarFfi(
+            label: "Jul", conversations: 5_000, height: 1, selected: false, count: "5,000+")
+        #expect(MonthChart.spoken(month) == "Jul, 5,000+")
+    }
+
     @Test func aDragFromBar3ToBar5ReportsThreeToFiveOnceOnReleaseNeverDuring() {
         var reports: [[UInt32]] = []
         let drag = TimelineDrag(bars: 12) { reports.append([$0, $1]) }
