@@ -20,6 +20,14 @@ use postio_widgets::widgets::{Kind, Size, close_button, icon_button, icon_menu_b
 /// What a control asks the window to do.
 type Handler = Rc<dyn Fn(CommandId)>;
 
+/// A native window action, available before there is a mail command context.
+pub(crate) fn maximize_button() -> gtk::Button {
+    let button = icon_button("window-maximize-symbolic", "Maximize window");
+    button.add_css_class("focus-maximize");
+    button.set_action_name(Some("window.toggle-maximized"));
+    button
+}
+
 use postio_ui::focus_row::{BUTTONS, MENU};
 
 /// The main menu's check item for reading beside the list: the window's
@@ -33,6 +41,7 @@ pub struct Chrome {
     compose: gtk::Button,
     field: gtk::Button,
     close: gtk::Button,
+    maximize: gtk::Button,
     field_keys: gtk::Box,
     sync: gtk::Label,
     sync_icon: gtk::Image,
@@ -134,10 +143,12 @@ impl Chrome {
         let close = close_button();
         close.add_css_class("focus-close");
         close.add_css_class("circular");
+        let maximize = maximize_button();
 
         let end = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         end.append(&sync_row);
         end.append(&menu_button);
+        end.append(&maximize);
         end.append(&close);
 
         let top = gtk::CenterBox::new();
@@ -244,6 +255,7 @@ impl Chrome {
             compose: compose.clone(),
             field: field.clone(),
             close: close.clone(),
+            maximize,
             field_keys,
             sync,
             sync_icon,
@@ -318,6 +330,11 @@ impl Chrome {
     /// The top bar, to place in a layout.
     pub fn top_bar(&self) -> &gtk::CenterBox {
         &self.top
+    }
+
+    /// The maximize/restore control, whose state the window follows.
+    pub(crate) fn maximize(&self) -> &gtk::Button {
+        &self.maximize
     }
 
     /// The header strip, to place in a layout.

@@ -1,0 +1,26 @@
+apps = ["focus"]
+source = { kind = "issue", ref = "#1821" }
+proof = "base"
+seed = "bare-recipients"
+vary = { scheme = ["light", "dark"], width = ["wide", "narrow"] }
+
+[[step]]
+wait = { until = { cursor.index = 0 } }
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+[[step]]
+command = "next_message"
+
+[[step]]
+command = "open_message"
+check = { view = "reader", reading.id = "90" }
+expect = "The message reader stays centered with the inbox visible on both sides. Its frame does not grow to fit the message's recipient addresses."
+
+[[step]]
+key = "Home"
+check = { view = "reader" }
+expect = "At the top of the message, three bare recipient addresses wrap within the same column as the subject and body, each keeping its domain visible. The centered reader's frame keeps the inbox visible on both sides."

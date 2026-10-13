@@ -21,9 +21,9 @@ pub struct HeaderCard {
     from: gtk::Box,
     date: gtk::Label,
     to_label: gtk::Label,
-    to: gtk::Box,
+    to: adw::WrapBox,
     cc_label: gtk::Label,
-    cc: gtk::Box,
+    cc: adw::WrapBox,
 }
 
 /// A field's name: small and dim, in a column of its own.
@@ -41,6 +41,17 @@ fn line() -> gtk::Box {
     line.set_hexpand(true);
     line.set_valign(gtk::Align::Baseline);
     line
+}
+
+/// Recipients keep their readable addresses, wrapping at the column's
+/// edge rather than adding their minimum widths across the whole dialog.
+fn recipient_line() -> adw::WrapBox {
+    adw::WrapBox::builder()
+        .child_spacing(S1)
+        .line_spacing(S1)
+        .hexpand(true)
+        .valign(gtk::Align::Baseline)
+        .build()
 }
 
 /// How many characters an address may have and still be laid out whole.
@@ -76,9 +87,9 @@ impl HeaderCard {
         date.add_css_class("focus-open-date");
         date.set_valign(gtk::Align::Baseline);
         let to_label = field("To");
-        let to = line();
+        let to = recipient_line();
         let cc_label = field("Cc");
-        let cc = line();
+        let cc = recipient_line();
         root.attach(&from_label, 0, 0, 1, 1);
         root.attach(&from, 1, 0, 1, 1);
         root.attach(&date, 2, 0, 1, 1);
@@ -182,8 +193,10 @@ fn name_of(address: &EmailAddress) -> Option<&str> {
 /// A field of recipients: the first few by name (an address alone when
 /// there is no name), how many more, and the full list in the tooltip. A
 /// field nobody is in is not drawn, so a message with no Cc has no Cc line.
-fn recipients(label: &gtk::Label, line: &gtk::Box, addresses: &[EmailAddress]) {
-    clear(line);
+fn recipients(label: &gtk::Label, line: &adw::WrapBox, addresses: &[EmailAddress]) {
+    while let Some(child) = line.first_child() {
+        line.remove(&child);
+    }
     label.set_visible(!addresses.is_empty());
     line.set_visible(!addresses.is_empty());
     line.set_tooltip_text(None);

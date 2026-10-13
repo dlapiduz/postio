@@ -118,6 +118,10 @@ edges: `min(480, dialog − 96)` for a body in app colours, `min(640,
 dialog − 48)` for one on paper, following the treatment the renderer decided
 (and `O`). At 480, a line of prose is about seventy characters.
 
+Bare recipient addresses wrap within that column. Their domains stay
+visible and the full list remains in the tooltip; the combined widths of
+several addresses never enlarge the dialog (#1821).
+
 **Rhythm,** by explicit spacing (`focus_dialog::rhythm`): action row → thread
 marker 28; marker → subject 12; subject → labels 10; labels → sender block
 16; sender block padded 12 above and below, rows 22; sender → action card

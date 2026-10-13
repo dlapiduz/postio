@@ -33,6 +33,8 @@ pub enum Seed {
     /// newsletter that paints its own page: a message tall enough to
     /// scroll, with a treatment `O` can switch.
     LongNewsletter,
+    /// The message screen 04 opens, addressed to three bare long addresses.
+    BareRecipients,
     /// One conversation of seven messages, the last two unread.
     LongThread,
     /// Thirty-six conversations in the inbox.
@@ -50,10 +52,11 @@ pub enum Seed {
 
 impl Seed {
     /// Every seed Focus can build.
-    pub const ALL: [Seed; 9] = [
+    pub const ALL: [Seed; 10] = [
         Seed::Small,
         Seed::Empty,
         Seed::LongNewsletter,
+        Seed::BareRecipients,
         Seed::LongThread,
         Seed::ThirtyThreads,
         Seed::TwoAccounts,
@@ -68,6 +71,7 @@ impl Seed {
             Seed::Small => "small",
             Seed::Empty => "empty",
             Seed::LongNewsletter => "long-newsletter",
+            Seed::BareRecipients => "bare-recipients",
             Seed::LongThread => "long-thread",
             Seed::ThirtyThreads => "thirty-threads",
             Seed::TwoAccounts => "two-accounts",
@@ -108,6 +112,7 @@ pub async fn seeded(seed: Seed) -> (Store, AccountId) {
         }
         Seed::Small
         | Seed::LongNewsletter
+        | Seed::BareRecipients
         | Seed::TwoAccounts
         | Seed::Outbox
         | Seed::DraftLeftOver
@@ -115,6 +120,31 @@ pub async fn seeded(seed: Seed) -> (Store, AccountId) {
             let (database, account) = demo().await;
             match seed {
                 Seed::LongNewsletter => treatment_demo(&database, account, "30").await,
+                Seed::BareRecipients => {
+                    let connection = database.connect().await.expect("a connection");
+                    let messages = MessageRepository::new(&connection);
+                    let newest = RfcMessageId::new(format!(
+                        "<demo.{OPENED}.{}@example.test>",
+                        TODAY[OPENED].messages - 1
+                    ));
+                    for id in messages
+                        .ids_by_rfc_message_id(account, &newest)
+                        .await
+                        .expect("the opened message")
+                    {
+                        let mut message =
+                            messages.get(id).await.expect("a message").expect("saved");
+                        message.to = [
+                            "engineering.accounts.team@example.com",
+                            "operations.accounts.team@example.org",
+                            "procurement.accounts.team@example.net",
+                        ]
+                        .into_iter()
+                        .map(|address| EmailAddress::new(None::<String>, address))
+                        .collect();
+                        messages.update(&mut message).await.expect("addressed");
+                    }
+                }
                 Seed::TwoAccounts => {
                     let second = postio_storage::seed::seed_extra_account(
                         &database,

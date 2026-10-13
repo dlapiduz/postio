@@ -441,6 +441,27 @@ impl FocusWindow {
         }
     }
 
+    /// Keep the visible control's icon, tooltip and accessible name in
+    /// step with maximize requests from the button or the window manager.
+    fn follow_maximized(&self, button: &gtk::Button) {
+        fn update(window: &FocusWindow, button: &gtk::Button) {
+            let (icon, label) = if window.is_maximized() {
+                ("window-restore-symbolic", "Restore window")
+            } else {
+                ("window-maximize-symbolic", "Maximize window")
+            };
+            button.set_icon_name(icon);
+            button.set_tooltip_text(Some(label));
+            button.update_property(&[gtk::accessible::Property::Label(label)]);
+        }
+        update(self, button);
+        self.connect_maximized_notify(glib::clone!(
+            #[weak]
+            button,
+            move |window| update(window, &button)
+        ));
+    }
+
     fn build(&self) {
         crate::style::install(&WidgetExt::display(self));
         postio_widgets::style::install_icons(&WidgetExt::display(self));
@@ -484,7 +505,15 @@ impl FocusWindow {
         ));
         let bar = gtk::CenterBox::new();
         bar.add_css_class("focus-top-bar");
-        bar.set_end_widget(Some(&close));
+        let maximize = crate::chrome::maximize_button();
+        self.follow_maximized(&maximize);
+        let controls = gtk::Box::new(
+            gtk::Orientation::Horizontal,
+            postio_widgets::widgets::space::S2,
+        );
+        controls.append(&maximize);
+        controls.append(&close);
+        bar.set_end_widget(Some(&controls));
         imp.bar_before_mail.set_child(Some(&bar));
         let before_mail = gtk::Box::new(gtk::Orientation::Vertical, 0);
         before_mail.append(&imp.bar_before_mail);
@@ -2394,7 +2423,10 @@ impl FocusWindow {
             self,
             move |id| window.act(id)
         ));
-        imp.inbox.append(chrome.top_bar());
+        let titlebar = gtk::WindowHandle::new();
+        titlebar.set_child(Some(chrome.top_bar()));
+        self.follow_maximized(chrome.maximize());
+        imp.inbox.append(&titlebar);
         imp.inbox.append(chrome.strip());
         imp.chrome.replace(Some(Rc::clone(&chrome)));
         let state_banner = crate::banner::StateBanner::new();
