@@ -4465,13 +4465,13 @@ fn focus_remembers_the_searches_it_ran_and_forgets_them_on_request() {
 
     ask(seed
         .rt
-        .block_on(seed.client.remember_search("atlas".into(), 4)));
+        .block_on(seed.client.remember_search("atlas".into(), 4, false)));
     ask(seed
         .rt
-        .block_on(seed.client.remember_search("from:ada".into(), 2)));
+        .block_on(seed.client.remember_search("from:ada".into(), 2, true)));
     ask(seed
         .rt
-        .block_on(seed.client.remember_search("atlas".into(), 5)));
+        .block_on(seed.client.remember_search("atlas".into(), 5, false)));
 
     let recent = seed
         .rt
@@ -4479,11 +4479,11 @@ fn focus_remembers_the_searches_it_ran_and_forgets_them_on_request() {
         .expect("an answer");
     let seen: Vec<_> = recent
         .iter()
-        .map(|search| (search.query.as_str(), search.hits))
+        .map(|search| (search.query.as_str(), search.hits, search.capped))
         .collect();
     assert_eq!(
         seen[..2],
-        [("atlas", 5), ("from:ada", 2)],
+        [("atlas", 5, false), ("from:ada", 2, true)],
         "newest run first"
     );
     assert_eq!(recent.len(), seeded + 2, "a query run twice is one entry");

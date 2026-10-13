@@ -1124,9 +1124,18 @@ impl Client {
     }
 
     /// Remember that `query` ran and matched `hits` conversations.
-    pub async fn remember_search(&self, query: String, hits: u64) -> Result<(), StoreError> {
+    pub async fn remember_search(
+        &self,
+        query: String,
+        hits: u64,
+        capped: bool,
+    ) -> Result<(), StoreError> {
         self.read(
-            Req::RememberSearch { query, hits },
+            Req::RememberSearch {
+                query,
+                hits,
+                capped,
+            },
             "a remembered search",
             |answer| match answer {
                 Resp::Done => Some(()),

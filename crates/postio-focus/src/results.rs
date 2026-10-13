@@ -1416,7 +1416,7 @@ impl Results {
             landed.frame = true;
             if !self.remembered {
                 self.remembered = true;
-                landed.remember = self.frame.as_ref().map(|frame| frame.total);
+                landed.remember = self.frame.as_ref().map(|frame| (frame.total, frame.capped));
             }
             if self.frame.as_ref().is_some_and(|frame| frame.total == 0) {
                 self.none = Some(NoResults::default());
@@ -2571,7 +2571,7 @@ pub(crate) struct Landed {
     /// The passages to ask for.
     pub(crate) passages: Option<Request>,
     /// Keep the query among the recent searches, with this many found.
-    pub(crate) remember: Option<u64>,
+    pub(crate) remember: Option<(u64, bool)>,
     /// It found nothing: draw the no-results page and count its ways out.
     pub(crate) nothing: bool,
 }
@@ -3918,8 +3918,12 @@ impl FocusController {
                 if let Some((first, count)) = landed.rows {
                     steps.push(Step::Show(Intent::ResultsPage { first, count }));
                 }
-                if let Some(hits) = landed.remember {
-                    steps.push(Step::Ask(Request::RememberSearch { query, hits }));
+                if let Some((hits, capped)) = landed.remember {
+                    steps.push(Step::Ask(Request::RememberSearch {
+                        query,
+                        hits,
+                        capped,
+                    }));
                 }
                 steps.extend(landed.passages.map(Step::Ask));
                 steps

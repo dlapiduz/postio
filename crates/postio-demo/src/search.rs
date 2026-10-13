@@ -785,7 +785,7 @@ pub async fn search_demo() -> (Store, AccountId) {
         ("atlas budget", 48, 1),
     ] {
         searches
-            .remember(query, hits, today - Duration::days(days))
+            .remember(query, hits, false, today - Duration::days(days))
             .await
             .expect("a recent search");
     }

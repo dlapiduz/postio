@@ -52,11 +52,16 @@ async fn with_history() -> std::sync::Arc<Session> {
         let searches = SearchRepository::new(&connection);
         let now = chrono::Utc::now();
         searches
-            .remember("from:ada invoice", 6, now - chrono::TimeDelta::days(3))
+            .remember(
+                "from:ada invoice",
+                6,
+                false,
+                now - chrono::TimeDelta::days(3),
+            )
             .await
             .expect("remembered");
         searches
-            .remember("atlas budget", 48, now - chrono::TimeDelta::hours(2))
+            .remember("atlas budget", 48, false, now - chrono::TimeDelta::hours(2))
             .await
             .expect("remembered");
     }

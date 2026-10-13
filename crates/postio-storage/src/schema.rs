@@ -230,6 +230,16 @@ UPDATE messages SET
             include_str!("schema/walk-columns.sql"),
         ),
     },
+    // Spec 010 D30: a recent search remembers whether its count stopped at
+    // the walk's cap. A row from before is taken as exact, which is what
+    // its Recent row already said.
+    Migration {
+        from: stamp(0x72d3_2a05),
+        to: stamp(0x804e_6e62),
+        statements: "
+ALTER TABLE recent_searches ADD COLUMN capped INTEGER NOT NULL DEFAULT 0;
+",
+    },
 ];
 
 /// The steps that carry a store stamped `found` to [`FINGERPRINT`], in the
@@ -946,7 +956,10 @@ CREATE TABLE recent_searches (
     -- UTC ms.
     last_run_at  INTEGER NOT NULL,
     -- Conversations, as the footer said.
-    hits         INTEGER NOT NULL
+    hits         INTEGER NOT NULL,
+    -- 1 when that search stopped at its walk's cap, so `hits` is a floor
+    -- and the Recent row says "5,000+ results" (spec 010 D30).
+    capped       INTEGER NOT NULL DEFAULT 0
 );
 
 -- A reminder to follow up (spec 007 US5, research R7): when nobody but the

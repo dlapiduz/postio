@@ -319,8 +319,12 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .map_err(|error| error.to_string()),
         ),
-        Request::RememberSearch { query, hits } => {
-            if let Err(error) = client.remember_search(query, hits).await {
+        Request::RememberSearch {
+            query,
+            hits,
+            capped,
+        } => {
+            if let Err(error) = client.remember_search(query, hits, capped).await {
                 tracing::warn!(%error, "Focus could not keep a recent search");
             }
             Reply::Noted

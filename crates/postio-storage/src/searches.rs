@@ -25,6 +25,8 @@ pub struct RecentSearch {
     pub last_run_at: DateTime<Utc>,
     /// Conversations it matched, as the footer said.
     pub hits: u64,
+    /// Its search stopped at the walk's cap: `hits` is a floor (D30).
+    pub capped: bool,
 }
 
 /// Recent searches and saved-search progress on one connection.
@@ -46,7 +48,7 @@ impl<'a> SearchRepository<'a> {
     pub async fn recent(&self) -> Result<Vec<RecentSearch>> {
         sql::all(
             self.connection,
-            "SELECT query, last_run_at, hits FROM recent_searches
+            "SELECT query, last_run_at, hits, capped FROM recent_searches
               ORDER BY last_run_at DESC, query LIMIT ?1",
             sql::bind![RECENT_KEPT],
             |row| {
@@ -54,23 +56,32 @@ impl<'a> SearchRepository<'a> {
                     query: row.text(0)?,
                     last_run_at: from_millis(row.int(1)?),
                     hits: u64::try_from(row.int(2)?).unwrap_or(0),
+                    capped: row.int(3)? != 0,
                 })
             },
         )
         .await
     }
 
-    /// Record that `query` ran at `at` and matched `hits` conversations:
-    /// one row per query, then everything past the newest [`RECENT_KEPT`]
-    /// is deleted.
-    pub async fn remember(&self, query: &str, hits: u64, at: DateTime<Utc>) -> Result<()> {
+    /// Record that `query` ran at `at` and matched `hits` conversations, a
+    /// floor when `capped`: one row per query, then everything past the
+    /// newest [`RECENT_KEPT`] is deleted.
+    pub async fn remember(
+        &self,
+        query: &str,
+        hits: u64,
+        capped: bool,
+        at: DateTime<Utc>,
+    ) -> Result<()> {
         sql::in_scope(self.connection, |_| async {
             sql::execute(
                 self.connection,
-                "INSERT INTO recent_searches (query, last_run_at, hits) VALUES (?1, ?2, ?3)
+                "INSERT INTO recent_searches (query, last_run_at, hits, capped)
+                 VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT (query) DO UPDATE
-                    SET last_run_at = excluded.last_run_at, hits = excluded.hits",
-                sql::bind![query, at.timestamp_millis(), hits],
+                    SET last_run_at = excluded.last_run_at, hits = excluded.hits,
+                        capped = excluded.capped",
+                sql::bind![query, at.timestamp_millis(), hits, capped],
             )
             .await?;
             sql::execute(

@@ -2452,6 +2452,7 @@ impl Bar {
             Step::Ask(Request::RememberSearch {
                 query: query.to_owned(),
                 hits: landed.total,
+                capped: landed.capped,
             })
         })
     }

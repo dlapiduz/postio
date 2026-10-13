@@ -445,7 +445,7 @@ pub(crate) fn empty(parts: EmptyParts<'_>) -> DropdownView {
             token: *token,
             kind: DropdownRowKind::Recent,
             title: query_runs(&recent.query),
-            detail: vec![Run::plain(words::results_count(recent.hits, false))],
+            detail: vec![Run::plain(words::results_count(recent.hits, recent.capped))],
             folder: None,
             right: Some(words::recent_when(
                 recent.last_run_at.with_timezone(&Local),

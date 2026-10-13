@@ -773,6 +773,8 @@ pub enum Request {
         query: String,
         /// Conversations it matched.
         hits: u64,
+        /// The search stopped at its walk's cap: `hits` is a floor (D30).
+        capped: bool,
     },
     /// Forget a recent search; answered with the recent searches left.
     ForgetSearch {
@@ -2151,6 +2153,7 @@ mod tests {
             Request::RememberSearch {
                 query: "atlas".to_owned(),
                 hits: 3,
+                capped: false,
             },
             Request::ForgetSearch {
                 query: "atlas".to_owned(),

@@ -17,11 +17,11 @@ async fn remembering_a_query_twice_keeps_one_row_with_the_latest_run() {
     let searches = SearchRepository::new(&connection);
 
     searches
-        .remember("from:ada", 3, at(0))
+        .remember("from:ada", 3, false, at(0))
         .await
         .expect("first");
     searches
-        .remember("from:ada", 5, at(9))
+        .remember("from:ada", 5, false, at(9))
         .await
         .expect("again");
 
@@ -29,7 +29,32 @@ async fn remembering_a_query_twice_keeps_one_row_with_the_latest_run() {
     assert_eq!(recent.len(), 1);
     assert_eq!(recent[0].query, "from:ada");
     assert_eq!(recent[0].hits, 5);
+    assert!(!recent[0].capped);
     assert_eq!(recent[0].last_run_at, at(9));
+}
+
+/// A search that stopped at its walk's cap is remembered as a floor, so its
+/// Recent row says "5,000+ results" (D30); running it again uncapped makes
+/// it exact.
+#[tokio::test]
+async fn a_capped_count_is_remembered_as_a_floor() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let searches = SearchRepository::new(&connection);
+
+    searches
+        .remember("atlas", 5_000, true, at(0))
+        .await
+        .expect("capped");
+    let recent = searches.recent().await.expect("recent");
+    assert_eq!((recent[0].hits, recent[0].capped), (5_000, true));
+
+    searches
+        .remember("atlas", 12, false, at(1))
+        .await
+        .expect("exact");
+    let recent = searches.recent().await.expect("recent");
+    assert_eq!((recent[0].hits, recent[0].capped), (12, false));
 }
 
 #[tokio::test]
@@ -38,9 +63,9 @@ async fn recent_is_newest_first() {
     let connection = database.connect().await.expect("checkout");
     let searches = SearchRepository::new(&connection);
 
-    searches.remember("one", 1, at(1)).await.unwrap();
-    searches.remember("three", 1, at(3)).await.unwrap();
-    searches.remember("two", 1, at(2)).await.unwrap();
+    searches.remember("one", 1, false, at(1)).await.unwrap();
+    searches.remember("three", 1, false, at(3)).await.unwrap();
+    searches.remember("two", 1, false, at(2)).await.unwrap();
 
     let queries: Vec<_> = searches
         .recent()
@@ -60,7 +85,7 @@ async fn only_the_newest_twenty_are_kept() {
 
     for n in 0..25 {
         searches
-            .remember(&format!("query {n}"), 0, at(n))
+            .remember(&format!("query {n}"), 0, false, at(n))
             .await
             .unwrap();
     }
@@ -76,8 +101,8 @@ async fn forgetting_deletes_one_query_and_says_whether_it_was_there() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let searches = SearchRepository::new(&connection);
-    searches.remember("keep", 1, at(1)).await.unwrap();
-    searches.remember("drop", 1, at(2)).await.unwrap();
+    searches.remember("keep", 1, false, at(1)).await.unwrap();
+    searches.remember("drop", 1, false, at(2)).await.unwrap();
 
     assert!(searches.forget("drop").await.unwrap());
     assert!(!searches.forget("drop").await.unwrap());

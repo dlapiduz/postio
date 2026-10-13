@@ -101,6 +101,7 @@ fn entering_the_results_remembers_the_query() {
         [Request::RememberSearch {
             query: "atlas budget".to_owned(),
             hits: CONVERSATIONS as u64,
+            capped: false,
         }],
         "once, with what it found"
     );

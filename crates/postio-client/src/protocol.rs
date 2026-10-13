@@ -402,6 +402,8 @@ pub enum Req {
         query: String,
         /// Conversations it matched, as the footer said.
         hits: u64,
+        /// The search stopped at its walk's cap: `hits` is a floor (D30).
+        capped: bool,
     },
     /// Forget one recent search.
     ForgetSearch(String),
@@ -1113,6 +1115,8 @@ pub struct RecentSearch {
     pub last_run_at: chrono::DateTime<chrono::Utc>,
     /// Conversations it matched, as the footer said.
     pub hits: u64,
+    /// Its search stopped at the walk's cap: `hits` is a floor (D30).
+    pub capped: bool,
 }
 
 /// What a saved search's pill and quiet badge count (spec 010 D15, D30).

@@ -1193,6 +1193,7 @@ mod dropdown {
             query: query.to_owned(),
             last_run_at: (today() - chrono::TimeDelta::days(days_ago)).to_utc(),
             hits,
+            capped: false,
         }
     }
 
@@ -1990,6 +1991,7 @@ mod dropdown {
         assert!(asked(&effects).contains(&Request::RememberSearch {
             query: "atlas budget".to_owned(),
             hits: 48,
+            capped: false,
         }));
         assert_eq!(
             shown(&effects),
@@ -2003,6 +2005,44 @@ mod dropdown {
                 }
             ]
         );
+    }
+
+    /// A search whose count stopped at the walk's cap is remembered as a
+    /// floor, and its Recent row says so (D30).
+    #[test]
+    fn a_capped_search_is_remembered_and_recalled_as_a_floor() {
+        let rows = List::of(3);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let mut broad = atlas_budget();
+        broad.total = 5_000;
+        broad.capped = true;
+        let effects = searched(&mut focus, "atlas budget", broad, &rows);
+        let second = dropdown(&effects).sections[0].rows[1].token;
+        let effects = focus.handle_on(Input::BarRun(second), &rows);
+        assert!(asked(&effects).contains(&Request::RememberSearch {
+            query: "atlas budget".to_owned(),
+            hits: 5_000,
+            capped: true,
+        }));
+
+        let mut focus = mac_search();
+        let _ = focus.handle(Input::SavedSearches(saved()));
+        let effects = bar_open(&mut focus, CommandId::Search, &rows);
+        let effects = answer(
+            &mut focus,
+            &effects,
+            |request| *request == Request::RecentSearches,
+            |_| {
+                Reply::RecentSearches(Ok(vec![RecentSearch {
+                    capped: true,
+                    ..recent("atlas budget", 1, 5_000)
+                }]))
+            },
+            &rows,
+        );
+        let view = dropdown(&effects);
+        assert_eq!(text(&view.sections[0].rows[0].detail), "5,000+ results");
     }
 
     #[test]
@@ -2028,6 +2068,7 @@ mod dropdown {
         assert!(asked(&effects).contains(&Request::RememberSearch {
             query: "atlas budget".to_owned(),
             hits: 48,
+            capped: false,
         }));
     }
 

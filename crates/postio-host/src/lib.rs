@@ -1046,9 +1046,11 @@ impl Inner {
             Req::RecentSearches => search::recent(&self.wiring.database)
                 .await
                 .map_or_else(Resp::Failed, Resp::Recent),
-            Req::RememberSearch { query, hits } => {
-                done(search::remember(&self.wiring.database, &query, hits).await)
-            }
+            Req::RememberSearch {
+                query,
+                hits,
+                capped,
+            } => done(search::remember(&self.wiring.database, &query, hits, capped).await),
             Req::ForgetSearch(query) => done(search::forget(&self.wiring.database, &query).await),
             Req::MarkSeen(key) => done(search::mark_seen(&self.wiring.database, &key).await),
             Req::SavedCounts {

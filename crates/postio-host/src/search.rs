@@ -224,20 +224,23 @@ pub async fn recent(
             query: search.query,
             last_run_at: search.last_run_at,
             hits: search.hits,
+            capped: search.capped,
         })
         .collect())
 }
 
-/// Record that `query` ran now and matched `hits` conversations.
+/// Record that `query` ran now and matched `hits` conversations, a floor
+/// when `capped`.
 pub async fn remember(
     database: &Store,
     query: &str,
     hits: u64,
+    capped: bool,
 ) -> Result<(), postio_model::listing::StoreError> {
     let write = async {
         let (connection, _permit) = database.interactive_write().await?;
         SearchRepository::new(&connection)
-            .remember(query, hits, chrono::Utc::now())
+            .remember(query, hits, capped, chrono::Utc::now())
             .await
     };
     write.await.map_err(failed)
