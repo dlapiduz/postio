@@ -443,7 +443,7 @@ pub(crate) fn empty(parts: EmptyParts<'_>) -> DropdownView {
             token: *token,
             kind: DropdownRowKind::Recent,
             title: query_runs(&recent.query),
-            detail: vec![Run::plain(words::results_count(recent.hits))],
+            detail: vec![Run::plain(words::results_count(recent.hits, false))],
             folder: None,
             right: Some(words::recent_when(
                 recent.last_run_at.with_timezone(&Local),
@@ -475,7 +475,7 @@ pub(crate) fn empty(parts: EmptyParts<'_>) -> DropdownView {
                 op: None,
                 label: pill.name.clone(),
                 count: pill.count.map(|count| count.to_string()),
-                fresh: pill.fresh.map(words::new_badge),
+                fresh: pill.fresh.map(|new| words::new_badge(new, false)),
                 key: postio_ui::command_bar::SAVED
                     .get(index)
                     .and_then(|id| postio_ui::hints::key(parts.keymap, *id)),

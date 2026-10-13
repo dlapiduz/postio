@@ -1058,7 +1058,13 @@ pub enum Reply {
         /// The stamp it was asked under.
         stamp: u64,
         /// Each looser search with its count.
-        answer: Result<Vec<(postio_search::relax::Relaxation, u64)>, String>,
+        answer: Result<
+            Vec<(
+                postio_search::relax::Relaxation,
+                postio_search::results::Counted,
+            )>,
+            String,
+        >,
     },
     /// The answer to [`Request::Facets`]: the facets alone, in the
     /// results' shape.

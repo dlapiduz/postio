@@ -123,7 +123,12 @@ async fn each_relaxation_counts_what_its_search_would_find() {
         let expected = conversations(&connection, &variant.query, ConversationOrder::Newest, 0, 1)
             .await
             .total;
-        assert_eq!(*count, expected, "the count for {:?}", variant.query);
+        assert_eq!(
+            count.conversations, expected,
+            "the count for {:?}",
+            variant.query
+        );
+        assert!(!count.capped, "{:?} is counted to the end", variant.query);
     }
 
     // And over a corpus where something does match, the same holds for a
@@ -137,10 +142,68 @@ async fn each_relaxation_counts_what_its_search_would_find() {
         let expected = conversations(&connection, &variant.query, ConversationOrder::Newest, 0, 1)
             .await
             .total;
-        assert_eq!(*count, expected, "the count for {:?}", variant.query);
+        assert_eq!(
+            count.conversations, expected,
+            "the count for {:?}",
+            variant.query
+        );
+        assert!(!count.capped, "{:?} is counted to the end", variant.query);
     }
     assert!(
-        counts.iter().any(|count| *count >= 2),
+        counts.iter().any(|count| count.conversations >= 2),
         "a relaxation here finds more than one conversation: {counts:?}"
     );
+}
+
+/// A way out counts to `TOTAL_HITS_CAP`, and past it says its count is a
+/// floor (D30), as every count drawn past a cap is: screen 13 then reads
+/// "10,000+ conversations", never a bare 10,000 that is not the total.
+#[tokio::test]
+async fn a_way_out_past_the_cap_says_its_count_is_a_floor() {
+    let (_database, connection, account, inbox) = store().await;
+    let cap = postio_search::TOTAL_HITS_CAP as i64;
+    let ids = format!(
+        "[{}]",
+        (0..=cap)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let received = crate::conversations::now().timestamp_millis() - 86_400_000;
+    // Operator-only, so the walk reads `messages` alone and the metadata
+    // index can stand aside for the load.
+    connection.execute("BEGIN", ()).await.expect("begin");
+    postio_index::index::defer_documents(&connection)
+        .await
+        .expect("defer the index");
+    connection
+        .execute(
+            "INSERT INTO messages (account_id, mailbox_id, received_at, sort_at, seen)
+             SELECT ?1, ?2, ?3 - value, ?3 - value, 0 FROM json_each(?4)",
+            (account.id.get(), inbox.get(), received, ids),
+        )
+        .await
+        .expect("a mailbox past the cap");
+    connection
+        .execute("DELETE FROM search_documents_deferred", ())
+        .await
+        .expect("end the deferral");
+    connection.execute("COMMIT", ()).await.expect("commit");
+
+    let ways = |query: &str| postio_search::relax::Relaxation {
+        loosen: postio_search::relax::Loosen::Drop { token: 0 },
+        query: query.to_owned(),
+    };
+    let counts = relaxation_counts(
+        &connection,
+        AccountScope::Unified,
+        &[ways("is:unread"), ways("is:unread before:2000-01-01")],
+        today(),
+    )
+    .await
+    .expect("the counts");
+    assert_eq!(counts[0].conversations, postio_search::TOTAL_HITS_CAP);
+    assert!(counts[0].capped, "a count that stopped says so");
+    assert_eq!(counts[1].conversations, 0);
+    assert!(!counts[1].capped, "a count that ran out is exact");
 }

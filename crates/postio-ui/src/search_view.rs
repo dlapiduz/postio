@@ -155,12 +155,19 @@ pub const NARROW_TO: &str = "Narrow to";
 /// What the Show all row says after its count.
 pub const SHOW_ALL_DETAIL: &str = "in the main window, with filters, a timeline and Quick Look";
 
-/// How many conversations a recent search found: "48 results".
-pub fn results_count(n: u64) -> String {
-    match n {
-        1 => "1 result".to_owned(),
-        n => format!("{} results", grouped(n)),
+/// How many conversations a recent search found: "48 results", or
+/// "5,000+ results" when that search stopped at its walk's cap (D30).
+pub fn results_count(n: u64, capped: bool) -> String {
+    match (n, capped) {
+        (1, false) => "1 result".to_owned(),
+        (n, capped) => format!("{} results", count(n, capped)),
     }
+}
+
+/// A saved search's pill count: "39", or "5,000+" when its search stopped
+/// at the walk's cap and the count is a floor (D30).
+pub fn saved_count(n: u64, capped: bool) -> String {
+    count(n, capped)
 }
 
 /// A top hit's date column: the day and month ("26 Sep"), with the year's
@@ -861,9 +868,10 @@ pub fn rolling_note(after: chrono::NaiveDate, today: chrono::NaiveDate) -> Strin
     )
 }
 
-/// A saved search's quiet badge (§3.9, D15): "3 new". Never a banner.
-pub fn new_badge(n: u64) -> String {
-    format!("{} new", grouped(n))
+/// A saved search's quiet badge (§3.9, D15): "3 new", or "99+ new" when
+/// the badge stopped counting at its cap. Never a banner.
+pub fn new_badge(n: u64, capped: bool) -> String {
+    format!("{} new", count(n, capped))
 }
 
 /// The results tabs' words, in their order (§3.2).
@@ -1315,9 +1323,10 @@ pub fn no_results_hints(keymap: &Keymap, offered: usize) -> Vec<Hint> {
     out
 }
 
-/// A looser search's count, on its row's right: "4 conversations".
-pub fn relaxation_count(n: u64) -> String {
-    conversations(n, false)
+/// A looser search's count, on its row's right: "4 conversations", or
+/// "10,000+ conversations" when its count stopped at its cap (D30).
+pub fn relaxation_count(n: u64, capped: bool) -> String {
+    conversations(n, capped)
 }
 
 /// The line under the looser searches (§3.10): how much was searched.
@@ -1924,10 +1933,22 @@ mod tests {
 
     #[test]
     fn a_recent_search_counts_its_results() {
-        assert_eq!(results_count(48), "48 results");
-        assert_eq!(results_count(1), "1 result");
-        assert_eq!(results_count(0), "0 results");
-        assert_eq!(results_count(18_204), "18,204 results");
+        assert_eq!(results_count(48, false), "48 results");
+        assert_eq!(results_count(1, false), "1 result");
+        assert_eq!(results_count(0, false), "0 results");
+        assert_eq!(results_count(18_204, false), "18,204 results");
+        // A search that stopped at its walk's cap remembers a floor (D30).
+        assert_eq!(results_count(5_000, true), "5,000+ results");
+        assert_eq!(results_count(1, true), "1+ results");
+    }
+
+    #[test]
+    fn a_saved_search_pill_and_its_badge_say_a_capped_count_as_a_floor() {
+        assert_eq!(saved_count(39, false), "39");
+        assert_eq!(saved_count(1_204, false), "1,204");
+        assert_eq!(saved_count(5_000, true), "5,000+");
+        assert_eq!(new_badge(3, false), "3 new");
+        assert_eq!(new_badge(99, true), "99+ new");
     }
 
     #[test]
@@ -2785,9 +2806,11 @@ mod tests {
                 "Remove \u{201c}budget\u{201d}",
             ]
         );
-        assert_eq!(relaxation_count(4), "4 conversations");
-        assert_eq!(relaxation_count(1), "1 conversation");
-        assert_eq!(relaxation_count(18_204), "18,204 conversations");
+        assert_eq!(relaxation_count(4, false), "4 conversations");
+        assert_eq!(relaxation_count(1, false), "1 conversation");
+        assert_eq!(relaxation_count(18_204, false), "18,204 conversations");
+        // Counted to TOTAL_HITS_CAP, and a floor past it (D30).
+        assert_eq!(relaxation_count(10_000, true), "10,000+ conversations");
     }
 
     #[test]

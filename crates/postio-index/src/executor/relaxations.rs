@@ -13,7 +13,7 @@ use chrono::NaiveDate;
 use postio_model::AccountScope;
 use postio_search::facets::Scope;
 use postio_search::relax::Relaxation;
-use postio_search::results::TOTAL_HITS_CAP;
+use postio_search::results::{Counted, TOTAL_HITS_CAP};
 use postio_storage::Connection;
 use postio_storage::sql::{self, RowExt as _};
 
@@ -22,7 +22,7 @@ use crate::error::Result;
 
 /// Each relaxation's conversation total, in the order given: what
 /// `search_conversations` would say its `total` is. Past the cap a count is
-/// a floor, as every count is.
+/// a floor, as every count is, and says so (`capped`).
 ///
 /// Counted to [`TOTAL_HITS_CAP`], not the conversation walk's own, smaller
 /// cap (D30): this walk reads a conversation id a row, not the facets'
@@ -34,7 +34,7 @@ pub async fn relaxation_counts(
     account: AccountScope,
     relaxations: &[Relaxation],
     today: NaiveDate,
-) -> Result<Vec<u64>> {
+) -> Result<Vec<Counted>> {
     let mut counts = Vec::with_capacity(relaxations.len());
     for relaxation in relaxations {
         let query = postio_search::parse(&relaxation.query, today);
@@ -55,7 +55,7 @@ async fn count(
     connection: &Connection,
     account: AccountScope,
     query: &postio_search::ParsedQuery,
-) -> Result<u64> {
+) -> Result<Counted> {
     Ok(counts(
         connection,
         account,
@@ -64,16 +64,8 @@ async fn count(
     )
     .await?
     .first()
-    .map_or(0, |counted| counted.conversations))
-}
-
-/// One query's conversations, and whether the walk stopped at its cap.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) struct Counted {
-    /// The conversations among the matches walked.
-    pub(super) conversations: u64,
-    /// The walk stopped at the cap: `conversations` is a floor.
-    pub(super) capped: bool,
+    .copied()
+    .unwrap_or_default())
 }
 
 /// Each query's conversations, as [`count`] counts one, in **one**

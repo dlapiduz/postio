@@ -1046,7 +1046,12 @@ pub async fn relaxations(
     account: AccountScope,
     query: &ParsedQuery,
     today: chrono::NaiveDate,
-) -> Option<Vec<(postio_search::relax::Relaxation, u64)>> {
+) -> Option<
+    Vec<(
+        postio_search::relax::Relaxation,
+        postio_search::results::Counted,
+    )>,
+> {
     let offered = postio_search::relax::relax(query);
     let counts = postio_index::executor::relaxation_counts(connection, account, &offered, today)
         .await
@@ -1055,8 +1060,8 @@ pub async fn relaxations(
     let mut counted: Vec<_> = offered
         .into_iter()
         .zip(counts)
-        .filter(|(_, count)| *count > 0)
+        .filter(|(_, count)| count.conversations > 0)
         .collect();
-    counted.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+    counted.sort_by_key(|(_, count)| std::cmp::Reverse(count.conversations));
     Some(counted)
 }

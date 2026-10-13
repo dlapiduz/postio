@@ -170,7 +170,7 @@ pub async fn relaxations(
     account: AccountScope,
     query: &ParsedQuery,
     today: NaiveDate,
-) -> Vec<(Relaxation, u64)> {
+) -> Vec<(Relaxation, postio_search::results::Counted)> {
     let reader = match database.read().await {
         Ok(reader) => reader,
         Err(error) => {

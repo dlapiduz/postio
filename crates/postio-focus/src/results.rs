@@ -27,7 +27,7 @@ use postio_search::query::{Clause, Filter, TokenKind};
 use postio_search::relax::{Loosen, Relaxation};
 use postio_search::results::{
     ConversationHit, ConversationKey, ConversationMatch, ConversationOrder, ConversationResults,
-    FacetNames, FileHit, Location, Match, ResultsTab, Source,
+    Counted, FacetNames, FileHit, Location, Match, ResultsTab, Source,
 };
 use postio_ui::hints::Hint;
 use postio_ui::search_view::{self as words, FilterKind};
@@ -710,7 +710,7 @@ struct Offer {
 pub(crate) struct NoResults {
     /// Every looser search with its count, as the engine answered; `None`
     /// while they are counted.
-    found: Option<Vec<(Relaxation, u64)>>,
+    found: Option<Vec<(Relaxation, Counted)>>,
     /// The one Return runs, among those shown.
     focus: usize,
 }
@@ -1054,12 +1054,13 @@ impl Results {
 
     /// The looser searches shown: those that find something, most first,
     /// at most four. Empty while they are counted.
-    fn ways_out(&self) -> Vec<&(Relaxation, u64)> {
+    fn ways_out(&self) -> Vec<&(Relaxation, Counted)> {
         let Some(found) = self.none.as_ref().and_then(|none| none.found.as_ref()) else {
             return Vec::new();
         };
-        let mut shown: Vec<&(Relaxation, u64)> = found.iter().filter(|(_, n)| *n > 0).collect();
-        shown.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+        let mut shown: Vec<&(Relaxation, Counted)> =
+            found.iter().filter(|(_, n)| n.conversations > 0).collect();
+        shown.sort_by_key(|(_, n)| std::cmp::Reverse(n.conversations));
         shown.truncate(RELAXATIONS_SHOWN);
         shown
     }
@@ -1102,7 +1103,7 @@ impl Results {
     pub(crate) fn ways_out_landed(
         &mut self,
         stamp: u64,
-        answer: Result<Vec<(Relaxation, u64)>, String>,
+        answer: Result<Vec<(Relaxation, Counted)>, String>,
     ) -> bool {
         if stamp != self.stamp {
             return false;
@@ -1142,7 +1143,7 @@ impl Results {
                     .and_then(|id| postio_ui::hints::key(keymap, *id)),
                 label: words::relaxation_line(relaxation, &self.parsed, &name_of, today),
                 query: relaxation.query.clone(),
-                count: words::relaxation_count(*n),
+                count: words::relaxation_count(n.conversations, n.capped),
                 focused: at == none.focus,
             })
             .collect();

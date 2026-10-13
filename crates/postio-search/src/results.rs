@@ -180,6 +180,17 @@ pub const TOTAL_HITS_CAP: u64 = 10_000;
 /// neither is this walk, and lowering it would move both.
 pub const CONVERSATION_WALK_CAP: u64 = 5_000;
 
+/// How many conversations a walk found, and whether it stopped at its cap:
+/// past it `conversations` is a floor, and every place it is drawn says so
+/// ("10,000+", D30). What a way out of no results and a saved search count.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Counted {
+    /// The conversations among the matches walked.
+    pub conversations: u64,
+    /// The walk stopped at its cap: `conversations` is a floor.
+    pub capped: bool,
+}
+
 // ---------------------------------------------------------------------------
 // Conversation search (spec 010)
 // ---------------------------------------------------------------------------

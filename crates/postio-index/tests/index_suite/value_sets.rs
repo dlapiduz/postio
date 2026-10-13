@@ -17,8 +17,8 @@ use postio_search::parse;
 use postio_search::relax::{Loosen, Relaxation};
 use postio_search::results::{ConversationKey, ConversationOrder};
 use postio_storage::Connection;
-use postio_storage::sql::RowExt as _;
 use postio_storage::repository::{LabelRepository, MailboxRepository};
+use postio_storage::sql::RowExt as _;
 
 use crate::conversations::{Mail, conversations, file, now, store, today};
 
@@ -140,6 +140,7 @@ async fn counted(connection: &Connection, query: &str) -> u64 {
     )
     .await
     .expect("a count")[0]
+        .conversations
 }
 
 /// `query` answers `expected` every way it can be asked.

@@ -16,7 +16,7 @@ use postio_focus::{
     SurfaceKind, TermEdit,
 };
 use postio_model::MessageId;
-use postio_search::results::ConversationOrder;
+use postio_search::results::{ConversationOrder, Counted};
 use postio_ui::keymap::KeyContext;
 use postio_ui::search_view::FilterKind;
 use search_support::*;
@@ -2025,8 +2025,24 @@ fn ways_out_asked(effects: &[Effect]) -> Option<(postio_focus::Ticket, String, u
 }
 
 /// The engine's answer to the ways out of `query`: each relaxation it
-/// offers, in its order, with the count given, zeros and all.
-fn ways_out(query: &str, counts: &[u64]) -> Vec<(postio_search::relax::Relaxation, u64)> {
+/// offers, in its order, with the count given, zeros and all, every one
+/// counted to the end.
+fn ways_out(query: &str, counts: &[u64]) -> Vec<(postio_search::relax::Relaxation, Counted)> {
+    let exact: Vec<Counted> = counts
+        .iter()
+        .map(|&conversations| Counted {
+            conversations,
+            capped: false,
+        })
+        .collect();
+    ways_out_counted(query, &exact)
+}
+
+/// As [`ways_out`], each count as given, floors and all.
+fn ways_out_counted(
+    query: &str,
+    counts: &[Counted],
+) -> Vec<(postio_search::relax::Relaxation, Counted)> {
     let parsed = postio_search::parse(query, today().date_naive());
     let offered = postio_search::relax::relax(&parsed);
     assert_eq!(offered.len(), counts.len(), "{offered:?}");
@@ -2041,6 +2057,23 @@ fn nothing_found(
     counts: &[u64],
     rows: &List,
 ) -> Vec<Effect> {
+    let exact: Vec<Counted> = counts
+        .iter()
+        .map(|&conversations| Counted {
+            conversations,
+            capped: false,
+        })
+        .collect();
+    nothing_found_counted(focus, query, &exact, rows)
+}
+
+/// As [`nothing_found`], each count as given, floors and all.
+fn nothing_found_counted(
+    focus: &mut FocusController,
+    query: &str,
+    counts: &[Counted],
+    rows: &List,
+) -> Vec<Effect> {
     let effects = search(focus, query, rows);
     let (ticket, _, stamp) = ways_out_asked(&effects).expect("the ways out are asked for");
     focus.handle_on(
@@ -2048,11 +2081,43 @@ fn nothing_found(
             ticket,
             postio_focus::Reply::Relaxations {
                 stamp,
-                answer: Ok(ways_out(query, counts)),
+                answer: Ok(ways_out_counted(query, counts)),
             },
         ),
         rows,
     )
+}
+
+/// A way out counted past its cap says so (D30): "10,000+ conversations",
+/// never a bare number that is not the total.
+#[test]
+fn a_way_out_counted_past_its_cap_is_drawn_as_a_floor() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let floor = |conversations| Counted {
+        conversations,
+        capped: true,
+    };
+    let exact = |conversations| Counted {
+        conversations,
+        capped: false,
+    };
+    let effects = nothing_found_counted(
+        &mut focus,
+        NOTHING,
+        &[floor(10_000), exact(1), exact(0), exact(4), exact(0)],
+        &rows,
+    );
+    let page = no_results_view(&effects).expect("drawn").expect("up");
+    let counts: Vec<&str> = page
+        .relaxations
+        .iter()
+        .map(|way| way.count.as_str())
+        .collect();
+    assert_eq!(
+        counts,
+        ["10,000+ conversations", "4 conversations", "1 conversation"]
+    );
 }
 
 #[test]

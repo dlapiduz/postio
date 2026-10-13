@@ -686,7 +686,14 @@ async fn a_message_filed_twice_is_one_match() {
         )
         .await
         .expect("its count");
-        assert_eq!(counts, [1], "{query:?}, counted");
+        assert_eq!(
+            counts,
+            [postio_search::results::Counted {
+                conversations: 1,
+                capped: false
+            }],
+            "{query:?}, counted"
+        );
     }
 }
 

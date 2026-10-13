@@ -1071,7 +1071,13 @@ impl Client {
         account: postio_model::AccountScope,
         query: postio_search::ParsedQuery,
         today: chrono::NaiveDate,
-    ) -> Result<Vec<(postio_search::relax::Relaxation, u64)>, StoreError> {
+    ) -> Result<
+        Vec<(
+            postio_search::relax::Relaxation,
+            postio_search::results::Counted,
+        )>,
+        StoreError,
+    > {
         let request = Req::Relaxations {
             account,
             query,

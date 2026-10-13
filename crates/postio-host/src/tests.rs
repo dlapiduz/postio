@@ -11,6 +11,7 @@ use postio_core::bridge::event_channel;
 use postio_core::{Command, Event, EventEnvelope, MessageTarget, SharedState};
 use postio_model::listing::{ListPage, MailStore, PageRequest};
 use postio_model::{ListScope, MailboxId, Message, MessageId};
+use postio_search::results::Counted;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 
@@ -4261,17 +4262,21 @@ fn focus_asks_the_host_for_the_ways_out_of_no_results() {
         .expect("an answer");
 
     // What each way out would find, asked of the same host as a search.
-    let mut expected: Vec<(postio_search::relax::Relaxation, u64)> = offered
+    let mut expected: Vec<(postio_search::relax::Relaxation, Counted)> = offered
         .iter()
         .map(|relaxation| {
+            let found = seed.conversations(&relaxation.query);
             (
                 relaxation.clone(),
-                seed.conversations(&relaxation.query).total,
+                Counted {
+                    conversations: found.total,
+                    capped: found.capped,
+                },
             )
         })
-        .filter(|(_, total)| *total > 0)
+        .filter(|(_, total)| total.conversations > 0)
         .collect();
-    expected.sort_by_key(|(_, total)| std::cmp::Reverse(*total));
+    expected.sort_by_key(|(_, total)| std::cmp::Reverse(total.conversations));
     assert!(
         expected.len() >= 2 && expected.len() < offered.len(),
         "the seed leaves some ways out finding nothing: {expected:?}"

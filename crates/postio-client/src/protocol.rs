@@ -780,7 +780,12 @@ pub enum Resp {
     Path(Option<std::path::PathBuf>),
     /// The ways out that would find something, most first; empty when none
     /// would, or when they could not be counted.
-    Relaxed(Vec<(postio_search::relax::Relaxation, u64)>),
+    Relaxed(
+        Vec<(
+            postio_search::relax::Relaxation,
+            postio_search::results::Counted,
+        )>,
+    ),
     /// What a prefix could become; empty when the store could not be read.
     Suggestions(Box<postio_search::suggest::Suggestions>),
     /// The remembered searches, newest first.
