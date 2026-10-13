@@ -316,7 +316,10 @@ public struct DropdownView: View {
             }
             HStack(spacing: 6) {
                 Spacer(minLength: 0)
-                if let right = row.right {
+                if let hint = model.highlightedHint(row) {
+                    // "↩ adds" (screen 04): the key and its verb, unboxed.
+                    Text("\(hint.cap) \(hint.words)").font(.system(size: 12)).foregroundStyle(.secondary)
+                } else if let right = row.right {
                     Text(right).font(.system(size: 12.5).monospacedDigit()).foregroundStyle(.secondary)
                 }
                 if let cap = row.cap { KeyCap(cap) }

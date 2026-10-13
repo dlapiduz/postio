@@ -172,6 +172,55 @@ public final class BarSearchField: NSSearchField {
         }
     }
 
+    /// "⇥ completes", at the field's right while there is a ghost (screen
+    /// 02): the controller's words, the keymap's cap.
+    public var ghostHint: DropdownModel.Hint? {
+        didSet {
+            guard ghostHint != oldValue else { return }
+            hintCap.text = ghostHint?.cap ?? ""
+            hintWords.stringValue = ghostHint?.words ?? ""
+            hintView.isHidden = ghostHint == nil
+            placeGhost()
+        }
+    }
+
+    /// The operator being typed ("from:"), drawn tertiary before its value,
+    /// which keeps the label colour (screen 04).
+    public var operatorPrefix: String? {
+        didSet {
+            guard operatorPrefix != oldValue else { return }
+            tintOperator()
+        }
+    }
+
+    private let hintCap = KeyCapView("")
+    private let hintWords: NSTextField = {
+        let label = NSTextField(labelWithString: "")
+        label.font = .systemFont(ofSize: 12)
+        label.textColor = .secondaryLabelColor
+        return label
+    }()
+    private lazy var hintView: NSStackView = {
+        let stack = NSStackView(views: [hintCap, hintWords])
+        stack.orientation = .horizontal
+        stack.spacing = 4
+        stack.isHidden = true
+        stack.setAccessibilityElement(false)
+        return stack
+    }()
+
+    /// The operator's characters in tertiary, through the field editor's
+    /// temporary attributes: what is typed is unchanged, only drawn so.
+    private func tintOperator() {
+        guard let editor = currentEditor() as? NSTextView, let layout = editor.layoutManager else { return }
+        let text = editor.string as NSString
+        layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: text.length))
+        guard let prefix = operatorPrefix, !prefix.isEmpty else { return }
+        let found = text.range(of: prefix, options: .backwards)
+        guard found.location != NSNotFound else { return }
+        layout.addTemporaryAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, forCharacterRange: found)
+    }
+
     private func applyFont() {
         font = operatorTyped ? .monospacedSystemFont(ofSize: 14, weight: .regular) : textFont
         placeGhost()
@@ -198,12 +247,19 @@ public final class BarSearchField: NSSearchField {
 
     override public func textDidChange(_ notification: Notification) {
         super.textDidChange(notification)
+        tintOperator()
         placeGhost()
     }
 
     /// The ghost, right after the typed text, in the field's font.
     private func placeGhost() {
         if ghostLabel.superview == nil { addSubview(ghostLabel) }
+        if hintView.superview == nil { addSubview(hintView) }
+        // The hint at the field's right, before the box's Escape cap.
+        let hintSize = hintView.fittingSize
+        hintView.frame = NSRect(
+            x: bounds.maxX - hintSize.width, y: (bounds.height - hintSize.height) / 2,
+            width: hintSize.width, height: hintSize.height)
         guard let ghost, !ghost.isEmpty, let font else {
             ghostLabel.isHidden = true
             return
@@ -223,9 +279,10 @@ public final class BarSearchField: NSSearchField {
         let end = lastGlyphEnd() ?? (text.minX + 2 + width)
         let inset = ghostLabel.cell?.titleRect(forBounds: ghostLabel.bounds).minX ?? 0
         let x = end - inset
+        let room = (hintView.isHidden ? text.maxX : hintView.frame.minX - 8) - x
         ghostLabel.frame = NSRect(
             x: x, y: (bounds.height - size.height) / 2,
-            width: min(size.width, max(text.maxX - x, 0)), height: size.height)
+            width: min(size.width, max(room, 0)), height: size.height)
         ghostLabel.isHidden = false
     }
 

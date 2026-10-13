@@ -2159,6 +2159,12 @@ mod dropdown {
         let view = dropdown(&effects);
         assert_eq!(view.state, DropdownState::Prefix);
         assert_eq!(view.ghost.as_deref(), Some("las"), "at|las");
+        assert_eq!(view.operator, None, "words, no operator");
+        assert_eq!(
+            view.ghost_hint,
+            Some(postio_ui::search_view::ghost_hint()),
+            "Tab completes, in the field beside the ghost"
+        );
         let titles: Vec<&str> = view.sections.iter().map(|s| s.title.as_str()).collect();
         assert_eq!(titles, ["Suggestions", "Top hits so far", ""]);
         assert_eq!(
@@ -2307,6 +2313,11 @@ mod dropdown {
         let effects = suggested(&mut focus, &effects, people(), &rows);
         let view = dropdown(&effects);
         assert_eq!(view.state, DropdownState::Operator);
+        assert_eq!(
+            view.operator.as_deref(),
+            Some("from:"),
+            "the field draws the operator tertiary, its value primary"
+        );
         assert_eq!(view.sections[0].title, "People");
         assert_eq!(
             view.sections[0].note.as_deref(),
@@ -2321,6 +2332,13 @@ mod dropdown {
         );
         assert_eq!(ada.initials.as_deref(), Some("AM"));
         assert_eq!(view.highlight, Some(ada.token));
+        assert!(
+            view.sections[0]
+                .rows
+                .iter()
+                .all(|row| row.highlighted == Some(postio_ui::search_view::adds_hint())),
+            "whichever person is highlighted says Return adds"
+        );
         assert_eq!(
             view.hints,
             postio_ui::search_view::operator_hints(focus.keymap(), "from")

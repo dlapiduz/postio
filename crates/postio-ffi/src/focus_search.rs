@@ -160,6 +160,9 @@ pub struct DropdownRowFfi {
     pub selectable: bool,
     /// A person's initials, for the round avatar.
     pub initials: Option<String>,
+    /// On its right while the arrows rest on it: "↩ adds" (screen 04).
+    #[uniffi(default = None)]
+    pub highlighted: Option<KeyHintFfi>,
 }
 
 /// One tile of the "Understood as" bar (screen 05).
@@ -213,6 +216,14 @@ pub struct DropdownViewFfi {
     pub state: DropdownStateFfi,
     /// The rest of the best word, tertiary after the caret ("las").
     pub ghost: Option<String>,
+    /// In the field before Escape's cap while there is a ghost: "Tab
+    /// completes" (screen 02).
+    #[uniffi(default = None)]
+    pub ghost_hint: Option<KeyHintFfi>,
+    /// The operator being typed ("from:"), drawn tertiary in the field
+    /// before its value (screen 04).
+    #[uniffi(default = None)]
+    pub operator_prefix: Option<String>,
     /// The "Understood as" bar's tiles, in plain English.
     pub understood: Vec<UnderstoodTileFfi>,
     /// Top to bottom.
@@ -233,6 +244,8 @@ impl From<postio_focus::DropdownView> for DropdownViewFfi {
         DropdownViewFfi {
             state: view.state.into(),
             ghost: view.ghost,
+            ghost_hint: view.ghost_hint.map(key_hint),
+            operator_prefix: view.operator,
             understood: view
                 .understood
                 .into_iter()
@@ -262,6 +275,7 @@ impl From<postio_focus::DropdownView> for DropdownViewFfi {
                             key: row.key,
                             selectable: row.selectable,
                             initials: row.initials,
+                            highlighted: row.highlighted.map(key_hint),
                         })
                         .collect(),
                     pills: section
@@ -280,16 +294,16 @@ impl From<postio_focus::DropdownView> for DropdownViewFfi {
                 .collect(),
             highlight: view.highlight,
             select: view.select,
-            footer_hints: view
-                .hints
-                .into_iter()
-                .map(|hint| KeyHintFfi {
-                    key: hint.key,
-                    label: hint.label,
-                })
-                .collect(),
+            footer_hints: view.hints.into_iter().map(key_hint).collect(),
             footer_count: view.count,
         }
+    }
+}
+
+fn key_hint(hint: postio_ui::hints::Hint) -> KeyHintFfi {
+    KeyHintFfi {
+        key: hint.key,
+        label: hint.label,
     }
 }
 

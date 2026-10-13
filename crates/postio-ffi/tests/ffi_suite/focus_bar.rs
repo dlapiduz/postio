@@ -65,9 +65,11 @@ async fn slash_opens_the_bar_and_in_lists_the_folders_counted() {
     // 009's folder listing stays GTK's, `postio-focus` tests/bar.rs).
     session.focus_bar_typed("in:In".to_owned());
     let mut folder = None;
+    let mut operator = None;
     assert!(
         heard(&session, 10, |event| match event {
             UiEvent::FocusDropdown { view } if view.state == DropdownStateFfi::Operator => {
+                operator = view.operator_prefix.clone();
                 folder = view
                     .sections
                     .iter()
@@ -83,6 +85,13 @@ async fn slash_opens_the_bar_and_in_lists_the_folders_counted() {
     );
     let folder = folder.expect("seen");
     assert_eq!(folder.right.as_deref(), Some("2"), "{folder:?}");
+    assert_eq!(
+        operator.as_deref(),
+        Some("in:"),
+        "drawn tertiary in the field"
+    );
+    let adds = folder.highlighted.expect("↩ adds, while highlighted");
+    assert_eq!((adds.key.as_str(), adds.label.as_str()), ("Return", "adds"));
     session.shutdown();
 }
 

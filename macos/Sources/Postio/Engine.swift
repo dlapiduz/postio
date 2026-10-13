@@ -915,12 +915,16 @@ final class Engine {
             // The ghost after the caret, and the operator's face (§2).
             let dropdown = commandBar?.showsDropdown == true ? commandBar?.dropdown : nil
             searchField?.ghost = dropdown?.ghost
+            searchField?.ghostHint = dropdown?.ghostHint
             searchField?.operatorTyped = dropdown?.state == .operator
+            searchField?.operatorPrefix = dropdown?.operatorPrefix
         case .close:
             barPanel?.hide()
             barShown?(false)
             searchField?.ghost = nil
+            searchField?.ghostHint = nil
             searchField?.operatorTyped = false
+            searchField?.operatorPrefix = nil
             searchField?.stringValue = ""
             keycapsChanged?()
             typedAhead = ""

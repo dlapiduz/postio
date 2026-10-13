@@ -81,13 +81,15 @@ async fn the_empty_bar_emits_a_dropdown_with_recents_and_saved_searches() {
                 .sections
                 .iter()
                 .any(|section| section.pills.iter().any(|pill| pill.count.is_some()))
+            && view.footer_count.is_some()
     })
     .await;
-    let titles: Vec<&str> = view
-        .sections
-        .iter()
-        .map(|section| section.title.as_str())
-        .collect();
+    assert_eq!(
+        view.footer_count.as_deref(),
+        Some("local index \u{b7} 0 messages"),
+        "the store holds no mail"
+    );
+    assert_eq!(view.ghost_hint, None, "nothing typed, nothing to complete");
     assert_eq!(
         session.focus_search_resting_placeholder(),
         "Search mail or run a command"
@@ -96,6 +98,11 @@ async fn the_empty_bar_emits_a_dropdown_with_recents_and_saved_searches() {
         session.focus_search_placeholder(),
         "Search mail, people and files, or type > for commands"
     );
+    let titles: Vec<&str> = view
+        .sections
+        .iter()
+        .map(|section| section.title.as_str())
+        .collect();
     assert_eq!(titles, ["Recent", "Saved searches", "Search by"]);
     let recent: Vec<String> = view.sections[0]
         .rows

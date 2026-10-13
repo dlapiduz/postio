@@ -1665,6 +1665,26 @@ pub fn prefix_hints(keymap: &Keymap) -> Vec<Hint> {
     hints
 }
 
+/// In the field, before Escape's cap, while a ghost completes the word
+/// (screen 02): "Tab completes".
+pub fn ghost_hint() -> Hint {
+    hints::fixed(
+        "Tab",
+        "completes",
+        "Tab in the field is the toolkit's key; the bar takes it for the ghost",
+    )
+}
+
+/// On the highlighted person's, label's or folder's right while an
+/// operator is typed (screen 04): "↩ adds".
+pub fn adds_hint() -> Hint {
+    hints::fixed(
+        "Return",
+        "adds",
+        "Return runs the highlighted row: the field's own key, not a command",
+    )
+}
+
 /// The operator footer (screen 04): Return adds the chip, the exclusion
 /// key excludes it (`-from:`), the arrows choose, Backspace goes back to
 /// words.
@@ -1928,6 +1948,14 @@ mod tests {
         assert_eq!(local_index(18_204), "local index \u{b7} 18,204 messages");
         assert_eq!(local_index(1), "local index \u{b7} 1 message");
         assert_eq!(local_index(0), "local index \u{b7} 0 messages");
+    }
+
+    #[test]
+    fn the_field_teaches_tab_beside_the_ghost_and_a_chosen_row_says_return_adds() {
+        let tab = ghost_hint();
+        assert_eq!((tab.key.as_str(), tab.label.as_str()), ("Tab", "completes"));
+        let adds = adds_hint();
+        assert_eq!((adds.key.as_str(), adds.label.as_str()), ("Return", "adds"));
     }
 
     #[test]

@@ -144,6 +144,9 @@ pub struct DropdownRow {
     pub selectable: bool,
     /// A person's initials, for the round avatar.
     pub initials: Option<String>,
+    /// What the row's right says while the arrows rest on it: "↩ adds"
+    /// on a person, label or folder while an operator is typed.
+    pub highlighted: Option<Hint>,
 }
 
 /// A pill: a saved search, or a filter to narrow to.
@@ -196,6 +199,12 @@ pub struct DropdownView {
     /// The rest of the best word, drawn tertiary after the caret ("las"
     /// after "at"): Tab takes it.
     pub ghost: Option<String>,
+    /// In the field before Escape's cap while there is a ghost: "Tab
+    /// completes".
+    pub ghost_hint: Option<Hint>,
+    /// The operator being typed, as the field shows it ("from:"): drawn
+    /// tertiary before its value, which is primary (screen 04).
+    pub operator: Option<String>,
     /// The "Understood as" bar's tiles, in plain English.
     pub understood: Vec<UnderstoodTile>,
     /// Top to bottom.
@@ -443,6 +452,7 @@ pub(crate) fn empty(parts: EmptyParts<'_>) -> DropdownView {
             key: None,
             selectable: true,
             initials: None,
+            highlighted: None,
         })
         .collect();
     let highlight = recents.first().map(|row| row.token);
@@ -492,6 +502,7 @@ pub(crate) fn empty(parts: EmptyParts<'_>) -> DropdownView {
             key: None,
             selectable: false,
             initials: None,
+            highlighted: None,
         })
         .collect();
     if let Some(token) = parts.sheet.get(words::cheat_sheet().len()) {
@@ -511,6 +522,7 @@ pub(crate) fn empty(parts: EmptyParts<'_>) -> DropdownView {
             key: None,
             selectable: false,
             initials: None,
+            highlighted: None,
         });
     }
     sections.push(DropdownSection {
@@ -523,6 +535,8 @@ pub(crate) fn empty(parts: EmptyParts<'_>) -> DropdownView {
     DropdownView {
         state: DropdownState::Empty,
         ghost: None,
+        ghost_hint: None,
+        operator: None,
         understood: Vec::new(),
         sections,
         highlight,
@@ -544,6 +558,8 @@ pub(crate) fn words(
         return DropdownView {
             state: DropdownState::Words,
             ghost: None,
+            ghost_hint: None,
+            operator: None,
             understood: Vec::new(),
             sections: Vec::new(),
             highlight: None,
@@ -600,6 +616,8 @@ pub(crate) fn words(
     DropdownView {
         state: DropdownState::Words,
         ghost: None,
+        ghost_hint: None,
+        operator: None,
         understood: Vec::new(),
         sections,
         highlight: (landed.total > 0).then_some(landed.show_all),
@@ -648,6 +666,7 @@ pub(crate) fn hit_row(
         key: None,
         selectable: true,
         initials: None,
+        highlighted: None,
     }
 }
 
@@ -671,6 +690,7 @@ fn show_all_section(landed: &Landed, typed: Option<&str>, keymap: &Keymap) -> Dr
             key: postio_ui::hints::key(keymap, CommandId::ShowAllResults),
             selectable: true,
             initials: None,
+            highlighted: None,
         }],
         pills: Vec::new(),
     }
@@ -782,6 +802,7 @@ impl Offer {
             key: None,
             selectable: true,
             initials: None,
+            highlighted: None,
         };
         match self {
             Offer::Word(word) => DropdownRow {
@@ -957,6 +978,8 @@ pub(crate) fn prefix(parts: PrefixParts<'_>) -> DropdownView {
     }
     DropdownView {
         state: DropdownState::Prefix,
+        ghost_hint: parts.ghost.as_ref().map(|_| words::ghost_hint()),
+        operator: None,
         ghost: parts.ghost,
         understood: Vec::new(),
         sections,
@@ -996,7 +1019,11 @@ pub(crate) fn operator(parts: OperatorParts<'_>) -> DropdownView {
     let rows: Vec<DropdownRow> = parts
         .offers
         .iter()
-        .map(|(token, offer)| offer.row(*token, parts.value, parts.now, false, true))
+        .map(|(token, offer)| DropdownRow {
+            // ↩ makes the chip of whichever the arrows rest on.
+            highlighted: Some(words::adds_hint()),
+            ..offer.row(*token, parts.value, parts.now, false, true)
+        })
         .collect();
     let highlight = rows.first().map(|row| row.token);
     let mut sections = vec![DropdownSection {
@@ -1022,6 +1049,8 @@ pub(crate) fn operator(parts: OperatorParts<'_>) -> DropdownView {
     DropdownView {
         state: DropdownState::Operator,
         ghost: None,
+        ghost_hint: None,
+        operator: Some(format!("{}:", parts.keyword)),
         understood: Vec::new(),
         sections,
         highlight,
@@ -1083,6 +1112,8 @@ pub(crate) fn plain(parts: PlainParts<'_>) -> DropdownView {
     DropdownView {
         state: DropdownState::PlainEnglish,
         ghost: None,
+        ghost_hint: None,
+        operator: None,
         understood: parts.tiles,
         sections,
         highlight,

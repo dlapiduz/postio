@@ -119,6 +119,43 @@ struct DropdownKeyboardTests {
         return (model, engine)
     }
 
+    /// Screens 02 and 04: "Tab completes" in the field beside the ghost;
+    /// "↩ adds" on whichever person the arrows rest on, and on no other;
+    /// the operator typed, for the field to draw tertiary.
+    @Test func theFieldTeachesTabAndTheHighlightedPersonSaysReturnAdds() {
+        let (model, _) = Self.model()
+        let adds = KeyHintFfi(key: "Return", label: "adds")
+        var ada = Self.row(51, .person, "Ada Moreno")
+        ada.highlighted = adds
+        var ben = Self.row(52, .person, "Ben Adeyemi")
+        ben.highlighted = adds
+        model.apply(.focusDropdown(
+            view: DropdownViewFfi(
+                state: .operator, ghost: nil, operatorPrefix: "from:", understood: [],
+                sections: [Self.section("People", [ada, ben])],
+                highlight: 51, select: nil, footerHints: [], footerCount: nil)))
+        let dropdown = model.dropdown
+        #expect(dropdown.operatorPrefix == "from:")
+        #expect(dropdown.ghostHint == nil)
+        let rows = dropdown.sections[0].rows
+        let returnAdds = DropdownModel.Hint(cap: KeyCapSpelling.cap("Return") ?? "", words: "adds")
+        #expect(dropdown.highlightedHint(rows[0]) == returnAdds)
+        #expect(dropdown.highlightedHint(rows[1]) == nil, "only the highlighted row says it")
+        model.move(by: 1)
+        #expect(dropdown.highlightedHint(rows[0]) == nil)
+        #expect(dropdown.highlightedHint(rows[1]) == returnAdds)
+
+        model.apply(.focusDropdown(
+            view: DropdownViewFfi(
+                state: .prefix, ghost: "las", ghostHint: KeyHintFfi(key: "Tab", label: "completes"),
+                understood: [], sections: [Self.section("Suggestions", [Self.row(71, .word, "atlas")])],
+                highlight: 71, select: nil, footerHints: [], footerCount: nil)))
+        #expect(
+            model.dropdown.ghostHint
+                == DropdownModel.Hint(cap: KeyCapSpelling.cap("Tab") ?? "", words: "completes"))
+        #expect(model.dropdown.operatorPrefix == nil)
+    }
+
     @Test func theArrowsWalkTheRowsThatRunAndSkipHeadersAndTheCheatSheet() {
         let (model, engine) = Self.model()
         #expect(model.apply(Self.empty()) == .lines)

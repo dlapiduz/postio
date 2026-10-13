@@ -31,6 +31,8 @@ public final class DropdownModel {
         public let selectable: Bool
         /// A person's initials, for the round avatar.
         public let initials: String?
+        /// On its right while the arrows rest on it: "↩ adds" (screen 04).
+        public var whenHighlighted: Hint? = nil
     }
 
     /// One pill, as drawn.
@@ -69,6 +71,12 @@ public final class DropdownModel {
     /// The rest of the best word, drawn tertiary after the caret ("las"),
     /// while a short prefix is typed (screen 02).
     public private(set) var ghost: String?
+    /// In the field before Escape's cap while there is a ghost: "⇥
+    /// completes" (screen 02).
+    public private(set) var ghostHint: Hint?
+    /// The operator being typed ("from:"): the field draws it tertiary,
+    /// its value primary (screen 04).
+    public private(set) var operatorPrefix: String?
     /// What plain English was understood as, one tile a term (screen 05).
     public private(set) var understood: [UnderstoodTileFfi] = []
     /// The highlighted row's token.
@@ -85,6 +93,17 @@ public final class DropdownModel {
         sections.flatMap { $0.rows.filter(\.selectable).map(\.id) }
     }
 
+    /// A hint spelled for the Mac: its keycap and its words.
+    static func hint(_ hint: KeyHintFfi) -> Hint {
+        Hint(cap: KeyCapSpelling.cap(hint.key) ?? hint.key, words: hint.label)
+    }
+
+    /// What `row` says on its right for being highlighted ("↩ adds"):
+    /// nothing while the arrows rest elsewhere.
+    public func highlightedHint(_ row: Row) -> Hint? {
+        row.id == highlighted ? row.whenHighlighted : nil
+    }
+
     /// The highlighted row, when there is one.
     public var highlightedRow: Row? {
         guard let highlighted else { return nil }
@@ -95,6 +114,8 @@ public final class DropdownModel {
     public func draw(_ view: DropdownViewFfi) {
         state = view.state
         ghost = view.ghost
+        ghostHint = view.ghostHint.map(Self.hint)
+        operatorPrefix = view.operatorPrefix
         understood = view.understood
         sections = view.sections.enumerated().map { index, section in
             Section(
@@ -104,7 +125,8 @@ public final class DropdownModel {
                     Row(
                         id: row.token, kind: row.kind, title: row.title, detail: row.detail,
                         folder: row.folder, right: row.right, cap: KeyCapSpelling.cap(row.key),
-                        selectable: row.selectable, initials: row.initials)
+                        selectable: row.selectable, initials: row.initials,
+                        whenHighlighted: row.highlighted.map(Self.hint))
                 },
                 pills: section.pills.map { pill in
                     Pill(
@@ -112,9 +134,7 @@ public final class DropdownModel {
                         fresh: pill.fresh, cap: KeyCapSpelling.cap(pill.key))
                 })
         }
-        hints = view.footerHints.map { hint in
-            Hint(cap: KeyCapSpelling.cap(hint.key) ?? hint.key, words: hint.label)
-        }
+        hints = view.footerHints.map(Self.hint)
         count = view.footerCount
         let runs = selectable
         if let moved = view.select, runs.contains(moved) {
@@ -176,6 +196,8 @@ public final class DropdownModel {
     func forget() {
         state = .empty
         ghost = nil
+        ghostHint = nil
+        operatorPrefix = nil
         understood = []
         sections = []
         hints = []
