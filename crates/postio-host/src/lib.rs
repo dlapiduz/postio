@@ -1066,14 +1066,7 @@ impl Inner {
             Req::StoredBody(message) => {
                 Resp::StoredBody(search::stored_body(&self.wiring.database, message).await)
             }
-            Req::ExportMessages(messages) => match export::write_messages(
-                &self.wiring.database,
-                &self.wiring.blobs,
-                self.wiring.engine.get().cloned(),
-                &messages,
-            )
-            .await
-            {
+            Req::ExportMessages(messages) => match self.export_messages(&messages).await {
                 Ok(written) => Resp::Exported(written),
                 Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
             },
@@ -1243,17 +1236,21 @@ impl Inner {
                 Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
             },
             Req::Readings { messages, offline } => {
-                reading::readings(&self.wiring.database, &messages, offline)
-                    .await
-                    .map_or_else(Resp::Failed, |read| self.opened(read))
+                match reading::readings(&self.wiring.database, &messages, offline).await {
+                    Ok(read) => self.opened(read).await,
+                    Err(error) => Resp::Failed(error),
+                }
             }
             Req::ThreadReadings {
                 thread,
                 limit,
                 offline,
-            } => reading::thread_readings(&self.wiring.database, thread, limit as usize, offline)
+            } => match reading::thread_readings(&self.wiring.database, thread, limit as usize, offline)
                 .await
-                .map_or_else(Resp::Failed, |read| self.opened(read)),
+            {
+                Ok(read) => self.opened(read).await,
+                Err(error) => Resp::Failed(error),
+            },
             Req::InlinePart {
                 message,
                 content_id,
@@ -1270,7 +1267,7 @@ impl Inner {
                 let failed = parts::save_parts(
                     &self.wiring.database,
                     &self.wiring.blobs,
-                    self.wiring.engine.get().cloned(),
+                    self.engine_for_message(message).await,
                     message,
                     &parts,
                 )
@@ -1278,7 +1275,7 @@ impl Inner {
                 Resp::SavedParts(u32::try_from(failed).unwrap_or(u32::MAX))
             }
             Req::FetchBody(message) => {
-                self.fetch_body(message);
+                self.fetch_body(message).await;
                 Resp::Done
             }
             Req::StorageCeiling(max_bytes) => {
@@ -1301,7 +1298,7 @@ impl Inner {
             Req::RawSource(message) => match parts::raw_source(
                 &self.wiring.database,
                 &self.wiring.blobs,
-                self.wiring.engine.get().cloned(),
+                self.engine_for_message(message).await,
                 message,
             )
             .await
@@ -1422,38 +1419,71 @@ impl Inner {
 
     /// A reading pane's answer, after asking for each body it draws as
     /// "Downloading this message": the pane is a person opening it (#1788).
-    fn opened(&self, readings: Vec<postio_client::protocol::Reading>) -> Resp {
+    async fn opened(&self, readings: Vec<postio_client::protocol::Reading>) -> Resp {
         for message in self
             .asked_bodies
             .to_ask(&readings, std::time::Instant::now())
         {
-            self.fetch_body(message);
+            self.fetch_body(message).await;
         }
         Resp::Readings(readings)
     }
 
-    /// Ask every engine for `message`'s body ahead of its backfill: a person
-    /// opened it. Each engine answers for its own account's mail. Over a
-    /// wiring whose engine someone else started, that one.
-    fn fetch_body(&self, message: postio_model::MessageId) {
-        let mut engines: Vec<postio_runtime::Engine> = self
-            .engines
-            .running
-            .lock()
-            .expect("never poisoned")
-            .values()
-            .cloned()
-            .collect();
+    /// The engine owning this message's server identity. UIDs and mailbox
+    /// paths are scoped to an account: another engine can fetch unrelated
+    /// bytes under the same identity, or leave the request waiting forever.
+    async fn engine_for_message(
+        &self,
+        message: postio_model::MessageId,
+    ) -> Option<postio_runtime::Engine> {
+        let connection = self.wiring.database.read().await.ok()?;
+        let account = postio_storage::sql::first(
+            &connection,
+            "SELECT account_id FROM messages WHERE id = ?1",
+            [message.get()],
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0).map(postio_model::AccountId::new),
+        )
+        .await
+        .ok()??;
+        let engines = self.engines.running.lock().expect("never poisoned");
         if engines.is_empty() {
-            engines.extend(self.wiring.engine.get().cloned());
+            // A caller may supply its own engine through Wiring instead of
+            // asking the host to start sync.
+            self.wiring.engine.get().cloned()
+        } else {
+            engines.get(&account).cloned()
         }
-        for engine in engines {
-            self.runtime().spawn(async move {
-                if let Err(error) = engine.request_body(message).await {
-                    tracing::warn!(message = message.get(), %error, "cannot fetch that body");
-                }
-            });
+    }
+
+    /// Ask the message's account for its body ahead of its backfill.
+    async fn fetch_body(&self, message: postio_model::MessageId) {
+        let Some(engine) = self.engine_for_message(message).await else {
+            return;
+        };
+        self.runtime().spawn(async move {
+            if let Err(error) = engine.request_body(message).await {
+                tracing::warn!(message = message.get(), %error, "cannot fetch that body");
+            }
+        });
+    }
+
+    async fn export_messages(
+        &self,
+        messages: &[(postio_model::MessageId, std::path::PathBuf)],
+    ) -> Result<Vec<std::path::PathBuf>, String> {
+        let mut written = Vec::with_capacity(messages.len());
+        for entry in messages {
+            written.extend(
+                export::write_messages(
+                    &self.wiring.database,
+                    &self.wiring.blobs,
+                    self.engine_for_message(entry.0).await,
+                    std::slice::from_ref(entry),
+                )
+                .await?,
+            );
         }
+        Ok(written)
     }
 
     /// Rebuild `account`'s local search index, and return when it is over.
@@ -1864,7 +1894,7 @@ impl Inner {
         let written = parts::save_part(
             &self.wiring.database,
             &self.wiring.blobs,
-            self.wiring.engine.get().cloned(),
+            self.engine_for_message(message).await,
             message,
             attachment,
             &to,
