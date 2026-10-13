@@ -1771,6 +1771,30 @@ mod dropdown {
     /// You are in every message you sent, so you are often the top sender;
     /// a pill to narrow to yourself is not one screen 03 offers. The
     /// People tab leaves you out the same way.
+    /// A capped search's facets are floors, so its Narrow to pills are too
+    /// (D30).
+    #[test]
+    fn narrow_to_pills_over_a_capped_search_are_floors() {
+        let rows = List::of(3);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let mut broad = atlas_budget();
+        broad.total = 5_000;
+        broad.capped = true;
+        let effects = searched(&mut focus, "atlas budget", broad, &rows);
+        let view = dropdown(&effects);
+        let narrow = view
+            .sections
+            .iter()
+            .find(|section| section.title == "Narrow to")
+            .expect("the pills");
+        assert!(!narrow.pills.is_empty());
+        for pill in &narrow.pills {
+            let count = pill.count.as_deref().expect("a count");
+            assert!(count.ends_with('+'), "{count:?} is a floor");
+        }
+    }
+
     #[test]
     fn narrow_to_offers_no_pill_for_your_own_address() {
         let rows = List::of(3);

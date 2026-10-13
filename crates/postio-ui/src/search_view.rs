@@ -95,7 +95,7 @@ pub struct NarrowPill {
     pub op: String,
     /// What it is set to: a person, "attachment", a label.
     pub value: String,
-    /// The count, grouped: "9", "1,204".
+    /// The count, grouped: "9", "1,204", or "1,204+" as a floor.
     pub count: String,
 }
 
@@ -106,12 +106,13 @@ impl NarrowPill {
     }
 }
 
-/// The "Narrow to" pill for `op` `value`, which keeps `count` results.
-pub fn narrow_pill(op: &str, value: &str, count: u64) -> NarrowPill {
+/// The "Narrow to" pill for `op` `value`, which keeps `count` results: a
+/// floor ("1,204+") when the search it narrows stopped at its cap (D30).
+pub fn narrow_pill(op: &str, value: &str, count: u64, capped: bool) -> NarrowPill {
     NarrowPill {
         op: op.to_owned(),
         value: value.to_owned(),
-        count: grouped(count),
+        count: self::count(count, capped),
     }
 }
 
@@ -1917,18 +1918,22 @@ mod tests {
 
     #[test]
     fn a_narrow_to_pill_says_its_operator_its_value_and_its_count() {
-        let pill = narrow_pill("from:", "Tomás Reyes", 9);
+        let pill = narrow_pill("from:", "Tomás Reyes", 9, false);
         assert_eq!(
             (pill.op.as_str(), pill.value.as_str(), pill.count.as_str()),
             ("from:", "Tomás Reyes", "9")
         );
         assert_eq!(pill.label(), "from: Tomás Reyes 9");
 
-        let attachment = narrow_pill("has:", "attachment", 12);
+        let attachment = narrow_pill("has:", "attachment", 12, false);
         assert_eq!(attachment.label(), "has: attachment 12");
 
-        let big = narrow_pill("label:", "Atlas", 1_204);
+        let big = narrow_pill("label:", "Atlas", 1_204, false);
         assert_eq!(big.count, "1,204");
+
+        // Counted over a walk that stopped at its cap: a floor (D30).
+        let floor = narrow_pill("label:", "Atlas", 1_204, true);
+        assert_eq!(floor.count, "1,204+");
     }
 
     #[test]

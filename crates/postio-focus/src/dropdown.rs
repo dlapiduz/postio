@@ -337,14 +337,14 @@ pub(crate) fn narrow_pills(results: &ConversationResults) -> Vec<(words::NarrowP
                 .clone()
                 .unwrap_or_else(|| person.address.clone());
             Some((
-                words::narrow_pill("from:", &said, count.conversations),
+                words::narrow_pill("from:", &said, count.conversations, results.capped),
                 positive(Filter::From(person.address.clone())),
             ))
         });
     let mut pills: Vec<_> = senders.by_ref().take(2).collect();
     if narrows(facets.attachment) {
         pills.push((
-            words::narrow_pill("has:", "attachment", facets.attachment),
+            words::narrow_pill("has:", "attachment", facets.attachment, results.capped),
             positive(Filter::HasAttachment),
         ));
     }
@@ -362,7 +362,7 @@ pub(crate) fn narrow_pills(results: &ConversationResults) -> Vec<(words::NarrowP
         })
     {
         pills.push((
-            words::narrow_pill("label:", name, count.conversations),
+            words::narrow_pill("label:", name, count.conversations, results.capped),
             positive(Filter::Label(name.clone())),
         ));
     }
