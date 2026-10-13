@@ -1,0 +1,8 @@
+apps = ["focus"]
+source = { kind = "issue", ref = "#1820" }
+proof = "base"
+vary = { scheme = ["light", "dark"], width = ["wide", "narrow"] }
+
+[[step]]
+wait = { until = { cursor.index = 0 } }
+expect = "The inbox header has a visible maximize/restore control immediately before its close button. Its free space remains available for dragging the window; the search, compose and main menu controls remain clear."

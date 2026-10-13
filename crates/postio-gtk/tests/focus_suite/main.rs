@@ -891,6 +891,14 @@ const CASES: &[(&str, fn())] = &[
         window_controls::the_top_bars_icon_buttons_hover_in_their_own_shape as fn(),
     ),
     (
+        "window_controls::the_inbox_top_bar_is_a_window_handle",
+        window_controls::the_inbox_top_bar_is_a_window_handle as fn(),
+    ),
+    (
+        "window_controls::maximize_and_restore_work_before_and_after_mail_opens",
+        window_controls::maximize_and_restore_work_before_and_after_mail_opens as fn(),
+    ),
+    (
         "close_buttons::every_closable_surface_has_the_same_x_at_the_right",
         close_buttons::every_closable_surface_has_the_same_x_at_the_right as fn(),
     ),
