@@ -267,36 +267,38 @@ pub fn words_hints(keymap: &Keymap) -> Vec<Hint> {
 use postio_search::query::{Filter, State};
 use postio_search::results::{Location, RankReason, Source};
 
-/// Why a top hit ranked, as the line under its sender says it: at most two
-/// reasons, then how many of its messages matched when that is more than
-/// one ("you replied · 3 matches"). The app says flagged, never starred
-/// (D19).
+/// Why a top hit ranked, as the line under its sender says it: two parts
+/// at most (D20). The strongest reason first, in D20's order, then how
+/// many of its messages matched when that is more than one ("you replied
+/// · 3 matches"); a single match is not worth saying, so a second reason
+/// takes the place ("frequent sender · file name"). The app says flagged,
+/// never starred (D19).
 pub fn reason_line(reasons: &[RankReason]) -> String {
-    let mut words: Vec<String> = reasons
-        .iter()
-        .filter_map(|reason| {
-            Some(
-                match reason {
-                    RankReason::Replied => "you replied",
-                    RankReason::Flagged => "you flagged",
-                    RankReason::FrequentSender => "frequent sender",
-                    RankReason::InSubject => "subject",
-                    RankReason::InFileName => "file name",
-                    RankReason::Matches(_) => return None,
-                }
-                .to_owned(),
-            )
+    let mut words = reasons.iter().filter_map(|reason| {
+        Some(match reason {
+            RankReason::Replied => "you replied",
+            RankReason::Flagged => "you flagged",
+            RankReason::FrequentSender => "frequent sender",
+            RankReason::InSubject => "subject",
+            RankReason::InFileName => "file name",
+            RankReason::Matches(_) => return None,
         })
-        .take(2)
-        .collect();
-    let matched = reasons.iter().find_map(|reason| match reason {
-        RankReason::Matches(n) => Some(*n),
-        _ => None,
     });
-    if let Some(n) = matched.filter(|n| *n > 1) {
-        words.push(format!("{} matches", grouped(u64::from(n))));
-    }
-    words.join(" \u{b7} ")
+    let matched = reasons
+        .iter()
+        .find_map(|reason| match reason {
+            RankReason::Matches(n) => Some(*n),
+            _ => None,
+        })
+        .filter(|n| *n > 1)
+        .map(|n| format!("{} matches", grouped(u64::from(n))));
+    let first = words.next().map(str::to_owned);
+    let second = matched.or_else(|| words.next().map(str::to_owned));
+    [first, second]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" \u{b7} ")
 }
 
 /// Where the words matched, as a row's source tag says it: "body", "quoted
@@ -1953,7 +1955,7 @@ mod tests {
     use postio_search::results::{Location, RankReason, Source};
 
     #[test]
-    fn a_top_hit_says_why_it_ranked_in_at_most_two_reasons_and_its_matches() {
+    fn a_top_hit_says_why_it_ranked_in_at_most_two_parts() {
         use RankReason::*;
         assert_eq!(
             reason_line(&[Replied, Matches(3)]),
@@ -1970,9 +1972,15 @@ mod tests {
         );
         assert_eq!(
             reason_line(&[Replied, FrequentSender, InSubject, Matches(4)]),
-            "you replied · frequent sender · 4 matches",
-            "two reasons at most, and the matches"
+            "you replied · 4 matches",
+            "two parts at most: the strongest reason, then the matches"
         );
+        assert_eq!(
+            reason_line(&[Replied, FrequentSender, InSubject, Matches(1)]),
+            "you replied · frequent sender",
+            "one match is not worth saying, so the next reason has the place"
+        );
+        assert_eq!(reason_line(&[Matches(5)]), "5 matches");
         assert_eq!(reason_line(&[InSubject]), "subject");
         assert_eq!(reason_line(&[Matches(1)]), "");
         assert_eq!(reason_line(&[]), "");
