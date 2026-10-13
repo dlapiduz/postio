@@ -28,14 +28,20 @@ pub fn the_inbox_top_bar_is_a_window_handle() {
 async fn maximize_and_restore(window: &postio_gtk::window::FocusWindow) {
     window.set_default_size(1024, 700);
     window.unmaximize();
-    assert!(crate::settle_until(async || !window.is_maximized()).await);
+    assert!(
+        crate::settle_until(async || !window.is_maximized()
+            && window.width() == 1024
+            && window.height() == 700)
+        .await,
+        "the window never settled at its restored size"
+    );
     let button = support::only(window, "focus-maximize")
         .downcast::<gtk::Button>()
         .expect("a button");
     assert_eq!(button.tooltip_text().as_deref(), Some("Maximize window"));
     support::click(window, &button, 1);
     assert!(
-        crate::settle_until(async || window.is_maximized()).await,
+        crate::settle_until(async || window.is_maximized() && window.width() > 1024).await,
         "clicking the visible maximize button never maximized the window"
     );
     assert_eq!(button.tooltip_text().as_deref(), Some("Restore window"));
@@ -64,7 +70,10 @@ pub fn maximize_and_restore_work_before_and_after_mail_opens() {
         window.destroy();
 
         let fixture = support::Fixture::empty().await;
-        let (window, _client) = fixture.five().await;
+        fixture
+            .file(("Ada", "ada@example.com"), "Mail", "x", 10)
+            .await;
+        let (window, _client) = fixture.open_sized(Some((1024, 700))).await;
         maximize_and_restore(&window).await;
     });
 }
