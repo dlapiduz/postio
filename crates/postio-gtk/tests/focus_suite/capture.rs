@@ -3,6 +3,7 @@
 //! a folder on this computer. What is appended is asserted byte for byte,
 //! and every other note is asserted unchanged.
 
+use adw::prelude::AdwDialogExt;
 use chrono::TimeZone;
 use gtk::gdk;
 use postio_storage::repository::{Marker, MarkerRepository, MarkerSource};
@@ -261,4 +262,60 @@ pub fn without_a_vault_there_is_no_task_and_t_says_why() {
             window.toast_showing()
         );
     });
+}
+
+fn capture_from_reader(key: &str, heading: &str) {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let vault = TempVault::new();
+        let fixture = Fixture::empty().await;
+        harbor_to_do(&fixture).await;
+        let window = postio_gtk::window::FocusWindow::new(None);
+        gtk::prelude::GtkWindowExt::present(&window);
+        support::keep(postio_gtk::startup::adopt(
+            &window,
+            fixture.host(),
+            &vault.config(),
+        ));
+        assert!(crate::settle_until(async || !support::subjects(&window).is_empty()).await);
+        support::keys(&window, &["j", "Return"]);
+        let reading = window.reading().expect("Return opened the message");
+        assert_eq!(reading.title(), "Harbor API draft v3");
+        assert!(
+            crate::settle_until(async || {
+                reading
+                    .dialog()
+                    .child()
+                    .is_some_and(|content| gtk::prelude::WidgetExt::is_mapped(&content))
+            })
+            .await,
+            "the reader never reached the screen"
+        );
+
+        support::keys(&window, &[key]);
+        assert!(
+            crate::settle_until(async || window.capture().is_some_and(|sheet| sheet.is_shown()))
+                .await,
+            "{key} in the reader did not show capture"
+        );
+        let sheet = window.capture().expect("the visible capture sheet");
+        assert!(sheet.texts().iter().any(|text| text == heading));
+        assert_eq!(sheet.text(), "Please leave comments by Wednesday");
+
+        support::keys(&window, &["Escape"]);
+        assert!(crate::settle_until(async || !sheet.is_open()).await);
+        assert!(reading.is_open(), "cancel keeps the source message open");
+        assert_eq!(vault.read("Projects/Harbor.md"), HARBOR);
+        assert_eq!(vault.read("Tasks.md"), TASKS);
+    });
+}
+
+pub fn t_on_an_open_message_opens_the_task_sheet() {
+    capture_from_reader("t", "Add task");
+}
+
+pub fn n_on_an_open_message_opens_the_note_sheet() {
+    capture_from_reader("n", "Add note");
 }
