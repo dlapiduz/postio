@@ -7,6 +7,75 @@ time is in one statement: the walk that feeds the facets.
 
 ## Bench
 
+### After D30: every shape under budget
+
+Options 1, 2 and 3 below were taken (maintainer, 2026-10-09: "do both",
+spec D30): the walk reads a matched message's people, labels and
+attachment count as columns `messages` keeps by trigger (`51907d17`,
+`d304bd49`), and stops at `CONVERSATION_WALK_CAP` = 5,000 matches, every
+count past it a floor (`c57e30dc`). Same bench, corpus, method and
+machine as the table below; built on `c57e30dc`. `uptime` load 6.6-8.9
+while the shapes ran (other sessions building), higher than the table
+below's 4.1-4.8, so these are if anything pessimistic.
+
+| shape | query | p50 ms | p95 ms | stmts | found |
+|---|---|---:|---:|---:|---:|
+| one word | `quarterly` | 2.13 | 2.16 | 3 | 203 |
+| two words | `quarterly forecast` | 0.63 | 0.64 | 3 | 7 |
+| operator only | `from:sender3` | 4.81 | 4.85 | 4 | 479 |
+| operator + words | `from:sender3 regarding` | 15.24 | 17.27 | 4 | 460 |
+| **common word** | `regarding` | 13.72 | **14.81** | 3 | 904 |
+| typed `a` | `a` | 9.25 | 9.97 | 3 | 775 |
+| **typed `at`** | `at` | 13.48 | **14.51** | 3 | 872 |
+| typed `atl` | `atl` | 2.87 | 2.92 | 3 | 366 |
+| completions | `a` | 4.25 | 4.31 | 4 | 2 |
+| completions | `at` | 2.24 | 2.28 | 4 | 2 |
+| completions | `atl` | 4.04 | 4.60 | 4 | 2 |
+| completions | `from:a` | 1.54 | 1.55 | 1 | 4 |
+| zero hits, four filters | (step 1's) | 0.89 | 0.91 | 2 | 0 |
+| relaxations of that | five variants | 3.23 | 3.25 | 5 | 1 variant |
+| e2e one word | `quarterly` | 3.48 | 3.69 | 56 | 203 |
+| e2e two words | `quarterly forecast` | 0.94 | 0.96 | 13 | 7 |
+| e2e operator + words | `from:sender3 regarding` | 16.30 | 17.81 | 57 | 460 |
+| **e2e common word** | `regarding` | 14.86 | **15.58** | 56 | 904 |
+| e2e typed `atl` | `atl` | 4.26 | 5.10 | 56 | 366 |
+| preview check a person | `quarterly from:sender3` | 1.92 | 2.23 | 4 | 9 |
+| preview exclude a person | `quarterly -from:sender3` | 3.38 | 3.66 | 4 | 194 |
+| preview check a label | `quarterly label:atlas` | 1.10 | 1.12 | 4 | 21 |
+| preview check a folder | `quarterly in:inbox` | 2.16 | 2.21 | 3 | 203 |
+| timeline range + word | `quarterly after:… before:…` | 0.89 | 1.03 | 3 | 24 |
+| date words since + word | `quarterly after:…` | 0.89 | 0.92 | 3 | 24 |
+| timeline range alone | `after:… before:…` | 5.04 | 5.23 | 3 | 352 |
+| timeline range + operator | `from:sender3 after:… before:…` | 2.54 | 2.63 | 4 | 66 |
+| file word | `kestrel` | 0.87 | 0.97 | 4 | 20 |
+| e2e file word | `kestrel` | 1.28 | 1.31 | 8 | 20 |
+| Files tab, file word | `kestrel` | 0.40 | 0.44 | 3 | 20 |
+| Files tab, one word | `quarterly` | 0.88 | 0.90 | 2 | 0 |
+| Files tab, operator | `from:sender3` | 4.34 | 5.18 | 3 | 350 |
+| e2e preview check a person | `quarterly from:sender3` | 2.29 | 2.58 | 16 | 9 |
+| e2e timeline range + word | `quarterly after:… before:…` | 1.60 | 1.63 | 30 | 24 |
+
+Every search under 50 ms at p95 (the worst, `e2e operator + words`,
+17.8) and every completion under 20 (the worst 4.6). `found` for the
+broad words is now the conversations among the first 5,000 matches
+(904 for `regarding`, against 1,678 walking 10,000), and the results say
+"5,000+" for them.
+
+Each half on its own, for the three shapes that were over: the columns
+alone (the same build with the cap set back to 10,000 for the run, not
+committed; load 40-60, so its absolute numbers are inflated) put
+`common word` at 26.8 ms p95, `typed at` 26.5 and `e2e common word`
+29.8 -- found 1,684 -- so the columns took about half of the walk
+and the cap half of what was left, as the breakdown below predicted
+(-27 and -26 ms of the old 56).
+
+The write cost of the columns' triggers is in spec D30
+(`insert_cost_curve`): +0.07 ms a row on a first sync's 1.7-1.8, inside
+the runs' own spread, and 0.44 → 0.54 ms a row on a resync, which
+rewrites every child row.
+
+### Before D30
+
 `crates/postio-bench/benches/search_focus.rs`, release build, Apple M1 Pro
 (32 GB), in-memory store, 20,000 messages (step 1's corpus, step 9's
 attachment units), 60 timed runs per shape after 5 warm-ups. Method as in
@@ -115,6 +184,8 @@ the label key, `idx_attachments_message`, the marker's key); this is the
 cost of 10,000 seeks of each, not of a bad plan.
 
 ## Options, not taken
+
+*Since taken: 1, 2 and 3, as spec D30 (above). 4 was not needed.*
 
 None of these is implemented: the first two are schema work on the write
 path, the last two change what a person sees, and all four want the
