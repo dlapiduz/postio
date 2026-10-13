@@ -62,7 +62,7 @@ pub enum Seed {
 
 impl Seed {
     /// Every seed Focus can build.
-    pub const ALL: [Seed; 10] = [
+    pub const ALL: [Seed; 11] = [
         Seed::Small,
         Seed::Empty,
         Seed::LongNewsletter,
