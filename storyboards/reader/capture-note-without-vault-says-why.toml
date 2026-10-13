@@ -1,0 +1,36 @@
+# Capture from the open message must explain a missing local vault.
+apps = ["focus"]
+proof = "base"
+source = { kind = "flow", ref = "Reader capture without a configured vault (#1807)" }
+
+[[step]]
+wait = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "toggle_has_action"
+check = { keyboard.region = "list" }
+
+[[step]]
+command = "next_message"
+check = { cursor.index = 1 }
+
+[[step]]
+command = "next_message"
+check = { cursor.index = 2, cursor.subject = "Harbor API draft v3" }
+
+[[step]]
+command = "open_message"
+settle = { until = { view = "reader" } }
+check = { view = "reader", keyboard.region = "reader" }
+expect = "The to-do message opens with its action card and the keyboard in the reader."
+
+[[step]]
+command = "capture_note"
+settle = { until = { notice.text = "Name a vault under [focus.vault] in config.toml to capture tasks and notes" } }
+check = { view = "reader", keyboard.region = "reader", keyboard.typing = false }
+expect = "The toast explains how to configure a local vault. The message stays open and no capture sheet appears."
+
+[[step]]
+command = "back"
+check = { view = "list", keyboard.region = "list", cursor.index = 2, cursor.subject = "Harbor API draft v3" }
+expect = "Esc closes the reader and returns to the same message."

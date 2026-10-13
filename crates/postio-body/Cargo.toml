@@ -12,7 +12,7 @@ repository.workspace = true
 # The HTML parser, and the reason this is its own crate rather than part of
 # postio-model: `ammonia` pulls html5ever, markup5ever and a generated tag
 # table, and postio-model is what the whole workspace waits on. See ADR 0004.
-ammonia = "4"
+ammonia = "4.1.7"
 # Already in the tree: `ammonia` parses `style` attributes with it, so the
 # sender-CSS work shares one parser rather than adding a second. See #1326.
 cssparser = "0.37"

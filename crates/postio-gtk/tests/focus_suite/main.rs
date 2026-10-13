@@ -1521,6 +1521,14 @@ const CASES: &[(&str, fn())] = &[
         "settings::a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings",
         settings::a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings as fn(),
     ),
+    (
+        "capture::t_on_an_open_message_opens_the_task_sheet",
+        capture::t_on_an_open_message_opens_the_task_sheet as fn(),
+    ),
+    (
+        "capture::n_on_an_open_message_opens_the_note_sheet",
+        capture::n_on_an_open_message_opens_the_note_sheet as fn(),
+    ),
 ];
 
 use gtk::glib;

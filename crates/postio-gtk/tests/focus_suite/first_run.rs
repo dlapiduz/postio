@@ -89,6 +89,14 @@ async fn opened(backend: MockBackend) -> (postio_gtk::window::FocusWindow, MockB
     (window, backend)
 }
 
+fn config_contents(path: &std::path::Path) -> Option<Vec<u8>> {
+    match std::fs::read(path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => panic!("could not read the config: {error}"),
+    }
+}
+
 pub fn first_run_with_no_account_opens_the_add_account_form_and_lists_the_inbox() {
     crate::gtk_case(async {
         if !support::display() {
@@ -148,6 +156,8 @@ pub fn the_first_run_asks_how_much_history_to_sync_after_the_account_is_saved() 
         if !support::display() {
             return;
         }
+        let config_path = postio_config::paths::config_path().expect("a config path");
+        let config_before = config_contents(&config_path);
         let (window, backend) = opened(MockBackend::new()).await;
         assert!(
             crate::settle_until(async || window.add_account_dialog().is_some()).await,
@@ -174,9 +184,9 @@ pub fn the_first_run_asks_how_much_history_to_sync_after_the_account_is_saved() 
         );
         // Nothing is synced until the choice is made, and the choice is not
         // written before it is.
-        let config_path = postio_config::paths::config_path().expect("a config path");
-        assert!(
-            !config_path.exists(),
+        assert_eq!(
+            config_contents(&config_path),
+            config_before,
             "the history was written before it was chosen"
         );
         assert_eq!(

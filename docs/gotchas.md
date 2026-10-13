@@ -4,6 +4,8 @@ These are the traps in this repository that are still live and that no check, ho
 
 ## Tests and the headless compositor
 
+**The small demo's second inbox row is a digest, not a message.** `x` deliberately leaves it out of bulk selection, and Return opens the digest rather than the reader. Storyboards for message actions must pass it and assert the row they mean; the first Has action row is an invite, not a to-do. A capture storyboard also needs a configured vault to expect a capture sheet (#1807).
+
 **Waiting for a total in an integration test measures every other row too.** If any other row moves, the total is wrong while the software is right. Wait for the specific message, row or widget by its identity. Use a count only when the count is the property, and settle it against the store.
 
 **`unwrap_or_default()` on a test's own observation turns breakage into a false accusation.** If the query breaks, it returns the same default as "not ready yet", and the test times out blaming the code it covers. Unwrap in the observation path. A precondition that something else can satisfy is a race in the same way: `queued > 0` counts what *this call* added, not whether there is work.
@@ -141,6 +143,8 @@ The store is Turso (ADR 0038). Its planner and defaults are not SQLite's, and mo
 **Moving code out of a crate this host cannot compile leaves stale imports behind.** For each moved symbol, split its remaining uses at the last `mod tests`. Rustdoc cannot link upward from a dependency to its dependent, so name such an item in prose.
 
 ## Builds, caches and worktrees
+
+**Cargo merges a nested worktree's config with its ancestor's.** The base checkout made by `scripts/storyboards.sh base` under `target/storyboard-base/tree` reads both `.cargo/config.toml` files: rustflags repeat and the reflinked build cache goes cold (#1818). Until that checkout lives outside the implementing tree, stop its build, move only that detached worktree beside the other worktrees, and symlink its original path to it before replaying the base.
 
 **`RUSTUP_TOOLCHAIN` overrides `rust-toolchain.toml`, and mise exports it.** The land and test scripts unset it; your shell does not. When the pin moves, move the mise pin too and sweep stale `target/` directories. `fuzz/` pins its own dated nightly; run it through `scripts/fuzz.sh`, which changes into that directory.
 

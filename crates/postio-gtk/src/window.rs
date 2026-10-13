@@ -1215,6 +1215,8 @@ impl FocusWindow {
                 | CommandId::Move
                 | CommandId::Snooze
                 | CommandId::RemindIfNoReply
+                | CommandId::CaptureTask
+                | CommandId::CaptureNote
                 | CommandId::Undo),
             ) => self.act(id),
             Ok(CommandId::PrevInConversation) => reading.step_thread(-1),
