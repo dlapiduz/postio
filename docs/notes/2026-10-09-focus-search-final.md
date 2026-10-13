@@ -271,7 +271,7 @@ Rows that hold on every screen, said once:
 
 | # | Design | Built | Decision |
 |---|---|---|---|
-| A1 | Today is Saturday 26 September; counts like 48 results, 18,204 messages | The demo's today is the real date (Friday 9 October), and its counts are the search seed's (27 for `atlas budget`, 459 messages) | **Explained**: the seed's data. Month windows end in October, "since July" runs to October, This quarter starts 1 October |
+| A1 | Today is Saturday 26 September; counts like 48 results, 18,204 messages | The demo's today is the real date (Friday 9 October), and its counts are the search seed's (27 for `atlas budget`, 459 messages, 462 once screen 05's invoices were added) | **Explained**: the seed's data. Month windows end in October, "since July" runs to October, This quarter starts 1 October |
 | A2 | The Escape cap reads "Esc", Tab "Tab" | "⎋", "⇥" | **Explained**: one spelling per key app-wide (`KeyCapSpelling`, spec 009), as every Mac keycap spells them |
 | A3 | Avatars in the design's colours | A system hue chosen by the name | **Explained**: drawing only; a person keeps theirs (step 4 #3) |
 | A4 | Checkboxes, the Pin switch and rings in graphite | The system accent | **Explained**: the system accent, as spec 009's list does (step 6 #9) |
@@ -287,27 +287,27 @@ Rows that hold on every screen, said once:
 | 2 | 01 | Recent: "yesterday", "Mon", "21 Sep" | "yesterday", "Sun", "30 Sep" | **Explained**: A1, and step 2 #12 (the design's two dates cannot both hold under T045's rule) |
 | 3 | 01 | Saved searches 5 / 38 / 19 / 4 | 0 / 46 / 26 / 0 | **Explained**: the seed's real counts (step 2 #14) |
 | 4 | 01 | "invoices from ada last month becomes from:ada invoice after:2026-08-01 before:2026-09-01" | "… becomes invoices from:ada after:2026-09-01 before:2026-10-01" | **Explained**: the one language's lowering keeps the sentence's order and plural (FR-004: it must equal `lower`), and the month is the one before today (step 2 #16) |
-| 5 | 01 | Footer right "local index · 18,204 messages" | Nothing on the right | **Not fixed**: needs the store's message count in the empty state and a `postio-ui` word (step 2 #13). Small follow-up |
+| 5 | 01 | Footer right "local index · 18,204 messages" | Nothing on the right | **Fixed** (`feat(focus): say how many messages the index holds`): "local index · 462 messages", the folders' maintained totals the places read already loads (ADR 0040), over the scope the results' "Searched N messages" uses (gap-01) |
 | 6 | 02 | Ghost "at\|las" right after the caret | "at las": a gap of about five points | **Fixed** (`fix(macos): set the ghost right after the typed word`): placed from the field editor's last glyph, less the label's inset |
-| 7 | 02 | "Tab completes" before the Esc cap in the field | The cap alone | **Not fixed**: a `postio-ui` word and an FFI export (step 2 #3, step 8 #2). Small follow-up |
+| 7 | 02 | "Tab completes" before the Esc cap in the field | The cap alone | **Fixed** (`feat(focus): the field and its people say their keys`): "⇥ completes" at the field's right while there is a ghost (gap-02) |
 | 8 | 02 | "Atlas planning · mailing list" row | Absent | **Explained**: the seed has no list mail (step 8 #5) |
 | 9 | 02 | Top hits match *atlas* by prefix | Three of your replies that say "at" | **Explained**: the conversation search for the word as typed; prefix matching there is not built (step 8 #7) |
 | 10 | 03 | Every top hit has a passage after its subject | Only the hit that matched in a file had one: a one-line body's match was kept out as "the row's preview" | **Fixed** (`fix(focus): mark the first line's match in the dropdown`): the dropdown's row shows no preview, so it asks `FirstLine::Avoided` as the results do. D7's "the row already shows the first line" holds for neither Mac surface |
 | 11 | 03 | Narrow to: "from: Ada Moreno 21", "from: Tomás Reyes 9", attachment, label | "from: You", then Ada | **Fixed** (`fix(focus): offer no pill or From row for yourself`): the facets' names say which people are yours, by the People tab's notion of you, and Narrow to skips them |
-| 12 | 03, 06 | "in:Inbox" | "in:INBOX" | **Fixed** (`fix(ui): call the inbox Inbox where search names it`), carrying step 2 #25 and step 3 #16: IMAP's INBOX is the inbox in any case |
+| 12 | 03, 06 | "in:Inbox" | "in:INBOX" | **Fixed** (`fix(ui): call the inbox Inbox where search names it`), carrying step 2 #25 and step 3 #16: IMAP's INBOX is the inbox in any case. The sweep's 08 still said "in:INBOX" only because it was taken before that commit; a walk of every surface then found four more that said the store's name (an `in:` chip, the Anywhere button applied, the folders `in:` completes to, a row's VoiceOver sentence), fixed by `fix(focus): call the inbox Inbox on every search surface` (gap-08) |
 | 13 | 03 | Dates "26 Sep" | One top hit "22 Oct 25" | **Explained**: another year's short form (step 3 #17) |
-| 14 | 04 | "from:" tertiary and "ad" primary in the field | "from:ad" all primary, in SF Mono | **Not fixed**: the field colours no part of what is typed; an operator's prefix in tertiary needs the field to style its own text as it is edited. Small follow-up |
-| 15 | 04 | "↩ adds" on the focused person's right | Absent | **Not fixed** (step 8 #13): a `postio-ui` word drawn on the highlighted row. Small follow-up; the footer says the same |
+| 14 | 04 | "from:" tertiary and "ad" primary in the field | "from:ad" all primary, in SF Mono | **Fixed** (`feat(focus): the field and its people say their keys`): the controller names the operator being typed, and the field tints it through the field editor's temporary attributes (gap-04) |
+| 15 | 04 | "↩ adds" on the focused person's right | Absent | **Fixed** (same commit): the operator state's rows carry "↩ adds", drawn on whichever the arrows rest on (gap-04) |
 | 16 | 04 | Four people; "15:51" | Two; "9 Oct" | **Explained**: the seed's address book, and `hit_date`'s one rule (step 8 #12, #14) |
 | 17 | 05 | "each part is a chip you can edit" after the tiles | Absent: the tiles' scroll view took every point even with room to spare | **Fixed** (with 1): the note shows when the tiles fit and gives way when they do not |
-| 18 | 05 | `invoice*`, `from:Ada Moreno`, the August dates; three results | `invoices`, `from:ada`, September; no results | **Explained** (step 8 #16, #18): the lowering, the seed's address book and mail, today's month. Double quotes against single: step 8 #17, the spec's own quotes |
+| 18 | 05 | `invoice*`, `from:Ada Moreno`, the August dates; three results | `invoices`, `from:ada`, September; three results | **Explained** (step 8 #16, #18): the lowering, the seed's address book, today's month. The results are **fixed** (`feat(demo): Ada's invoices of last month in the search seed`): the seed holds the design's three invoices from Ada, dated in the month before today whatever day it runs (gap-05). Double quotes against single: step 8 #17, the spec's own quotes |
 
 ### Screens 06 to 13, the results
 
 | # | Screen | Design | Built | Decision |
 |---|---|---|---|---|
 | 19 | 07 | The focused row on the accent at 14% (`accsoft`, dark) | 7%: hardly off the list's ground (43,49,60 against 59,65,78) | **Fixed** (`fix(macos): tint search's focus as the design does`): `SearchRuns.focusFill`, 8% light and 14% dark, on every search surface with a ring |
-| 20 | 06 | Top hits' reasons: two at most ("you replied · 3 matches") | "you replied · frequent sender · …", cut at 176 | **Not fixed** (step 3 #15): `reason_line` keeps two reasons *and* the matches, while D20 says two at most. Changing it is a words decision (which two), and its test says the opposite today |
+| 20 | 06 | Top hits' reasons: two at most ("you replied · 3 matches") | "you replied · frequent sender · …", cut at 176 | **Fixed** (`fix(ui): a top hit's reason line has two parts`, the lead's decision, D20 updated): the strongest reason, then "N matches" when N > 1, else a second reason; "you flagged · 9 matches", "you replied · 3 matches" (gap-08) |
 | 21 | 06 | The timeline 74 tall in the PNG; Top hits at 190 | 66 (`McSearch.dc.html`'s height); Top hits at 183 | **Explained**: built to the source's 66, which the PNG renders taller |
 | 22 | 06 | Group headers "September 2026  9 · newest first" | The same rule, the seed's months | Same |
 | 23 | 08 | Six senders, none of them you | Eight, no "You" row | **Fixed** with 11: the From popover leaves you out unless the query already asks for you, so the check can be taken off. **To keeps you**: mail to you is a real narrowing |
@@ -315,7 +315,7 @@ Rows that hold on every screen, said once:
 | 25 | 09 | "This quarter" ringed, July to September | "Any time" ringed, July to October | **Explained**: A1 (This quarter starts 1 October here, step 4 #10) |
 | 26 | 09 | Timeline hint "Jul – Sep selected · drag to change ·" / "⌥← → steps a month" | "… drag to change · ⌥←" / "⌥→ steps a month": the pair breaks across the lines | **Explained**: the pair is spelled as every pair is (step 4 #16); the 230 column wraps it where it falls |
 | 27 | 10 | One card per file: "Atlas-Q3-budget.xlsx · Sheet “Q3”, row 3" | Two: the file's name as its own passage, then its row | **Fixed** (`fix(session): one Quick Look card for a file`): a file whose contents matched is its content's card |
-| 28 | 10 | "to you, Finance team" on the sender line | No recipients | **Not fixed** (step 5 #5): neither the row nor the matches carry the best message's To; a read of its own. Small follow-up |
+| 28 | 10 | "to you, Finance team" on the sender line | No recipients | **Fixed** (`feat(focus): Quick Look says who the message went to`): the conversation's matches carry their message's To, one statement for all its members, you marked as the People tab knows you. The seed's message is to you alone, so gap-10 reads "to you"; "Finance team" is the design's data |
 | 29 | 10 | Deep shadow (0 30 90, 35%) | The window server's panel shadow, lighter | **Explained**: the platform's shadow for a panel (step 5 #2) |
 | 30 | 10 | Earlier reply "You · 24 Sep"; cards in the result's order | No earlier reply in the seed; oldest first | **Explained** (step 5 #8, #9) |
 | 31 | 11 | Eight cards incl. a Numbers table and a photo; note names iWork and images | Four; the note names PDF, Office documents and text | **Explained** (step 9 #1, #5, #6): iWork and text in images are not read |
@@ -333,24 +333,41 @@ called **Same** or **Fixed** are not repeated.
 | Note | # | What | Now |
 |---|---|---|---|
 | step 2 | 5 | The panel's own shadow (`0 16 48`) | **Explained**: the window server's, visible in the real captures, lighter |
-| step 2 | 24 | At rest the placeholder is the bar's long one, cut at 320 | **Not fixed**: one placeholder is exported; a resting one is a `postio-ui` word and an export. Small follow-up |
+| step 2 | 24 | At rest the placeholder is the bar's long one, cut at 320 | **Fixed** (`feat(macos): the field at rest says the short placeholder`): "Search mail or run a command" (McList.dc.html) at rest, the long one opened |
 | step 2 | 25, step 3 16 | "in:INBOX" | **Fixed** (12) |
 | step 3 | 14a | Rows matched by a file name alone show no passage | **Explained**: a name is its own words |
-| step 3 | 15 | The reason line's third part | **Not fixed** (20) |
+| step 3 | 15 | The reason line's third part | **Fixed** (20) |
 | step 4 | 4, open question | "You" among the senders | **Fixed** (11, 23) |
-| step 5 | 5 | No recipients in Quick Look | **Not fixed** (28) |
+| step 5 | 5 | No recipients in Quick Look | **Fixed** (28) |
 | step 6 | 2, 4, 5 | The Save popover drawn grey, its field unringed, its switch grey | **Settled** by the real capture: the snapshot's artefacts |
 | step 6 | 11 | "X select all" | **Fixed** since: the cap reads "⇧X" |
 | step 7 | 11 | The field not ringed while nothing matches | **Fixed** since (36) |
 | step 8 | field | The field held at 327 wide, every row cut | **Fixed** since (`ca9f2bff`, `e9e652a2`): 860, right edge 12 |
 | step 8 | 1 | The ghost's offset | **Fixed** (6) |
-| step 8 | 2, 13 | "Tab completes", "↩ adds" | **Not fixed** (7, 15) |
+| step 8 | 2, 13 | "Tab completes", "↩ adds" | **Fixed** (7, 15) |
 | step 9 | 18, 19 | The system's Quick Look and save panel; arrows on the grid | **Explained**: the system's own windows, outside a demo's keys (`ffi_suite` proves the copy) |
 | step 10 | left as is | Before the People tab is opened, "N people" counts you | **Explained**: the search would read every address per keystroke to leave you out; the count corrects itself when the tab reads its rows |
 
-So nothing is unexplained (SC-005). What is **not fixed** is all small,
-and each wants a word from `postio-ui` or a read the controller does not
-make yet: the empty state's message count (5), "Tab completes" (7), the
-operator's prefix in tertiary (14), "↩ adds" (15), the reason line's
-two-at-most (20, a words decision), Quick Look's recipients (28) and the
-resting placeholder.
+So nothing is unexplained (SC-005), and nothing the sweep left **not
+fixed** is still open: the empty state's message count (5), "Tab
+completes" (7), the operator's prefix in tertiary (14), "↩ adds" (15),
+the reason line's two parts (20), Quick Look's recipients (28) and the
+resting placeholder were fixed after it, each with its own test.
+
+### After the sweep: the gaps, again
+
+01, 02, 04, 05, 08 and 10 were taken again once those landed
+(`gap-<nn>.png` beside the sweep's own), and the field at rest. These are
+the demo's snapshots (`POSTIO_DEMO_SNAPSHOT`, as steps 2 to 10 took
+theirs): on 13 October `screencapture` returned the desktop's wallpaper
+for every region and full-screen capture from this terminal, so the
+Screen Recording grant the sweep had was not in effect. The snapshot
+draws the window's views again, without the window server's shadow;
+the rows above that a real capture settled stay settled. What they show:
+the footer's "local index · 462 messages" (01); "⇥ completes" in the
+field (02); "from:" tertiary before "ad", and "↩ adds" on Ada (04); three
+of Ada's invoices for "invoices from ada last month" (05); "in:Inbox" on
+every row and two-part reasons (08); "to you" on Quick Look's sender line
+(10); "Search mail or run a command" at rest. The facet popovers and the
+timeline now draw a capped count as the controller words it, "5,000+"
+(`fix(macos): draw the facet counts as the controller words them`, D30).
