@@ -4095,6 +4095,51 @@ impl Drop for SearchSeed {
     }
 }
 
+/// Screen 05's example finds what it says: the cheat sheet's "invoices
+/// from ada last month", lowered against the demo's today as the bar
+/// lowers it, finds Ada's three invoices of last month and nothing else.
+#[test]
+fn the_plain_english_example_finds_adas_invoices_of_last_month() {
+    let seed = SearchSeed::new();
+    let today = postio_demo::today()
+        .with_timezone(&chrono::Local)
+        .date_naive();
+    // The address book knows Ada, as the bar's `Names` does: "from ada"
+    // is `from:ada`.
+    let ada = |name: &str| name.eq_ignore_ascii_case("ada").then(|| "ada".to_owned());
+    let query = postio_search::natural::lower("invoices from ada last month", today, &ada);
+    let results = seed
+        .rt
+        .block_on(seed.client.conversations(
+            seed.scope(),
+            query,
+            postio_search::results::ConversationOrder::Newest,
+            0,
+            20,
+        ))
+        .expect("an answer")
+        .expect("the store was read");
+    let found: Vec<(String, String)> = results
+        .hits
+        .iter()
+        .map(|hit| {
+            (
+                hit.from
+                    .as_ref()
+                    .map(|from| from.address.clone())
+                    .unwrap_or_default(),
+                hit.subject.clone().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(results.total, 3, "{found:?}");
+    assert!(
+        found.iter().all(|(from, subject)| from == "ada@example.com"
+            && subject.to_lowercase().contains("invoice")),
+        "{found:?}"
+    );
+}
+
 #[test]
 fn focus_asks_the_host_for_conversations_then_their_passages() {
     let seed = SearchSeed::new();

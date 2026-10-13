@@ -612,6 +612,55 @@ fn generated() -> Vec<Thread> {
     threads
 }
 
+/// Screen 05's example, "invoices from ada last month": three invoices
+/// from Ada in the calendar month before the demo's today, on days 11, 16
+/// and 27 before its last (the design's 19, 14 and 3 August), so the
+/// example finds them whatever day the demo runs. Each says "invoices",
+/// the word the example keeps; none says Atlas or budget, or carries a
+/// label, so the screens' other searches and counts stay as they were.
+fn invoices() -> Vec<Thread> {
+    use chrono::{Datelike as _, Local};
+    let today = today().with_timezone(&Local);
+    let into_month = i64::from(today.day());
+    // The last day of last month, and the month before it.
+    let last = today - days(into_month);
+    let before = last - days(i64::from(last.day()));
+    let month = last.format("%Y-%m");
+    let invoice = |subject: String, folder, back: i64, text: &str| Thread {
+        subject,
+        folder,
+        label: None,
+        newest: days(into_month + back),
+        step: Duration::hours(7),
+        turns: turns(&[(Some(ADA), text)]),
+        parts: Vec::new(),
+        ask: None,
+        flagged: false,
+        answered: false,
+        unread: false,
+    };
+    vec![
+        invoice(
+            format!("Re: Invoice {month} (corrected)"),
+            "Receipts",
+            11,
+            "Fixed the PO number on both invoices, same total.",
+        ),
+        invoice(
+            format!("Invoice {month}, contractor hours"),
+            "INBOX",
+            16,
+            "Two invoices this month: 64 hours at the agreed rate, and the travel.",
+        ),
+        invoice(
+            format!("Invoice for {} (late)", before.format("%B")),
+            "Archive",
+            27,
+            "Late invoices again, sorry. This one covers three weeks.",
+        ),
+    ]
+}
+
 fn address(from: From) -> EmailAddress {
     match from {
         Some(person) => EmailAddress::new(Some(PEOPLE[person].0), PEOPLE[person].1),
@@ -672,6 +721,8 @@ pub async fn search_demo() -> (Store, AccountId) {
     let mut bodies: Vec<(MessageId, String)> = Vec::new();
     let mut threads = curated();
     threads.extend(generated());
+    // After the rest, so every other thread keeps its place and its ids.
+    threads.extend(invoices());
     for (index, thread) in threads.iter().enumerate() {
         let mailbox = folders
             .iter()
