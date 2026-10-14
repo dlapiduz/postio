@@ -497,7 +497,7 @@ pub fn held_mail_is_found_by_search_and_says_where_it_waits() {
             "held mail is in the inbox: {:?}",
             support::subjects(&window)
         );
-        // T140: the strip says how many rules there are, with g d.
+        // T140: the strip says how many rules there are, with g r.
         let chrome = window.chrome().expect("the strip");
         assert!(
             crate::settle_until(async || {
@@ -510,7 +510,7 @@ pub fn held_mail_is_found_by_search_and_says_where_it_waits() {
         assert!(
             support::texts(chrome.strip())
                 .iter()
-                .any(|text| text == "g d"),
+                .any(|text| text == "g r"),
             "with its key"
         );
         support::press(&window, "slash", gdk::ModifierType::empty());

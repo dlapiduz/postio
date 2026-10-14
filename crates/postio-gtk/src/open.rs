@@ -1564,7 +1564,7 @@ impl OpenMessage {
         });
     }
 
-    /// "Latest of 6 in this thread · [ earlier message", for a thread.
+    /// "Latest of 6 in this thread · p earlier message", for a thread.
     fn show_thread_chip(&self, messages: u32, latest: bool) {
         while let Some(child) = self.thread_chip.first_child() {
             self.thread_chip.remove(&child);

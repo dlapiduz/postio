@@ -1044,9 +1044,9 @@ pub fn a_hit_steps_the_results_and_its_own_thread() {
             reading.body_text()
         );
         let toward_middle = if reading.body_text().contains("Message 1") {
-            "bracketright"
+            "n"
         } else {
-            "bracketleft"
+            "p"
         };
         chain(&window, toward_middle);
         assert!(

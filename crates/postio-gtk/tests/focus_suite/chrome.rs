@@ -24,7 +24,7 @@ pub fn the_top_bar_and_the_header_strip_carry_each_control_and_its_key() {
         // The keys KEYS.md sets out, as the registry spells them.
         assert_eq!(key(CommandId::Search), "/");
         assert_eq!(key(CommandId::CommandPalette), "ctrl+k");
-        assert_eq!(key(CommandId::GoToFolders), "g o");
+        assert_eq!(key(CommandId::GoToFolders), "g l");
         assert_eq!(key(CommandId::ToggleHasAction), "!");
 
         // The top bar: compose, the command-bar field with its two keys, the

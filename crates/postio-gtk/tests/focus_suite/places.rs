@@ -98,7 +98,7 @@ pub fn flagged_and_snoozed_are_listed_and_open_their_views() {
 
         support::keys(&window, &["g", "l"]);
         let places = window.places().expect("g l opened the folders popover");
-        for (name, key) in [("Flagged", "g *"), ("Snoozed", "g z")] {
+        for (name, key) in [("Flagged", "g s"), ("Snoozed", "g b")] {
             assert!(
                 crate::settle_until(async || places.names().contains(&name.to_owned())).await,
                 "the popover never listed {name}: {:?}",

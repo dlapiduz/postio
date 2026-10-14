@@ -260,7 +260,7 @@ pub fn every_notice_action_carries_its_key() {
     assert_eq!(
         caps(),
         [
-            ("Unsubscribe", Some("U".to_owned())),
+            ("Unsubscribe", Some("M".to_owned())),
             ("Show images", Some("i i".to_owned())),
         ],
         "a notice's button without its key"
