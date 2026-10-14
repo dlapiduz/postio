@@ -3805,7 +3805,7 @@ impl Session {
         };
         // A command this platform does not offer is never available on it,
         // whatever the context: see `postio_core::registry::offered_on`.
-        if !postio_core::registry::offered_on(id, postio_config::paths::Platform::host()) {
+        if !postio_core::registry::offered_on(id, crate::PLATFORM) {
             return false;
         }
         postio_core::registry::reachable_in(
@@ -3989,7 +3989,10 @@ impl Session {
         match &*cached {
             Some((size, keymap)) if *size == commands => keymap.clone(),
             _ => {
-                let keymap = postio_core::Keymap::resolve(&self.keys.lock().expect("keys lock"));
+                let keymap = postio_core::Keymap::resolve_on(
+                    &self.keys.lock().expect("keys lock"),
+                    crate::PLATFORM,
+                );
                 *cached = Some((commands, keymap.clone()));
                 keymap
             }

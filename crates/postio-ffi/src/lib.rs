@@ -200,6 +200,15 @@ pub fn intercepted_commands() -> Vec<String> {
 /// `postio_core::registry::offered_on` keeps off the Mac.
 pub const FRONTEND: postio_core::Frontend = postio_core::Frontend::Focus;
 
+/// Which platform's design the boundary serves: Apple's, whatever host it
+/// was built on. Every platform question this crate asks -- what the
+/// registry offers, what `mod` means, the menu bar, Focus's
+/// [`postio_focus::Policy`] -- is asked about this and never about
+/// `Platform::host()`, so the Linux gate (ADR 0019 Q7) runs the composition
+/// the Mac runs. Asking the host there ran spec 010's results view with
+/// none of its keys, a combination nothing ships.
+pub const PLATFORM: postio_config::paths::Platform = postio_config::paths::Platform::Apple;
+
 uniffi::setup_scaffolding!();
 
 /// Set aside the store at `store_path` (or the usual path) and start a fresh

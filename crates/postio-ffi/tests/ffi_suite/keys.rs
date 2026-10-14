@@ -26,19 +26,19 @@ const NONE: ModifiersFfi = ModifiersFfi {
     command: false,
 };
 
-/// The primary accelerator, as this platform's keyboard delivers it.
+/// The primary accelerator, as the Mac's keyboard delivers it.
 ///
-/// `mod` in `[keys]`, expanded when the keymap is built: ⌘ on Apple and
-/// Control on freedesktop. One definition, because writing `command: true`
-/// inline is a test that passes on a Mac and fails on the runner -- which is
-/// exactly what it did, and exactly the mistake
+/// `mod` in `[keys]`, expanded when the keymap is built: ⌘ on Apple, which
+/// is the boundary's platform on every host (`postio_ffi::PLATFORM`). It
+/// once read the host's instead, so the Linux gate only ever pressed
+/// Control and never saw the Mac's composition -- the mistake
 /// `docs/notes/2026-09-05-the-gate-that-runs-cannot-see-the-platform-that-does-not.md`
-/// is about, made inside the change that added the note.
+/// is about.
 const PRIMARY: ModifiersFfi = ModifiersFfi {
-    control: !cfg!(target_os = "macos"),
+    control: false,
     option: false,
     shift: false,
-    command: cfg!(target_os = "macos"),
+    command: true,
 };
 
 /// A press of a key that types `character`.

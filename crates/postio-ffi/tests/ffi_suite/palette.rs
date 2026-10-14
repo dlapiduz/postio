@@ -139,19 +139,14 @@ fn the_binding_shown_is_the_one_in_force() {
 fn the_primary_modifier_reaches_the_sheet_as_this_platform_spells_it() {
     let session = session();
     // `mod+k` in the registry, and what the sheet prints has to be the key
-    // somebody can actually press. Reads the same on both platforms and
-    // asserts a different string on each, which is the point.
+    // somebody can actually press: the Mac's, on every host, because the
+    // boundary serves the Mac (`postio_ffi::PLATFORM`).
     let palette = session
         .cheat_sheet(UiContext::List)
         .into_iter()
         .find(|entry| entry.id == "command_palette")
         .expect("the palette can be opened from the list");
-    let expected = if cfg!(target_os = "macos") {
-        "cmd+k"
-    } else {
-        "ctrl+k"
-    };
-    assert_eq!(palette.binding.as_deref(), Some(expected));
+    assert_eq!(palette.binding.as_deref(), Some("cmd+k"));
     session.shutdown();
 }
 

@@ -14,7 +14,6 @@
 use std::sync::{Arc, Mutex};
 
 use postio_client::Client;
-use postio_config::paths::Platform;
 use postio_core::Event;
 use postio_focus::{Effect, FocusController, Input, Intent, Policy, Request, Ticket};
 use postio_model::listing::ThreadSummary;
@@ -460,7 +459,7 @@ impl FocusDriver {
         local: async_channel::Sender<UiEvent>,
     ) -> Arc<Self> {
         Arc::new(FocusDriver {
-            focus: Mutex::new(FocusController::new(Policy::for_platform(Platform::Apple))),
+            focus: Mutex::new(FocusController::new(Policy::for_platform(crate::PLATFORM))),
             list: Mutex::new(ListWindow::new()),
             client,
             runtime,

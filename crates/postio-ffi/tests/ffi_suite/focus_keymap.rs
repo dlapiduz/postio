@@ -4,10 +4,9 @@
 //! The controller decides (`postio-focus`'s `tests/keymap.rs`); these assert
 //! the Mac gets it through the session: `?` opens the key map as
 //! `FocusOpenKeyMap`, carrying the sheet `postio_ui::keymap_sheet` groups for
-//! this platform, and closes it again; a key rebound in `config.toml` is in
+//! the Mac, and closes it again; a key rebound in `config.toml` is in
 //! the sheet, the menu's bindings and the keyboard at once.
 
-use postio_config::paths::Platform;
 use postio_core::{CommandId, Frontend, Keymap};
 use postio_ffi::{KeyMapSheetFfi, Session, SessionOptions, SurfaceKindFfi, UiEvent};
 use postio_ui::keymap_sheet;
@@ -42,11 +41,12 @@ async fn question_mark_opens_the_key_map_and_closes_it() {
         "`?` opens the key map"
     );
     let sheet = sheet.expect("seen");
-    let keymap = Keymap::resolve(&Default::default());
-    let expected: Vec<&str> = keymap_sheet::key_map_on(&keymap, Frontend::Focus, Platform::host())
-        .iter()
-        .map(|(group, _)| group.title())
-        .collect();
+    let keymap = Keymap::resolve_on(&Default::default(), postio_ffi::PLATFORM);
+    let expected: Vec<&str> =
+        keymap_sheet::key_map_on(&keymap, Frontend::Focus, postio_ffi::PLATFORM)
+            .iter()
+            .map(|(group, _)| group.title())
+            .collect();
     assert_eq!(
         sheet
             .groups
@@ -59,7 +59,7 @@ async fn question_mark_opens_the_key_map_and_closes_it() {
     assert_eq!(sheet.title, keymap_sheet::TITLE);
     assert_eq!(
         sheet.rebind_footer,
-        keymap_sheet::rebind_footer(Platform::host())
+        keymap_sheet::rebind_footer(postio_ffi::PLATFORM)
     );
     assert!(
         sheet
@@ -125,9 +125,8 @@ async fn a_rebound_key_is_in_the_key_map_and_the_menu_at_once() {
     session.shutdown();
 }
 
-// A Mac's bindings, so asked of a Mac's session: elsewhere the session
-// resolves Freedesktop's keys, where ⌘ is not the primary modifier.
-#[cfg(target_os = "macos")]
+// A Mac's bindings, which the session resolves on every host
+// (`postio_ffi::PLATFORM`), so the Linux gate asks it too.
 #[test]
 fn command_w_does_not_quit_on_the_mac() {
     // `quit`'s alternate `mod+w` is GTK's (spec 007 T216: one window, so

@@ -160,7 +160,7 @@ fn the_filtering_pane_says_what_gtk_s_says() {
     let shared = postio_ui::filtering::page(
         &config.focus,
         Some(186),
-        &postio_core::Keymap::resolve(&config.keys),
+        &postio_core::Keymap::resolve_on(&config.keys, postio_ffi::PLATFORM),
     );
     assert!(page.on);
     assert_eq!(page.state, shared.state);

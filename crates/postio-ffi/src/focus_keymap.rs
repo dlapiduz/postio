@@ -60,7 +60,7 @@ pub struct KeyMapRowFfi {
 /// the platform does not offer, with the words for this platform's file.
 pub(crate) fn sheet(keymap: &postio_core::Keymap) -> KeyMapSheetFfi {
     use postio_ui::keymap_sheet;
-    let platform = postio_config::paths::Platform::host();
+    let platform = crate::PLATFORM;
     let map = keymap_sheet::key_map_on(keymap, crate::FRONTEND, platform);
     let sizes: Vec<usize> = map.iter().map(|(_, rows)| rows.len()).collect();
     KeyMapSheetFfi {

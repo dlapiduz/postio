@@ -119,7 +119,7 @@ fn the_free_function_and_the_session_method_agree() {
 /// three-pane apps answer would otherwise be a menu item that does nothing.
 #[test]
 fn the_menus_hold_what_focus_offers_here_and_nothing_else() {
-    let platform = postio_config::paths::Platform::host();
+    let platform = postio_ffi::PLATFORM;
     for spec in postio_ffi::commands() {
         let id: postio_core::CommandId = spec.id.parse().expect("a registry id");
         let offered = postio_core::registry::get(id)
