@@ -188,7 +188,11 @@ async fn typing_quickly_completes_only_the_searches_still_wanted() {
     }
     let mut counts = Vec::new();
     let _ = heard(&session, 3, |event| {
+        // The empty panel can still be redrawn after the keystrokes are
+        // sent -- a read it asked for landing before they reach Focus -- and
+        // that answers no words.
         if let UiEvent::FocusDropdown { view } = event
+            && view.state != DropdownStateFfi::Empty
             && let Some(count) = &view.footer_count
         {
             counts.push(count.clone());
