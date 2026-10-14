@@ -1856,7 +1856,7 @@ impl Session {
                 wired: host.wired(),
                 _focus: engage_focus(&host, &config.focus, &source),
                 focus_config: Mutex::new(config.focus.clone()),
-            notices: Mutex::new(crate::NoticesFfi::from(&sync_config)),
+                notices: Mutex::new(crate::NoticesFfi::from(&sync_config)),
                 _host: host,
                 config_watch: Mutex::new(None),
                 focus_list: crate::focus_list::FocusDriver::new(

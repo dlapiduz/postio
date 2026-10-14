@@ -7,9 +7,10 @@
 //! is a log the lock screen reads out. The frontend's `MailNotifier` is a
 //! shim over this, and `UNUserNotificationCenter` is the only thing it adds.
 //!
-//! The role gate (`[sync] notify_roles`) is not applied here yet: the
-//! boundary does not carry `[sync]` across, so the macOS app notifies for
-//! every folder as it did before this function existed.
+//! The master switch (`[sync] notify`) crosses as `Session::notices` and
+//! the frontend applies it; the role gate (`[sync] notify_roles`) is not
+//! applied here yet, so the macOS app notifies for every folder as it did
+//! before this function existed.
 
 use postio_model::{MailboxId, MessageId};
 use postio_ui::notify::{self, Attention, Decision, Suppressed, Wording};
