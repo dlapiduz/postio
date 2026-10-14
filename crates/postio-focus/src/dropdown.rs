@@ -703,7 +703,7 @@ fn show_all_section(landed: &Landed, typed: Option<&str>, keymap: &Keymap) -> Dr
 }
 
 /// Where in `text` a word begins with `prefix`, case aside: the find
-/// highlight while a word is half typed ("[At]las").
+/// highlight while a word is half typed ("\[At\]las").
 pub(crate) fn prefix_marks(text: &str, prefix: &str) -> Vec<std::ops::Range<usize>> {
     let prefix: Vec<char> = prefix.chars().flat_map(char::to_lowercase).collect();
     if prefix.is_empty() {

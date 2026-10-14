@@ -441,7 +441,7 @@ pub struct PopoverView {
 /// One of the Date popover's presets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatePresetView {
-    /// What [`Input::DatePreset`](crate::Input::DatePreset) names it by.
+    /// What [`Input::DatePreset`] names it by.
     pub token: u64,
     /// "Last 30 days", "Custom…".
     pub label: String,

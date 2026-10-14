@@ -1,9 +1,9 @@
 //! The frame an extraction crosses a process boundary in (spec 010 D28).
 //!
 //! The indexer does not call [`extract`](crate::extract) in its own
-//! process: it starts `postio-extract-helper`, writes one [request] to its
-//! stdin and reads one [reply] from its stdout. This is both halves of
-//! that exchange, so the writer and the reader are one piece of code and
+//! process: it starts `postio-extract-helper`, writes one [`Request`] to
+//! its stdin and reads one reply ([`read_reply`]) from its stdout. This is
+//! both halves of that exchange, so the writer and the reader are one piece of code and
 //! cannot drift.
 //!
 //! # The format
