@@ -10,7 +10,7 @@
 # again, the line still there, to be sent.
 #
 # The words are the controller's: GTK's composer says "Draft saved to
-# Drafts (g t)" until it adopts slice 7 (`body-typing-is-not-eaten.toml`
+# Drafts (g d)" until it adopts slice 7 (`body-typing-is-not-eaten.toml`
 # pins those meanwhile), so the toast is the frame's to judge here rather
 # than a `notice.text` check.
 apps   = ["focus"]
