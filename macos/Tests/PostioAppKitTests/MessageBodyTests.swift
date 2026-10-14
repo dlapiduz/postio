@@ -60,6 +60,22 @@ struct MessageBodyTests {
         #expect(text as? String == "Please leave comments by Wednesday")
     }
 
+    @Test func waitingForThePaintEndsWithThePagesScriptOff() async throws {
+        // The body stays out of sight until this returns, so it must return:
+        // in a window, after two frames; out of one, after its bound.
+        let (view, policy) = try await loaded("<html><body><p>hello</p></body></html>")
+        defer { withExtendedLifetime(policy) {} }
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 400), styleMask: [.borderless],
+            backing: .buffered, defer: false)
+        window.contentView = view
+        let started = ContinuousClock.now
+        try await MessageBodyMeasure.painted(view)
+        #expect(ContinuousClock.now - started < .seconds(1))
+        window.contentView = nil
+        try await MessageBodyMeasure.painted(view)
+    }
+
     @Test func aSentenceTheBodyDoesNotHoldMarksNothing() async throws {
         let (view, policy) = try await loaded("<html><body><p>Nothing to see.</p></body></html>")
         defer { withExtendedLifetime(policy) {} }

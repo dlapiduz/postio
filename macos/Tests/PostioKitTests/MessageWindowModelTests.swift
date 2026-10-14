@@ -25,6 +25,9 @@ struct MessageWindowModelTests {
         var later: Int64?
         var shown: TreatmentFfi = .paper
         var raw: Result<Data, Error> = .success(Data("Received: by example.com\r\n".utf8))
+        /// When set, every document read waits for it: a body still being
+        /// read while its chrome is in.
+        var hold: DispatchSemaphore?
 
         var views: [(Int64, UInt32, UInt32)] { lock.withLock { _views } }
         var documents: [(Int64, TreatmentFfi?, Int32)] { lock.withLock { _documents } }
@@ -38,7 +41,8 @@ struct MessageWindowModelTests {
             message: Int64, remote: RemoteImagesFfi, chosen: TreatmentFfi?, mainWidth: Int32
         ) -> FocusReaderDocumentFfi {
             lock.withLock { _documents.append((message, chosen, mainWidth)) }
-            return MessageWindowModelTests.document(shown: chosen ?? shown)
+            if let hold { hold.wait() }
+            return MessageWindowModelTests.document(shown: chosen ?? shown, of: message)
         }
 
         func rawSource(_ message: Int64) throws -> Data { try raw.get() }
@@ -53,9 +57,9 @@ struct MessageWindowModelTests {
             more: nil, attachments: [])
     }
 
-    nonisolated static func document(shown: TreatmentFfi) -> FocusReaderDocumentFfi {
+    nonisolated static func document(shown: TreatmentFfi, of message: Int64 = 0) -> FocusReaderDocumentFfi {
         FocusReaderDocumentFfi(
-            html: "<p>hello</p>", notice: nil, caveat: nil, treatmentShown: shown,
+            html: "<p>\(message)</p>", notice: nil, caveat: nil, treatmentShown: shown,
             treatmentClassified: .paper, renderMode: nil, sender: "news@example.com",
             senderChoice: nil, windowWidth: 720, columnWidth: shown == .paper ? 640 : 560,
             foldsIntoMore: false, paperFloor: 0.85)
@@ -97,6 +101,53 @@ struct MessageWindowModelTests {
         #expect(
             source.documents.last?.2 == 1440,
             "the window keeps the width it opened with, so j never resizes it")
+    }
+
+    /// Wait, a little at a time, for `done`.
+    static func until(_ done: () -> Bool) async throws {
+        for _ in 0..<400 where !done() {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    @Test func aStepKeepsTheMessageWholeUntilTheNextBodyIsRead() async throws {
+        // A header over the last message's body, or over none, is what the
+        // window flickered through on every `j`.
+        let source = Source()
+        let (model, _) = Self.model(source)
+        model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
+        await model.settled()
+        let hold = DispatchSemaphore(value: 0)
+        source.hold = hold
+        model.open(message: 8, index: 3, total: 9, mainWidth: 1440)
+        try await Self.until { source.views.contains { $0.0 == 8 } }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(model.view?.message == 7, "no header over a body not yet read")
+        #expect(model.document?.html == "<p>7</p>")
+        hold.signal()
+        source.hold = nil
+        try await Self.until { model.incoming != nil }
+        #expect(model.incoming?.message == 8, "read whole, and drawn out of sight")
+        #expect(model.view?.message == 7, "nor until that body is drawn")
+        model.bodyDrawn(7)
+        #expect(model.displayed == 7, "only the incoming body puts itself on screen")
+        model.bodyDrawn(8)
+        #expect(model.displayed == 8 && model.incoming == nil)
+        #expect(model.view?.message == 8 && model.document?.html == "<p>8</p>")
+        #expect(!model.keepsScroll, "a new message is read from its top")
+    }
+
+    @Test func aBodyThatNeverSaysItIsDrawnIsShownAnyway() async throws {
+        let source = Source()
+        let (model, _) = Self.model(source)
+        model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
+        await model.settled()
+        #expect(model.displayed == 7, "a fresh window has nothing to keep, so waits for nothing")
+        let started = ContinuousClock.now
+        model.open(message: 8, index: 3, total: 9, mainWidth: 1440)
+        await model.settled()
+        #expect(model.displayed == 8)
+        #expect(ContinuousClock.now - started >= MessageWindowModel.drawPatience)
     }
 
     @Test func theSameMessageAgainReadsNothing() async {
