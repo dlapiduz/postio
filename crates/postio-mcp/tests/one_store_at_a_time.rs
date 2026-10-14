@@ -89,8 +89,11 @@ fn the_store_is_held_only_while_a_call_is_answered() {
     let directory = tempfile::tempdir().expect("a directory");
     let store = directory.path().join("postio.db");
     let config = directory.path().join("config.toml");
-    std::fs::write(&config, "[mcp.accounts.\"ada@example.com\"]\nmailboxes = [\"*\"]\n")
-        .expect("the config");
+    std::fs::write(
+        &config,
+        "[mcp.accounts.\"ada@example.com\"]\nmailboxes = [\"*\"]\n",
+    )
+    .expect("the config");
     let hex = postio_storage::key::StoreKey::generate()
         .to_hex()
         .as_str()

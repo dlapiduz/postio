@@ -34,7 +34,9 @@ fn a_version_it_does_not_speak_is_answered_with_one_it_does() {
         "initialize",
         json!({"protocolVersion": "1999-01-01", "capabilities": {}, "clientInfo": {"name": "x", "version": "0"}}),
     );
-    let offered = answer["result"]["protocolVersion"].as_str().expect("a version");
+    let offered = answer["result"]["protocolVersion"]
+        .as_str()
+        .expect("a version");
     assert_ne!(offered, "1999-01-01");
     assert!(offered.starts_with("20"), "{answer}");
 }

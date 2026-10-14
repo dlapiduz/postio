@@ -372,7 +372,9 @@ impl Shared {
     }
 
     fn path(&self, mailbox: MailboxId) -> Option<&str> {
-        self.folders.get(&mailbox).map(|mailbox| mailbox.path.as_str())
+        self.folders
+            .get(&mailbox)
+            .map(|mailbox| mailbox.path.as_str())
     }
 }
 
@@ -603,7 +605,10 @@ async fn create_draft(
         Some(_) => return Err(Refused::Arguments("`reply_all` must be true or false.")),
     };
     let account = integer(arguments, "account")?.map(AccountId::new);
-    let source = match (integer(arguments, "reply_to")?, integer(arguments, "forward")?) {
+    let source = match (
+        integer(arguments, "reply_to")?,
+        integer(arguments, "forward")?,
+    ) {
         (Some(_), Some(_)) => {
             return Err(Refused::Arguments(
                 "A draft replies to a message or forwards one, not both.",

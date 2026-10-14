@@ -84,8 +84,10 @@ impl Scope {
         };
         match postio_config::Config::load_from_path(path) {
             Ok(config) => Scope::from_config(&config.mcp),
-            Err(error) => {
-                tracing::warn!(%error, "config.toml did not load; sharing nothing with the agent");
+            Err(_) => {
+                // Not the error itself: a parse error quotes the line, and the
+                // line here may be an address.
+                tracing::warn!("config.toml did not load; sharing nothing with the agent");
                 Scope::none()
             }
         }
@@ -143,7 +145,8 @@ mod tests {
 
     #[test]
     fn only_the_named_folders_are_shared() {
-        let scope = scope("[mcp.accounts.\"ada@example.com\"]\nmailboxes = [\"inbox\", \"Receipts\"]\n");
+        let scope =
+            scope("[mcp.accounts.\"ada@example.com\"]\nmailboxes = [\"inbox\", \"Receipts\"]\n");
         let folders = scope.account("ada@example.com").expect("shared");
         assert!(folders.allows("INBOX"));
         assert!(folders.allows("Receipts"));

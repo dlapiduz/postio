@@ -40,8 +40,18 @@ fn no_tool_sends_moves_deletes_archives_or_marks_mail() {
     let mut world = World::new(INBOX_ONLY);
     for name in names(&mut world) {
         for verb in [
-            "send", "forward", "move", "delete", "archive", "trash", "mark", "flag", "label",
-            "reply", "unsubscribe", "spam",
+            "send",
+            "forward",
+            "move",
+            "delete",
+            "archive",
+            "trash",
+            "mark",
+            "flag",
+            "label",
+            "reply",
+            "unsubscribe",
+            "spam",
         ] {
             assert!(!name.contains(verb), "`{name}` is a {verb} verb");
         }
@@ -53,7 +63,10 @@ fn every_tool_says_what_it_takes() {
     let mut world = World::new(INBOX_ONLY);
     let answer = world.request("tools/list", json!({}));
     for tool in answer["result"]["tools"].as_array().expect("tools") {
-        assert!(tool["description"].as_str().is_some_and(|d| !d.is_empty()), "{tool}");
+        assert!(
+            tool["description"].as_str().is_some_and(|d| !d.is_empty()),
+            "{tool}"
+        );
         assert_eq!(tool["inputSchema"]["type"], "object", "{tool}");
     }
 }
@@ -78,7 +91,14 @@ fn the_tool_list_is_the_same_whatever_the_mailbox_holds() {
     assert_eq!(before, elsewhere);
 
     let text = before.to_string();
-    for mail in ["Atlas", "atlas budget", "Quarterly", "grace@example.org", ADA, "Newsletter"] {
+    for mail in [
+        "Atlas",
+        "atlas budget",
+        "Quarterly",
+        "grace@example.org",
+        ADA,
+        "Newsletter",
+    ] {
         assert!(!text.contains(mail), "the tool list mentions `{mail}`");
     }
 }

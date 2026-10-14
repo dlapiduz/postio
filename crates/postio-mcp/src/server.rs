@@ -46,13 +46,11 @@ impl<B: Backend> Server<B> {
         };
         let id = message.get("id").cloned();
         let method = message.get("method").and_then(Value::as_str);
-        let (Some(method), true) = (method, message.get("jsonrpc") == Some(&json!("2.0")))
-        else {
+        let (Some(method), true) = (method, message.get("jsonrpc") == Some(&json!("2.0"))) else {
             // A response to something this server never asks, or not
             // JSON-RPC at all.
-            return id.map(|id| {
-                error(id, INVALID_REQUEST, "Not a JSON-RPC 2.0 request.").to_string()
-            });
+            return id
+                .map(|id| error(id, INVALID_REQUEST, "Not a JSON-RPC 2.0 request.").to_string());
         };
         // A notification -- `notifications/initialized`, a cancellation --
         // asks for nothing back, and none needs doing.
@@ -90,7 +88,8 @@ impl<B: Backend> Server<B> {
         // `[mcp]` has taken it out from the next call on (ADR 0010 Q6).
         let scope = Scope::load(self.config.as_deref());
         let answer = tools::call(tool, &arguments, &mut self.backend, &scope);
-        self.audit.record(tool.name(), &answer.access, answer.outcome);
+        self.audit
+            .record(tool.name(), &answer.access, answer.outcome);
         Ok(answer.result())
     }
 }

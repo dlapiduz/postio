@@ -28,7 +28,10 @@ fn reading_instructions_in_a_message_causes_no_action() {
     let notice = read.notice();
     assert!(notice.contains("untrusted"), "{notice}");
     for instruction in ["send_mail", "ledger@billing.example", "ignore all previous"] {
-        assert!(!notice.contains(instruction), "the server's own words carry `{instruction}`");
+        assert!(
+            !notice.contains(instruction),
+            "the server's own words carry `{instruction}`"
+        );
     }
 
     // And nothing happened: the tool it names does not exist, and calling

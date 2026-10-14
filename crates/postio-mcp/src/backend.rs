@@ -29,7 +29,9 @@ pub struct Lease {
 impl Lease {
     /// The client a call reads and writes through.
     pub fn client(&self) -> &Client {
-        self.client.as_ref().expect("held until the lease is dropped")
+        self.client
+            .as_ref()
+            .expect("held until the lease is dropped")
     }
 }
 
@@ -84,7 +86,7 @@ impl Backend for Installed {
             Arc::clone(&self.secrets),
             &|_| {},
         )
-            .map_err(|refusal| refusal.to_string())?;
+        .map_err(|refusal| refusal.to_string())?;
         let client = host.connect(ClientKind::Mcp);
         Ok(Lease {
             client: Some(client),

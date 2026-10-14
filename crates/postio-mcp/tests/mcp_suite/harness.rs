@@ -16,8 +16,7 @@ use postio_mcp::{Audit, Backend, Held, Lease, Server};
 use postio_model::{AccountId, EmailAddress, MailboxId, Message, MessageId};
 use postio_storage::Store;
 use postio_storage::repository::{
-    AccountRepository, MessageRepository, OperationQueueRepository, StoredBody,
-    ThreadingRepository,
+    AccountRepository, MessageRepository, OperationQueueRepository, StoredBody, ThreadingRepository,
 };
 use postio_storage::test_support;
 use serde_json::{Value, json};
@@ -89,10 +88,8 @@ impl World {
             let (account, inbox) = test_support::account_with_inbox(&connection).await;
             let archive = test_support::mailbox(&connection, &account, "Archive").await;
             test_support::mailbox(&connection, &account, "Drafts").await;
-            let mut other = postio_model::Account::new(
-                "Other",
-                EmailAddress::new(Some("Other Person"), OTHER),
-            );
+            let mut other =
+                postio_model::Account::new("Other", EmailAddress::new(Some("Other Person"), OTHER));
             other.incoming.host = "imap.example.org".to_owned();
             other.outgoing.host = "smtp.example.org".to_owned();
             AccountRepository::new(&connection)
@@ -157,9 +154,7 @@ impl World {
             message.subject = Some("Atlas budget".into());
             message.from = vec![EmailAddress::new(Some("Grace Hopper"), "grace@example.org")];
             message.to = vec![EmailAddress::new(Some("Test User"), ADA)];
-            message.body.text = Some(format!(
-                "The atlas budget is due Friday. {COMMON}\n\nGrace"
-            ));
+            message.body.text = Some(format!("The atlas budget is due Friday. {COMMON}\n\nGrace"));
         });
         world.archived = world.message(ada, archive, |message| {
             message.subject = Some("Quarterly numbers".into());

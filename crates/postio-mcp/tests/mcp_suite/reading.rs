@@ -25,7 +25,10 @@ fn a_search_finds_mail_in_the_query_language() {
 #[test]
 fn a_search_returns_no_more_than_the_limit() {
     let mut world = World::new(EVERY_FOLDER);
-    let result = world.call("search_mail", json!({"query": crate::harness::COMMON, "limit": 1}));
+    let result = world.call(
+        "search_mail",
+        json!({"query": crate::harness::COMMON, "limit": 1}),
+    );
     assert_eq!(result.mail()["messages"].as_array().expect("rows").len(), 1);
 }
 
@@ -53,8 +56,19 @@ fn html_reads_as_text_with_no_script_markup_or_remote_reference() {
     let body = result.mail()["body"].as_str().expect("a body").to_owned();
     assert!(body.contains("Hello reader"), "{body}");
     assert!(body.contains("Read on."), "{body}");
-    for never in ["<script", "steal", "cookie", "tracker.example.net", "<p", "<b>", "onclick"] {
-        assert!(!result.all_text().contains(never), "`{never}` came back: {body}");
+    for never in [
+        "<script",
+        "steal",
+        "cookie",
+        "tracker.example.net",
+        "<p",
+        "<b>",
+        "onclick",
+    ] {
+        assert!(
+            !result.all_text().contains(never),
+            "`{never}` came back: {body}"
+        );
     }
 }
 
@@ -67,17 +81,25 @@ fn a_thread_reads_as_its_shared_messages_oldest_first() {
     };
     let result = world.call("read_thread", json!({"thread": thread}));
     assert!(!result.is_error(), "{}", result.0);
-    let messages = result.mail()["messages"].as_array().expect("messages").clone();
+    let messages = result.mail()["messages"]
+        .as_array()
+        .expect("messages")
+        .clone();
     assert_eq!(messages.len(), 1, "{messages:?}");
     assert_eq!(messages[0]["message"], json!(world.budget.get()));
-    assert!(messages[0]["body"].as_str().is_some_and(|body| body.contains("atlas budget")));
+    assert!(
+        messages[0]["body"]
+            .as_str()
+            .is_some_and(|body| body.contains("atlas budget"))
+    );
 }
 
 #[test]
 fn a_thread_in_a_folder_nobody_shared_is_refused() {
     let mut world = World::new(EVERY_FOLDER);
-    let thread = world.call("read_message", json!({"message": world.archived.get()})).mail()
-        ["thread"]
+    let thread = world
+        .call("read_message", json!({"message": world.archived.get()}))
+        .mail()["thread"]
         .as_i64()
         .expect("a thread");
     world.share(crate::harness::INBOX_ONLY);

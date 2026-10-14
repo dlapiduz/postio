@@ -37,7 +37,11 @@ fn a_new_draft_is_saved_and_nothing_is_sent() {
         "{draft:?}"
     );
     assert_eq!(result.mail()["draft"], json!(draft.id.get()));
-    assert!(result.notice().contains("not been sent"), "{}", result.notice());
+    assert!(
+        result.notice().contains("not been sent"),
+        "{}",
+        result.notice()
+    );
     assert_eq!(sends(&world), 0);
     // The queue is read for real: the draft's copy for the server's Drafts
     // folder is in it, as the composer's autosave puts one there.
@@ -67,8 +71,12 @@ fn a_reply_goes_to_the_sender_and_quotes_the_original() {
     assert_eq!(draft.to[0].address, "grace@example.org");
     assert_eq!(draft.subject, "Re: Atlas budget");
     let text = draft.body.text.as_deref().expect("a text body");
-    let own = text.find("Friday works for me.").expect("the agent's words");
-    let quoted = text.find("> The atlas budget is due Friday.").expect("the quote");
+    let own = text
+        .find("Friday works for me.")
+        .expect("the agent's words");
+    let quoted = text
+        .find("> The atlas budget is due Friday.")
+        .expect("the quote");
     assert!(own < quoted, "{text}");
     assert_eq!(sends(&world), 0);
 }
@@ -139,7 +147,10 @@ fn a_forward_carries_the_original_below_the_agent_s_words() {
 #[test]
 fn an_address_that_is_not_one_is_refused() {
     let mut world = World::new(INBOX_ONLY);
-    let result = world.call("create_draft", json!({"to": ["not an address"], "body": "Hi"}));
+    let result = world.call(
+        "create_draft",
+        json!({"to": ["not an address"], "body": "Hi"}),
+    );
     assert!(result.is_error(), "{}", result.0);
     assert!(world.drafts().is_empty());
 }

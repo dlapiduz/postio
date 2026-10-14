@@ -63,10 +63,7 @@ impl Audit {
     /// Where this installation keeps it: beside the store, as
     /// `mcp-access.log`.
     pub fn installed() -> Audit {
-        Audit::to_file(
-            postio_session::paths::store_path()
-                .with_file_name("mcp-access.log"),
-        )
+        Audit::to_file(postio_session::paths::store_path().with_file_name("mcp-access.log"))
     }
 
     /// The file, when there is one.
@@ -109,7 +106,7 @@ impl Audit {
             writeln!(file, "{line}")
         })();
         if let Err(error) = written {
-            tracing::warn!(%error, "the agent access log could not be written");
+            tracing::warn!(%error, "the agent access log could not be written: {error}");
         }
     }
 }

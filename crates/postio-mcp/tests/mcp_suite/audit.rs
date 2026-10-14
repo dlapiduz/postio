@@ -22,7 +22,10 @@ fn every_call_is_logged_with_what_it_returned_by_id() {
     assert_eq!(lines[2]["outcome"], "refused");
     assert_eq!(lines[2]["messages"], json!([]));
     for line in &lines {
-        assert!(line["at"].as_str().is_some_and(|at| at.contains('T')), "{line}");
+        assert!(
+            line["at"].as_str().is_some_and(|at| at.contains('T')),
+            "{line}"
+        );
     }
 }
 
@@ -36,10 +39,21 @@ fn the_log_never_holds_what_the_mail_or_the_query_said() {
         json!({"to": ["grace@example.org"], "subject": "Lunch", "body": "Thursday?"}),
     );
     let text = std::fs::read_to_string(&world.audit).expect("the log");
-    for content in ["atlas", "Atlas", "grace@example.org", "Lunch", "Thursday", "test@example.com"] {
+    for content in [
+        "atlas",
+        "Atlas",
+        "grace@example.org",
+        "Lunch",
+        "Thursday",
+        "test@example.com",
+    ] {
         assert!(!text.contains(content), "the log holds `{content}`: {text}");
     }
     let lines = world.audit_lines();
     assert_eq!(lines[2]["tool"], "create_draft");
-    assert_eq!(lines[2]["drafts"].as_array().map(Vec::len), Some(1), "{text}");
+    assert_eq!(
+        lines[2]["drafts"].as_array().map(Vec::len),
+        Some(1),
+        "{text}"
+    );
 }

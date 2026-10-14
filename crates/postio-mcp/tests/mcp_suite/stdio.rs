@@ -11,8 +11,11 @@ use serde_json::{Value, json};
 fn the_binary_speaks_mcp_on_stdin_and_stdout() {
     let directory = tempfile::tempdir().expect("a directory");
     let config = directory.path().join("config.toml");
-    std::fs::write(&config, "[mcp.accounts.\"test@example.com\"]\nmailboxes = [\"*\"]\n")
-        .expect("the config");
+    std::fs::write(
+        &config,
+        "[mcp.accounts.\"test@example.com\"]\nmailboxes = [\"*\"]\n",
+    )
+    .expect("the config");
     let audit = directory.path().join("access.log");
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_postio-mcp"))
@@ -40,19 +43,29 @@ fn the_binary_speaks_mcp_on_stdin_and_stdout() {
         "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "suite", "version": "0"}},
     }))
     .expect("answered");
-    assert_eq!(initialized["result"]["serverInfo"]["name"], "postio", "{initialized}");
+    assert_eq!(
+        initialized["result"]["serverInfo"]["name"], "postio",
+        "{initialized}"
+    );
     assert_eq!(
         ask(json!({"jsonrpc": "2.0", "method": "notifications/initialized"})),
         None
     );
     let tools = ask(json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})).expect("answered");
-    assert_eq!(tools["result"]["tools"].as_array().map(Vec::len), Some(6), "{tools}");
+    assert_eq!(
+        tools["result"]["tools"].as_array().map(Vec::len),
+        Some(6),
+        "{tools}"
+    );
     let accounts = ask(json!({
         "jsonrpc": "2.0", "id": 3, "method": "tools/call",
         "params": {"name": "list_accounts", "arguments": {}},
     }))
     .expect("answered");
-    assert!(accounts.to_string().contains("test@example.com"), "{accounts}");
+    assert!(
+        accounts.to_string().contains("test@example.com"),
+        "{accounts}"
+    );
 
     drop(ask);
     let status = child.wait().expect("it exits when stdin closes");

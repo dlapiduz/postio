@@ -112,9 +112,7 @@ fn main() -> ExitCode {
         #[cfg(not(feature = "demo"))]
         Some(_) => unreachable!("--demo is refused without the demo feature"),
         None => {
-            let audit = options
-                .audit
-                .map_or_else(Audit::installed, Audit::to_file);
+            let audit = options.audit.map_or_else(Audit::installed, Audit::to_file);
             let backend = Installed::new(
                 config.clone(),
                 Arc::new(postio_account::secret::KeyringSecretStore::default()),
@@ -126,7 +124,7 @@ fn main() -> ExitCode {
     match served {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            tracing::error!(%error, "stdin or stdout failed");
+            tracing::error!(%error, "stdin or stdout failed: {error}");
             ExitCode::FAILURE
         }
     }
