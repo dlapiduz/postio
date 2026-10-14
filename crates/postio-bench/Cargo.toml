@@ -101,5 +101,11 @@ harness = false
 name = "search_focus"
 harness = false
 
+# What the metadata and body indexes weigh on disk against the text they
+# were built from (#407, #1466). It prints and asserts nothing.
+[[bench]]
+name = "body_index_size"
+harness = false
+
 [dependencies]
 postio-workspace-hack.workspace = true

@@ -32,6 +32,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 # The shared dial (#1249). `scripts/lib`, not beside this file, because CI
@@ -161,6 +162,60 @@ def main() -> int:
                 "the compositor was started for it",
                 mutter_calls(stub_dir) == 1,
                 "mutter was never launched for a test binary",
+            )
+
+            # ── the watchdog waits on the child, not on a clock (#272) ─────
+            #
+            # The WebKit-touching suites run under a watchdog. It used to
+            # poll the child with `sleep 1`, so every one of them ended on
+            # the next whole second: a binary that took 0.1 s cost 1 s, and
+            # nextest runs `focus_suite` one process per test.
+            #
+            # The compositor is already up from the cases above, so what is
+            # timed here is the runner's own overhead and not mutter's start.
+            watched = stub_dir / "focus_suite-0123456789abcdef"
+            watched.write_text(
+                "#!/usr/bin/env bash\nsleep 0.1\nexit \"${STUB_EXIT:-0}\"\n"
+            )
+            watched.chmod(0o755)
+            started = time.monotonic()
+            result = run_full(watched, stub_dir, runtime_dir)
+            elapsed = time.monotonic() - started
+            case(
+                "a watched binary ends when it ends, not on the next second",
+                result.returncode == 0 and elapsed < 0.9,
+                f"a 0.1 s binary took {elapsed:.2f} s under the watchdog "
+                f"(exit {result.returncode}); it is polling on a whole-second "
+                "clock",
+            )
+
+            result = run_full(watched, stub_dir, runtime_dir, STUB_EXIT="3")
+            case(
+                "a watched binary's exit status comes back unchanged",
+                result.returncode == 3,
+                f"exit {result.returncode}, expected 3",
+            )
+
+            # A hang still dies at the deadline, says so, and exits 124.
+            hung = stub_dir / "e2e-0123456789abcdef"
+            hung.write_text("#!/usr/bin/env bash\nsleep 30 &\nwait\n")
+            hung.chmod(0o755)
+            started = time.monotonic()
+            result = run_full(
+                hung, stub_dir, runtime_dir,
+                POSTIO_TEST_WATCHDOG="1", POSTIO_TEST_PATIENCE="1",
+            )
+            elapsed = time.monotonic() - started
+            case(
+                "a hung binary is still killed at the deadline, with 124",
+                result.returncode == 124 and elapsed < 10,
+                f"exit {result.returncode} after {elapsed:.1f} s; expected "
+                "124 shortly after the 1 s limit",
+            )
+            case(
+                "and the watchdog says why it killed it",
+                "exceeded 1s" in result.stderr,
+                f"stderr was {result.stderr!r}",
             )
 
             out = run(test_bin, stub_dir, runtime_dir, POSTIO_HEADLESS="0")

@@ -263,25 +263,49 @@ e2e-*|widgets_suite-*|focus_suite-*)
     setsid "$@" &
     GROUP=$!
     trap 'kill -9 -"$GROUP" 2>/dev/null' INT TERM
-    START=$(date +%s)
-    while kill -0 "$GROUP" 2>/dev/null; do
-        if [ $(( $(date +%s) - START )) -gt "$LIMIT" ]; then
-            {
-                echo "postio watchdog: $(basename "$1") exceeded ${LIMIT}s; process tree at kill:"
-                for pid in $(pgrep -g "$GROUP"); do
-                    echo "  pid $pid $(cat /proc/$pid/comm 2>/dev/null): state=$(awk '{print $3}' /proc/$pid/stat 2>/dev/null) wchan=$(cat /proc/$pid/wchan 2>/dev/null)"
-                    for t in /proc/$pid/task/*; do
-                        echo "    thread $(basename "$t"): state=$(awk '{print $3}' "$t/stat" 2>/dev/null) wchan=$(cat "$t/wchan" 2>/dev/null)"
-                    done
+    # The deadline is a timer beside the child, not a loop polling it. The
+    # loop slept a whole second between looks, so every watched binary ended
+    # on the next whole second -- a 0.1 s test cost 1 s, and nextest runs
+    # these suites one process per test. Now `wait` returns the moment the
+    # child does, and the timer is what fires on a hang.
+    #
+    # The timer counts whole-second sleeps rather than making one long one,
+    # and each sleep has its descriptors closed: SIGKILL is the only way to
+    # stop the timer that cannot race a trap it has not installed yet, and it
+    # leaves the current sleep orphaned. That orphan lives under a second and
+    # holds none of cargo's pipes. The marker is how this shell learns the
+    # timer, not the test, ended the run: 137 alone cannot tell.
+    FIRED="${TMPDIR:-/tmp}/postio-watchdog.$$"
+    rm -f "$FIRED"
+    (
+        for _ in $(seq 1 "$LIMIT"); do sleep 1 </dev/null >/dev/null 2>&1; done
+        {
+            echo "postio watchdog: $(basename "$1") exceeded ${LIMIT}s; process tree at kill:"
+            for pid in $(pgrep -g "$GROUP"); do
+                echo "  pid $pid $(cat /proc/$pid/comm 2>/dev/null): state=$(awk '{print $3}' /proc/$pid/stat 2>/dev/null) wchan=$(cat /proc/$pid/wchan 2>/dev/null)"
+                for t in /proc/$pid/task/*; do
+                    echo "    thread $(basename "$t"): state=$(awk '{print $3}' "$t/stat" 2>/dev/null) wchan=$(cat "$t/wchan" 2>/dev/null)"
                 done
-                echo "postio watchdog: killing the process group; raise POSTIO_TEST_WATCHDOG if this was real work."
-            } >&2
-            kill -9 -"$GROUP" 2>/dev/null
-            exit 124
-        fi
-        sleep 1
+            done
+            echo "postio watchdog: killing the process group; raise POSTIO_TEST_WATCHDOG if this was real work."
+        } >&2
+        : > "$FIRED"
+        kill -9 -"$GROUP" 2>/dev/null
+    ) &
+    TIMER=$!
+    # `wait` also returns early when a trapped signal arrives; the trap has
+    # killed the group by then, so wait again to reap the child's own status.
+    while :; do
+        wait "$GROUP"; RC=$?
+        kill -0 "$GROUP" 2>/dev/null || break
     done
-    wait "$GROUP"; RC=$?
+    kill -9 "$TIMER" 2>/dev/null
+    wait "$TIMER" 2>/dev/null
+    if [ -e "$FIRED" ]; then
+        rm -f "$FIRED"
+        kill -9 -"$GROUP" 2>/dev/null
+        exit 124
+    fi
     # Reap anything that outlived the harness -- the save-dialog and orphaned
     # WebProcess pattern CLAUDE.md records. An empty group is the normal case.
     kill -9 -"$GROUP" 2>/dev/null

@@ -111,7 +111,8 @@ jobs:
   #
   # `--profile ci-full`: the measurement tier runs too, minus the one
   # measurement that asserts on a stopwatch, which a shared runner cannot
-  # defend. `.config/nextest.toml` says which and why.
+  # defend, and the storyboard passes, which `storyboards` below runs in
+  # parallel. `.config/nextest.toml` says which and why.
   suite:
     name: Full suite
     needs: plan
@@ -152,18 +153,52 @@ jobs:
           POSTIO_TEST_PATIENCE: "3"
         run: dbus-run-session -- cargo test --workspace --doc
 
+  # Focus's two storyboard passes, which `profile.ci-full` holds out so they
+  # can run beside the suite instead of stopping it for twelve minutes; the
+  # nightly's `storyboards` job says why. Same condition as `suite`, because
+  # a green nightly at this commit ran these too.
+  storyboards:
+    name: Storyboard passes
+    needs: plan
+    if: needs.plan.outputs.build == 'true' && needs.plan.outputs.suite == 'run'
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/rust-workspace
+
+      - name: Give the GTK suites a runtime directory
+        run: |
+          runtime="${RUNNER_TEMP:-/tmp}/xdg"
+          mkdir -p "$runtime" && chmod 700 "$runtime"
+          echo "XDG_RUNTIME_DIR=$runtime" >> "$GITHUB_ENV"
+
+      - name: Cache cargo-nextest
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: ${{ runner.os }}-cargo-nextest-${{ hashFiles('scripts/install-nextest.sh') }}
+
+      - name: Install cargo-nextest
+        run: scripts/install-nextest.sh
+
+      - name: Run the storyboard passes
+        env:
+          POSTIO_TEST_PATIENCE: "3"
+        run: dbus-run-session -- scripts/test-with-flake-retry.sh ci-storyboards postio-gtk
+
   # One job per Flatpak row of the variants file. A build job reads the tree
   # as it is: the version is already in it, because the release pull request
   # put it there, and the manifests build from the checkout (`"type": "dir"`).
   flatpak:
     name: Flatpak (${{ matrix.variant.id }})
-    needs: [plan, suite]
+    needs: [plan, suite, storyboards]
     # `always()` because `suite` is skipped whenever the nightly already
     # answered, and a skipped need otherwise skips this too.
     if: >-
       always() && needs.plan.outputs.build == 'true'
       && needs.plan.outputs.flatpaks != '[]'
       && (needs.suite.result == 'success' || needs.suite.result == 'skipped')
+      && (needs.storyboards.result == 'success' || needs.storyboards.result == 'skipped')
     runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
@@ -298,11 +333,12 @@ jobs:
   # it.
   tarball:
     name: Tarball (${{ matrix.variant.id }})
-    needs: [plan, suite]
+    needs: [plan, suite, storyboards]
     if: >-
       always() && needs.plan.outputs.build == 'true'
       && needs.plan.outputs.tarballs != '[]'
       && (needs.suite.result == 'success' || needs.suite.result == 'skipped')
+      && (needs.storyboards.result == 'success' || needs.storyboards.result == 'skipped')
     runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
@@ -370,11 +406,12 @@ jobs:
   # macos-latest, so Apple Silicon only.
   macos:
     name: macOS (${{ matrix.variant.id }})
-    needs: [plan, suite]
+    needs: [plan, suite, storyboards]
     if: >-
       always() && needs.plan.outputs.build == 'true'
       && needs.plan.outputs.macos != '[]'
       && (needs.suite.result == 'success' || needs.suite.result == 'skipped')
+      && (needs.storyboards.result == 'success' || needs.storyboards.result == 'skipped')
     runs-on: macos-latest
     strategy:
       fail-fast: false
