@@ -812,6 +812,7 @@ fn saving_a_new_attachment_fetches_from_its_own_account() {
         "source",
         "export",
         "body",
+        "reading",
     ] {
         let server = |payload: &str| {
             let text = format!("See attached: {payload}");
@@ -961,8 +962,16 @@ fn saving_a_new_attachment_fetches_from_its_own_account() {
                         .contains("%PDF second account")
                 );
             }
-            "body" => {
-                client.fetch_body(message);
+            "body" | "reading" => {
+                if action == "reading" {
+                    let read = world
+                        .rt
+                        .block_on(client.readings(vec![message], false))
+                        .unwrap();
+                    assert_eq!(read[0].message, message);
+                } else {
+                    client.fetch_body(message);
+                }
                 eventually(&world, || {
                     match world.rt.block_on(client.body(message)).ok()? {
                         postio_client::protocol::Body::Ready { body, .. } => body

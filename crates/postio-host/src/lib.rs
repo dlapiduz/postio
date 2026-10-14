@@ -1245,8 +1245,13 @@ impl Inner {
                 thread,
                 limit,
                 offline,
-            } => match reading::thread_readings(&self.wiring.database, thread, limit as usize, offline)
-                .await
+            } => match reading::thread_readings(
+                &self.wiring.database,
+                thread,
+                limit as usize,
+                offline,
+            )
+            .await
             {
                 Ok(read) => self.opened(read).await,
                 Err(error) => Resp::Failed(error),
