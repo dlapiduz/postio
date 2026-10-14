@@ -82,6 +82,27 @@ struct Inner {
     config_path: Mutex<Option<std::path::PathBuf>>,
     /// The bodies a reading pane has asked for (#1788).
     asked_bodies: reading::AskedBodies,
+    #[cfg(test)]
+    searches_in_flight: AtomicU64,
+}
+
+/// Observe this operation's lifetime, including cancellation, in host tests.
+#[cfg(test)]
+struct SearchProbe<'a>(&'a AtomicU64);
+
+#[cfg(test)]
+impl SearchProbe<'_> {
+    fn start(counter: &AtomicU64) -> SearchProbe<'_> {
+        counter.fetch_add(1, Ordering::SeqCst);
+        SearchProbe(counter)
+    }
+}
+
+#[cfg(test)]
+impl Drop for SearchProbe<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 /// The engine syncing each account: at most one per account, however many
@@ -487,6 +508,8 @@ impl Host {
             oauth_offers: Mutex::new(HashMap::new()),
             sign_ins: Mutex::new(HashMap::new()),
             asked_bodies: reading::AskedBodies::default(),
+            #[cfg(test)]
+            searches_in_flight: AtomicU64::new(0),
         });
         let pump = Arc::clone(&inner);
         inner.runtime().spawn(async move {
@@ -878,6 +901,9 @@ impl Inner {
     /// Answer one request from local state. Nothing here waits on the
     /// network: a remote effect is a command, queued.
     async fn answer(&self, client: ClientId, request: Req) -> Resp {
+        #[cfg(test)]
+        let _search = matches!(&request, Req::Conversations { .. })
+            .then(|| SearchProbe::start(&self.searches_in_flight));
         let request = match self.answer_in_order(client, request) {
             InOrder::Answered(answered) => return answered,
             InOrder::Pending(landing) => return landing.await,

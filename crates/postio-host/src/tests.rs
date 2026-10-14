@@ -4661,15 +4661,20 @@ fn a_search_whose_caller_has_gone_stops_on_the_host() {
     // its reader and its CPU while the one that replaced it waits.
     //
     // Every reader turn is held here, so the host's search waits for one:
-    // a piece of work in flight, holding the host (its task's share of
-    // `Inner`) for as long as it lives. Dropped, it must let go without
-    // ever reading a row.
+    // a search in flight. Its own probe ends when the future returns or is
+    // dropped, without counting unrelated background tasks. Dropped, it
+    // must let go without ever reading a row.
     let seed = SearchSeed::new();
     let host = seed.host.as_ref().expect("running");
     let query = postio_search::parse("atlas budget", postio_demo::today().date_naive());
     // Warm: whatever the host starts lazily on a first search is started.
     seed.conversations("atlas budget");
-    let idle = std::sync::Arc::strong_count(&host.inner);
+    assert_eq!(
+        host.inner
+            .searches_in_flight
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
 
     let held: Vec<postio_storage::Reader> = seed.rt.block_on(async {
         let mut held = Vec::new();
@@ -4697,12 +4702,18 @@ fn a_search_whose_caller_has_gone_stops_on_the_host() {
     });
     assert!(waited, "the search waits for a reader turn");
     postio_test_support::wait_until("the host to be working on the search", || {
-        std::sync::Arc::strong_count(&host.inner) > idle
+        host.inner
+            .searches_in_flight
+            .load(std::sync::atomic::Ordering::SeqCst)
+            == 1
     });
 
     drop(call);
     postio_test_support::wait_until("the host to stop the abandoned search", || {
-        std::sync::Arc::strong_count(&host.inner) == idle
+        host.inner
+            .searches_in_flight
+            .load(std::sync::atomic::Ordering::SeqCst)
+            == 0
     });
 
     drop(held);
