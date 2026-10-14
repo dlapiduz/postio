@@ -614,6 +614,79 @@ jobs:
         if: ${{ !cancelled() }}
         uses: ./.github/actions/build-cache-save
 
+  # Broken intra-doc links used to be found only by the nightly `doc` job,
+  # hours after merge; one kept the nightly red for four days and forced
+  # every pull request into a full re-run. `issue-land.sh` already builds
+  # rustdoc for each changed crate (#1463); this is the same check on the
+  # pull request, for work that did not come through the landing script.
+  #
+  # Per changed crate with `--no-deps`, not the workspace: the workspace doc
+  # build is the 23-minute job #833 removed from this path. The flags are
+  # `nightly.yml`'s `doc` job's and `issue-land.sh`'s `run_rustdoc`, exactly;
+  # change one, change all three. A crate whose docs break because of a
+  # change in a *different* crate is still the nightly's to find.
+  #
+  # It also runs on pushes to `main`, only so the build cache gets written:
+  # a pull request never saves one (#1710), and without a saved `doc` cache
+  # every run would build the dependency graph cold.
+  rustdoc:
+    name: Rustdoc links
+    runs-on: ubuntu-26.04
+    needs: changes
+    if: needs.changes.outputs.rust == 'yes'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Which crates changed
+        id: crates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "${{ github.event_name }}" in
+            pull_request) range="${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" ;;
+            push)         range="${{ github.event.before }}...${{ github.sha }}" ;;
+            *)            range="" ;;
+          esac
+          files=""
+          if [ -n "$range" ]; then
+            files=$(gh api --paginate "repos/${{ github.repository }}/compare/$range" \
+                      --jq '.files[].filename' 2>/dev/null || true)
+          fi
+          crates=$(printf '%s\n' "$files" \
+            | sed -n 's|^crates/\([^/]*\)/.*|\1|p' | sort -u \
+            | while read -r c; do [ -d "crates/$c" ] && echo "$c"; done)
+          echo "crates: $(echo $crates)"
+          {
+            echo "list<<EOF"
+            printf '%s\n' "$crates"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: ./.github/actions/rust-workspace
+        if: steps.crates.outputs.list != ''
+        with:
+          cache-name: "doc"
+
+      - name: cargo doc, per changed crate
+        if: steps.crates.outputs.list != ''
+        env:
+          RUSTDOCFLAGS: -D warnings -A rustdoc::private_intra_doc_links
+          CRATES: ${{ steps.crates.outputs.list }}
+        run: |
+          for c in $CRATES; do
+            echo "--- rustdoc: $c ---"
+            cargo doc --no-deps --document-private-items -p "$c"
+          done
+
+      - name: Drop workspace artifacts before caching
+        if: always() && steps.crates.outputs.list != ''
+        run: scripts/ci-drop-workspace-artifacts.sh
+
+      # From `main` only; see .github/actions/build-cache.
+      - name: Save the build cache
+        if: ${{ !cancelled() && steps.crates.outputs.list != '' }}
+        uses: ./.github/actions/build-cache-save
+
   test:
     name: Tests
     runs-on: ubuntu-26.04
