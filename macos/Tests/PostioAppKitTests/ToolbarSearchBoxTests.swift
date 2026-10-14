@@ -47,10 +47,19 @@ import Testing
         }
     }
 
+    /// A window AppKit keeps as wide as it was made: a CI runner's screen is
+    /// 1024 wide, and a titled window is otherwise squeezed onto it, so the
+    /// toolbar lays out for a width the test never asked for.
+    final class Unconstrained: NSWindow {
+        override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+            frameRect
+        }
+    }
+
     /// A window `width` wide with the inbox's toolbar shape: Compose, a
     /// flexible space, the field.
     static func window(width: CGFloat) -> (NSWindow, Delegate) {
-        let window = NSWindow(
+        let window = Unconstrained(
             contentRect: NSRect(x: 40, y: 40, width: width, height: 700),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
@@ -64,6 +73,7 @@ import Testing
         toolbar.allowsUserCustomization = false
         window.toolbar = toolbar
         window.orderFront(nil)
+        #expect(window.frame.width == width, "as wide as asked, whatever the screen")
         return (window, delegate)
     }
 
@@ -88,7 +98,9 @@ import Testing
         #expect(box.field.placeholderAttributedString?.string == "Search mail or run a command")
     }
 
-    @Test(arguments: [CGFloat(1440), CGFloat(1024)])
+    // 3000 is wider than any screen this runs on, so a window squeezed onto
+    // the screen fails here too, not only on a narrow CI runner.
+    @Test(arguments: [CGFloat(1440), CGFloat(1024), CGFloat(3000)])
     func openedTheFieldGrowsLeftwardWithItsRightEdge12FromTheWindows(width: CGFloat) {
         let (window, delegate) = Self.window(width: width)
         defer { window.close() }
