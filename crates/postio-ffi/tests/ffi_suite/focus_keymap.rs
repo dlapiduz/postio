@@ -88,6 +88,37 @@ async fn question_mark_opens_the_key_map_and_closes_it() {
     session.shutdown();
 }
 
+/// The Mac says nothing back when the controller closes the key map, so
+/// closing it by its own keys must leave the keyboard the list's: the
+/// keyboard is sent home, and `?` opens it again rather than closing a key
+/// map that is no longer on screen. Before, it stayed on the controller's
+/// stack and swallowed every key after.
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_the_key_map_by_its_keys_gives_the_keyboard_back() {
+    let session = Session::open(SessionOptions::in_memory()).expect("a session");
+    for close in [CommandId::CheatSheet, CommandId::Back] {
+        session.invoke(&CommandId::CheatSheet.to_string());
+        assert!(
+            heard(&session, 10, |event| matches!(
+                event,
+                UiEvent::FocusOpenKeyMap { .. }
+            ))
+            .await,
+            "`?` opens the key map (before {close:?})"
+        );
+        session.invoke(&close.to_string());
+        assert!(
+            heard(&session, 10, |event| matches!(
+                event,
+                UiEvent::FocusKeyboardHome
+            ))
+            .await,
+            "{close:?} closes it and sends the keyboard home"
+        );
+    }
+    session.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rebound_key_is_in_the_key_map_and_the_menu_at_once() {
     let directory = tempfile::tempdir().expect("a directory");

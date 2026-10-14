@@ -416,9 +416,11 @@ fn back_closes_a_dialog_and_the_key_map_closes_on_its_own_key() {
     let _ = focus.handle_on(Input::SurfaceOpened(SurfaceKind::KeyMap), &rows);
     assert_eq!(
         shown(&run(&mut focus, CommandId::CheatSheet, &rows)),
-        vec![Intent::CloseSurface(SurfaceKind::KeyMap)]
+        vec![
+            Intent::CloseSurface(SurfaceKind::KeyMap),
+            Intent::KeyboardHome
+        ]
     );
-    let _ = focus.handle_on(Input::SurfaceClosed(SurfaceKind::KeyMap), &rows);
     let _ = focus.handle_on(Input::SurfaceOpened(SurfaceKind::Capture), &rows);
     assert_eq!(
         shown(&run(&mut focus, CommandId::Back, &rows)),
