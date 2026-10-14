@@ -110,19 +110,16 @@ fn a_file_that_says_nothing_leaves_the_built_in_sync_defaults_standing() {
 #[test]
 fn a_mod_override_reaches_swift_as_this_platforms_accelerator() {
     // A `config.toml` written on Linux and synced to a Mac. The file says
-    // `mod+shift+a` on both machines; the menu says Command here.
+    // `mod+shift+a` on both machines; the Mac's menu says Command, whatever
+    // host the boundary was built on (`postio_ffi::PLATFORM`).
     let session = Session::open(
         SessionOptions::in_memory().with_config_for_test("[keys]\narchive = \"mod+shift+a\"\n"),
     )
     .expect("a session with a rebinding");
 
-    let expected = match cfg!(target_os = "macos") {
-        true => "cmd+shift+a",
-        false => "ctrl+shift+a",
-    };
     assert_eq!(
         session.binding_for("archive".to_string()).as_deref(),
-        Some(expected)
+        Some("cmd+shift+a")
     );
     session.shutdown();
 }
@@ -139,12 +136,12 @@ fn every_command_with_a_default_key_reports_it() {
     let silent: Vec<String> = postio_ffi::commands()
         .into_iter()
         .filter(|spec| !spec.default_binding.is_empty())
-        // A command this platform does not offer has no key on it by design
+        // A command the Mac does not offer has no key on it by design
         // (`postio_core::registry::offered_on`); that is not a lost key.
         .filter(|spec| {
-            spec.id.parse::<postio_core::ActionId>().is_ok_and(|id| {
-                postio_core::registry::offered_on(id, postio_config::paths::Platform::host())
-            })
+            spec.id
+                .parse::<postio_core::ActionId>()
+                .is_ok_and(|id| postio_core::registry::offered_on(id, postio_ffi::PLATFORM))
         })
         .filter(|spec| session.binding_for(spec.id.clone()).is_none())
         .map(|spec| spec.id)

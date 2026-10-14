@@ -63,6 +63,9 @@ pub enum UiContext {
     Filtered,
     /// The capture sheet: Postio Focus's (spec 007, milestone 3).
     Capture,
+    /// The Mac's search results, the main window's other mode (spec 010
+    /// D17).
+    Results,
 }
 
 impl From<postio_core::Context> for UiContext {
@@ -83,6 +86,7 @@ impl From<postio_core::Context> for UiContext {
             Context::Digest => UiContext::Digest,
             Context::Filtered => UiContext::Filtered,
             Context::Capture => UiContext::Capture,
+            Context::Results => UiContext::Results,
         }
     }
 }
@@ -112,6 +116,7 @@ impl From<UiContext> for postio_core::Context {
             UiContext::Digest => Context::Digest,
             UiContext::Filtered => Context::Filtered,
             UiContext::Capture => Context::Capture,
+            UiContext::Results => Context::Results,
         }
     }
 }
@@ -179,11 +184,10 @@ pub struct MenuFfi {
 /// The menu bar's own shape: every section, in order.
 #[uniffi::export]
 pub fn menus() -> Vec<MenuFfi> {
-    // For *this* platform: macOS gets an application menu first and
-    // freedesktop does not, and the commands fold accordingly. The decision
-    // takes a platform rather than reading a `cfg` so either host can assert
-    // both answers -- see `postio_core::menu::section_on`.
-    postio_core::menu::MenuSection::bar_for(postio_config::paths::Platform::host())
+    // The Mac's ([`crate::PLATFORM`]), whatever the host: macOS gets an
+    // application menu first and freedesktop does not, and the commands fold
+    // accordingly -- see `postio_core::menu::section_on`.
+    postio_core::menu::MenuSection::bar_for(crate::PLATFORM)
         .into_iter()
         .map(|section| MenuFfi {
             section: MenuSectionFfi::from(section),
@@ -247,12 +251,9 @@ impl From<&'static postio_core::registry::CommandSpec> for CommandSpecFfi {
                 .collect(),
             destructive: spec.destructive,
             recovery: spec.recovery.into(),
-            // Folded for this platform, so a command's `menu` agrees with the
-            // bar `menus()` describes: on freedesktop the application-menu
-            // three arrive under Edit, which is the only menu that exists for
-            // them there.
-            menu: postio_core::menu::section_on(spec.id, postio_config::paths::Platform::host())
-                .map(MenuSectionFfi::from),
+            // Folded for the Mac's bar, so a command's `menu` agrees with the
+            // bar `menus()` describes.
+            menu: postio_core::menu::section_on(spec.id, crate::PLATFORM).map(MenuSectionFfi::from),
         }
     }
 }

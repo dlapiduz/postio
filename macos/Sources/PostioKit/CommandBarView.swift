@@ -44,6 +44,7 @@ public struct CommandBarView: View {
     /// How tall the bar is for what `model` holds, before the window caps
     /// it (the lines then scroll).
     public static func height(for model: CommandBarModel) -> CGFloat {
+        if model.showsDropdown { return DropdownView.height(for: model.dropdown) }
         var height = Metrics.footer
         if !model.saved.isEmpty { height += Metrics.saved + 1 }
         if !model.chips.isEmpty {
@@ -60,6 +61,25 @@ public struct CommandBarView: View {
     }
 
     public var body: some View {
+        Group {
+            if model.showsDropdown {
+                // Search on the Mac (specs/010-focus-search): the dropdown
+                // in place of the lines, in the same panel.
+                DropdownView(model: model.dropdown) { token in model.dropdown.run(token) }
+            } else {
+                lines
+            }
+        }
+        .background(.background, in: .rect(cornerRadius: Metrics.radius))
+        .overlay(
+            RoundedRectangle(cornerRadius: Metrics.radius).strokeBorder(.separator, lineWidth: 1)
+        )
+        .clipShape(.rect(cornerRadius: Metrics.radius))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Command bar")
+    }
+
+    private var lines: some View {
         VStack(alignment: .leading, spacing: 0) {
             if !model.saved.isEmpty {
                 savedRow
@@ -90,13 +110,6 @@ public struct CommandBarView: View {
             Divider()
             footer
         }
-        .background(.background, in: .rect(cornerRadius: Metrics.radius))
-        .overlay(
-            RoundedRectangle(cornerRadius: Metrics.radius).strokeBorder(.separator, lineWidth: 1)
-        )
-        .clipShape(.rect(cornerRadius: Metrics.radius))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Command bar")
     }
 
     // MARK: the saved row

@@ -185,6 +185,89 @@ public final class PostioSession {
     /// `Tab` in the bar's field; `false` leaves the key to the toolkit.
     public func focusBarTab() -> Bool { inner.focusBarTab() }
 
+    /// The search dropdown's arrows rest on `token` (specs/010-focus-search).
+    public func focusSearchHighlighted(_ token: UInt64) { inner.focusSearchHighlighted(token: token) }
+
+    /// ⌥⌫ on the dropdown's recent search `token`.
+    public func focusSearchForget(_ token: UInt64) { inner.focusSearchForget(token: token) }
+
+    /// ⌥↩ on the dropdown's person, label or folder `token`: its chip,
+    /// excluded.
+    public func focusSearchExclude(_ token: UInt64) { inner.focusSearchExclude(token: token) }
+
+    /// ⌘↩ in the dropdown.
+    public func focusSearchShowAll() { inner.focusSearchShowAll() }
+
+    /// The search field's placeholder (screen 01).
+    public func focusSearchPlaceholder() -> String { inner.focusSearchPlaceholder() }
+    /// The search field's placeholder at rest in the toolbar.
+    public func focusSearchRestingPlaceholder() -> String { inner.focusSearchRestingPlaceholder() }
+
+    // MARK: the results view (specs/010-focus-search step 3)
+
+    /// A filter button, a chip's ✕, a timeline drag: the results' query
+    /// changes, and `FocusQuery` then `FocusResults` say how.
+    public func focusSearchEdit(_ edit: TermEditFfi) { inner.focusSearchEdit(edit: edit) }
+
+    /// A filter button with a popover was pressed (specs/010-focus-search
+    /// step 4): `FocusQuery` rings it and `FocusPopover` draws it.
+    public func focusSearchPopover(_ kind: FilterKindFfi) { inner.focusSearchPopover(kind: kind) }
+
+    /// Space or a click on the open popover's row `token`; `exclude` when ⌥
+    /// was held.
+    public func focusSearchPopoverToggle(_ token: UInt64, exclude: Bool) {
+        inner.focusSearchPopoverToggle(token: token, exclude: exclude)
+    }
+
+    /// The popover's own search field.
+    public func focusSearchPopoverFilter(_ text: String) { inner.focusSearchPopoverFilter(text: text) }
+
+    /// ↩ (`apply`), or Esc and a click away: the toolkit closed it.
+    public func focusSearchPopoverDone(_ apply: Bool) { inner.focusSearchPopoverDone(apply: apply) }
+
+    /// The Date popover's plain words.
+    public func focusSearchDateWords(_ text: String) { inner.focusSearchDateWords(text: text) }
+
+    /// The Date popover's preset `token`.
+    public func focusSearchDatePreset(_ token: UInt64) { inner.focusSearchDatePreset(token: token) }
+
+    /// A drag across the timeline ended over bars `first...last`.
+    public func focusSearchMonths(_ first: UInt32, _ last: UInt32) {
+        inner.focusSearchMonths(first: first, last: last)
+    }
+
+    /// A results tab picked by a click (⌘1-3 are commands).
+    public func focusSearchTab(_ tab: ResultsTabFfi) { inner.focusSearchTab(tab: tab) }
+
+    /// The Sort menu.
+    public func focusSearchOrder(_ order: ConversationOrderFfi) { inner.focusSearchOrder(order: order) }
+
+    /// A click on the result at `position`: the focus ring goes there.
+    public func focusSearchPoint(_ position: UInt64) { inner.focusSearchPoint(position: position) }
+
+    /// Save ↩ in the Save popover: the results' query kept under `name`,
+    /// as the three switches say.
+    public func focusSearchSave(_ name: String, pin: Bool, notify: Bool, rolling: Bool) {
+        inner.focusSearchSave(name: name, pin: pin, notify: notify, rolling: rolling)
+    }
+
+    /// How many rows the results table has.
+    public func focusSearchRowCount() -> UInt64 { inner.focusSearchRowCount() }
+
+    /// The result at `position`, or `nil` while its page is on its way
+    /// (read it again on `FocusResultsPage`).
+    public func focusSearchRow(_ position: UInt64) -> ResultRowFfi? { inner.focusSearchRow(position: position) }
+
+    /// The Files tab's card at `position`, or `nil` past the last.
+    public func focusSearchFile(_ position: UInt64) -> FileCardFfi? { inner.focusSearchFile(position: position) }
+
+    /// The People tab's row at `position`, or `nil` past the last.
+    public func focusSearchPerson(_ position: UInt64) -> PersonRowFfi? { inner.focusSearchPerson(position: position) }
+
+    /// The system's Quick Look on a file, or its save panel, is gone: the
+    /// copy it was handed can go too (FR-053).
+    public func focusSearchFileDone() { inner.focusSearchFileDone() }
+
     /// The folders popover's places whose names hold `filter`, read now
     /// from the last read (ask again on `FocusPlacesChanged`).
     public func focusPlaces(_ filter: String) -> [PlaceEntryFfi] { inner.focusPlaces(filter: filter) }

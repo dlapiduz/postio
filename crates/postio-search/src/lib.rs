@@ -38,10 +38,12 @@
 //!
 //! # Operators
 //!
-//! `from:` `to:` `subject:` `has:attach` `is:unread` `is:flagged` `before:`
-//! `after:` `in:` `filename:` `larger:` `smaller:` `list:`, each optionally
+//! `from:` `to:` `subject:` `has:attach` `has:action` `is:unread`
+//! `is:flagged` `before:` `after:` `in:` `label:` `filename:` `larger:`
+//! `smaller:` `list:` `account:` `group:` `header:`, each optionally
 //! negated with a leading `-`, each composable with the others and with free
-//! text. Dates accept ISO (`2026-01-01`), loose (`aug1`) and relative
+//! text. A name-valued operator takes either of several values in braces,
+//! `from:{ada tomas}` (spec 010, D26). Dates accept ISO (`2026-01-01`), loose (`aug1`) and relative
 //! (`yesterday`, `last week`, `3m`) forms; sizes accept `K`/`M`/`G`.
 //!
 //! # Where the FTS5 index and executor went
@@ -59,12 +61,15 @@
 //! [`facets`] and [`highlight`].
 
 pub mod date;
+pub mod edit;
 pub mod facets;
 pub mod highlight;
 pub mod matcher;
 pub mod natural;
 mod parser;
+pub mod passage;
 pub mod query;
+pub mod relax;
 pub mod results;
 mod size;
 pub mod suggest;

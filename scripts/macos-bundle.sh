@@ -56,6 +56,19 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/Postio"
 cp macos/Resources/Info.plist "$APP/Contents/Info.plist"
 
+# The attachment-text helper (specs/010-focus-search D28): every attachment
+# is read in a process of its own that the indexer kills at its deadline,
+# so a hostile file costs a process rather than the app. The indexer looks
+# for it beside its own executable, which is here. Fatal when missing: an
+# app without it refuses to read PDFs, and that should not ship quietly.
+HELPER="${CARGO_TARGET_DIR:-target}/$CONFIG/postio-extract-helper"
+if [ ! -x "$HELPER" ]; then
+    echo "no extraction helper at $HELPER." >&2
+    echo "Run scripts/macos-build.sh${CONFIG:+ ${CONFIG/debug/}} first." >&2
+    exit 1
+fi
+cp "$HELPER" "$APP/Contents/MacOS/postio-extract-helper"
+
 # The icon, rendered from the SVG the GTK frontend already ships rather than
 # from a set of PNGs checked in beside it -- the rule the design tokens follow,
 # for the same reason: a copy is correct on the day it is made.
@@ -99,6 +112,15 @@ if [ -d "$APP/Contents/Frameworks" ]; then
         codesign --force --sign "$IDENTITY" "$library"
     done
 fi
+# The helper is nested code too: signed with the same identity before the
+# bundle, under an identifier of its own. It takes no entitlements. It
+# loads only system libraries, so library validation has nothing to
+# refuse; spawning it needs none under the hardened runtime; and the app is
+# not sandboxed -- if it ever is, the helper needs
+# `com.apple.security.inherit` to run inside the app's sandbox.
+codesign --force --sign "$IDENTITY" \
+    --identifier dev.postio.Postio.extract-helper \
+    "$APP/Contents/MacOS/postio-extract-helper"
 codesign --force --sign "$IDENTITY" \
     --entitlements macos/Resources/PostioReleaseLocal.entitlements \
     "$APP"

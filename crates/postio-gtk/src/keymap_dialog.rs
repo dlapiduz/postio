@@ -52,7 +52,13 @@ pub fn build(keymap: &Keymap) -> adw::Dialog {
     x.set_valign(gtk::Align::Center);
     header.append(&x);
 
-    let map = keymap_sheet::key_map(keymap, postio_core::Frontend::Focus);
+    // Less what the registry keeps off Linux, so the sheet never teaches a
+    // key this app does not answer (the Mac's search keys, spec 010 D25).
+    let map = keymap_sheet::key_map_on(
+        keymap,
+        postio_core::Frontend::Focus,
+        postio_config::paths::Platform::Freedesktop,
+    );
     let columns = gtk::Box::new(gtk::Orientation::Horizontal, S6);
     columns.set_homogeneous(true);
     columns.set_vexpand(true);

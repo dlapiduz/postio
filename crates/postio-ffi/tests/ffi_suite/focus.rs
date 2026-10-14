@@ -664,9 +664,8 @@ async fn the_message_window_s_chrome_is_composed_in_rust() {
 /// The key labelled Delete on a Mac (⌫, which AppKit reports as `backspace`)
 /// deletes the cursor's conversation, as `Delete` does on Linux (#1795).
 ///
-/// A Mac's binding, so asked of a Mac's session: elsewhere the session
-/// resolves Freedesktop's keys, where Backspace is not Delete.
-#[cfg(target_os = "macos")]
+/// A Mac's binding, which the session resolves on every host
+/// (`postio_ffi::PLATFORM`), so the Linux gate asks it too.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_macs_delete_key_deletes_the_cursors_row() {
     use postio_ffi::{KeyOutcomeFfi, ModifiersFfi, UiContext, UiEvent};

@@ -156,6 +156,21 @@ pub fn fold_html_quotes(html: &str) -> String {
 /// sign-off above it and the fold below it (specs/007-postio-focus T208).
 pub const ATTRIBUTION_CLASS: &str = "postio-attribution";
 
+/// `own` -- a [`Stretch::Own`] that a quote follows -- without its last
+/// line when that line introduces the quote ("On Monday, Ana wrote:"):
+/// what the person said, not who said what follows. The same line
+/// [`text_to_html`] sets apart as the attribution. `own` whole when its
+/// last line introduces nothing.
+pub fn without_attribution(own: &str) -> &str {
+    let words = own.trim_end();
+    let start = words.rfind('\n').map_or(0, |at| at + 1);
+    if introduces(&words[start..]) {
+        &own[..start]
+    } else {
+        own
+    }
+}
+
 /// Whether `text` (a line's words, markup gone) introduces what follows:
 /// it ends in a colon, as "wrote:", "a écrit :" and "schrieb:" all do, and
 /// says something before it.
@@ -919,6 +934,26 @@ mod tests {
                 "linkified like any line: {out}"
             );
         }
+    }
+
+    /// A stretch of the person's own words above a quote, without the line
+    /// that introduces it: what a search passage is cut from.
+    #[test]
+    fn the_own_words_above_a_quote_lose_only_its_attribution() {
+        assert_eq!(
+            without_attribution("Done.\n\nOn Fri 9 Oct 2026 at 10:59, You wrote:\n"),
+            "Done.\n\n"
+        );
+        assert_eq!(
+            without_attribution("On 2026-02-10, Ada Norwood wrote:\n"),
+            "",
+            "an attribution alone is all of it"
+        );
+        assert_eq!(
+            without_attribution("I agree with this part.\n"),
+            "I agree with this part.\n",
+            "a sentence that introduces nothing stays"
+        );
     }
 
     /// Only a line that introduces something is an attribution: one ending

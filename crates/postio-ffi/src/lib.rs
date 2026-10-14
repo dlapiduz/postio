@@ -52,6 +52,7 @@ mod focus_list;
 mod focus_message;
 mod focus_pickers;
 mod focus_reader;
+mod focus_search;
 mod focus_states;
 mod focus_surfaces;
 mod keys;
@@ -108,6 +109,13 @@ pub use focus_pickers::{
     PickerAnchorFfi, PickerFieldFfi, PickerKindFfi, PickerRowFfi, PickerViewFfi,
 };
 pub use focus_reader::{FocusReaderDocumentFfi, RenderModeWordsFfi, TreatmentFfi};
+pub use focus_search::{
+    ConversationOrderFfi, DropdownRowFfi, DropdownRowKindFfi, DropdownSectionFfi, DropdownStateFfi,
+    DropdownViewFfi, FileCardFfi, FileCopyFfi, FilePreviewFfi, FilesHeaderFfi, FilterButtonFfi,
+    FilterKindFfi, MonthBarFfi, PersonRowFfi, PillFfi, QueryChipFfi, QueryViewFfi, ResultGroupFfi,
+    ResultRowFfi, ResultsTabFfi, ResultsViewFfi, RunFfi, RunStyleFfi, SearchWordsFfi, TabFfi,
+    TermEditFfi, focus_search_checked, focus_search_row_accessible, focus_search_words,
+};
 pub use focus_states::{
     BannerButtonFfi, BannerFfi, BannerProgressFfi, EmptyPageFfi, EmptyShortcutFfi, SyncMarkFfi,
 };
@@ -191,6 +199,15 @@ pub fn intercepted_commands() -> Vec<String> {
 /// palette rows, menu items, settings sections -- is Focus's, less what
 /// `postio_core::registry::offered_on` keeps off the Mac.
 pub const FRONTEND: postio_core::Frontend = postio_core::Frontend::Focus;
+
+/// Which platform's design the boundary serves: Apple's, whatever host it
+/// was built on. Every platform question this crate asks -- what the
+/// registry offers, what `mod` means, the menu bar, Focus's
+/// [`postio_focus::Policy`] -- is asked about this and never about
+/// `Platform::host()`, so the Linux gate (ADR 0019 Q7) runs the composition
+/// the Mac runs. Asking the host there ran spec 010's results view with
+/// none of its keys, a combination nothing ships.
+pub const PLATFORM: postio_config::paths::Platform = postio_config::paths::Platform::Apple;
 
 uniffi::setup_scaffolding!();
 

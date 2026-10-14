@@ -42,11 +42,13 @@
 
 pub mod actions;
 pub mod attaching;
+mod attachment_text;
 pub mod blocking;
 pub mod checkup;
 pub mod diag;
 pub mod egress;
 pub mod engine;
+mod extraction;
 pub mod focus;
 pub mod handoff;
 pub mod logging;
@@ -183,6 +185,11 @@ pub fn backfill_policy(sync: &postio_config::SyncConfig) -> postio_runtime::Back
     }
 }
 
+pub use attachment_text::{
+    index_local_attachments, index_local_attachments_with, index_named_attachments,
+    spawn_attachment_indexer,
+};
+pub use extraction::{Extraction, Extractor, HELPER_ENV, HELPER_GRACE, HELPER_NAME, Via};
 pub use postio_storage::key::STORE_KEY_ENTRY;
 
 /// The master key this installation's store is encrypted under, minting one

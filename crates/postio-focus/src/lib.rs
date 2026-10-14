@@ -27,11 +27,14 @@ mod compose;
 mod confirm;
 mod cursor;
 mod digest;
+mod dropdown;
 mod feed;
 mod filtered;
+mod history;
 mod keys;
 mod perform;
 mod pickers;
+mod results;
 mod states;
 mod surfaces;
 mod verbs;
@@ -45,6 +48,10 @@ pub use digest::{
     DigestCard, DigestEmail, DigestLine, DigestStatement, DigestTopic, DigestView, RulePreviewLine,
     RuleView,
 };
+pub use dropdown::{
+    DropdownPill, DropdownRow, DropdownRowKind, DropdownSection, DropdownState, DropdownView, Lane,
+    Run, RunStyle, UnderstoodTile,
+};
 pub use feed::{Opened, PageAnswer};
 pub use filtered::{FilteredLine, FilteredTab, FilteredView};
 pub use perform::{perform, perform_now};
@@ -53,6 +60,13 @@ pub use pickers::{
 };
 pub use postio_ui::capture::{Mode as CaptureMode, Pick as CapturePick};
 pub use postio_ui::digest::{Page as DigestPage, Schedule as RuleSchedule};
+pub use postio_ui::search_view::FilePreview;
+pub use results::{
+    Chip, DatePresetView, FileCard, FileCopy, FilePurpose, FilesHeader, FilterButton, LabelPill,
+    MatchCard, MonthBar, NoResultsView, PersonRow, PopoverRow, PopoverView, QueryView,
+    QuickLookView, RelaxationView, ResultGroup, ResultRow, ResultsTabView, ResultsView, SaveView,
+    TermEdit, file_copies,
+};
 pub use states::{AccountsRead, BannerButton, BannerView};
 pub use surfaces::{Host, ReaderVerb, SurfaceKind};
 pub use verbs::{Everything, ToastKind};
@@ -76,6 +90,10 @@ pub struct Capabilities {
     /// Secondary surfaces stack over each other: Linux's dialogs do, the
     /// Mac's windows replace each other (spec 009 M4).
     pub stacking: bool,
+    /// Search has its two layers: the dropdown, and the results view it
+    /// opens (spec 010 D17). The Mac has them; GTK's bar keeps spec 009's
+    /// blend until Linux adopts them (S2).
+    pub results_view: bool,
 }
 
 impl Policy {
@@ -87,6 +105,7 @@ impl Policy {
             caps: Capabilities {
                 reading_pane: linux,
                 stacking: linux,
+                results_view: !linux,
             },
         }
     }
@@ -150,14 +169,70 @@ pub enum Input {
     /// `Tab` in the bar: into the chips, and on from chip to chip. Nothing
     /// comes back when there is no chip to step into.
     BarTab,
+    /// The dropdown's arrows rest on the row with this token now: what
+    /// `ForgetRecent` forgets.
+    SearchHighlighted(u64),
+    /// `alt+BackSpace` on the dropdown's recent search with this token:
+    /// forget it.
+    SearchForget(u64),
+    /// `alt+Return` on the dropdown's person, label or folder with this
+    /// token: its chip, excluded (spec 010 US7).
+    SearchExclude(u64),
+    /// A filter button, a chip's ✕, a popover's check or the timeline
+    /// changed the results' query (spec 010 step 3).
+    SearchEdit(TermEdit),
+    /// A filter button with a popover was pressed: open it (spec 010 step
+    /// 4, FR-027). A toggle button's kind opens nothing.
+    SearchPopover(postio_ui::search_view::FilterKind),
+    /// A check on the open popover's row `token`: Space or a click
+    /// toggles it, ⌥-click (`exclude`) excludes it.
+    PopoverToggle {
+        /// The row's [`PopoverRow::token`].
+        token: u64,
+        /// ⌥ was held.
+        exclude: bool,
+    },
+    /// The popover's own search field holds this now.
+    PopoverFilter(String),
+    /// The Date popover's plain-words field holds this now.
+    DateWords(String),
+    /// The Date popover's preset with this
+    /// [`token`](DatePresetView::token) was picked.
+    DatePreset(u64),
+    /// ↩ (`apply`), or Esc and a click away: the popover closes.
+    PopoverDone {
+        /// Keep what it previewed.
+        apply: bool,
+    },
+    /// A results tab was picked: ⌘1-3, or a click.
+    ResultsTab(postio_search::results::ResultsTab),
+    /// The Sort menu.
+    ResultsOrder(postio_search::results::ConversationOrder),
+    /// A click put the focus ring on this result.
+    ResultsPoint(u64),
+    /// The system's Quick Look on a file, or its save panel, is gone: the
+    /// copy it was handed can go too (FR-053).
+    FileCopyDone,
     /// Go to the folders popover's place with this token
     /// ([`FocusController::places`]).
     OpenPlace(u64),
-    /// The pinned saved searches, in order: each name and its query.
-    SavedSearches(Vec<(String, String)>),
-    /// What became of an [`Intent::SaveSearch`]: the saved searches now, or
-    /// the sentence saying why it was not saved.
-    SearchSaved(Result<Vec<(String, String)>, String>),
+    /// The pinned saved searches, in order.
+    SavedSearches(Vec<postio_ui::saved_search::SavedSearch>),
+    /// What became of an [`Intent::SaveSearch`]: the saved searches now and
+    /// the key of the one saved, or the sentence saying why it was not.
+    SearchSaved(Result<SearchesSaved, String>),
+    /// Save ↩ in the Save popover (spec 010 FR-029): the results' query,
+    /// under this name, pinned, notifying and its dates rolling or not.
+    SaveSearchAs {
+        /// The Name field.
+        name: String,
+        /// Pin to saved searches.
+        pin: bool,
+        /// Notify when new mail matches.
+        notify: bool,
+        /// Keep the date rolling.
+        rolling: bool,
+    },
     /// The bindings in force: what the bar's keycaps say.
     Keymap(postio_core::Keymap),
     /// Whether Focus files mail away: the places list Filtered while it does.
@@ -261,6 +336,31 @@ pub enum Effect {
         /// How long to wait.
         after: Duration,
     },
+}
+
+/// A save the frontend writes to `config.toml` (`postio_ui::saved_search`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaveSearch {
+    /// The query, as the field holds it.
+    pub query: String,
+    /// The name it shows under; `None` shows its key.
+    pub name: Option<String>,
+    /// Pin to saved searches: the next free place and ⌥ number.
+    pub pin: bool,
+    /// A quiet badge with new matches (D15).
+    pub notify: bool,
+    /// How its dates keep (D14).
+    pub dates: postio_ui::saved_search::Dates,
+}
+
+/// What a save left: every pinned saved search, and the key of the one
+/// saved (`None` when nothing was).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchesSaved {
+    /// The pinned saved searches now, in order.
+    pub searches: Vec<postio_ui::saved_search::SavedSearch>,
+    /// The key the save was written under.
+    pub key: Option<String>,
 }
 
 /// What the frontend draws. Each one is drawable without asking the
@@ -398,6 +498,40 @@ pub enum Intent {
     },
     /// Draw the bar's lines, whole.
     BarLines(BarView),
+    /// Draw the search dropdown, whole, in place of the bar's lines.
+    Dropdown(DropdownView),
+    /// The main window shows a search's results: this frame, whole; its
+    /// rows are read with [`FocusController::result_row`] (spec 010 D17).
+    ShowResults(Box<ResultsView>),
+    /// Results rows `first..first + count` changed: read them again.
+    ResultsPage {
+        /// The first row.
+        first: u64,
+        /// How many.
+        count: u64,
+    },
+    /// The focus ring is on this result: draw it there and bring it into
+    /// view.
+    ResultsCursor(u64),
+    /// The field's chips and words and the filter bar's buttons.
+    Query(QueryView),
+    /// Draw the filter popover, whole, hung from its button; `None` closes
+    /// it.
+    Popover(Option<Box<PopoverView>>),
+    /// Draw Quick Look over the results, whole, in place of the one
+    /// showing; `None` closes it (spec 010 US4).
+    QuickLook(Option<Box<QuickLookView>>),
+    /// The results found nothing: draw this page, whole, in the rows'
+    /// place; `None` takes it away (spec 010 US6, design §3.10).
+    Relaxations(Option<Box<NoResultsView>>),
+    /// Hand the system this copy of a file: its Quick Look on it, or a
+    /// save panel to put it somewhere (spec 010 US8, FR-053); `None`
+    /// closes the Quick Look panel. The frontend says
+    /// [`Input::FileCopyDone`] when the panel is gone.
+    FileCopy(Option<FileCopy>),
+    /// The main window shows the inbox again; its cursor and selection
+    /// follow.
+    LeaveResults,
     /// The list shows this place now: what the header strip names.
     Place {
         /// "Inbox", "Receipts".
@@ -410,12 +544,12 @@ pub enum Intent {
     PlacesChanged,
     /// Show Filtered, the view of what Focus filed away.
     ShowFiltered,
-    /// Keep `query` as a saved search, and say how that went with
-    /// [`Input::SearchSaved`].
-    SaveSearch {
-        /// The bar's query.
-        query: String,
-    },
+    /// Keep a query as a saved search, as [`SaveSearch`] says, and say how
+    /// that went with [`Input::SearchSaved`].
+    SaveSearch(SaveSearch),
+    /// Show the Save popover from the toolbar's Save search button (spec
+    /// 010 §3.9), or take it down with `None`.
+    SavePopover(Option<Box<SaveView>>),
     /// Run this command as the frontend's own: a line of the bar that is
     /// not the controller's to answer.
     Run(CommandId),
@@ -514,6 +648,151 @@ pub enum Request {
         order: postio_search::ResultOrder,
         /// The bar's words' stamp, echoed in the answer.
         stamp: u64,
+    },
+    /// Search this machine's index for conversations: the dropdown's top
+    /// hits and the facets it narrows by (spec 010).
+    Conversations {
+        /// The words, lowered.
+        query: postio_search::ParsedQuery,
+        /// Which order they come in.
+        order: postio_search::results::ConversationOrder,
+        /// How many hits.
+        limit: u32,
+        /// The bar's words' stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// The passages of hits on screen, each where it matched.
+    Passages {
+        /// The query whose words the passages are cut around.
+        query: postio_search::ParsedQuery,
+        /// Each hit's best message, and where it matched.
+        hits: Vec<(MessageId, Vec<postio_search::results::Source>)>,
+        /// The bar's words' stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// A page of the results view's conversations: its Top hits (Best
+    /// match), or its month groups' rows (Newest).
+    ResultsPage {
+        /// The query, lowered.
+        query: postio_search::ParsedQuery,
+        /// Which order.
+        order: postio_search::results::ConversationOrder,
+        /// The first conversation.
+        offset: u32,
+        /// How many.
+        limit: u32,
+        /// The results' stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// The passages of a page of results.
+    ResultsPassages {
+        /// The query whose words the passages are cut around.
+        query: postio_search::ParsedQuery,
+        /// Each hit's best message, and where it matched.
+        hits: Vec<(MessageId, Vec<postio_search::results::Source>)>,
+        /// The results' stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// The Files tab's cards (spec 010 US8).
+    Files {
+        /// The results' query.
+        query: postio_search::ParsedQuery,
+        /// The results' stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// The People tab's rows (spec 010 US9).
+    People {
+        /// The results' query.
+        query: postio_search::ParsedQuery,
+        /// The results' stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// Copy a file's bytes, when they are on this machine, into
+    /// [`file_copies`]: for the system's Quick Look or a save.
+    AttachmentCopy {
+        /// Which file.
+        attachment: postio_model::AttachmentId,
+        /// What the copy is for.
+        purpose: FilePurpose,
+        /// The copy's stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// A copy handed to the system is done with: remove it, when it is
+    /// one of [`file_copies`]'s and nothing else.
+    RemoveCopy(std::path::PathBuf),
+    /// Every match in the conversation Quick Look shows.
+    QuickLookMatches {
+        /// The results' query.
+        query: postio_search::ParsedQuery,
+        /// Which conversation.
+        key: postio_search::results::ConversationKey,
+        /// Quick Look's stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// The ways out of a search that found nothing: each looser search
+    /// and how many conversations it finds (spec 010 US6, FR-043).
+    Relaxations {
+        /// The search that found nothing, lowered.
+        query: postio_search::ParsedQuery,
+        /// The day its relative dates are counted from.
+        today: chrono::NaiveDate,
+        /// The results' stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// The facets of a query, and nothing else: what a filter popover lists
+    /// when its own field is already in the query (spec 010 D27).
+    Facets {
+        /// The query without the popover's field, lowered.
+        query: postio_search::ParsedQuery,
+        /// The popover's stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// What the prefix typed could become: words, labels, lists and files,
+    /// or the operator `field`'s values (spec 010 US7).
+    Suggest {
+        /// The word, or the operator's value so far.
+        prefix: String,
+        /// The operator being typed, when one is.
+        field: Option<postio_search::query::Field>,
+        /// The bar's words' stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// The latest two conversations from `address`: the operator state's
+    /// "Latest from" the focused person (spec 010 US7).
+    LatestFrom {
+        /// Whose.
+        address: String,
+        /// The bar's words' stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// The searches run lately, newest first.
+    RecentSearches,
+    /// Keep `query` among the searches run, with what it matched.
+    RememberSearch {
+        /// The query, as run.
+        query: String,
+        /// Conversations it matched.
+        hits: u64,
+        /// The search stopped at its walk's cap: `hits` is a floor (D30).
+        capped: bool,
+    },
+    /// Forget a recent search; answered with the recent searches left.
+    ForgetSearch {
+        /// The query.
+        query: String,
+    },
+    /// The saved search under `key` was viewed: its badge counts from now
+    /// (D15).
+    MarkSeen {
+        /// The `[saved_searches.<key>]` identity.
+        key: String,
+    },
+    /// How many each saved search matches.
+    SavedCounts {
+        /// Every saved search, as `(key, query)`.
+        searches: Vec<(String, String)>,
+        /// The day relative dates are read against.
+        today: chrono::NaiveDate,
     },
     /// A folder's newest conversations, for `in:`.
     Folder {
@@ -644,6 +923,39 @@ pub enum Request {
     },
 }
 
+impl Request {
+    /// What a request for passages does with a message's first line (D7):
+    /// `None` for any other request.
+    pub fn first_line(&self) -> Option<postio_search::passage::FirstLine> {
+        match self {
+            // Neither the dropdown's hits (screen 03) nor the results' rows
+            // (design §3.4) show a preview: a match after the first line,
+            // or the first line's own when it holds the only one.
+            Request::Passages { .. } | Request::ResultsPassages { .. } => {
+                Some(postio_search::passage::FirstLine::Avoided)
+            }
+            _ => None,
+        }
+    }
+
+    /// The search lane this request is on, when it is one: a newer request
+    /// of the same lane makes the one before it waste (spec 010 D8).
+    pub fn lane(&self) -> Option<Lane> {
+        match self {
+            Request::Conversations { .. } => Some(Lane::Conversations),
+            Request::Passages { .. } => Some(Lane::Passages),
+            Request::QuickLookMatches { .. } => Some(Lane::Matches),
+            Request::Files { .. } => Some(Lane::Files),
+            Request::People { .. } => Some(Lane::People),
+            Request::Relaxations { .. } => Some(Lane::Relaxations),
+            Request::Facets { .. } => Some(Lane::Facets),
+            Request::Suggest { .. } => Some(Lane::Suggest),
+            Request::LatestFrom { .. } => Some(Lane::Latest),
+            _ => None,
+        }
+    }
+}
+
 /// The engine's answer to a [`Request`]. A failure is carried as its
 /// sentence: the controller decides what to show, not how to recover.
 #[derive(Debug, Clone, PartialEq)]
@@ -681,6 +993,110 @@ pub enum Reply {
         /// What it found.
         answer: Result<Found, String>,
     },
+    /// The answer to [`Request::Conversations`].
+    Conversations {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// What it found, boxed: it is the largest answer by far.
+        answer: Result<Box<postio_search::results::ConversationResults>, String>,
+    },
+    /// The answer to [`Request::Passages`].
+    Passages {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// Each hit's matches, with their passages.
+        answer: Result<Vec<(MessageId, Vec<postio_search::results::Match>)>, String>,
+    },
+    /// The answer to [`Request::ResultsPage`].
+    ResultsPage {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// The order asked.
+        order: postio_search::results::ConversationOrder,
+        /// The offset asked.
+        offset: u32,
+        /// What it found, boxed: it is the largest answer by far.
+        answer: Result<Box<postio_search::results::ConversationResults>, String>,
+    },
+    /// The answer to [`Request::ResultsPassages`].
+    ResultsPassages {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// Each hit's matches, with their passages.
+        answer: Result<Vec<(MessageId, Vec<postio_search::results::Match>)>, String>,
+    },
+    /// The answer to [`Request::Files`].
+    Files {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// The cards, newest first.
+        answer: Result<Vec<postio_search::results::FileHit>, String>,
+    },
+    /// The answer to [`Request::People`].
+    People {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// The rows, most messages first.
+        answer: Result<Vec<postio_search::suggest::Person>, String>,
+    },
+    /// The answer to [`Request::AttachmentCopy`].
+    AttachmentCopy {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// What the copy was for.
+        purpose: FilePurpose,
+        /// Where the copy is, or nothing when the bytes are not here.
+        answer: Result<Option<std::path::PathBuf>, String>,
+    },
+    /// The answer to [`Request::QuickLookMatches`].
+    QuickLookMatches {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// The conversation's matches, oldest first.
+        answer: Result<Vec<postio_search::results::ConversationMatch>, String>,
+    },
+    /// The answer to [`Request::Relaxations`].
+    Relaxations {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// Each looser search with its count.
+        answer: Result<
+            Vec<(
+                postio_search::relax::Relaxation,
+                postio_search::results::Counted,
+            )>,
+            String,
+        >,
+    },
+    /// The answer to [`Request::Facets`]: the facets alone, in the
+    /// results' shape.
+    Facets {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// What the query finds, hits left out.
+        answer: Result<Box<postio_search::results::ConversationResults>, String>,
+    },
+    /// The answer to [`Request::Suggest`].
+    Suggest {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// What the prefix could become.
+        answer: Result<Box<postio_search::suggest::Suggestions>, String>,
+    },
+    /// The answer to [`Request::LatestFrom`].
+    LatestFrom {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// Whose they are.
+        address: String,
+        /// Their latest conversations.
+        answer: Result<Box<postio_search::results::ConversationResults>, String>,
+    },
+    /// The answer to [`Request::RecentSearches`] and
+    /// [`Request::ForgetSearch`].
+    RecentSearches(Result<Vec<postio_client::protocol::RecentSearch>, String>),
+    /// The answer to [`Request::SavedCounts`].
+    SavedCounts(Result<Vec<postio_client::protocol::SavedCount>, String>),
     /// The answer to [`Request::Folder`].
     Folder {
         /// The stamp it was asked under.
@@ -823,6 +1239,10 @@ pub struct FocusController {
     /// Stamps the surfaces' reads, so an answer for one since moved on is
     /// dropped.
     stamps: u64,
+    /// The main window's results, while it shows them (spec 010 D17).
+    results: Option<results::Results>,
+    /// What the main window showed before, and after (spec 010 R9).
+    history: history::History,
 }
 
 impl FocusController {
@@ -836,7 +1256,7 @@ impl FocusController {
             cursor: cursor::Cursor::default(),
             verbs: verbs::Verbs::default(),
             surfaces: surfaces::Surfaces::default(),
-            bar: bar::Bar::new(policy.platform),
+            bar: bar::Bar::new(policy.platform, policy.caps.results_view),
             pickers: pickers::Pickers::default(),
             toast_undo: None,
             counts: None,
@@ -849,6 +1269,8 @@ impl FocusController {
             confirm: None,
             compose: compose::Compose::default(),
             stamps: 0,
+            results: None,
+            history: history::History::default(),
         }
     }
 
@@ -888,8 +1310,22 @@ impl FocusController {
         {
             return self.effects(steps);
         }
+        // The results are the main window's while they are up: their keys
+        // are theirs, and a verb acts on the focused result.
+        if let Input::Command(id) = &input
+            && self.surfaces.top().is_none()
+            && let Some(steps) = self.results_command(*id)
+        {
+            return self.effects(steps);
+        }
         match input {
             Input::Command(CommandId::Quit) => vec![Effect::Show(Intent::Quit)],
+            Input::Command(id @ (CommandId::HistoryBack | CommandId::HistoryForward))
+                if self.surfaces.top().is_none() =>
+            {
+                let steps = self.history_command(id).unwrap_or_default();
+                self.effects(steps)
+            }
             Input::Command(id) if self.surfaces.top().is_some() => {
                 match self.surface_command(id, rows) {
                     Some(steps) => self.effects(steps),
@@ -972,10 +1408,29 @@ impl FocusController {
                 let steps = self.surface_reply(reply, rows);
                 self.effects(steps)
             }
+            // So do the results'.
+            Input::Reply(
+                _,
+                reply @ (Reply::ResultsPage { .. }
+                | Reply::ResultsPassages { .. }
+                | Reply::Files { .. }
+                | Reply::People { .. }
+                | Reply::AttachmentCopy { .. }
+                | Reply::QuickLookMatches { .. }
+                | Reply::Facets { .. }
+                | Reply::Relaxations { .. }),
+            ) => {
+                let steps = self.results_reply(reply);
+                self.effects(steps)
+            }
             Input::Reply(ticket, _) if ticket.generation != self.generation => Vec::new(),
             Input::Reply(_, Reply::FocusCounts(Ok(counts))) => {
-                self.counts = Some(counts);
+                let before = self.counts.replace(counts);
                 let mut steps = vec![feed::Step::Show(Intent::Counts(counts))];
+                steps.extend(self.bar.filtered_counted(
+                    before.map(|before| before.filtered_today),
+                    counts.filtered_today,
+                ));
                 steps.extend(self.show_empty());
                 self.effects(steps)
             }
@@ -1017,6 +1472,12 @@ impl FocusController {
                 _,
                 reply @ (Reply::Places(_)
                 | Reply::Search { .. }
+                | Reply::Conversations { .. }
+                | Reply::Passages { .. }
+                | Reply::Suggest { .. }
+                | Reply::LatestFrom { .. }
+                | Reply::RecentSearches(_)
+                | Reply::SavedCounts(_)
                 | Reply::Folder { .. }
                 | Reply::RoleFolder(_)),
             ) => {
@@ -1025,6 +1486,8 @@ impl FocusController {
             }
             Input::Event(event) => {
                 let mut steps = self.verbs.event(&event);
+                steps.extend(self.results_heard(&event));
+                steps.extend(self.bar.heard(&event));
                 steps.extend(self.feed.event(&event));
                 steps.extend(self.hear_sync(&event));
                 steps.extend(self.filtered_event(&event));
@@ -1037,6 +1500,7 @@ impl FocusController {
             }
             Input::Clock(clock) => {
                 self.pickers.clock = clock;
+                self.bar.set_clock(clock);
                 Vec::new()
             }
             Input::PickerTyped { text } => {
@@ -1129,9 +1593,27 @@ impl FocusController {
                 let steps = self.timer(token);
                 self.effects(steps)
             }
+            input @ (Input::SearchEdit(_)
+            | Input::SearchPopover(_)
+            | Input::PopoverToggle { .. }
+            | Input::PopoverFilter(_)
+            | Input::PopoverDone { .. }
+            | Input::DateWords(_)
+            | Input::DatePreset(_)
+            | Input::ResultsTab(_)
+            | Input::ResultsOrder(_)
+            | Input::ResultsPoint(_)
+            | Input::FileCopyDone
+            | Input::SaveSearchAs { .. }) => {
+                let steps = self.results_input(input);
+                self.effects(steps)
+            }
             input @ (Input::Typed { .. }
             | Input::BarRun(_)
             | Input::BarTab
+            | Input::SearchHighlighted(_)
+            | Input::SearchForget(_)
+            | Input::SearchExclude(_)
             | Input::OpenPlace(_)
             | Input::SavedSearches(_)
             | Input::SearchSaved(_)
@@ -1180,6 +1662,9 @@ impl FocusController {
 
     /// The key context in force: the top surface's, or the list's.
     pub fn key_context(&self) -> postio_ui::keymap::KeyContext {
+        if self.surfaces.top().is_none() && self.results.is_some() {
+            return postio_ui::keymap::KeyContext::Results;
+        }
         self.surfaces.key_context()
     }
 
@@ -1313,7 +1798,10 @@ impl FocusController {
                 if self.hit_facts(reading).is_some() =>
             {
                 let by = if id == CommandId::NextMessage { 1 } else { -1 };
-                self.step_hit(reading, by)
+                let mut steps = self.step_hit(reading, by)?;
+                // A message a result opened: the focus ring follows it.
+                steps.extend(self.results_follow(self.surfaces.reading()));
+                Some(steps)
             }
             // `j`/`k` step the list behind the message, and the message
             // follows the cursor; nothing closes.
@@ -1349,11 +1837,33 @@ impl FocusController {
     /// the selection's, `!`, and the verbs on the list. A frontend sends the
     /// rest -- a surface's commands, the composer's -- where it always did.
     pub fn answers(&self, id: CommandId) -> bool {
-        if self.surfaces.top() == Some(SurfaceKind::Bar) && bar::bar_key(id) {
+        if self.surfaces.top() == Some(SurfaceKind::Bar)
+            && bar::bar_key(id, self.policy.caps.results_view)
+        {
             return true;
         }
         if pickers::picker_key(id) {
             return true;
+        }
+        if self.surfaces.top().is_none() {
+            if self.results.is_some() && results::results_key(id) {
+                return true;
+            }
+            // ⌘⌫ clears the filters while nothing matches (D24), and is
+            // nobody's otherwise.
+            if id == CommandId::BackToWords
+                && self
+                    .results
+                    .as_ref()
+                    .is_some_and(results::Results::found_nothing)
+            {
+                return true;
+            }
+            if self.policy.caps.results_view
+                && matches!(id, CommandId::HistoryBack | CommandId::HistoryForward)
+            {
+                return true;
+            }
         }
         if self.surfaces.top() == Some(SurfaceKind::Composer) {
             return Self::composer_answers(id);
@@ -1616,6 +2126,55 @@ impl FocusController {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The search requests name their lanes, so a driver can abort the one
+    /// a newer request of the same lane makes waste (spec 010 D8); nothing
+    /// else is on a lane, writes least of all.
+    #[test]
+    fn the_search_requests_name_their_lanes_and_nothing_else_does() {
+        let query = postio_search::ParsedQuery::default();
+        let conversations = Request::Conversations {
+            query: query.clone(),
+            order: postio_search::results::ConversationOrder::BestMatch,
+            limit: 4,
+            stamp: 1,
+        };
+        assert_eq!(conversations.lane(), Some(Lane::Conversations));
+        let passages = Request::Passages {
+            query: query.clone(),
+            hits: Vec::new(),
+            stamp: 1,
+        };
+        assert_eq!(passages.lane(), Some(Lane::Passages));
+        let matches = Request::QuickLookMatches {
+            query: query.clone(),
+            key: postio_search::results::ConversationKey::Lone(MessageId::new(1)),
+            stamp: 1,
+        };
+        assert_eq!(matches.lane(), Some(Lane::Matches));
+        for request in [
+            Request::RecentSearches,
+            Request::RememberSearch {
+                query: "atlas".to_owned(),
+                hits: 3,
+                capped: false,
+            },
+            Request::ForgetSearch {
+                query: "atlas".to_owned(),
+            },
+            Request::MarkSeen {
+                key: "atlas".to_owned(),
+            },
+            Request::Places,
+            Request::Search {
+                query,
+                order: postio_search::ResultOrder::default(),
+                stamp: 1,
+            },
+        ] {
+            assert_eq!(request.lane(), None, "{request:?}");
+        }
+    }
 
     /// An inbox of ten conversations, `has_action` of them marked: one
     /// with mail in it, so no empty page follows the counts.

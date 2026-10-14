@@ -129,8 +129,13 @@ pub fn terms(query: &ParsedQuery) -> Vec<String> {
         .map(|term| term.value.clone())
         .collect();
 
-    for clause in query.filters().filter(|clause| !clause.negated) {
-        let value = match &clause.filter {
+    // Every value of a set (D26): either is what the reader is looking for.
+    for filter in query
+        .filters()
+        .filter(|clause| !clause.negated)
+        .flat_map(|clause| clause.filter.alternatives())
+    {
+        let value = match filter {
             Filter::From(value)
             | Filter::To(value)
             | Filter::Subject(value)
@@ -291,7 +296,7 @@ pub fn snippet(text: &str, terms: &[String]) -> String {
 }
 
 /// Every run of whitespace as one space, and no leading or trailing space.
-fn collapse_whitespace(text: &str) -> String {
+pub(crate) fn collapse_whitespace(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut in_space = false;
     for character in text.chars() {
@@ -462,6 +467,16 @@ mod tests {
             ["invoice", "ada"],
             "`is:`, `larger:` and `after:` have no text in the message to point at"
         );
+    }
+
+    #[test]
+    fn every_value_of_a_positive_set_is_a_term() {
+        // D26: either person is what the reader is looking for.
+        assert_eq!(
+            terms(&parse("from:{ada tomas} subject:{budget plan} -to:{bo cy}")),
+            ["ada", "tomas", "budget", "plan"]
+        );
+        assert!(terms(&parse("in:{archive inbox}")).is_empty());
     }
 
     #[test]

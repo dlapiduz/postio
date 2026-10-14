@@ -458,6 +458,76 @@ pub enum UiEvent {
         /// The registry command the button runs.
         command: String,
     },
+    /// Draw the search dropdown, whole, in place of the bar's lines
+    /// (specs/010-focus-search step 2). A `FocusBarLines` after it puts the
+    /// lines back: `>`, `in:` and `@` are still spec 009's.
+    FocusDropdown {
+        /// What it draws.
+        view: crate::focus_search::DropdownViewFfi,
+    },
+    /// The query's chips and words in the field, and the filter bar's
+    /// buttons (spec 010 step 3): after any edit.
+    FocusQuery {
+        /// What they draw.
+        view: crate::focus_search::QueryViewFfi,
+    },
+    /// The main window shows a search's results: this frame, whole --
+    /// entering them, and after every query, tab or sort change. Read the
+    /// rows with `focus_search_row`.
+    FocusResults {
+        /// The frame.
+        view: crate::focus_search::ResultsViewFfi,
+    },
+    /// Results rows `first..first + count` changed: read them again.
+    FocusResultsPage {
+        /// The first row.
+        first: u64,
+        /// How many.
+        count: u64,
+    },
+    /// The focus ring is on this result: draw it there and scroll it into
+    /// view.
+    FocusResultsCursor {
+        /// The row.
+        position: u64,
+    },
+    /// Back to the inbox: Esc's last rung, or ⌘[. The list's own cursor and
+    /// selection follow.
+    FocusLeaveResults,
+    /// Hang this filter popover from its button, or redraw the one open,
+    /// whole; `None` closes it (spec 010 step 4, FR-027).
+    FocusPopover {
+        /// What it draws.
+        view: Option<crate::focus_search::PopoverViewFfi>,
+    },
+    /// Draw Quick Look over the results, whole, in place of the one
+    /// showing; `None` closes it (spec 010 step 5, FR-028).
+    FocusQuickLook {
+        /// What it draws.
+        view: Option<crate::focus_search::QuickLookViewFfi>,
+    },
+    /// Hang the Save popover from the toolbar's Save search button (⌘S,
+    /// spec 010 §3.9, FR-029); `None` takes it down. Save ↩ is
+    /// `focus_search_save`.
+    FocusSavePopover {
+        /// What it draws.
+        view: Option<crate::focus_search::SaveViewFfi>,
+    },
+    /// The results found nothing: draw this page in the rows' place,
+    /// whole; `None` takes it away (spec 010 step 7, FR-030). A way out
+    /// is run by invoking `pick_relaxation_<n>`.
+    FocusRelaxations {
+        /// What it draws.
+        view: Option<crate::focus_search::NoResultsViewFfi>,
+    },
+    /// Hand the system this copy of a file: Quick Look on it, or a save
+    /// panel to put it somewhere (spec 010 step 9, FR-031, FR-053); `None`
+    /// closes the Quick Look panel. Say `focus_search_file_done` when the
+    /// person closes the panel, or the save is done or cancelled.
+    FocusFileCopy {
+        /// The copy.
+        copy: Option<crate::focus_search::FileCopyFfi>,
+    },
 }
 
 /// How a Focus toast is drawn.

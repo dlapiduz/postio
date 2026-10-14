@@ -11,6 +11,7 @@ use postio_core::bridge::event_channel;
 use postio_core::{Command, Event, EventEnvelope, MessageTarget, SharedState};
 use postio_model::listing::{ListPage, MailStore, PageRequest};
 use postio_model::{ListScope, MailboxId, Message, MessageId};
+use postio_search::results::Counted;
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 
@@ -1754,6 +1755,67 @@ fn saving_every_part_writes_each_and_counts_what_could_not_be() {
     );
     assert!(!out.path().join("nothing").exists());
     assert_eq!(client.counts().of("SaveParts"), 1, "one call for the batch");
+}
+
+/// Spec 010 FR-053, FR-050 (T128): a file card's copy, for the system's
+/// Quick Look or a save, is written into the folder asked and nowhere
+/// else, and only from bytes already on this machine.
+#[test]
+fn an_attachment_copy_lands_in_the_folder_asked_and_nowhere_else() {
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Focus);
+    let blobs = postio_storage::BlobStore::open(world.blob_dir.clone(), &test_support::blob_keys())
+        .expect("the same blob store");
+    let blob = blobs.put(b"PK the workbook").expect("stored");
+    let message = another_message(&world, |message| {
+        let mut sheet = postio_model::Attachment::new(
+            MessageId::UNASSIGNED,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            15,
+        );
+        // A hostile name: only its last component is ever used.
+        sheet.filename = Some("../../Atlas-Q3-budget.xlsx".into());
+        sheet.part_id = Some("2".into());
+        sheet.blob_id = Some(blob);
+        message.attachments.push(sheet);
+        let mut remote =
+            postio_model::Attachment::new(MessageId::UNASSIGNED, "application/pdf", 900);
+        remote.filename = Some("never-downloaded.pdf".into());
+        remote.part_id = Some("3".into());
+        message.attachments.push(remote);
+    });
+    let parts = world.rt.block_on(client.parts(message)).expect("the parts");
+    let (sheet, remote) = (parts[0].id, parts[1].id);
+    let outside = tempfile::tempdir().unwrap();
+    let dir = outside.path().join("previews");
+
+    let copy = world
+        .rt
+        .block_on(client.attachment_copy(sheet, dir.clone()))
+        .expect("an answer")
+        .expect("its bytes are here");
+    assert!(copy.starts_with(&dir), "{copy:?} is under {dir:?}");
+    assert_eq!(
+        copy.file_name().and_then(|name| name.to_str()),
+        Some("Atlas-Q3-budget.xlsx")
+    );
+    assert_eq!(std::fs::read(&copy).unwrap(), b"PK the workbook");
+    // Nothing beside the folder asked: the hostile name climbed nowhere.
+    let written: Vec<_> = std::fs::read_dir(outside.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(written, [std::ffi::OsString::from("previews")]);
+
+    // Bytes never downloaded are not fetched for a preview.
+    assert_eq!(
+        world
+            .rt
+            .block_on(client.attachment_copy(remote, dir.clone()))
+            .expect("an answer"),
+        None
+    );
+    assert_eq!(client.counts().of("AttachmentCopy"), 2);
 }
 
 /// A message in the fixture's inbox whose body says `body`, indexed the way
@@ -3965,4 +4027,771 @@ fn an_address_written_to_is_offered_before_one_only_seen() {
         .find(|row| row.contact.address.address == "quill.wrote@example.net")
         .expect("in the directory");
     assert_eq!(wrote.sent_count, 42, "the directory carries the letters");
+}
+
+// ---------------------------------------------------------------------------
+// Focus's search (spec 010): conversations, passages, relaxations
+// ---------------------------------------------------------------------------
+
+/// A host over the search seed, and a frontend on it.
+struct SearchSeed {
+    rt: tokio::runtime::Runtime,
+    host: Option<Host>,
+    client: Client,
+    account: postio_model::AccountId,
+    database: postio_storage::Store,
+    _blobs: tempfile::TempDir,
+}
+
+impl SearchSeed {
+    fn new() -> SearchSeed {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a test runtime");
+        let (database, account) = rt.block_on(postio_demo::seeded(postio_demo::Seed::Search));
+        let directory = tempfile::tempdir().expect("a blob directory");
+        let blobs = postio_storage::BlobStore::open(
+            directory.path().to_path_buf(),
+            &test_support::blob_keys(),
+        )
+        .expect("a blob store");
+        postio_demo::store_search_blobs(&blobs).expect("the seed's files");
+        let host = Host::start(database.clone(), blobs, |wiring| {
+            wiring.with_secrets(std::sync::Arc::new(MemorySecretStore::new()))
+        })
+        .expect("a host");
+        let client = host.connect(ClientKind::Focus);
+        SearchSeed {
+            rt,
+            host: Some(host),
+            client,
+            account,
+            database,
+            _blobs: directory,
+        }
+    }
+
+    fn scope(&self) -> postio_model::AccountScope {
+        postio_model::AccountScope::Account(self.account)
+    }
+
+    fn conversations(&self, text: &str) -> postio_search::results::ConversationResults {
+        self.rt
+            .block_on(self.client.conversations(
+                self.scope(),
+                postio_search::parse(text, postio_demo::today().date_naive()),
+                postio_search::results::ConversationOrder::BestMatch,
+                0,
+                20,
+            ))
+            .expect("an answer")
+            .expect("the store was read")
+    }
+}
+
+impl Drop for SearchSeed {
+    fn drop(&mut self) {
+        self.host.take();
+    }
+}
+
+/// Screen 05's example finds what it says: the cheat sheet's "invoices
+/// from ada last month", lowered against the demo's today as the bar
+/// lowers it, finds Ada's three invoices of last month and nothing else.
+#[test]
+fn the_plain_english_example_finds_adas_invoices_of_last_month() {
+    let seed = SearchSeed::new();
+    let today = postio_demo::today()
+        .with_timezone(&chrono::Local)
+        .date_naive();
+    // The address book knows Ada, as the bar's `Names` does: "from ada"
+    // is `from:ada`.
+    let ada = |name: &str| name.eq_ignore_ascii_case("ada").then(|| "ada".to_owned());
+    let query = postio_search::natural::lower("invoices from ada last month", today, &ada);
+    let results = seed
+        .rt
+        .block_on(seed.client.conversations(
+            seed.scope(),
+            query,
+            postio_search::results::ConversationOrder::Newest,
+            0,
+            20,
+        ))
+        .expect("an answer")
+        .expect("the store was read");
+    let found: Vec<(String, String)> = results
+        .hits
+        .iter()
+        .map(|hit| {
+            (
+                hit.from
+                    .as_ref()
+                    .map(|from| from.address.clone())
+                    .unwrap_or_default(),
+                hit.subject.clone().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(results.total, 3, "{found:?}");
+    assert!(
+        found.iter().all(|(from, subject)| from == "ada@example.com"
+            && subject.to_lowercase().contains("invoice")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn focus_asks_the_host_for_conversations_then_their_passages() {
+    let seed = SearchSeed::new();
+    let results = seed.conversations("atlas budget");
+    assert!(results.total > 1, "the seed's Atlas threads are found");
+    assert!(
+        results.names.labels.iter().any(|(_, name)| name == "Atlas"),
+        "the label facet comes back named: {:?}",
+        results.names.labels
+    );
+
+    let asked: Vec<_> = results
+        .hits
+        .iter()
+        .map(|hit| {
+            (
+                hit.best,
+                hit.matches
+                    .iter()
+                    .map(|found| found.source.clone())
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    let answered = seed
+        .rt
+        .block_on(seed.client.passages(
+            postio_search::parse("atlas budget", postio_demo::today().date_naive()),
+            asked.clone(),
+            // As the results view asks: its rows show no preview.
+            postio_search::passage::FirstLine::Avoided,
+        ))
+        .expect("an answer");
+    assert_eq!(
+        answered.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        asked.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        "one answer per hit, in the order asked"
+    );
+    let cut: Vec<&postio_search::passage::Passage> = answered
+        .iter()
+        .flat_map(|(_, matches)| matches)
+        .filter(|found| found.source == postio_search::results::Source::Body)
+        .filter_map(|found| found.passage.as_ref())
+        .collect();
+    assert!(!cut.is_empty(), "the bodies that matched are cut");
+    for passage in cut {
+        let marked: Vec<String> = passage
+            .ranges
+            .iter()
+            .map(|range| passage.text[range.clone()].to_lowercase())
+            .collect();
+        assert!(
+            marked
+                .iter()
+                .all(|word| word == "atlas" || word == "budget"),
+            "a passage marks the words searched for: {marked:?} in {:?}",
+            passage.text
+        );
+    }
+}
+
+/// Quick Look's cards (spec 010 US4): every match in the first result's
+/// conversation, its own words with who wrote them, the subject once last.
+#[test]
+fn focus_asks_the_host_for_a_conversations_matches() {
+    let seed = SearchSeed::new();
+    let results = seed.conversations("atlas budget");
+    let hit = results
+        .hits
+        .iter()
+        .find(|hit| hit.messages > 1)
+        .expect("an Atlas conversation of more than one message");
+    let found = seed
+        .rt
+        .block_on(seed.client.conversation_matches(
+            postio_search::parse("atlas budget", postio_demo::today().date_naive()),
+            hit.key,
+        ))
+        .expect("an answer");
+    assert!(!found.is_empty(), "the conversation's matches");
+    let bodies: Vec<_> = found
+        .iter()
+        .filter(|each| each.found.source == postio_search::results::Source::Body)
+        .collect();
+    assert!(!bodies.is_empty(), "{found:?}");
+    for body in &bodies {
+        assert!(body.message.is_some() && body.from.is_some(), "{body:?}");
+        assert!(body.found.passage.is_some(), "{body:?}");
+    }
+    let when: Vec<_> = bodies.iter().map(|body| body.found.when).collect();
+    let mut sorted = when.clone();
+    sorted.sort();
+    assert_eq!(when, sorted, "oldest first");
+    assert!(
+        found
+            .iter()
+            .filter(|each| each.found.source == postio_search::results::Source::Subject)
+            .count()
+            <= 1,
+        "the subject is said once"
+    );
+}
+
+#[test]
+fn focus_asks_the_host_for_the_ways_out_of_no_results() {
+    let seed = SearchSeed::new();
+    // Two ways out find something, the rest nothing, and the one that
+    // finds more is the later token: the order is the counts', not the
+    // query's.
+    let text = "budget invoice from:priya@example.com label:Atlas";
+    let today = postio_demo::today().date_naive();
+    let query = postio_search::parse(text, today);
+    assert_eq!(seed.conversations(text).total, 0, "nothing says all of it");
+
+    let offered = postio_search::relax::relax(&query);
+    let answered = seed
+        .rt
+        .block_on(seed.client.relaxations(seed.scope(), query, today))
+        .expect("an answer");
+
+    // What each way out would find, asked of the same host as a search.
+    let mut expected: Vec<(postio_search::relax::Relaxation, Counted)> = offered
+        .iter()
+        .map(|relaxation| {
+            let found = seed.conversations(&relaxation.query);
+            (
+                relaxation.clone(),
+                Counted {
+                    conversations: found.total,
+                    capped: found.capped,
+                },
+            )
+        })
+        .filter(|(_, total)| total.conversations > 0)
+        .collect();
+    expected.sort_by_key(|(_, total)| std::cmp::Reverse(total.conversations));
+    assert!(
+        expected.len() >= 2 && expected.len() < offered.len(),
+        "the seed leaves some ways out finding nothing: {expected:?}"
+    );
+    assert_eq!(
+        answered, expected,
+        "the ways out that find something, most first"
+    );
+    let at = |relaxation: &postio_search::relax::Relaxation| {
+        offered.iter().position(|offer| offer == relaxation)
+    };
+    assert!(
+        at(&answered[0].0) > at(&answered[1].0),
+        "the more fruitful way out leads though the query names it later: {answered:?}"
+    );
+}
+
+#[test]
+fn focus_asks_the_host_what_a_prefix_could_become() {
+    // Spec 010 US7: the dropdown's short-prefix and `from:` states. The
+    // host answers on a reader turn, and stops when the keystroke after
+    // supersedes it (D9).
+    let seed = SearchSeed::new();
+    let found = seed
+        .rt
+        .block_on(seed.client.suggest(seed.scope(), "at".to_owned(), None))
+        .expect("an answer");
+    assert_eq!(
+        found.words.first().map(|word| word.text.as_str()),
+        Some("atlas"),
+        "the seed's Atlas mail: {found:?}"
+    );
+    assert_eq!(found.ghost.as_deref(), Some("las"));
+    let atlas = &found.words[0];
+    assert_eq!(
+        atlas.count,
+        seed.conversations(&atlas.query).total,
+        "the count is what the query finds"
+    );
+    assert!(
+        found.labels.iter().any(|label| label.text == "Atlas"),
+        "the seed's label: {:?}",
+        found.labels
+    );
+
+    let people = seed
+        .rt
+        .block_on(seed.client.suggest(
+            seed.scope(),
+            "ad".to_owned(),
+            Some(postio_search::query::Field::From),
+        ))
+        .expect("an answer");
+    assert!(
+        people
+            .people
+            .iter()
+            .any(|person| person.address.starts_with("ada")),
+        "Ada is someone the seed's mail is from: {:?}",
+        people.people
+    );
+    assert!(
+        postio_client::protocol::Req::Suggest {
+            account: seed.scope(),
+            prefix: "at".to_owned(),
+            field: None,
+        }
+        .cancellable(),
+        "a keystroke supersedes it"
+    );
+}
+
+#[test]
+fn focus_asks_the_host_who_the_results_are_from_and_to() {
+    // Spec 010 US9: the People tab. The host answers on a reader turn, the
+    // person's own addresses left out, and stops when a newer search
+    // supersedes it (D9).
+    let seed = SearchSeed::new();
+    let query = postio_search::parse("atlas", postio_demo::today().date_naive());
+    let people = seed
+        .rt
+        .block_on(seed.client.people(seed.scope(), query.clone(), 0, 50))
+        .expect("an answer");
+    assert!(
+        people
+            .iter()
+            .any(|person| person.address.starts_with("ada")),
+        "Ada wrote about Atlas in the seed: {people:?}"
+    );
+    let own = seed.rt.block_on(async {
+        let reader = seed.database.read().await.expect("a reader");
+        postio_storage::repository::IdentityRepository::new(&reader)
+            .own_addresses()
+            .await
+            .expect("own addresses")
+    });
+    assert!(!own.is_empty());
+    assert!(
+        people.iter().all(|person| own
+            .iter()
+            .all(|mine| !mine.address.eq_ignore_ascii_case(&person.address))),
+        "never yourself: {people:?}"
+    );
+    assert!(
+        postio_client::protocol::Req::People {
+            account: seed.scope(),
+            query,
+            offset: 0,
+            limit: 50,
+        }
+        .cancellable(),
+        "a newer search supersedes it"
+    );
+}
+
+#[test]
+fn a_search_whose_caller_has_gone_stops_on_the_host() {
+    // D9: the driver aborts a superseded search by dropping the client's
+    // future, and the host has to notice, or the abandoned search keeps
+    // its reader and its CPU while the one that replaced it waits.
+    //
+    // Every reader turn is held here, so the host's search waits for one:
+    // a piece of work in flight, holding the host (its task's share of
+    // `Inner`) for as long as it lives. Dropped, it must let go without
+    // ever reading a row.
+    let seed = SearchSeed::new();
+    let host = seed.host.as_ref().expect("running");
+    let query = postio_search::parse("atlas budget", postio_demo::today().date_naive());
+    // Warm: whatever the host starts lazily on a first search is started.
+    seed.conversations("atlas budget");
+    let idle = std::sync::Arc::strong_count(&host.inner);
+
+    let held: Vec<postio_storage::Reader> = seed.rt.block_on(async {
+        let mut held = Vec::new();
+        while let Ok(turn) =
+            tokio::time::timeout(Duration::from_millis(50), seed.database.read()).await
+        {
+            held.push(turn.expect("a reader"));
+        }
+        held
+    });
+    assert!(!held.is_empty(), "every reader turn is held");
+
+    let call = seed.client.conversations(
+        seed.scope(),
+        query,
+        postio_search::results::ConversationOrder::BestMatch,
+        0,
+        20,
+    );
+    let mut call = Box::pin(call);
+    let waited = seed.rt.block_on(async {
+        tokio::time::timeout(Duration::from_millis(50), &mut call)
+            .await
+            .is_err()
+    });
+    assert!(waited, "the search waits for a reader turn");
+    postio_test_support::wait_until("the host to be working on the search", || {
+        std::sync::Arc::strong_count(&host.inner) > idle
+    });
+
+    drop(call);
+    postio_test_support::wait_until("the host to stop the abandoned search", || {
+        std::sync::Arc::strong_count(&host.inner) == idle
+    });
+
+    drop(held);
+    let after = seed.conversations("atlas budget");
+    assert!(
+        after.total > 1,
+        "the host searches on after an abandoned one"
+    );
+}
+
+#[test]
+fn focus_remembers_the_searches_it_ran_and_forgets_them_on_request() {
+    let seed = SearchSeed::new();
+    let ask = |request: Result<(), postio_model::listing::StoreError>| request.expect("an answer");
+
+    // The seed has screen 01's recents, all run on earlier days.
+    let seeded = seed
+        .rt
+        .block_on(seed.client.recent_searches())
+        .expect("an answer")
+        .len();
+
+    ask(seed
+        .rt
+        .block_on(seed.client.remember_search("atlas".into(), 4, false)));
+    ask(seed
+        .rt
+        .block_on(seed.client.remember_search("from:ada".into(), 2, true)));
+    ask(seed
+        .rt
+        .block_on(seed.client.remember_search("atlas".into(), 5, false)));
+
+    let recent = seed
+        .rt
+        .block_on(seed.client.recent_searches())
+        .expect("an answer");
+    let seen: Vec<_> = recent
+        .iter()
+        .map(|search| (search.query.as_str(), search.hits, search.capped))
+        .collect();
+    assert_eq!(
+        seen[..2],
+        [("atlas", 5, false), ("from:ada", 2, true)],
+        "newest run first"
+    );
+    assert_eq!(recent.len(), seeded + 2, "a query run twice is one entry");
+
+    ask(seed.rt.block_on(seed.client.forget_search("atlas".into())));
+    let recent = seed
+        .rt
+        .block_on(seed.client.recent_searches())
+        .expect("an answer");
+    assert_eq!(recent.len(), seeded + 1);
+    assert_eq!(recent[0].query, "from:ada");
+    assert!(recent.iter().all(|search| search.query != "atlas"));
+    assert_eq!(seed.client.counts().of("RememberSearch"), 3);
+}
+
+#[test]
+fn focus_counts_each_saved_search_and_nothing_is_new_before_it_is_seen() {
+    let seed = SearchSeed::new();
+    let today = postio_demo::today().date_naive();
+    let counts = seed
+        .rt
+        .block_on(seed.client.saved_counts(
+            seed.scope(),
+            today,
+            vec![
+                ("budget".into(), "atlas budget".into()),
+                ("nothing".into(), "zzzqxv".into()),
+            ],
+        ))
+        .expect("an answer");
+
+    assert_eq!(counts.len(), 2, "one count per saved search, in order");
+    assert_eq!(counts[0].key, "budget");
+    let found = seed.conversations("atlas budget");
+    assert_eq!(
+        counts[0].total,
+        Counted {
+            conversations: found.total,
+            capped: found.capped,
+        }
+    );
+    assert!(counts[0].total.conversations > 0);
+    assert_eq!(
+        counts[0].new,
+        Counted::default(),
+        "nothing is new before it was first seen"
+    );
+    assert_eq!(
+        counts[1],
+        postio_client::protocol::SavedCount {
+            key: "nothing".to_owned(),
+            total: Counted::default(),
+            new: Counted::default(),
+        }
+    );
+}
+
+#[test]
+fn an_archive_aimed_at_a_query_archives_what_it_matches_and_one_undo_restores_it() {
+    // US5's first scenario: ⇧X in the results, then `a`. The frontend says
+    // the query and the rows taken back out -- a predicate -- and the host
+    // walks the match the results were drawn from.
+    let seed = SearchSeed::new();
+    let events = seed.client.events();
+    let today = postio_demo::today().date_naive();
+    let all = |text: &str| {
+        seed.rt
+            .block_on(seed.client.conversations(
+                seed.scope(),
+                postio_search::parse(text, today),
+                postio_search::results::ConversationOrder::Newest,
+                0,
+                500,
+            ))
+            .expect("an answer")
+            .expect("the store was read")
+    };
+    let archive_folder = seed
+        .rt
+        .block_on(seed.client.mailboxes(seed.account))
+        .expect("the folders")
+        .into_iter()
+        .find(|folder| folder.role == postio_model::MailboxRole::Archive)
+        .expect("the seed has an Archive")
+        .id;
+    let before = all("atlas budget");
+    assert!(before.hits.len() > 3, "a match worth selecting");
+    let placed = |found: &postio_search::results::ConversationResults| {
+        found
+            .hits
+            .iter()
+            .map(|hit| (hit.best, hit.mailbox_id))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let was = placed(&before);
+    let kept = before
+        .hits
+        .iter()
+        .find(|hit| hit.mailbox_id != archive_folder)
+        .expect("one not archived yet")
+        .best;
+    // Something that does not match, in a folder of its own.
+    let elsewhere = all("dinner saturday");
+    let elsewhere_was = placed(&elsewhere);
+    assert!(
+        !elsewhere_was.is_empty() && elsewhere_was.keys().all(|best| !was.contains_key(best)),
+        "a conversation the query does not match"
+    );
+
+    seed.rt
+        .block_on(seed.client.send_matching(
+            Command::Archive {
+                target: MessageTarget::Selection,
+            },
+            seed.scope(),
+            postio_search::parse("atlas budget", today),
+            vec![kept],
+        ))
+        .expect("sent");
+    let completed = |event: &Event| matches!(event, Event::ActionCompleted { .. });
+    let rt = &seed.rt;
+    let hear = |wanted: &dyn Fn(&Event) -> bool| {
+        rt.block_on(async {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    let envelope = events.recv().await.expect("the host is running");
+                    if let Event::CommandRejected { reason, .. } = &envelope.event {
+                        panic!("rejected: {reason}");
+                    }
+                    if wanted(&envelope.event) {
+                        return;
+                    }
+                }
+            })
+            .await
+            .expect("the event arrived")
+        })
+    };
+    hear(&completed);
+
+    let after = placed(&all("atlas budget"));
+    assert_eq!(after.len(), was.len(), "archived mail still matches");
+    for (best, folder) in &after {
+        if *best == kept {
+            assert_eq!(Some(folder), was.get(best), "the row taken back out stays");
+        } else {
+            assert_eq!(*folder, archive_folder, "every other match is archived");
+        }
+    }
+    assert_eq!(
+        placed(&all("dinner saturday")),
+        elsewhere_was,
+        "nothing else moved"
+    );
+
+    seed.rt
+        .block_on(seed.client.send(Command::Undo))
+        .expect("sent");
+    hear(&|event| matches!(event, Event::UndoPerformed { .. }));
+    assert_eq!(
+        placed(&all("atlas budget")),
+        was,
+        "one undo puts it all back"
+    );
+}
+
+#[test]
+fn a_saved_search_counts_what_arrived_since_it_was_seen_and_viewing_clears_it() {
+    // D15: the badge is the matches received after the saved search's
+    // seen-up-to instant; viewing it moves that instant to now.
+    let seed = SearchSeed::new();
+    let today = postio_demo::today().date_naive();
+    let searches = vec![
+        ("budget".to_owned(), "atlas budget".to_owned()),
+        ("dinner".to_owned(), "dinner saturday".to_owned()),
+    ];
+    let counts = || {
+        seed.rt
+            .block_on(
+                seed.client
+                    .saved_counts(seed.scope(), today, searches.clone()),
+            )
+            .expect("an answer")
+    };
+    // On the clock seam, past everything the seed holds (its newest mail is
+    // dated this afternoon): seen now, then mail a minute later, then seen
+    // again a minute after that.
+    let seen = (postio_demo::today() + chrono::TimeDelta::hours(1)).with_timezone(&chrono::Local);
+    postio_model::clock::freeze(seen);
+    seed.rt
+        .block_on(seed.client.mark_seen("budget".to_owned()))
+        .expect("marked");
+    let before = counts();
+    assert_eq!(
+        before[0].new.conversations, 0,
+        "everything that matches was there when seen"
+    );
+
+    // Mail that matches arrives after it was seen.
+    let inbox = seed
+        .rt
+        .block_on(postio_model::listing::MailStore::mailboxes(
+            &seed.client,
+            seed.account,
+        ))
+        .expect("the folders")
+        .into_iter()
+        .find(|folder| folder.role == postio_model::MailboxRole::Inbox)
+        .expect("an inbox")
+        .id;
+    seed.rt.block_on(async {
+        let connection = seed.database.connect().await.expect("a connection");
+        let mut message = Message::new(
+            seed.account,
+            inbox,
+            (seen + chrono::TimeDelta::minutes(1)).to_utc(),
+        );
+        message.subject = Some("Atlas budget, one more line".to_owned());
+        MessageRepository::new(&connection)
+            .create(&mut message)
+            .await
+            .expect("a message");
+    });
+    let after = counts();
+    assert_eq!(
+        after[0].total.conversations,
+        before[0].total.conversations + 1,
+        "it matches"
+    );
+    assert_eq!(
+        after[0].new,
+        Counted {
+            conversations: 1,
+            capped: false,
+        },
+        "and it is new since the search was seen"
+    );
+    assert_eq!(
+        after[1].new.conversations, 0,
+        "a search never seen has no badge"
+    );
+
+    postio_model::clock::freeze(seen + chrono::TimeDelta::minutes(2));
+    seed.rt
+        .block_on(seed.client.mark_seen("budget".to_owned()))
+        .expect("marked");
+    postio_model::clock::thaw();
+    assert_eq!(
+        counts()[0].new.conversations,
+        0,
+        "viewing it clears the badge"
+    );
+    assert_eq!(seed.client.counts().of("MarkSeen"), 2);
+}
+
+#[test]
+fn a_badge_that_stopped_at_its_cap_says_it_is_a_floor() {
+    // D30: the badge reads at most NEW_CAP conversations, and when every
+    // one it read is new there may be more behind them -- "99+ new".
+    let seed = SearchSeed::new();
+    let today = postio_demo::today().date_naive();
+    let seen = (postio_demo::today() + chrono::TimeDelta::hours(1)).with_timezone(&chrono::Local);
+    postio_model::clock::freeze(seen);
+    seed.rt
+        .block_on(seed.client.mark_seen("budget".to_owned()))
+        .expect("marked");
+    postio_model::clock::thaw();
+    let inbox = seed
+        .rt
+        .block_on(postio_model::listing::MailStore::mailboxes(
+            &seed.client,
+            seed.account,
+        ))
+        .expect("the folders")
+        .into_iter()
+        .find(|folder| folder.role == postio_model::MailboxRole::Inbox)
+        .expect("an inbox")
+        .id;
+    let arrivals = i64::from(crate::search::NEW_CAP) + 1;
+    seed.rt.block_on(async {
+        let connection = seed.database.connect().await.expect("a connection");
+        for minute in 1..=arrivals {
+            let mut message = Message::new(
+                seed.account,
+                inbox,
+                (seen + chrono::TimeDelta::minutes(minute)).to_utc(),
+            );
+            message.subject = Some(format!("Atlas budget, line {minute}"));
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .await
+                .expect("a message");
+        }
+    });
+    let counted = seed
+        .rt
+        .block_on(seed.client.saved_counts(
+            seed.scope(),
+            today,
+            vec![("budget".to_owned(), "atlas budget".to_owned())],
+        ))
+        .expect("an answer");
+    assert_eq!(
+        counted[0].new,
+        Counted {
+            conversations: u64::from(crate::search::NEW_CAP),
+            capped: true,
+        }
+    );
+    assert!(!counted[0].total.capped, "the total is counted to the end");
 }

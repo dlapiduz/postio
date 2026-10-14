@@ -88,6 +88,16 @@ const DIVIDING: &[&str] = &[
     "from:ada.norwood@example.com list:harbour",
     "from:quinn.abara@example.net -list:harbour",
     "from:example.com -from:ada.norwood@example.com",
+    // Either of several values (spec 010, D26).
+    "from:{ada.norwood@example.com quinn.abara@example.net}",
+    "from:{ada tanaka.yoko@jp.example orders@shop.example.org}",
+    "-from:{ada.norwood@example.com quinn.abara@example.net}",
+    "list:{harbour weekly.news.example.org}",
+    "to:{ada.norwood@example.com ren}",
+    "subject:{walkthrough receipt}",
+    "filename:{invite.ics badge.png}",
+    "from:{example.com example.org} -list:{harbour}",
+    "from:{ada quinn.abara@example.net} -subject:{walkthrough zeppelin}",
 ];
 
 /// Queries no fixture should answer.
@@ -99,6 +109,8 @@ const NOTHING: &[&str] = &[
     "to:nobody@example.com",
     "subject:zeppelin",
     "filename:nothing.pdf",
+    "from:{nobody@example.com francoise}",
+    "subject:{zeppelin dirigible}",
 ];
 
 fn today() -> NaiveDate {
@@ -272,5 +284,29 @@ async fn the_matcher_reads_the_row_the_index_holds() {
         .await
         .expect("every stored message has a row");
         assert_eq!(Document::of(message), stored, "{name}");
+    }
+}
+
+#[test]
+fn the_matcher_refuses_label_and_has_action() {
+    // D12: labels and open markers are written after a message is filed,
+    // which is when the matcher runs, so it must refuse them -- never answer
+    // from a state that does not exist yet. Pinned here so a later change
+    // to the matcher's table cannot start answering them at filing time.
+    use postio_search::matcher::Unsupported;
+    for (text, token) in [
+        ("label:atlas", "label:atlas"),
+        ("-label:atlas", "-label:atlas"),
+        (r#"label:"Q3 close""#, r#"label:"Q3 close""#),
+        ("has:action", "has:action"),
+        ("from:ada@example.com has:action", "has:action"),
+        ("label:atlas from:ada@example.com", "label:atlas"),
+    ] {
+        let refused = Matcher::new(&parse(text, today())).err();
+        assert_eq!(
+            refused,
+            Some(Unsupported::Token(token.to_owned())),
+            "{text:?} is refused, naming {token:?}"
+        );
     }
 }

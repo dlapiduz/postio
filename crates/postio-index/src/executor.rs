@@ -35,6 +35,17 @@ use crate::error::Result;
 use postio_storage::Connection;
 use postio_storage::sql::{self, RowExt as _};
 
+mod completions;
+mod conversations;
+mod files;
+mod people;
+mod relaxations;
+pub use completions::{COMPLETION_COUNT_CAP, completions};
+pub use conversations::{ConversationRequest, search_conversations};
+pub use files::{FILES_CAP, FileMatch, file_matches, files};
+pub use people::{OWN_ADDRESSES, PEOPLE_CAP, people};
+pub use relaxations::relaxation_counts;
+
 /// How many candidates `search` pulls out of SQL before re-ranking in Rust,
 /// as a multiple of the requested page size.
 const CANDIDATE_POOL_MULTIPLIER: u32 = 5;
@@ -255,6 +266,115 @@ fn known(times_seen: i64) -> u8 {
     (affinity.min(1.0) * 4.0).floor().min(3.0) as u8
 }
 
+/// Where the relevance order puts one candidate, once it is scored: what
+/// [`search`] sorts its pool by, and what a conversation search sorts its
+/// pool by with the match count in between ([`RelevanceKey::order`]).
+#[derive(Debug, Clone, Copy)]
+struct RelevanceKey {
+    /// The best score of its band ([`TEXT_TIE`], or [`SAID_TIE`] among those
+    /// whose subject and sender say every word).
+    band: f64,
+    /// How much of the query its subject and sender say ([`coverage`]).
+    said: f64,
+    /// How well its sender is known, coarsely ([`known`]).
+    known: u8,
+    aged_from: DateTime<Utc>,
+    /// Its [`rank_score`].
+    score: f64,
+}
+
+impl RelevanceKey {
+    /// Better first. `between` decides what the subject and sender leave
+    /// tied, before the sender and the age do: [`search`] passes `Equal`,
+    /// a conversation search how many of each one's messages matched.
+    fn order(&self, other: &Self, between: std::cmp::Ordering) -> std::cmp::Ordering {
+        // In a band: what the subject and sender say, then how well the
+        // sender is known in coarse steps (a correspondent of eighty
+        // letters still leads a stranger, but four sightings against
+        // five is noise), then the newer.
+        self.band
+            .total_cmp(&other.band)
+            .then(other.said.total_cmp(&self.said))
+            .then(between)
+            .then(other.known.cmp(&self.known))
+            .then(other.aged_from.cmp(&self.aged_from))
+            .then(self.score.total_cmp(&other.score))
+    }
+}
+
+/// Scores each candidate ([`rank_score`] over its text band) and says where
+/// the relevance order puts it, in the candidates' own order.
+fn relevance_keys(
+    candidates: &mut [Candidate],
+    query: &ParsedQuery,
+    now: DateTime<Utc>,
+) -> Vec<RelevanceKey> {
+    let texts = text_bands(
+        &candidates
+            .iter()
+            .map(|candidate| candidate.bm25)
+            .collect::<Vec<_>>(),
+    );
+    for (candidate, text) in candidates.iter_mut().zip(texts) {
+        candidate.score = rank_score(text, candidate.aged_from, now, candidate.sender_times_seen);
+    }
+    // Scores within [`TEXT_TIE`] of each other are one band: as good
+    // an answer as each other, so within it the message whose subject
+    // and sender say more of the query leads, then the newer one.
+    // Recency and affinity are too weak to order recent mail on their
+    // own -- a week is 0.02, and a sender seen four times rather than
+    // five is 0.04 -- so a sender's own newsletters came back in no
+    // order a person could see.
+    let terms: Vec<String> = query
+        .searchable_terms()
+        .filter(|term| !term.negated)
+        .map(|term| term.value.clone())
+        .collect();
+    let said: Vec<f64> = candidates
+        .iter()
+        .map(|candidate| {
+            let said = [
+                candidate.subject.as_deref(),
+                candidate.from_name.as_deref(),
+                candidate.from_address.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ");
+            coverage(&terms, &said)
+        })
+        .collect();
+    // Those that say all of it are banded among themselves, more
+    // loosely ([`SAID_TIE`]); the rest by [`TEXT_TIE`].
+    let mut banded = vec![0.0; candidates.len()];
+    for all in [true, false] {
+        let members: Vec<usize> = (0..candidates.len())
+            .filter(|index| (said[*index] >= 1.0) == all)
+            .collect();
+        let scores: Vec<f64> = members
+            .iter()
+            .map(|index| candidates[*index].score)
+            .collect();
+        let tie = if all { SAID_TIE } else { TEXT_TIE };
+        for (index, band) in members.into_iter().zip(bands(&scores, tie)) {
+            banded[index] = band;
+        }
+    }
+    candidates
+        .iter()
+        .zip(banded)
+        .zip(said)
+        .map(|((candidate, band), said)| RelevanceKey {
+            band,
+            said,
+            known: known(candidate.sender_times_seen),
+            aged_from: candidate.aged_from,
+            score: candidate.score,
+        })
+        .collect()
+}
+
 /// How old a message is, to the ranking: its own `Date`, when that is
 /// earlier than the server's arrival date, else the arrival date.
 ///
@@ -397,82 +517,11 @@ async fn search_as(
 
     match request.order {
         postio_search::ResultOrder::Relevance => {
-            let texts = text_bands(
-                &candidates
-                    .iter()
-                    .map(|candidate| candidate.bm25)
-                    .collect::<Vec<_>>(),
-            );
-            for (candidate, text) in candidates.iter_mut().zip(texts) {
-                candidate.score =
-                    rank_score(text, candidate.aged_from, now, candidate.sender_times_seen);
-            }
-            // Scores within [`TEXT_TIE`] of each other are one band: as good
-            // an answer as each other, so within it the message whose subject
-            // and sender say more of the query leads, then the newer one.
-            // Recency and affinity are too weak to order recent mail on their
-            // own -- a week is 0.02, and a sender seen four times rather than
-            // five is 0.04 -- so a sender's own newsletters came back in no
-            // order a person could see.
-            let terms: Vec<String> = request
-                .query
-                .searchable_terms()
-                .filter(|term| !term.negated)
-                .map(|term| term.value.clone())
-                .collect();
-            let said: Vec<f64> = candidates
-                .iter()
-                .map(|candidate| {
-                    let said = [
-                        candidate.subject.as_deref(),
-                        candidate.from_name.as_deref(),
-                        candidate.from_address.as_deref(),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                    coverage(&terms, &said)
-                })
-                .collect();
-            // Those that say all of it are banded among themselves, more
-            // loosely ([`SAID_TIE`]); the rest by [`TEXT_TIE`].
-            let mut banded = vec![0.0; candidates.len()];
-            for all in [true, false] {
-                let members: Vec<usize> = (0..candidates.len())
-                    .filter(|index| (said[*index] >= 1.0) == all)
-                    .collect();
-                let scores: Vec<f64> = members
-                    .iter()
-                    .map(|index| candidates[*index].score)
-                    .collect();
-                let tie = if all { SAID_TIE } else { TEXT_TIE };
-                for (index, band) in members.into_iter().zip(bands(&scores, tie)) {
-                    banded[index] = band;
-                }
-            }
-            let mut keyed: Vec<(f64, f64, Candidate)> = banded
-                .into_iter()
-                .zip(said)
-                .zip(candidates)
-                .map(|((band, said), candidate)| (band, said, candidate))
-                .collect();
-            // In a band: what the subject and sender say, then how well the
-            // sender is known in coarse steps (a correspondent of eighty
-            // letters still leads a stranger, but four sightings against
-            // five is noise), then the newer.
-            keyed.sort_by(|(a_band, a_said, a), (b_band, b_said, b)| {
-                a_band
-                    .total_cmp(b_band)
-                    .then(b_said.total_cmp(a_said))
-                    .then(known(b.sender_times_seen).cmp(&known(a.sender_times_seen)))
-                    .then(b.aged_from.cmp(&a.aged_from))
-                    .then(a.score.total_cmp(&b.score))
-            });
-            candidates = keyed
-                .into_iter()
-                .map(|(_, _, candidate)| candidate)
-                .collect();
+            let keys = relevance_keys(&mut candidates, request.query, now);
+            let mut keyed: Vec<(RelevanceKey, Candidate)> =
+                keys.into_iter().zip(candidates).collect();
+            keyed.sort_by(|(a, _), (b, _)| a.order(b, std::cmp::Ordering::Equal));
+            candidates = keyed.into_iter().map(|(_, candidate)| candidate).collect();
             // Why the order is what it is, in numbers and ids only: the
             // text match, the age, how often the sender was seen, and what
             // they came to.
@@ -1085,6 +1134,45 @@ const HITS_JOIN: &str = "FROM (
           ) hits CROSS JOIN messages m INDEXED BY idx_messages_content
                  ON m.content_id = hits.rid";
 
+/// [`HITS_JOIN`] with a third arm: what attachments say (spec 010 D11).
+///
+/// The conversation search's own, and only its: GTK's [`search`] keeps
+/// [`HITS_JOIN`]'s corpus until Linux adopts this search, so the two are
+/// separate strings. **Keep the first two arms and the join in step with
+/// [`HITS_JOIN`]**: a change to how a hit is joined to its messages there
+/// is owed here too.
+///
+/// The arm is grouped by content: a spreadsheet whose every row says the
+/// word is one hit for its message, not thousands, so the walk's `LIMIT`
+/// counts messages as it does for the other two. Its score is the best
+/// unit's, read bare inside and aggregated outside, for the reason
+/// [`HITS_JOIN`] gives about arithmetic around `fts_score`. The attachment
+/// text is folded as the body is, so it is matched by the body's `?2`.
+///
+/// The join names `idx_messages_content` for the reason [`HITS_JOIN`] gives
+/// (#1809), and so does every other statement here that looks messages up
+/// by content: the set path's arms in `conversations.rs`, a negated word's
+/// set ([`NEGATED_WORD_SET`]), a column's set (`fts_column_set`), the Files
+/// tab's passages. `driven_join_plan` in the index suite holds them.
+const HITS_JOIN_WITH_FILES: &str = "FROM (
+             SELECT content_id AS rid,
+                    fts_score(sender, recipients, subject, filenames, list_id, ?1) AS meta,
+                    NULL AS body, NULL AS file
+               FROM search_documents
+              WHERE fts_match(sender, recipients, subject, filenames, list_id, ?1)
+             UNION ALL
+             SELECT content_id, NULL, fts_score(body_search, ?2), NULL
+               FROM message_search_bodies
+              WHERE fts_match(body_search, ?2)
+             UNION ALL
+             SELECT content_id, NULL, NULL, max(unit_score)
+               FROM (SELECT content_id, fts_score(text_search, ?2) AS unit_score
+                       FROM attachment_passages
+                      WHERE fts_match(text_search, ?2))
+              GROUP BY content_id
+          ) hits CROSS JOIN messages m INDEXED BY idx_messages_content
+                 ON m.content_id = hits.rid";
+
 /// The same match, asked one message at a time.
 ///
 /// Two plans, because two statements want opposite things. [`HITS_JOIN`] is
@@ -1189,11 +1277,49 @@ struct Plan {
     /// The same expression for the body index: each term folded the way the
     /// body text was, joined after folding. See [`Plan::match_params`].
     body_match_param: Option<turso::Value>,
+    /// The filters taken out of `conditions` as sets of message ids, when
+    /// the plan was built by [`Plan::build_sets`]; empty otherwise.
+    sets: Vec<IdSet>,
 }
+
+/// One filter as the set of messages it keeps (or, negated, refuses): the
+/// subquery that names them, and its parameters.
+///
+/// A conversation search's way round a plan this engine makes of
+/// `m.id IN (subquery)`: tested once per row walked, at a cost that grows
+/// with the subquery's size, so `budget from:ada` over a common word walked
+/// every message the word matched and compared it against every message Ada
+/// sent -- 375 ms on 20,000 messages, measured. Read once, as a set, the
+/// same filter costs about a millisecond.
+#[derive(Debug, Clone)]
+struct IdSet {
+    sql: String,
+    params: Vec<turso::Value>,
+    negated: bool,
+}
+
+/// What a negated word refuses: the messages either index says carry it.
+/// The indexes are keyed by content, so each content is joined to every
+/// message that carries it, as [`HITS_JOIN`] joins its hits.
+const NEGATED_WORD_SET: &str = "SELECT m.id AS message_id FROM (
+             SELECT content_id FROM search_documents
+              WHERE fts_match(sender, recipients, subject, filenames, list_id, ?)
+             UNION ALL
+             SELECT content_id FROM message_search_bodies WHERE fts_match(body_search, ?)
+          ) d CROSS JOIN messages m INDEXED BY idx_messages_content
+                 ON m.content_id = d.content_id";
 
 impl Plan {
     fn build(request: &SearchRequest<'_>) -> Self {
         Self::build_near(request, &Default::default())
+    }
+
+    /// [`Plan::build`], with every filter that is a set of messages
+    /// ([`id_set`]) and every negated word taken out of `conditions` and
+    /// into [`Plan::sets`], for a caller that reads them once and applies
+    /// them itself. [`search`] never does: its plan is unchanged.
+    fn build_sets(request: &SearchRequest<'_>) -> Self {
+        Self::build_with(request, &Default::default(), true)
     }
 
     /// The plan with each word `near` names read as any of its words: the
@@ -1202,6 +1328,14 @@ impl Plan {
     fn build_near(
         request: &SearchRequest<'_>,
         near: &std::collections::HashMap<String, Vec<String>>,
+    ) -> Self {
+        Self::build_with(request, near, false)
+    }
+
+    fn build_with(
+        request: &SearchRequest<'_>,
+        near: &std::collections::HashMap<String, Vec<String>>,
+        as_sets: bool,
     ) -> Self {
         // `AccountScope::Unified` names no account, so the predicate is
         // absent rather than widened -- which is why migration 0012 exists:
@@ -1239,6 +1373,7 @@ impl Plan {
         let mut has_match = false;
         let mut match_param = None;
         let mut body_match_param = None;
+        let mut sets = Vec::new();
 
         // Negated terms are excluded across both indexes rather than folded
         // into each one's own match, and that is a correctness fix rather
@@ -1249,6 +1384,18 @@ impl Plan {
         // to be about the message, and only a condition outside the join can
         // be.
         for term in request.query.text_terms().filter(|term| term.negated) {
+            let literal = fts_literal(&term.value);
+            if as_sets {
+                sets.push(IdSet {
+                    sql: NEGATED_WORD_SET.to_string(),
+                    params: vec![
+                        turso::Value::Text(literal.clone()),
+                        turso::Value::Text(postio_model::fold::fold(&literal)),
+                    ],
+                    negated: true,
+                });
+                continue;
+            }
             conditions.push(
                 "m.content_id NOT IN (SELECT content_id FROM search_documents
                                WHERE fts_match(sender, recipients, subject,
@@ -1257,7 +1404,6 @@ impl Plan {
                                    WHERE fts_match(body_search, ?))"
                     .to_string(),
             );
-            let literal = fts_literal(&term.value);
             // The body half folded, the metadata half not -- the same rule
             // `match_params` keeps, for the same reason.
             params.push(turso::Value::Text(literal.clone()));
@@ -1333,6 +1479,14 @@ impl Plan {
         }
 
         for clause in request.query.filters() {
+            if as_sets && let Some((sql, params)) = id_set(&clause.filter) {
+                sets.push(IdSet {
+                    sql,
+                    params,
+                    negated: clause.negated,
+                });
+                continue;
+            }
             let (sql, mut values) = filter_condition(&clause.filter);
             let sql = if clause.negated {
                 format!("NOT ({sql})")
@@ -1351,6 +1505,7 @@ impl Plan {
             widened: !near.is_empty(),
             match_param,
             body_match_param,
+            sets,
         }
     }
 
@@ -1961,9 +2116,10 @@ fn scope_role(scope: Scope, names_a_folder: bool) -> Option<&'static str> {
 /// Only an affirmative one: `-in:trash` is a person keeping the default
 /// exclusion and adding to it, not asking to see the trash.
 fn names_a_folder(query: &ParsedQuery) -> bool {
+    // A set of folders names them too (D26).
     query
         .filters()
-        .any(|clause| !clause.negated && matches!(clause.filter, Filter::In(_)))
+        .any(|clause| !clause.negated && clause.filter.field() == postio_search::query::Field::In)
 }
 
 /// Translates one structured filter into a SQL condition (unnegated) plus its
@@ -2004,15 +2160,7 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
         // matches nothing, the same "never everything" rule `Account` and
         // `In` follow just above.
         Filter::Group(value) => (
-            "m.id IN (SELECT r.message_id FROM recipients r \
-             JOIN addresses a ON a.id = r.address_id \
-             WHERE r.kind IN ('from', 'to', 'cc', 'bcc') \
-               AND a.address_normalized IN ( \
-                 SELECT c.address_normalized FROM contact_group_members gm \
-                 JOIN contacts c ON c.id = gm.contact_id \
-                 JOIN contact_groups g ON g.id = gm.group_id \
-                 WHERE lower(g.name) = lower(?)))"
-                .to_string(),
+            format!("m.id IN ({GROUP_SET})"),
             vec![turso::Value::Text(value.clone())],
         ),
         // ADR 0025 Q2, and the one operator that is not an FTS `MATCH`. Header
@@ -2056,6 +2204,28 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
         // `messages.list_id` stores, indexed here the same way `subject` is.
         Filter::List(value) => fts_column_condition("list_id", value),
         Filter::HasAttachment => ("m.has_attachments = 1".to_string(), Vec::new()),
+        // Spec 010 (S2): a label by name, in whichever account owns the
+        // message -- the join through `message_labels` already keeps it to
+        // the message's own account, so the scope needs no clause of its
+        // own. Case-insensitive the way the name is unique
+        // (`idx_labels_account_name`). A name no label has is an empty
+        // `EXISTS` and matches nothing, never everything, as `account:` and
+        // `in:` above.
+        Filter::Label(value) => (
+            "EXISTS (SELECT 1 FROM message_labels ml \
+              JOIN labels l ON l.id = ml.label_id \
+              WHERE ml.message_id = m.id AND lower(l.name) = lower(?))"
+                .to_string(),
+            vec![turso::Value::Text(value.clone())],
+        ),
+        // An open marker: one the person has not dismissed. `markers` is
+        // keyed on the message, so this is one primary-key probe a row.
+        Filter::HasAction => (
+            "EXISTS (SELECT 1 FROM markers k \
+              WHERE k.message_id = m.id AND k.dismissed_at IS NULL)"
+                .to_string(),
+            Vec::new(),
+        ),
         Filter::Is(state) => {
             use postio_search::query::State;
             match state {
@@ -2097,6 +2267,19 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
             "m.size <= ?".to_string(),
             vec![turso::Value::Integer(*bytes as i64)],
         ),
+        // Either of several values (spec 010, D26): each member's own
+        // condition, ORed. The parameters follow the placeholders, member
+        // by member, left to right.
+        Filter::AnyOf(set) => {
+            let mut sql = Vec::with_capacity(set.members().len());
+            let mut params = Vec::new();
+            for member in set.members() {
+                let (condition, mut values) = filter_condition(member);
+                sql.push(format!("({condition})"));
+                params.append(&mut values);
+            }
+            (format!("({})", sql.join(" OR ")), params)
+        }
     }
 }
 
@@ -2131,18 +2314,98 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
 /// Verified in `turso_capabilities.rs`: a column subset alone scans, and the
 /// pair uses the index.
 fn fts_column_condition(column: &str, value: &str) -> (String, Vec<turso::Value>) {
+    let (contents, params) = fts_column_contents(column, value);
+    (format!("m.content_id IN ({contents})"), params)
+}
+
+/// The messages whose `column` carries `value`: [`fts_column_condition`]'s
+/// subquery as a set of message ids. The index is keyed by content, so each
+/// content it names is joined to every message that carries it.
+fn fts_column_set(column: &str, value: &str) -> (String, Vec<turso::Value>) {
+    let (contents, params) = fts_column_contents(column, value);
+    (
+        format!(
+            "SELECT m.id AS message_id FROM ({contents}) d
+               CROSS JOIN messages m INDEXED BY idx_messages_content
+                 ON m.content_id = d.content_id"
+        ),
+        params,
+    )
+}
+
+/// The contents whose `column` carries `value`, asked twice as
+/// [`fts_column_condition`] explains.
+fn fts_column_contents(column: &str, value: &str) -> (String, Vec<turso::Value>) {
     let literal = fts_literal(value);
     (
         format!(
-            "m.content_id IN (SELECT content_id FROM search_documents
-                       WHERE fts_match(sender, recipients, subject, filenames, list_id, ?)
-                         AND fts_match({column}, ?))"
+            "SELECT content_id FROM search_documents
+              WHERE fts_match(sender, recipients, subject, filenames, list_id, ?)
+                AND fts_match({column}, ?)"
         ),
         vec![
             turso::Value::Text(literal.clone()),
             turso::Value::Text(literal),
         ],
     )
+}
+
+/// The messages from or to any member of a group, by name: `group:`'s
+/// subquery (ADR 0007 Q3).
+const GROUP_SET: &str = "SELECT r.message_id FROM recipients r \
+     JOIN addresses a ON a.id = r.address_id \
+     WHERE r.kind IN ('from', 'to', 'cc', 'bcc') \
+       AND a.address_normalized IN ( \
+         SELECT c.address_normalized FROM contact_group_members gm \
+         JOIN contacts c ON c.id = gm.contact_id \
+         JOIN contact_groups g ON g.id = gm.group_id \
+         WHERE lower(g.name) = lower(?))";
+
+/// A filter as the set of messages it keeps, for [`Plan::build_sets`]: the
+/// filters that are a lookup of message ids rather than a test of the
+/// message's own row. `None` for the rest, which stay conditions.
+///
+/// `label:` and `has:action` are `EXISTS` probes in [`filter_condition`],
+/// cheap per row; as sets they are one walk of `message_labels` or
+/// `markers`, which lets a conversation search walk only the messages they
+/// keep when nothing else narrows it.
+fn id_set(filter: &Filter) -> Option<(String, Vec<turso::Value>)> {
+    Some(match filter {
+        // A set (D26) is the union of its members' sets, when each is one;
+        // `UNION` rather than `UNION ALL`, because a set may also drive the
+        // walk (`relaxations`), which must see each message once.
+        Filter::AnyOf(set) => {
+            let mut arms = Vec::with_capacity(set.members().len());
+            let mut params = Vec::new();
+            for member in set.members() {
+                let (sql, mut values) = id_set(member)?;
+                arms.push(format!("SELECT message_id FROM ({sql})"));
+                params.append(&mut values);
+            }
+            (arms.join(" UNION "), params)
+        }
+        Filter::From(value) => fts_column_set("sender", value),
+        Filter::To(value) => fts_column_set("recipients", value),
+        Filter::Subject(value) => fts_column_set("subject", value),
+        Filter::Filename(value) => fts_column_set("filenames", value),
+        Filter::List(value) => fts_column_set("list_id", value),
+        Filter::Group(value) => (
+            GROUP_SET.to_string(),
+            vec![turso::Value::Text(value.clone())],
+        ),
+        Filter::Label(value) => (
+            "SELECT ml.message_id FROM labels l \
+               JOIN message_labels ml ON ml.label_id = l.id \
+              WHERE lower(l.name) = lower(?)"
+                .to_string(),
+            vec![turso::Value::Text(value.clone())],
+        ),
+        Filter::HasAction => (
+            "SELECT message_id FROM markers WHERE dismissed_at IS NULL".to_string(),
+            Vec::new(),
+        ),
+        _ => return None,
+    })
 }
 
 /// A literal for the middle of a `LIKE '%' || ? || '%' ESCAPE '\\'` pattern.
@@ -2201,6 +2464,7 @@ mod tests {
             widened: false,
             match_param: Some(turso::Value::Text("invoice".to_owned())),
             body_match_param: Some(turso::Value::Text("invoice".to_owned())),
+            sets: Vec::new(),
         }
     }
 

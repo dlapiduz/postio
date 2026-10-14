@@ -10,8 +10,8 @@ use postio_session::Wiring;
 
 /// Start every catch-up pass over `wiring`'s store: the body indexer (a
 /// catch-up pass now, then one batched write after each burst of
-/// `BodyLoaded` on the wiring's hub), the header repair and index catch-up,
-/// and the disk reclaim.
+/// `BodyLoaded` on the wiring's hub), the attachment indexer beside it, the
+/// header repair and index catch-up, and the disk reclaim.
 ///
 /// Every body reaches the search index through the indexer and nothing else
 /// -- neither the store nor the fetch writes the row -- see
@@ -22,6 +22,14 @@ pub fn spawn_idle_passes(wiring: &Wiring) {
     postio_session::spawn_body_indexer(
         wiring.database.clone(),
         wiring.events.subscribe("indexer"),
+        &wiring.runtime,
+    );
+    // Attachment contents (spec 010 D10): only what is already on disk,
+    // never a fetch, woken by the same `BodyLoaded` a payload fetch sends.
+    postio_session::spawn_attachment_indexer(
+        wiring.database.clone(),
+        wiring.blobs.clone(),
+        wiring.events.subscribe("attachment-indexer"),
         &wiring.runtime,
     );
     repair_the_header_blocks(wiring);

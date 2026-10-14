@@ -214,14 +214,130 @@ const CONTRACT: &[Row] = &[
     row("toggle_has_action", "!", Focus),
     // -- Search ---------------------------------------------------------
     with("save_search", "mod+s", &[], All, &[Context::Search]),
+    // Spec 010 D24: in the results' no-results state the same key clears
+    // the filters.
     with(
         "back_to_words",
         "mod+BackSpace",
         &["alt+BackSpace"],
         Focus,
-        &[Context::Search],
+        &[Context::Search, Context::Results],
     ),
     with("toggle_result_order", "alt+o", &[], All, &[Context::Search]),
+    // Spec 010: the Mac's search bar. `mod+Return` sends in the composer;
+    // here it opens the results. Neither is offered on Freedesktop yet (D25).
+    with(
+        "show_all_results",
+        "mod+Return",
+        &[],
+        Graphical,
+        &[Context::Search],
+    ),
+    // Spec 010 step 8: the dropdown's exclusion (US7).
+    with(
+        "exclude_suggestion",
+        "alt+Return",
+        &[],
+        Graphical,
+        &[Context::Search],
+    ),
+    with(
+        "forget_recent",
+        "alt+BackSpace",
+        &[],
+        Graphical,
+        &[Context::Search],
+    ),
+    // Spec 010 step 3: the Mac's results view (R10). History and the tabs
+    // are its own; none is offered on Freedesktop until Linux adopts it
+    // (D25).
+    with(
+        "history_back",
+        "mod+bracketleft",
+        &[],
+        Graphical,
+        &[Context::List, Context::Results],
+    ),
+    with(
+        "history_forward",
+        "mod+bracketright",
+        &[],
+        Graphical,
+        &[Context::List, Context::Results],
+    ),
+    with(
+        "results_conversations",
+        "mod+1",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
+    with(
+        "results_files",
+        "mod+2",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
+    with(
+        "results_people",
+        "mod+3",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
+    // Spec 010 step 5: Space looks inside a result; ]/[ walk its matches
+    // while it is open (FR-028).
+    with("quick_look", "space", &[], Graphical, &[Context::Results]),
+    with("next_match", "]", &[], Graphical, &[Context::Results]),
+    with("prev_match", "[", &[], Graphical, &[Context::Results]),
+    // Spec 010 step 7: a search that found nothing offers looser ones,
+    // numbered (FR-030).
+    with(
+        "pick_relaxation_1",
+        "1",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
+    with(
+        "pick_relaxation_2",
+        "2",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
+    with(
+        "pick_relaxation_3",
+        "3",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
+    with(
+        "pick_relaxation_4",
+        "4",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
+    // Spec 010 step 9: ⌘↓ saves the file under the ring (FR-031).
+    with("save_file", "mod+Down", &[], Graphical, &[Context::Results]),
+    // Spec 010 step 4: ⌥←/⌥→ step the timeline's range a month (FR-023).
+    with(
+        "step_range_back",
+        "alt+Left",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
+    with(
+        "step_range_forward",
+        "alt+Right",
+        &[],
+        Graphical,
+        &[Context::Results],
+    ),
     // -- Pickers --------------------------------------------------------
     with("picker_choose_1", "1", &[], Focus, &[Context::Picker]),
     with("picker_choose_2", "2", &[], Focus, &[Context::Picker]),
@@ -509,4 +625,181 @@ fn a_command_has_the_same_key_in_every_app_that_offers_it() {
             }
         }
     }
+}
+
+/// Spec 010 D23 and D25: the Mac's search bar has two keys Linux does not
+/// adopt yet, and the one `alt+BackSpace` means a different command on each
+/// platform -- the terminal's alternate for `back_to_words` on Linux, the
+/// forgetting of a recent search on the Mac.
+#[test]
+fn the_search_bar_s_new_keys_resolve_on_the_mac_and_not_on_linux() {
+    let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
+    let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+
+    assert_eq!(mac.bindings(CommandId::ShowAllResults), ["cmd+Return"]);
+    assert_eq!(mac.bindings(CommandId::ForgetRecent), ["alt+BackSpace"]);
+    assert!(linux.bindings(CommandId::ShowAllResults).is_empty());
+    assert!(linux.bindings(CommandId::ForgetRecent).is_empty());
+    assert!(!linux.offers(CommandId::ShowAllResults));
+    assert!(!linux.offers(CommandId::ForgetRecent));
+
+    assert_eq!(
+        mac.bindings(CommandId::BackToWords),
+        ["cmd+BackSpace"],
+        "the terminal's alternate is not the Mac's: alt+BackSpace forgets a recent"
+    );
+    assert_eq!(
+        linux.bindings(CommandId::BackToWords),
+        ["ctrl+BackSpace", "alt+BackSpace"]
+    );
+}
+
+/// Spec 010 step 3 (R10, D25): the results view's own keys are the Mac's,
+/// and the list's verbs reach a result as they reach a row.
+#[test]
+fn the_results_views_keys_resolve_on_the_mac_and_not_on_linux() {
+    let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
+    let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+
+    for (id, key) in [
+        (CommandId::HistoryBack, "cmd+bracketleft"),
+        (CommandId::HistoryForward, "cmd+bracketright"),
+        (CommandId::ResultsConversations, "cmd+1"),
+        (CommandId::ResultsFiles, "cmd+2"),
+        (CommandId::ResultsPeople, "cmd+3"),
+    ] {
+        assert_eq!(mac.bindings(id), [key], "{id} on the Mac");
+        assert!(registry::get(id).available_in(Context::Results), "{id}");
+        assert!(linux.bindings(id).is_empty(), "{id} has a key on Linux");
+        assert!(!linux.offers(id), "{id} is offered on Linux");
+    }
+
+    // The list's verbs, by the key the Mac spells them with: a result is a
+    // row to them (design §3.5's footer and bulk bar).
+    for (id, key) in [
+        (CommandId::NextMessage, "j"),
+        (CommandId::PrevMessage, "k"),
+        (CommandId::ToggleSelection, "x"),
+        (CommandId::SelectAll, "X"),
+        (CommandId::Archive, "a"),
+        (CommandId::Reply, "e"),
+        (CommandId::Snooze, "s"),
+        (CommandId::AddLabel, "l"),
+        (CommandId::Move, "m"),
+        (CommandId::ToggleRead, "r"),
+        (CommandId::Delete, "BackSpace"),
+        (CommandId::OpenMessage, "Return"),
+        (CommandId::ToggleHasAction, "!"),
+        (CommandId::SaveSearch, "cmd+s"),
+        (CommandId::ToggleResultOrder, "alt+o"),
+        (CommandId::Search, "/"),
+    ] {
+        assert!(
+            registry::get(id).available_in(Context::Results),
+            "`{id}` is not reachable in the results"
+        );
+        assert!(
+            mac.bindings(id).iter().any(|bound| bound == key),
+            "`{id}` is not on `{key}` on the Mac: {:?}",
+            mac.bindings(id)
+        );
+    }
+}
+
+/// Spec 010 step 4 (FR-023, D25): ⌥←/⌥→ step the timeline's range by a
+/// month in the results, on the Mac, and are not offered on Linux yet.
+#[test]
+fn the_timeline_steps_on_alt_arrows_on_the_mac_and_not_on_linux() {
+    let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
+    let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+    for (id, key) in [
+        (CommandId::StepRangeBack, "alt+Left"),
+        (CommandId::StepRangeForward, "alt+Right"),
+    ] {
+        assert_eq!(mac.bindings(id), [key], "{id} on the Mac");
+        assert!(registry::get(id).available_in(Context::Results), "{id}");
+        assert!(linux.bindings(id).is_empty(), "{id} has a key on Linux");
+        assert!(!linux.offers(id), "{id} is offered on Linux");
+    }
+}
+
+/// Spec 010 step 5 (FR-028, D25): Space opens Quick Look on a result and
+/// ]/[ walk its matches, in the results, on the Mac; not on Linux yet.
+#[test]
+fn quick_look_is_space_and_its_matches_are_brackets_on_the_mac() {
+    let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
+    let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+    for (id, key) in [
+        (CommandId::QuickLook, "space"),
+        (CommandId::NextMatch, "]"),
+        (CommandId::PrevMatch, "["),
+    ] {
+        assert_eq!(mac.bindings(id), [key], "{id} on the Mac");
+        assert_eq!(
+            mac.command_for(Context::Results, key),
+            Some(postio_core::ActionId::Builtin(id)),
+            "{key}"
+        );
+        assert!(linux.bindings(id).is_empty(), "{id} has a key on Linux");
+        assert!(!linux.offers(id), "{id} is offered on Linux");
+    }
+}
+
+/// Spec 010 step 7 (FR-030, D24, D25): 1-4 pick a looser search and ⌘⌫
+/// clears the filters, in the results, on the Mac; the numbers are not
+/// Linux's yet.
+#[test]
+fn relaxations_are_numbers_and_back_to_words_reaches_the_results_on_the_mac() {
+    let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
+    let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+    for (id, key) in [
+        (CommandId::PickRelaxation1, "1"),
+        (CommandId::PickRelaxation2, "2"),
+        (CommandId::PickRelaxation3, "3"),
+        (CommandId::PickRelaxation4, "4"),
+    ] {
+        assert_eq!(mac.bindings(id), [key], "{id} on the Mac");
+        assert_eq!(
+            mac.command_for(Context::Results, key),
+            Some(postio_core::ActionId::Builtin(id)),
+            "{key}"
+        );
+        assert!(linux.bindings(id).is_empty(), "{id} has a key on Linux");
+        assert!(!linux.offers(id), "{id} is offered on Linux");
+    }
+    assert_eq!(
+        mac.command_for(Context::Results, "cmd+BackSpace"),
+        Some(postio_core::ActionId::Builtin(CommandId::BackToWords)),
+        "D24: ⌘⌫ in the results"
+    );
+}
+
+/// Spec 010 step 8 (US7, D25): ⌥↩ excludes the dropdown's focused person,
+/// label or folder on the Mac; Linux has no dropdown yet.
+#[test]
+fn exclude_suggestion_is_option_return_on_the_mac() {
+    let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
+    let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+    assert_eq!(mac.bindings(CommandId::ExcludeSuggestion), ["alt+Return"]);
+    assert_eq!(
+        mac.command_for(Context::Search, "alt+Return"),
+        Some(postio_core::ActionId::Builtin(CommandId::ExcludeSuggestion))
+    );
+    assert!(linux.bindings(CommandId::ExcludeSuggestion).is_empty());
+    assert!(!linux.offers(CommandId::ExcludeSuggestion));
+}
+
+/// Spec 010 step 9 (FR-031, D25): ⌘↓ saves the file on the Files tab, on
+/// the Mac; not on Linux yet.
+#[test]
+fn saving_a_file_is_command_down_on_the_mac() {
+    let mac = Keymap::resolve_on(&KeyBindings::default(), Platform::Apple);
+    let linux = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
+    assert_eq!(mac.bindings(CommandId::SaveFile), ["cmd+Down"]);
+    assert_eq!(
+        mac.command_for(Context::Results, "cmd+Down"),
+        Some(postio_core::ActionId::Builtin(CommandId::SaveFile))
+    );
+    assert!(linux.bindings(CommandId::SaveFile).is_empty());
+    assert!(!linux.offers(CommandId::SaveFile));
 }

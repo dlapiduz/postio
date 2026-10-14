@@ -431,7 +431,8 @@ static SPECS: &[CommandSpec] = &[
         // walked as the list's are (screen 21's footer).
         contexts: ctx(LIST_SURFACES)
             .with(Context::Filtered)
-            .with(Context::Digest),
+            .with(Context::Digest)
+            .with(Context::Results),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -445,7 +446,8 @@ static SPECS: &[CommandSpec] = &[
         // walked as the list's are (screen 21's footer).
         contexts: ctx(LIST_SURFACES)
             .with(Context::Filtered)
-            .with(Context::Digest),
+            .with(Context::Digest)
+            .with(Context::Results),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -459,7 +461,7 @@ static SPECS: &[CommandSpec] = &[
         // would be read as a key named "gg", which no keyboard has.
         default_binding: "g g",
         alternate_bindings: &[],
-        contexts: ctx(LIST_SURFACES),
+        contexts: ctx(LIST_SURFACES).with(Context::Results),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -469,7 +471,7 @@ static SPECS: &[CommandSpec] = &[
         title: "Last message",
         default_binding: "G",
         alternate_bindings: &[],
-        contexts: ctx(LIST_SURFACES),
+        contexts: ctx(LIST_SURFACES).with(Context::Results),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -486,7 +488,8 @@ static SPECS: &[CommandSpec] = &[
         // And a row of Focus's Filtered view or digest window.
         contexts: ctx(&[Context::List, Context::Conversation, Context::Search])
             .with(Context::Filtered)
-            .with(Context::Digest),
+            .with(Context::Digest)
+            .with(Context::Results),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -498,7 +501,7 @@ static SPECS: &[CommandSpec] = &[
         // here than a mnemonic nobody has.
         default_binding: "x",
         alternate_bindings: &[],
-        contexts: ctx(LIST_SURFACES),
+        contexts: ctx(LIST_SURFACES).with(Context::Results),
         destructive: false,
         // Changing what an action *would* hit changes no durable state, so
         // there is nothing to undo and nothing to confirm.
@@ -539,7 +542,7 @@ static SPECS: &[CommandSpec] = &[
         // application.
         default_binding: "X",
         alternate_bindings: &["mod+a"],
-        contexts: ctx(LIST_SURFACES),
+        contexts: ctx(LIST_SURFACES).with(Context::Results),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -575,7 +578,7 @@ static SPECS: &[CommandSpec] = &[
         title: "Toggle result order",
         default_binding: "alt+o",
         alternate_bindings: &[],
-        contexts: ctx(&[Context::Search]),
+        contexts: ctx(&[Context::Search]).with(Context::Results),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -796,7 +799,7 @@ static SPECS: &[CommandSpec] = &[
         title: "Reply",
         default_binding: "e",
         alternate_bindings: &["mod+r"],
-        contexts: ctx(REPLY_SURFACES),
+        contexts: ctx(REPLY_SURFACES).with(Context::Results),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -826,7 +829,7 @@ static SPECS: &[CommandSpec] = &[
         title: "Archive",
         default_binding: "a",
         alternate_bindings: &["mod+shift+a"],
-        contexts: ctx(MESSAGE_SURFACES),
+        contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
         // Sweeping a screenful out of the inbox is exactly the case docs/PRODUCT.md §16
         // wants a toast for.
         destructive: true,
@@ -852,7 +855,7 @@ static SPECS: &[CommandSpec] = &[
         // keymap, and "delete" has one key everywhere it is offered.
         default_binding: "Delete",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES),
+        contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
         destructive: true,
         recovery: Recovery::Undo,
         requires: MAIL,
@@ -862,7 +865,7 @@ static SPECS: &[CommandSpec] = &[
         title: "Move to…",
         default_binding: "m",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES),
+        contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
         destructive: false,
         recovery: Recovery::Undo,
         // A destination is one mailbox in one account, and a unified view
@@ -893,7 +896,7 @@ static SPECS: &[CommandSpec] = &[
         // one keymap (specs/007-postio-focus contracts/keymap.md).
         default_binding: "r",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES),
+        contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
         destructive: false,
         recovery: Recovery::Undo,
         requires: MAIL,
@@ -905,7 +908,7 @@ static SPECS: &[CommandSpec] = &[
         // contracts/keymap.md); `B` still unsnoozes.
         default_binding: "s",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES),
+        contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
         destructive: false,
         recovery: Recovery::Undo,
         requires: MAIL,
@@ -939,7 +942,7 @@ static SPECS: &[CommandSpec] = &[
         // (specs/007-postio-focus contracts/keymap.md).
         default_binding: "l",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES),
+        contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
         destructive: false,
         recovery: Recovery::Undo,
         requires: MAIL,
@@ -1063,7 +1066,7 @@ static SPECS: &[CommandSpec] = &[
         // The go-to surfaces, for the go-to reason: the folder list is one
         // pane over, and nobody checks which pane has the keyboard before
         // reaching for search.
-        contexts: ctx(GO_SURFACES),
+        contexts: ctx(GO_SURFACES).with(Context::Results),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -1078,7 +1081,7 @@ static SPECS: &[CommandSpec] = &[
         alternate_bindings: &[],
         // Only reachable with the search box open -- saving needs a query
         // to save, and `Context::Search` is where one exists.
-        contexts: Context::Search.as_set(),
+        contexts: Context::Search.as_set().with(Context::Results),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -1093,10 +1096,221 @@ static SPECS: &[CommandSpec] = &[
         // A terminal delivers `ctrl+BackSpace` as plain backspace, so the
         // terminal's key is `alt+BackSpace`.
         alternate_bindings: &["alt+BackSpace"],
-        contexts: Context::Search.as_set(),
+        // In the Mac's results, where nothing matched, the same key clears
+        // the filters and keeps the words (spec 010 D24): there are no
+        // words to go back to, and a second command on the key would be
+        // two meanings in one place.
+        contexts: Context::Search.as_set().with(Context::Results),
         destructive: false,
         recovery: Recovery::None,
         requires: FOCUS_MAIL,
+    },
+    // Spec 010: the Mac's search dropdown, drawn as pixels (so not the
+    // terminal's). Neither is offered on Linux until it adopts the dropdown
+    // (`offered_on`, D25).
+    CommandSpec {
+        id: CommandId::ShowAllResults,
+        title: "Show all results",
+        // Where `mod+Return` sends in the composer: contexts do not overlap.
+        default_binding: "mod+Return",
+        alternate_bindings: &[],
+        contexts: Context::Search.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ForgetRecent,
+        title: "Forget recent search",
+        // The design names the Mac's Option-Delete (D23).
+        default_binding: "alt+BackSpace",
+        alternate_bindings: &[],
+        contexts: Context::Search.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    // Spec 010 step 8 (US7): ↩ on a person, label or folder makes its
+    // chip, ⌥↩ the excluded chip. Where `alt+Return` sends in a terminal's
+    // composer and writes a capture: contexts do not overlap.
+    CommandSpec {
+        id: CommandId::ExcludeSuggestion,
+        title: "Exclude suggestion",
+        default_binding: "alt+Return",
+        alternate_bindings: &[],
+        contexts: Context::Search.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    // Spec 010 step 3: the Mac's results view (R10), a mode of the main
+    // window with its own context. History moves between it and the inbox
+    // the way a browser's back and forward do -- from either, so the inbox
+    // names it too -- and ⌘1-3 pick its tabs.
+    // None is offered on Linux until it adopts the results view (D25).
+    CommandSpec {
+        id: CommandId::HistoryBack,
+        title: "Back",
+        default_binding: "mod+bracketleft",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::List, Context::Results]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::HistoryForward,
+        title: "Forward",
+        default_binding: "mod+bracketright",
+        alternate_bindings: &[],
+        contexts: ctx(&[Context::List, Context::Results]),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ResultsConversations,
+        title: "Show conversations",
+        default_binding: "mod+1",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ResultsFiles,
+        title: "Show files",
+        default_binding: "mod+2",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ResultsPeople,
+        title: "Show people",
+        default_binding: "mod+3",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    // ⌥←/⌥→ step the timeline's range by a month (spec 010 FR-023): the
+    // results' own, and the Mac's until Linux adopts them (D25).
+    CommandSpec {
+        id: CommandId::StepRangeBack,
+        title: "Earlier month",
+        default_binding: "alt+Left",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::StepRangeForward,
+        title: "Later month",
+        default_binding: "alt+Right",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    // Space looks inside a result without opening it, and ]/[ walk its
+    // matches while it is open (spec 010 US4, FR-028, design §3.7): the
+    // results' own, and the Mac's until Linux adopts them (D25). The same
+    // brackets walk a thread's messages and a digest's references, each in
+    // its own context.
+    CommandSpec {
+        id: CommandId::QuickLook,
+        title: "Quick Look",
+        default_binding: "space",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::NextMatch,
+        title: "Next match",
+        default_binding: "]",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::PrevMatch,
+        title: "Previous match",
+        default_binding: "[",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    // A search that found nothing offers up to four looser ones, numbered
+    // (spec 010 US6, FR-030, design §3.10): the results' own, and the
+    // Mac's until Linux adopts them (D25). The same digits pick a picker's
+    // options and Filtered's tabs, each in its own context.
+    CommandSpec {
+        id: CommandId::PickRelaxation1,
+        title: "Run looser search 1",
+        default_binding: "1",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::PickRelaxation2,
+        title: "Run looser search 2",
+        default_binding: "2",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::PickRelaxation3,
+        title: "Run looser search 3",
+        default_binding: "3",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::PickRelaxation4,
+        title: "Run looser search 4",
+        default_binding: "4",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    // ⌘↓ saves the file under the ring on the Files tab (spec 010 FR-031,
+    // design §3.8): Finder's "open" chord, for the file a card stands for.
+    // The results' own, and the Mac's until Linux adopts them (D25).
+    CommandSpec {
+        id: CommandId::SaveFile,
+        title: "Save file",
+        default_binding: "mod+Down",
+        alternate_bindings: &[],
+        contexts: Context::Results.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
     },
     CommandSpec {
         id: CommandId::Compose,
@@ -1763,7 +1977,7 @@ static SPECS: &[CommandSpec] = &[
         // filter is, and where its toggle is drawn (FR-017).
         default_binding: "!",
         alternate_bindings: &[],
-        contexts: ctx(&[Context::List]),
+        contexts: ctx(&[Context::List]).with(Context::Results),
         destructive: false,
         recovery: Recovery::None,
         requires: FOCUS_MAIL,
@@ -2595,13 +2809,35 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             // repair, and recolouring there would break the contrast floor;
             // the maintainer chose to leave it out (2026-10-01, #1705).
             | (ActionId::Builtin(C::DarkenMessage), Platform::Apple)
+            // The search dropdown is the Mac's until Linux adopts it
+            // (spec 010 D23, D25).
+            | (ActionId::Builtin(C::ShowAllResults), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ForgetRecent), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ExcludeSuggestion), Platform::Freedesktop)
+            // And so is the results view (spec 010 D17, D25).
+            | (ActionId::Builtin(C::HistoryBack), Platform::Freedesktop)
+            | (ActionId::Builtin(C::HistoryForward), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ResultsConversations), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ResultsFiles), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ResultsPeople), Platform::Freedesktop)
+            | (ActionId::Builtin(C::StepRangeBack), Platform::Freedesktop)
+            | (ActionId::Builtin(C::StepRangeForward), Platform::Freedesktop)
+            | (ActionId::Builtin(C::QuickLook), Platform::Freedesktop)
+            | (ActionId::Builtin(C::NextMatch), Platform::Freedesktop)
+            | (ActionId::Builtin(C::PrevMatch), Platform::Freedesktop)
+            | (ActionId::Builtin(C::PickRelaxation1), Platform::Freedesktop)
+            | (ActionId::Builtin(C::PickRelaxation2), Platform::Freedesktop)
+            | (ActionId::Builtin(C::PickRelaxation3), Platform::Freedesktop)
+            | (ActionId::Builtin(C::PickRelaxation4), Platform::Freedesktop)
+            | (ActionId::Builtin(C::SaveFile), Platform::Freedesktop)
     )
 }
 
 /// Whether `platform` lets `action` take its alternate `binding` (as the
 /// registry spells it, before `mod+` is expanded).
 ///
-/// One alternate is the desktop's and not the Mac's: `quit`'s `mod+w`.
+/// Two alternates are the desktop's and not the Mac's: `quit`'s `mod+w`, and
+/// `back_to_words`' `alt+BackSpace`, which the Mac's `forget_recent` takes.
 /// GTK's Postio has one window, so closing it is quitting (spec 007 T216);
 /// on the Mac ⌘W closes the window in front -- the message, digest or
 /// compose window over the list most of all -- through Window › Close, and
@@ -2611,6 +2847,13 @@ pub fn alternate_offered_on(action: ActionId, binding: &str, platform: Platform)
     !matches!(
         (action, binding, platform),
         (ActionId::Builtin(CommandId::Quit), "mod+w", Platform::Apple)
+            // The terminal's key for `back_to_words` is the Mac's for
+            // `forget_recent` (spec 010 D23).
+            | (
+                ActionId::Builtin(CommandId::BackToWords),
+                "alt+BackSpace",
+                Platform::Apple
+            )
     )
 }
 
@@ -2661,17 +2904,43 @@ mod tests {
         CommandId::NextScope,
     ];
 
+    /// What only the Mac's search dropdown and results view draw, until
+    /// Linux adopts them (spec 010 D23, D25).
+    const NOT_ON_LINUX_YET: [CommandId; 18] = [
+        CommandId::ShowAllResults,
+        CommandId::ForgetRecent,
+        CommandId::ExcludeSuggestion,
+        CommandId::HistoryBack,
+        CommandId::HistoryForward,
+        CommandId::ResultsConversations,
+        CommandId::ResultsFiles,
+        CommandId::ResultsPeople,
+        CommandId::StepRangeBack,
+        CommandId::StepRangeForward,
+        CommandId::QuickLook,
+        CommandId::NextMatch,
+        CommandId::PrevMatch,
+        CommandId::PickRelaxation1,
+        CommandId::PickRelaxation2,
+        CommandId::PickRelaxation3,
+        CommandId::PickRelaxation4,
+        CommandId::SaveFile,
+    ];
+
     #[test]
     fn every_command_is_offered_on_freedesktop() {
         // GTK draws every surface these commands name, so nothing is scoped
-        // away there -- this is the half that guards the GTK build against a
-        // Mac decision leaking into it.
-        for id in CommandId::ALL {
-            assert!(
-                offered_on(ActionId::Builtin(*id), Platform::Freedesktop),
-                "`{id}` stopped being offered on Linux"
-            );
-        }
+        // away there but the Mac's dropdown -- this is the half that guards
+        // the GTK build against a Mac decision leaking into it.
+        let scoped: Vec<CommandId> = CommandId::ALL
+            .iter()
+            .copied()
+            .filter(|id| !offered_on(ActionId::Builtin(*id), Platform::Freedesktop))
+            .collect();
+        assert_eq!(
+            scoped, NOT_ON_LINUX_YET,
+            "a command left Linux's menus without anyone deciding it"
+        );
     }
 
     #[test]

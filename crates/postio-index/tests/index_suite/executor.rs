@@ -2224,3 +2224,496 @@ async fn a_rule_or_saved_search_stays_exact() {
             .is_empty()
     );
 }
+
+// ---------------------------------------------------------------------------
+// The path GTK uses, pinned (spec 010 T003, FR-046)
+// ---------------------------------------------------------------------------
+
+/// One message of the pinned corpus: who, where, what, when, and its state.
+struct Pinned {
+    from: &'static str,
+    folder: &'static str,
+    subject: &'static str,
+    body: &'static str,
+    /// Days after 2026-06-01, at noon.
+    day: i64,
+    unread: bool,
+    flagged: bool,
+    file: Option<&'static str>,
+}
+
+/// Twenty-one messages across an inbox, an archive and a receipts folder.
+/// A row's number in this table is its index in the recorded answers below.
+const PINNED: [Pinned; 21] = [
+    Pinned {
+        from: "ada",
+        folder: "INBOX",
+        subject: "Re: Atlas Q3 budget, final numbers",
+        body: "The final numbers for the atlas budget are in the sheet. Please approve by Friday.",
+        day: 80,
+        unread: true,
+        flagged: false,
+        file: Some("atlas-q3-budget.xlsx"),
+    },
+    Pinned {
+        from: "tomas",
+        folder: "INBOX",
+        subject: "Atlas staffing plan for Q4",
+        body: "Two more platform roles move the atlas budget up by nine percent.",
+        day: 79,
+        unread: true,
+        flagged: true,
+        file: None,
+    },
+    Pinned {
+        from: "ada",
+        folder: "Archive",
+        subject: "Atlas budget template v2",
+        body: "The summary sheet totals the budget for the year.",
+        day: 40,
+        unread: false,
+        flagged: false,
+        file: Some("atlas-budget-template.xlsx"),
+    },
+    Pinned {
+        from: "priya",
+        folder: "INBOX",
+        subject: "Contractor invoices for September",
+        body: "Two of them should be charged to the atlas budget line, not harbor.",
+        day: 77,
+        unread: false,
+        flagged: false,
+        file: Some("invoices-sep.pdf"),
+    },
+    Pinned {
+        from: "finance",
+        folder: "Archive",
+        subject: "Q3 close: budget owners please review",
+        body: "Owners are listed below. Please confirm by the thirtieth.",
+        day: 74,
+        unread: false,
+        flagged: false,
+        file: None,
+    },
+    Pinned {
+        from: "ben",
+        folder: "Archive",
+        subject: "Re: Harbor SOW",
+        body: "Legal agrees to move the vendor cost out of the atlas budget.",
+        day: 71,
+        unread: false,
+        flagged: false,
+        file: None,
+    },
+    Pinned {
+        from: "ada",
+        folder: "Receipts",
+        subject: "Atlas September actuals",
+        body: "Actuals are attached. Page two has the spend to date.",
+        day: 66,
+        unread: false,
+        flagged: false,
+        file: Some("atlas-sep-actuals.pdf"),
+    },
+    Pinned {
+        from: "grace",
+        folder: "Archive",
+        subject: "Design headcount for Atlas",
+        body: "The two design roles come out of the harbor budget, not atlas.",
+        day: 62,
+        unread: false,
+        flagged: false,
+        file: None,
+    },
+    Pinned {
+        from: "tomas",
+        folder: "Archive",
+        subject: "Re: Atlas offsite",
+        body: "The offsite fits inside the atlas budget if we skip the dinner.",
+        day: 55,
+        unread: false,
+        flagged: false,
+        file: None,
+    },
+    Pinned {
+        from: "lena",
+        folder: "Archive",
+        subject: "Harbor vs Atlas split for shared tooling",
+        body: "Proposing sixty forty between harbor and atlas for the runners.",
+        day: 48,
+        unread: false,
+        flagged: true,
+        file: None,
+    },
+    Pinned {
+        from: "priya",
+        folder: "INBOX",
+        subject: "Invoice 2026-08, Atlas contractor hours",
+        body: "Attached is the invoice for august, two hundred twelve hours.",
+        day: 70,
+        unread: true,
+        flagged: false,
+        file: Some("invoice-2026-08.pdf"),
+    },
+    Pinned {
+        from: "ada",
+        folder: "Archive",
+        subject: "Budget approvals",
+        body: "Budget approvals are due on the twenty-eighth. Review your lines.",
+        day: 30,
+        unread: false,
+        flagged: false,
+        file: None,
+    },
+    Pinned {
+        from: "ben",
+        folder: "INBOX",
+        subject: "Harbor API questions",
+        body: "Two questions on pagination and rate limits.",
+        day: 60,
+        unread: false,
+        flagged: false,
+        file: None,
+    },
+    Pinned {
+        from: "lena",
+        folder: "INBOX",
+        subject: "Harbor weekly notes",
+        body: "The pagination change is in review. The budget is unchanged.",
+        day: 58,
+        unread: false,
+        flagged: false,
+        file: None,
+    },
+    Pinned {
+        from: "shop",
+        folder: "Receipts",
+        subject: "Your coffee order",
+        body: "Thank you for your order. Here is your receipt.",
+        day: 75,
+        unread: false,
+        flagged: false,
+        file: None,
+    },
+    Pinned {
+        from: "shop",
+        folder: "Receipts",
+        subject: "Bookshop receipt",
+        body: "Thank you for your purchase.",
+        day: 50,
+        unread: false,
+        flagged: false,
+        file: None,
+    },
+    Pinned {
+        from: "grace",
+        folder: "INBOX",
+        subject: "Design review",
+        body: "The design review is Friday. Agenda: navigation and empty states.",
+        day: 76,
+        unread: true,
+        flagged: false,
+        file: None,
+    },
+    Pinned {
+        from: "omar",
+        folder: "Archive",
+        subject: "Travel plans",
+        body: "Flights are booked for the conference.",
+        day: 12,
+        unread: false,
+        flagged: false,
+        file: None,
+    },
+    Pinned {
+        from: "sofia",
+        folder: "Archive",
+        subject: "Dinner on Saturday",
+        body: "Are you free for dinner on Saturday?",
+        day: 5,
+        unread: false,
+        flagged: false,
+        file: None,
+    },
+    Pinned {
+        from: "finance",
+        folder: "INBOX",
+        subject: "Quarterly planning",
+        body: "Send your top three asks for the quarter. The atlas roadmap comes first.",
+        day: 78,
+        unread: false,
+        flagged: false,
+        file: None,
+    },
+    Pinned {
+        from: "omar",
+        folder: "INBOX",
+        subject: "Reading list",
+        body: "Two papers and a talk this month.",
+        day: 20,
+        unread: false,
+        flagged: false,
+        file: None,
+    },
+];
+
+/// What the GTK path answered for one query over [`PINNED`] when it was
+/// pinned (rows are indexes into the table, in the order the hits came): the hits' rows in order, the total, the matches per scope
+/// (all mail, inbox, lists) and the refinements offered.
+struct Answer {
+    query: &'static str,
+    scope: Scope,
+    order: postio_search::ResultOrder,
+    rows: &'static [usize],
+    total: u64,
+    scopes: [u64; 3],
+    offered: &'static [(&'static str, u64)],
+}
+
+/// `executor::search` and `executor::facets` over a fixed corpus: the answers
+/// the GTK app gets today. Every phase of spec 010 adds a second path
+/// (`search_conversations`, `Fold`, the attachment-text arm, `label:` and
+/// `has:action`); this test is what proves none of them moved the first
+/// (FR-046, D11). It was green on arrival and must stay so. A change that
+/// moves one of these answers on purpose edits the table in the same commit
+/// and says why.
+#[tokio::test]
+async fn gtk_search_path_is_pinned() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let archive = test_support::mailbox(&connection, &account, "Archive").await;
+    let receipts = test_support::mailbox(&connection, &account, "Receipts").await;
+
+    let start = Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap();
+    let mut ids = Vec::new();
+    for row in &PINNED {
+        let mailbox = match row.folder {
+            "INBOX" => inbox,
+            "Archive" => archive.id,
+            _ => receipts.id,
+        };
+        let mut created =
+            Message::new(account.id, mailbox, start + chrono::Duration::days(row.day));
+        created.from = vec![EmailAddress::new(
+            Some(row.from),
+            format!("{}@example.com", row.from),
+        )];
+        created.subject = Some(row.subject.to_string());
+        if !row.unread {
+            created.flags.insert(postio_model::Flag::Seen);
+        }
+        if row.flagged {
+            created.flags.insert(postio_model::Flag::Flagged);
+        }
+        if let Some(name) = row.file {
+            let mut file = Attachment::new(
+                postio_model::MessageId::UNASSIGNED,
+                "application/octet-stream",
+                4096,
+            );
+            file.filename = Some(name.to_string());
+            created.attachments.push(file);
+        }
+        MessageRepository::new(&connection)
+            .create(&mut created)
+            .await
+            .expect("create");
+        postio_index::index::index_body(&connection, created.id.get(), Some(row.body))
+            .await
+            .expect("index body");
+        body_here(&connection, &created).await;
+        ids.push(created.id);
+    }
+
+    let now = Utc.with_ymd_and_hms(2026, 8, 30, 12, 0, 0).unwrap();
+    for expected in &PINNED_ANSWERS {
+        let query = parse(expected.query, now.date_naive());
+        let request = SearchRequest {
+            account: AccountScope::Account(account.id),
+            query: &query,
+            scope: expected.scope,
+            limit: 10,
+            order: expected.order,
+        };
+        let results = search(&connection, &request, now).await.expect("search");
+        let facets = postio_index::executor::facets(&connection, &request)
+            .await
+            .expect("facets");
+        let rows: Vec<usize> = results
+            .hits
+            .iter()
+            .map(|hit| {
+                ids.iter()
+                    .position(|id| *id == hit.message_id)
+                    .expect("a pinned row")
+            })
+            .collect();
+        let scopes = [
+            facets.hits(Scope::AllMail),
+            facets.hits(Scope::Inbox),
+            facets.hits(Scope::Lists),
+        ];
+        let offered: Vec<(String, u64)> = facets
+            .suggested(results.total_hits)
+            .iter()
+            .map(|refinement| (refinement.token.clone(), refinement.hits))
+            .collect();
+        let said = |what: &str| format!("{what} for {:?}", expected.query);
+        assert_eq!(rows, expected.rows, "{}", said("hits and their order"));
+        assert_eq!(results.total_hits, expected.total, "{}", said("the total"));
+        assert_eq!(scopes, expected.scopes, "{}", said("the scope columns"));
+        let offered: Vec<(&str, u64)> = offered
+            .iter()
+            .map(|(token, hits)| (token.as_str(), *hits))
+            .collect();
+        assert_eq!(offered, expected.offered, "{}", said("the refinements"));
+    }
+}
+
+const PINNED_ANSWERS: [Answer; 12] = {
+    use postio_search::ResultOrder::{Newest, Relevance};
+    [
+        Answer {
+            query: "atlas",
+            scope: Scope::AllMail,
+            order: Relevance,
+            rows: &[0, 1, 10, 6, 7, 8, 9, 2, 19, 3],
+            total: 11,
+            scopes: [11, 5, 1],
+            offered: &[
+                ("has:attach", 5),
+                ("in:Archive", 5),
+                ("in:INBOX", 5),
+                ("is:unread", 3),
+            ],
+        },
+        Answer {
+            query: "atlas budget",
+            scope: Scope::AllMail,
+            order: Relevance,
+            rows: &[0, 2, 1, 7, 8, 3, 5],
+            total: 7,
+            scopes: [7, 3, 0],
+            offered: &[
+                ("in:Archive", 4),
+                ("has:attach", 3),
+                ("in:INBOX", 3),
+                ("is:unread", 2),
+            ],
+        },
+        Answer {
+            query: "budget",
+            scope: Scope::AllMail,
+            order: Relevance,
+            rows: &[0, 4, 2, 11, 1, 3, 5, 7, 13, 8],
+            total: 10,
+            scopes: [10, 4, 0],
+            offered: &[
+                ("in:Archive", 6),
+                ("in:INBOX", 4),
+                ("has:attach", 3),
+                ("is:unread", 2),
+            ],
+        },
+        Answer {
+            query: "from:ada budget",
+            scope: Scope::AllMail,
+            order: Relevance,
+            rows: &[0, 2, 11],
+            total: 3,
+            scopes: [3, 1, 0],
+            offered: &[
+                ("has:attach", 2),
+                ("in:Archive", 2),
+                ("is:unread", 1),
+                ("in:INBOX", 1),
+            ],
+        },
+        Answer {
+            query: "in:archive atlas",
+            scope: Scope::AllMail,
+            order: Relevance,
+            rows: &[7, 8, 9, 2, 5],
+            total: 5,
+            scopes: [5, 0, 0],
+            offered: &[("is:flagged", 1), ("has:attach", 1)],
+        },
+        Answer {
+            query: "has:attachment budget",
+            scope: Scope::AllMail,
+            order: Relevance,
+            rows: &[0, 2, 3],
+            total: 3,
+            scopes: [3, 2, 0],
+            offered: &[("in:INBOX", 2), ("is:unread", 1), ("in:Archive", 1)],
+        },
+        Answer {
+            query: "is:unread",
+            scope: Scope::AllMail,
+            order: Newest,
+            rows: &[0, 1, 16, 10],
+            total: 4,
+            scopes: [4, 4, 0],
+            offered: &[("has:attach", 2), ("is:flagged", 1)],
+        },
+        Answer {
+            query: "after:2026-07-15 atlas",
+            scope: Scope::AllMail,
+            order: Relevance,
+            rows: &[0, 1, 10, 6, 7, 8, 9, 19, 3, 5],
+            total: 10,
+            scopes: [10, 5, 1],
+            offered: &[
+                ("in:INBOX", 5),
+                ("has:attach", 4),
+                ("in:Archive", 4),
+                ("is:unread", 3),
+            ],
+        },
+        Answer {
+            query: "budget -atlas",
+            scope: Scope::AllMail,
+            order: Relevance,
+            rows: &[4, 11, 13],
+            total: 3,
+            scopes: [3, 1, 0],
+            offered: &[("in:Archive", 2), ("in:INBOX", 1)],
+        },
+        Answer {
+            query: "subject:invoice",
+            scope: Scope::Inbox,
+            order: Relevance,
+            rows: &[10],
+            total: 1,
+            scopes: [1, 1, 0],
+            offered: &[],
+        },
+        Answer {
+            query: "\"atlas budget\"",
+            scope: Scope::AllMail,
+            order: Newest,
+            rows: &[0, 1, 3, 5, 8, 2],
+            total: 6,
+            scopes: [6, 3, 0],
+            offered: &[
+                ("has:attach", 3),
+                ("in:Archive", 3),
+                ("in:INBOX", 3),
+                ("is:unread", 2),
+            ],
+        },
+        Answer {
+            query: "filename:xlsx",
+            scope: Scope::AllMail,
+            order: Relevance,
+            rows: &[0, 2],
+            total: 2,
+            scopes: [2, 1, 0],
+            offered: &[("is:unread", 1), ("in:Archive", 1), ("in:INBOX", 1)],
+        },
+    ]
+};

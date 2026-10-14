@@ -225,6 +225,24 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::MoreActions
         | C::ToggleReadingPane
         | C::BackToWords
+        | C::ShowAllResults
+        | C::ForgetRecent
+        | C::ExcludeSuggestion
+        | C::HistoryBack
+        | C::HistoryForward
+        | C::ResultsConversations
+        | C::ResultsFiles
+        | C::ResultsPeople
+        | C::StepRangeBack
+        | C::StepRangeForward
+        | C::QuickLook
+        | C::NextMatch
+        | C::PrevMatch
+        | C::PickRelaxation1
+        | C::PickRelaxation2
+        | C::PickRelaxation3
+        | C::PickRelaxation4
+        | C::SaveFile
         | C::GoToFiltered
         | C::GoToDigestRules
         | C::ToggleHasAction

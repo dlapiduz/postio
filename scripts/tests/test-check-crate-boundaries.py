@@ -68,6 +68,7 @@ def build_fixture(
     vault_deps: str = "",
     storyboard_deps: str = "",
     controller_deps: str = "",
+    extract_deps: str = "",
     include_focus: bool = True,
     hack_deps: str | None = None,
 ) -> Path:
@@ -99,6 +100,8 @@ def build_fixture(
     write_crate(root, "crates", "postio-storyboard", storyboard_deps)
     # Focus's sans-IO controller (specs/009-focus-macos, ADR 0045).
     write_crate(root, "crates", "postio-focus", controller_deps)
+    # Attachment text, a pure leaf (specs/010-focus-search FR-052).
+    write_crate(root, "crates", "postio-extract", extract_deps)
     # Bystanders: every crate `RULES` names has to exist as a workspace
     # member, or `find_violations` raises before any rule gets checked
     # (#560) -- so a rule added for a real crate the fixture never grew a
@@ -656,6 +659,44 @@ def main() -> int:
             ),
             expected_status=1,
             must_mention=("postio-model", "tokio", "helper"),
+        )
+
+        # Attachment text is a pure leaf: bytes in, located text out
+        # (specs/010-focus-search FR-052). No store engine, no runtime, no
+        # network, no toolkit, no inference engine -- directly or not.
+        for banned, why in (
+            ("turso", "the store engine"),
+            ("tokio", "an async runtime"),
+            ("reqwest", "an HTTP client"),
+            ("gtk4", "a toolkit"),
+            ("candle-core", "an inference engine"),
+        ):
+            check_case(
+                f"postio-extract gains {why}",
+                build_fixture(
+                    tmp_path / f"extract-{banned}",
+                    extract_deps=f'{banned} = {{ path = "../../vendor/{banned}" }}\n',
+                ),
+                expected_status=1,
+                must_mention=("postio-extract", banned),
+            )
+        check_case(
+            "postio-extract reaches tokio through another crate",
+            build_fixture(
+                tmp_path / "extract-helper-tokio",
+                extract_deps='helper = { path = "../helper" }\n',
+                helper_deps='tokio = { path = "../../vendor/tokio" }\n',
+            ),
+            expected_status=1,
+            must_mention=("postio-extract", "tokio", "helper"),
+        )
+        check_case(
+            "postio-extract may stand on postio-search",
+            build_fixture(
+                tmp_path / "extract-search",
+                extract_deps='postio-search = { path = "../postio-search" }\n',
+            ),
+            expected_status=0,
         )
 
         # 18. And the real workspace is clean today.

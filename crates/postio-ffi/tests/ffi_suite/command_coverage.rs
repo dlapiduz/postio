@@ -80,7 +80,8 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
 /// The bar counts because the Mac draws it (`CommandBarPanel`, T085): its
 /// own keys -- `BackToWords`, the result order, saving -- reach the
 /// controller only while it is up, which is the only time they mean
-/// anything.
+/// anything. So do the search results' (spec 010 step 3): their tabs are
+/// theirs only while the main window shows them.
 fn the_controller_answers(id: CommandId) -> bool {
     use postio_focus::{FocusController, Input, Policy, SurfaceKind};
     let fresh =
@@ -90,8 +91,18 @@ fn the_controller_answers(id: CommandId) -> bool {
         let _ = focus.handle(Input::Command(CommandId::Search));
         focus.answers(id)
     };
+    let with_results = || {
+        let mut focus = fresh();
+        let _ = focus.handle(Input::Command(CommandId::Search));
+        let _ = focus.handle(Input::Typed {
+            text: "atlas".to_owned(),
+        });
+        let _ = focus.handle(Input::Command(CommandId::ShowAllResults));
+        focus.answers(id)
+    };
     fresh().answers(id)
         || with_bar()
+        || with_results()
         || [
             SurfaceKind::Filtered,
             SurfaceKind::Digest,

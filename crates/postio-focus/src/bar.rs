@@ -19,14 +19,17 @@
 //! however many accounts there are.
 
 use chrono::{DateTime, Utc};
+use postio_client::protocol::SavedCount;
 use postio_core::{ActionId, CommandId, Context, Frontend, Keymap};
 use postio_model::{Contact, FocusScope, ListScope, MailboxId, MailboxRole, MessageId, ThreadId};
 use postio_search::{Instead, ResultOrder, SearchHit};
 use postio_ui::command_bar::{self as rules, BarAction, Line, Row, Run};
 use postio_ui::finder::{self, Destination, Place};
 use postio_ui::places::Entry;
+use postio_ui::saved_search::SavedSearch;
 
 use crate::cursor::{RowFacts, Rows};
+use crate::dropdown::{self, Action, DropdownState, Landed, Latest, Offer, Shown, UnderstoodTile};
 use crate::feed::Step;
 use crate::{FocusController, Intent, Reply, Request, SurfaceKind};
 
@@ -152,6 +155,10 @@ pub struct PlacesRead {
     pub owners: Vec<(MailboxId, String)>,
     /// Every correspondent, for `@` and for a name typed.
     pub contacts: Vec<Contact>,
+    /// The messages a search looks through, off the folders' maintained
+    /// totals (ADR 0040): the empty dropdown's "local index · 18,204
+    /// messages".
+    pub messages: u64,
 }
 
 /// Where the highlight goes once results are drawn.
@@ -222,9 +229,10 @@ pub(crate) struct Bar {
     found: Vec<Hit>,
     /// The hits the results list now, with their conversations.
     walked: Vec<Hit>,
-    saved: Vec<(String, String)>,
-    /// The query an `Intent::SaveSearch` is saving.
-    saving: Option<String>,
+    /// The pinned saved searches, in order.
+    saved: Vec<SavedSearch>,
+    /// What an `Intent::SaveSearch` is saving.
+    saving: Option<crate::SaveSearch>,
     keymap: Keymap,
     /// The places, as last read.
     places: PlacesRead,
@@ -233,10 +241,86 @@ pub(crate) struct Bar {
     places_read: u64,
     /// Whether Focus files mail away: the popover lists Filtered then.
     filtering: bool,
+    /// The search half is the dropdown (spec 010 step 2), not the blend.
+    results_view: bool,
+    /// The clock, when stopped: what the dropdown's dates count from.
+    clock: Option<chrono::DateTime<chrono::Local>>,
+    /// The dropdown, while it is what the bar shows.
+    drop: Option<Drop>,
+    /// The searches run lately, newest first, each with its token.
+    recents: Vec<(u64, postio_client::protocol::RecentSearch)>,
+    /// The saved searches' counts by key, as last read: `(key, total,
+    /// new)`.
+    saved_counts: Vec<SavedCount>,
+    /// The saved pills' tokens, in order.
+    saved_tokens: Vec<u64>,
+    /// The cheat sheet's rows' tokens, and the example's.
+    sheet: Vec<u64>,
+    /// The row the toolkit's arrows rest on.
+    highlighted: Option<u64>,
+    /// The sentence ⌘⌫ kept as words: searched as typed, not lowered,
+    /// while the field still begins with it.
+    literal: Option<String>,
+    /// The field's text was put there, not typed: a run, Tab, a saved
+    /// search. An operator at its end is a chip made, not one being typed.
+    settled: bool,
+}
+
+/// The dropdown's state while the bar shows it.
+#[derive(Debug)]
+struct Drop {
+    state: DropdownState,
+    /// The query the words were lowered to.
+    query: Option<postio_search::ParsedQuery>,
+    /// The query's words, for the highlight.
+    terms: Vec<String>,
+    /// What the words found, once it has landed.
+    landed: Option<Landed>,
+    /// The operator whose value is being typed (`Operator`).
+    field: Option<postio_search::query::Field>,
+    /// Its value so far, or the prefix (`Prefix`).
+    value: String,
+    /// Where in the field the piece being typed begins: what a suggestion
+    /// run replaces.
+    piece: usize,
+    /// The suggestions on screen, each with its token.
+    offers: Vec<(u64, Offer)>,
+    /// The rest of the best word (`Prefix`).
+    ghost: Option<String>,
+    /// The latest from the focused person (`Operator`), and whose was
+    /// asked last.
+    latest: Option<Latest>,
+    latest_asked: Option<String>,
+    /// What the sentence was understood as (`PlainEnglish`): its tiles,
+    /// the lowered query as Tab writes it, and the results' note.
+    tiles: Vec<UnderstoodTile>,
+    lowered: Option<String>,
+    note: String,
+}
+
+impl Drop {
+    fn new(state: DropdownState) -> Self {
+        Drop {
+            state,
+            query: None,
+            terms: Vec::new(),
+            landed: None,
+            field: None,
+            value: String::new(),
+            piece: 0,
+            offers: Vec::new(),
+            ghost: None,
+            latest: None,
+            latest_asked: None,
+            tiles: Vec::new(),
+            lowered: None,
+            note: String::new(),
+        }
+    }
 }
 
 impl Bar {
-    pub(crate) fn new(platform: postio_config::paths::Platform) -> Self {
+    pub(crate) fn new(platform: postio_config::paths::Platform, results_view: bool) -> Self {
         Bar {
             mode: None,
             typed: String::new(),
@@ -270,7 +354,25 @@ impl Bar {
             names: postio_ui::names::Names::default(),
             places_read: 0,
             filtering: false,
+            results_view,
+            clock: None,
+            drop: None,
+            recents: Vec::new(),
+            saved_counts: Vec::new(),
+            saved_tokens: Vec::new(),
+            sheet: Vec::new(),
+            highlighted: None,
+            literal: None,
+            settled: false,
         }
+    }
+
+    pub(crate) fn set_clock(&mut self, clock: Option<chrono::DateTime<chrono::Local>>) {
+        self.clock = clock;
+    }
+
+    pub(crate) fn now(&self) -> chrono::DateTime<chrono::Local> {
+        self.clock.unwrap_or_else(postio_ui::clock::now)
     }
 
     pub(crate) fn is_open(&self) -> bool {
@@ -278,19 +380,87 @@ impl Bar {
     }
 
     /// The bindings in force, as the bar's keycaps say them.
+    /// How many saved searches are pinned: the next one's ⌥ number is one
+    /// more.
+    pub(crate) fn saved_len(&self) -> usize {
+        self.saved.len()
+    }
+
     pub(crate) fn keymap(&self) -> &Keymap {
         &self.keymap
+    }
+
+    /// Every folder the places know, by name.
+    pub(crate) fn folders(&self) -> &[(MailboxId, String)] {
+        &self.places.folders
+    }
+
+    /// The name a correspondent is known by, for an address.
+    pub(crate) fn name_for(&self, address: &str) -> Option<String> {
+        self.places
+            .contacts
+            .iter()
+            .find(|contact| contact.address.address.eq_ignore_ascii_case(address))
+            .and_then(|contact| {
+                contact
+                    .name
+                    .clone()
+                    .or_else(|| contact.address.name.clone())
+            })
+    }
+
+    /// The words in the field, trimmed, while the bar searches: what ⌘↩
+    /// shows the results of.
+    pub(crate) fn search_words(&self) -> Option<&str> {
+        let words = self.typed.trim();
+        (self.mode == Some(BarMode::Search) && !words.is_empty()).then_some(words)
+    }
+
+    /// What an `Intent::SaveSearch` is saving.
+    pub(crate) fn set_saving(&mut self, saving: crate::SaveSearch) {
+        self.saving = Some(saving);
+    }
+
+    /// Walk `hits` from a message one of them opened, as a hit opened from
+    /// the bar walks the bar's: nothing to come back to when it closes.
+    pub(crate) fn walk(&mut self, hits: Vec<(MessageId, Option<ThreadId>)>) {
+        self.found = hits
+            .into_iter()
+            .map(|(message, thread)| Hit { message, thread })
+            .collect();
+        self.held = None;
     }
 
     pub(crate) fn set_keymap(&mut self, keymap: postio_core::Keymap) {
         self.keymap = keymap;
     }
 
-    pub(crate) fn set_filtering(&mut self, filtering: bool) {
-        if self.filtering != filtering {
-            self.filtering = filtering;
-            self.places_read += 1;
+    /// Filtering turned on or off adds or takes away Filtered, so once the
+    /// places have landed the popover is told to read them again.
+    pub(crate) fn set_filtering(&mut self, filtering: bool) -> Vec<Step> {
+        if self.filtering == filtering {
+            return Vec::new();
         }
+        self.filtering = filtering;
+        self.places_read += 1;
+        if self.places.entries.is_empty() {
+            return Vec::new();
+        }
+        vec![Step::Show(Intent::PlacesChanged)]
+    }
+
+    /// Today's filtered count landed, `before` the one known until then.
+    /// While Focus files mail Filtered is listed by it, and the counts are a
+    /// read of their own that can land after the places: once the places
+    /// have landed (their read always holds Snoozed and Flagged), a change
+    /// in it is a change in them, so their tokens move on and the popover
+    /// is told to read them again.
+    pub(crate) fn filtered_counted(&mut self, before: Option<u32>, now: u32) -> Vec<Step> {
+        if !self.filtering || before == Some(now) || self.places.entries.is_empty() {
+            return Vec::new();
+        }
+        self.places_read += 1;
+        vec![Step::Show(Intent::PlacesChanged)]
     }
 
     /// Open the bar `mode`'s way on `text`, over the cursor's `aim`, and
@@ -303,6 +473,7 @@ impl Bar {
         self.order = ResultOrder::default();
         self.pending = Pending::Nowhere;
         self.typed = text.to_owned();
+        self.settled = true;
         let mut steps = vec![
             Step::Show(Intent::OpenBar {
                 mode,
@@ -311,6 +482,18 @@ impl Bar {
             }),
             Step::Ask(Request::Places),
         ];
+        if self.results_view && mode == BarMode::Search {
+            self.sheet = (0..=postio_ui::search_view::cheat_sheet().len())
+                .map(|_| self.token())
+                .collect();
+            steps.push(Step::Ask(Request::RecentSearches));
+            if !self.saved.is_empty() {
+                steps.push(Step::Ask(Request::SavedCounts {
+                    searches: keyed(self.saved.iter()),
+                    today: self.now().date_naive(),
+                }));
+            }
+        }
         steps.extend(self.answer());
         steps
     }
@@ -331,6 +514,9 @@ impl Bar {
         self.words = None;
         self.editing = None;
         self.saving = None;
+        self.drop = None;
+        self.highlighted = None;
+        self.literal = None;
     }
 
     /// The field's words now.
@@ -338,7 +524,19 @@ impl Bar {
         if !self.is_open() || text == self.typed {
             return Vec::new();
         }
+        // ⌫ on an operator with no value yet takes the colon in the field;
+        // the operator goes whole, back to the words before it (US7).
+        if let (Some(mode), Some(drop)) = (self.mode, &self.drop)
+            && drop.state == DropdownState::Operator
+            && drop.value.is_empty()
+            && self.typed.ends_with(':')
+            && text == self.typed[..self.typed.len() - 1]
+        {
+            let words = self.typed[..drop.piece].to_owned();
+            return self.retype(mode, words);
+        }
         self.typed = text;
+        self.settled = false;
         self.answer()
     }
 
@@ -352,6 +550,10 @@ impl Bar {
         self.heading = None;
         self.folder = None;
         let typed = self.typed.trim().to_owned();
+        if self.shows_dropdown(&typed) {
+            return self.answer_dropdown(&typed);
+        }
+        self.drop = None;
         let lines = self.base_lines(&typed);
         self.base = self.items(lines);
         self.chips.clear();
@@ -431,8 +633,8 @@ impl Bar {
     /// and asked the forgiving way: a person searching wants "tickt" to
     /// find the ticket. A saved search keeps the words, not this, so the
     /// rules made from them stay exact (ADR 0037, as amended).
-    fn lower(&self, typed: &str) -> postio_search::ParsedQuery {
-        postio_search::natural::lower(typed, postio_ui::clock::now().date_naive(), &|name| {
+    pub(crate) fn lower(&self, typed: &str) -> postio_search::ParsedQuery {
+        postio_search::natural::lower(typed, self.now().date_naive(), &|name| {
             self.names.lookup(name)
         })
         .forgiving()
@@ -521,6 +723,9 @@ impl Bar {
 
     /// The bar, as it is now, with the highlight on `highlight`.
     fn draw(&self, highlight: Option<u64>) -> Step {
+        if self.drop.is_some() {
+            return self.draw_dropdown(highlight);
+        }
         let after_search = self
             .base
             .iter()
@@ -539,7 +744,11 @@ impl Bar {
             editing: self.editing.map(|at| at as u32),
             lines,
             highlight,
-            saved: self.saved.iter().map(|(name, _)| name.clone()).collect(),
+            saved: self
+                .saved
+                .iter()
+                .map(|search| search.name.clone())
+                .collect(),
         }))
     }
 
@@ -755,6 +964,39 @@ impl Bar {
         let Some(mode) = self.mode else {
             return Vec::new();
         };
+        if let Some(drop) = &self.drop {
+            return match drop.state {
+                // The ghost: the word it completes, in the prefix's place.
+                DropdownState::Prefix => match drop.offers.iter().find_map(|(_, offer)| match offer
+                {
+                    Offer::Word(word) if drop.ghost.is_some() => Some(word.text.clone()),
+                    _ => None,
+                }) {
+                    Some(word) => {
+                        let text = format!("{}{word}", &self.typed[..drop.piece]);
+                        self.retype(mode, text)
+                    }
+                    None => Vec::new(),
+                },
+                // The sentence, as the chips it became.
+                DropdownState::PlainEnglish => match drop.lowered.clone() {
+                    Some(text) => self.retype(mode, text),
+                    None => Vec::new(),
+                },
+                DropdownState::Words => {
+                    let first = drop
+                        .landed
+                        .as_ref()
+                        .and_then(|landed| landed.pills.first())
+                        .map(|(_, _, clause)| clause.clone());
+                    match first {
+                        Some(clause) => self.narrow(mode, clause),
+                        None => Vec::new(),
+                    }
+                }
+                _ => Vec::new(),
+            };
+        }
         if self.chips.is_empty() {
             return Vec::new();
         }
@@ -786,8 +1028,17 @@ impl Bar {
         steps
     }
 
-    /// `mod+BackSpace`: back from the chips to the words they came from.
+    /// `mod+BackSpace`: back from the chips to the words they came from;
+    /// in plain English, the sentence kept as words, searched as typed.
     fn back_to_words(&mut self) -> Vec<Step> {
+        if self
+            .drop
+            .as_ref()
+            .is_some_and(|drop| drop.state == DropdownState::PlainEnglish)
+        {
+            self.literal = Some(self.typed.trim().to_owned());
+            return self.answer();
+        }
         let (Some(mode), Some(words)) = (self.mode, self.words.take()) else {
             return Vec::new();
         };
@@ -904,9 +1155,17 @@ pub(crate) fn goes(id: CommandId) -> bool {
     GOING.contains(&id)
 }
 
-/// Whether the bar, up, answers `id` itself.
-pub(crate) fn bar_key(id: CommandId) -> bool {
-    BAR_KEYS.contains(&id) || GOING.contains(&id)
+/// The commands the dropdown answers while it is up (spec 010 step 2).
+const DROPDOWN_KEYS: [CommandId; 3] = [
+    CommandId::ShowAllResults,
+    CommandId::ForgetRecent,
+    CommandId::ExcludeSuggestion,
+];
+
+/// Whether the bar, up, answers `id` itself; `results_view` when its search
+/// half is the dropdown.
+pub(crate) fn bar_key(id: CommandId, results_view: bool) -> bool {
+    BAR_KEYS.contains(&id) || GOING.contains(&id) || (results_view && DROPDOWN_KEYS.contains(&id))
 }
 
 impl FocusController {
@@ -914,7 +1173,11 @@ impl FocusController {
     /// somewhere; `None` when `id` is none of those.
     pub(crate) fn going(&mut self, id: CommandId, rows: &dyn Rows) -> Option<Vec<Step>> {
         let steps = match id {
-            CommandId::Search => self.open_bar(BarMode::Search, "", rows),
+            // Over the results, on their query (FR-021).
+            CommandId::Search => {
+                let query = self.results_query().unwrap_or_default();
+                self.open_bar(BarMode::Search, &query, rows)
+            }
             CommandId::CommandPalette => {
                 self.open_bar(BarMode::Commands, &finder::COMMANDS_ONLY.to_string(), rows)
             }
@@ -923,8 +1186,16 @@ impl FocusController {
             | CommandId::SavedSearch3
             | CommandId::SavedSearch4 => {
                 let index = rules::SAVED.iter().position(|saved| *saved == id)?;
-                match self.bar.saved.get(index).map(|(_, query)| query.clone()) {
-                    Some(query) => self.open_bar(BarMode::Search, &query, rows),
+                match self.bar.saved.get(index).cloned() {
+                    // Viewing a search that notifies is seeing it: its
+                    // badge counts from now (D15).
+                    Some(search) => {
+                        let mut steps = self.open_bar(BarMode::Search, &search.query, rows);
+                        if search.notify {
+                            steps.push(Step::Ask(Request::MarkSeen { key: search.key }));
+                        }
+                        steps
+                    }
                     None => vec![Step::Show(Intent::Toast {
                         text: postio_ui::focus_target::no_saved_search(index),
                         kind: crate::ToastKind::Notice,
@@ -939,10 +1210,20 @@ impl FocusController {
                 if query.is_empty() {
                     return Some(Vec::new());
                 }
-                self.bar.saving = Some(query.clone());
-                vec![Step::Show(Intent::SaveSearch { query })]
+                let save = crate::SaveSearch {
+                    query,
+                    name: None,
+                    pin: true,
+                    notify: false,
+                    dates: postio_ui::saved_search::Dates::AsTyped,
+                };
+                self.bar.saving = Some(save.clone());
+                vec![Step::Show(Intent::SaveSearch(save))]
             }
             CommandId::BackToWords => self.bar.back_to_words(),
+            CommandId::ShowAllResults if self.bar.results_view => self.show_all_results(),
+            CommandId::ForgetRecent if self.bar.results_view => self.bar.forget_highlighted(),
+            CommandId::ExcludeSuggestion if self.bar.results_view => self.bar.exclude_highlighted(),
             CommandId::ToggleResultOrder => self.bar.toggle_order(),
             CommandId::GoToInbox => self.go_inbox(),
             CommandId::GoToDrafts => vec![Step::Ask(Request::RoleFolder(MailboxRole::Drafts))],
@@ -1048,6 +1329,9 @@ impl FocusController {
         if !self.bar.is_open() {
             return Vec::new();
         }
+        if let Some(action) = self.bar.action(token) {
+            return self.drop_run(action, rows);
+        }
         let Some(row) = self.bar.row(token) else {
             return Vec::new();
         };
@@ -1074,6 +1358,7 @@ impl FocusController {
                     select: None,
                 })];
                 self.bar.typed = text;
+                self.bar.settled = true;
                 steps.extend(self.bar.answer());
                 steps
             }
@@ -1108,27 +1393,38 @@ impl FocusController {
     fn open_hit(&mut self, message: MessageId) -> Vec<Step> {
         // A search's hits carry their conversations; a folder's (`in:`)
         // are its messages.
-        let found: Vec<Hit> = self
-            .bar
-            .base
-            .iter()
-            .chain(&self.bar.results)
-            .filter_map(|item| match &item.row {
-                Row::Message { message, .. } => Some(*message),
-                _ => None,
-            })
-            .map(|message| {
-                self.bar
-                    .walked
-                    .iter()
-                    .find(|hit| hit.message == message)
-                    .cloned()
-                    .unwrap_or(Hit {
-                        message,
-                        thread: None,
-                    })
-            })
-            .collect();
+        let found: Vec<Hit> = match &self.bar.drop {
+            Some(drop) => drop
+                .landed
+                .iter()
+                .flat_map(|landed| &landed.hits)
+                .map(|shown| Hit {
+                    message: shown.hit.best,
+                    thread: shown.thread(),
+                })
+                .collect(),
+            None => self
+                .bar
+                .base
+                .iter()
+                .chain(&self.bar.results)
+                .filter_map(|item| match &item.row {
+                    Row::Message { message, .. } => Some(*message),
+                    _ => None,
+                })
+                .map(|message| {
+                    self.bar
+                        .walked
+                        .iter()
+                        .find(|hit| hit.message == message)
+                        .cloned()
+                        .unwrap_or(Hit {
+                            message,
+                            thread: None,
+                        })
+                })
+                .collect(),
+        };
         let typed = self.bar.typed.clone();
         let mut steps = self.dismiss_bar(true);
         self.bar.found = found;
@@ -1138,7 +1434,7 @@ impl FocusController {
     }
 
     /// Show the hit `message`, at its place among the hits.
-    fn show_hit(&mut self, message: MessageId) -> Vec<Step> {
+    pub(crate) fn show_hit(&mut self, message: MessageId) -> Vec<Step> {
         let Some(index) = self.bar.found.iter().position(|hit| hit.message == message) else {
             return Vec::new();
         };
@@ -1235,6 +1531,16 @@ impl FocusController {
         match reply {
             Reply::Places(read) => self.bar.places_landed(read),
             Reply::Search { stamp, answer } => self.bar.found(stamp, answer),
+            Reply::Conversations { stamp, answer } => self.bar.conversations(stamp, answer),
+            Reply::Passages { stamp, answer } => self.bar.passages(stamp, answer),
+            Reply::Suggest { stamp, answer } => self.bar.suggested(stamp, answer),
+            Reply::LatestFrom {
+                stamp,
+                address,
+                answer,
+            } => self.bar.latest_landed(stamp, &address, answer),
+            Reply::RecentSearches(answer) => self.bar.recents_read(answer),
+            Reply::SavedCounts(answer) => self.bar.saved_counted(answer),
             Reply::Folder { stamp, count, rows } => self.bar.folder(stamp, count, rows),
             Reply::RoleFolder(Some((mailbox, name))) => {
                 self.go_to(Destination::Mailbox(mailbox), &name, rows)
@@ -1250,22 +1556,34 @@ impl FocusController {
             Input::Typed { text } => self.bar.typed(text),
             Input::BarRun(token) => self.bar_run(token, rows),
             Input::BarTab => self.bar.tab(),
+            Input::SearchHighlighted(token) => self.bar.highlight(token),
+            Input::SearchForget(token) => self.bar.forget(token),
+            Input::SearchExclude(token) => self.bar.exclude(token),
             Input::OpenPlace(token) => self.open_place(token, rows),
             Input::SavedSearches(saved) => {
-                self.bar.saved = saved;
+                self.bar.set_saved(saved);
                 self.redraw_bar()
             }
             Input::SearchSaved(result) => {
                 let saving = self.bar.saving.take();
                 match result {
                     Ok(saved) => {
-                        self.bar.saved = saved;
+                        self.bar.set_saved(saved.searches);
+                        let said = saving
+                            .as_ref()
+                            .map(|save| save.name.as_deref().unwrap_or(&save.query))
+                            .unwrap_or_default();
                         let mut steps = vec![Step::Show(Intent::Toast {
-                            text: postio_ui::focus_target::search_saved(
-                                saving.as_deref().unwrap_or_default(),
-                            ),
+                            text: postio_ui::focus_target::search_saved(said),
                             kind: crate::ToastKind::Notice,
                         })];
+                        // A search that notifies starts seen: its badge
+                        // counts what arrives after it was saved (D15).
+                        if let (Some(key), true) =
+                            (saved.key, saving.as_ref().is_some_and(|save| save.notify))
+                        {
+                            steps.push(Step::Ask(Request::MarkSeen { key }));
+                        }
                         steps.extend(self.redraw_bar());
                         steps
                     }
@@ -1275,10 +1593,7 @@ impl FocusController {
                     })],
                 }
             }
-            Input::Filtering(filtering) => {
-                self.bar.set_filtering(filtering);
-                Vec::new()
-            }
+            Input::Filtering(filtering) => self.bar.set_filtering(filtering),
             _ => Vec::new(),
         }
     }
@@ -1290,4 +1605,963 @@ impl FocusController {
             Vec::new()
         }
     }
+}
+
+/// The dropdown: its state, what it asks and what its rows run (spec 010
+/// step 2).
+impl Bar {
+    /// Whether `typed` is drawn as the dropdown: on a frontend with a
+    /// results view, the empty field, words, and `in:` (an operator's
+    /// state, step 8). `>` and `@` keep spec 009's lines.
+    fn shows_dropdown(&self, typed: &str) -> bool {
+        self.results_view
+            && self.mode == Some(BarMode::Search)
+            && (typed.is_empty()
+                || matches!(
+                    rules::route(typed),
+                    rules::Route::Blend | rules::Route::Folder(_)
+                ))
+    }
+
+    /// The pinned saved searches changed: their pills get new tokens.
+    fn set_saved(&mut self, saved: Vec<SavedSearch>) {
+        self.saved = saved;
+        self.saved_tokens = (0..self.saved.len()).map(|_| self.token()).collect();
+    }
+
+    /// Answer what is typed as the dropdown: the empty state now, or the
+    /// state the words are in (design §2's table) and what it asks.
+    fn answer_dropdown(&mut self, typed: &str) -> Vec<Step> {
+        if typed.is_empty() {
+            self.chips.clear();
+            self.literal = None;
+            self.drop = Some(Drop::new(DropdownState::Empty));
+            return vec![self.draw(None)];
+        }
+        if self
+            .literal
+            .as_deref()
+            .is_some_and(|kept| !typed.starts_with(kept))
+        {
+            self.literal = None;
+        }
+        let raw = self.typed.trim_start().to_owned();
+        let offset = self.typed.len() - raw.len();
+        if let Some((field, value, piece)) = operator_typed(&raw).filter(|_| !self.settled) {
+            return self.answer_operator(field, value, offset + piece);
+        }
+        if self.literal.is_none() && is_prefix(typed) {
+            return self.answer_prefix(typed, offset);
+        }
+        let lowered =
+            postio_search::natural::lower_with_origins(typed, self.now().date_naive(), &|name| {
+                self.names.lookup(name)
+            });
+        if self.literal.is_none() && understood(&lowered) {
+            return self.answer_plain(lowered);
+        }
+        let parsed = match self.literal {
+            Some(_) => postio_search::parse(typed, self.now().date_naive()),
+            None => self.lower(typed),
+        };
+        self.answer_words(parsed)
+    }
+
+    /// The previous drop, when it was in `state`: what is kept on screen
+    /// until the next answer lands, rather than blinking empty.
+    fn kept(&mut self, state: DropdownState) -> Option<Drop> {
+        self.drop.take().filter(|drop| drop.state == state)
+    }
+
+    /// Words: their top hits, Narrow to and Show all (screen 03).
+    fn answer_words(&mut self, parsed: postio_search::ParsedQuery) -> Vec<Step> {
+        self.chips = rules::chips(&parsed).unwrap_or_default();
+        let searchable = parsed.is_searchable();
+        let kept = self
+            .kept(DropdownState::Words)
+            .filter(|_| searchable)
+            .and_then(|drop| drop.landed);
+        let was_words = kept.is_some();
+        self.drop = Some(Drop {
+            terms: postio_search::highlight::terms(&parsed),
+            query: Some(parsed.clone()),
+            landed: kept,
+            ..Drop::new(DropdownState::Words)
+        });
+        let mut steps = Vec::new();
+        if !was_words {
+            steps.push(self.draw(None));
+        }
+        if searchable {
+            steps.push(Step::Ask(Request::Conversations {
+                query: parsed,
+                order: postio_search::results::ConversationOrder::BestMatch,
+                limit: dropdown::TOP_HITS,
+                stamp: self.stamp,
+            }));
+        }
+        steps
+    }
+
+    /// One to three letters: what they could become, and the top hits so
+    /// far (screen 02).
+    fn answer_prefix(&mut self, typed: &str, piece: usize) -> Vec<Step> {
+        // Half a word, not English: "at" is no stop word here.
+        let parsed = postio_search::parse(typed, self.now().date_naive()).forgiving();
+        self.chips.clear();
+        let kept = self.kept(DropdownState::Prefix);
+        let (landed, offers, ghost) = match kept {
+            Some(drop) => (drop.landed, drop.offers, drop.ghost),
+            None => (None, Vec::new(), None),
+        };
+        // A ghost is only drawn while the word still begins with what is typed.
+        let ghost = ghost.and(offers.iter().find_map(|(_, offer)| match offer {
+            Offer::Word(word) => postio_search::suggest::ghost(typed, &word.text),
+            _ => None,
+        }));
+        self.drop = Some(Drop {
+            terms: vec![typed.to_owned()],
+            query: Some(parsed.clone()),
+            landed,
+            value: typed.to_owned(),
+            piece,
+            offers,
+            ghost,
+            ..Drop::new(DropdownState::Prefix)
+        });
+        let mut steps = vec![
+            self.draw(None),
+            Step::Ask(Request::Suggest {
+                prefix: typed.to_owned(),
+                field: None,
+                stamp: self.stamp,
+            }),
+        ];
+        if parsed.is_searchable() {
+            steps.push(Step::Ask(Request::Conversations {
+                query: parsed,
+                order: postio_search::results::ConversationOrder::BestMatch,
+                limit: dropdown::HITS_SO_FAR,
+                stamp: self.stamp,
+            }));
+        }
+        steps
+    }
+
+    /// An operator's value: its people, labels or folders (screen 04).
+    fn answer_operator(
+        &mut self,
+        field: postio_search::query::Field,
+        value: String,
+        piece: usize,
+    ) -> Vec<Step> {
+        let typed = self.typed.trim().to_owned();
+        self.chips = rules::chips(&self.lower(&typed)).unwrap_or_default();
+        let kept = self
+            .kept(DropdownState::Operator)
+            .filter(|drop| drop.field == Some(field));
+        let (offers, latest, latest_asked) = match kept {
+            Some(drop) => (drop.offers, drop.latest, drop.latest_asked),
+            None => (Vec::new(), None, None),
+        };
+        self.drop = Some(Drop {
+            field: Some(field),
+            value: value.clone(),
+            piece,
+            offers,
+            latest,
+            latest_asked,
+            ..Drop::new(DropdownState::Operator)
+        });
+        vec![
+            self.draw(None),
+            Step::Ask(Request::Suggest {
+                prefix: value,
+                field: Some(field),
+                stamp: self.stamp,
+            }),
+        ]
+    }
+
+    /// A sentence the Mac lowered: what it understood, then its results
+    /// newest first (screen 05).
+    fn answer_plain(&mut self, lowered: postio_search::natural::Lowered) -> Vec<Step> {
+        let query = lowered.query.clone().forgiving();
+        self.chips = rules::chips(&query).unwrap_or_default();
+        let tiles = lowered
+            .origins
+            .iter()
+            .filter_map(|origin| {
+                let token = lowered.query.tokens().get(origin.token)?;
+                Some(self.tile(token, &origin.words))
+            })
+            .collect();
+        let chips_text = lowered
+            .query
+            .tokens()
+            .iter()
+            .map(|token| token.raw.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let (after, before) = query
+            .filters()
+            .fold((None, None), |(after, before), clause| {
+                match &clause.filter {
+                    postio_search::query::Filter::After(date) if !clause.negated => {
+                        (Some(*date), before)
+                    }
+                    postio_search::query::Filter::Before(date) if !clause.negated => {
+                        (after, Some(*date))
+                    }
+                    _ => (after, before),
+                }
+            });
+        let landed = self
+            .kept(DropdownState::PlainEnglish)
+            .and_then(|drop| drop.landed);
+        // The words are marked, not the person: the sender column says who
+        // (screen 05 marks "Invoice" alone).
+        let terms = query
+            .text_terms()
+            .filter(|term| !term.negated)
+            .map(|term| term.value.clone())
+            .collect();
+        self.drop = Some(Drop {
+            terms,
+            query: Some(query.clone()),
+            landed,
+            tiles,
+            lowered: Some(chips_text),
+            note: postio_ui::search_view::plain_results_note(after, before),
+            ..Drop::new(DropdownState::PlainEnglish)
+        });
+        let mut steps = vec![self.draw(None)];
+        if query.is_searchable() {
+            steps.push(Step::Ask(Request::Conversations {
+                query,
+                order: postio_search::results::ConversationOrder::Newest,
+                limit: dropdown::PLAIN_RESULTS,
+                stamp: self.stamp,
+            }));
+        }
+        steps
+    }
+
+    /// One "Understood as" tile: the token's operator and value, a person
+    /// by the name the address book gives, and the words it came from.
+    fn tile(&self, token: &postio_search::query::Token, words: &str) -> UnderstoodTile {
+        let (op, value) = match (token.field(), token.raw.split_once(':')) {
+            (Some(field), Some((op, value))) => {
+                let value = match field {
+                    postio_search::query::Field::From | postio_search::query::Field::To => {
+                        self.name_for(value).unwrap_or_else(|| value.to_owned())
+                    }
+                    _ => value.to_owned(),
+                };
+                (format!("{op}:"), value)
+            }
+            _ => (String::new(), token.raw.clone()),
+        };
+        UnderstoodTile {
+            op,
+            value,
+            origin: postio_ui::search_view::origin_line(words),
+        }
+    }
+
+    /// The dropdown, as it is now.
+    fn draw_dropdown(&self, select: Option<u64>) -> Step {
+        let Some(drop) = &self.drop else {
+            return Step::Show(Intent::BarLines(BarView::default()));
+        };
+        let now = self.now();
+        let mut view = match drop.state {
+            DropdownState::Words => {
+                dropdown::words(drop.landed.as_ref(), &drop.terms, &self.keymap, now)
+            }
+            DropdownState::Prefix => dropdown::prefix(dropdown::PrefixParts {
+                typed: &drop.value,
+                ghost: drop.ghost.clone(),
+                offers: &drop.offers,
+                landed: drop.landed.as_ref(),
+                keymap: &self.keymap,
+                now,
+            }),
+            DropdownState::Operator => dropdown::operator(dropdown::OperatorParts {
+                keyword: drop.field.map_or("from", |field| field.keyword()),
+                value: &drop.value,
+                offers: &drop.offers,
+                latest: drop.latest.as_ref(),
+                keymap: &self.keymap,
+                now,
+            }),
+            DropdownState::PlainEnglish => dropdown::plain(dropdown::PlainParts {
+                tiles: drop.tiles.clone(),
+                landed: drop.landed.as_ref(),
+                terms: &drop.terms,
+                note: drop.note.clone(),
+                keymap: &self.keymap,
+                now,
+            }),
+            _ => {
+                let saved: Vec<dropdown::SavedPill> = self
+                    .saved
+                    .iter()
+                    .zip(&self.saved_tokens)
+                    .map(|(search, token)| {
+                        let counted = self
+                            .saved_counts
+                            .iter()
+                            .find(|counted| counted.key == search.key);
+                        dropdown::SavedPill {
+                            token: *token,
+                            name: search.name.clone(),
+                            count: counted.map(|counted| counted.total),
+                            fresh: counted
+                                .filter(|_| search.notify)
+                                .map(|counted| counted.new)
+                                .filter(|new| new.conversations > 0),
+                        }
+                    })
+                    .collect();
+                dropdown::empty(dropdown::EmptyParts {
+                    recents: &self.recents,
+                    saved: &saved,
+                    sheet: &self.sheet,
+                    example: self.example(),
+                    messages: (self.places_read > 0).then_some(self.places.messages),
+                    keymap: &self.keymap,
+                    now,
+                })
+            }
+        };
+        view.select = select;
+        Step::Show(Intent::Dropdown(view))
+    }
+
+    /// The cheat sheet's example, lowered against today and the address
+    /// book, as typing it would be.
+    fn example(&self) -> String {
+        let lowered = postio_search::natural::lower_with_origins(
+            postio_ui::search_view::EXAMPLE,
+            self.now().date_naive(),
+            &|name| self.names.lookup(name),
+        );
+        lowered
+            .query
+            .tokens()
+            .iter()
+            .map(|token| token.raw.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// What the dropdown's row or pill `token` runs.
+    fn action(&self, token: u64) -> Option<Action> {
+        let drop = self.drop.as_ref()?;
+        if let Some((_, offer)) = drop.offers.iter().find(|(at, _)| *at == token) {
+            return offer.action(drop.field);
+        }
+        if let Some(shown) = drop
+            .latest
+            .iter()
+            .flat_map(|latest| &latest.hits)
+            .find(|shown| shown.token == token)
+        {
+            return Some(Action::Hit(shown.hit.best));
+        }
+        match drop.state {
+            DropdownState::Words | DropdownState::Prefix | DropdownState::PlainEnglish => {
+                let landed = drop.landed.as_ref()?;
+                if landed.show_all == token {
+                    return Some(Action::ShowAll);
+                }
+                if let Some(shown) = landed.hits.iter().find(|shown| shown.token == token) {
+                    return Some(Action::Hit(shown.hit.best));
+                }
+                landed
+                    .pills
+                    .iter()
+                    .find(|(at, _, _)| *at == token)
+                    .map(|(_, _, clause)| Action::Narrow(clause.clone()))
+            }
+            _ => {
+                if let Some((_, recent)) = self.recents.iter().find(|(at, _)| *at == token) {
+                    return Some(Action::Recent(recent.query.clone()));
+                }
+                self.saved_tokens
+                    .iter()
+                    .position(|at| *at == token)
+                    .map(Action::Saved)
+            }
+        }
+    }
+
+    /// Put `text` in the field, as a run of the bar does, and answer it.
+    fn retype(&mut self, mode: BarMode, text: String) -> Vec<Step> {
+        let mut steps = vec![Step::Show(Intent::OpenBar {
+            mode,
+            text: text.clone(),
+            select: None,
+        })];
+        self.typed = text;
+        self.settled = true;
+        steps.extend(self.answer());
+        steps
+    }
+
+    /// Add `clause` to the query, spelled once (D13), and search again.
+    fn narrow(&mut self, mode: BarMode, clause: postio_search::query::Clause) -> Vec<Step> {
+        let text = postio_search::edit::apply(
+            self.typed.trim(),
+            postio_search::edit::Edit::Add(clause),
+            self.now().date_naive(),
+        );
+        self.retype(mode, text)
+    }
+
+    /// A conversation search landed: the words' top hits, pills and count,
+    /// when it is for the words still typed; then their passages.
+    fn conversations(
+        &mut self,
+        stamp: u64,
+        answer: Result<Box<postio_search::results::ConversationResults>, String>,
+    ) -> Vec<Step> {
+        if !self.is_open() || stamp != self.stamp {
+            return Vec::new();
+        }
+        let results = match answer {
+            Ok(results) => *results,
+            Err(error) => {
+                tracing::debug!(%error, "the dropdown's search found nothing to show");
+                return Vec::new();
+            }
+        };
+        let pills = dropdown::narrow_pills(&results);
+        let hits: Vec<Shown> = results
+            .hits
+            .into_iter()
+            .map(|hit| Shown {
+                token: self.token(),
+                hit,
+            })
+            .collect();
+        let pills = pills
+            .into_iter()
+            .map(|(pill, clause)| (self.token(), pill, clause))
+            .collect();
+        let show_all = self.token();
+        let mut folders = results.names.folders;
+        folders.extend(self.places.folders.iter().cloned());
+        let landed = Landed {
+            hits,
+            pills,
+            show_all,
+            total: results.total,
+            capped: results.capped,
+            elapsed: results.elapsed,
+            folders,
+        };
+        let Some(drop) = self.drop.as_mut() else {
+            return Vec::new();
+        };
+        let asked = landed
+            .hits
+            .iter()
+            .map(|shown| {
+                let sources = shown
+                    .hit
+                    .matches
+                    .iter()
+                    .map(|each| each.source.clone())
+                    .collect();
+                (shown.hit.best, sources)
+            })
+            .collect::<Vec<_>>();
+        drop.landed = Some(landed);
+        let query = drop.query.clone();
+        let mut steps = Vec::new();
+        let select = match std::mem::take(&mut self.pending) {
+            Pending::Hit(message) => self.drop.as_ref().and_then(|drop| {
+                drop.landed
+                    .as_ref()?
+                    .hits
+                    .iter()
+                    .find(|shown| shown.hit.best == message)
+            }),
+            _ => None,
+        }
+        .map(|shown| shown.token);
+        steps.push(self.draw(select));
+        if let Some(query) = query
+            && !asked.is_empty()
+        {
+            steps.push(Step::Ask(Request::Passages {
+                query,
+                hits: asked,
+                stamp,
+            }));
+        }
+        steps
+    }
+
+    /// The hits' passages landed: drawn in place, the arrows where they are.
+    fn passages(
+        &mut self,
+        stamp: u64,
+        answer: Result<Vec<(MessageId, Vec<postio_search::results::Match>)>, String>,
+    ) -> Vec<Step> {
+        if !self.is_open() || stamp != self.stamp {
+            return Vec::new();
+        }
+        let found = match answer {
+            Ok(found) => found,
+            Err(error) => {
+                tracing::debug!(%error, "the dropdown's passages could not be read");
+                return Vec::new();
+            }
+        };
+        let Some(landed) = self.drop.as_mut().and_then(|drop| drop.landed.as_mut()) else {
+            return Vec::new();
+        };
+        for (message, matches) in found {
+            if let Some(shown) = landed
+                .hits
+                .iter_mut()
+                .find(|shown| shown.hit.best == message)
+            {
+                shown.hit.matches = matches;
+            }
+        }
+        vec![self.draw(None)]
+    }
+
+    /// What the prefix or the operator's value could become, landed: the
+    /// offers drawn, each with a token kept while it stays; for people, the
+    /// latest from the one focused by default asked at once.
+    fn suggested(
+        &mut self,
+        stamp: u64,
+        answer: Result<Box<postio_search::suggest::Suggestions>, String>,
+    ) -> Vec<Step> {
+        if !self.is_open() || stamp != self.stamp {
+            return Vec::new();
+        }
+        let found = match answer {
+            Ok(found) => *found,
+            Err(error) => {
+                tracing::debug!(%error, "the dropdown's suggestions could not be read");
+                return Vec::new();
+            }
+        };
+        let Some(state) = self.drop.as_ref().map(|drop| drop.state) else {
+            return Vec::new();
+        };
+        if !matches!(state, DropdownState::Prefix | DropdownState::Operator) {
+            return Vec::new();
+        }
+        let kept = self
+            .drop
+            .as_mut()
+            .map(|drop| std::mem::take(&mut drop.offers))
+            .unwrap_or_default();
+        let offers: Vec<(u64, Offer)> = dropdown::offers(&found)
+            .into_iter()
+            .map(|offer| {
+                let token = kept
+                    .iter()
+                    .find(|(_, was)| same_offer(was, &offer))
+                    .map(|(token, _)| *token)
+                    .unwrap_or_else(|| self.token());
+                (token, offer)
+            })
+            .collect();
+        let first_person = offers.iter().find_map(|(_, offer)| match offer {
+            Offer::Person(person) => Some(person.address.clone()),
+            _ => None,
+        });
+        let Some(drop) = self.drop.as_mut() else {
+            return Vec::new();
+        };
+        let typed = drop.value.clone();
+        drop.ghost = found
+            .ghost
+            .and_then(|_| {
+                offers.iter().find_map(|(_, offer)| match offer {
+                    Offer::Word(word) => postio_search::suggest::ghost(&typed, &word.text),
+                    _ => None,
+                })
+            })
+            .filter(|_| state == DropdownState::Prefix);
+        drop.offers = offers;
+        let mut steps = vec![self.draw(None)];
+        // The arrows rest where they were if that row is still drawn, and on
+        // the first person otherwise: whose latest is shown.
+        let focused = self
+            .highlighted
+            .and_then(|token| self.person(token))
+            .or(first_person);
+        if let Some(address) = focused {
+            steps.extend(self.ask_latest(address));
+        }
+        steps
+    }
+
+    /// The person whose row is `token`, among the offers on screen.
+    fn person(&self, token: u64) -> Option<String> {
+        self.drop
+            .as_ref()?
+            .offers
+            .iter()
+            .find_map(|(at, offer)| match offer {
+                Offer::Person(person) if *at == token => Some(person.address.clone()),
+                _ => None,
+            })
+    }
+
+    /// Ask for the latest from `address`, unless it was the last asked.
+    fn ask_latest(&mut self, address: String) -> Option<Step> {
+        let drop = self.drop.as_mut()?;
+        if drop.latest_asked.as_deref() == Some(address.as_str()) {
+            return None;
+        }
+        drop.latest_asked = Some(address.clone());
+        Some(Step::Ask(Request::LatestFrom {
+            address,
+            stamp: self.stamp,
+        }))
+    }
+
+    /// The arrows rest on `token` now: what the keys aimed at the
+    /// highlighted row act on, and on a person, their latest is asked.
+    fn highlight(&mut self, token: u64) -> Vec<Step> {
+        self.highlighted = Some(token);
+        match self.person(token) {
+            Some(address) => self.ask_latest(address).into_iter().collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// The latest from a person landed: drawn under the people when it is
+    /// still the one asked for.
+    fn latest_landed(
+        &mut self,
+        stamp: u64,
+        address: &str,
+        answer: Result<Box<postio_search::results::ConversationResults>, String>,
+    ) -> Vec<Step> {
+        if !self.is_open() || stamp != self.stamp {
+            return Vec::new();
+        }
+        let results = match answer {
+            Ok(results) => *results,
+            Err(error) => {
+                tracing::debug!(%error, "the latest from a person could not be read");
+                return Vec::new();
+            }
+        };
+        let name = self
+            .drop
+            .as_ref()
+            .and_then(|drop| {
+                drop.offers.iter().find_map(|(_, offer)| match offer {
+                    Offer::Person(person) if person.address == address => {
+                        Some(person.name.clone().unwrap_or_else(|| address.to_owned()))
+                    }
+                    _ => None,
+                })
+            })
+            .unwrap_or_else(|| address.to_owned());
+        let hits: Vec<Shown> = results
+            .hits
+            .into_iter()
+            .map(|hit| Shown {
+                token: self.token(),
+                hit,
+            })
+            .collect();
+        let mut folders = results.names.folders;
+        folders.extend(self.places.folders.iter().cloned());
+        let Some(drop) = self.drop.as_mut() else {
+            return Vec::new();
+        };
+        if drop.state != DropdownState::Operator || drop.latest_asked.as_deref() != Some(address) {
+            return Vec::new();
+        }
+        drop.latest = Some(Latest {
+            name,
+            hits,
+            folders,
+        });
+        vec![self.draw(None)]
+    }
+
+    /// ⌥↩ on the offer `token`: its chip, excluded, in place of what is
+    /// being typed.
+    pub(crate) fn exclude(&mut self, token: u64) -> Vec<Step> {
+        let (Some(mode), Some(drop)) = (self.mode, self.drop.as_ref()) else {
+            return Vec::new();
+        };
+        let Some(filter) = drop
+            .offers
+            .iter()
+            .find(|(at, _)| *at == token)
+            .and_then(|(_, offer)| offer.excluded(drop.field))
+        else {
+            return Vec::new();
+        };
+        self.pick(mode, filter, true)
+    }
+
+    /// The key: exclude the offer the arrows rest on, or the one focused
+    /// by default when they have not moved.
+    fn exclude_highlighted(&mut self) -> Vec<Step> {
+        let Some(drop) = self.drop.as_ref() else {
+            return Vec::new();
+        };
+        let token = self
+            .highlighted
+            .filter(|token| drop.offers.iter().any(|(at, _)| at == token))
+            .or_else(|| drop.offers.first().map(|(token, _)| *token));
+        match token {
+            Some(token) => self.exclude(token),
+            None => Vec::new(),
+        }
+    }
+
+    /// Put `filter`'s chip, `negated` or not, in place of what is being
+    /// typed, with room to type on.
+    fn pick(
+        &mut self,
+        mode: BarMode,
+        filter: postio_search::query::Filter,
+        negated: bool,
+    ) -> Vec<Step> {
+        let piece = self.drop.as_ref().map_or(0, |drop| drop.piece);
+        let chip = postio_search::query::spell(&postio_search::query::Clause { negated, filter });
+        let text = format!("{}{chip} ", &self.typed[..piece.min(self.typed.len())]);
+        self.retype(mode, text)
+    }
+
+    /// Put `text` in place of what is being typed.
+    fn replace(&mut self, mode: BarMode, text: &str) -> Vec<Step> {
+        let piece = self.drop.as_ref().map_or(0, |drop| drop.piece);
+        let text = format!("{}{text}", &self.typed[..piece.min(self.typed.len())]);
+        self.retype(mode, text)
+    }
+
+    /// The recent searches, read: drawn when the empty dropdown is up.
+    fn recents_read(
+        &mut self,
+        answer: Result<Vec<postio_client::protocol::RecentSearch>, String>,
+    ) -> Vec<Step> {
+        let recents = match answer {
+            Ok(recents) => recents,
+            Err(error) => {
+                tracing::debug!(%error, "the recent searches could not be read");
+                return Vec::new();
+            }
+        };
+        // A query still listed keeps its token, so the arrows stay on it.
+        let kept = std::mem::take(&mut self.recents);
+        self.recents = recents
+            .into_iter()
+            .map(|recent| {
+                let token = kept
+                    .iter()
+                    .find(|(_, was)| was.query == recent.query)
+                    .map(|(token, _)| *token)
+                    .unwrap_or_else(|| self.token());
+                (token, recent)
+            })
+            .collect();
+        self.redraw_empty()
+    }
+
+    /// New mail arrived: the searches that notify are counted again while
+    /// the dropdown shows their badges; the others keep their counts
+    /// (spec 010 T099).
+    pub(crate) fn heard(&self, event: &postio_core::Event) -> Vec<Step> {
+        if !matches!(event, postio_core::Event::NewMail { .. })
+            || !self.results_view
+            || !self.is_open()
+        {
+            return Vec::new();
+        }
+        let searches = keyed(self.saved.iter().filter(|search| search.notify));
+        if searches.is_empty() {
+            return Vec::new();
+        }
+        vec![Step::Ask(Request::SavedCounts {
+            searches,
+            today: self.now().date_naive(),
+        })]
+    }
+
+    /// The saved searches' counts, read.
+    fn saved_counted(&mut self, answer: Result<Vec<SavedCount>, String>) -> Vec<Step> {
+        match answer {
+            // Merged by key: a recount of the searches that notify leaves
+            // the others' counts as they were.
+            Ok(counts) => {
+                for counted in counts {
+                    match self
+                        .saved_counts
+                        .iter_mut()
+                        .find(|was| was.key == counted.key)
+                    {
+                        Some(was) => *was = counted,
+                        None => self.saved_counts.push(counted),
+                    }
+                }
+                self.redraw_empty()
+            }
+            Err(error) => {
+                tracing::debug!(%error, "the saved searches could not be counted");
+                Vec::new()
+            }
+        }
+    }
+
+    fn redraw_empty(&self) -> Vec<Step> {
+        match &self.drop {
+            Some(drop) if self.is_open() && drop.state == DropdownState::Empty => {
+                vec![self.draw(None)]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Forget the recent search `token`: gone from the panel now, from the
+    /// store when the host has it.
+    fn forget(&mut self, token: u64) -> Vec<Step> {
+        let Some(at) = self.recents.iter().position(|(at, _)| *at == token) else {
+            return Vec::new();
+        };
+        let (_, recent) = self.recents.remove(at);
+        let mut steps = self.redraw_empty();
+        steps.push(Step::Ask(Request::ForgetSearch {
+            query: recent.query,
+        }));
+        steps
+    }
+
+    /// The key: forget the recent search the arrows rest on, or the one
+    /// focused by default when they have not moved.
+    fn forget_highlighted(&mut self) -> Vec<Step> {
+        if !matches!(&self.drop, Some(drop) if drop.state == DropdownState::Empty) {
+            return Vec::new();
+        }
+        let token = self
+            .highlighted
+            .filter(|token| self.recents.iter().any(|(at, _)| at == token))
+            .or_else(|| self.recents.first().map(|(token, _)| *token));
+        match token {
+            Some(token) => self.forget(token),
+            None => Vec::new(),
+        }
+    }
+
+    /// The query, as it is kept among the recent searches.
+    pub(crate) fn remember(&self) -> Option<Step> {
+        let landed = self.drop.as_ref()?.landed.as_ref()?;
+        let query = self.typed.trim();
+        (!query.is_empty()).then(|| {
+            Step::Ask(Request::RememberSearch {
+                query: query.to_owned(),
+                hits: landed.total,
+                capped: landed.capped,
+            })
+        })
+    }
+}
+
+impl FocusController {
+    /// Run the dropdown's `action`.
+    fn drop_run(&mut self, action: Action, rows: &dyn Rows) -> Vec<Step> {
+        let Some(mode) = self.bar.mode else {
+            return Vec::new();
+        };
+        match action {
+            Action::Recent(query) => self.bar.retype(mode, query),
+            Action::Hit(message) => {
+                let mut steps: Vec<Step> = self.bar.remember().into_iter().collect();
+                steps.extend(self.open_hit(message));
+                steps
+            }
+            Action::ShowAll => self.show_all_results(),
+            Action::Narrow(clause) => self.bar.narrow(mode, clause),
+            Action::Replace(text) => self.bar.replace(mode, &text),
+            Action::Pick(filter) => self.bar.pick(mode, filter, false),
+            Action::Saved(index) => rules::SAVED
+                .get(index)
+                .and_then(|id| self.going(*id, rows))
+                .unwrap_or_default(),
+        }
+    }
+}
+
+/// `(key, query)` for each saved search: what their counts are asked by.
+fn keyed<'a>(searches: impl Iterator<Item = &'a SavedSearch>) -> Vec<(String, String)> {
+    searches
+        .map(|search| (search.key.clone(), search.query.clone()))
+        .collect()
+}
+
+/// Whether two offers are the same row: a redraw keeps its token.
+fn same_offer(a: &Offer, b: &Offer) -> bool {
+    match (a, b) {
+        (Offer::Word(a), Offer::Word(b))
+        | (Offer::Label(a), Offer::Label(b))
+        | (Offer::List(a), Offer::List(b))
+        | (Offer::Folder(a), Offer::Folder(b)) => a.text == b.text,
+        (Offer::Files(_), Offer::Files(_)) => true,
+        (Offer::Person(a), Offer::Person(b)) => a.address == b.address,
+        _ => false,
+    }
+}
+
+/// The operator whose value is being typed at the end of `typed`, with the
+/// value so far and where its piece begins: `from:`, `to:`, `label:` and
+/// `in:` (design §2, "Operator being typed"). A space after the value
+/// says it is done, and none is.
+fn operator_typed(typed: &str) -> Option<(postio_search::query::Field, String, usize)> {
+    use postio_search::query::Field;
+    if typed.is_empty() || typed.ends_with(char::is_whitespace) {
+        return None;
+    }
+    let piece = typed.rfind(char::is_whitespace).map_or(0, |at| {
+        at + typed[at..].chars().next().map_or(1, char::len_utf8)
+    });
+    let last = &typed[piece..];
+    let (keyword, value) = last.strip_prefix('-').unwrap_or(last).split_once(':')?;
+    let field = match keyword.to_ascii_lowercase().as_str() {
+        "from" => Field::From,
+        "to" => Field::To,
+        "label" => Field::Label,
+        "in" => Field::In,
+        _ => return None,
+    };
+    Some((field, value.trim_start_matches('"').to_owned(), piece))
+}
+
+/// Whether `typed` is a short prefix: one word of one to three letters or
+/// digits (design §2, "Short prefix").
+fn is_prefix(typed: &str) -> bool {
+    let count = typed.chars().count();
+    (1..=3).contains(&count) && typed.chars().all(char::is_alphanumeric)
+}
+
+/// Whether the sentence was understood as more than its words: some term
+/// was lowered from English into an operator (screen 05). Operators typed
+/// as themselves have no English origin and are only a query.
+fn understood(lowered: &postio_search::natural::Lowered) -> bool {
+    lowered.origins.iter().any(|origin| {
+        origin.from.is_some()
+            && lowered
+                .query
+                .tokens()
+                .get(origin.token)
+                .is_some_and(|token| token.field().is_some())
+    })
 }

@@ -117,6 +117,7 @@ final class Engine {
             makeBar(session)
             makePicker(session)
             filtered = FilteredModel(engine: session)
+            makeResults(session)
             digest = DigestModel(engine: session, source: session)
             ruleSheet = RuleSheetModel(engine: session)
             capture = CaptureModel(engine: session)
@@ -353,6 +354,7 @@ final class Engine {
     /// is what a menu greys against.
     var mainContext: UiContext {
         if commandBar?.isOpen == true { return .search }
+        if results?.isOpen == true { return .results }
         if capture?.isOpen == true { return .capture }
         if digest?.isOpen == true { return .digest }
         if filtered?.isOpen == true { return .filtered }
@@ -521,6 +523,11 @@ final class Engine {
             }
         case let .reader(verb):
             messageWindow?.apply(verb)
+        case .keyboardHome where results?.isOpen == true:
+            // In the results, home is the results table, or the Files
+            // tab's grid.
+            mainWindow?.makeKeyAndOrderFront(nil)
+            if results?.isFiles == true { filesGrid?.takeKeyboard() } else { resultsTable?.takeKeyboard() }
         case .keyboardHome:
             guard let table = focusTable?.tableView, let window = table.window else { return }
             window.makeKeyAndOrderFront(nil)
@@ -628,6 +635,10 @@ final class Engine {
     /// The keycap in the toolbar's search field, spelled again when the
     /// bindings change. The toolbar hands this over when it is installed.
     var keycapsChanged: (() -> Void)?
+
+    /// The bar opened (`true`) or closed: the toolbar grows its search field
+    /// to 860 wide while it is up, and back after (spec 010 T054).
+    var barShown: ((Bool) -> Void)?
 
     // MARK: the command bar and the folders popover (T085, T086)
 
@@ -843,6 +854,18 @@ final class Engine {
             guard let rect = table.pickerAnchor(row: Int(position), width: PickerMetrics.width)
             else { return }
             popover.show(relativeTo: rect, of: table.tableView)
+        case let .result(position):
+            // Under the focused result, at its content column (spec 010
+            // US5): the rows checked, or that one.
+            guard let table = resultsTable, let row = results?.tableRow(of: position) else { return }
+            table.tableView.scrollRowToVisible(row)
+            let frame = table.tableView.rect(ofRow: row)
+            let content = ResultRowView.Columns.leading + ResultRowView.Columns.gutter
+                + ResultRowView.Columns.sender + 2 * ResultRowView.Columns.gap
+            popover.show(
+                relativeTo: NSRect(
+                    x: frame.minX + content, y: frame.minY, width: PickerMetrics.width, height: frame.height),
+                of: table.tableView)
         case .openMessage:
             guard let content = messageContent, content.window != nil else { return }
             let frame = verbFrames[PickerCommand.opening(picker.kind)]
@@ -874,17 +897,170 @@ final class Engine {
             guard let field = searchField else { return }
             field.stringValue = text
             keycapsChanged?()
+            barShown?(true)
             barPanel?.show(under: field)
             if field.currentEditor() == nil {
                 field.window?.makeFirstResponder(field)
             }
             field.currentEditor()?.selectedRange = selection
+            // What was typed into the results' chips before the bar was up:
+            // the bar's field takes it, as if typed there.
+            if !typedAhead.isEmpty, let editor = field.currentEditor() as? NSTextView {
+                let typed = typedAhead
+                typedAhead = ""
+                editor.insertText(typed, replacementRange: editor.selectedRange())
+            }
         case .lines:
             barPanel?.relayout()
+            // The ghost after the caret, and the operator's face (§2).
+            let dropdown = commandBar?.showsDropdown == true ? commandBar?.dropdown : nil
+            searchField?.ghost = dropdown?.ghost
+            searchField?.ghostHint = dropdown?.ghostHint
+            searchField?.operatorTyped = dropdown?.state == .operator
+            searchField?.operatorPrefix = dropdown?.operatorPrefix
         case .close:
             barPanel?.hide()
+            barShown?(false)
+            searchField?.ghost = nil
+            searchField?.ghostHint = nil
+            searchField?.operatorTyped = false
+            searchField?.operatorPrefix = nil
             searchField?.stringValue = ""
             keycapsChanged?()
+            typedAhead = ""
+        }
+    }
+
+    // MARK: the results view (specs/010-focus-search step 3)
+
+    /// The results' query: the field's chips and the filter bar's buttons.
+    private(set) var searchQuery: SearchQueryModel?
+
+    /// The results' frame, rows and focus ring.
+    private(set) var results: ResultsModel?
+
+    /// The results table, in the inbox's place while the results are up.
+    @ObservationIgnored private(set) var resultsTable: ResultsTable?
+
+    /// The Files tab's grid (step 9), in the table's place while it is the
+    /// tab shown, and the system's Quick Look or save panel over a file.
+    @ObservationIgnored private(set) var filesGrid: FilesGrid?
+    @ObservationIgnored private(set) var filePreview: FilePreview?
+
+    /// The filter popover that is up (step 4), and what hangs it from its
+    /// button.
+    @ObservationIgnored private(set) var filterPopover: FilterPopoverModel?
+    @ObservationIgnored private(set) var filterPopoverPresenter: FilterPopover?
+
+    /// Quick Look over the results (step 5), and the panel it is drawn in.
+    @ObservationIgnored private(set) var quickLook: QuickLookModel?
+    @ObservationIgnored private(set) var quickLookPanel: QuickLookPanel?
+
+    /// The no-results page (step 7), in the rows' place while the results
+    /// found nothing.
+    private(set) var noResults: NoResultsModel?
+
+    /// The Save popover (step 6), and what hangs it from Save search.
+    @ObservationIgnored private(set) var savePopover: SavePopoverModel?
+    @ObservationIgnored private(set) var savePresenter: SavePopover?
+
+    /// The results' chrome words, `postio-ui`'s.
+    let searchWords = focusSearchWords()
+
+    /// The toolbar: the results' items or the inbox's.
+    @ObservationIgnored var resultsShown: ((Bool) -> Void)?
+
+    /// The toolbar's query box, while the results' items are up.
+    @ObservationIgnored weak var queryBox: ResultsQueryBox?
+
+    /// Typed into the chips before the bar was up, for its field to take.
+    @ObservationIgnored private var typedAhead = ""
+
+    private func makeResults(_ session: PostioSession) {
+        searchQuery = SearchQueryModel(engine: session)
+        let results = ResultsModel(engine: session)
+        self.results = results
+        resultsTable = ResultsTable(model: results)
+        let grid = FilesGrid(model: results)
+        let preview = FilePreview(done: { [weak session] in session?.focusSearchFileDone() })
+        grid.preview = preview
+        filesGrid = grid
+        filePreview = preview
+        let popover = FilterPopoverModel(engine: session)
+        filterPopover = popover
+        filterPopoverPresenter = FilterPopover(model: popover)
+        let look = QuickLookModel(engine: session)
+        quickLook = look
+        quickLookPanel = QuickLookPanel(model: look)
+        let save = SavePopoverModel(engine: session)
+        savePopover = save
+        savePresenter = SavePopover(model: save)
+        noResults = NoResultsModel(engine: session)
+    }
+
+    /// "5 selected", while results are checked.
+    var resultsChecked: String? {
+        guard let selected = results?.selected, selected > 0 else { return nil }
+        return focusSearchChecked(n: selected)
+    }
+
+    /// The query box draws what the last `FocusQuery` said.
+    func redrawQuery() {
+        guard let query = searchQuery else { return }
+        queryBox?.show(chips: query.chips, words: query.words, hint: query.hint, nothingFound: query.ringed)
+    }
+
+    /// The query box asks for the dropdown: a click, or `/` in it.
+    func queryFieldFocused() {
+        guard commandBar?.isOpen != true else { return }
+        run(BarCommand.search)
+    }
+
+    /// Words typed into the query box's chips: the bar opens on the query
+    /// and its field takes them.
+    func queryFieldTyped(_ text: String) {
+        typedAhead += text
+        if let field = searchField, commandBar?.isOpen == true, let editor = field.currentEditor() as? NSTextView {
+            let typed = typedAhead
+            typedAhead = ""
+            editor.insertText(typed, replacementRange: editor.selectedRange())
+            return
+        }
+        run(BarCommand.search)
+    }
+
+    /// What the results' coming, going or moving asks of the window.
+    private func resultsMoved(_ change: ResultsModel.Change) {
+        switch change {
+        case .open:
+            resultsShown?(true)
+            redrawQuery()
+            if commandBar?.isOpen != true { resultsTable?.takeKeyboard() }
+        case .close:
+            resultsShown?(false)
+            if let table = focusTable?.tableView, let window = table.window, commandBar?.isOpen != true {
+                window.makeFirstResponder(table)
+            }
+        case .redraw:
+            // A tab changed under the keyboard: the grid or the table has
+            // it, whichever is shown. After SwiftUI has swapped them in --
+            // the view being left takes the keyboard with it, to the next
+            // key view (a tab button) -- and never from a field.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.commandBar?.isOpen != true, self.results?.isOpen == true,
+                      let window = self.mainWindow, !(window.firstResponder is NSText)
+                else { return }
+                let responder = window.firstResponder
+                if self.results?.isFiles == true, !(responder is FilesCollectionView) {
+                    self.filesGrid?.takeKeyboard()
+                } else if self.results?.isFiles != true, responder is FilesCollectionView
+                    || responder === window
+                {
+                    self.resultsTable?.takeKeyboard()
+                }
+            }
+        case .rows, .cursor:
+            break
         }
     }
 
@@ -905,6 +1081,7 @@ final class Engine {
     func searchFieldLeft() {
         guard let bar = commandBar, bar.closedByToolkit() else { return }
         barPanel?.hide()
+        barShown?(false)
         searchField?.stringValue = ""
         keycapsChanged?()
         session?.focusSurfaceClosed(.bar)
@@ -921,9 +1098,25 @@ final class Engine {
         case #selector(NSResponder.moveDown(_:)):
             bar.move(by: 1)
         case #selector(NSResponder.insertNewline(_:)):
+            // ⌘↩ is the dropdown's Show all (specs/010-focus-search).
+            if NSApp.currentEvent?.modifierFlags.contains(.command) == true, bar.showAll() {
+                return true
+            }
+            // ⌥↩ excludes the highlighted person, label or folder (US7).
+            if NSApp.currentEvent?.modifierFlags.contains(.option) == true, bar.excludeHighlighted() {
+                return true
+            }
+            bar.runHighlighted()
+        case #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
+            // What a field editor makes of ⌥↩.
+            if bar.excludeHighlighted() { return true }
             bar.runHighlighted()
         case #selector(NSResponder.insertTab(_:)):
             return bar.tab()
+        case #selector(NSResponder.deleteWordBackward(_:)):
+            // ⌥⌫ on a recent search forgets it; anywhere else it is the
+            // field's own.
+            return bar.forgetHighlighted()
         case #selector(NSResponder.cancelOperation(_:)):
             bar.back()
         default:
@@ -1100,6 +1293,54 @@ final class Engine {
             apply(change)
             return
         }
+        // The results view (specs/010-focus-search step 3): its query, its
+        // frame, its pages and its focus ring, and leaving it. The list's
+        // own cursor and selection follow `FocusLeaveResults` as intents.
+        if case .focusQuery = event {
+            searchQuery?.apply(event)
+            redrawQuery()
+            return
+        }
+        // A filter popover (step 4): hung from its button, drawn whole, or
+        // taken down when the controller says.
+        if let change = filterPopover?.apply(event) {
+            filterPopoverPresenter?.apply(change)
+            return
+        }
+        // The Save popover (step 6): hung from Save search on ⌘S, taken
+        // down when its Save went to the controller.
+        if let change = savePopover?.apply(event) {
+            savePresenter?.apply(change)
+            return
+        }
+        // Quick Look (step 5): a panel over the results, drawn whole each
+        // time and closed when the controller says.
+        if let change = quickLook?.apply(event) {
+            quickLookPanel?.apply(change, over: mainWindow)
+            return
+        }
+        // The no-results page (step 7): drawn whole each time, gone with a
+        // new query or with the results. Leaving the results is also the
+        // results' event, so it is told and handed on.
+        if case .focusRelaxations = event {
+            noResults?.apply(event)
+            return
+        }
+        if case .focusLeaveResults = event { noResults?.apply(event) }
+        // A file handed to the system (step 9): its Quick Look, from the
+        // grid that drives it, or a save panel.
+        if case let .focusFileCopy(copy) = event {
+            if copy?.save == false { filesGrid?.takeKeyboard() }
+            filePreview?.apply(copy, over: mainWindow)
+            return
+        }
+        if let change = results?.apply(event) {
+            if change == .close { searchQuery?.apply(event) }
+            resultsTable?.apply(change)
+            filesGrid?.apply(change)
+            resultsMoved(change)
+            return
+        }
         // The controller's intents: the cursor, the selection, `!`'s heading,
         // the toast (T049). The table draws what changed.
         if let change = focus.apply(event) {
@@ -1189,19 +1430,80 @@ final class Engine {
     /// landed, each through the resolver and `run` as a real press would
     /// go, with a pause for what it opened to land.
     private func replayDemoKeys() {
-        guard !demoKeys.isEmpty else { return }
+        guard !demoKeys.isEmpty || DemoMode.snapshot != nil, !demoReplayed else { return }
+        demoReplayed = true
         let keys = demoKeys
         demoKeys = []
         Task { @MainActor [weak self] in
+            defer { self?.drawDemoSnapshot() }
             for key in keys {
                 try? await Task.sleep(nanoseconds: 400_000_000)
                 guard let self, let session = self.session else { return }
+                if self.replayClick(key) { continue }
                 if self.replayIntoField(key) { continue }
-                if case let .command(id) = session.key(key, in: .list, typing: false) {
+                // With the bar up, a chord is the search field's, as a press
+                // there resolves it: ⌘↩ is Show all, ⌥⌫ forgets a recent.
+                let searching = self.commandBar?.isOpen == true
+                if case let .command(id) = session.key(
+                    key, in: searching ? .search : .list, typing: searching)
+                {
                     self.run(id)
                 }
             }
         }
+    }
+
+    @ObservationIgnored private var demoReplayed = false
+
+    /// Draw the main window, its toolbar and its children to
+    /// `DemoMode.snapshot`, once what the keys opened has landed.
+    private func drawDemoSnapshot() {
+        guard let path = DemoMode.snapshot else { return }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard let window = self?.mainWindow, let frame = window.contentView?.superview else { return }
+            frame.layoutSubtreeIfNeeded()
+            guard let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) else { return }
+            frame.cacheDisplay(in: frame.bounds, to: rep)
+            // The windows over it -- a filter popover, the bar's panel --
+            // are windows of their own, so a picture of the main window's
+            // views alone leaves them out: each is drawn in at its place.
+            let over = NSApp.windows.filter { other in
+                other !== window && other.isVisible && other.frame.intersects(window.frame)
+                    && other.level.rawValue >= window.level.rawValue
+            }
+            let image = NSImage(size: frame.bounds.size)
+            image.lockFocus()
+            rep.draw(in: NSRect(origin: .zero, size: frame.bounds.size))
+            for other in over.sorted(by: { $0.orderedIndex > $1.orderedIndex }) {
+                guard let view = other.contentView?.superview,
+                      let piece = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+                else { continue }
+                view.cacheDisplay(in: view.bounds, to: piece)
+                let origin = NSPoint(
+                    x: other.frame.minX - window.frame.minX, y: other.frame.minY - window.frame.minY)
+                piece.draw(
+                    in: NSRect(origin: origin, size: other.frame.size), from: .zero, operation: .sourceOver,
+                    fraction: 1, respectFlipped: true, hints: nil)
+            }
+            image.unlockFocus()
+            guard let tiff = image.tiffRepresentation, let whole = NSBitmapImageRep(data: tiff) else { return }
+            try? whole.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+        }
+    }
+
+    /// A demo's click on a filter button, named `@from`, `@to`, `@date`,
+    /// `@anywhere` or `@label` (screens 08 and 09): the format of
+    /// `POSTIO_DEMO_KEYS` has no pointer, and a popover opens from a click.
+    /// `false` for any other key.
+    private func replayClick(_ key: KeyEvent.Reduced) -> Bool {
+        guard key.name == nil, let word = key.character, word.hasPrefix("@"), word.count > 1 else { return false }
+        let kinds: [String: FilterKindFfi] = [
+            "@from": .from, "@to": .to, "@date": .date, "@anywhere": .anywhere, "@label": .label,
+        ]
+        guard let kind = kinds[word.lowercased()] else { return false }
+        searchQuery?.tap(kind)
+        return true
     }
 
     /// A replayed key, given to the bar's or the popover's field while one
@@ -1225,6 +1527,26 @@ final class Engine {
                 guard typing else { return false }
                 popover.type(text)
             // Return, Tab and Escape resolve as a press does.
+            default: return false
+            }
+            return true
+        }
+        if let model = filterPopover, let view = model.view {
+            switch key.name {
+            case "down": model.moveHighlight(by: 1)
+            case "up": model.moveHighlight(by: -1)
+            case "return": model.apply()
+            case "escape": model.cancel()
+            case nil:
+                let text = key.character ?? ""
+                if view.kind == .date {
+                    model.words(model.wordsText + text)
+                } else if text == " ", model.filterText.isEmpty {
+                    // Space toggles the highlighted row, as in the popover.
+                    model.toggleHighlighted()
+                } else {
+                    model.filter(model.filterText + text)
+                }
             default: return false
             }
             return true
@@ -1351,6 +1673,16 @@ final class Engine {
         if bannerRepair.asking != nil { return false }
         // A question's alert is up: Return and Escape are its buttons'.
         if asking != nil { return false }
+        // The Save popover has the keyboard: Return saves, Escape cancels,
+        // every other key is its field's and its switches'.
+        if let save = savePopover, save.isOpen {
+            switch id {
+            case Intercepted.back: save.cancel()
+            case "open_message", "picker_confirm": save.save()
+            default: return false
+            }
+            return true
+        }
         // The rule sheet holds the keyboard (a dialog takes every key in
         // the controller, which answers only Back): Escape is Back, which
         // closes it; Return is Create; every other key is the sheet's

@@ -699,7 +699,7 @@ impl From<postio_ui::filtering::Listed> for FilteringEntryFfi {
 pub fn settings_filtering(text: String, filtered_today: Option<u32>) -> Option<FilteringPageFfi> {
     use postio_ui::filtering as words;
     let config = Config::from_toml_str(&text).ok()?;
-    let keymap = postio_core::Keymap::resolve(&config.keys);
+    let keymap = postio_core::Keymap::resolve_on(&config.keys, crate::PLATFORM);
     let page = words::page(&config.focus, filtered_today, &keymap);
     Some(FilteringPageFfi {
         switch: words::SWITCH.to_owned(),

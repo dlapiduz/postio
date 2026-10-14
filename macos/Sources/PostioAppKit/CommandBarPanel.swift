@@ -6,9 +6,9 @@ import SwiftUI
 /// The command bar on the Mac (specs/009-focus-macos T085; screens 07 to
 /// 09; contracts/mac-surfaces.md, "Command bar").
 ///
-/// A borderless, non-activating child panel whose top meets the toolbar's
-/// bottom, its right edge on the search field's, as wide as the field or
-/// 640, whichever is wider. Nothing behind it is dimmed. The keyboard stays
+/// A borderless, non-activating child panel hung 6 below the search field,
+/// with its left edge and width: the field grows to 860 while the bar is up
+/// (specs/010-focus-search T054). Nothing behind it is dimmed. The keyboard stays
 /// in the toolbar's field: the panel can never become key, so typing,
 /// ↑/↓, Return, Tab and Escape all arrive at the field and go to
 /// `CommandBarModel` from there. Its content is `CommandBarView`.
@@ -32,7 +32,7 @@ public final class CommandBarPanel {
     public init(model: CommandBarModel, saveCap: @escaping () -> String?) {
         self.model = model
         panel = BarPanel(
-            contentRect: NSRect(x: 0, y: 0, width: CommandBarGeometry.minWidth, height: 200),
+            contentRect: NSRect(x: 0, y: 0, width: CommandBarGeometry.searchWidth, height: 200),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: true)
@@ -48,15 +48,25 @@ public final class CommandBarPanel {
         panel.setAccessibilityLabel("Command bar")
         hosting = FirstMouseHostingView(rootView: CommandBarView(model: model, saveCap: saveCap()))
         hosting.sizingOptions = []
+        // Design §5: the field is a combobox and this is its listbox.
+        hosting.role = .list
+        hosting.setAccessibilityLabel(focusSearchWords().suggestionsLabel)
         panel.contentView = hosting
         self.saveCap = saveCap
     }
 
     private let saveCap: () -> String?
 
+    /// The listbox the field is a combobox for, as a screen reader sees it.
+    var listAccessibilityRole: NSAccessibility.Role? { hosting.accessibilityRole() }
+    var listAccessibilityLabel: String? { hosting.accessibilityLabel() }
+
     /// Put the panel under `field`, a child of the field's window, or move
     /// it there and resize it for what the model holds now.
     public func show(under field: NSView) {
+        // The field's text sits inside the box that draws it: the panel
+        // hangs from the box.
+        let field = (field as? BarSearchField)?.frameView ?? field
         guard let parent = field.window else { return }
         self.field = field
         hosting.rootView = CommandBarView(model: model, saveCap: saveCap())
@@ -83,11 +93,11 @@ public final class CommandBarPanel {
 
     private func place() {
         guard let field, let parent = field.window else { return }
+        // The toolbar has just grown the field: lay it out before reading it.
+        parent.contentView?.superview?.layoutSubtreeIfNeeded()
         let fieldOnScreen = parent.convertToScreen(field.convert(field.bounds, to: nil))
-        let contentTop = parent.frame.minY + parent.contentLayoutRect.maxY
         let frame = CommandBarGeometry.frame(
-            field: fieldOnScreen, window: parent.frame, contentTop: contentTop,
-            height: CommandBarView.height(for: model))
+            field: fieldOnScreen, window: parent.frame, height: CommandBarView.height(for: model))
         panel.setFrame(frame.integral, display: true)
     }
 }
@@ -103,6 +113,11 @@ private final class BarPanel: NSPanel {
 /// click rather than wake the window.
 final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// The role this view answers with: SwiftUI's hosting view reports its
+    /// own, so one set with `setAccessibilityRole` would be ignored.
+    var role: NSAccessibility.Role?
+    override func accessibilityRole() -> NSAccessibility.Role? { role ?? super.accessibilityRole() }
 }
 
 /// The toolbar's search field, which says when it takes the keyboard.
@@ -112,12 +127,188 @@ final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
 /// words the controller never hears. `/` and ⌘K focus the field themselves
 /// once the bar is up, which this reports too; the caller ignores it then.
 public final class BarSearchField: NSSearchField {
+    /// A cell with no buttons: the box around the field draws the
+    /// magnifier and the keycap where the design puts them, and a cell's
+    /// own would draw a second of each.
+    override public class var cellClass: AnyClass? {
+        get { BareSearchFieldCell.self }
+        set {}
+    }
+
+    /// Whether the dropdown under it is up: a combobox says so.
+    public var listOpen = false
+
+    override public func accessibilityRole() -> NSAccessibility.Role? { .comboBox }
+    override public func accessibilityLabel() -> String? { focusSearchWords().queryLabel }
+    override public func isAccessibilityExpanded() -> Bool { listOpen }
+
     /// The field took the keyboard.
     public var onFocus: (() -> Void)?
+
+    /// The view that draws the field around this text -- the toolbar's
+    /// box, the results' query box -- which the panel hangs from.
+    public weak var frameView: NSView?
+
+    /// The words' face while no operator is typed.
+    public var textFont: NSFont = .systemFont(ofSize: 13) {
+        didSet { applyFont() }
+    }
+
+    /// The rest of the best word, drawn in tertiary after the typed text
+    /// while a short prefix is typed ("at|las", specs/010-focus-search
+    /// screen 02). Tab takes it; the controller says what it is.
+    public var ghost: String? {
+        didSet {
+            guard ghost != oldValue else { return }
+            placeGhost()
+        }
+    }
+
+    /// An operator's value is being typed: the text is SF Mono 14 (§2).
+    public var operatorTyped = false {
+        didSet {
+            guard operatorTyped != oldValue else { return }
+            applyFont()
+        }
+    }
+
+    /// "⇥ completes", at the field's right while there is a ghost (screen
+    /// 02): the controller's words, the keymap's cap.
+    public var ghostHint: DropdownModel.Hint? {
+        didSet {
+            guard ghostHint != oldValue else { return }
+            hintCap.text = ghostHint?.cap ?? ""
+            hintWords.stringValue = ghostHint?.words ?? ""
+            hintView.isHidden = ghostHint == nil
+            placeGhost()
+        }
+    }
+
+    /// The operator being typed ("from:"), drawn tertiary before its value,
+    /// which keeps the label colour (screen 04).
+    public var operatorPrefix: String? {
+        didSet {
+            guard operatorPrefix != oldValue else { return }
+            tintOperator()
+        }
+    }
+
+    private let hintCap = KeyCapView("")
+    private let hintWords: NSTextField = {
+        let label = NSTextField(labelWithString: "")
+        label.font = .systemFont(ofSize: 12)
+        label.textColor = .secondaryLabelColor
+        return label
+    }()
+    private lazy var hintView: NSStackView = {
+        let stack = NSStackView(views: [hintCap, hintWords])
+        stack.orientation = .horizontal
+        stack.spacing = 4
+        stack.isHidden = true
+        stack.setAccessibilityElement(false)
+        return stack
+    }()
+
+    /// The operator's characters in tertiary, through the field editor's
+    /// temporary attributes: what is typed is unchanged, only drawn so.
+    private func tintOperator() {
+        guard let editor = currentEditor() as? NSTextView, let layout = editor.layoutManager else { return }
+        let text = editor.string as NSString
+        layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: text.length))
+        guard let prefix = operatorPrefix, !prefix.isEmpty else { return }
+        let found = text.range(of: prefix, options: .backwards)
+        guard found.location != NSNotFound else { return }
+        layout.addTemporaryAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, forCharacterRange: found)
+    }
+
+    private func applyFont() {
+        font = operatorTyped ? .monospacedSystemFont(ofSize: 14, weight: .regular) : textFont
+        placeGhost()
+    }
+
+    private let ghostLabel: NSTextField = {
+        let label = NSTextField(labelWithString: "")
+        label.textColor = .tertiaryLabelColor
+        label.isHidden = true
+        label.setAccessibilityElement(false)
+        return label
+    }()
 
     override public func becomeFirstResponder() -> Bool {
         let became = super.becomeFirstResponder()
         if became { onFocus?() }
         return became
+    }
+
+    override public func layout() {
+        super.layout()
+        placeGhost()
+    }
+
+    override public func textDidChange(_ notification: Notification) {
+        super.textDidChange(notification)
+        tintOperator()
+        placeGhost()
+    }
+
+    /// The ghost, right after the typed text, in the field's font.
+    private func placeGhost() {
+        if ghostLabel.superview == nil { addSubview(ghostLabel) }
+        if hintView.superview == nil { addSubview(hintView) }
+        // The hint at the field's right, before the box's Escape cap.
+        let hintSize = hintView.fittingSize
+        hintView.frame = NSRect(
+            x: bounds.maxX - hintSize.width, y: (bounds.height - hintSize.height) / 2,
+            width: hintSize.width, height: hintSize.height)
+        guard let ghost, !ghost.isEmpty, let font else {
+            ghostLabel.isHidden = true
+            return
+        }
+        let typed = currentEditor()?.string ?? stringValue
+        let text = (cell as? NSSearchFieldCell)?.searchTextRect(forBounds: bounds) ?? bounds
+        let width = (typed as NSString).size(withAttributes: [.font: font]).width
+        ghostLabel.font = font
+        ghostLabel.stringValue = ghost
+        ghostLabel.sizeToFit()
+        let size = ghostLabel.frame.size
+        // The ghost follows the last glyph where the field editor laid it
+        // out; without an editor, two points in (its line fragment
+        // padding) past the typed text's width. The label draws its own
+        // text inset in its frame, which the frame takes back, so "at" and
+        // "las" read as one word (screen 02).
+        let end = lastGlyphEnd() ?? (text.minX + 2 + width)
+        let inset = ghostLabel.cell?.titleRect(forBounds: ghostLabel.bounds).minX ?? 0
+        let x = end - inset
+        let room = (hintView.isHidden ? text.maxX : hintView.frame.minX - 8) - x
+        ghostLabel.frame = NSRect(
+            x: x, y: (bounds.height - size.height) / 2,
+            width: min(size.width, max(room, 0)), height: size.height)
+        ghostLabel.isHidden = false
+    }
+
+    /// Where the field editor drew the typed text's last glyph, in this
+    /// field's coordinates; nil while nothing is being edited.
+    private func lastGlyphEnd() -> CGFloat? {
+        guard let editor = currentEditor() as? NSTextView,
+            let layout = editor.layoutManager, let container = editor.textContainer,
+            layout.numberOfGlyphs > 0
+        else { return nil }
+        let last = layout.boundingRect(
+            forGlyphRange: NSRange(location: layout.numberOfGlyphs - 1, length: 1), in: container)
+        let x = last.maxX + editor.textContainerOrigin.x
+        return editor.convert(NSPoint(x: x, y: 0), to: self).x
+    }
+}
+
+/// A search field cell whose buttons take no room and draw nothing.
+final class BareSearchFieldCell: NSSearchFieldCell {
+    override func searchButtonRect(forBounds rect: NSRect) -> NSRect { .zero }
+    override func cancelButtonRect(forBounds rect: NSRect) -> NSRect { .zero }
+    override func searchTextRect(forBounds rect: NSRect) -> NSRect { rect }
+    /// The words from the field's left edge, where the search cell would
+    /// have kept room for its magnifier; the height as the cell has it.
+    override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        let drawn = super.drawingRect(forBounds: rect)
+        return NSRect(x: rect.minX, y: drawn.minY, width: rect.width, height: drawn.height)
     }
 }

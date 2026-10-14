@@ -56,7 +56,7 @@ pub enum Field {
     To,
     /// `subject:` — subject line.
     Subject,
-    /// `has:` — a structural property, currently only `has:attach`.
+    /// `has:` — a structural property: `has:attach`, or `has:action`.
     Has,
     /// `is:` — a flag state, `is:unread`, `is:read`, `is:flagged`, or what a
     /// message's promoted headers say, `is:bulk`, `is:automated`.
@@ -96,6 +96,12 @@ pub enum Field {
     /// body arrives is promoted to an operator of its own instead — `list:`
     /// is one that was.
     Header,
+    /// `label:` — a label the message carries, by name, case-insensitively.
+    ///
+    /// Spec 010 (S2): one operator of the shared language, so it means the
+    /// same thing in every interface. A name with spaces is quoted, as a
+    /// `subject:` phrase is: `label:"Q3 close"`.
+    Label,
 }
 
 impl Field {
@@ -115,6 +121,7 @@ impl Field {
         Field::List,
         Field::Account,
         Field::Group,
+        Field::Label,
         // Last, because the popup is ordered by how often an operator is
         // reached for and this is the one you type when none of the others
         // will do.
@@ -139,6 +146,7 @@ impl Field {
             Field::Account => "account",
             Field::Group => "group",
             Field::Header => "header",
+            Field::Label => "label",
         }
     }
 
@@ -161,6 +169,7 @@ impl Field {
             "account" => Some(Field::Account),
             "group" => Some(Field::Group),
             "header" => Some(Field::Header),
+            "label" => Some(Field::Label),
             _ => None,
         }
     }
@@ -180,7 +189,18 @@ impl Field {
                 | Field::Account
                 | Field::Group
                 | Field::Header
+                | Field::Label
         )
+    }
+}
+
+impl Field {
+    /// Whether the field takes a braced set of values, `from:{ada tomas}`
+    /// (spec 010, D26): every field whose value is a name. `header:` has a
+    /// grammar of its own inside its value, and a flag, a date or a size
+    /// asked for "either" is better asked once.
+    pub fn takes_set(&self) -> bool {
+        self.takes_free_text() && *self != Field::Header
     }
 }
 
@@ -255,6 +275,15 @@ pub enum Filter {
     },
     /// `has:attach`
     HasAttachment,
+    /// `label:atlas` — a label by name, unresolved.
+    ///
+    /// Text for the reason `Account` is: a saved search is the string the
+    /// user typed, and a label's id changes when it is re-created.
+    /// `postio-index` resolves it against `labels.name`, case-insensitively.
+    Label(String),
+    /// `has:action` — the message carries an open marker (an undismissed
+    /// `markers` row).
+    HasAction,
     /// `is:unread`, `is:read`, `is:flagged`, `is:bulk`, `is:automated`
     Is(State),
     /// `after:2026-01-01` — on or after this date, inclusive.
@@ -265,6 +294,44 @@ pub enum Filter {
     Larger(u64),
     /// `smaller:1M` — size in bytes, inclusive.
     Smaller(u64),
+    /// `from:{ada tomas}` — either of several values of one field (spec
+    /// 010, D26): holds when any member does, and negated when none does.
+    AnyOf(AnyOf),
+}
+
+/// Two or more filters of one field that takes a set ([`Field::takes_set`]),
+/// none of them a set itself: what `from:{ada tomas}` asks for.
+///
+/// Its members are private and [`AnyOf::new`] is the only way in, so every
+/// reader -- the executor, the conversation search, the matcher, the chips
+/// -- can rely on one field and no nesting without checking for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnyOf {
+    members: Vec<Filter>,
+}
+
+impl AnyOf {
+    /// A set of `members`, or `None` when they are fewer than two, of
+    /// different fields, of a field that takes no set, or a set among them.
+    pub fn new(members: Vec<Filter>) -> Option<AnyOf> {
+        let field = members.first()?.field();
+        let fits = members.len() >= 2
+            && field.takes_set()
+            && members
+                .iter()
+                .all(|member| !matches!(member, Filter::AnyOf(_)) && member.field() == field);
+        fits.then_some(AnyOf { members })
+    }
+
+    /// The values, as filters, in the order they were written.
+    pub fn members(&self) -> &[Filter] {
+        &self.members
+    }
+
+    /// The one field every member is of.
+    pub fn field(&self) -> Field {
+        self.members[0].field()
+    }
 }
 
 impl Filter {
@@ -281,12 +348,36 @@ impl Filter {
             Filter::Group(_) => Field::Group,
             Filter::Header { .. } => Field::Header,
             Filter::HasAttachment => Field::Has,
+            Filter::Label(_) => Field::Label,
+            Filter::HasAction => Field::Has,
             Filter::Is(_) => Field::Is,
             Filter::After(_) => Field::After,
             Filter::Before(_) => Field::Before,
             Filter::Larger(_) => Field::Larger,
             Filter::Smaller(_) => Field::Smaller,
+            Filter::AnyOf(set) => set.field(),
         }
+    }
+
+    /// What the filter accepts any one of: a set's members, or the filter
+    /// itself. How a reader that lists values -- highlights, chips, a
+    /// button's label -- reads a set without matching on it.
+    pub fn alternatives(&self) -> &[Filter] {
+        match self {
+            Filter::AnyOf(set) => set.members(),
+            other => std::slice::from_ref(other),
+        }
+    }
+
+    /// `members` as one filter: the member itself when there is one, a set
+    /// when there are more ([`AnyOf::new`]'s rules), `None` otherwise.
+    pub fn any_of(mut members: Vec<Filter>) -> Option<Filter> {
+        if members.len() == 1 {
+            return members
+                .pop()
+                .filter(|only| !matches!(only, Filter::AnyOf(_)));
+        }
+        AnyOf::new(members).map(Filter::AnyOf)
     }
 }
 
@@ -498,6 +589,111 @@ impl ParsedQuery {
     }
 }
 
+/// The canonical text of a clause: the one form term edits write (D13).
+///
+/// A chip's ✕, a filter button and a relaxation all rewrite the query
+/// string, and each would otherwise write whatever spelling came to hand --
+/// `has:attach` here, `has:attachments` there. This is the one spelling:
+/// `has:attachment`, `is:unread`, `has:action`, ISO dates, sizes in the
+/// largest binary unit that divides them exactly, and a value quoted when it
+/// holds whitespace (`label:"Q3 close"`). The parser still reads every form
+/// it reads today; [`crate::parse`] of the result is `clause` again.
+///
+/// A value containing a `"` cannot be written in this language at all (a
+/// quote only ever groups), so no spelling of it round-trips.
+pub fn spell(clause: &Clause) -> String {
+    let body = spell_filter(&clause.filter);
+    if clause.negated {
+        format!("-{body}")
+    } else {
+        body
+    }
+}
+
+/// [`spell`] without the negation. A set is its field's keyword and its
+/// members' values in braces (D26).
+fn spell_filter(filter: &Filter) -> String {
+    match filter {
+        Filter::AnyOf(set) => {
+            let values: Vec<String> = set
+                .members()
+                .iter()
+                .map(|member| {
+                    let spelled = spell_filter(member);
+                    let (_, value) = spelled.split_once(':').unwrap_or(("", &spelled));
+                    value.to_owned()
+                })
+                .collect();
+            format!("{}:{{{}}}", set.field().keyword(), values.join(" "))
+        }
+        _ => spell_one(filter),
+    }
+}
+
+/// One value's filter, spelled.
+fn spell_one(filter: &Filter) -> String {
+    match filter {
+        Filter::From(value)
+        | Filter::To(value)
+        | Filter::Subject(value)
+        | Filter::In(value)
+        | Filter::Filename(value)
+        | Filter::List(value)
+        | Filter::Account(value)
+        | Filter::Group(value)
+        | Filter::Label(value) => {
+            format!("{}:{}", filter.field().keyword(), quoted(value))
+        }
+        Filter::Header { name, value: None } => format!("header:{name}"),
+        Filter::Header {
+            name,
+            value: Some(value),
+        } => format!("header:{name}={}", quoted(value)),
+        Filter::HasAttachment => "has:attachment".to_owned(),
+        Filter::HasAction => "has:action".to_owned(),
+        Filter::Is(state) => format!(
+            "is:{}",
+            match state {
+                State::Unread => "unread",
+                State::Read => "read",
+                State::Flagged => "flagged",
+                State::Bulk => "bulk",
+                State::Automated => "automated",
+            }
+        ),
+        Filter::After(date) => format!("after:{}", date.format("%Y-%m-%d")),
+        Filter::Before(date) => format!("before:{}", date.format("%Y-%m-%d")),
+        Filter::Larger(bytes) => format!("larger:{}", spell_size(*bytes)),
+        Filter::Smaller(bytes) => format!("smaller:{}", spell_size(*bytes)),
+        Filter::AnyOf(_) => spell_filter(filter),
+    }
+}
+
+/// A value as typed: bare when it is one word, in quotes when it is not --
+/// or when a brace in it would read as a set's (D26).
+fn quoted(value: &str) -> String {
+    if value.is_empty()
+        || value
+            .chars()
+            .any(|c| c.is_whitespace() || c == '{' || c == '}')
+    {
+        format!("\"{value}\"")
+    } else {
+        value.to_owned()
+    }
+}
+
+/// `1048576` as `1M`: the largest binary unit that divides it exactly, so
+/// the spelling reads back to the same number of bytes.
+fn spell_size(bytes: u64) -> String {
+    const UNITS: [(u64, &str); 3] = [(1 << 30, "G"), (1 << 20, "M"), (1 << 10, "K")];
+    UNITS
+        .iter()
+        .find(|(unit, _)| bytes != 0 && bytes.is_multiple_of(*unit))
+        .map(|(unit, suffix)| format!("{}{suffix}", bytes / unit))
+        .unwrap_or_else(|| bytes.to_string())
+}
+
 /// Wraps a term as an FTS5 string literal, doubling embedded quotes.
 ///
 /// `pub` rather than private: `postio-index`'s executor needs it too, to
@@ -618,6 +814,8 @@ mod tests {
             (Filter::Account("a".into()), Field::Account),
             (Filter::Group("a".into()), Field::Group),
             (Filter::HasAttachment, Field::Has),
+            (Filter::Label("a".into()), Field::Label),
+            (Filter::HasAction, Field::Has),
             (Filter::Is(State::Unread), Field::Is),
             (
                 Filter::After(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap()),
@@ -666,6 +864,220 @@ mod tests {
         assert!(filter_token.negated());
         assert!(!partial_token.negated());
         assert!(text_token.negated());
+    }
+
+    fn every_kind_of_filter() -> Vec<Filter> {
+        let day = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        vec![
+            Filter::From("ada".into()),
+            Filter::From("Ada Moreno".into()),
+            Filter::From("ada@example.com".into()),
+            Filter::To("bo".into()),
+            Filter::Subject("budget v4".into()),
+            Filter::In("Archive".into()),
+            Filter::Filename("q3.xlsx".into()),
+            Filter::List("dev.example.com".into()),
+            Filter::Account("work".into()),
+            Filter::Group("family".into()),
+            Filter::Label("atlas".into()),
+            Filter::Label("Q3 close".into()),
+            Filter::Header {
+                name: "x-mailer".into(),
+                value: None,
+            },
+            Filter::Header {
+                name: "x-mailer".into(),
+                value: Some("mutt 1.5".into()),
+            },
+            Filter::Header {
+                name: "authentication-results".into(),
+                value: Some("spf=pass".into()),
+            },
+            Filter::HasAttachment,
+            Filter::HasAction,
+            Filter::Is(State::Unread),
+            Filter::Is(State::Read),
+            Filter::Is(State::Flagged),
+            Filter::Is(State::Bulk),
+            Filter::Is(State::Automated),
+            Filter::After(day(2026, 7, 1)),
+            Filter::Before(day(2025, 12, 31)),
+            Filter::Larger(1024 * 1024),
+            Filter::Larger(1500),
+            Filter::Smaller(3 * 1024),
+            Filter::Smaller(2 * 1024 * 1024 * 1024),
+        ]
+    }
+
+    #[test]
+    fn every_clause_spells_to_text_that_parses_back_to_it() {
+        let today = NaiveDate::from_ymd_opt(2026, 10, 8).unwrap();
+        for filter in every_kind_of_filter() {
+            for negated in [false, true] {
+                let clause = Clause {
+                    negated,
+                    filter: filter.clone(),
+                };
+                let text = spell(&clause);
+                let parsed = crate::parse(&text, today);
+                assert_eq!(parsed.tokens().len(), 1, "{text:?} is one token");
+                assert_eq!(
+                    parsed.tokens()[0].kind,
+                    TokenKind::Filter(clause.clone()),
+                    "{text:?} reads back as {clause:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn spell_writes_one_canonical_form_per_filter() {
+        let clause = |filter| Clause {
+            negated: false,
+            filter,
+        };
+        let day = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        assert_eq!(spell(&clause(Filter::HasAttachment)), "has:attachment");
+        assert_eq!(spell(&clause(Filter::HasAction)), "has:action");
+        assert_eq!(spell(&clause(Filter::Is(State::Unread))), "is:unread");
+        assert_eq!(spell(&clause(Filter::Is(State::Flagged))), "is:flagged");
+        assert_eq!(
+            spell(&clause(Filter::Label("Q3 close".into()))),
+            r#"label:"Q3 close""#
+        );
+        assert_eq!(spell(&clause(Filter::Label("atlas".into()))), "label:atlas");
+        assert_eq!(
+            spell(&clause(Filter::After(day(2026, 7, 1)))),
+            "after:2026-07-01"
+        );
+        assert_eq!(
+            spell(&clause(Filter::Before(day(2026, 3, 9)))),
+            "before:2026-03-09"
+        );
+        assert_eq!(spell(&clause(Filter::Larger(1024 * 1024))), "larger:1M");
+        assert_eq!(spell(&clause(Filter::Smaller(1500))), "smaller:1500");
+        assert_eq!(
+            spell(&clause(Filter::Header {
+                name: "x-mailer".into(),
+                value: Some("mutt 1.5".into()),
+            })),
+            r#"header:x-mailer="mutt 1.5""#
+        );
+        assert_eq!(
+            spell(&Clause {
+                negated: true,
+                filter: Filter::From("ada".into()),
+            }),
+            "-from:ada"
+        );
+    }
+
+    fn set(members: Vec<Filter>) -> Filter {
+        Filter::any_of(members).expect("a set of one field")
+    }
+
+    #[test]
+    fn a_set_spells_as_braces_and_one_value_as_the_plain_clause() {
+        let clause = |filter| Clause {
+            negated: false,
+            filter,
+        };
+        assert_eq!(
+            spell(&clause(set(vec![
+                Filter::From("ada@example.com".into()),
+                Filter::From("tomas@example.com".into()),
+            ]))),
+            "from:{ada@example.com tomas@example.com}"
+        );
+        assert_eq!(
+            spell(&Clause {
+                negated: true,
+                filter: set(vec![
+                    Filter::Label("Q3 close".into()),
+                    Filter::Label("atlas".into()),
+                ]),
+            }),
+            r#"-label:{"Q3 close" atlas}"#
+        );
+        assert_eq!(
+            spell(&clause(set(vec![
+                Filter::In("a}b".into()),
+                Filter::In("{x".into()),
+            ]))),
+            r#"in:{"a}b" "{x"}"#,
+            "a brace in a value is quoted"
+        );
+        assert_eq!(
+            spell(&clause(Filter::Label("{x".into()))),
+            r#"label:"{x""#,
+            "a plain value that opens with a brace is quoted too"
+        );
+    }
+
+    #[test]
+    fn every_set_spells_to_text_that_parses_back_to_it() {
+        let today = NaiveDate::from_ymd_opt(2026, 10, 8).unwrap();
+        let sets = [
+            set(vec![
+                Filter::From("ada".into()),
+                Filter::From("Tomás Reyes".into()),
+            ]),
+            set(vec![
+                Filter::To("a@example.com".into()),
+                Filter::To("b@example.com".into()),
+                Filter::To("c@example.com".into()),
+            ]),
+            set(vec![
+                Filter::Subject("budget v4".into()),
+                Filter::Subject("q3".into()),
+            ]),
+            set(vec![
+                Filter::In("Inbox".into()),
+                Filter::In("Archive".into()),
+            ]),
+            set(vec![
+                Filter::Label("Q3 close".into()),
+                Filter::Label("{odd}".into()),
+            ]),
+            set(vec![
+                Filter::List("a.example.org".into()),
+                Filter::List("b".into()),
+            ]),
+            set(vec![
+                Filter::Filename("q3.xlsx".into()),
+                Filter::Filename("v4.pdf".into()),
+            ]),
+            set(vec![
+                Filter::Account("work".into()),
+                Filter::Account("home".into()),
+            ]),
+            set(vec![
+                Filter::Group("family".into()),
+                Filter::Group("team".into()),
+            ]),
+        ];
+        for filter in sets {
+            for negated in [false, true] {
+                let clause = Clause {
+                    negated,
+                    filter: filter.clone(),
+                };
+                let text = spell(&clause);
+                let parsed = crate::parse(&text, today);
+                assert_eq!(parsed.tokens().len(), 1, "{text:?} is one token");
+                assert_eq!(
+                    parsed.tokens()[0].kind,
+                    TokenKind::Filter(clause.clone()),
+                    "{text:?} reads back as {clause:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_plain_filter_is_its_own_one_alternative() {
+        let ada = Filter::From("ada".into());
+        assert_eq!(ada.alternatives(), std::slice::from_ref(&ada));
     }
 
     #[test]

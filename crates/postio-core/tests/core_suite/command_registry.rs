@@ -209,16 +209,30 @@ fn ids_serialize_as_their_stable_string() {
 
 #[test]
 fn bindings_do_not_collide_within_a_context() {
+    // A key can mean one command on one platform and another on the other
+    // (`alt+BackSpace`: the terminal's back-to-words on Linux, the Mac's
+    // forget-recent), so a collision is two commands that are both live on
+    // some platform (`offered_on`, `alternate_offered_on`).
     for context in Context::ALL {
-        let mut seen: BTreeMap<&str, CommandId> = BTreeMap::new();
+        let mut seen: BTreeMap<(bool, &str), CommandId> = BTreeMap::new();
         for spec in registry::for_context(*context) {
-            for binding in spec.bindings() {
-                if let Some(other) = seen.insert(binding, spec.id) {
-                    panic!(
-                        "`{binding}` is bound to both `{other}` and `{}` in the \
-                         {context} context",
-                        spec.id
-                    );
+            for (at, binding) in spec.bindings().enumerate() {
+                for platform in [Platform::Freedesktop, Platform::Apple] {
+                    let action = postio_core::ActionId::Builtin(spec.id);
+                    if !registry::offered_on(action, platform)
+                        || (at > 0 && !registry::alternate_offered_on(action, binding, platform))
+                    {
+                        continue;
+                    }
+                    if let Some(other) =
+                        seen.insert((platform == Platform::Apple, binding), spec.id)
+                    {
+                        panic!(
+                            "`{binding}` is bound to both `{other}` and `{}` in the \
+                             {context} context on {platform:?}",
+                            spec.id
+                        );
+                    }
                 }
             }
         }
@@ -317,8 +331,9 @@ fn contexts_round_trip_through_strings() {
     // `every_context_fits_the_set` derives it from the integer itself, so
     // this is only the deliberate-act tripwire. Postio Focus's picker, digest
     // and Filtered view (spec 007) make thirteen, and its capture sheet
-    // (milestone 3) fourteen.
-    assert_eq!(Context::ALL.len(), 14);
+    // (milestone 3) fourteen, and the Mac's search results (spec 010 D17)
+    // fifteen.
+    assert_eq!(Context::ALL.len(), 15);
 }
 
 #[test]
@@ -851,4 +866,167 @@ fn a_focus_only_command_is_offered_to_focus_and_the_terminal_that_draws_it() {
         [Frontend::Terminal, Frontend::Focus],
         "a Focus row is reachable in the terminal"
     );
+}
+
+/// Spec 010 D23 and D25: the Mac's search bar commands are not offered on
+/// Linux until it adopts the dropdown, and are reachable in the search bar.
+#[test]
+fn the_search_bar_s_new_commands_are_the_macs_until_linux_adopts_them() {
+    use postio_config::paths::Platform;
+    use postio_core::ActionId;
+    for id in [CommandId::ShowAllResults, CommandId::ForgetRecent] {
+        let action = ActionId::Builtin(id);
+        assert!(registry::offered_on(action, Platform::Apple), "{id}");
+        assert!(!registry::offered_on(action, Platform::Freedesktop), "{id}");
+        assert!(registry::get(id).available_in(Context::Search), "{id}");
+    }
+    assert!(!registry::alternate_offered_on(
+        ActionId::Builtin(CommandId::BackToWords),
+        "alt+BackSpace",
+        Platform::Apple
+    ));
+    assert!(registry::alternate_offered_on(
+        ActionId::Builtin(CommandId::BackToWords),
+        "alt+BackSpace",
+        Platform::Freedesktop
+    ));
+}
+
+/// Spec 010 step 3 (R10, D25): the results view's commands are the Mac's
+/// until Linux adopts the results view, and reachable in it.
+#[test]
+fn the_results_views_commands_are_the_macs_until_linux_adopts_them() {
+    use postio_config::paths::Platform;
+    use postio_core::ActionId;
+    for id in [
+        CommandId::HistoryBack,
+        CommandId::HistoryForward,
+        CommandId::ResultsConversations,
+        CommandId::ResultsFiles,
+        CommandId::ResultsPeople,
+    ] {
+        let action = ActionId::Builtin(id);
+        assert!(registry::offered_on(action, Platform::Apple), "{id}");
+        assert!(!registry::offered_on(action, Platform::Freedesktop), "{id}");
+        assert!(registry::get(id).available_in(Context::Results), "{id}");
+    }
+    // ⌘[ and ⌘] reach back and forward from the inbox too (D17); the tabs
+    // are the results view's alone.
+    for id in [CommandId::HistoryBack, CommandId::HistoryForward] {
+        assert!(registry::get(id).available_in(Context::List), "{id}");
+    }
+    for id in [
+        CommandId::ResultsConversations,
+        CommandId::ResultsFiles,
+        CommandId::ResultsPeople,
+    ] {
+        assert_eq!(
+            registry::get(id).contexts,
+            Context::Results.as_set(),
+            "{id}"
+        );
+    }
+}
+
+/// Spec 010 step 4 (FR-023, D25): the timeline's month steps are the
+/// results view's alone, and the Mac's until Linux adopts it.
+#[test]
+fn the_timeline_steps_are_the_results_views_alone() {
+    use postio_config::paths::Platform;
+    use postio_core::ActionId;
+    for id in [CommandId::StepRangeBack, CommandId::StepRangeForward] {
+        let action = ActionId::Builtin(id);
+        assert!(registry::offered_on(action, Platform::Apple), "{id}");
+        assert!(!registry::offered_on(action, Platform::Freedesktop), "{id}");
+        assert_eq!(
+            registry::get(id).contexts,
+            Context::Results.as_set(),
+            "{id} is the results view's alone"
+        );
+    }
+    assert_eq!(CommandId::StepRangeBack.as_str(), "step_range_back");
+    assert_eq!(CommandId::StepRangeForward.as_str(), "step_range_forward");
+}
+
+/// Spec 010 step 5 (FR-028, D25): Quick Look and its match steps are the
+/// results view's alone, and the Mac's until Linux adopts them.
+#[test]
+fn quick_look_is_the_results_views_alone() {
+    use postio_config::paths::Platform;
+    use postio_core::ActionId;
+    for id in [
+        CommandId::QuickLook,
+        CommandId::NextMatch,
+        CommandId::PrevMatch,
+    ] {
+        let action = ActionId::Builtin(id);
+        assert!(registry::offered_on(action, Platform::Apple), "{id}");
+        assert!(!registry::offered_on(action, Platform::Freedesktop), "{id}");
+        assert_eq!(
+            registry::get(id).contexts,
+            Context::Results.as_set(),
+            "{id} is the results view's alone"
+        );
+    }
+    assert_eq!(CommandId::QuickLook.as_str(), "quick_look");
+    assert_eq!(CommandId::NextMatch.as_str(), "next_match");
+    assert_eq!(CommandId::PrevMatch.as_str(), "prev_match");
+}
+
+/// Spec 010 step 7 (FR-030, D25): the looser searches are picked by number
+/// in the results view alone, and only on the Mac until Linux adopts them;
+/// `BackToWords` reaches the results, where it clears the filters (D24).
+#[test]
+fn relaxations_are_the_results_views_alone() {
+    use postio_config::paths::Platform;
+    use postio_core::ActionId;
+    for (id, name) in [
+        (CommandId::PickRelaxation1, "pick_relaxation_1"),
+        (CommandId::PickRelaxation2, "pick_relaxation_2"),
+        (CommandId::PickRelaxation3, "pick_relaxation_3"),
+        (CommandId::PickRelaxation4, "pick_relaxation_4"),
+    ] {
+        let action = ActionId::Builtin(id);
+        assert!(registry::offered_on(action, Platform::Apple), "{id}");
+        assert!(!registry::offered_on(action, Platform::Freedesktop), "{id}");
+        assert_eq!(
+            registry::get(id).contexts,
+            Context::Results.as_set(),
+            "{id} is the results view's alone"
+        );
+        assert_eq!(id.as_str(), name);
+    }
+    assert!(registry::get(CommandId::BackToWords).available_in(Context::Results));
+    assert!(registry::get(CommandId::BackToWords).available_in(Context::Search));
+}
+
+/// Spec 010 step 8 (US7, D25): ⌥↩ in the dropdown excludes the focused
+/// person, label or folder, the Mac's until Linux adopts the dropdown.
+#[test]
+fn exclude_suggestion_is_the_dropdowns_alone() {
+    use postio_config::paths::Platform;
+    use postio_core::ActionId;
+    let id = CommandId::ExcludeSuggestion;
+    let action = ActionId::Builtin(id);
+    assert!(registry::offered_on(action, Platform::Apple));
+    assert!(!registry::offered_on(action, Platform::Freedesktop));
+    assert_eq!(registry::get(id).contexts, Context::Search.as_set());
+    assert_eq!(id.as_str(), "exclude_suggestion");
+}
+
+/// Spec 010 step 9 (FR-031, D25): ⌘↓ saves the file under the ring on the
+/// Files tab: the results view's alone, and the Mac's until Linux adopts
+/// it.
+#[test]
+fn saving_a_file_is_the_results_views_alone() {
+    use postio_config::paths::Platform;
+    use postio_core::ActionId;
+    let action = ActionId::Builtin(CommandId::SaveFile);
+    assert!(registry::offered_on(action, Platform::Apple));
+    assert!(!registry::offered_on(action, Platform::Freedesktop));
+    assert_eq!(
+        registry::get(CommandId::SaveFile).contexts,
+        Context::Results.as_set()
+    );
+    assert_eq!(CommandId::SaveFile.as_str(), "save_file");
 }

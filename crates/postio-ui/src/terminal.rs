@@ -257,6 +257,9 @@ mod registry {
         let unreachable: Vec<String> = postio_core::registry::all()
             // A command a terminal never offers owes it no key.
             .filter(|spec| spec.requires.met_by(terminal))
+            // Nor one the platform has no surface for yet (the Mac's
+            // search dropdown, spec 010 D25).
+            .filter(|spec| postio_core::registry::offered_on(spec.id.into(), Platform::Freedesktop))
             .filter(|spec| {
                 !spec.bindings().any(|binding| {
                     expand_mod(binding, Platform::Freedesktop)

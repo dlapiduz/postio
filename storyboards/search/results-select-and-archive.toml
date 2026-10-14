@@ -1,0 +1,68 @@
+# x checks results, ⇧X checks every conversation the query matches, and a
+# verb from the bulk bar acts on what is checked -- the whole match as a
+# predicate when ⇧X made it -- with one ⌘Z taking it all back
+# (specs/010-focus-search US5, FR-026, design §3.4-3.5, screen 12).
+#
+# While anything is checked the footer is the bulk bar: "N selected",
+# then Archive a, Label l, Move m, Mark read r, Snooze s, and on the
+# right "⇧X select all N". Checked rows draw a filled box in the gutter
+# and a selection tint. Rows stay after a verb: search spans every
+# folder, so an archived result still matches and is asked for again
+# with its new folder ("in:Archive").
+#
+# The controller's half is postio-focus tests/results.rs (select_*,
+# bulk_*); the predicate's resolution is postio-host's
+# an_archive_aimed_at_a_query_*.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/010-focus-search US5" }
+seed   = "search"
+design = "12-select-and-save"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "search"
+
+[[step]]
+type    = "atlas budget"
+
+[[step]]
+command = "show_all_results"
+check   = { keyboard.region = "results" }
+
+[[step]]
+id      = "one"
+command = "toggle_selection"
+check   = { keyboard.region = "results" }
+expect  = "x checks the focused result: a filled box in its gutter and a selection tint. The footer is the bulk bar: “1 selected”, Archive a, Label l, Move m, Mark read r, Snooze s, and “⇧X select all …” on the right."
+
+[[step]]
+command = "next_message"
+check   = { keyboard.region = "results" }
+
+[[step]]
+command = "toggle_selection"
+check   = { keyboard.region = "results" }
+expect  = "The second result is checked too; the bar says “2 selected”."
+
+[[step]]
+command = "select_all"
+check   = { keyboard.region = "results" }
+expect  = "⇧X checks every result: every gutter has a filled box, the bar says the whole count (“12 selected” for the design's query) and the “select all” on its right is gone."
+
+[[step]]
+command = "toggle_selection"
+check   = { keyboard.region = "results" }
+expect  = "x on a checked row takes it back out of the whole: its box empties and the count drops by one."
+
+[[step]]
+id      = "archived"
+command = "archive"
+check   = { keyboard.region = "results" }
+expect  = "a archives every checked conversation at once: the toast says so with Undo, nothing is checked any more, the footer has its key hints again, and the archived rows say “in:Archive”. The row taken back out is untouched."
+
+[[step]]
+command = "undo"
+check   = { keyboard.region = "results" }
+expect  = "One ⌘Z brings every one of them back to the folder it was in."

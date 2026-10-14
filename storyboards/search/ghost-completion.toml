@@ -1,0 +1,42 @@
+# A short prefix completes (specs/010-focus-search US7, FR-042, design §2
+# "Short prefix", screen 02).
+#
+# One to three letters and nothing else: the field draws the rest of the
+# best word after the caret in tertiary ("at|las") with a quiet "Tab
+# completes" on its right, and the panel says what the letters could
+# become -- the completed word, a label, a mailing list, files whose names
+# hold such a word -- each with how many conversations it finds; then the
+# top hits so far, and "Show all N results for “at”". Tab takes the ghost.
+#
+# The words come from the index's best documents for `at*` (research R1,
+# D22): there is no vocabulary table.
+#
+# The controller's half is postio-focus tests/bar.rs (prefix_*); the
+# executor's is postio-index tests/index_suite/completions.rs.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/010-focus-search US7" }
+seed   = "search"
+design = "02-typing-prefix"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "search"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+
+[[step]]
+id      = "prefix"
+type    = "at"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
+expect  = "After the caret the field draws “las” in a lighter grey, and “Tab completes” sits at its right end. The panel's first section is “Suggestions” (“complete the word, or jump to a filter”): “atlas” with “at” in the find highlight, “as a word”, its count and a Tab keycap, ringed; “label:Atlas” in mono with “label” and its count; a mailing list whose id says atlas; and “Files named “at…”” with two names and how many more. Then “Top hits so far” (“update on every keystroke”) with up to three messages, and “Show all N results for “at”” with its ⌘↩ keycap. The footer: “Tab complete · ↑↓ move · ↩ open · ⌘↩ all results”, and “N matches · N ms” on the right."
+
+[[step]]
+key     = "Tab"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
+expect  = "Tab takes the ghost: the field holds “atlas”, the caret after it, no ghost and no “Tab completes”. The panel is the words state now: Top hits for atlas, Narrow to, and “Show all N results” focused."
+
+[[step]]
+command = "back"
+check   = { overlay.kind = "none", keyboard.region = "list" }
+expect  = "Escape closes the panel, and the list has the keyboard on the row it had."

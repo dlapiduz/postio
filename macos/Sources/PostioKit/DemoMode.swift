@@ -88,6 +88,18 @@ public enum DemoMode {
         "↓": "down", "↑": "up",
     ]
 
+    /// Where to draw the main window once the demo's keys are pressed, from
+    /// `POSTIO_DEMO_SNAPSHOT`, in a demo only: a picture drawn by the app
+    /// itself, for a terminal `screencapture` cannot photograph from (no
+    /// Screen Recording grant). Not the screen's pixels -- the window's
+    /// views drawn again -- so materials and shadows may differ.
+    public static var snapshot: String? { snapshot(in: ProcessInfo.processInfo.environment) }
+
+    static func snapshot(in environment: [String: String]) -> String? {
+        guard seed(in: environment) != nil else { return nil }
+        return environment["POSTIO_DEMO_SNAPSHOT"].flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     static func state(in environment: [String: String]) -> String? {
         guard seed(in: environment) != nil else { return nil }
         return environment["POSTIO_DEMO_STATE"].flatMap { $0.isEmpty ? nil : $0 }

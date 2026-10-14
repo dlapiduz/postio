@@ -1,0 +1,74 @@
+# `from:` completes to people (specs/010-focus-search US7 scenario 2,
+# FR-042, D21, design §2 "Operator being typed", screen 04).
+#
+# Typing an operator turns the panel into its values. For `from:` and
+# `to:` those are people, ranked by how often you write to each other
+# (they wrote to you plus you wrote to them, D21), each with an initials
+# avatar, the name, and "address · N messages · last X"; under them,
+# "Latest from <the focused person>", two rows, which follow the arrows.
+# Return makes the chip, ⌥Return the exclusion (struck through), and
+# Backspace on an empty value goes back to words. The field sets the
+# operator in SF Mono 14 while it is typed.
+#
+# `label:` and `in:` behave the same with labels and folders.
+#
+# The controller's half is postio-focus tests/bar.rs (operator_*); the
+# people's order is postio-index tests/index_suite/completions.rs.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/010-focus-search US7" }
+seed   = "search"
+design = "04-typing-operator"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "search"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+
+[[step]]
+id      = "people"
+type    = "from:"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
+expect  = "The field's text is monospaced. The panel's first section is “People” with “by how often you write to each other” on the right: up to four people, each a round initials avatar, the name in bold, and under it in mono “address · N messages · last X”; the first is ringed and says “↩ adds”. Under them “Latest from <that person>” (“preview of the focused person”) with two of their messages, folder and time. The footer: “↩ add as chip · ⌥↩ exclude (-from:) · ↑↓ choose · ⌫ back to words”, and “Contacts and everyone you have mail with” on the right."
+
+[[step]]
+type    = "ad"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
+expect  = "The section is “People matching “ad””, and only people whose name or address begins a word with “ad” are listed, still most-written-to first."
+
+[[step]]
+key     = "Down"
+check   = { overlay.kind = "finder", keyboard.region = "search" }
+expect  = "The ring moves to the second person and “Latest from” follows: its title names them and its two rows are theirs."
+
+[[step]]
+key     = "alt+Return"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
+expect  = "⌥↩ makes the exclusion: the field shows the chip `-from:` and that person's address, struck through, and the panel re-runs on it."
+
+[[step]]
+command = "search"
+
+[[step]]
+type    = "from:"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
+
+[[step]]
+key     = "BackSpace"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
+expect  = "Backspace on an empty value goes back to words: the operator is gone, the field is in the ordinary face, and the panel is the empty state."
+
+[[step]]
+type    = "label:At"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
+expect  = "`label:` lists labels the same way: “Atlas” with how many conversations carry it, ringed."
+
+[[step]]
+key     = "Return"
+check   = { overlay.kind = "finder", keyboard.region = "search", keyboard.typing = true }
+expect  = "Return makes the chip `label:Atlas`, and the panel shows what it finds."
+
+[[step]]
+command = "back"
+check   = { overlay.kind = "none", keyboard.region = "list" }

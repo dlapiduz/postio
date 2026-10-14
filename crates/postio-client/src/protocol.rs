@@ -77,6 +77,21 @@ pub enum Req {
     Send(Command, StateSnapshot),
     /// The same, learning the id its events will carry.
     SendTracked(Command, StateSnapshot),
+    /// Run a command at every conversation `query` matches but the rows
+    /// `except` stands for (each a conversation's best message): ⇧X in
+    /// Focus's search results (spec 010 US5). A predicate the host walks
+    /// with the results' own match, in order with every other command, so
+    /// one undo takes the whole back.
+    SendMatching {
+        /// The verb; its target is the match.
+        command: Command,
+        /// Which accounts the search is over.
+        account: postio_model::AccountScope,
+        /// The query, as the results ran it.
+        query: postio_search::ParsedQuery,
+        /// Rows taken back out of the selection.
+        except: Vec<MessageId>,
+    },
     /// One page of a list.
     Page(PageRequest),
     /// How many rows a list would show.
@@ -287,6 +302,125 @@ pub enum Req {
         /// The scope on screen.
         scope: postio_search::facets::Scope,
     },
+    /// Focus's search (spec 010): one page of conversations, with the
+    /// facets' counts and names. Cancellable: dropping the call stops it.
+    Conversations {
+        /// Which accounts.
+        account: postio_model::AccountScope,
+        /// The query, as the bar parsed it.
+        query: postio_search::ParsedQuery,
+        /// Best match or newest first.
+        order: postio_search::results::ConversationOrder,
+        /// How many conversations to skip.
+        offset: u32,
+        /// How many to return.
+        limit: u32,
+    },
+    /// The passages of the hits on screen, each body match told apart into
+    /// the person's own words and quoted history. A read of its own, after
+    /// the conversations (D7). Cancellable.
+    Passages {
+        /// The query the hits were found by.
+        query: postio_search::ParsedQuery,
+        /// Each hit's best message and where it matched.
+        hits: Vec<(MessageId, Vec<postio_search::results::Source>)>,
+        /// What the asking row does with a message's first line.
+        first_line: postio_search::passage::FirstLine,
+    },
+    /// The Files tab: a page of the attachments whose name or contents
+    /// match, each with its match (spec 010 US8). Cancellable.
+    Files {
+        /// Which accounts.
+        account: postio_model::AccountScope,
+        /// The query.
+        query: postio_search::ParsedQuery,
+        /// How many cards to skip.
+        offset: u32,
+        /// How many to answer.
+        limit: u32,
+    },
+    /// The People tab: who the matched mail is from and to, the person's
+    /// own addresses left out, each with how many matched messages and the
+    /// newest (spec 010 US9). Cancellable.
+    People {
+        /// Which accounts.
+        account: postio_model::AccountScope,
+        /// The query.
+        query: postio_search::ParsedQuery,
+        /// How many people to skip.
+        offset: u32,
+        /// How many to answer.
+        limit: u32,
+    },
+    /// Copy an attachment's bytes, when they are on this machine, into
+    /// `dir` -- a temporary folder the frontend owns -- for the system's
+    /// Quick Look or a save (FR-053). Never fetched: an attachment whose
+    /// bytes are not here answers nothing (FR-050).
+    AttachmentCopy {
+        /// Which attachment.
+        attachment: postio_model::ids::AttachmentId,
+        /// Where the copy goes; nothing is written outside it.
+        dir: std::path::PathBuf,
+    },
+    /// Every match in one conversation, oldest first, each with its
+    /// passage and who wrote it: Quick Look's cards (spec 010 US4).
+    /// Cancellable.
+    ConversationMatches {
+        /// The query the conversation was found by.
+        query: postio_search::ParsedQuery,
+        /// Which conversation.
+        key: postio_search::results::ConversationKey,
+    },
+    /// The ways out of a search that found nothing, each with what it would
+    /// find. Cancellable.
+    Relaxations {
+        /// Which accounts.
+        account: postio_model::AccountScope,
+        /// The query that found nothing.
+        query: postio_search::ParsedQuery,
+        /// The day dates in the variants are read against.
+        today: chrono::NaiveDate,
+    },
+    /// What a prefix could become (spec 010 US7, FR-042): with no `field`
+    /// the words, labels, lists and file names it begins; with one, the
+    /// operator's values -- people for `from:` and `to:`, labels, folders.
+    /// Each counted as its query counts. Cancellable.
+    Suggest {
+        /// Which accounts the counts are over.
+        account: postio_model::AccountScope,
+        /// What is typed: the word, or the operator's value so far.
+        prefix: String,
+        /// The operator being typed, when one is.
+        field: Option<postio_search::query::Field>,
+    },
+    /// The searches a person ran, newest first (spec 010 D16). Cancellable.
+    RecentSearches,
+    /// A search was committed: the results view opened, a hit was opened
+    /// from the dropdown, or a saved search ran. The host stamps the time.
+    RememberSearch {
+        /// The query, exactly as run.
+        query: String,
+        /// Conversations it matched, as the footer said.
+        hits: u64,
+        /// The search stopped at its walk's cap: `hits` is a floor (D30).
+        capped: bool,
+    },
+    /// Forget one recent search.
+    ForgetSearch(String),
+    /// How many conversations each saved search matches, and how many of
+    /// those arrived since the person last looked. Cancellable.
+    SavedCounts {
+        /// Which accounts the counts are over.
+        account: postio_model::AccountScope,
+        /// The day relative dates in the queries are read against.
+        today: chrono::NaiveDate,
+        /// Every saved search as `(key, query text)`. A search whose key is
+        /// not listed is no longer saved, and its seen-progress is dropped.
+        searches: Vec<(String, String)>,
+    },
+    /// The saved search under this key has been viewed: its badge counts
+    /// from now (spec 010 D15).
+    MarkSeen(String),
     /// Change an account the way the settings' account commands do.
     Account(AccountOp),
     /// Look up the servers for a new account's address.
@@ -632,6 +766,34 @@ pub enum Resp {
     Hits(Option<Box<Hits>>),
     /// A search's facet counts, or nothing when they did not run.
     Facets(Option<postio_search::facets::Facets>),
+    /// One page of a conversation search, or nothing when the store could
+    /// not be read.
+    Conversations(Option<Box<Conversations>>),
+    /// Each hit's matches with their passages, in the order asked.
+    Passages(Vec<(MessageId, Vec<postio_search::results::Match>)>),
+    /// One conversation's matches, oldest first; empty when it could not be
+    /// read.
+    Matches(Vec<postio_search::results::ConversationMatch>),
+    /// The Files tab's cards; empty when the store could not be read.
+    Files(Vec<postio_search::results::FileHit>),
+    /// The People tab's rows; empty when the store could not be read.
+    People(Vec<postio_search::suggest::Person>),
+    /// Where a copy was written, or nothing when it could not be.
+    Path(Option<std::path::PathBuf>),
+    /// The ways out that would find something, most first; empty when none
+    /// would, or when they could not be counted.
+    Relaxed(
+        Vec<(
+            postio_search::relax::Relaxation,
+            postio_search::results::Counted,
+        )>,
+    ),
+    /// What a prefix could become; empty when the store could not be read.
+    Suggestions(Box<postio_search::suggest::Suggestions>),
+    /// The remembered searches, newest first.
+    Recent(Vec<RecentSearch>),
+    /// Each saved search asked, counted, in the order asked.
+    SavedCounts(Vec<SavedCount>),
     /// A message's stored words; empty when there are none here.
     StoredBody(postio_model::MessageBody),
     /// Where each exported message was written, in the order asked.
@@ -941,6 +1103,40 @@ pub struct Found {
 pub struct Hits(pub postio_search::SearchResults);
 
 impl Eq for Hits {}
+
+/// What a conversation search found, as Focus's results view draws it.
+///
+/// A search a person ran: one row of the dropdown's Recent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecentSearch {
+    /// The query, exactly as run.
+    pub query: String,
+    /// When it last ran.
+    pub last_run_at: chrono::DateTime<chrono::Utc>,
+    /// Conversations it matched, as the footer said.
+    pub hits: u64,
+    /// Its search stopped at the walk's cap: `hits` is a floor (D30).
+    pub capped: bool,
+}
+
+/// What a saved search's pill and quiet badge count (spec 010 D15, D30).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedCount {
+    /// Its `[saved_searches.<key>]` key.
+    pub key: String,
+    /// The conversations it matches; a floor past the walk's cap.
+    pub total: postio_search::results::Counted,
+    /// How many of them have a match received since it was last viewed;
+    /// zero before it was first viewed, and a floor past the badge's cap.
+    pub new: postio_search::results::Counted,
+}
+
+/// A wrapper only for [`Resp`]'s `Eq`, as [`Hits`] is: a hit's score is an
+/// `f64`, never NaN.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Conversations(pub postio_search::results::ConversationResults);
+
+impl Eq for Conversations {}
 
 /// What recipient completion can offer an account: its groups, each with
 /// its members' addresses, and its contacts in the order the store ranks

@@ -14,7 +14,6 @@
 use std::sync::{Arc, Mutex};
 
 use postio_client::Client;
-use postio_config::paths::Platform;
 use postio_core::Event;
 use postio_focus::{Effect, FocusController, Input, Intent, Policy, Request, Ticket};
 use postio_model::listing::ThreadSummary;
@@ -442,6 +441,13 @@ pub(crate) struct FocusDriver {
     local: async_channel::Sender<UiEvent>,
     /// Pages read from the store, so a test can count what scrolling cost.
     page_reads: std::sync::atomic::AtomicUsize,
+    /// Conversation searches that ran to the end, so a test can count
+    /// what typing quickly cost (spec 010 D8).
+    search_reads: std::sync::atomic::AtomicUsize,
+    /// Each search lane's task in flight: a newer request of the lane
+    /// aborts it, which drops the client's call, and the host stops the
+    /// read when its reply channel closes (spec 010 D8, D9).
+    lanes: Mutex<std::collections::HashMap<postio_focus::Lane, tokio::task::AbortHandle>>,
     /// The `config.toml` a saved search is written to, when there is one.
     config_path: Mutex<Option<std::path::PathBuf>>,
 }
@@ -453,12 +459,14 @@ impl FocusDriver {
         local: async_channel::Sender<UiEvent>,
     ) -> Arc<Self> {
         Arc::new(FocusDriver {
-            focus: Mutex::new(FocusController::new(Policy::for_platform(Platform::Apple))),
+            focus: Mutex::new(FocusController::new(Policy::for_platform(crate::PLATFORM))),
             list: Mutex::new(ListWindow::new()),
             client,
             runtime,
             local,
             page_reads: std::sync::atomic::AtomicUsize::new(0),
+            search_reads: std::sync::atomic::AtomicUsize::new(0),
+            lanes: Mutex::new(std::collections::HashMap::new()),
             config_path: Mutex::new(None),
         })
     }
@@ -549,7 +557,39 @@ impl FocusDriver {
     /// of is over the list; `None` leaves it to the caller.
     pub(crate) fn key_context(&self) -> Option<postio_ui::keymap::KeyContext> {
         let focus = self.focus.lock().expect("focus lock");
-        focus.has_surface().then(|| focus.key_context())
+        (focus.has_surface() || focus.in_results()).then(|| focus.key_context())
+    }
+
+    /// How many rows the results table has.
+    pub(crate) fn result_count(&self) -> u64 {
+        self.focus.lock().expect("focus lock").result_count()
+    }
+
+    /// The People tab's row at `position`, drawn.
+    pub(crate) fn result_person(&self, position: u64) -> Option<postio_focus::PersonRow> {
+        self.focus
+            .lock()
+            .expect("focus lock")
+            .result_person(position)
+    }
+
+    /// The Files tab's card at `position`; `None` past the last.
+    pub(crate) fn result_file(&self, position: u64) -> Option<postio_focus::FileCard> {
+        self.focus.lock().expect("focus lock").result_file(position)
+    }
+
+    /// The result at `position`, or `None` while its page is on its way: a
+    /// miss asks for the page, and `FocusResultsPage` says when it landed.
+    pub(crate) fn result_row(self: &Arc<Self>, position: u64) -> Option<postio_focus::ResultRow> {
+        let effects = {
+            let mut focus = self.focus.lock().expect("focus lock");
+            if let Some(row) = focus.result_row(position) {
+                return Some(row);
+            }
+            focus.results_wanted(position)
+        };
+        self.apply(effects);
+        None
     }
 
     /// The message under the cursor, once its page has landed: what a verb
@@ -582,6 +622,12 @@ impl FocusDriver {
     #[cfg(feature = "testing")]
     pub(crate) fn page_reads(&self) -> usize {
         self.page_reads.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// How many conversation searches ran to the end.
+    #[cfg(feature = "testing")]
+    pub(crate) fn search_reads(&self) -> usize {
+        self.search_reads.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// How many rows the window is holding.
@@ -804,6 +850,33 @@ impl FocusDriver {
                 select: select.map(|(start, end)| crate::focus_bar::BarSelectFfi { start, end }),
             }),
             Intent::BarLines(view) => self.say(UiEvent::FocusBarLines { view: view.into() }),
+            Intent::Dropdown(view) => self.say(UiEvent::FocusDropdown { view: view.into() }),
+            Intent::ShowResults(view) => self.say(UiEvent::FocusResults {
+                view: (*view).into(),
+            }),
+            Intent::ResultsPage { first, count } => {
+                self.say(UiEvent::FocusResultsPage { first, count });
+            }
+            Intent::ResultsCursor(position) => {
+                self.say(UiEvent::FocusResultsCursor { position });
+            }
+            Intent::Query(view) => self.say(UiEvent::FocusQuery { view: view.into() }),
+            Intent::LeaveResults => self.say(UiEvent::FocusLeaveResults),
+            Intent::Popover(view) => self.say(UiEvent::FocusPopover {
+                view: view.map(|view| (*view).into()),
+            }),
+            Intent::QuickLook(view) => self.say(UiEvent::FocusQuickLook {
+                view: view.map(|view| (*view).into()),
+            }),
+            Intent::SavePopover(view) => self.say(UiEvent::FocusSavePopover {
+                view: view.map(|view| (*view).into()),
+            }),
+            Intent::Relaxations(view) => self.say(UiEvent::FocusRelaxations {
+                view: view.map(|view| (*view).into()),
+            }),
+            Intent::FileCopy(copy) => self.say(UiEvent::FocusFileCopy {
+                copy: copy.map(Into::into),
+            }),
             Intent::Place { name } => self.say(UiEvent::FocusPlace { name }),
             Intent::OpenPlaces => self.say(UiEvent::FocusOpenPlaces),
             Intent::PlacesChanged => self.say(UiEvent::FocusPlacesChanged),
@@ -867,8 +940,8 @@ impl FocusDriver {
             Intent::SaveDraft { composition } => {
                 self.say(UiEvent::FocusSaveDraft { composition });
             }
-            Intent::SaveSearch { query } => {
-                let saved = self.save_search(&query);
+            Intent::SaveSearch(save) => {
+                let saved = self.save_search(&save);
                 self.input(Input::SearchSaved(saved));
             }
             _ => {}
@@ -879,13 +952,29 @@ impl FocusDriver {
     /// `postio_ui::saved_search` writes one -- `[saved_searches]` alone, the
     /// rest of the file as it was -- and answer with the saved searches now,
     /// or the sentence the toast says instead.
-    fn save_search(&self, query: &str) -> Result<Vec<(String, String)>, String> {
+    fn save_search(
+        &self,
+        save: &postio_focus::SaveSearch,
+    ) -> Result<postio_focus::SearchesSaved, String> {
         let Some(path) = self.config_path.lock().expect("config path lock").clone() else {
             return Err(postio_ui::focus_target::NO_CONFIG_TO_SAVE.to_owned());
         };
-        postio_ui::saved_search::apply(&path, postio_ui::saved_search::Verb::Save { query })
-            .and_then(|_| postio_config::Config::load_from_path(&path))
-            .map(|config| postio_session::focus::saved_searches(&config))
+        let verb = postio_ui::saved_search::Verb::Save {
+            query: &save.query,
+            name: save.name.as_deref(),
+            pin: save.pin,
+            notify: save.notify,
+            dates: save.dates,
+        };
+        postio_ui::saved_search::apply(&path, verb)
+            .and_then(|edit| {
+                postio_config::Config::load_from_path(&path).map(|config| {
+                    postio_focus::SearchesSaved {
+                        searches: postio_ui::saved_search::pinned(&config),
+                        key: edit.changed,
+                    }
+                })
+            })
             .map_err(|error| {
                 tracing::warn!(%error, "Focus could not save the search");
                 postio_ui::focus_target::SEARCH_NOT_WRITTEN.to_owned()
@@ -910,9 +999,16 @@ impl FocusDriver {
             self.page_reads
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
+        let searches = matches!(request, Request::Conversations { .. });
+        let lane = request.lane();
         let driver = Arc::clone(self);
-        self.runtime.spawn(async move {
+        let task = self.runtime.spawn(async move {
             let reply = postio_focus::perform(&driver.client, request).await;
+            if searches {
+                driver
+                    .search_reads
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             let effects = driver
                 .focus
                 .lock()
@@ -920,6 +1016,17 @@ impl FocusDriver {
                 .handle(Input::Reply(ticket, reply));
             driver.apply(effects);
         });
+        // The stamps keep a superseded answer off the screen; this keeps
+        // it from costing the host a read nobody will draw.
+        if let Some(lane) = lane
+            && let Some(before) = self
+                .lanes
+                .lock()
+                .expect("lanes lock")
+                .insert(lane, task.abort_handle())
+        {
+            before.abort();
+        }
     }
 
     /// Hand the controller `Input::Timer(token)` once `after` has passed,

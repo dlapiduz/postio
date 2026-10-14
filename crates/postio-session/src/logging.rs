@@ -260,6 +260,7 @@ const OURS: &[&str] = &[
     "postio_config",
     "postio_core",
     "postio_demo",
+    "postio_extract",
     "postio_ffi",
     "postio_focus",
     "postio_gtk",

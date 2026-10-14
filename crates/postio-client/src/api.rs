@@ -64,11 +64,32 @@ pub trait Transport: Send + Sync + 'static {
 }
 
 impl Req {
+    /// Whether the host may stop answering this when its caller goes:
+    /// true for Focus's search reads (spec 010 D9), which a keystroke
+    /// supersedes and whose answer nobody would read. Everything else is
+    /// answered to the end, as it always was: GTK's search keeps its path
+    /// (FR-046), and a write stopped halfway is worse than a wasted answer.
+    pub fn cancellable(&self) -> bool {
+        matches!(
+            self,
+            Req::Conversations { .. }
+                | Req::Passages { .. }
+                | Req::ConversationMatches { .. }
+                | Req::Files { .. }
+                | Req::People { .. }
+                | Req::Relaxations { .. }
+                | Req::Suggest { .. }
+                | Req::RecentSearches
+                | Req::SavedCounts { .. }
+        )
+    }
+
     /// The family a round trip is counted under.
     pub fn family(&self) -> &'static str {
         match self {
             Req::Send(..) => "Send",
             Req::SendTracked(..) => "SendTracked",
+            Req::SendMatching { .. } => "SendMatching",
             Req::Page(_) => "Page",
             Req::Count(_) => "Count",
             Req::Rows(_) => "Rows",
@@ -111,6 +132,19 @@ impl Req {
             Req::Search(_) => "Search",
             Req::SearchHits { .. } => "SearchHits",
             Req::Facets { .. } => "Facets",
+            Req::Conversations { .. } => "Conversations",
+            Req::Passages { .. } => "Passages",
+            Req::ConversationMatches { .. } => "ConversationMatches",
+            Req::Files { .. } => "Files",
+            Req::People { .. } => "People",
+            Req::AttachmentCopy { .. } => "AttachmentCopy",
+            Req::Relaxations { .. } => "Relaxations",
+            Req::Suggest { .. } => "Suggest",
+            Req::RecentSearches => "RecentSearches",
+            Req::RememberSearch { .. } => "RememberSearch",
+            Req::ForgetSearch(_) => "ForgetSearch",
+            Req::SavedCounts { .. } => "SavedCounts",
+            Req::MarkSeen(_) => "MarkSeen",
             Req::StoredBody(_) => "StoredBody",
             Req::ExportMessages(_) => "ExportMessages",
             Req::Account(_) => "Account",
@@ -905,6 +939,255 @@ impl Client {
         .await
     }
 
+    /// One page of Focus's conversation search for `query`, its facets
+    /// counted and named; `None` when the store could not be read.
+    pub async fn conversations(
+        &self,
+        account: postio_model::AccountScope,
+        query: postio_search::ParsedQuery,
+        order: postio_search::results::ConversationOrder,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Option<postio_search::results::ConversationResults>, StoreError> {
+        let request = Req::Conversations {
+            account,
+            query,
+            order,
+            offset,
+            limit,
+        };
+        self.read(request, "a search", |answer| match answer {
+            Resp::Conversations(found) => Some(found.map(|found| found.0)),
+            _ => None,
+        })
+        .await
+    }
+
+    /// The passages of `hits`' matches under `query`, in the order asked,
+    /// for a row that does `first_line` with a message's first line.
+    pub async fn passages(
+        &self,
+        query: postio_search::ParsedQuery,
+        hits: Vec<(MessageId, Vec<postio_search::results::Source>)>,
+        first_line: postio_search::passage::FirstLine,
+    ) -> Result<Vec<(MessageId, Vec<postio_search::results::Match>)>, StoreError> {
+        self.read(
+            Req::Passages {
+                query,
+                hits,
+                first_line,
+            },
+            "the passages",
+            |answer| match answer {
+                Resp::Passages(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Every match in the conversation `key` under `query`, oldest first:
+    /// Quick Look's cards.
+    pub async fn conversation_matches(
+        &self,
+        query: postio_search::ParsedQuery,
+        key: postio_search::results::ConversationKey,
+    ) -> Result<Vec<postio_search::results::ConversationMatch>, StoreError> {
+        self.read(
+            Req::ConversationMatches { query, key },
+            "a conversation's matches",
+            |answer| match answer {
+                Resp::Matches(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// The Files tab: a page of the attachments whose name or contents
+    /// match `query`, newest first (spec 010 US8).
+    pub async fn files(
+        &self,
+        account: postio_model::AccountScope,
+        query: postio_search::ParsedQuery,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<postio_search::results::FileHit>, StoreError> {
+        let request = Req::Files {
+            account,
+            query,
+            offset,
+            limit,
+        };
+        self.read(request, "the files", |answer| match answer {
+            Resp::Files(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// The People tab: who the mail `query` matches is from and to, the
+    /// person's own addresses left out, a page of them, most messages
+    /// first (spec 010 US9).
+    pub async fn people(
+        &self,
+        account: postio_model::AccountScope,
+        query: postio_search::ParsedQuery,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<postio_search::suggest::Person>, StoreError> {
+        let request = Req::People {
+            account,
+            query,
+            offset,
+            limit,
+        };
+        self.read(request, "the people", |answer| match answer {
+            Resp::People(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// Copy `attachment`'s bytes into `dir`, when they are on this
+    /// machine: where the copy is, or nothing (FR-050, FR-053).
+    pub async fn attachment_copy(
+        &self,
+        attachment: postio_model::ids::AttachmentId,
+        dir: std::path::PathBuf,
+    ) -> Result<Option<std::path::PathBuf>, StoreError> {
+        let request = Req::AttachmentCopy { attachment, dir };
+        self.read(request, "a copy of a file", |answer| match answer {
+            Resp::Path(path) => Some(path),
+            _ => None,
+        })
+        .await
+    }
+
+    /// The ways out of `query` finding nothing that would find something,
+    /// each with its count, most first.
+    pub async fn relaxations(
+        &self,
+        account: postio_model::AccountScope,
+        query: postio_search::ParsedQuery,
+        today: chrono::NaiveDate,
+    ) -> Result<
+        Vec<(
+            postio_search::relax::Relaxation,
+            postio_search::results::Counted,
+        )>,
+        StoreError,
+    > {
+        let request = Req::Relaxations {
+            account,
+            query,
+            today,
+        };
+        self.read(request, "the ways out", |answer| match answer {
+            Resp::Relaxed(found) => Some(found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// What `prefix` could become, each offer counted: the words, labels,
+    /// lists and files it begins, or `field`'s values (spec 010 US7).
+    pub async fn suggest(
+        &self,
+        account: postio_model::AccountScope,
+        prefix: String,
+        field: Option<postio_search::query::Field>,
+    ) -> Result<postio_search::suggest::Suggestions, StoreError> {
+        let request = Req::Suggest {
+            account,
+            prefix,
+            field,
+        };
+        self.read(request, "the suggestions", |answer| match answer {
+            Resp::Suggestions(found) => Some(*found),
+            _ => None,
+        })
+        .await
+    }
+
+    /// The searches a person ran, newest first.
+    pub async fn recent_searches(&self) -> Result<Vec<crate::protocol::RecentSearch>, StoreError> {
+        self.read(
+            Req::RecentSearches,
+            "the recent searches",
+            |answer| match answer {
+                Resp::Recent(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Remember that `query` ran and matched `hits` conversations.
+    pub async fn remember_search(
+        &self,
+        query: String,
+        hits: u64,
+        capped: bool,
+    ) -> Result<(), StoreError> {
+        self.read(
+            Req::RememberSearch {
+                query,
+                hits,
+                capped,
+            },
+            "a remembered search",
+            |answer| match answer {
+                Resp::Done => Some(()),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// The saved search `key` has been viewed: what its badge counts from
+    /// is now.
+    pub async fn mark_seen(&self, key: String) -> Result<(), StoreError> {
+        self.done(Req::MarkSeen(key), "a saved search seen").await
+    }
+
+    /// Forget one recent search.
+    pub async fn forget_search(&self, query: String) -> Result<(), StoreError> {
+        self.read(
+            Req::ForgetSearch(query),
+            "a forgotten search",
+            |answer| match answer {
+                Resp::Done => Some(()),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Each of `searches` (`(key, query text)`) counted, in the order
+    /// asked. Keys not listed lose their seen-progress.
+    pub async fn saved_counts(
+        &self,
+        account: postio_model::AccountScope,
+        today: chrono::NaiveDate,
+        searches: Vec<(String, String)>,
+    ) -> Result<Vec<crate::protocol::SavedCount>, StoreError> {
+        let request = Req::SavedCounts {
+            account,
+            today,
+            searches,
+        };
+        self.read(
+            request,
+            "the saved searches' counts",
+            |answer| match answer {
+                Resp::SavedCounts(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
     /// `message`'s stored words; empty when none are here.
     pub async fn stored_body(
         &self,
@@ -1378,6 +1661,30 @@ impl Client {
     pub async fn send(&self, command: Command) -> Result<(), SendError> {
         let aim = self.state.read(|state| state.snapshot());
         match self.call(Req::Send(command, aim)).await? {
+            Resp::Stopped => Err(SendError::Stopped),
+            _ => Ok(()),
+        }
+    }
+
+    /// Run `command` at every conversation `query` matches but those whose
+    /// best message is in `except`: a whole search's selection, said as the
+    /// predicate it is. Its effects arrive as events.
+    pub async fn send_matching(
+        &self,
+        command: Command,
+        account: postio_model::AccountScope,
+        query: postio_search::ParsedQuery,
+        except: Vec<MessageId>,
+    ) -> Result<(), SendError> {
+        match self
+            .call(Req::SendMatching {
+                command,
+                account,
+                query,
+                except,
+            })
+            .await?
+        {
             Resp::Stopped => Err(SendError::Stopped),
             _ => Ok(()),
         }

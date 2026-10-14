@@ -168,6 +168,44 @@ command_ids! {
     SaveSearch => "save_search",
     /// Leave a search's chips for the plain words it was typed as.
     BackToWords => "back_to_words",
+    /// Open the search bar's words as a results view (the Mac's dropdown
+    /// "Show all N results").
+    ShowAllResults => "show_all_results",
+    /// Forget the recent search the dropdown has highlighted.
+    ForgetRecent => "forget_recent",
+    /// The dropdown: exclude the focused person, label or folder.
+    ExcludeSuggestion => "exclude_suggestion",
+    /// Back through the search history: the results to the inbox, or the
+    /// results before.
+    HistoryBack => "history_back",
+    /// Forward through the search history.
+    HistoryForward => "history_forward",
+    /// The results' Conversations tab.
+    ResultsConversations => "results_conversations",
+    /// The results' Files tab.
+    ResultsFiles => "results_files",
+    /// The results' People tab.
+    ResultsPeople => "results_people",
+    /// The timeline's range, a month earlier.
+    StepRangeBack => "step_range_back",
+    /// The timeline's range, a month later.
+    StepRangeForward => "step_range_forward",
+    /// Look inside the focused result without opening it, or stop looking.
+    QuickLook => "quick_look",
+    /// Quick Look's next match in its conversation.
+    NextMatch => "next_match",
+    /// Quick Look's previous match in its conversation.
+    PrevMatch => "prev_match",
+    /// A search that found nothing: run its first looser search.
+    PickRelaxation1 => "pick_relaxation_1",
+    /// Run the second looser search.
+    PickRelaxation2 => "pick_relaxation_2",
+    /// Run the third looser search.
+    PickRelaxation3 => "pick_relaxation_3",
+    /// Run the fourth looser search.
+    PickRelaxation4 => "pick_relaxation_4",
+    /// Save the file under the ring on the results' Files tab.
+    SaveFile => "save_file",
     /// Start a new message.
     Compose => "compose",
     /// Send what is in the composer.
@@ -767,6 +805,45 @@ pub enum Command {
     SaveSearch,
     /// Leave a search's chips for the plain words it was typed as.
     BackToWords,
+    /// Open the words in the search bar as a results view.
+    ShowAllResults,
+    /// Forget the highlighted recent search.
+    ForgetRecent,
+    /// Exclude the dropdown's focused person, label or folder: its chip,
+    /// negated (spec 010 US7).
+    ExcludeSuggestion,
+    /// Back through the search history.
+    HistoryBack,
+    /// Forward through the search history.
+    HistoryForward,
+    /// The results' Conversations tab.
+    ResultsConversations,
+    /// The results' Files tab.
+    ResultsFiles,
+    /// The results' People tab.
+    ResultsPeople,
+    /// Step the timeline's range a month earlier (`after:` and `before:`
+    /// both).
+    StepRangeBack,
+    /// Step the timeline's range a month later.
+    StepRangeForward,
+    /// Open Quick Look on the focused result, or close it (spec 010 US4).
+    QuickLook,
+    /// Ring Quick Look's next match card.
+    NextMatch,
+    /// Ring Quick Look's previous match card.
+    PrevMatch,
+    /// Run the first looser search a search that found nothing offers
+    /// (spec 010 US6).
+    PickRelaxation1,
+    /// Run the second looser search.
+    PickRelaxation2,
+    /// Run the third looser search.
+    PickRelaxation3,
+    /// Run the fourth looser search.
+    PickRelaxation4,
+    /// Save the file under the ring on the results' Files tab.
+    SaveFile,
 
     // -- Compose ---------------------------------------------------------
     /// Start a new message, optionally from an existing draft.
@@ -1223,6 +1300,24 @@ impl Command {
             Command::Search { .. } => CommandId::Search,
             Command::SaveSearch => CommandId::SaveSearch,
             Command::BackToWords => CommandId::BackToWords,
+            Command::ShowAllResults => CommandId::ShowAllResults,
+            Command::ForgetRecent => CommandId::ForgetRecent,
+            Command::ExcludeSuggestion => CommandId::ExcludeSuggestion,
+            Command::HistoryBack => CommandId::HistoryBack,
+            Command::HistoryForward => CommandId::HistoryForward,
+            Command::ResultsConversations => CommandId::ResultsConversations,
+            Command::ResultsFiles => CommandId::ResultsFiles,
+            Command::ResultsPeople => CommandId::ResultsPeople,
+            Command::StepRangeBack => CommandId::StepRangeBack,
+            Command::StepRangeForward => CommandId::StepRangeForward,
+            Command::QuickLook => CommandId::QuickLook,
+            Command::NextMatch => CommandId::NextMatch,
+            Command::PrevMatch => CommandId::PrevMatch,
+            Command::PickRelaxation1 => CommandId::PickRelaxation1,
+            Command::PickRelaxation2 => CommandId::PickRelaxation2,
+            Command::PickRelaxation3 => CommandId::PickRelaxation3,
+            Command::PickRelaxation4 => CommandId::PickRelaxation4,
+            Command::SaveFile => CommandId::SaveFile,
             Command::Compose { .. } => CommandId::Compose,
             Command::Send => CommandId::Send,
             Command::ScheduleSend => CommandId::ScheduleSend,
@@ -1400,6 +1495,24 @@ impl Command {
             CommandId::Search => Command::Search { query: None },
             CommandId::SaveSearch => Command::SaveSearch,
             CommandId::BackToWords => Command::BackToWords,
+            CommandId::ShowAllResults => Command::ShowAllResults,
+            CommandId::ForgetRecent => Command::ForgetRecent,
+            CommandId::ExcludeSuggestion => Command::ExcludeSuggestion,
+            CommandId::HistoryBack => Command::HistoryBack,
+            CommandId::HistoryForward => Command::HistoryForward,
+            CommandId::ResultsConversations => Command::ResultsConversations,
+            CommandId::ResultsFiles => Command::ResultsFiles,
+            CommandId::ResultsPeople => Command::ResultsPeople,
+            CommandId::StepRangeBack => Command::StepRangeBack,
+            CommandId::StepRangeForward => Command::StepRangeForward,
+            CommandId::QuickLook => Command::QuickLook,
+            CommandId::NextMatch => Command::NextMatch,
+            CommandId::PrevMatch => Command::PrevMatch,
+            CommandId::PickRelaxation1 => Command::PickRelaxation1,
+            CommandId::PickRelaxation2 => Command::PickRelaxation2,
+            CommandId::PickRelaxation3 => Command::PickRelaxation3,
+            CommandId::PickRelaxation4 => Command::PickRelaxation4,
+            CommandId::SaveFile => Command::SaveFile,
             CommandId::Compose => Command::Compose { draft: None },
             CommandId::Send => Command::Send,
             CommandId::ScheduleSend => Command::ScheduleSend,

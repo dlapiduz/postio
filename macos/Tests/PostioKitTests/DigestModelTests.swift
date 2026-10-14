@@ -81,7 +81,7 @@ struct DigestModelTests {
         #expect(model.view?.page == .summary)
         #expect(model.view?.topics.count == 2)
         #expect(model.focusedTopic == 0, "the card stands under the focused reference's topic")
-        #expect(model.archiveCap == "A")
+        #expect(model.archiveCap == "⇧A")
         #expect(model.ruleCap == "d")
     }
 

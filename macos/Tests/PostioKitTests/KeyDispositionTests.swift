@@ -72,4 +72,30 @@ import Testing
         // field's.
         #expect(!KeyDisposition.belongsToText(chord("k"), typing: true))
     }
+
+    // -- the Files grid's arrows are the grid's (spec 010 T130) ----------
+
+    private func named(_ name: String, shift: Bool = false, command: Bool = false) -> KeyEvent.Reduced {
+        KeyEvent.Reduced(
+            character: nil, name: name,
+            modifiers: ModifiersFfi(control: false, option: false, shift: shift, command: command))
+    }
+
+    @Test func theFilesGridKeepsItsBareArrows() {
+        for arrow in ["left", "right", "up", "down"] {
+            #expect(KeyDisposition.belongsToGrid(named(arrow), gridFocused: true), "\(arrow)")
+            #expect(!KeyDisposition.belongsToGrid(named(arrow), gridFocused: false), "\(arrow), elsewhere")
+        }
+        // A chord is still a command: ⌘↓ saves, ⌥← steps the timeline.
+        #expect(!KeyDisposition.belongsToGrid(named("down", command: true), gridFocused: true))
+        #expect(!KeyDisposition.belongsToGrid(named("left", shift: true), gridFocused: true))
+        // And every other key still resolves: Space, Return, j.
+        #expect(!KeyDisposition.belongsToGrid(named("return"), gridFocused: true))
+        #expect(
+            !KeyDisposition.belongsToGrid(
+                KeyEvent.Reduced(
+                    character: "j", name: nil,
+                    modifiers: ModifiersFfi(control: false, option: false, shift: false, command: false)),
+                gridFocused: true))
+    }
 }

@@ -74,6 +74,9 @@ chrono = { workspace = true, features = ["std"] }
 # The index schema and `index_body`, so a search test seeds a store the way
 # the indexer would rather than asserting against an empty index.
 postio-index.workspace = true
+# The search demo store (spec 010): two years of invented mail, indexed,
+# for what typing quickly over a real-sized index costs.
+postio-demo.workspace = true
 postio-storage = { workspace = true, features = ["test-support"] }
 # The shared deadline dial: every wall-clock wait in a test answers to
 # `POSTIO_TEST_PATIENCE` (#842, #957).

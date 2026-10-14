@@ -355,6 +355,23 @@ impl Cursor {
         }
     }
 
+    /// The cursor and the selection as they are, drawn again: the list
+    /// shown again after the results it was hidden under (spec 010 D17).
+    pub(crate) fn redraw(&self, total: u32) -> Vec<Step> {
+        let mut steps: Vec<Step> = self
+            .position
+            .map(|position| {
+                Step::Show(Intent::Cursor {
+                    position,
+                    to_top: false,
+                })
+            })
+            .into_iter()
+            .collect();
+        steps.extend(self.selection_steps(true, total));
+        steps
+    }
+
     fn selection_steps(&self, changed: bool, total: u32) -> Vec<Step> {
         if !changed {
             return Vec::new();

@@ -182,6 +182,64 @@ ALTER TABLE drafts ADD COLUMN rich INTEGER NOT NULL DEFAULT 0;
             include_str!("schema/content-projection.sql"),
         ),
     },
+    // Spec 010, search for Focus: what the search bar remembers. Both tables
+    // are new, so a store gains them empty and nothing is backfilled.
+    Migration {
+        from: stamp(0xdcb8_490f),
+        to: stamp(0x3235_e866),
+        statements: "
+CREATE TABLE IF NOT EXISTS recent_searches (
+    query        TEXT    PRIMARY KEY,
+    last_run_at  INTEGER NOT NULL,
+    hits         INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS saved_search_seen (
+    key         TEXT    PRIMARY KEY,
+    seen_up_to  INTEGER NOT NULL
+);
+",
+    },
+    // Spec 010 D30: the search walk's people, labels and attachment count
+    // as columns on `messages`, kept by triggers, so a broad search reads
+    // three columns where it ran three lookups per matched message. Filled
+    // here from the rows the store already holds, once, in the step's
+    // transaction.
+    Migration {
+        from: stamp(0x3235_e866),
+        to: stamp(0x72d3_2a05),
+        statements: concat!(
+            "
+ALTER TABLE messages ADD COLUMN people_ids TEXT;
+
+ALTER TABLE messages ADD COLUMN label_ids TEXT;
+
+ALTER TABLE messages ADD COLUMN attachment_count INTEGER NOT NULL DEFAULT 0;
+
+UPDATE messages SET
+    people_ids = (SELECT group_concat(CASE r.kind WHEN 'from' THEN -r.address_id
+                                                  ELSE r.address_id END)
+                    FROM recipients r
+                   WHERE r.message_id = messages.id
+                     AND r.kind IN ('from', 'to', 'cc', 'bcc')),
+    label_ids = (SELECT group_concat(ml.label_id) FROM message_labels ml
+                  WHERE ml.message_id = messages.id),
+    attachment_count = (SELECT count(*) FROM attachments f
+                         WHERE f.message_id = messages.id);
+",
+            include_str!("schema/walk-columns.sql"),
+        ),
+    },
+    // Spec 010 D30: a recent search remembers whether its count stopped at
+    // the walk's cap. A row from before is taken as exact, which is what
+    // its Recent row already said.
+    Migration {
+        from: stamp(0x72d3_2a05),
+        to: stamp(0x804e_6e62),
+        statements: "
+ALTER TABLE recent_searches ADD COLUMN capped INTEGER NOT NULL DEFAULT 0;
+",
+    },
 ];
 
 /// The steps that carry a store stamped `found` to [`FINGERPRINT`], in the
@@ -801,7 +859,18 @@ CREATE TABLE messages (
     content_key             TEXT,
     -- Whether the content holds a header block, kept here so the header
     -- backfill can find what still needs one without reading contents.
-    body_has_headers        INTEGER NOT NULL DEFAULT 0
+    body_has_headers        INTEGER NOT NULL DEFAULT 0,
+    -- What a search walk reads of each matched message besides its own
+    -- columns (spec 010 D30), kept by the triggers in `walk-columns.sql`
+    -- so the walk reads three columns instead of three lookups a row.
+    -- `people_ids`: the address ids of its From, To, Cc and Bcc rows,
+    -- comma-separated, a From negated -- exactly the `group_concat` the
+    -- lookup made, so the reader parses what it always parsed; NULL with
+    -- nobody. `label_ids`: its labels' ids, the same way. Neither has an
+    -- order. `attachment_count`: its `attachments` rows.
+    people_ids              TEXT,
+    label_ids               TEXT,
+    attachment_count        INTEGER NOT NULL DEFAULT 0
 );
 
 -- The body folded for the full-text index, one row per indexed message.
@@ -878,6 +947,21 @@ CREATE TABLE recipients (
     CHECK ((message_id IS NOT NULL) <> (draft_id IS NOT NULL))
 );
 
+-- The searches a person ran (spec 010 D16): the results view opened, a hit
+-- opened from the dropdown, or a saved search run. Never each keystroke. The
+-- last 20 distinct queries are kept; older rows are deleted on insert.
+CREATE TABLE recent_searches (
+    -- Exactly as run: the one query language.
+    query        TEXT    PRIMARY KEY,
+    -- UTC ms.
+    last_run_at  INTEGER NOT NULL,
+    -- Conversations, as the footer said.
+    hits         INTEGER NOT NULL,
+    -- 1 when that search stopped at its walk's cap, so `hits` is a floor
+    -- and the Recent row says "5,000+ results" (spec 010 D30).
+    capped       INTEGER NOT NULL DEFAULT 0
+);
+
 -- A reminder to follow up (spec 007 US5, research R7): when nobody but the
 -- person has written in the conversation by `due_at`, the conversation
 -- comes back to the top of Focus's inbox, marked "No reply since" the day
@@ -900,6 +984,16 @@ CREATE TABLE reminders (
     cancelled_at       INTEGER,
     -- When a surfaced reminder stopped standing: a reply came after all.
     settled_at         INTEGER
+);
+
+-- Per saved search, the newest message the person has seen its results up
+-- to (spec 010 D15); the badge counts matches received after it. Keyed by
+-- the `[saved_searches.<key>]` identity in `config.toml`, so a row whose
+-- saved search was deleted is an orphan that `forget_seen_except` removes.
+CREATE TABLE saved_search_seen (
+    key         TEXT    PRIMARY KEY,
+    -- UTC ms, a `received_at`.
+    seen_up_to  INTEGER NOT NULL
 );
 
 CREATE TABLE settings (
@@ -1286,7 +1380,8 @@ BEGIN
      WHERE id = NEW.mailbox_id;
 END;;"#,
     include_str!("schema/content-locations.sql"),
-    include_str!("schema/content-projection.sql")
+    include_str!("schema/content-projection.sql"),
+    include_str!("schema/walk-columns.sql")
 );
 
 /// What the schema declares, as names, without an engine.

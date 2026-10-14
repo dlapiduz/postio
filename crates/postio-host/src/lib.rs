@@ -268,6 +268,17 @@ struct Queued {
     command: Command,
     aim: StateSnapshot,
     invocation: Option<InvocationId>,
+    /// The command's target is a search's whole match, resolved when it
+    /// runs: in order with every other command, as one unit.
+    matching: Option<Matching>,
+}
+
+/// Every conversation a query matches but the rows taken back out
+/// (`Req::SendMatching`).
+struct Matching {
+    account: postio_model::AccountScope,
+    query: postio_search::ParsedQuery,
+    except: Vec<postio_model::MessageId>,
 }
 
 /// Whether `event` is a command speaking about itself, which only the
@@ -738,6 +749,22 @@ impl Inner {
                     refused => refused,
                 })
             }
+            Req::SendMatching {
+                command,
+                account,
+                query,
+                except,
+            } => InOrder::Answered(self.queue_command(Queued {
+                client,
+                command,
+                aim: StateSnapshot::default(),
+                invocation: None,
+                matching: Some(Matching {
+                    account,
+                    query,
+                    except,
+                }),
+            })),
             Req::NoteRemoved(mailbox, messages) => {
                 self.wiring.store.note_removed(mailbox, messages);
                 InOrder::Answered(Resp::Done)
@@ -800,10 +827,33 @@ impl Inner {
     }
 
     /// Run one client's command, aimed with that client's selection.
-    async fn run(&self, queued: Queued) {
+    async fn run(&self, mut queued: Queued) {
         let Some(entry) = self.entry(queued.client) else {
             return;
         };
+        if let Some(matching) = queued.matching.take() {
+            // A whole search's selection becomes its messages here, on the
+            // command queue: what the match holds when the verb runs, and
+            // one target, so one undo takes it all back. A match that could
+            // not be walked aims at nothing, which the verb refuses aloud.
+            let messages = match self.wiring.database.read().await {
+                Ok(reader) => postio_session::search::matching(
+                    &reader,
+                    matching.account,
+                    &matching.query,
+                    &matching.except,
+                )
+                .await
+                .unwrap_or_default(),
+                Err(error) => {
+                    tracing::warn!(%error, "no connection to walk the match with");
+                    Vec::new()
+                }
+            };
+            queued.command = queued
+                .command
+                .with_target(postio_core::MessageTarget::Messages(messages));
+        }
         let (quiet, _) = event_channel();
         entry.state.update(&quiet, |app| {
             app.adopt(queued.aim);
@@ -834,6 +884,7 @@ impl Inner {
         match request {
             Req::Send(..)
             | Req::SendTracked(..)
+            | Req::SendMatching { .. }
             | Req::NoteRemoved(..)
             | Req::SaveDraft { .. }
             | Req::QueueSend { .. }
@@ -937,6 +988,78 @@ impl Inner {
                 query,
                 scope,
             } => Resp::Facets(search::facets(&self.wiring.database, account, &query, scope).await),
+            Req::Conversations {
+                account,
+                query,
+                order,
+                offset,
+                limit,
+            } => Resp::Conversations(
+                search::conversations(&self.wiring.database, account, &query, order, offset, limit)
+                    .await
+                    .map(|found| Box::new(postio_client::protocol::Conversations(found))),
+            ),
+            Req::Passages {
+                query,
+                hits,
+                first_line,
+            } => Resp::Passages(
+                search::passages(&self.wiring.database, &query, &hits, first_line).await,
+            ),
+            Req::ConversationMatches { query, key } => Resp::Matches(
+                search::conversation_matches(&self.wiring.database, &query, key).await,
+            ),
+            Req::Files {
+                account,
+                query,
+                offset,
+                limit,
+            } => Resp::Files(
+                search::files(&self.wiring.database, account, &query, offset, limit).await,
+            ),
+            Req::People {
+                account,
+                query,
+                offset,
+                limit,
+            } => Resp::People(
+                search::people(&self.wiring.database, account, &query, offset, limit).await,
+            ),
+            Req::AttachmentCopy { attachment, dir } => Resp::Path(
+                parts::local_copy(&self.wiring.database, &self.wiring.blobs, attachment, &dir)
+                    .await,
+            ),
+            Req::Relaxations {
+                account,
+                query,
+                today,
+            } => Resp::Relaxed(
+                search::relaxations(&self.wiring.database, account, &query, today).await,
+            ),
+            Req::Suggest {
+                account,
+                prefix,
+                field,
+            } => Resp::Suggestions(Box::new(
+                search::suggest(&self.wiring.database, account, &prefix, field).await,
+            )),
+            Req::RecentSearches => search::recent(&self.wiring.database)
+                .await
+                .map_or_else(Resp::Failed, Resp::Recent),
+            Req::RememberSearch {
+                query,
+                hits,
+                capped,
+            } => done(search::remember(&self.wiring.database, &query, hits, capped).await),
+            Req::ForgetSearch(query) => done(search::forget(&self.wiring.database, &query).await),
+            Req::MarkSeen(key) => done(search::mark_seen(&self.wiring.database, &key).await),
+            Req::SavedCounts {
+                account,
+                today,
+                searches,
+            } => Resp::SavedCounts(
+                search::saved_counts(&self.wiring.database, account, today, &searches).await,
+            ),
             Req::StoredBody(message) => {
                 Resp::StoredBody(search::stored_body(&self.wiring.database, message).await)
             }
@@ -1786,12 +1909,16 @@ impl Inner {
         aim: StateSnapshot,
         invocation: Option<InvocationId>,
     ) -> Resp {
-        let queued = Queued {
+        self.queue_command(Queued {
             client,
             command,
             aim,
             invocation,
-        };
+            matching: None,
+        })
+    }
+
+    fn queue_command(&self, queued: Queued) -> Resp {
         match self.queue.try_send(queued) {
             Ok(()) => Resp::Done,
             Err(_) => Resp::Stopped,
@@ -1829,12 +1956,34 @@ impl Transport for Local {
             }
             InOrder::Later(request) => request,
         };
-        let (answer, answered) = tokio::sync::oneshot::channel();
+        let (mut answer, answered) = tokio::sync::oneshot::channel();
         let inner = Arc::clone(&self.inner);
         let client = self.client;
-        self.inner.runtime().spawn(async move {
-            let _ = answer.send(inner.answer(client, request).await);
-        });
+        if request.cancellable() {
+            // A search whose caller has gone stops at its next await (D9):
+            // the driver drops a superseded keystroke's future, and the
+            // search that replaced it should not wait behind it for a
+            // reader. Dropping a read mid-match leaves its connection clean
+            // (`turso_capabilities.rs`, R8).
+            let family = request.family();
+            self.inner.runtime().spawn(async move {
+                let resp = tokio::select! {
+                    biased;
+                    () = answer.closed() => None,
+                    resp = inner.answer(client, request) => Some(resp),
+                };
+                match resp {
+                    Some(resp) => {
+                        let _ = answer.send(resp);
+                    }
+                    None => tracing::debug!(family, "a search was abandoned"),
+                }
+            });
+        } else {
+            self.inner.runtime().spawn(async move {
+                let _ = answer.send(inner.answer(client, request).await);
+            });
+        }
         Box::pin(async move { answered.await.map_err(|_| Disconnected) })
     }
 

@@ -97,6 +97,7 @@ fn heading(context: Context) -> &'static str {
         Context::Digest => "Digests",
         Context::Filtered => "Filtered",
         Context::Capture => "Capture",
+        Context::Results => "Search results",
     }
 }
 

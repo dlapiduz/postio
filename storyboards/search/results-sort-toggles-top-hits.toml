@@ -1,0 +1,35 @@
+# Sort decides whether the results have Top hits (specs/010-focus-search
+# US2 scenario 1, FR-022, FR-024, design §3.2 and §3.4): Best match, the
+# default when the query has words, puts at most three Top hits first,
+# each saying under the sender why it ranked, then the month groups;
+# Newest has only the month groups, newest first.
+#
+# The Mac's own: see results-enter-and-leave.toml.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/010-focus-search US2" }
+seed   = "search"
+design = "06-results"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "search"
+
+[[step]]
+type    = "atlas budget"
+
+[[step]]
+command = "show_all_results"
+check   = { keyboard.region = "results" }
+expect  = "Sort reads “Best match”. Top hits holds three rows, each with a reason line (“you replied · 3 matches”, “you flagged · 2 matches”, “frequent sender · file name”), then “September 2026 · 9”."
+
+[[step]]
+command = "toggle_result_order"
+check   = { keyboard.region = "results" }
+expect  = "Sort reads “Newest”. There is no Top hits group: the first group is “September 2026 · 9” and its first row is the newest match. The counts and the timeline are unchanged."
+
+[[step]]
+command = "toggle_result_order"
+check   = { keyboard.region = "results" }
+expect  = "Back to “Best match”: Top hits is first again, with the same three rows."

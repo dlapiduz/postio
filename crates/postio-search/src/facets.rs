@@ -29,6 +29,9 @@
 //! Refinements are the opposite, and deliberately so: clicking one *appends a
 //! chip*, because it is a token the user could have typed.
 
+use chrono::{Datelike, Months, NaiveDate};
+use postio_model::{AddressId, LabelId, MailboxId};
+
 /// Which slice of the mailbox a search looks at.
 ///
 /// Not a mailbox id: this is the standing, no-typing rescope from the canvas'
@@ -168,9 +171,126 @@ pub fn append(query: &str, token: &str) -> String {
     format!("{query} {token}")
 }
 
+/// The facets of a conversation search (spec 010): what the filter
+/// buttons, their popovers and the timeline count.
+///
+/// Beside [`Facets`], which GTK's search keeps. Every count is of
+/// conversations, and of the query with that term added (SC-008). Names and
+/// addresses are not here: `postio-session` resolves the ids it returns.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SearchFacets {
+    /// Senders, the top 50 by count.
+    pub senders: Vec<Count<AddressId>>,
+    /// Recipients (To, Cc), the top 50 by count.
+    pub recipients: Vec<Count<AddressId>>,
+    /// Labels.
+    pub labels: Vec<Count<LabelId>>,
+    /// Folders.
+    pub folders: Vec<Count<MailboxId>>,
+    /// Conversations with an attachment.
+    pub attachment: u64,
+    /// Conversations with an open marker (`has:action`).
+    pub action: u64,
+    /// Conversations with something unread.
+    pub unread: u64,
+    /// The timeline: oldest first, ending with today's month
+    /// ([`months_ending`]).
+    pub months: [MonthCount; 12],
+    /// The Date popover's presets: last 7 days, last 30 days, this quarter,
+    /// this year, any time.
+    pub presets: [u64; 5],
+    /// The match was capped: every count is a floor.
+    pub capped: bool,
+}
+
+/// How many conversations one facet value holds.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Count<T> {
+    /// The value: a person, a label, a folder.
+    pub id: T,
+    /// Conversations.
+    pub conversations: u64,
+}
+
+/// One bar of the timeline.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MonthCount {
+    /// The month's first day.
+    pub month: NaiveDate,
+    /// Conversations whose newest match fell in it (D4).
+    pub conversations: u64,
+}
+
+/// The first days of the twelve months ending with `today`'s, oldest first:
+/// the timeline's bars.
+pub fn months_ending(today: NaiveDate) -> [NaiveDate; 12] {
+    let this = today.with_day(1).unwrap_or(today);
+    std::array::from_fn(|index| {
+        let back = u32::try_from(11 - index).unwrap_or(0);
+        this.checked_sub_months(Months::new(back)).unwrap_or(this)
+    })
+}
+
+/// Where the Date popover's five presets start, in [`SearchFacets::presets`]
+/// order: last 7 days, last 30 days, this quarter, this year, and any time
+/// (`None`, no start).
+///
+/// Each is the `after:` its words lower to, so a preset's count is the
+/// count of the query with that `after:` added: "the last 30 days" is
+/// [`crate::natural`]'s rolling `after:` thirty days back, and a quarter or
+/// a year starts on its first day.
+pub fn preset_starts(today: NaiveDate) -> [Option<NaiveDate>; 5] {
+    let back = |days: u64| today.checked_sub_days(chrono::Days::new(days));
+    let quarter = (today.month0() / 3) * 3 + 1;
+    [
+        back(7),
+        back(30),
+        NaiveDate::from_ymd_opt(today.year(), quarter, 1),
+        NaiveDate::from_ymd_opt(today.year(), 1, 1),
+        None,
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_timeline_is_twelve_months_ending_with_this_one() {
+        let day = |y, m, d| chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        let months = months_ending(day(2026, 2, 14));
+        assert_eq!(months.len(), 12);
+        assert_eq!(months[0], day(2025, 3, 1), "oldest first, across a year");
+        assert_eq!(months[9], day(2025, 12, 1));
+        assert_eq!(months[10], day(2026, 1, 1));
+        assert_eq!(months[11], day(2026, 2, 1), "ending with today's month");
+        assert!(months.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(
+            months_ending(day(2026, 12, 31))[0],
+            day(2026, 1, 1),
+            "December's twelve are one calendar year"
+        );
+    }
+
+    #[test]
+    fn the_date_presets_start_where_their_words_would() {
+        let day = |y, m, d| chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        // "the last 7 days" and "the last 30 days" lower to an `after:` that
+        // many days back (`natural`); a quarter and a year from their first
+        // day; any time has no start.
+        assert_eq!(
+            preset_starts(day(2026, 9, 30)),
+            [
+                Some(day(2026, 9, 23)),
+                Some(day(2026, 8, 31)),
+                Some(day(2026, 7, 1)),
+                Some(day(2026, 1, 1)),
+                None,
+            ]
+        );
+        assert_eq!(preset_starts(day(2026, 2, 3))[2], Some(day(2026, 1, 1)));
+        assert_eq!(preset_starts(day(2026, 12, 31))[2], Some(day(2026, 10, 1)));
+    }
 
     fn refinement(token: &str, hits: u64) -> Refinement {
         Refinement {

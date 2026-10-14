@@ -11,7 +11,12 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use postio_model::{EmailAddress, MailboxId, MessageId, ThreadId};
+use postio_model::{
+    AddressId, AttachmentId, EmailAddress, LabelId, MailboxId, MessageId, ThreadId,
+};
+
+use crate::facets::SearchFacets;
+pub use crate::passage::Passage;
 
 /// Which order a result set comes back in.
 ///
@@ -159,6 +164,296 @@ pub struct Instead {
 /// "how broad is this" signal for the planner, and a cap for the display.
 /// FTS5 offers no cheap count, which is what makes that hard.
 pub const TOTAL_HITS_CAP: u64 = 10_000;
+
+/// How many matched messages a conversation search walks (spec 010 D30):
+/// its total, its facets, its months, and the Files and People tabs are
+/// counted over at most this many, and past it every one is a floor
+/// ("5,000+").
+///
+/// Half of [`TOTAL_HITS_CAP`], and its own constant rather than that one
+/// lowered, because the two bound different work. The conversation walk
+/// reads every matched row whole -- its conversation, folder, dates,
+/// flags, people, labels and files -- and is linear in rows: at 10,000 the
+/// common word took 56 ms of its 50 ms budget, and at 5,000 it is about
+/// half. `TOTAL_HITS_CAP` is also what GTK's `search` reads to choose a
+/// plan (see above), and what the relaxations' cheaper count walks to;
+/// neither is this walk, and lowering it would move both.
+pub const CONVERSATION_WALK_CAP: u64 = 5_000;
+
+/// How many conversations a walk found, and whether it stopped at its cap:
+/// past it `conversations` is a floor, and every place it is drawn says so
+/// ("10,000+", D30). What a way out of no results and a saved search count.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Counted {
+    /// The conversations among the matches walked.
+    pub conversations: u64,
+    /// The walk stopped at its cap: `conversations` is a floor.
+    pub capped: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Conversation search (spec 010)
+// ---------------------------------------------------------------------------
+
+/// Where in a message a match was found: the row's source tag.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Source {
+    /// The subject line.
+    Subject,
+    /// The body, the person's own words.
+    Body,
+    /// The body's quoted history.
+    Quoted,
+    /// An attachment's file name.
+    FileName {
+        /// The attachment.
+        attachment: AttachmentId,
+        /// Its file name.
+        name: String,
+    },
+    /// What an attachment says.
+    FileContent {
+        /// The attachment.
+        attachment: AttachmentId,
+        /// Its file name.
+        name: String,
+        /// Where in it.
+        location: Location,
+    },
+}
+
+/// Where in an attachment a passage sits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Location {
+    /// A PDF page, 1-based.
+    Page(u32),
+    /// A spreadsheet row, 1-based, in a named sheet.
+    Sheet {
+        /// The sheet's name.
+        name: String,
+        /// The row, 1-based.
+        row: u32,
+    },
+    /// A presentation slide, 1-based.
+    Slide(u32),
+    /// A document paragraph, 1-based.
+    Paragraph(u32),
+    /// A line of plain text, 1-based.
+    Line(u32),
+    /// Reserved: a row of a table in a document.
+    Table {
+        /// Which table, 1-based.
+        index: u32,
+        /// The row, 1-based.
+        row: u32,
+    },
+    /// Reserved: text read from an image.
+    ImageText,
+}
+
+/// One place a message matched, and the words around it once they are cut.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Match {
+    /// Where.
+    pub source: Source,
+    /// The words around it; `None` until `Req::Passages` fills it, or when
+    /// there is no local text to cut it from.
+    pub passage: Option<Passage>,
+    /// When the matching message arrived.
+    pub when: Option<DateTime<Utc>>,
+}
+
+/// One match in a conversation, as Quick Look lists them (spec 010 US4):
+/// a [`Match`] with the message it is in and who wrote that message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConversationMatch {
+    /// The message it is in; `None` for the conversation's subject, which
+    /// is one match however many messages carry it.
+    pub message: Option<MessageId>,
+    /// Who wrote the words; `None` for the subject and for quoted history,
+    /// whose writer the quote does not say.
+    pub from: Option<EmailAddress>,
+    /// Where, the words around it, and when it was sent.
+    pub found: Match,
+    /// Who its message was sent to, the To line in order; empty for the
+    /// subject. Quick Look's sender line says it ("to you, Finance team").
+    pub to: Vec<Addressee>,
+}
+
+/// One person a message was sent to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Addressee {
+    /// Their address, with the name the header gave it.
+    pub address: EmailAddress,
+    /// An account's or an identity's address: the person searching.
+    pub own: bool,
+}
+
+/// Why a conversation ranks where it does: the row's reason line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RankReason {
+    /// The person replied in it.
+    Replied,
+    /// The person flagged it.
+    Flagged,
+    /// From someone the person often hears from.
+    FrequentSender,
+    /// The words are in the subject.
+    InSubject,
+    /// The words are in an attachment's name.
+    InFileName,
+    /// How many of its messages matched; always last.
+    Matches(u32),
+}
+
+/// What one result row stands for: a thread, or a message threading never
+/// joined to one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ConversationKey {
+    /// A thread.
+    Thread(ThreadId),
+    /// A message on its own.
+    Lone(MessageId),
+}
+
+/// One conversation that matched.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConversationHit {
+    /// Which conversation.
+    pub key: ConversationKey,
+    /// The message the row shows and opens: its best match.
+    pub best: MessageId,
+    /// The best message's folder.
+    pub mailbox_id: MailboxId,
+    /// The best message's subject.
+    pub subject: Option<String>,
+    /// The best message's sender.
+    pub from: Option<EmailAddress>,
+    /// When its newest matching message arrived: decides its month (D4).
+    pub newest_match: DateTime<Utc>,
+    /// Messages in the conversation: the count badge.
+    pub messages: u32,
+    /// Anything in it unread.
+    pub unread: bool,
+    /// Anything in it with an attachment.
+    pub has_attachments: bool,
+    /// Its labels.
+    pub labels: Vec<LabelId>,
+    /// Lower is better, as [`SearchHit::score`].
+    pub score: f64,
+    /// Why it ranks here; `Matches` always last.
+    pub reasons: Vec<RankReason>,
+    /// Where it matched; passages filled by a read of their own.
+    pub matches: Vec<Match>,
+}
+
+/// What one conversation search produced.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConversationResults {
+    /// This page.
+    pub hits: Vec<ConversationHit>,
+    /// Conversations that match, among the first
+    /// [`CONVERSATION_WALK_CAP`] matched messages.
+    pub total: u64,
+    /// Whether the walk stopped at its cap: `total`, the facets, `files`
+    /// and `people` are then floors.
+    pub capped: bool,
+    /// Messages the search looked through: "Searched all 18,204 messages".
+    pub messages_searched: u64,
+    /// Every message's body is indexed (as [`SearchResults::corpus_complete`]).
+    pub corpus_complete: bool,
+    /// Every downloaded attachment's text is extracted.
+    pub contents_complete: bool,
+    /// The filter buttons' and timeline's counts.
+    pub facets: SearchFacets,
+    /// Matching files: the Files tab's count.
+    pub files: u64,
+    /// Matching people: the People tab's count.
+    pub people: u64,
+    /// The names behind the facets' ids and the hits' labels. Empty from
+    /// the executor; `postio-session` reads them.
+    pub names: FacetNames,
+    /// How long it took.
+    pub elapsed: Duration,
+}
+
+/// What the ids a conversation search returns are called: the filter
+/// buttons' and popovers' words ("From: Ada Moreno"), and the rows' label
+/// pills.
+///
+/// Read once per kind for the counts a search returns rather than carried
+/// on each count, so a facet of fifty people costs one read, not fifty.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FacetNames {
+    /// Senders and recipients: the address, with the name its mail gave it.
+    pub people: Vec<(AddressId, EmailAddress)>,
+    /// Which of `people` are the person searching: an account's or an
+    /// identity's address. The facets count them -- you are in every
+    /// message you sent -- but nothing offers you as someone to narrow to,
+    /// as the People tab leaves you out.
+    pub own: Vec<AddressId>,
+    /// Labels, by their names.
+    pub labels: Vec<(LabelId, String)>,
+    /// The colours labels were given (`#rrggbb`), for the rows' pills;
+    /// a label with none is not here.
+    pub label_colors: Vec<(LabelId, String)>,
+    /// Folders, by their names.
+    pub folders: Vec<(MailboxId, String)>,
+}
+
+/// The results view's two orders.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ConversationOrder {
+    /// Ranked, with Top hits first.
+    #[default]
+    BestMatch,
+    /// Newest first, in month groups only.
+    Newest,
+}
+
+impl From<ConversationOrder> for ResultOrder {
+    fn from(order: ConversationOrder) -> Self {
+        match order {
+            ConversationOrder::BestMatch => ResultOrder::Relevance,
+            ConversationOrder::Newest => ResultOrder::Newest,
+        }
+    }
+}
+
+/// The results view's tabs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ResultsTab {
+    /// Conversations.
+    #[default]
+    Conversations,
+    /// Files.
+    Files,
+    /// People.
+    People,
+}
+
+/// One attachment that matched: a card on the Files tab.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileHit {
+    /// The attachment.
+    pub attachment: AttachmentId,
+    /// The message carrying it.
+    pub message: MessageId,
+    /// Its file name.
+    pub name: String,
+    /// Its MIME type.
+    pub mime_type: String,
+    /// Its size in bytes.
+    pub size: u64,
+    /// Who sent it.
+    pub from: Option<EmailAddress>,
+    /// When it arrived.
+    pub received_at: DateTime<Utc>,
+    /// The message's subject.
+    pub subject: Option<String>,
+    /// Where it matched: its name, or a located passage of its content.
+    pub matched: Option<Match>,
+}
 
 #[cfg(test)]
 mod tests {

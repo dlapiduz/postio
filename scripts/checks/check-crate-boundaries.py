@@ -24,6 +24,10 @@ The invariants (see docs/ARCHITECTURE.md; CLAUDE.md, "What the code must do"):
     pure leaf: the composer's document, the HTML subset, quoting and
     sanitising, kept out of ``postio-model`` only because ``ammonia`` pulls an
     HTML parser (ADR 0004) -- not because it needed a toolkit or a database.
+  * ``postio-extract`` must not depend on a store engine, ``tokio``, a network
+    client, a toolkit or an inference engine. It reads the text inside an
+    attachment already on this machine -- bytes in, located units out -- and
+    the indexer in ``postio-session`` does the rest (spec 010 FR-052).
   * ``postio-model`` must not depend on ``ammonia``/``html5ever``,
     ``rusqlite``/``turso``/``gtk4``, or ``tokio``. ADR 0004 Q1 rejected putting the
     composer's document here for exactly this reason -- dependency weight on
@@ -662,6 +666,32 @@ RULES: dict[str, dict[str, object]] = {
             "all depend on postio-search directly, so the same query string has "
             "to mean the same thing in the search bar, the sidebar and "
             "[saved_searches], which only holds if this crate does no SQL of its own."
+        ),
+    },
+    "postio-extract": {
+        "banned": [
+            "rusqlite",
+            "libsqlite3-sys",
+            "turso",
+            "turso_core",
+            "tokio",
+            "async-std",
+            *NETWORK_CRATES,
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "libadwaita",
+            *INFERENCE_ENGINES,
+        ],
+        "why": (
+            "postio-extract reads the text inside an attachment that is "
+            "already on this machine: bytes in, located units out "
+            "(specs/010-focus-search D10, FR-052). The indexer in "
+            "postio-session reads the blob and writes the rows; a store "
+            "engine, a runtime, a network client, a toolkit or an inference "
+            "engine here would let a parser of hostile files reach what it "
+            "has no business reaching, and would put that weight in every "
+            "app that indexes."
         ),
     },
     "postio-body": {

@@ -32,12 +32,21 @@ pub fn perform_now(client: &Client, request: Request) -> Result<Reply, Request> 
             client.note_removed(mailbox, messages);
             Ok(Reply::Noted)
         }
+        // A copy handed to the system's Quick Look or save panel is done
+        // with (FR-053). Only ever one of `file_copies`' own: a path from
+        // anywhere else is left alone.
+        Request::RemoveCopy(path) => {
+            crate::results::remove_copy(&path);
+            Ok(Reply::Noted)
+        }
         other => Err(other),
     }
 }
 
 /// Ask the engine; return what the controller is to be told.
 pub async fn perform(client: &Client, request: Request) -> Reply {
+    // How a passage treats the first line is the request's to say (D7).
+    let first_line = request.first_line().unwrap_or_default();
     match request {
         Request::FocusCounts => Reply::FocusCounts(
             client
@@ -141,6 +150,209 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
             stamp,
             answer: search(client, query, order).await,
         },
+        Request::Conversations {
+            query,
+            order,
+            limit,
+            stamp,
+        } => Reply::Conversations {
+            stamp,
+            answer: client
+                .conversations(postio_model::AccountScope::Unified, query, order, 0, limit)
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|found| found.ok_or_else(|| "no search index here".to_owned()))
+                .map(Box::new),
+        },
+        Request::Passages { query, hits, stamp } => Reply::Passages {
+            stamp,
+            answer: client
+                .passages(query, hits, first_line)
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::ResultsPage {
+            query,
+            order,
+            offset,
+            limit,
+            stamp,
+        } => Reply::ResultsPage {
+            stamp,
+            order,
+            offset,
+            answer: client
+                .conversations(
+                    postio_model::AccountScope::Unified,
+                    query,
+                    order,
+                    offset,
+                    limit,
+                )
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|found| found.ok_or_else(|| "no search index here".to_owned()))
+                .map(Box::new),
+        },
+        Request::ResultsPassages { query, hits, stamp } => Reply::ResultsPassages {
+            stamp,
+            answer: client
+                .passages(query, hits, first_line)
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::Files { query, stamp } => Reply::Files {
+            stamp,
+            answer: client
+                .files(
+                    postio_model::AccountScope::Unified,
+                    query,
+                    0,
+                    crate::results::FILES_READ,
+                )
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::People { query, stamp } => Reply::People {
+            stamp,
+            answer: client
+                .people(
+                    postio_model::AccountScope::Unified,
+                    query,
+                    0,
+                    crate::results::PEOPLE_READ,
+                )
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::AttachmentCopy {
+            attachment,
+            purpose,
+            stamp,
+        } => Reply::AttachmentCopy {
+            stamp,
+            purpose,
+            answer: client
+                .attachment_copy(attachment, crate::results::file_copies())
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::RemoveCopy(path) => {
+            crate::results::remove_copy(&path);
+            Reply::Noted
+        }
+        Request::QuickLookMatches { query, key, stamp } => Reply::QuickLookMatches {
+            stamp,
+            answer: client
+                .conversation_matches(query, key)
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        Request::Relaxations {
+            query,
+            today,
+            stamp,
+        } => Reply::Relaxations {
+            stamp,
+            answer: client
+                .relaxations(postio_model::AccountScope::Unified, query, today)
+                .await
+                .map_err(|error| error.to_string()),
+        },
+        // The facets alone: no hit is read.
+        Request::Facets { query, stamp } => Reply::Facets {
+            stamp,
+            answer: client
+                .conversations(
+                    postio_model::AccountScope::Unified,
+                    query,
+                    postio_search::results::ConversationOrder::Newest,
+                    0,
+                    0,
+                )
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|found| found.ok_or_else(|| "no search index here".to_owned()))
+                .map(Box::new),
+        },
+        Request::Suggest {
+            prefix,
+            field,
+            stamp,
+        } => Reply::Suggest {
+            stamp,
+            answer: client
+                .suggest(postio_model::AccountScope::Unified, prefix, field)
+                .await
+                .map(Box::new)
+                .map_err(|error| error.to_string()),
+        },
+        // Two, newest first: the "Latest from" preview under the people.
+        Request::LatestFrom { address, stamp } => {
+            let query = postio_search::parse(
+                &postio_search::query::spell(&postio_search::query::Clause {
+                    negated: false,
+                    filter: postio_search::query::Filter::From(address.clone()),
+                }),
+                postio_ui::clock::now().date_naive(),
+            );
+            Reply::LatestFrom {
+                stamp,
+                address,
+                answer: client
+                    .conversations(
+                        postio_model::AccountScope::Unified,
+                        query,
+                        postio_search::results::ConversationOrder::Newest,
+                        0,
+                        crate::dropdown::LATEST,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())
+                    .and_then(|found| found.ok_or_else(|| "no search index here".to_owned()))
+                    .map(Box::new),
+            }
+        }
+        Request::RecentSearches => Reply::RecentSearches(
+            client
+                .recent_searches()
+                .await
+                .map_err(|error| error.to_string()),
+        ),
+        Request::RememberSearch {
+            query,
+            hits,
+            capped,
+        } => {
+            if let Err(error) = client.remember_search(query, hits, capped).await {
+                tracing::warn!(%error, "Focus could not keep a recent search");
+            }
+            Reply::Noted
+        }
+        // Answered with what is left, so the panel needs no second read.
+        Request::ForgetSearch { query } => {
+            if let Err(error) = client.forget_search(query).await {
+                tracing::warn!(%error, "Focus could not forget a recent search");
+            }
+            Reply::RecentSearches(
+                client
+                    .recent_searches()
+                    .await
+                    .map_err(|error| error.to_string()),
+            )
+        }
+        Request::MarkSeen { key } => {
+            if let Err(error) = client.mark_seen(key).await {
+                tracing::warn!(%error, "Focus could not mark a saved search seen");
+            }
+            Reply::Noted
+        }
+        Request::SavedCounts { searches, today } => Reply::SavedCounts(
+            client
+                .saved_counts(postio_model::AccountScope::Unified, today, searches)
+                .await
+                .map_err(|error| error.to_string()),
+        ),
         Request::Folder { mailbox, stamp } => {
             let scope = ListScope::Mailbox(mailbox);
             let count = client
@@ -364,6 +576,7 @@ async fn places(client: &Client) -> Result<PlacesRead, String> {
     let mut owners = Vec::new();
     for account in &enabled {
         for mailbox in client.mailboxes(account.id).await.unwrap_or_default() {
+            read.messages += searched(&mailbox);
             owners.push((mailbox.id, account.address.address.clone()));
             read.folders.push((mailbox.id, rules::place_name(&mailbox)));
             read.places.push(rules::mailbox_place(&mailbox));
@@ -416,6 +629,17 @@ async fn places(client: &Client) -> Result<PlacesRead, String> {
         read.owners = owners;
     }
     Ok(read)
+}
+
+/// The messages of `mailbox` a search looks through: its maintained total
+/// (ADR 0040), for every folder but drafts, junk and trash, which the
+/// search's All mail leaves out (#1523) as the results' "Searched 18,204
+/// messages" does.
+fn searched(mailbox: &postio_model::Mailbox) -> u64 {
+    match mailbox.role {
+        MailboxRole::Drafts | MailboxRole::Junk | MailboxRole::Trash => 0,
+        _ => u64::from(mailbox.counts.total),
+    }
 }
 
 /// Search this machine's index for the bar: one row per conversation, and
@@ -559,6 +783,17 @@ async fn send(
     aims: Vec<MessageTarget>,
     everything: Option<crate::Everything>,
 ) -> Result<(), String> {
+    if let Some(crate::Everything {
+        query: Some(query),
+        except,
+        ..
+    }) = everything
+    {
+        return client
+            .send_matching(command, postio_model::AccountScope::Unified, query, except)
+            .await
+            .map_err(|error| error.to_string());
+    }
     if let Some(everything) = everything {
         let state = SharedState::default();
         let (sink, _) = postio_core::bridge::event_channel();
@@ -638,6 +873,23 @@ mod tests {
         match pin!(future).poll(&mut Context::from_waker(Waker::noop())) {
             Poll::Ready(output) => output,
             Poll::Pending => panic!("a scripted answer is ready on the first poll"),
+        }
+    }
+
+    #[test]
+    fn the_index_holds_what_all_mail_searches_by_the_folders_totals() {
+        let held = |role: MailboxRole| {
+            let mut mailbox =
+                postio_model::Mailbox::new(postio_model::AccountId::new(1), "Folder", None);
+            mailbox.role = role;
+            mailbox.counts.total = 40;
+            super::searched(&mailbox)
+        };
+        assert_eq!(held(MailboxRole::Inbox), 40);
+        assert_eq!(held(MailboxRole::Sent), 40);
+        assert_eq!(held(MailboxRole::Regular), 40);
+        for left_out in [MailboxRole::Drafts, MailboxRole::Junk, MailboxRole::Trash] {
+            assert_eq!(held(left_out), 0, "{left_out:?} is not searched (#1523)");
         }
     }
 
