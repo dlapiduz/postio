@@ -2215,9 +2215,15 @@ async fn pump_body(
     let requests: Vec<_> = claims.iter().map(|claim| claim.request.clone()).collect();
     let prefetched = match store.connect_background().await {
         Ok(connection) => {
+            // Background only if every claim in the batch is: one the user
+            // or an arrival is waiting on lifts the whole command.
+            let quiet = claims
+                .iter()
+                .all(|claim| claim.priority == backfill::Priority::Background)
+                .then(|| background_backend(parts));
             let cache = backfill::prefetch_text_sections(
                 &connection,
-                parts.backend.as_ref(),
+                quiet.as_deref().unwrap_or(parts.backend.as_ref()),
                 &requests,
                 &cancel,
             )
@@ -2338,10 +2344,12 @@ async fn fetch_one_body(
     // so a borrow held across the await below would be the second borrower's
     // panic — the kind that compiles and then only fails under load.
     let mut mine = prefetched.map(|cache| cache.borrow_mut().split_for(&claim.request.remote_id));
+    let quiet =
+        (claim.priority == backfill::Priority::Background).then(|| background_backend(parts));
     let result = backfill::fetch_body(
         &connection,
         &parts.blobs,
-        parts.backend.as_ref(),
+        quiet.as_deref().unwrap_or(parts.backend.as_ref()),
         &claim.request,
         inline_cap,
         mine.as_mut(),
@@ -3379,6 +3387,16 @@ async fn claim_bodies_for_the_wave(
     (!claims.is_empty()).then_some(claims)
 }
 
+/// The account's server for work nobody is waiting on: the archive's
+/// headers and the background lane's bodies. See
+/// [`MailBackend::for_background`].
+fn background_backend(parts: &EngineParts) -> Arc<dyn MailBackend> {
+    parts
+        .backend
+        .for_background()
+        .unwrap_or_else(|| Arc::clone(&parts.backend))
+}
+
 /// What the wave's watch on the inbox came back with.
 ///
 /// # Its own clock, and a real `IDLE`
@@ -3456,9 +3474,15 @@ async fn fetch_bodies(
     let requests: Vec<_> = claims.iter().map(|claim| claim.request.clone()).collect();
     let prefetched = match store.connect_background().await {
         Ok(connection) => {
+            // Background only if every claim in the batch is: one the user
+            // or an arrival is waiting on lifts the whole command.
+            let quiet = claims
+                .iter()
+                .all(|claim| claim.priority == backfill::Priority::Background)
+                .then(|| background_backend(parts));
             let cache = backfill::prefetch_text_sections(
                 &connection,
-                parts.backend.as_ref(),
+                quiet.as_deref().unwrap_or(parts.backend.as_ref()),
                 &requests,
                 &cancel,
             )
@@ -3637,6 +3661,12 @@ async fn sync_pass(
 
     // A folder *path* is a name the user chose for a container, not a message
     // and not an address; it is what makes a per-mailbox line legible at all.
+    // INBOX is what a person is waiting on, new mail included; every other
+    // folder's headers are a backfill, and take a shared connection only
+    // when nothing a person asked for wants it.
+    let quiet =
+        (record.role != postio_model::MailboxRole::Inbox).then(|| background_backend(parts));
+    let backend = quiet.as_deref().unwrap_or(parts.backend.as_ref());
     tracing::Span::current().record("path", record.path.as_str());
     tracing::Span::current().record("incremental", synced_before);
     tracing::info!("sync started");
@@ -3671,14 +3701,9 @@ async fn sync_pass(
     let result = if synced_before {
         // Its arrivals go to the filing pass, when a host in Focus mode gave
         // this engine one; a first sync, below, never files (spec 007).
-        resync::resync_mailbox_filing(
-            connection,
-            parts.backend.as_ref(),
-            &record,
-            filing,
-            cancel,
-            |progress| committed.batch(progress),
-        )
+        resync::resync_mailbox_filing(connection, backend, &record, filing, cancel, |progress| {
+            committed.batch(progress)
+        })
         .await
         .map(|outcome| {
             if let resync::Outcome::Incremental {
@@ -3718,13 +3743,9 @@ async fn sync_pass(
             summarise_resync(outcome)
         })
     } else {
-        initial::sync_mailbox(
-            connection,
-            parts.backend.as_ref(),
-            &record,
-            cancel,
-            |progress| committed.batch(progress),
-        )
+        initial::sync_mailbox(connection, backend, &record, cancel, |progress| {
+            committed.batch(progress)
+        })
         .await
         .map(|report| SyncSummary {
             inserted: report.inserted,
