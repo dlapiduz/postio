@@ -1,8 +1,8 @@
 # The keys the open message's action row shows do what they say (found by the
 # generated pass).
 #
-# The action row draws Archive `a`, Snooze `s`, Remind `h`, Label `l`, Move
-# `m` and Delete `Del`. The reader's key handler (`reading_key`, window.rs)
+# The action row draws Archive `e`, Snooze `b`, Remind `h`, Label `l`, Move
+# `v` and Delete `#`. The reader's key handler (`reading_key`, window.rs)
 # gives each of them to the window, as the buttons do.
 #
 # Each key opens its picker over the message, and Escape closes the picker
@@ -31,4 +31,4 @@ expect  = "Escape closes the picker, and the message is still open with the keyb
 [[step]]
 command = "move"
 check   = { overlay.kind = "picker", keyboard.region = "picker", keyboard.field = "query", keyboard.typing = true }
-expect  = "`m` opens the folder picker, the caret in its filter field as the label picker's is."
+expect  = "`v` opens the folder picker, the caret in its filter field as the label picker's is."

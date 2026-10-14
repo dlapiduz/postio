@@ -2542,11 +2542,11 @@ mod tests {
         assert_eq!(
             said,
             [
-                ("a", "Archive"),
+                ("e", "Archive"),
                 ("l", "Label"),
-                ("m", "Move"),
-                ("r", "Mark read"),
-                ("s", "Snooze"),
+                ("v", "Move"),
+                ("I", "Mark read"),
+                ("b", "Snooze"),
             ]
         );
     }
@@ -2619,7 +2619,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 ("Open".to_owned(), "Return".to_owned()),
-                ("Archive".to_owned(), "a".to_owned()),
+                ("Archive".to_owned(), "e".to_owned()),
                 ("Close".to_owned(), "space".to_owned()),
             ]
         );

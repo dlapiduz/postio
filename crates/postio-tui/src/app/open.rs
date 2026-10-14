@@ -494,7 +494,7 @@ impl App {
         })]
     }
 
-    /// `[` and `]`: another message of the conversation. Its body is read
+    /// `p` and `n`: another message of the conversation. Its body is read
     /// the first time it is shown, and it starts its own read clock.
     pub(super) fn walk_conversation(&mut self, step: isize) -> Vec<Effect> {
         let Some(reading) = self.reading.as_mut() else {
@@ -520,7 +520,7 @@ impl App {
         effects
     }
 
-    /// `v`: the message as it came off the wire, in place of the message.
+    /// `V`: the message as it came off the wire, in place of the message.
     pub(super) fn view_source(&mut self) -> Vec<Effect> {
         let Some(message) = self
             .reading
@@ -563,7 +563,7 @@ impl App {
         }
     }
 
-    /// `o`: the message's links and its attachments, to choose one to open.
+    /// `A`: the message's links and its attachments, to choose one to open.
     pub(super) fn offer_choices(&mut self) -> Vec<Effect> {
         let Some(reading) = self.reading.as_ref() else {
             return Vec::new();

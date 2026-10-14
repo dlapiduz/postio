@@ -217,13 +217,13 @@ mod tests {
     fn the_strip_names_the_place_its_counts_the_toggle_and_the_features_in_use() {
         let strip = strip_of(&counted((120, 30)), (120, 30));
         assert!(
-            strip.contains("Inbox ▾ g o   312 · 41 unread   ⚑ Has action · 7 !"),
+            strip.contains("Inbox ▾ g l   312 · 41 unread   ⚑ Has action · 7 !"),
             "{strip}"
         );
         assert!(
             strip
                 .trim_end()
-                .ends_with("186 filtered today g f   4 digest rules g d"),
+                .ends_with("186 filtered today g f   4 digest rules g r"),
             "{strip}"
         );
     }
@@ -249,7 +249,7 @@ mod tests {
         );
         let strip = strip_of(&quiet, (120, 30));
         assert!(!strip.contains("filtered"), "{strip}");
-        assert!(strip.contains("4 digest rules g d"), "{strip}");
+        assert!(strip.contains("4 digest rules g r"), "{strip}");
     }
 
     #[test]
@@ -262,7 +262,7 @@ mod tests {
         assert!(!strip.contains("filtered"), "the right side went: {strip}");
         update(&mut app, Input::Resize(50, 30));
         let strip = strip_of(&app, (50, 30));
-        assert!(strip.contains("Inbox ▾ g o"), "{strip}");
+        assert!(strip.contains("Inbox ▾ g l"), "{strip}");
         assert!(
             strip.contains("Has action · 7 !"),
             "the toggle stays: {strip}"

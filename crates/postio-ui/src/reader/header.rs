@@ -573,10 +573,10 @@ mod tests {
         assert_eq!(
             actions(&keymap),
             vec![
-                (ReaderAction::Reply, Some("e".to_string())),
-                (ReaderAction::ReplyAll, Some("E".to_string())),
+                (ReaderAction::Reply, Some("r".to_string())),
+                (ReaderAction::ReplyAll, Some("a".to_string())),
                 (ReaderAction::Forward, Some("f".to_string())),
-                (ReaderAction::Archive, Some("a".to_string())),
+                (ReaderAction::Archive, Some("e".to_string())),
             ]
         );
     }
@@ -586,29 +586,29 @@ mod tests {
         let mut overrides = postio_config::KeyBindings::default();
         overrides
             .overrides_mut()
-            .insert("reply".to_string(), "r".to_string());
+            .insert("reply".to_string(), "w".to_string());
         let keymap = Keymap::resolve(&overrides);
         let keys: Vec<_> = actions(&keymap).into_iter().map(|(_, key)| key).collect();
-        assert_eq!(keys[0], Some("r".to_string()));
-        assert_eq!(keys[1], Some("E".to_string()), "only Reply was rebound");
+        assert_eq!(keys[0], Some("w".to_string()));
+        assert_eq!(keys[1], Some("a".to_string()), "only Reply was rebound");
     }
 
     #[test]
     fn a_key_lost_to_another_command_is_never_shown_as_still_working() {
-        // `undo`'s default is `u`; rebinding it to `a` takes Archive's own
-        // default in every context they share, so Archive loses `a`. What it
-        // shows instead is whatever binding it has left — `mod+shift+a`, its
-        // alternate — and never `a`, which now runs undo. A button teaching
+        // Rebinding `undo` to `e` takes Archive's own default in every
+        // context they share, so Archive loses `e`. What it shows instead is
+        // whatever binding it has left — `mod+shift+a`, its alternate — and
+        // never `e`, which now runs undo. A button teaching
         // a key that does something else is the failure this guards;
         // teaching a longer key that still works is not.
         let mut overrides = postio_config::KeyBindings::default();
         overrides
             .overrides_mut()
-            .insert("undo".to_string(), "a".to_string());
+            .insert("undo".to_string(), "e".to_string());
         let keymap = Keymap::resolve(&overrides);
         let keys: Vec<_> = actions(&keymap).into_iter().map(|(_, key)| key).collect();
 
-        assert_ne!(keys[3].as_deref(), Some("a"), "still teaching undo's key");
+        assert_ne!(keys[3].as_deref(), Some("e"), "still teaching undo's key");
         assert_eq!(
             keys[3].as_deref(),
             keymap.binding(CommandId::Archive),
@@ -618,13 +618,13 @@ mod tests {
 
     #[test]
     fn a_verb_with_no_binding_left_shows_no_hint_at_all() {
-        // Both of Archive's bindings taken: `a` by undo, `mod+shift+a` by
+        // Both of Archive's bindings taken: `e` by undo, `mod+shift+a` by
         // flag. Nothing is left, and nothing is what the button says —
         // rather than a key that would archive nothing.
         let mut overrides = postio_config::KeyBindings::default();
         overrides
             .overrides_mut()
-            .insert("undo".to_string(), "a".to_string());
+            .insert("undo".to_string(), "e".to_string());
         overrides
             .overrides_mut()
             .insert("flag".to_string(), "mod+shift+a".to_string());

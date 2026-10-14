@@ -6,7 +6,7 @@
 # without asking, the keyboard goes back to the row it left, and the toast
 # says the draft was saved locally, at what time ("Draft saved locally
 # 16:12", the design's words; no Undo, since nothing was undone). The draft
-# is a row of Drafts (`g t`), and Return on it opens it in the composer
+# is a row of Drafts (`g d`), and Return on it opens it in the composer
 # again, the line still there, to be sent.
 #
 # The words are the controller's: GTK's composer says "Draft saved to

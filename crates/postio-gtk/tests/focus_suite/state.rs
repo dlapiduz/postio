@@ -207,7 +207,7 @@ fn form_in(widget: &gtk::Widget) -> Option<postio_widgets::onboarding::Onboardin
     None
 }
 
-/// US6 scenario 1, the archive half: with no network, `a` takes the row
+/// US6 scenario 1, the archive half: with no network, `e` takes the row
 /// away at once and queues the move for sync. Labelling and searching are
 /// the next case.
 pub fn offline_an_archive_takes_effect_at_once_and_queues() {
@@ -243,7 +243,7 @@ pub fn offline_an_archive_takes_effect_at_once_and_queues() {
             "the window never heard it was offline"
         );
 
-        support::keys(&window, &["a"]);
+        support::keys(&window, &["e"]);
         assert!(
             crate::settle_until(async || support::subjects(&window) == ["Draft"]).await,
             "the archived row stayed while offline: {:?}",

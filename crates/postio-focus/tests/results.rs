@@ -1434,7 +1434,7 @@ fn quick_look_opens_on_the_focused_result_and_reads_its_matches() {
             .iter()
             .map(|hint| (hint.label.as_str(), hint.key.as_str()))
             .collect::<Vec<_>>(),
-        [("Open", "Return"), ("Archive", "a"), ("Close", "space")]
+        [("Open", "Return"), ("Archive", "e"), ("Close", "space")]
     );
     assert_eq!(
         matches_asked(&effects),
@@ -1702,12 +1702,12 @@ fn x_checks_results_and_the_footer_becomes_the_bulk_bar() {
         labels(&view.bulk),
         ["Archive", "Label", "Move", "Mark read", "Snooze"]
     );
-    let all = view.select_all.expect("⇧X on the bar's right");
+    let all = view.select_all.expect("`* a` on the bar's right");
     assert_eq!(
         all.label, "select all 120",
         "every conversation, not every row"
     );
-    assert_eq!(all.key, "X");
+    assert_eq!(all.key, "* a");
 
     let _ = run(&mut focus, CommandId::NextMessage, &rows);
     let effects = run(&mut focus, CommandId::ToggleSelection, &rows);

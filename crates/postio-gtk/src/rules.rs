@@ -1,4 +1,4 @@
-//! The digest rules list, `g d` (spec 007 T139, C15), in Filtered's
+//! The digest rules list, `g r` (spec 007 T139, C15), in Filtered's
 //! full-view frame (screen 21): every rule in `config.toml` with what it
 //! matches, when it delivers, when it next does, and what it holds now.
 //!

@@ -23,13 +23,13 @@ use crate::input::Keys;
 /// Which picker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// `s`: mail leaves the inbox until a time.
+    /// `b`: mail leaves the inbox until a time.
     Snooze,
     /// `h`: bring the conversation back if nobody replies by a time.
     Remind,
     /// `l`: put labels on, or take them off.
     Label,
-    /// `m`: move to a folder.
+    /// `v`: move to a folder.
     Move,
 }
 

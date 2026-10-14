@@ -75,8 +75,8 @@ pub fn a_saved_rebind_reaches_the_keyboard_every_keycap_and_the_key_map() {
         );
         support::keys(&window, &["j", "x"]);
         assert!(
-            crate::settle_until(async || archive_cap(&window) == ["a"]).await,
-            "the bulk bar's Archive wears a: {:?}",
+            crate::settle_until(async || archive_cap(&window) == ["e"]).await,
+            "the bulk bar's Archive wears e: {:?}",
             archive_cap(&window)
         );
 
@@ -105,9 +105,9 @@ pub fn a_saved_rebind_reaches_the_keyboard_every_keycap_and_the_key_map() {
         support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
         assert!(crate::settle_until(async || window.key_map().is_none()).await);
 
-        support::keys(&window, &["Escape", "a"]);
+        support::keys(&window, &["Escape", "e"]);
         crate::settle();
-        assert_eq!(support::subjects(&window).len(), 3, "a no longer archives");
+        assert_eq!(support::subjects(&window).len(), 3, "e no longer archives");
         support::keys(&window, &["w"]);
         assert!(
             crate::settle_until(async || support::subjects(&window).len() == 2).await,
@@ -200,7 +200,7 @@ pub fn a_saved_compose_section_reaches_the_next_reply() {
             Some(text.find("Ada at Atlas")? < text.find("The quoted line.")?)
         };
 
-        support::keys(&window, &["j", "e"]);
+        support::keys(&window, &["j", "r"]);
         assert!(
             crate::settle_until(async || order(&composed(&window)).is_some()).await,
             "the reply quotes and signs: {:?}",
@@ -218,7 +218,7 @@ pub fn a_saved_compose_section_reaches_the_next_reply() {
         save(&path, "[compose]\nsignature_on_reply = \"below_quote\"\n");
         // The watcher's own debounce, then the reload.
         crate::settle_for(std::time::Duration::from_millis(600)).await;
-        support::keys(&window, &["e"]);
+        support::keys(&window, &["r"]);
         assert!(
             crate::settle_until(async || order(&composed(&window)) == Some(false)).await,
             "the saved placement never reached the next reply: {:?}",

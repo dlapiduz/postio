@@ -823,7 +823,7 @@ mod frame_tests {
 
     #[test]
     fn the_kept_note_names_where_the_draft_went_and_the_key_there() {
-        assert_eq!(kept_note(Some("g t")), "Draft saved to Drafts (g t)");
+        assert_eq!(kept_note(Some("g d")), "Draft saved to Drafts (g d)");
         assert_eq!(kept_note(None), "Draft saved to Drafts");
     }
 }

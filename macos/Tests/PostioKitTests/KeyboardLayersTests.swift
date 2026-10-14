@@ -27,24 +27,24 @@ import Testing
 
     /// The canvas' own table: command, chord, mnemonic.
     private let canvas: [(command: String, chord: String, mnemonic: String)] = [
-        ("reply", "⌘R", "e"),
-        ("reply_all", "⇧⌘R", "E"),
+        // Gmail's mnemonics since the maintainer's 2026-10-14 decision
+        // (docs/PRODUCT.md §8), the canvas' chords unchanged.
+        ("reply", "⌘R", "r"),
+        ("reply_all", "⇧⌘R", "a"),
         ("forward", "⇧⌘F", "f"),
-        ("archive", "⇧⌘A", "a"),
-        ("archive_thread", "", "A"),
+        ("archive", "⇧⌘A", "e"),
+        ("archive_thread", "", "E"),
         ("compose", "⌘N", "c"),
         ("search", "⌥⌘F", "/"),
-        // `]` and `[` since the one keymap every app shares
-        // (specs/007-postio-focus contracts/keymap.md); `J`/`K` extend the
-        // list's selection.
-        ("next_in_conversation", "⌥↓", "]"),
-        ("prev_in_conversation", "⌥↑", "["),
+        // Gmail's `n` and `p`; `J`/`K` extend the list's selection.
+        ("next_in_conversation", "⌥↓", "n"),
+        ("prev_in_conversation", "⌥↑", "p"),
         ("next_message", "↓", "j"),
         ("prev_message", "↑", "k"),
-        ("expand_all", "⇧⌘E", "O"),
-        // No mnemonic: the one keymap made `mod+z` Undo's only key, the
-        // undo every other application has taught.
-        ("undo", "⌘Z", ""),
+        ("expand_all", "⇧⌘E", ";"),
+        // Gmail's `z`, beside `⌘Z`, the undo every other application has
+        // taught.
+        ("undo", "⌘Z", "z"),
         ("settings", "⌘,", ""),
     ]
 
@@ -85,9 +85,9 @@ import Testing
     }
 
     @Test func aCommandWithNoChordDrawsItsMnemonicRatherThanNothing() {
-        // Archive-thread is `A` and nothing else — the canvas says so with a
+        // Archive-thread is `E` and nothing else — the canvas says so with a
         // dash. A menu item with no accelerator at all is worse than one
         // naming the key that does work.
-        #expect(MenuPlan.accelerator(among: bindings("archive_thread")) == "⇧A")
+        #expect(MenuPlan.accelerator(among: bindings("archive_thread")) == "⇧E")
     }
 }

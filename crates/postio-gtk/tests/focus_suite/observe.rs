@@ -113,8 +113,8 @@ pub fn the_window_says_where_the_keyboard_cursor_and_notices_are() {
         assert_eq!(seen.cursor, cursor);
         assert_eq!(seen.reading.id, None);
 
-        // `a`: the row goes, and the toast offers to take it back.
-        press(&window, "a");
+        // `e`: the row goes, and the toast offers to take it back.
+        press(&window, "e");
         assert!(
             crate::settle_until(async || window.observe().notice.text.is_some()).await,
             "no notice after archive"
@@ -123,8 +123,8 @@ pub fn the_window_says_where_the_keyboard_cursor_and_notices_are() {
         assert!(seen.notice.undo, "{seen:#?}");
         assert_eq!(seen.notice.tone, Some(Tone::Info));
 
-        // `e`: a reply, with the keyboard in its body.
-        press(&window, "e");
+        // `r`: a reply, with the keyboard in its body.
+        press(&window, "r");
         assert!(
             crate::settle_until(async || window.observe().composer.open).await,
             "no composer after reply"

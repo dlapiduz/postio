@@ -46,7 +46,7 @@ pub struct Compose {
 
 impl Compose {
     /// The composer, mounted in its dialog over `window`, writing as
-    /// `account` through `client`; `current` names the message `e`, `E` and
+    /// `account` through `client`; `current` names the message `r`, `a` and
     /// `f` answer.
     pub fn new(
         window: &FocusWindow,

@@ -47,7 +47,7 @@ pub fn what_focus_archives_the_terminal_sees_archived() {
             "nothing archived yet"
         );
 
-        support::keys(&window, &["j", "a"]);
+        support::keys(&window, &["j", "e"]);
         assert!(
             crate::settle_until(async || support::subjects(&window).is_empty()).await,
             "Focus did not archive it"

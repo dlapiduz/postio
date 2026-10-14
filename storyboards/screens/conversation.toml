@@ -1,5 +1,5 @@
 # A long thread opened: its newest message over the list, with the thread's
-# chip and `[`/`]` to step it (C2).
+# chip and `p`/`n` to step it (C2).
 #
 # Focus's design references are never committed
 # (specs/007-postio-focus/screens.md records each one).

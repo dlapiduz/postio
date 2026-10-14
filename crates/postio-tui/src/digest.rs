@@ -169,7 +169,7 @@ impl Window {
         self.sync_cursor();
     }
 
-    /// Make the list's cursor follow the focused reference, so `D` and `U`
+    /// Make the list's cursor follow the focused reference, so `D` and `M`
     /// act on its message.
     fn sync_cursor(&mut self) {
         let message = self
@@ -190,7 +190,7 @@ impl Window {
         self.rows.iter().find(|row| row.id == message)
     }
 
-    /// The message `D` and `U` act on: the email on screen, else the focused
+    /// The message `D` and `M` act on: the email on screen, else the focused
     /// reference's, else the list's cursor.
     pub fn focused(&self) -> Option<&Row> {
         if let Some(email) = &self.email {

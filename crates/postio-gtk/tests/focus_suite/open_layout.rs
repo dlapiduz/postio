@@ -837,7 +837,7 @@ pub fn a_narrow_dialog_folds_label_move_and_delete_into_more() {
         let said: Vec<Vec<String>> = items.iter().map(support::texts).collect();
         assert_eq!(
             said,
-            [["Label", "l"], ["Move", "m"], ["Delete", "Del"]]
+            [["Label", "l"], ["Move", "v"], ["Delete", "#"]]
                 .map(|item| item.map(str::to_owned).to_vec()),
             "More's menu"
         );
@@ -977,9 +977,10 @@ pub fn the_action_cards_sentence_wraps_and_is_never_cut() {
     });
 }
 
-/// SPEC section 2: Delete's cap reads `Del` in the action row, as the
-/// handoff draws it; the binding keeps its name.
-pub fn delete_s_cap_reads_del_in_the_action_row() {
+/// SPEC section 2, under the Gmail keymap (docs/PRODUCT.md §8): Delete's cap
+/// reads `#`, Gmail's key for it, in the action row; the Delete key still
+/// deletes, as its alternate.
+pub fn delete_s_cap_reads_its_gmail_key_in_the_action_row() {
     crate::gtk_case(async {
         if !support::display() {
             return;
@@ -992,11 +993,13 @@ pub fn delete_s_cap_reads_del_in_the_action_row() {
         let window = opened_at(&fixture, 1, WIDE).await;
         let reading = window.reading().expect("open");
         let delete = shown(&reading.dialog(), "focus-open-delete");
-        assert_eq!(support::texts(&delete), ["Delete", "Del"]);
-        assert_eq!(
-            postio_core::Keymap::defaults().binding(postio_core::CommandId::Delete),
-            Some("Delete"),
-            "the binding keeps its name"
+        assert_eq!(support::texts(&delete), ["Delete", "#"]);
+        assert!(
+            postio_core::Keymap::defaults()
+                .bindings(postio_core::CommandId::Delete)
+                .iter()
+                .any(|binding| binding == "Delete"),
+            "the Delete key still deletes"
         );
     });
 }

@@ -93,7 +93,7 @@ pub fn a_fired_reminder_is_a_no_reply_row_at_its_place_and_listed_once() {
             Some(budget),
             "the cursor is on the reminder's row"
         );
-        support::press(&window, "a", gtk::gdk::ModifierType::empty());
+        support::press(&window, "e", gtk::gdk::ModifierType::empty());
         assert!(
             crate::settle_until(async || {
                 support::subjects(&window) == ["Staffing plan", "Harbor draft"]
@@ -182,10 +182,10 @@ pub fn a_delivered_digest_is_one_row_where_it_came_due() {
             );
         }
 
-        // `a` on the digest's row archives the whole delivery, and the row
+        // `e` on the digest's row archives the whole delivery, and the row
         // goes; what it held does not come back to the inbox.
         support::keys(&window, &["j"]);
-        support::press(&window, "a", gtk::gdk::ModifierType::empty());
+        support::press(&window, "e", gtk::gdk::ModifierType::empty());
         assert!(
             crate::settle_until(async || {
                 support::subjects(&window) == ["Staffing plan", "Harbor draft", "Atlas budget"]

@@ -1,5 +1,5 @@
 //! The cursor and the selection are two things (constitution II; FR-015):
-//! the cursor is where the keyboard is, the selection is what `a` would
+//! the cursor is where the keyboard is, the selection is what `e` would
 //! archive, and the bulk bar says what is selected and what to do with it
 //! (T045; US1 scenario 3).
 
@@ -37,7 +37,7 @@ pub fn three_selected_and_the_cursor_on_a_fourth_archives_exactly_the_three() {
             );
         }
 
-        support::keys(&window, &["a"]);
+        support::keys(&window, &["e"]);
         assert!(
             crate::settle_until(async || support::subjects(&window) == ["Fourth", "Fifth"]).await,
             "exactly the three selected left the inbox, and the cursor's row did not: {:?}",
@@ -51,7 +51,7 @@ pub fn three_selected_and_the_cursor_on_a_fourth_archives_exactly_the_three() {
 }
 
 /// `a a` works down the list (#1746): the row below the archived one takes
-/// the cursor, so the second `a` archives it rather than nothing.
+/// the cursor, so the second `e` archives it rather than nothing.
 pub fn archive_hands_the_cursor_to_the_row_below() {
     crate::gtk_case(async {
         if !support::display() {
@@ -63,10 +63,10 @@ pub fn archive_hands_the_cursor_to_the_row_below() {
         let cursor = || window.pane().expect("the inbox").cursor().selected();
         assert_eq!(cursor(), 1, "two j put the cursor on the second row");
 
-        support::keys(&window, &["a"]);
+        support::keys(&window, &["e"]);
         assert!(
             crate::settle_until(async || support::subjects(&window).len() == 4).await,
-            "a archived the cursor's row: {:?}",
+            "e archived the cursor's row: {:?}",
             support::subjects(&window)
         );
         assert_eq!(
@@ -75,7 +75,7 @@ pub fn archive_hands_the_cursor_to_the_row_below() {
             "the row below slid into the archived one's place and holds the cursor"
         );
 
-        support::keys(&window, &["a"]);
+        support::keys(&window, &["e"]);
         assert!(
             crate::settle_until(async || support::subjects(&window).len() == 3).await,
             "the second a archived the row that took the cursor: {:?}",
@@ -129,7 +129,7 @@ pub fn escape_clears_the_selection_and_the_cursor_stays() {
 pub fn a_select_all_archives_what_focus_lists_and_never_held_mail() {
     // `X` is a predicate over the view (FR-015), so which view it names is
     // the whole question: Focus's inbox leaves out held digest mail, and the
-    // unified inbox does not. `a` after `X` must take exactly what the list
+    // unified inbox does not. `e` after `X` must take exactly what the list
     // shows (T167).
     crate::gtk_case(async {
         if !support::display() {
@@ -153,7 +153,7 @@ pub fn a_select_all_archives_what_focus_lists_and_never_held_mail() {
         }
         let (window, _client) = fixture.five().await;
 
-        support::keys(&window, &["X", "a"]);
+        support::keys(&window, &["X", "e"]);
         assert!(
             crate::settle_until(async || support::subjects(&window).is_empty()).await,
             "a select-all archives every conversation the list shows: {:?}",

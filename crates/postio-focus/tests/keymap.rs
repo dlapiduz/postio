@@ -52,7 +52,7 @@ fn rebound(command: &str, key: &str) -> Keymap {
 fn a_new_keymap_is_what_the_controller_resolves() {
     let mut focus = focus();
     assert_eq!(
-        press(&mut focus, "a"),
+        press(&mut focus, "e"),
         Outcome::Command("archive".to_owned())
     );
     let _ = focus.handle(Input::Keymap(rebound("archive", "F9")));
@@ -62,7 +62,7 @@ fn a_new_keymap_is_what_the_controller_resolves() {
         "the new binding resolves"
     );
     assert_ne!(
-        press(&mut focus, "a"),
+        press(&mut focus, "e"),
         Outcome::Command("archive".to_owned()),
         "the old one no longer archives"
     );

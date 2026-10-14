@@ -954,17 +954,15 @@ mod tests {
             }),
         );
         let (text, cells, theme) = status_of(&app, Colour::TrueColor);
-        assert!(
-            text.starts_with(" ✓ Archived 1 message · Undo ctrl+z"),
-            "{text}"
-        );
+        assert!(text.starts_with(" ✓ Archived 1 message · Undo z"), "{text}");
         assert_eq!(cells[1].fg, theme.style(Role::Success).fg.unwrap());
         let characters: Vec<char> = text.chars().collect();
         let key = characters
             .windows(6)
-            .position(|window| window.iter().collect::<String>() == "ctrl+z")
-            .expect("the key");
-        for cell in &cells[key..key + 6] {
+            .position(|window| window.iter().collect::<String>() == "Undo z")
+            .expect("the key")
+            + 5;
+        for cell in &cells[key..key + 1] {
             assert_eq!(
                 cell.fg,
                 theme.style(Role::Accent).fg.unwrap(),

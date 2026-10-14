@@ -163,8 +163,8 @@ pub fn opening_and_switching_large_folders_asks_a_bounded_number_of_pages() {
         // Switching while it is still loading: each switch resets the window,
         // so replies for the folder just left arrive into one that has moved
         // on. No settling between: that is the gesture.
-        support::keys(&window, &["g", "o"]);
-        let places = window.places().expect("g o opened the folders popover");
+        support::keys(&window, &["g", "l"]);
+        let places = window.places().expect("g l opened the folders popover");
         assert!(
             // Snoozed and Flagged are listed at once; the mailboxes follow.
             crate::settle_until(async || places.names().contains(&"Inbox".to_owned())).await,

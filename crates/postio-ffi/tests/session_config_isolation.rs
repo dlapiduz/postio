@@ -107,7 +107,7 @@ fn the_assertions() {
         session.binding_for("archive".to_owned()).as_deref(),
         // The registry's default. The fixture says `ctrl+shift+z`, so a
         // session that read it fails here with the fixture's own value.
-        Some("a"),
+        Some("e"),
         "an in-memory session took its key bindings from the machine's \
          config.toml -- the failure that silently changes what every keyboard \
          test resolves"

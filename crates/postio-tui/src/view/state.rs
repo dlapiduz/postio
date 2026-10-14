@@ -403,8 +403,8 @@ mod tests {
             .lines()
             .rfind(|line| line.contains("Compose c"))
             .unwrap_or_else(|| panic!("{drawn}"));
-        assert!(line.contains("Archive g r"), "{drawn}");
-        assert!(line.find("Archive g r") < line.find("Compose c"), "{drawn}");
+        assert!(line.contains("Archive g a"), "{drawn}");
+        assert!(line.find("Archive g a") < line.find("Compose c"), "{drawn}");
         assert!(drawn.contains("Synced "), "when it last synced:\n{drawn}");
     }
 

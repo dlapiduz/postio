@@ -330,7 +330,7 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
             typed(&mut app, "ar");
         }
         "folders" => {
-            typed(&mut app, "go");
+            typed(&mut app, "gl");
             let mut atlas = crate::test_support::label(7, "Atlas");
             atlas.color = Some("#3584e4".into());
             update(
@@ -351,7 +351,7 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
             );
         }
         "snooze" => {
-            typed(&mut app, "s");
+            typed(&mut app, "b");
         }
         "remind" => {
             typed(&mut app, "h");
@@ -378,7 +378,7 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
             );
         }
         "move" => {
-            typed(&mut app, "m");
+            typed(&mut app, "v");
             update(
                 &mut app,
                 Input::RecentMoves(vec![MailboxId::new(6), MailboxId::new(2)]),
@@ -620,7 +620,7 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
                     ),
                 )],
             );
-            key(&mut app, KeyCode::Char('t'), KeyModifiers::NONE);
+            key(&mut app, KeyCode::Char('T'), KeyModifiers::NONE);
             let project = |name: &str| postio_vault::Project {
                 name: name.into(),
                 note: std::path::PathBuf::from(format!("Projects/{name}.md")),
@@ -644,7 +644,7 @@ pub fn state(state: &str, width: u16, height: u16) -> (App, Colour) {
             key(&mut app, KeyCode::Char('g'), KeyModifiers::NONE);
             update(
                 &mut app,
-                crate::test_support::key(KeyCode::Char('d'), KeyModifiers::NONE),
+                crate::test_support::key(KeyCode::Char('r'), KeyModifiers::NONE),
             );
             update(
                 &mut app,

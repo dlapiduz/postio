@@ -561,7 +561,7 @@ mod tests {
 
         let first = found.commands.first().expect("a command matches arch");
         assert_eq!(first.id, ActionId::Builtin(CommandId::Archive));
-        assert_eq!(first.binding.as_deref(), Some("a"));
+        assert_eq!(first.binding.as_deref(), Some("e"));
         assert_eq!(
             found.commands,
             crate::palette::entries(&defaults(), Context::List, an_account(), "arch"),

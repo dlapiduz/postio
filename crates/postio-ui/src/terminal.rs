@@ -244,7 +244,7 @@ mod registry {
         );
         assert_eq!(
             super::deliverable_binding(&keymap, postio_core::CommandId::Archive, false).as_deref(),
-            Some("a")
+            Some("e")
         );
     }
 

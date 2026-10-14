@@ -73,17 +73,29 @@ fn command_ids_are_unique() {
 }
 
 #[test]
-fn bindings_are_the_ones_the_canvas_settled_on() {
-    // docs/PRODUCT.md §8 records these as the resolved bindings. The canvas
-    // settled them first, over an earlier brief that proposed `r` reply; the
-    // one keymap every app shares (specs/007-postio-focus
-    // contracts/keymap.md) moved undo to `mod+z` and the previous view to
-    // `Left`.
+fn bindings_are_gmails() {
+    // docs/PRODUCT.md §8 records these as the resolved bindings: Gmail's
+    // keyboard shortcuts wherever Postio has the command (the maintainer's
+    // decision, 2026-10-14), over the canvas's `e` reply and `a` archive.
     let expected = [
-        ("reply", "e"),
-        ("archive", "a"),
-        ("archive_thread", "A"),
-        ("undo", "ctrl+z"),
+        ("reply", "r"),
+        ("reply_all", "a"),
+        ("forward", "f"),
+        ("archive", "e"),
+        ("archive_thread", "E"),
+        ("delete", "#"),
+        ("flag", "s"),
+        ("snooze", "b"),
+        ("move", "v"),
+        ("add_label", "l"),
+        ("toggle_read", "I"),
+        ("next_in_conversation", "n"),
+        ("prev_in_conversation", "p"),
+        ("expand_all", ";"),
+        ("select_all", "* a"),
+        ("more_actions", "."),
+        ("capture_task", "T"),
+        ("undo", "z"),
         ("compose", "c"),
         ("search", "/"),
         ("command_palette", "ctrl+k"),
@@ -103,15 +115,30 @@ fn bindings_are_the_ones_the_canvas_settled_on() {
         let parsed: CommandId = id.parse().expect("known command id");
         assert_eq!(keymap.binding(parsed), Some(key), "binding for {id}");
     }
-    // `Right` opens, the way `Left` comes back, without displacing the
-    // `Return` default that config.toml already documents. `l` no longer
-    // does: it is the label key.
-    assert!(
-        registry::get(CommandId::OpenMessage)
-            .bindings()
-            .any(|b| b == "Right"),
-        "`Right` must open the focused message"
-    );
+    // `Right` opens, the way `Left` comes back, and Gmail's `o`, without
+    // displacing the `Return` default that config.toml already documents.
+    // `l` no longer does: it is the label key.
+    for key in ["Right", "o"] {
+        assert!(
+            registry::get(CommandId::OpenMessage)
+                .bindings()
+                .any(|b| b == key),
+            "`{key}` must open the focused message"
+        );
+    }
+    // Gmail's other halves: `u` back to the list, `U` mark unread, `mod+z`
+    // the undo every other application taught.
+    for (id, key) in [
+        (CommandId::PrevView, "u"),
+        (CommandId::ToggleRead, "U"),
+        (CommandId::Undo, "mod+z"),
+        (CommandId::Delete, "Delete"),
+    ] {
+        assert!(
+            registry::get(id).bindings().any(|b| b == key),
+            "`{key}` must reach {id:?}"
+        );
+    }
     assert!(
         !registry::get(CommandId::OpenMessage)
             .bindings()
@@ -123,23 +150,17 @@ fn bindings_are_the_ones_the_canvas_settled_on() {
 #[test]
 fn the_places_people_go_most_answer_to_two_keys() {
     // `g` is already this app's "go to" prefix -- `g g` is the first message,
-    // `g o` the folders, `g a` the next scope -- and these extend it to the
-    // destinations a person visits dozens of times a day.
-    //
-    // `g a` is deliberately not among them. It means "next scope" here and
-    // "all mail" in the convention being copied, which is not even the same
-    // destination, so an existing command is not given up for an imperfect
-    // match. The letters are the one keymap's (specs/007-postio-focus
-    // contracts/keymap.md), which gave the archive `g r` and moved the
-    // drafts, the sent mail and the flagged mail along to make room for
-    // Focus's `g d` and `g f`.
+    // `g l` the folders -- and these extend it to the destinations a person
+    // visits dozens of times a day. The letters are Gmail's (docs/PRODUCT.md
+    // §8): its starred is Postio's flagged, and its all mail the archive,
+    // which is where archived mail is.
     let expected = [
         ("go_to_inbox", "g i"),
-        ("go_to_drafts", "g t"),
-        ("go_to_sent", "g s"),
-        ("go_to_archive", "g r"),
-        ("go_to_snoozed", "g z"),
-        ("go_to_flagged", "g *"),
+        ("go_to_drafts", "g d"),
+        ("go_to_sent", "g t"),
+        ("go_to_archive", "g a"),
+        ("go_to_snoozed", "g b"),
+        ("go_to_flagged", "g s"),
     ];
     let keymap = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
     for (id, key) in expected {

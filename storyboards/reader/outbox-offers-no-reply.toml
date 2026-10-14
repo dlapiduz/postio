@@ -4,7 +4,7 @@
 # for mail somebody else sent, so `e` composed a reply to your own mail
 # still on its way out. The key has to refuse with a notice instead.
 #
-# Re-expressed for Focus (T265): the Outbox is a place in `g o`, and the key
+# Re-expressed for Focus (T265): the Outbox is a place in `g l`, and the key
 # is pressed on its one row.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1749" }

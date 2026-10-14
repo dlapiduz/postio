@@ -1,4 +1,4 @@
-//! The pickers at the row (US5; screens 11-14): `s`, `h`, `l` and `m` open
+//! The pickers at the row (US5; screens 11-14): `b`, `h`, `l` and `v` open
 //! a small picker anchored to the focused row, acting on the selection when
 //! there is one.
 
@@ -9,7 +9,7 @@ use postio_storage::repository::MessageRepository;
 
 use crate::support::{self};
 
-/// US5 scenario 1, in Focus: `s` opens the snooze picker at the row, naming
+/// US5 scenario 1, in Focus: `b` opens the snooze picker at the row, naming
 /// the conversation; `2` snoozes it to tomorrow morning, and it leaves the
 /// inbox.
 pub fn s_then_2_snoozes_the_row_until_tomorrow_morning() {
@@ -20,8 +20,8 @@ pub fn s_then_2_snoozes_the_row_until_tomorrow_morning() {
         let (fixture, window) = support::three_in_the_inbox().await;
         let row = window.cursor_row().expect("j put the cursor on a row");
         let subject = support::subjects(&window)[0].clone();
-        support::press(&window, "s", gdk::ModifierType::empty());
-        let picker = window.open_picker().expect("s opened the snooze picker");
+        support::press(&window, "b", gdk::ModifierType::empty());
+        let picker = window.open_picker().expect("b opened the snooze picker");
         assert!(
             crate::settle_until(async || picker.is_shown()).await,
             "the snooze picker never drew"
@@ -113,7 +113,7 @@ pub fn escape_closes_a_picker_and_changes_nothing() {
         support::press(&window, "j", gdk::ModifierType::empty());
         let row = window.cursor_row().expect("j put the cursor on a row");
         let before = support::subjects(&window);
-        for key in ["s", "h"] {
+        for key in ["b", "h"] {
             support::press(&window, key, gdk::ModifierType::empty());
             let picker = window.open_picker().expect("a picker opened");
             assert!(crate::settle_until(async || picker.is_shown()).await);
@@ -262,7 +262,7 @@ pub fn l_toggles_a_label_and_creates_a_new_one() {
     });
 }
 
-/// US5 scenario 6: with three rows selected, `m` opens the move picker
+/// US5 scenario 6: with three rows selected, `v` opens the move picker
 /// naming all three, the last destination first under Recent with `1`; `1`
 /// moves all three out of the inbox, and one `Ctrl+Z` returns them.
 pub fn m_moves_three_to_receipts_and_ctrl_z_returns_them() {
@@ -293,8 +293,8 @@ pub fn m_moves_three_to_receipts_and_ctrl_z_returns_them() {
             "the inbox never reached the screen"
         );
         support::keys(&window, &["x", "j", "x", "j", "x"]);
-        support::press(&window, "m", gdk::ModifierType::empty());
-        let picker = window.open_picker().expect("m opened the move picker");
+        support::press(&window, "v", gdk::ModifierType::empty());
+        let picker = window.open_picker().expect("v opened the move picker");
         assert!(
             crate::settle_until(async || picker.texts().iter().any(|line| line == "Travel")).await,
             "the folders never listed: {:?}",

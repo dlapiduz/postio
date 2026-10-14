@@ -461,9 +461,9 @@ mod tests {
                 .to_owned()
         };
         assert!(drawn.contains("Commands"), "{drawn}");
-        assert!(line_of("Archive").contains(" a "), "{}", line_of("Archive"));
+        assert!(line_of("Archive").contains(" e "), "{}", line_of("Archive"));
         assert!(drawn.contains("Go to"), "{drawn}");
-        assert!(line_of("in:Archive").contains("g r"), "{drawn}");
+        assert!(line_of("in:Archive").contains("g a"), "{drawn}");
         assert!(drawn.contains("Search mail for “arch”"), "{drawn}");
         assert!(
             line_of("Archive").contains('▌'),

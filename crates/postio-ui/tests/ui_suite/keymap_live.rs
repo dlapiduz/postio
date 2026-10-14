@@ -56,10 +56,10 @@ fn editing_the_keys_section_rebinds_immediately() {
     let (mut resolver, startup_problems) = Resolver::from_commands(service.keymap());
     assert!(startup_problems.is_empty(), "{startup_problems:?}");
     assert_eq!(command(&mut resolver, "w").as_deref(), Some("archive"));
-    assert_eq!(command(&mut resolver, "a"), None, "the default moved");
+    assert_eq!(command(&mut resolver, "e"), None, "the default moved");
 
     // The user edits the file and saves.
-    write(directory.path(), "[keys]\narchive = \"a\"\nflag = \"w\"\n");
+    write(directory.path(), "[keys]\narchive = \"e\"\nflag = \"w\"\n");
     let update = service.reload();
 
     assert!(update.applied());
@@ -69,7 +69,7 @@ fn editing_the_keys_section_rebinds_immediately() {
     resolver = rebuilt;
 
     assert_eq!(
-        command(&mut resolver, "a").as_deref(),
+        command(&mut resolver, "e").as_deref(),
         Some("archive"),
         "back to the default, with no restart"
     );
@@ -100,11 +100,11 @@ fn the_folder_list_reaches_search_and_the_go_to_family() {
     );
     for (keys, command) in [
         ("g i", "go_to_inbox"),
-        ("g t", "go_to_drafts"),
-        ("g s", "go_to_sent"),
-        ("g r", "go_to_archive"),
-        ("g z", "go_to_snoozed"),
-        ("g *", "go_to_flagged"),
+        ("g d", "go_to_drafts"),
+        ("g t", "go_to_sent"),
+        ("g a", "go_to_archive"),
+        ("g b", "go_to_snoozed"),
+        ("g s", "go_to_flagged"),
     ] {
         resolver.clear_pending();
         assert_eq!(
@@ -146,8 +146,8 @@ fn a_rebind_reaches_a_sequence_too() {
 #[test]
 fn a_rebind_takes_the_key_and_the_command_that_had_it_is_told() {
     let directory = TempDir::new().expect("a temporary directory");
-    // `a` already archives, in the same contexts reply is reachable in.
-    let path = write(directory.path(), "[keys]\nreply = \"a\"\n");
+    // `e` already archives, in the same contexts reply is reachable in.
+    let path = write(directory.path(), "[keys]\nreply = \"e\"\n");
     let service = ConfigService::load(&path);
 
     // The override wins. `Keymap::resolve_on` resolves `[keys]` before
@@ -155,7 +155,7 @@ fn a_rebind_takes_the_key_and_the_command_that_had_it_is_told() {
     // so a user who wrote this gets what they asked for.
     //
     // This case used to assert the opposite: that the entry was dropped and
-    // archive kept `a`. Both rules were live at once and neither was wrong
+    // archive kept its key. Both rules were live at once and neither was wrong
     // where it ran, because `postio-config` validated the collision away for
     // the 23 commands it had defaults for and the keymap's rule governed the
     // other 56 (#1227). With one default table there is one answer, and it is
@@ -164,7 +164,7 @@ fn a_rebind_takes_the_key_and_the_command_that_had_it_is_told() {
     // than in silence.
     let (mut resolver, _) = Resolver::from_commands(service.keymap());
     assert_eq!(
-        command(&mut resolver, "a").as_deref(),
+        command(&mut resolver, "e").as_deref(),
         Some("reply"),
         "the override takes the key it asked for"
     );
@@ -212,7 +212,7 @@ fn an_unknown_command_id_is_reported_rather_than_ignored() {
     let (mut resolver, problems) = Resolver::from_commands(service.keymap());
     assert!(problems.contains(&reported), "{problems:?}");
     assert_eq!(
-        command(&mut resolver, "a").as_deref(),
+        command(&mut resolver, "e").as_deref(),
         Some("archive"),
         "and every other binding still works"
     );
@@ -231,7 +231,7 @@ fn an_unusable_binding_is_reported_and_costs_nothing() {
 
     let (mut resolver, _) = Resolver::from_commands(service.keymap());
     assert_eq!(
-        command(&mut resolver, "a").as_deref(),
+        command(&mut resolver, "e").as_deref(),
         Some("archive"),
         "a binding nobody can press must not take the key away"
     );

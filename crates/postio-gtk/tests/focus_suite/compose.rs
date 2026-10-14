@@ -112,7 +112,7 @@ pub fn field(root: &impl IsA<gtk::Widget>, name: &str) -> Option<String> {
     Some(shown.join(", "))
 }
 
-/// US3 scenario 1 (T078): `E` on a conversation opens the composer, in its
+/// US3 scenario 1 (T078): `a` on a conversation opens the composer, in its
 /// dialog over the list, with every recipient from the thread, a "Re:"
 /// subject, the thread's labels marked as its, and the quote folded; `Esc`
 /// returns to where the person was.
@@ -129,10 +129,10 @@ pub fn reply_all_starts_with_every_recipient_re_the_labels_and_a_folded_quote() 
         let cursor = window.cursor_row().map(|row| row.id());
         assert_eq!(cursor, Some(message), "the cursor is on the thread");
 
-        support::keys(&window, &["E"]);
+        support::keys(&window, &["a"]);
         assert!(
             crate::settle_until(async || window.compose_dialog().is_some()).await,
-            "E opened no composer over the list"
+            "a opened no composer over the list"
         );
         let dialog = window.compose_dialog().expect("the compose dialog");
         // The message dialog's size rule, from the window (T221).
@@ -215,7 +215,7 @@ pub fn reply_all_starts_with_every_recipient_re_the_labels_and_a_folded_quote() 
 }
 
 /// US3 scenario 1 from the open message (T078's dialog half, screen 04's
-/// toolbar): `E` in the message dialog answers the message on screen, and
+/// toolbar): `a` in the message dialog answers the message on screen, and
 /// `Esc` returns to that message, still open.
 pub fn reply_all_from_the_open_message_answers_it_and_esc_returns_to_it() {
     crate::gtk_case(async {
@@ -240,10 +240,10 @@ pub fn reply_all_from_the_open_message_answers_it_and_esc_returns_to_it() {
         let reading = window.reading().expect("Enter opened the message");
         assert_eq!(reading.title(), "Harbor API draft v3");
 
-        support::keys(&window, &["E"]);
+        support::keys(&window, &["a"]);
         assert!(
             crate::settle_until(async || window.compose_dialog().is_some()).await,
-            "E in the open message opened no composer"
+            "a in the open message opened no composer"
         );
         let dialog = window.compose_dialog().expect("the compose dialog");
         assert!(
@@ -286,10 +286,10 @@ pub fn a_reply_nobody_wrote_in_is_discarded_on_esc_and_one_with_words_is_kept() 
             crate::settle_until(async || support::subjects(&window).len() == 1).await,
             "the inbox never reached the screen"
         );
-        support::keys(&window, &["e"]);
+        support::keys(&window, &["r"]);
         assert!(
             crate::settle_until(async || window.compose_dialog().is_some()).await,
-            "e opened no composer"
+            "r opened no composer"
         );
         let dialog = window.compose_dialog().expect("the compose dialog");
         assert!(
@@ -311,10 +311,10 @@ pub fn a_reply_nobody_wrote_in_is_discarded_on_esc_and_one_with_words_is_kept() 
             "an untouched reply is discarded without a word"
         );
 
-        support::keys(&window, &["e"]);
+        support::keys(&window, &["r"]);
         assert!(
             crate::settle_until(async || window.compose_dialog().is_some()).await,
-            "e opened no composer the second time"
+            "r opened no composer the second time"
         );
         window
             .composer()
@@ -346,10 +346,10 @@ pub fn a_send_says_it_was_queued_and_undo_takes_it_back() {
             crate::settle_until(async || support::subjects(&window).len() == 1).await,
             "the inbox never reached the screen"
         );
-        support::keys(&window, &["j", "e"]);
+        support::keys(&window, &["j", "r"]);
         assert!(
             crate::settle_until(async || window.compose_dialog().is_some()).await,
-            "e opened no composer"
+            "r opened no composer"
         );
         support::press(&window, "Return", gtk::gdk::ModifierType::CONTROL_MASK);
         assert!(
@@ -447,10 +447,10 @@ pub fn a_reply_to_a_message_still_downloading_says_it_is_not_quoted() {
             crate::settle_until(async || support::subjects(&window).len() == 1).await,
             "the inbox never reached the screen"
         );
-        support::keys(&window, &["j", "e"]);
+        support::keys(&window, &["j", "r"]);
         assert!(
             crate::settle_until(async || window.compose_dialog().is_some()).await,
-            "e opened no composer"
+            "r opened no composer"
         );
         let dialog = window.compose_dialog().expect("the compose dialog");
         assert!(

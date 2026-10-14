@@ -61,7 +61,7 @@ pub struct Chrome {
     filtered_today_key: gtk::Box,
     filtered_today_button: gtk::Button,
     digest_rules: gtk::Box,
-    /// "4 digest rules", inside the strip's button to `g d`.
+    /// "4 digest rules", inside the strip's button to `g r`.
     digest_rules_label: gtk::Label,
     digest_rules_key: gtk::Box,
     handler: RefCell<Option<Handler>>,

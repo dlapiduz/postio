@@ -156,8 +156,8 @@ pub fn a_folder_from_the_popover_opens_with_the_cursor_on_its_first_row() {
             crate::settle_until(async || support::subjects(&window) == ["Inbox mail"]).await,
             "the inbox never reached the screen"
         );
-        support::keys(&window, &["g", "o"]);
-        let places = window.places().expect("g o opened the folders popover");
+        support::keys(&window, &["g", "l"]);
+        let places = window.places().expect("g l opened the folders popover");
         assert!(
             crate::settle_until(async || places.names().contains(&"Travel".to_owned())).await,
             "the popover never listed Travel"

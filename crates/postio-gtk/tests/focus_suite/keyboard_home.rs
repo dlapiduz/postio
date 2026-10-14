@@ -52,8 +52,8 @@ pub fn going_to_a_place_leaves_the_keyboard_in_the_list() {
             return;
         }
         let (_fixture, window) = support::three_in_the_inbox().await;
-        support::keys(&window, &["g", "o"]);
-        let places = window.places().expect("g o opened the folders popover");
+        support::keys(&window, &["g", "l"]);
+        let places = window.places().expect("g l opened the folders popover");
         assert!(places.is_open(), "the popover is up");
         places.activate();
         assert!(

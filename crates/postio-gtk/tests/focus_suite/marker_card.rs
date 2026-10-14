@@ -44,7 +44,7 @@ pub fn a_marked_message_opens_with_its_card_and_its_sentence_highlighted() {
             "no marker card"
         );
         let card = reading.marker_card_said();
-        for expected in ["Question", SENTENCE, "Reply", "e"] {
+        for expected in ["Question", SENTENCE, "Reply", "r"] {
             assert!(
                 card.iter().any(|said| said.contains(expected)),
                 "the card does not say {expected:?}: {card:?}"

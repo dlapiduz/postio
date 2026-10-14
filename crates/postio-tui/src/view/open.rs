@@ -1276,11 +1276,11 @@ mod tests {
         assert!(lines[3].contains("Message 1 of 3 · thread of 6"), "{drawn}");
         let verbs = lines[4];
         for wanted in [
-            "Reply e",
-            "Reply all E",
+            "Reply r",
+            "Reply all a",
             "Forward f",
-            "Archive a",
-            "Snooze s",
+            "Archive e",
+            "Snooze b",
             "Remind h",
             "More .",
         ] {
@@ -1297,7 +1297,7 @@ mod tests {
         let app = opened((160, 36));
         let drawn = screen(160, 36, &app);
         let verbs = lines_of(&drawn)[4];
-        for wanted in ["Label l", "Move m", "Delete Del"] {
+        for wanted in ["Label l", "Move v", "Delete #"] {
             assert!(verbs.contains(wanted), "{wanted}:\n{drawn}");
         }
         assert!(!verbs.contains("More"), "{drawn}");
@@ -1314,7 +1314,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("{needle} missing:\n{drawn}"))
         };
         let thread = at("Latest of 6 in this thread");
-        assert!(text[thread].contains("[ earlier message"), "{drawn}");
+        assert!(text[thread].contains("p earlier message"), "{drawn}");
         let subject = text
             .iter()
             .enumerate()
@@ -1353,7 +1353,7 @@ mod tests {
         assert!(text[card].contains(&format!("“{QUOTE}”")), "{drawn}");
         // The words fill the first row, so what answers is on a second.
         assert!(
-            text[card + 1].trim_end().ends_with("Snooze s  Dismiss -"),
+            text[card + 1].trim_end().ends_with("Snooze b  Dismiss -"),
             "{drawn}"
         );
         assert!(
@@ -1465,16 +1465,16 @@ mod tests {
     }
 
     #[test]
-    fn brackets_step_the_thread_and_the_chip_shows_where() {
+    fn n_and_p_step_the_thread_and_the_chip_shows_where() {
         let mut app = opened((120, 36));
-        let effects = update(&mut app, press('['));
+        let effects = update(&mut app, press('p'));
         assert!(
             effects.contains(&Effect::ReadBody(MessageId::new(5))),
             "{effects:?}"
         );
         let drawn = screen(120, 36, &app);
         assert!(drawn.contains("5 of 6 in the thread"), "{drawn}");
-        update(&mut app, press(']'));
+        update(&mut app, press('n'));
         assert!(screen(120, 36, &app).contains("thread of 6"));
     }
 
@@ -1494,7 +1494,7 @@ mod tests {
     }
 
     #[test]
-    fn the_message_counts_as_read_after_the_dwell_and_r_stops_the_clock() {
+    fn the_message_counts_as_read_after_the_dwell_and_shift_i_stops_the_clock() {
         let mut app = inbox((120, 36));
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         let _ = effects;
@@ -1534,8 +1534,8 @@ mod tests {
             })),
             "{read:?}"
         );
-        // r is the person's own say: the clock is stopped.
-        update(&mut app, press('r'));
+        // I is the person's own say: the clock is stopped.
+        update(&mut app, press('I'));
         let read = update(
             &mut app,
             Input::DwellDue {
@@ -1572,9 +1572,9 @@ mod tests {
     }
 
     #[test]
-    fn v_shows_the_raw_source_in_the_frame_and_escape_goes_back_to_the_message() {
+    fn shift_v_shows_the_raw_source_in_the_frame_and_escape_goes_back_to_the_message() {
         let mut app = opened((120, 36));
-        let effects = update(&mut app, press('v'));
+        let effects = update(&mut app, press('V'));
         assert!(
             effects.contains(&Effect::ReadSource(MessageId::new(6))),
             "{effects:?}"
@@ -1599,10 +1599,10 @@ mod tests {
     }
 
     #[test]
-    fn o_lists_the_links_and_attachments_and_choosing_one_opens_it() {
+    fn shift_a_lists_the_links_and_attachments_and_choosing_one_opens_it() {
         let mut app = inbox((120, 36));
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        let nothing = update(&mut app, press('o'));
+        let nothing = update(&mut app, press('A'));
         assert!(app.menu().is_none(), "{nothing:?}");
         assert_eq!(app.notice(), Some(postio_ui::focus_target::NOTHING_TO_OPEN));
         update(
@@ -1630,7 +1630,7 @@ mod tests {
                 }),
             },
         );
-        update(&mut app, press('o'));
+        update(&mut app, press('A'));
         let drawn = screen(120, 36, &app);
         assert!(drawn.contains("Open attachment or link"), "{drawn}");
         assert!(drawn.contains("https://example.com/report"), "{drawn}");
@@ -1695,7 +1695,7 @@ mod tests {
         let size = (120, 36);
         let mut app = opened(size);
         // An action row verb.
-        let (x, y) = find(&app, size, "Archive a", 2);
+        let (x, y) = find(&app, size, "Archive e", 2);
         let effects = click_at(&mut app, size, x, y);
         assert!(
             effects
@@ -1721,7 +1721,7 @@ mod tests {
             "the card goes"
         );
         // The thread chip steps back.
-        let (x, y) = find(&app, size, "[ earlier message", 6);
+        let (x, y) = find(&app, size, "p earlier message", 6);
         click_at(&mut app, size, x, y);
         assert_eq!(app.reading().unwrap().current, 4);
         // The down step key opens the next row.

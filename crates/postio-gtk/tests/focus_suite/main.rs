@@ -720,8 +720,8 @@ const CASES: &[(&str, fn())] = &[
         open_layout::the_senders_address_is_never_cut_while_there_is_room as fn(),
     ),
     (
-        "open_layout::delete_s_cap_reads_del_in_the_action_row",
-        open_layout::delete_s_cap_reads_del_in_the_action_row as fn(),
+        "open_layout::delete_s_cap_reads_its_gmail_key_in_the_action_row",
+        open_layout::delete_s_cap_reads_its_gmail_key_in_the_action_row as fn(),
     ),
     (
         "open_layout::a_page_on_paper_is_zoomed_to_its_column_and_scrolls_sideways_below_the_floor",

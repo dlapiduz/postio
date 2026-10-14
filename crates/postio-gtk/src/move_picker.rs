@@ -1,4 +1,4 @@
-//! The move picker (screen 14; US5 scenario 6): `m` lists where mail can
+//! The move picker (screen 14; US5 scenario 6): `v` lists where mail can
 //! go -- the last few destinations under "Recent", with `1` and `2`, then
 //! every folder under "All folders", each with its count. Typing filters;
 //! `Enter` or a number moves the mail, which leaves the inbox, and `Ctrl+Z`

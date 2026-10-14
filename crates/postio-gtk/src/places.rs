@@ -1,5 +1,5 @@
 //! The folders popover (screen 10; contracts/focus-surface.md, "The folders
-//! popover"): `g o`, or a click on "Inbox ▾", lists the places to go --
+//! popover"): `g l`, or a click on "Inbox ▾", lists the places to go --
 //! mailboxes with their direct keys, the person's folders, and labels --
 //! with their counts. Typing filters them, and `Enter` goes to the first.
 //!

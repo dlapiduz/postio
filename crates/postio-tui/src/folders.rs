@@ -1,4 +1,4 @@
-//! The folders popover (terminal.md, "Folders and labels"): `g o`, or a
+//! The folders popover (terminal.md, "Folders and labels"): `g l`, or a
 //! click on the strip's place, lists the places to go -- mailboxes with
 //! their direct keys, the person's folders, and labels -- with their counts.
 //! Typing filters them, and `Enter` goes to the one chosen.
@@ -137,7 +137,7 @@ impl Folders {
     }
 
     /// A key in the popover. With nothing typed, `g` and the key after it
-    /// are the keymap's own: `g r` goes to the archive from here as from the
+    /// are the keymap's own: `g a` goes to the archive from here as from the
     /// list.
     pub fn key(&mut self, key: &KeyEvent, keys: &mut Keys, reach: &Reach<'_>) -> Step {
         // With nothing typed the keymap's own keys are heard; once there is

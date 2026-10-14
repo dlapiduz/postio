@@ -1,4 +1,4 @@
-//! Saving attachments (T240, row 37): the `o` chooser offers Save and Save
+//! Saving attachments (T240, row 37): the `A` chooser offers Save and Save
 //! all through the file-chooser portal, and a click on an attachment chip
 //! opens that chooser at the part. The portal is a seam here -- a case says
 //! where the person chose, and what was asked of it.
@@ -62,10 +62,10 @@ pub fn save_in_the_chooser_writes_the_part_where_the_person_chose() {
         let into = tempfile::tempdir().expect("a directory");
         let target = into.path().join("chosen name.pdf");
         let (window, asked) = opened(&fixture, Some(target.clone())).await;
-        support::keys(&window, &["o"]);
+        support::keys(&window, &["A"]);
         assert!(
             crate::settle_until(async || !window.choices_shown().is_empty()).await,
-            "o offered nothing"
+            "A offered nothing"
         );
         assert!(asked.borrow().is_empty(), "the portal opened before Save");
         let dialog = dialog(&window);
@@ -95,7 +95,7 @@ pub fn save_all_in_the_chooser_writes_every_part_into_the_chosen_folder() {
         let fixture = Fixture::empty().await;
         let into = tempfile::tempdir().expect("a directory");
         let (window, asked) = opened(&fixture, Some(into.path().to_path_buf())).await;
-        support::keys(&window, &["o"]);
+        support::keys(&window, &["A"]);
         assert!(crate::settle_until(async || !window.choices_shown().is_empty()).await);
         // The chooser is still finding its size when it first lists the
         // parts; a press and a release that land apart are no click.
@@ -117,7 +117,7 @@ pub fn a_cancelled_portal_writes_nothing() {
         }
         let fixture = Fixture::empty().await;
         let (window, asked) = opened(&fixture, None).await;
-        support::keys(&window, &["o"]);
+        support::keys(&window, &["A"]);
         assert!(crate::settle_until(async || !window.choices_shown().is_empty()).await);
         let save = support::button_labelled(&dialog(&window), "Save");
         support::settle_still(&save, &window);

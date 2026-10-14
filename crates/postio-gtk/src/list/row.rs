@@ -349,7 +349,7 @@ impl RowWidget {
         self.queue_draw();
     }
 
-    /// Whether this row is in the selection: what `a` would archive.
+    /// Whether this row is in the selection: what `e` would archive.
     pub fn is_picked(&self) -> bool {
         let Some(id) = self.imp().item.borrow().as_ref().map(FocusRow::id) else {
             return false;

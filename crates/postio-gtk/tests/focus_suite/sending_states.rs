@@ -82,10 +82,10 @@ fn row_texts(window: &postio_gtk::window::FocusWindow, subject: &str) -> Option<
         .find(|texts| texts.iter().any(|text| text == subject))
 }
 
-/// `g o`, then a click on the place saying `name`.
+/// `g l`, then a click on the place saying `name`.
 async fn go_to(window: &postio_gtk::window::FocusWindow, name: &str) {
-    support::keys(window, &["g", "o"]);
-    let places = window.places().expect("g o opened the folders popover");
+    support::keys(window, &["g", "l"]);
+    let places = window.places().expect("g l opened the folders popover");
     assert!(
         crate::settle_until(async || places.names().contains(&name.to_owned())).await,
         "the folders popover does not list {name}: {:?}",
@@ -163,7 +163,7 @@ pub fn an_unconfirmed_send_says_so_and_mark_as_sent_settles_it() {
             return;
         }
         let (fixture, window, draft) = with_a_draft(DraftState::Unconfirmed).await;
-        support::keys(&window, &["g", "t"]);
+        support::keys(&window, &["g", "d"]);
         assert!(
             crate::settle_until(async || {
                 row_texts(&window, SUBJECT)
@@ -216,7 +216,7 @@ pub fn a_stopped_send_retries_into_the_outbox_and_cancel_brings_it_back() {
             return;
         }
         let (fixture, window, draft) = with_a_draft(DraftState::Failed).await;
-        support::keys(&window, &["g", "t"]);
+        support::keys(&window, &["g", "d"]);
         assert!(
             crate::settle_until(async || {
                 row_texts(&window, SUBJECT)
@@ -284,7 +284,7 @@ pub fn a_stopped_send_retries_into_the_outbox_and_cancel_brings_it_back() {
             crate::settle_until(async || row_texts(&window, SUBJECT).is_none()).await,
             "the cancelled send is still in the Outbox"
         );
-        support::keys(&window, &["g", "t"]);
+        support::keys(&window, &["g", "d"]);
         assert!(
             crate::settle_until(async || {
                 row_texts(&window, SUBJECT).is_some_and(|texts| {

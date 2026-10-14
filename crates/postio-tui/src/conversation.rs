@@ -2,7 +2,7 @@
 //! conversation, of which one is shown at a time.
 //!
 //! A conversation opens on its newest message, as the desktop's does, and
-//! `[` and `]` step through the rest; each body is read when it is first
+//! `p` and `n` step through the rest; each body is read when it is first
 //! shown.
 
 use crate::reader::{Block, Rendered};

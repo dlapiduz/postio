@@ -18,7 +18,7 @@ struct PlacesModelTests {
         var places: [PlaceEntryFfi] = PlacesModelTests.screen10
         var asked: [String] = []
         var opened: [UInt64] = []
-        var bindings: [String: String] = ["go_to_inbox": "g i", "go_to_drafts": "g t"]
+        var bindings: [String: String] = ["go_to_inbox": "g i", "go_to_drafts": "g d"]
 
         func focusPlaces(_ filter: String) -> [PlaceEntryFfi] {
             asked.append(filter)
@@ -59,7 +59,7 @@ struct PlacesModelTests {
         #expect(model.isOpen)
         #expect(model.entries.map(\.name) == ["Inbox", "Drafts", "Receipts", "Reading list", "Harbor", "Kids"])
         #expect(model.entries.map(\.count) == ["312", "2", "214", "37", "71", nil])
-        #expect(model.entries.map(\.cap) == ["g i", "g t", nil, nil, nil, nil])
+        #expect(model.entries.map(\.cap) == ["g i", "g d", nil, nil, nil, nil])
         // A heading goes wherever the section changes.
         #expect(model.entries.map(\.heading) == ["Mailboxes", nil, "Folders", nil, "Labels", nil])
         #expect(model.placeholder == "Go to folder or label")

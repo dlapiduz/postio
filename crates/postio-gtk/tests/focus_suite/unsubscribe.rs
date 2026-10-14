@@ -7,7 +7,7 @@
 //! Settings afterwards lists it. The same two-part shape as the egress log's
 //! case in `settings_wiring`.
 //!
-//! Focus answers `U` (`CommandId::Unsubscribe`) in a digest, on the message
+//! Focus answers `M` (`CommandId::Unsubscribe`) in a digest, on the message
 //! the digest's cursor is on. The open message's own unsubscribe notice is
 //! not wired in Focus (`Reader::set_unsubscribe` is never called and `act`
 //! has no arm for the command), so its case is held out in `IGNORED`.
@@ -144,7 +144,7 @@ async fn privacy_lists_an_activation(window: &postio_gtk::window::FocusWindow) {
     );
 }
 
-/// `U` in a digest leaves the list of the message the digest's cursor is on:
+/// `M` in a digest leaves the list of the message the digest's cursor is on:
 /// the log holds one activation stamped with the message's account and the
 /// sender's domain (no `List-Id` here), the window says what it left, and
 /// Privacy lists it.
@@ -162,10 +162,10 @@ pub fn u_in_a_digest_logs_the_activation_and_the_privacy_section_lists_it() {
         );
         assert!(logged(&fixture).await.is_empty(), "nothing is logged yet");
 
-        support::keys(&window, &["U"]);
+        support::keys(&window, &["M"]);
         assert!(
             crate::settle_until(async || logged(&fixture).await.len() == 1).await,
-            "`U` in the digest never reached storage"
+            "`M` in the digest never reached storage"
         );
         let activations = logged(&fixture).await;
         assert_eq!(activations[0].account_id, fixture.account.id);
@@ -188,7 +188,7 @@ pub fn u_in_a_digest_logs_the_activation_and_the_privacy_section_lists_it() {
     });
 }
 
-/// Personal mail opens with no unsubscribe band, and `U` still leaves the
+/// Personal mail opens with no unsubscribe band, and `M` still leaves the
 /// sender's domain: the band is for list mail, the key is not (T261).
 pub fn personal_mail_has_no_unsubscribe_band_but_u_still_works() {
     crate::gtk_case(async {
@@ -212,10 +212,10 @@ pub fn personal_mail_has_no_unsubscribe_band_but_u_still_works() {
             "personal mail carries no unsubscribe band"
         );
 
-        support::keys(&window, &["U"]);
+        support::keys(&window, &["M"]);
         assert!(
             crate::settle_until(async || logged(&fixture).await.len() == 1).await,
-            "`U` on a message with no band did nothing"
+            "`M` on a message with no band did nothing"
         );
         assert_eq!(
             logged(&fixture).await[0].list_identifier,

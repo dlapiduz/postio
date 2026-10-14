@@ -2,14 +2,14 @@
 # one shown (#1386, #1365, #1748).
 #
 # The defect: per-message focus and per-message reply did nothing, so a
-# long thread could only be read from its newest message, and `e` always
+# long thread could only be read from its newest message, and `r` always
 # answered that one. In the classic app `J`/`K` never reached the
 # conversation (#1748).
 #
 # Re-expressed for Focus (T265): Focus shows one message at a time and steps
-# the thread with `[` and `]` (C2, FR-037), so the open message names the
+# the thread with `p` and `n` (C2, FR-037), so the open message names the
 # message it shows. The seven-message long-thread opens on its newest,
-# message 7; `[` steps back, `]` forward, and `e` replies to the one shown.
+# message 7; `p` steps back, `n` forward, and `r` replies to the one shown.
 apps   = ["focus"]
 source = { kind = "issue", ref = "#1386" }
 proof  = "pinned"
@@ -36,7 +36,7 @@ check   = { reading.id = "5" }
 [[step]]
 command = "next_in_conversation"
 check   = { reading.id = "6" }
-expect  = "`]` steps forward again."
+expect  = "`n` steps forward again."
 
 [[step]]
 command = "reply"

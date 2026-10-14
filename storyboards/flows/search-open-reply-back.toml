@@ -1,7 +1,7 @@
 # Search, open a hit, reply, and come back (ux-architect §4).
 #
 # `/` and a query, Return to run it, the arrows to a hit, Return to open
-# it, `e` to reply, and Escape walks back out: first the composer, then the
+# it, `r` to reply, and Escape walks back out: first the composer, then the
 # hit. Nothing should be lost on the way: the inbox is whole.
 #
 # Re-expressed for Focus (T265): its bar lists the hits under the field and

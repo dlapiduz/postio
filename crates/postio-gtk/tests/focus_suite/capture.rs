@@ -1,5 +1,5 @@
-//! The capture sheet (US15, T158; screen 25): `t` on a message captures a
-//! task into the person's Obsidian vault, `n` a note, over a vault that is
+//! The capture sheet (US15, T158; screen 25): `T` on a message captures a
+//! task into the person's Obsidian vault, `N` a note, over a vault that is
 //! a folder on this computer. What is appended is asserted byte for byte,
 //! and every other note is asserted unchanged.
 
@@ -96,7 +96,7 @@ fn row_actions(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
 }
 
 /// US15 scenario 1: with a vault configured, the to-do's row offers Task
-/// `t`; `t` opens the sheet with the sentence verbatim, the due day from
+/// `T`; `T` opens the sheet with the sentence verbatim, the due day from
 /// the mail, and the Harbor project suggested with its reason; the preview
 /// is the exact line; and `Ctrl+Enter` appends exactly that line to
 /// Harbor's note, with the link before 📅, and changes nothing else.
@@ -121,8 +121,8 @@ pub fn t_appends_one_tasks_line_with_the_link_before_the_date() {
             row_actions(&window)
         );
 
-        support::keys(&window, &["j", "t"]);
-        let sheet = window.capture().expect("t opened the capture sheet");
+        support::keys(&window, &["j", "T"]);
+        let sheet = window.capture().expect("T opened the capture sheet");
         assert!(
             crate::settle_until(async || sheet.is_shown()).await,
             "the sheet never drew"
@@ -180,7 +180,7 @@ pub fn t_appends_one_tasks_line_with_the_link_before_the_date() {
     });
 }
 
-/// `n` opens the sheet as a note, `alt+s` puts the subject in place of the
+/// `N` opens the sheet as a note, `alt+s` puts the subject in place of the
 /// sentence, and the note entry is appended to the project's note.
 pub fn n_appends_a_note_and_alt_s_uses_the_subject() {
     crate::gtk_case(async {
@@ -201,8 +201,8 @@ pub fn n_appends_a_note_and_alt_s_uses_the_subject() {
             crate::settle_until(async || !support::subjects(&window).is_empty()).await,
             "the inbox never reached the screen"
         );
-        support::keys(&window, &["j", "n"]);
-        let sheet = window.capture().expect("n opened the capture sheet");
+        support::keys(&window, &["j", "N"]);
+        let sheet = window.capture().expect("N opened the capture sheet");
         assert!(crate::settle_until(async || sheet.is_shown()).await);
         assert!(
             sheet.texts().iter().any(|text| text == "Add note"),
@@ -233,7 +233,7 @@ pub fn n_appends_a_note_and_alt_s_uses_the_subject() {
     });
 }
 
-/// With no `[focus.vault]`, the to-do offers no Task, and `t` opens no
+/// With no `[focus.vault]`, the to-do offers no Task, and `T` opens no
 /// sheet: it says why instead (spec C9).
 pub fn without_a_vault_there_is_no_task_and_t_says_why() {
     crate::gtk_case(async {
@@ -248,7 +248,7 @@ pub fn without_a_vault_there_is_no_task_and_t_says_why() {
             "the marker never drew"
         );
         assert_eq!(row_actions(&window), ["Snooze"], "no Task without a vault");
-        support::keys(&window, &["j", "t"]);
+        support::keys(&window, &["j", "T"]);
         assert!(
             window.capture().is_none_or(|sheet| !sheet.is_open()),
             "no sheet without a vault"
@@ -258,7 +258,7 @@ pub fn without_a_vault_there_is_no_task_and_t_says_why() {
                 .toast_showing()
                 .is_some_and(|toast| toast.contains("[focus.vault]")))
             .await,
-            "t did not say why: {:?}",
+            "T did not say why: {:?}",
             window.toast_showing()
         );
     });
@@ -313,9 +313,9 @@ fn capture_from_reader(key: &str, heading: &str) {
 }
 
 pub fn t_on_an_open_message_opens_the_task_sheet() {
-    capture_from_reader("t", "Add task");
+    capture_from_reader("T", "Add task");
 }
 
 pub fn n_on_an_open_message_opens_the_note_sheet() {
-    capture_from_reader("n", "Add note");
+    capture_from_reader("N", "Add note");
 }

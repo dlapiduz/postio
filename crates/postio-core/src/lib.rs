@@ -22,7 +22,7 @@
 //! let rows: Vec<(&str, &str)> = registry::for_context(Context::List)
 //!     .map(|spec| (spec.title, spec.default_binding))
 //!     .collect();
-//! assert!(rows.contains(&("Archive", "a")));
+//! assert!(rows.contains(&("Archive", "e")));
 //!
 //! // Choosing a row yields the command to dispatch.
 //! assert_eq!(

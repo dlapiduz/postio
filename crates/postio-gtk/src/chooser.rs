@@ -1,4 +1,4 @@
-//! `o`: open an attachment or a link (US2 scenario 9). A small dialog lists
+//! `A`: open an attachment or a link (US2 scenario 9). A small dialog lists
 //! the open message's links and its parts; each link shows the words it was
 //! written behind and, under them, its full target -- what will open, seen
 //! before it opens. Nothing opens until a row is chosen.
@@ -16,7 +16,7 @@ pub const DIALOG_NAME: &str = "focus-open-choice";
 const WIDTH: i32 = 560;
 const HEIGHT: i32 = 420;
 
-/// One thing `o` offers.
+/// One thing `A` offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Choice {
     /// A link in the body.

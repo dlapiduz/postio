@@ -73,7 +73,7 @@ const STOP_DIALOG: &str = "focus-stop-digesting";
 /// The sweep's confirmation (FR-118).
 const SWEEP_DIALOG: &str = "focus-sweep";
 
-/// The digest rules list's page (`g d`, T139).
+/// The digest rules list's page (`g r`, T139).
 const RULES: &str = "rules";
 
 /// Removing a digest rule's confirmation (FR-126).
@@ -137,7 +137,7 @@ mod imp {
         pub keymap: RefCell<Keymap>,
         /// Keys to commands, for Focus's commands alone (`crate::keys`).
         pub resolver: RefCell<Option<Resolver>>,
-        /// What `a` would archive: not the cursor, which is GTK's
+        /// What `e` would archive: not the cursor, which is GTK's
         /// selection model on the list (constitution II).
         pub picked: SelectionState,
         /// The conversations each picked row reaches: its own and the
@@ -220,7 +220,7 @@ mod imp {
         /// The dialogs over the window, held so its changes keep being
         /// heard: libadwaita hands out a model of its own each time.
         pub dialogs: RefCell<Option<gtk::gio::ListModel>>,
-        /// The snooze picker, built the first time `s` opens it.
+        /// The snooze picker, built the first time `b` opens it.
         pub snooze: RefCell<Option<Rc<WhenPicker>>>,
         /// The row's right-click menu (T199), built on its first use.
         pub row_menu: RefCell<Option<Rc<crate::row_menu::RowMenu>>>,
@@ -244,7 +244,7 @@ mod imp {
         /// The start being measured, from `startup::time` until the frame
         /// with mail in it closes it.
         pub timeline: RefCell<Option<postio_widgets::startup::Timeline>>,
-        /// The digest rules list, built the first time `g d` opens it.
+        /// The digest rules list, built the first time `g r` opens it.
         pub rules_view: RefCell<Option<Rc<crate::rules::RulesView>>>,
         /// The digest rule dialog, built the first time `d` opens it.
         pub rule_dialog: RefCell<Option<Rc<crate::rule_dialog::RuleDialog>>>,
@@ -256,7 +256,7 @@ mod imp {
         pub pending_link: RefCell<Option<String>>,
         /// A `mailto:` link that arrived before the composer was mounted.
         pub pending_mailto: RefCell<Option<postio_model::mailto::Mailto>>,
-        /// The move picker, built the first time `m` opens it.
+        /// The move picker, built the first time `v` opens it.
         pub moves: RefCell<Option<Rc<crate::move_picker::MovePicker>>>,
         /// The composer, in its dialog (US3), once an account is known.
         pub compose: RefCell<Option<Rc<crate::compose::Compose>>>,
@@ -266,7 +266,7 @@ mod imp {
         /// Whether the composer's editing surface should start as soon as
         /// the composer is mounted: asked for before an account was known.
         pub warm: Cell<bool>,
-        /// The capture sheet (US15), built the first time `t` or `n` opens
+        /// The capture sheet (US15), built the first time `T` or `N` opens
         /// it.
         pub capture: RefCell<Option<Rc<crate::capture::CaptureSheet>>>,
         /// The add-account form's dialog, while it is open (T171, T172):
@@ -1053,12 +1053,12 @@ impl FocusWindow {
         }
     }
 
-    /// The capture sheet, once `t` or `n` has opened it.
+    /// The capture sheet, once `T` or `N` has opened it.
     pub fn capture(&self) -> Option<Rc<crate::capture::CaptureSheet>> {
         self.imp().capture.borrow().clone()
     }
 
-    /// `t` or `n`: the capture sheet for the message aimed at, as a task or
+    /// `T` or `N`: the capture sheet for the message aimed at, as a task or
     /// a note (US15). With no vault configured, it says so instead.
     fn open_capture(&self, mode: crate::capture::Mode) {
         let imp = self.imp();
@@ -1136,7 +1136,7 @@ impl FocusWindow {
 
     /// A key while a message is open over the list (US2 scenarios 1-3):
     /// `Esc` closes it and leaves the list as it was, `j`/`k` step the list
-    /// and move its cursor behind the dialog, and `[`/`]` step the thread.
+    /// and move its cursor behind the dialog, and `p`/`n` step the thread.
     fn reading_key(&self, outcome: Outcome) -> glib::Propagation {
         let Outcome::Command(id) = outcome else {
             return match outcome {
@@ -1761,7 +1761,7 @@ impl FocusWindow {
                     self.answer(message, id);
                 }
             }
-            // `g t`: the Drafts folder, where Enter opens a draft to edit.
+            // `g d`: the Drafts folder, where Enter opens a draft to edit.
             CommandId::GoToDrafts => self.go_to_role(postio_model::MailboxRole::Drafts),
             // The rest of the go-to keys (T236): a folder by its role, a
             // view by its scope.
@@ -1782,7 +1782,7 @@ impl FocusWindow {
                     );
                 }
             }
-            // A Focus row is a whole conversation, so `A` is `a` here.
+            // A Focus row is a whole conversation, so `E` is `e` here.
             CommandId::ArchiveThread => self.act(CommandId::Archive),
             // A send on its way or stopped, from the list or the open
             // message (T239): the draft behind the message aimed at.
@@ -1835,7 +1835,7 @@ impl FocusWindow {
                     }
                 }
             }
-            // `U` leaves the list on any message the shared rule allows, band
+            // `M` leaves the list on any message the shared rule allows, band
             // or not: the band only shows for list mail (T261), the key is
             // not tied to it.
             CommandId::Unsubscribe => {
@@ -2044,7 +2044,7 @@ impl FocusWindow {
         self.imp().reach.borrow_mut().clear();
     }
 
-    /// What is selected now: what `a` would archive.
+    /// What is selected now: what `e` would archive.
     pub fn selection(&self) -> Selection {
         self.imp().picked.selection()
     }
@@ -2772,7 +2772,7 @@ impl FocusWindow {
         });
     }
 
-    /// `g t`, `g s`, `g r`: list the folder of `role` in the account Focus
+    /// `g d`, `g t`, `g a`: list the folder of `role` in the account Focus
     /// writes from -- the first with one. A role, not a name: what a provider
     /// calls its sent mail does not matter.
     fn go_to_role(&self, role: postio_model::MailboxRole) {
@@ -2801,7 +2801,7 @@ impl FocusWindow {
         });
     }
 
-    /// `g z`, `g *`: list a view -- Snoozed or Flagged -- which is a scope
+    /// `g b`, `g s`: list a view -- Snoozed or Flagged -- which is a scope
     /// over mail filed elsewhere, not a folder with an id of its own. Of every
     /// enabled account, as Focus's inbox is.
     fn go_to_view(&self, role: postio_model::MailboxRole) {
@@ -3319,7 +3319,7 @@ impl FocusWindow {
             .and_then(|dialog| dialog.downcast().ok())
     }
 
-    /// `U`: leave the list `message` came from -- only ever on this key.
+    /// `M`: leave the list `message` came from -- only ever on this key.
     fn unsubscribe(&self, message: MessageId) {
         let Some(client) = self.imp().client.borrow().clone() else {
             return;
@@ -3480,7 +3480,7 @@ impl FocusWindow {
         imp.rules_view.borrow().clone()
     }
 
-    /// `g d`: every digest rule, in place of the inbox (T139).
+    /// `g r`: every digest rule, in place of the inbox (T139).
     fn show_rules(&self) {
         let imp = self.imp();
         let Some(client) = imp.client.borrow().clone() else {
@@ -4303,14 +4303,14 @@ impl FocusWindow {
             Some(launch) => launch(uri),
             None => {
                 // POSTIO-CONSENT: runs only when the person chooses a link or
-                // a part in the open-with chooser (`o`, then a row), one at a
+                // a part in the open-with chooser (`A`, then a row), one at a
                 // time; nothing opens on render, on arrival or from a setting.
                 gtk::UriLauncher::new(uri).launch(Some(self), None::<&gio::Cancellable>, |_| {})
             }
         }
     }
 
-    /// `o`: offer the open message's links and parts (US2 scenario 9), or
+    /// `A`: offer the open message's links and parts (US2 scenario 9), or
     /// a chip's part, which is the same chooser opened at that part (T240).
     fn offer_choices(&self, at: Option<postio_model::ids::AttachmentId>) {
         let Some(reading) = self.reading().filter(|reading| reading.is_open()) else {
@@ -4556,7 +4556,7 @@ impl FocusWindow {
             .and_then(|dialog| crate::source::shown(&dialog))
     }
 
-    /// `v`: the raw source of the message open, or else of the row under
+    /// `V`: the raw source of the message open, or else of the row under
     /// the cursor, read through the host and fetched only now if it is not
     /// here (US2 scenario 5).
     fn view_source(&self) {
@@ -4613,7 +4613,7 @@ impl FocusWindow {
             .unwrap_or_default()
     }
 
-    /// `g o`, or a click on "Inbox ▾": the folders popover (screen 10).
+    /// `g l`, or a click on "Inbox ▾": the folders popover (screen 10).
     fn open_places(&self) {
         let (Some(chrome), Some(client)) = (self.chrome(), self.imp().client.borrow().clone())
         else {

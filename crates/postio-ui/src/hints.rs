@@ -271,12 +271,12 @@ mod tests {
 
     #[test]
     fn an_unbound_command_has_no_hint() {
-        // An override outranks a default, so giving `Delete` to compose
-        // leaves Delete -- one key, no alternate -- with no key at all:
+        // An override outranks a default, so giving `b` to compose leaves
+        // Snooze -- one key, no alternate -- with no key at all:
         // palette-only. Compose itself cannot be the example; it has `mod+n`
         // to fall back on.
-        let keymap = rebound(CommandId::Compose, "Delete");
-        assert_eq!(hint(&keymap, CommandId::Delete, "Delete"), None);
+        let keymap = rebound(CommandId::Compose, "b");
+        assert_eq!(hint(&keymap, CommandId::Snooze, "Snooze"), None);
     }
 
     #[test]

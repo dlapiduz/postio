@@ -124,7 +124,7 @@ pub fn enter_opens_a_digest_and_shift_a_archives_all_of_it() {
             support::keycaps_are_taught(digest.dialog()),
             "the digest window's keycaps do not teach their controls (T142)"
         );
-        support::press(&window, "A", gdk::ModifierType::SHIFT_MASK);
+        support::press(&window, "E", gdk::ModifierType::SHIFT_MASK);
         assert!(
             crate::settle_until(async || {
                 support::subjects(&window) == ["Staffing plan", "Harbor draft", "Atlas budget"]
@@ -318,7 +318,7 @@ pub fn d_on_a_message_previews_the_rule_and_create_writes_it() {
     });
 }
 
-/// T139 (FR-126): `g d` lists every rule with what it matches, when it
+/// T139 (FR-126): `g r` lists every rule with what it matches, when it
 /// delivers and what it holds now; `Delete` removes the focused rule once
 /// confirmed, and what it held comes into the inbox.
 pub fn g_d_lists_the_rules_and_delete_releases_what_one_held() {
@@ -377,8 +377,8 @@ pub fn g_d_lists_the_rules_and_delete_releases_what_one_held() {
             support::subjects(&window)
         );
 
-        support::keys(&window, &["g", "d"]);
-        let rules = window.rules().expect("g d opened the rules");
+        support::keys(&window, &["g", "r"]);
+        let rules = window.rules().expect("g r opened the rules");
         assert!(
             crate::settle_until(async || rules.texts().iter().any(|text| text == "holds 2")).await,
             "the rule never said what it holds: {:?}",

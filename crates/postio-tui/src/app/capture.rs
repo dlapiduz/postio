@@ -1,7 +1,7 @@
-//! Capture (`t` and `n`): a task or a note written into the person's vault.
+//! Capture (`T` and `N`): a task or a note written into the person's vault.
 //!
-//! The state is `crate::capture`; the drawing is `view::capture`. `t` and
-//! `n` open the sheet on the message under the cursor, or the one open; in
+//! The state is `crate::capture`; the drawing is `view::capture`. `T` and
+//! `N` open the sheet on the message under the cursor, or the one open; in
 //! the sheet they switch it between a task and a note wherever a letter is
 //! not being typed. `ctrl+Return` writes.
 
@@ -69,7 +69,7 @@ impl App {
         })
     }
 
-    /// `t` and `n`: the sheet, over the message, reading the vault.
+    /// `T` and `N`: the sheet, over the message, reading the vault.
     pub(super) fn open_capture(&mut self, mode: Mode) -> Vec<Effect> {
         if !self.features.capture {
             return self.say(capture::NO_VAULT);
@@ -328,7 +328,7 @@ mod tests {
 
     fn opened(vault: bool) -> App {
         let mut app = inbox(vault);
-        update(&mut app, press('t'));
+        update(&mut app, press('T'));
         update(&mut app, Input::Answer(Answer::Vault(Ok(picture()))));
         app
     }
@@ -351,9 +351,9 @@ mod tests {
     }
 
     #[test]
-    fn t_opens_the_sheet_on_the_marker_sentence_and_reads_the_vault() {
+    fn shift_t_opens_the_sheet_on_the_marker_sentence_and_reads_the_vault() {
         let mut app = inbox(true);
-        let effects = update(&mut app, press('t'));
+        let effects = update(&mut app, press('T'));
         assert!(
             effects.contains(&Effect::Ask(Ask::Vault("Atlas figures".into()))),
             "{effects:?}"
@@ -361,7 +361,7 @@ mod tests {
         assert_eq!(app.focus(), Focus::Capture);
         let drawn = flat(&screen(120, 40, &app));
         assert!(drawn.contains("Capture"), "{drawn}");
-        assert!(drawn.contains("Task t   Note n"), "{drawn}");
+        assert!(drawn.contains("Task T   Note N"), "{drawn}");
         assert!(drawn.contains("From Ada Moreno · Atlas figures"), "{drawn}");
         assert!(
             drawn.contains("Please send the Atlas figures by Friday"),
@@ -378,8 +378,8 @@ mod tests {
     }
 
     #[test]
-    fn with_no_vault_t_and_n_say_to_name_one() {
-        for letter in ['t', 'n'] {
+    fn with_no_vault_shift_t_and_shift_n_say_to_name_one() {
+        for letter in ['T', 'N'] {
             let mut app = inbox(false);
             let effects = update(&mut app, press(letter));
             assert!(
@@ -451,11 +451,11 @@ mod tests {
     }
 
     #[test]
-    fn n_makes_it_a_note_with_no_due_day_and_its_own_words() {
+    fn shift_n_makes_it_a_note_with_no_due_day_and_its_own_words() {
         let mut app = opened(true);
-        // Tab off the text, where a letter is typed, and press n.
+        // Tab off the text, where a letter is typed, and press N.
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        update(&mut app, press('n'));
+        update(&mut app, press('N'));
         let drawn = flat(&screen(120, 40, &app));
         assert!(
             drawn.contains("This exact entry will be appended"),
@@ -473,17 +473,17 @@ mod tests {
         );
         // The text has the keyboard now, and a letter there is typed: walk on.
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        update(&mut app, press('t'));
+        update(&mut app, press('T'));
         assert!(screen(120, 40, &app).contains("Add task"));
     }
 
     #[test]
     fn a_letter_in_the_text_is_typed_not_run() {
         let mut app = opened(true);
-        type_text(&mut app, "tn");
+        type_text(&mut app, "TN");
         let drawn = flat(&screen(120, 40, &app));
         assert!(
-            drawn.contains("Please send the Atlas figures by Fridaytn"),
+            drawn.contains("Please send the Atlas figures by FridayTN"),
             "{drawn}"
         );
         assert!(drawn.contains("Add task"), "still a task");
@@ -575,7 +575,7 @@ mod tests {
     fn alt_enter_writes_too_and_a_note_goes_to_the_projects_note() {
         let mut app = opened(true);
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        update(&mut app, press('n'));
+        update(&mut app, press('N'));
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::ALT));
         let asked = effects.iter().find_map(|e| match e {
             Effect::Ask(Ask::CaptureNote { note, entry }) => Some((note.clone(), entry.clone())),
@@ -629,21 +629,21 @@ mod tests {
     #[test]
     fn a_marked_to_do_offers_task_before_snooze_only_with_a_vault() {
         let with = screen(120, 40, &inbox(true));
-        let row = line_with(&with, "Task t");
+        let row = line_with(&with, "Task T");
         assert!(
-            row.contains("Snooze s") && row.find("Task t") < row.find("Snooze s"),
+            row.contains("Snooze b") && row.find("Task T") < row.find("Snooze b"),
             "{row}"
         );
         let without = screen(120, 40, &inbox(false));
-        assert!(!without.contains("Task t"), "{without}");
-        assert!(without.contains("Snooze s"), "{without}");
+        assert!(!without.contains("Task T"), "{without}");
+        assert!(without.contains("Snooze b"), "{without}");
     }
 
     #[test]
-    fn t_from_the_open_message_captures_that_message() {
+    fn shift_t_from_the_open_message_captures_that_message() {
         let mut app = inbox(true);
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        let effects = update(&mut app, press('t'));
+        let effects = update(&mut app, press('T'));
         assert!(
             effects.contains(&Effect::Ask(Ask::Vault("Atlas figures".into()))),
             "{effects:?}"
@@ -751,7 +751,7 @@ mod tests {
                 hostile,
             ))],
         );
-        update(&mut app, press('t'));
+        update(&mut app, press('T'));
         let drawn = flat(&screen(120, 40, &app));
         assert!(
             !drawn.contains('\u{1b}') && !drawn.contains('\u{7}'),

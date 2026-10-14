@@ -1,8 +1,8 @@
 # Open a to-do, capture it as a task in the vault, and come back
 # (specs/009-focus-macos US9, screen 25; the controller's capture, T109).
 #
-# Needs `[focus.vault]` (C9): without one `t` says so in the toast and
-# opens nothing. With one, `t` on an open message with a to-do opens
+# Needs `[focus.vault]` (C9): without one `T` says so in the toast and
+# opens nothing. With one, `T` on an open message with a to-do opens
 # capture in place of the message window (M4): the sentence verbatim,
 # its due day with the quick picks, the project the vault suggests and
 # why, and the exact line it will append, its `postio://` link before the
