@@ -5084,6 +5084,7 @@ dependencies = [
  "postio-session",
  "postio-storage",
  "postio-workspace-hack",
+ "rustix 1.1.5",
  "serde_json",
  "tempfile",
  "tokio",

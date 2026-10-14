@@ -139,7 +139,7 @@ impl World {
         let leases = Rc::new(Cell::new(0));
         let server = Server::new(
             Counted {
-                held: Held::new(Arc::clone(&host)),
+                held: Held::new(host.connector()),
                 leases: Rc::clone(&leases),
             },
             Some(config.clone()),

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use postio_client::Client;
 use postio_client::protocol::ClientKind;
-use postio_host::Host;
+use postio_host::{Connector, Host};
 
 /// What a tool call reads and writes through.
 pub trait Backend {
@@ -95,22 +95,25 @@ impl Backend for Installed {
     }
 }
 
-/// A host started elsewhere and kept for the life of the server.
+/// A host something else started and keeps: the app's own, answering on
+/// the agent socket, or a demo's or a suite's.
 pub struct Held {
-    host: Arc<Host>,
+    connector: Connector,
 }
 
 impl Held {
-    /// Serve `host`.
-    pub fn new(host: Arc<Host>) -> Self {
-        Held { host }
+    /// Serve the host `connector` connects to.
+    pub fn new(connector: Connector) -> Self {
+        Held { connector }
     }
 }
 
 impl Backend for Held {
     fn lease(&mut self) -> Result<Lease, String> {
         Ok(Lease {
-            client: Some(self.host.connect(ClientKind::Mcp)),
+            // Beside the app's window when there is one, so what the agent
+            // does is on that window's undo (ADR 0041, amended 2026-10-14).
+            client: Some(self.connector.connect_agent()),
             host: None,
         })
     }

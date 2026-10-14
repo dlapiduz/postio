@@ -41,6 +41,7 @@ pub mod audit;
 pub mod backend;
 pub mod scope;
 pub mod server;
+pub mod socket;
 pub mod tools;
 
 pub use audit::Audit;

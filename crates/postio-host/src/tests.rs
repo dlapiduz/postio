@@ -5068,3 +5068,60 @@ fn a_badge_that_stopped_at_its_cap_says_it_is_a_floor() {
     );
     assert!(!counted[0].total.capped, "the total is counted to the end");
 }
+
+#[test]
+fn an_agent_s_change_lands_on_the_window_s_undo_and_the_window_is_told() {
+    // ADR 0041, amended 2026-10-14: an agent served by a running app acts
+    // as that app's window would. What it did is on the window's undo
+    // stack, so `u` there takes it back, and the window hears the undo
+    // offer the change makes, as it would for its own keystroke.
+    let world = World::new();
+    let (desktop, desktop_events) = world.frontend(ClientKind::Focus);
+    let agent = world.host().connector().connect_agent();
+    let agent_events = agent.events();
+
+    let invocation = world
+        .rt
+        .block_on(agent.send_tracked(Command::Archive {
+            target: MessageTarget::Messages(vec![world.message()]),
+        }))
+        .expect("sent");
+    world.hear(&agent_events, |event| {
+        matches!(event, Event::InvocationFinished { invocation: done, .. } if *done == invocation)
+    });
+    world.hear(&desktop_events, |event| {
+        matches!(event, Event::ActionCompleted { .. })
+    });
+    assert_eq!(world.inbox_rows(&desktop), 0, "archived");
+    assert_eq!(
+        world
+            .rt
+            .block_on(desktop.undo_top())
+            .expect("the undo top")
+            .as_deref(),
+        Some("Archived 1 message")
+    );
+
+    world.send(&desktop, Command::Undo);
+    world.hear(&desktop_events, |event| {
+        matches!(event, Event::UndoPerformed { .. })
+    });
+    assert_eq!(world.inbox_rows(&desktop), 1, "the window took it back");
+}
+
+#[test]
+fn an_agent_with_no_window_to_stand_beside_keeps_its_own_undo() {
+    let world = World::new();
+    let agent = world.host().connector().connect_agent();
+    let events = agent.events();
+    world.send(
+        &agent,
+        Command::Archive {
+            target: MessageTarget::Messages(vec![world.message()]),
+        },
+    );
+    world.hear(&events, |event| {
+        matches!(event, Event::ActionCompleted { .. })
+    });
+    assert_eq!(world.inbox_rows(&agent), 0);
+}
