@@ -809,6 +809,29 @@ fn counts_landing_after_the_places_change_them() {
     assert!(!shown(&effects).contains(&Intent::PlacesChanged));
 }
 
+/// Turning filtering on or off adds or takes away Filtered, so an open
+/// popover is told to read the places again, as when the count lands.
+#[test]
+fn filtering_turned_off_changes_the_places() {
+    let rows = List::of(1);
+    let mut focus = mac();
+    let _ = focus.handle(Input::Filtering(true));
+    let (ticket, _) = ask(&run(&mut focus, CommandId::GoToFolders, &rows));
+    let _ = focus.handle(Input::Reply(ticket, Reply::Places(Ok(places()))));
+
+    let effects = focus.handle(Input::Filtering(false));
+    assert!(
+        shown(&effects).contains(&Intent::PlacesChanged),
+        "{:?}",
+        shown(&effects)
+    );
+    let effects = focus.handle(Input::Filtering(false));
+    assert!(
+        !shown(&effects).contains(&Intent::PlacesChanged),
+        "unchanged"
+    );
+}
+
 #[test]
 fn a_bar_place_that_is_an_inbox_goes_to_focus_s_inbox() {
     let rows = List::of(1);

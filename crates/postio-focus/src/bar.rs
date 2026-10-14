@@ -435,11 +435,18 @@ impl Bar {
         self.keymap = keymap;
     }
 
-    pub(crate) fn set_filtering(&mut self, filtering: bool) {
-        if self.filtering != filtering {
-            self.filtering = filtering;
-            self.places_read += 1;
+    /// Filtering turned on or off adds or takes away Filtered, so once the
+    /// places have landed the popover is told to read them again.
+    pub(crate) fn set_filtering(&mut self, filtering: bool) -> Vec<Step> {
+        if self.filtering == filtering {
+            return Vec::new();
         }
+        self.filtering = filtering;
+        self.places_read += 1;
+        if self.places.entries.is_empty() {
+            return Vec::new();
+        }
+        vec![Step::Show(Intent::PlacesChanged)]
     }
 
     /// Today's filtered count landed, `before` the one known until then.
@@ -1586,10 +1593,7 @@ impl FocusController {
                     })],
                 }
             }
-            Input::Filtering(filtering) => {
-                self.bar.set_filtering(filtering);
-                Vec::new()
-            }
+            Input::Filtering(filtering) => self.bar.set_filtering(filtering),
             _ => Vec::new(),
         }
     }
