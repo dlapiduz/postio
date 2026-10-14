@@ -170,21 +170,21 @@ async fn the_folders_popover_lists_the_places_and_opens_one() {
         .await,
         "`g o` opens the popover"
     );
+    // Read again on every `FocusPlacesChanged`, as the popover does.
+    // Filtering is on by default, so Filtered is a place too -- once
+    // today's count, a read of its own, has landed, which may be after the
+    // places did.
+    let mut places = Vec::new();
+    let wanted = ["Inbox", "Snoozed", "Filtered", "Flagged"];
     assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusPlacesChanged
-        ))
+        heard(&session, 10, |event| {
+            if matches!(event, UiEvent::FocusPlacesChanged) {
+                places = session.focus_places(String::new());
+            }
+            places.iter().map(|place| place.name.as_str()).eq(wanted)
+        })
         .await,
-        "and the places are read"
-    );
-    let places = session.focus_places(String::new());
-    let names: Vec<&str> = places.iter().map(|place| place.name.as_str()).collect();
-    // Filtering is on by default, so Filtered is a place too.
-    assert_eq!(
-        names,
-        ["Inbox", "Snoozed", "Filtered", "Flagged"],
-        "{places:?}"
+        "and the places are read: {places:?}"
     );
     let inbox = &places[0];
     assert_eq!(inbox.count.as_deref(), Some("1"), "conversations, counted");

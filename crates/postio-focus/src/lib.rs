@@ -1425,8 +1425,12 @@ impl FocusController {
             }
             Input::Reply(ticket, _) if ticket.generation != self.generation => Vec::new(),
             Input::Reply(_, Reply::FocusCounts(Ok(counts))) => {
-                self.counts = Some(counts);
+                let before = self.counts.replace(counts);
                 let mut steps = vec![feed::Step::Show(Intent::Counts(counts))];
+                steps.extend(self.bar.filtered_counted(
+                    before.map(|before| before.filtered_today),
+                    counts.filtered_today,
+                ));
                 steps.extend(self.show_empty());
                 self.effects(steps)
             }

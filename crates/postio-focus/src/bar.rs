@@ -442,6 +442,20 @@ impl Bar {
         }
     }
 
+    /// Today's filtered count landed, `before` the one known until then.
+    /// While Focus files mail Filtered is listed by it, and the counts are a
+    /// read of their own that can land after the places: once the places
+    /// have landed (their read always holds Snoozed and Flagged), a change
+    /// in it is a change in them, so their tokens move on and the popover
+    /// is told to read them again.
+    pub(crate) fn filtered_counted(&mut self, before: Option<u32>, now: u32) -> Vec<Step> {
+        if !self.filtering || before == Some(now) || self.places.entries.is_empty() {
+            return Vec::new();
+        }
+        self.places_read += 1;
+        vec![Step::Show(Intent::PlacesChanged)]
+    }
+
     /// Open the bar `mode`'s way on `text`, over the cursor's `aim`, and
     /// read the places it can go.
     fn open(&mut self, mode: BarMode, text: &str, aim: Option<MessageId>) -> Vec<Step> {

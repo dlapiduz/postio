@@ -760,6 +760,55 @@ fn the_popover_lists_filtered_while_focus_files_mail() {
     assert_eq!(shown(&effects), vec![Intent::ShowFiltered]);
 }
 
+/// Filtered is listed by today's count, which is a read of its own and can
+/// land after the places do: the popover open by then is told the places
+/// changed, so it lists Filtered, and a token it read before is spent
+/// rather than opening whatever moved into its row.
+#[test]
+fn counts_landing_after_the_places_change_them() {
+    let rows = List::of(1);
+    let mut focus = mac();
+    let _ = focus.handle(Input::Filtering(true));
+    let Effect::Ask(counted, _) = focus.refresh_counts() else {
+        panic!("counts are asked for");
+    };
+    let (ticket, _) = ask(&run(&mut focus, CommandId::GoToFolders, &rows));
+    let _ = focus.handle(Input::Reply(ticket, Reply::Places(Ok(places()))));
+    let names = |focus: &FocusController| -> Vec<String> {
+        focus
+            .places("")
+            .into_iter()
+            .map(|(_, entry)| entry.name)
+            .collect()
+    };
+    assert!(!names(&focus).contains(&"Filtered".to_owned()), "not yet");
+    let archive = focus.places("archive")[0].0;
+
+    let counts = postio_client::protocol::FocusCounts {
+        filtered_today: 4,
+        ..Default::default()
+    };
+    let effects = focus.handle(Input::Reply(counted, Reply::FocusCounts(Ok(counts))));
+    assert!(
+        shown(&effects).contains(&Intent::PlacesChanged),
+        "{:?}",
+        shown(&effects)
+    );
+    assert!(names(&focus).contains(&"Filtered".to_owned()));
+    let effects = focus.handle_on(Input::OpenPlace(archive), &rows);
+    assert!(
+        shown(&effects).is_empty() && asked(&effects).is_empty(),
+        "a token from before opens nothing: {effects:?}"
+    );
+
+    // The same count again changes nothing.
+    let Effect::Ask(counted, _) = focus.refresh_counts() else {
+        panic!("counts are asked for");
+    };
+    let effects = focus.handle(Input::Reply(counted, Reply::FocusCounts(Ok(counts))));
+    assert!(!shown(&effects).contains(&Intent::PlacesChanged));
+}
+
 #[test]
 fn a_bar_place_that_is_an_inbox_goes_to_focus_s_inbox() {
     let rows = List::of(1);
