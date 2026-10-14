@@ -26,16 +26,14 @@
 //! cannot separate a table from its index; truer in that it counts everything
 //! the step adds to the file, which is the number that reaches a disk.
 //!
-//! POSTIO-MEASUREMENT: its output is numbers a person reads, so it runs on
-//! the nightly timer rather than the merge path. `.config/nextest.toml`'s
-//! `profile.default` filter is what holds it back; `--profile nightly` runs it.
-//!
-//! It is a measurement rather than an assertion — it takes
-//! seconds, it prints, and what it prints is only meaningful next to the
-//! account it was run against. Run it with:
+//! A bench, not a test: it asserts nothing, and what it prints is only
+//! meaningful next to the account it was run against. It spent a while in
+//! `postio-index`'s test suite on the nightly timer, where it cost ~208 s of
+//! every full suite to print numbers nobody read there. Here `bench.yml`
+//! keeps it compiling and a person runs it when they want the numbers:
 //!
 //! ```text
-//! cargo nextest run --profile nightly -p postio-index -E 'test(/^body_index_size::/)'
+//! cargo bench -p postio-bench --bench body_index_size
 //! ```
 
 use postio_index::index::{ensure_schema, index_body};
@@ -75,8 +73,8 @@ async fn store_bytes(store: &postio_storage::test_support::TempStore) -> i64 {
         .len() as i64
 }
 
-#[tokio::test]
-async fn what_the_bodies_cost_in_each_place() {
+#[tokio::main]
+async fn main() {
     const MESSAGES: usize = 5_000;
 
     let database = test_support::temp().await;

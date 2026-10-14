@@ -150,8 +150,9 @@ is **one function in `postio-model::headers`** (`normalize_name`,
 
 **The budget** is [ADR 0027](0027-the-header-index-is-budgeted-per-message.md)'s:
 `message_headers` and `idx_message_headers_name` together under 5 KiB a
-message, measured by `header_index_size.rs` beside `body_index_size.rs`
-(`crates/postio-index/tests/index_suite/`). A budget relative to the body
+message, measured by `header_index_size.rs`
+(`crates/postio-index/tests/index_suite/`) against the `body_index_size`
+bench (`crates/postio-bench/benches/`). A budget relative to the body
 index was rejected: the body index holds no text, so the ratio moved with the
 corpus's bodies rather than the header policy. If the ceiling is missed, the
 lever is the two caps — not a list of names.

@@ -1,7 +1,8 @@
 //! What indexing every header costs, measured against what indexing every
 //! body costs (ADR 0025 Q3).
 //!
-//! Beside `body_index_size.rs`, and asserting where that one only prints.
+//! The partner of `postio-bench`'s `body_index_size` bench, and asserting
+//! where that one only prints.
 //! The difference is what each is for: that one records a saving already
 //! taken, and this one holds a *policy* to account. ADR 0025 indexes every
 //! header with no allowlist, on the argument that the two structural caps —
@@ -76,13 +77,13 @@ const BYTES_PER_MESSAGE: i64 = 5 * 1024;
 
 /// Enough messages that the b-trees are more than their root pages and the
 /// ratio is about the data rather than about SQLite's overhead. Deliberately
-/// far short of `body_index_size.rs`'s 5,000: this one asserts, so it runs in
+/// far short of the `body_index_size` bench's 5,000: this one asserts, so it runs in
 /// the default suite and has to be worth its seconds.
 const MESSAGES: usize = 400;
 
 /// Mail-shaped text: a few hundred words with the repetition real mail has —
 /// a quoted parent, a signature, the same handful of names. The same body as
-/// `body_index_size.rs`, so the two measurements are about one corpus.
+/// the `body_index_size` bench, so the two measurements are about one corpus.
 fn a_body(n: usize) -> String {
     let quoted = "> On Monday the analytical engine was mentioned again, and the \
                   question of whether the mill can be made to fold a card back \
