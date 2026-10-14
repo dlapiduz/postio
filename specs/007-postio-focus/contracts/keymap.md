@@ -6,6 +6,14 @@ is the table of its defaults that Focus's design relies on, and the
 generated artefacts (`docs/keybindings.md`, the golden `linux-bindings.txt`)
 follow the registry, not this file.
 
+**Amended 2026-10-14: the keymap is Gmail's.** The maintainer chose
+Gmail's keyboard shortcuts (<https://support.google.com/mail/answer/6594>)
+for every command Postio shares with Gmail, reversing `KEYS.md`'s `e` reply,
+`a` archive and `r` read (docs/PRODUCT.md §8). A command Gmail has no key for
+kept its own, or took a new key in Gmail's style where Gmail's displaced it;
+those are marked *invented* below. No command id changed, so a `[keys]`
+section written before still means what it meant.
+
 Legend:
 
 - **All**: every app that has the surface.
@@ -34,37 +42,37 @@ it.
 
 | Key | Command id | Offered by | Notes |
 |---|---|---|---|
-| `j` / `Down` | `next_message` | All | |
-| `k` / `Up` | `prev_message` | All | |
+| `j` / `Down` | `next_message` | All | Gmail's older conversation |
+| `k` / `Up` | `prev_message` | All | Gmail's newer conversation |
 | `g g` / `G` | `first_message` / `last_message` | All | |
-| `Return` / `Right` | `open_message` | All | |
-| `x` | `toggle_selection` | All | |
+| `Return` / `o` / `Right` | `open_message` | All | Gmail's `o` and Enter |
+| `x` | `toggle_selection` | All | Gmail's |
 | `J` / `K` | `extend_selection_down` / `_up` | All | List, reader and search; alternates `shift+Down` / `shift+Up` |
-| `X` (alt `mod+a`) | `select_all` | All | A predicate over the view (C19) |
+| `* a` (alt `mod+a`, `X`) | `select_all` | All | Gmail's. A predicate over the view (C19) |
 | `Escape` | `back` | All | Clears the selection in the list, closes a dialog |
-| `]` / `[` | `next_in_conversation` / `prev_in_conversation` | All | Steps the open message through its thread. Alternates `alt+Down` / `alt+Up` |
-| `e` / `E` / `f` | `reply` / `reply_all` / `forward` | All | Alternates `mod+r` / `mod+shift+r` / `mod+shift+f` |
-| `a` | `archive` | All | Alternate `mod+shift+a` |
-| `A` | `archive_thread` | All | In `Context::Digest` it archives the whole digest |
-| `Delete` | `delete` | All | Moves to Trash, undoable (C12) |
-| `s` | `snooze` | All | Opens the snooze picker |
+| `n` / `p` | `next_in_conversation` / `prev_in_conversation` | All | Gmail's. Steps the open message through its thread. Alternates `alt+Down` / `alt+Up` |
+| `r` / `a` / `f` | `reply` / `reply_all` / `forward` | All | Gmail's. Alternates `mod+r` / `mod+shift+r` / `mod+shift+f` |
+| `e` | `archive` | All | Gmail's. Alternate `mod+shift+a` |
+| `E` | `archive_thread` | All | *Invented*: shifted archive. In `Context::Digest` it archives the whole digest |
+| `#` (alt `Delete`) | `delete` | All | Gmail's. Moves to Trash, undoable (C12) |
+| `b` | `snooze` | All | Gmail's. Opens the snooze picker |
 | `B` | `unsnooze` | All | |
 | `h` (alt `mod+h`) | `remind_if_no_reply` | Focus | `mod+h` is the composer's key, where `h` types |
-| `r` | `toggle_read` | All | |
-| `*` | `flag` | All | Toggles the flag; in Focus the row carries no mark (C13) |
-| `l` | `add_label` | All | Opens the label picker |
-| `m` | `move` | All | Opens the move picker |
-| `mod+z` | `undo` | All | Cancels an open RSVP window first (research R9) |
-| `c` | `compose` | All | Alternate `mod+n` |
+| `I` (alt `U`) | `toggle_read` | All | Gmail's mark read and mark unread; one toggling verb, so both reach it |
+| `s` | `flag` | All | Gmail's star. Toggles the flag; in Focus the row carries no mark (C13) |
+| `l` | `add_label` | All | Gmail's. Opens the label picker |
+| `v` | `move` | All | Gmail's. Opens the move picker |
+| `z` (alt `mod+z`) | `undo` | All | Gmail's. Cancels an open RSVP window first (research R9) |
+| `c` | `compose` | All | Gmail's. Alternate `mod+n` |
 | `y` / `Y` | `accept_invite` / `decline_invite` | Focus | |
-| `U` | `unsubscribe` | All | Also in `Context::Digest` |
+| `M` | `unsubscribe` | All | *Invented*: Gmail's `U` marks unread. Also in `Context::Digest` |
 | `d` | `digest_rule` | Focus | From a message: a new sender rule. In a digest: edit its rule |
 | `L` | `digest_like_this` | Focus | In the list, with a model configured |
-| `v` | `view_source` | Focus | The raw RFC 822 message |
-| `o` | `open_attachment_or_link` | Focus | A chooser over the message's links and parts, which also saves |
+| `V` | `view_source` | Focus | *Invented*: Gmail's `v` moves. The raw RFC 822 message |
+| `A` | `open_attachment_or_link` | Focus | *Invented*: Gmail's `o` opens. A chooser over the message's links and parts, which also saves |
 | `-` | `dismiss_marker` | Focus | |
-| `t` / `n` | `capture_task` / `capture_note` | Focus | With a vault configured; also switch the capture sheet |
-| `Left` | `prev_view` | All | |
+| `T` / `N` | `capture_task` / `capture_note` | Focus | Gmail's add to Tasks; `N` *invented* beside it. With a vault configured; also switch the capture sheet |
+| `Left` (alt `u`) | `prev_view` | All | Gmail's `u`, back to the list |
 | `F5` | `refresh` | All | |
 | `Page_Down` / `Page_Up` (alt `space` / `shift+space`) | `scroll_reader_down` / `_up` | All | |
 
@@ -73,7 +81,7 @@ it.
 | Key | Command id | Offered by | Notes |
 |---|---|---|---|
 | `O` | `switch_treatment` | Focus | Reader only: app colours or the original |
-| `.` | `more_actions` | Focus | Reader only: the open message's More (Label, Move, Delete) |
+| `.` | `more_actions` | Focus | Gmail's. Reader only: the open message's More (Label, Move, Delete) |
 | `i i` / `i a` | `show_images` / `always_show_images` | All | Once, or always for this sender |
 | `mod+f`, `mod+g`, `mod+shift+g` | `find_in_message`, `find_next`, `find_previous` | All | Alternates `F3` / `shift+F3` |
 | `mod+plus`, `mod+minus`, `mod+0` | `zoom_in`, `zoom_out`, `zoom_reset` | Graphical | Kept in `[reader] zoom` |
@@ -85,35 +93,35 @@ it.
 
 | Key | Command id | Notes |
 |---|---|---|
-| `mod+Return` | `send` | Alternates `alt+s`, `alt+Return`, which a terminal delivers |
+| `mod+Return` | `send` | Gmail's. Alternates `alt+s`, `alt+Return`, which a terminal delivers |
 | `mod+shift+Return` | `schedule_send` | Opens the Send later picker. Alternate `alt+S` |
 | `mod+shift+a` | `attach_file` | Alternate `alt+a` |
 | `mod+h` | `remind_if_no_reply` | |
 | `mod+shift+o` | `detach_composer` | Alternate `alt+o` |
-| `mod+shift+c` | `copy_fields` | Cc and Bcc. Alternate `alt+c` |
+| `mod+shift+c` | `copy_fields` | Cc and Bcc, Gmail's Cc key. Alternate `alt+c` |
 | `mod+s` / `mod+d` | `save_draft` / `discard_draft` | |
-| `mod+b`, `mod+i`, `mod+shift+k`, `mod+shift+7`, `mod+shift+8`, `mod+shift+9`, `mod+shift+g` | bold, italic, link, numbered and bullet lists, quote, image | Each with an `alt` alternate but bold |
+| `mod+b`, `mod+i`, `mod+shift+k`, `mod+shift+7`, `mod+shift+8`, `mod+shift+9`, `mod+shift+g` | bold, italic, link, numbered and bullet lists, quote, image | Each with an `alt` alternate but bold. Gmail's but the link, whose `mod+k` is the command bar's everywhere |
 | `mod+shift+x`, `mod+shift+y`, `mod+shift+m` | `cancel_send`, `retry_send`, `mark_sent` | Also in the list, for a draft being sent. Alternates `alt+x`, `alt+r`, `alt+m` |
 
 ## Going places
 
 | Key | Command id | Offered by | Notes |
 |---|---|---|---|
-| `/` | `search` | All | Focus's command bar, open for mail search (C24). Alternate `alt+mod+f` |
+| `/` | `search` | All | Gmail's. Focus's command bar, open for mail search (C24). Alternate `alt+mod+f` |
 | `mod+k` | `command_palette` | All | Focus's command bar in command mode, `>` typed (C24) |
-| `g i` | `go_to_inbox` | All | |
-| `g o` | `go_to_folders` | All | Focus's folders popover |
-| `g t` | `go_to_drafts` | All | |
-| `g s` | `go_to_sent` | All | |
-| `g r` | `go_to_archive` | All | |
-| `g z` | `go_to_snoozed` | All | |
-| `g *` | `go_to_flagged` | All | |
-| `g b` | `go_to_outbox` | Focus | The Outbox view of the first account |
+| `g i` | `go_to_inbox` | All | Gmail's |
+| `g l` | `go_to_folders` | All | Gmail's go to label. Focus's folders popover |
+| `g d` | `go_to_drafts` | All | Gmail's |
+| `g t` | `go_to_sent` | All | Gmail's |
+| `g a` | `go_to_archive` | All | Gmail's all mail |
+| `g b` | `go_to_snoozed` | All | Gmail's |
+| `g s` | `go_to_flagged` | All | Gmail's starred |
+| `g o` | `go_to_outbox` | Focus | *Invented*. The Outbox view of the first account |
 | `g j` | `go_to_junk` | Focus | |
 | `g #` | `go_to_trash` | Focus | |
 | `g f` | `go_to_filtered` | Focus | |
-| `g d` | `go_to_digest_rules` | Focus | |
-| `g a` | `next_scope` | All | Withheld on macOS |
+| `g r` | `go_to_digest_rules` | Focus | *Invented*: `r` for rules |
+| `g c` | `next_scope` | All | *Invented*: `c` to cycle. Withheld on macOS |
 | `alt+1` … `alt+4` | `saved_search_1` … `saved_search_4` | All | The pinned `[saved_searches]` entries, in their order |
 | `!` | `toggle_has_action` | Focus | A punctuation alias in `postio-ui`'s keymap |
 
@@ -142,16 +150,16 @@ The `>` prefix in the command bar is the finder's mode prefix, not a key.
 
 | Context | Key | Command id | Offered by |
 |---|---|---|---|
-| `Digest` | `A` | `archive_thread` (the whole digest) | All |
+| `Digest` | `E` | `archive_thread` (the whole digest) | All |
 | `Digest` | `d` | `digest_rule` (edit) | Focus |
 | `Digest`, `Reader` | `D` | `stop_digesting_sender` | Focus |
-| `Digest` | `U` | `unsubscribe` | All |
+| `Digest` | `M` | `unsubscribe` | All |
 | `Digest` | `]` / `[` | `next_reference` / `prev_reference` | Focus |
 | `Digest` | `Tab` | `toggle_digest_summary` | Focus |
 | `Filtered` | `R` | `restore_filtered` | Focus |
 | `Filtered` | `1` … `7` | `filtered_tab_1` … `filtered_tab_7` | Focus |
 | `List` | `F` | `sweep_inbox`: shows a count, then acts | Focus |
-| `Digest`, `Filtered` | `mod+z` | `undo` | All |
+| `Digest`, `Filtered` | `z` (alt `mod+z`) | `undo` | All |
 
 Both contexts fall back to Global only, so undo is bound in each: archiving
 the whole digest and a restore from Filtered are undoable where they were
@@ -169,7 +177,7 @@ done (FR-116, FR-125).
 
 | Key | Command id | Offered by |
 |---|---|---|
-| `?` | `cheat_sheet` (Focus's key map, screen 20) | All |
+| `?` | `cheat_sheet` (Focus's key map, screen 20; Gmail's) | All |
 | `mod+comma` | `settings` (alt `alt+comma`) | All |
 | `mod+shift+n` | `add_account` (alt `alt+n`) | All |
 | `mod+e` | `edit_config`: `config.toml` in the person's editor | All |
@@ -200,14 +208,15 @@ not collide with the message surfaces':
   saved search;
 - Parts: `p` opens it from the reader; `j`, `k`, `Return`, `s`, `S`, `x`,
   `H`;
-- Conversation: `z` folds, `O` expands all, `I` toggles the rail.
+- Conversation: `Z` folds (*invented*: Gmail's `z` undoes), `;` expands all
+  (Gmail's).
 
 ## The terminal
 
-- Raw mode delivers `ctrl+z` as a key, so undo is `ctrl+z`. The terminal
-  does not suspend.
-- Every key offered by All is deliverable by a terminal, `Delete`, `*`,
-  `alt+1`–`alt+4`, `]`, `[` and `!` included; the terminal's parity test
+- Raw mode delivers `ctrl+z` as a key, so undo's `ctrl+z` alternate works
+  there beside `z`. The terminal does not suspend.
+- Every key offered by All is deliverable by a terminal, `Delete`, `#`,
+  `* a`, `;`, `alt+1`–`alt+4` and `!` included; the terminal's parity test
   (`crates/postio-tui/tests/registry_parity.rs`) proves it.
 - The terminal is Focus (C29): `Requirement::Focus` is met by it, and
   `Requirement::ThreePane` is not. It offers every Focus command but those

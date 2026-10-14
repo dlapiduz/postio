@@ -7,6 +7,12 @@
 **Status**: Clarified and planned ([plan.md](plan.md)); built on
 `feature/postio-focus`. Nothing lands on `main` until the maintainer says so.
 
+**Keys amended 2026-10-14**: the keys this spec names are `KEYS.md`'s.
+The maintainer has since chosen Gmail's keymap (`e` archive, `r` reply,
+`I`/`U` read, `b` snooze, `s` flag, `T`/`N` capture, `M` unsubscribe, `E` the
+whole digest, ...); `contracts/keymap.md` and the generated
+`docs/keybindings.md` are current, and where a key below disagrees they win.
+
 **Input**: The maintainer's handoff (`Design/postio-focus-design/PROMPT.md`):
 a dense, keyboard-first inbox on the Postio engine that shows mail as it
 arrived, calls out real actions, holds some mail back into digests on a
