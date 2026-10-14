@@ -114,6 +114,7 @@ def build_fixture(
         "postio-ffi",
         "postio-gmail",
         "postio-jmap",
+        "postio-mcp",
         "postio-render",
         "postio-smtp",
     ):

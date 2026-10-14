@@ -1,0 +1,55 @@
+[package]
+name = "postio-mcp"
+description = "Postio over MCP: an AI agent reads the mail you share with it and writes drafts, on stdio (ADR 0010)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "postio-mcp"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[features]
+# `--demo <seed>`: serve one of Focus's demo stores, in memory, instead of
+# this installation's (specs/008-storyboards R11). Test-support only.
+demo = ["dep:postio-demo", "dep:postio-storage", "dep:tempfile"]
+
+[dependencies]
+chrono = { workspace = true, features = ["std"] }
+# The keyring the store key is read from: this process opens the store.
+postio-account.workspace = true
+# Bodies as text, through the document the reader and the composer share
+# (ADR 0004): never the raw `text/html`.
+postio-body.workspace = true
+postio-client.workspace = true
+# `[mcp]`, read again on every call.
+postio-config.workspace = true
+postio-core.workspace = true
+# The store's host, in this process, one call at a time (ADR 0041).
+postio-host.workspace = true
+postio-model.workspace = true
+postio-search.workspace = true
+# Logging, and where the store is.
+postio-session.workspace = true
+# JSON-RPC 2.0 framing, one message per line (the MCP stdio transport).
+serde_json = { workspace = true }
+tracing = { workspace = true }
+postio-demo = { workspace = true, optional = true }
+postio-storage = { workspace = true, optional = true, features = ["test-support"] }
+tempfile = { workspace = true, optional = true }
+postio-workspace-hack.workspace = true
+
+[dev-dependencies]
+# The binary the stdio suite drives, with a demo store to serve.
+postio-mcp = { path = ".", features = ["demo"] }
+postio-index.workspace = true
+postio-model = { workspace = true, features = ["test-corpus"] }
+postio-storage = { workspace = true, features = ["test-support"] }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }

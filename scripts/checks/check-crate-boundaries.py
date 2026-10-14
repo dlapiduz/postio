@@ -47,6 +47,10 @@ The invariants (see docs/ARCHITECTURE.md; CLAUDE.md, "What the code must do"):
     0041) -- so the engine and the protocol are in its graph by design; a
     toolkit is how it would stop being small (``docs/archive/specs/005-tui-frontend``
     FR-051).
+  * ``postio-mcp``, Postio over MCP, must not depend directly on the store
+    engine or the protocol, nor on a toolkit, WebKit, an HTTP or WebSocket
+    server, or an inference engine. It is a frontend over ``postio-client``
+    (ADR 0010 Q2) and listens on no socket: stdio only (ADR 0010 Q6).
   * ``postio-widgets`` must not depend on the store engine, the protocol, the
     host or the desktop app. It is the GTK the desktop app draws with (ADR
     0043), and it reaches mail only through ``postio-client``.
@@ -519,6 +523,38 @@ RULES: dict[str, dict[str, object]] = {
             "(ADR 0041), so the engine and the protocol are in its graph on "
             "purpose. It must stay small (docs/archive/specs/005-tui-frontend FR-051): no "
             "toolkit and no WebKit."
+        ),
+    },
+    "postio-mcp": {
+        "banned": [
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "libadwaita",
+            "libadwaita-sys",
+            "gdk4",
+            "gdk4-sys",
+            "gsk4-sys",
+            "webkit6",
+            "webkit6-sys",
+            "rusqlite",
+            "libsqlite3-sys",
+            # An HTTP or WebSocket server is a listening socket, and the MCP
+            # surface is stdio only (ADR 0010 Q6).
+            "axum",
+            "actix-web",
+            "warp",
+            "tiny_http",
+            "tokio-tungstenite",
+            *INFERENCE_ENGINES,
+        ],
+        "direct": INTERFACE_DIRECT,
+        "why": (
+            "postio-mcp is a frontend over postio-client (ADR 0010 Q2): it "
+            "opens the store through the host like every app (ADR 0041), so "
+            "it names neither the engine nor the protocol itself. It draws "
+            "nothing, links no model, and listens on no socket: stdio only "
+            "(ADR 0010 Q6)."
         ),
     },
     "postio-ffi": {

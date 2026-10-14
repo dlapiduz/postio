@@ -30,6 +30,8 @@ pub enum ClientKind {
     Focus,
     /// The macOS frontend, through `postio-ffi`.
     Ffi,
+    /// `postio-mcp`: an AI agent's tool calls (ADR 0010).
+    Mcp,
     /// A test.
     Test,
 }

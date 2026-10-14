@@ -18,6 +18,7 @@ graph TD
     app["<b>postio-gtk</b><br/><i>Postio, the desktop app — Linux</i><br/>one dense inbox · markers · digests · filtering<br/><i>its own code: no SQL · no protocol</i>"]
     mac["<b>macos/</b><br/><i>Swift package — macOS</i><br/>SwiftUI · AppKit · WKWebView"]
     tui["<b>postio-tui</b><br/><i>terminal binary</i><br/>ratatui · crossterm · Markdown in and out"]
+    mcp["<b>postio-mcp</b><br/><i>MCP server binary — ADR 0010</i><br/>stdio · reads and drafts, never sends"]
     host["<b>postio-host</b><br/><i>in each app's process</i><br/>every store operation, once · sync · upkeep"]
     client["<b>postio-client</b><br/>Req/Resp · commands down, events up<br/><i>no engine — CI enforced</i>"]
     session["<b>postio-session</b><br/><i>composition root — no toolkit</i><br/>store · runtime · engines · the verb vocabulary<br/><i>no GTK — CI enforced</i>"]
@@ -73,6 +74,9 @@ graph TD
     app --> client
     tui --> client
     tui --> host
+    mcp --> client
+    mcp --> host
+    mcp --> body
     host --> session
     host --> client
     host --> ai
@@ -114,7 +118,7 @@ graph TD
     classDef pure fill:#eef3f8,stroke:#5980a6,color:#1c2b3a
     classDef guard stroke-dasharray:4 3,stroke:#5980a6
     class model,search,calendar pure
-    class core,app,session,client,tui,widgets,classify,ai,vault guard
+    class core,app,session,client,tui,mcp,widgets,classify,ai,vault guard
 ```
 
 Arrows are "depends on", and every arrow drawn is a real direct dependency.
@@ -143,6 +147,15 @@ is in `postio-gtk` is a window, its rows and its dialogs, each of which names
 a widget. See [ADR 0010](decisions/0010-mcp-surface.md) for why the
 alternative — a second binary opening the store directly — is not a second
 frontend but a second application sharing a file.
+
+**`postio-mcp` is the frontend with no screen** (ADR 0010, [`mcp.md`](mcp.md)).
+An AI agent launches it and speaks the Model Context Protocol on its stdin
+and stdout; it listens on no socket. It is a client of `postio-host` like
+the other apps, and it opens the store for each tool call and closes it
+afterwards, so it never keeps the person's own mail client out. It reads
+only the accounts and folders `[mcp]` in `config.toml` shares, returns
+bodies as `postio-body` text inside a block labelled untrusted, and its one
+write is a draft: it has no tool that sends, moves, deletes or marks mail.
 
 Dashed borders mark the crates whose dependency closure CI polices
 (`scripts/checks/check-crate-boundaries.py`). Not drawn: every crate also
@@ -392,8 +405,12 @@ hide inside the thing meant to catch it.
   FR-168).
 - **`postio-vault` links no network crate, toolkit or database engine**, and
   no async runtime. It appends Markdown to a folder on this computer.
+- **`postio-mcp` names neither the database engine nor the protocol**,
+  and links no toolkit, WebKit, inference engine or HTTP or WebSocket
+  server. It is a frontend over `postio-client`, and its only transport
+  is stdio (ADR 0010).
 - **No app binary links an inference engine**: not `postio-gtk`,
-  `postio-tui` or `postio-ffi`. The model is the user's own,
+  `postio-tui`, `postio-mcp` or `postio-ffi`. The model is the user's own,
   run beside Postio, and optional.
 
 `scripts/checks/check-crate-boundaries.py` inspects `cargo metadata`'s **resolved
@@ -519,6 +536,13 @@ Two constraints already decided, before any of it is built:
   and the body contains instructions. This is an actively exploited class of
   attack against mail-reading agents, and it is the dominant design constraint
   on `postio-z3b.2` rather than an afterthought.
+
+**`postio-mcp` meets both by having fewer tools** (ADR 0010, #14). It has no
+send, forward, delete, move or mark-read tool for a confirmation to guard.
+Its one write is a draft, which leaves only when the person sends it from
+Postio. Its injection test (`crates/postio-mcp/tests/mcp_suite/injection.rs`)
+reads ADR 0009's hostile fixture and asserts that no operation, no draft and
+no connection follow.
 
 **The one exception is Focus's model** (the constitution's Scope,
 `specs/007-postio-focus` research R16). `postio-ai` is built, and narrower

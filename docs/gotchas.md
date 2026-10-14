@@ -92,6 +92,8 @@ The store is Turso (ADR 0038). Its planner and defaults are not SQLite's, and mo
 
 **Decide QRESYNC from the `CAPABILITY` list after login, never from the `* ENABLED` echo.** Take expunges from `SELECT`'s `vanished_earlier`, not from `FETCH (VANISHED)`. An empty capability list after login is an error. Do not use `watch::ImapMailboxWatch`.
 
+**Nothing under `postio-host` may print to stdout.** `postio-mcp` runs the host in its own process, and its stdout is the JSON-RPC channel to the agent. A stray `println!` there breaks the session for the agent and makes no error in Postio. Log through `tracing`, which writes to stderr.
+
 **Install tracing with `set_global_default`, never `.init()`.** `.init()` takes the process's only `log` slot and leaves io-imap's skip counter inert, so a fetch that dropped responses reports success (`crates/postio-session/src/logging.rs`).
 
 **Build one `TokenSource` per account, at the composition root.** A second source of the same type compiles, then splits rejections and refresh-token rotation between IMAP and SMTP. Only `postio_account::auth::with_credential` decides what a refused credential means.

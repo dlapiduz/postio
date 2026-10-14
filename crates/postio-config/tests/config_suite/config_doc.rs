@@ -666,6 +666,22 @@ fn render() -> String {
          rolling is written relative (`after:90d`, the last 90 days) and one that\n\
          stays put as a day (`after:2026-07-01`); both are the one query language.\n\
          \n\
+         ## `[mcp.accounts.\"<address>\"]`\n\
+         \n\
+         What an AI agent may read through `postio-mcp`, Postio's MCP server\n\
+         ([agents and MCP](mcp.md)). **Nothing is shared until a table here\n\
+         names an account**, keyed by its address, and the folders in it.\n\
+         \n\
+         ```toml\n\
+         [mcp.accounts.\"ada@example.com\"]\n\
+         mailboxes = [\"INBOX\", \"Receipts\"]   # folder paths; \"*\" shares every folder\n\
+         ```\n\
+         \n\
+         An account without a table, or whose table names no folder, is\n\
+         invisible to every tool, including the one that lists accounts. The\n\
+         server reads this section again on every call, so removing a line\n\
+         takes effect on the agent's next call.\n\
+         \n\
          ## `[mailboxes]`\n\
          \n\
          Maps a role Postio already knows (`archive`, `sent`, `trash`, ...) to\n\

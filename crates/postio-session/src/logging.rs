@@ -265,6 +265,7 @@ const OURS: &[&str] = &[
     "postio_focus",
     "postio_gtk",
     "postio_host",
+    "postio_mcp",
     "postio_account",
     "postio_jmap",
     "postio_gmail",

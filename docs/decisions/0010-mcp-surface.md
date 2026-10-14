@@ -1,7 +1,7 @@
 # ADR 0010 — Exposing Postio over MCP
 
-- **Status:** Accepted — **GO** (2026-08-24); the hub prerequisite landed
-  (ADR 0013), `postio-mcp` itself is not built — noted 2026-09-14
+- **Status:** Accepted — **GO** (2026-08-24). Built (2026-10-14):
+  `crates/postio-mcp`, the binary `postio-mcp`; see **Implemented** below
 - **Date:** 2026-08-24
 - **Issue:** [#14 Expose Postio over MCP](https://github.com/dlapiduz/postio/issues/14)
 - **Related:** [ADR 0002](0002-extensible-command-vocabulary.md) (built for
@@ -239,8 +239,8 @@ design. If it is ever wanted, it is an ADR of its own.
   ([ADR 0002](0002-extensible-command-vocabulary.md), #33); and the fan-out
   hub [ADR 0013](0013-event-fanout.md) decided is `EventHub` in
   `crates/postio-core/src/bridge.rs`
-  ([#176](https://github.com/dlapiduz/postio/issues/176)). What is left is
-  `postio-mcp` itself, which is not built (2026-09-14).
+  ([#176](https://github.com/dlapiduz/postio/issues/176)). `postio-mcp`
+  itself was built on 2026-10-14 (#14).
 - `postio-mcp` is a thin binary: stdio framing, tool schemas, and a translation
   to commands and queries. It is small precisely because Q2 was decided the
   expensive way.
@@ -248,3 +248,56 @@ design. If it is ever wanted, it is an ADR of its own.
   0.4.0, `postio-session` among them), alongside the one
   [ADR 0009](0009-ai-subsystem.md) adds.
 - `ARCHITECTURE.md`'s known-gaps table loses two rows.
+
+---
+
+## Implemented (2026-10-14, #14)
+
+`crates/postio-mcp` builds the binary `postio-mcp`. The user's guide is
+[`docs/mcp.md`](../mcp.md). Everything above holds as written. These are
+the calls the build had to make, and the points where it differs from the
+text above:
+
+- **It is a client of a host in its own process, and it opens the store
+  for each call.** [ADR 0041](0041-one-app-opens-the-store-at-a-time.md),
+  written after this ADR, decided that one app opens the store at a time
+  and that each app runs `postio-host` itself. So `postio-mcp` reaches the
+  store only through `postio-client`, the same way the terminal and the
+  desktop app do. An MCP server runs for as long as the agent's session,
+  so holding the store that long would lock the person out of their mail
+  client. Instead `backend::Installed` opens the store for a call and
+  closes it afterwards. A call made while another Postio has the store
+  open gets that app's sentence back. The next call after it closes is
+  answered with no restart
+  (`crates/postio-mcp/tests/one_store_at_a_time.rs`). Running beside an
+  open window, as Q3 imagined, would need a transport that crosses
+  processes, and ADR 0041 names that as the part to add.
+- **No sync, no fetch.** The server starts no engine and reads only what
+  is already stored (`offline` readings). Its tools make no connections.
+- **A draft goes through the composer's own save** (`Req::SaveDraft`). It
+  appears in Drafts and queues an `Operation::SaveDraft`, which is the
+  copy for the server's Drafts folder that every autosave queues. It never
+  queues `Operation::Send`. Q4's "enqueues nothing external" therefore
+  holds for sending but not for that copy. Skipping the copy would have
+  needed a draft write that only this frontend could make.
+- **Opt-in** is `[mcp.accounts."<address>"] mailboxes = [...]`, with `"*"`
+  meaning every folder (`postio-config`'s `McpConfig`). It is read again on
+  every call. With nothing shared, no call opens the store or the keyring.
+  A refusal for something unshared uses the same words as one for
+  something that does not exist.
+- **The access log** is `mcp-access.log`, one JSON line per call, kept
+  beside the store. It records ids and outcomes, never content. It is
+  not ADR 0009's log: that log is `egress_log`, which records outbound
+  connections, and an MCP call makes none. The settings panel does not
+  show the access log yet.
+- **No tool registers as an `ExtCommand`.** Q4 asked tools that map to a
+  Postio verb to register. None of these tools does: the reads are not
+  commands, and drafts are saved with a client request, not a `Command`.
+- **JSON-RPC is written by hand rather than taken from `rmcp`.** Four
+  methods and newline framing take a page of `serde_json`. `rmcp` would
+  add a dependency on `schemars` and its macros, which derive schemas from
+  types, and this server has to keep its schemas as literals (Q5).
+- **The boundary rule** is `postio-mcp` in
+  `scripts/checks/check-crate-boundaries.py`. The crate may not depend
+  directly on the store engine or the protocol, and may not depend on a
+  toolkit, WebKit, an inference engine or an HTTP or WebSocket server.

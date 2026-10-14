@@ -7,6 +7,7 @@
   - [The desktop app and the terminal, side by side](desktop-and-terminal.md)
 - [Keyboard reference](keyboard.md)
 - [config.toml reference](config.md)
+- [Agents and MCP](mcp.md)
 - [How sync works](sync.md)
 - [Privacy and security](privacy.md)
 - [FAQ](faq.md)

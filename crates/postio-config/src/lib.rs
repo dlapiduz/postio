@@ -57,6 +57,7 @@ pub mod focus_edit;
 pub mod keys;
 pub mod live;
 pub mod logging;
+pub mod mcp;
 pub mod model;
 pub mod paths;
 pub mod reader;
@@ -88,6 +89,7 @@ pub use focus::{
 pub use keys::{KeyBindings, patch_keys};
 pub use live::{LiveConfig, Reload};
 pub use logging::{LogLevel, LoggingConfig};
+pub use mcp::{McpAccount, McpConfig};
 pub use model::{EndpointRefused, FocusModel, ModelEndpoint, ModelFeature, ModelProblem, Reach};
 pub use reader::{ReaderConfig, ZOOM_STEPS, nearest_zoom, patch_reader, save_zoom};
 pub use storage::StorageConfig;
@@ -176,6 +178,10 @@ pub struct Config {
     /// files away, and its digest rules (spec 007).
     #[serde(default)]
     pub focus: FocusConfig,
+    /// `[mcp]` — the accounts and folders an AI agent may read through
+    /// `postio-mcp`; none until this says so (ADR 0010 Q6).
+    #[serde(default)]
+    pub mcp: McpConfig,
     /// Top-level keys this version of Postio does not know.
     #[serde(flatten)]
     pub extra: Extras,
