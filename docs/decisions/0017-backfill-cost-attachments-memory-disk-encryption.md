@@ -9,6 +9,9 @@
   **Amended 2026-09-14** (docs/archive/specs/004-turso-store): the contentless-FTS,
   partial-index, pragma and re-encrypt items in Axis 3 and Axis 4 are
   annotated in place below; every measurement stands.
+  **Amended 2026-10-14** (the maintainer): new mail's attachments are
+  fetched as it arrives, up to 25 MB a message; see "New mail is the
+  exception" under Axis 1. The archive's payloads stay on demand.
 - **Date:** 2026-08-26
 - **Amended:** 2026-08-27 — why blobs rather than compressed rows, and the
   dictionary deferred behind a measurement ([#399](https://github.com/dlapiduz/postio/issues/399))
@@ -136,6 +139,22 @@ The machinery for this already exists and has no production caller:
 `BodyPart::Section(spec)` maps to `BODY.PEEK[2.1]`, `attachments.part_id` already
 stores exactly that spec, and `stream_windows` already fetches a named section in
 bounded 128 KiB windows. Nothing new is needed at the protocol layer.
+
+### New mail is the exception (amended 2026-10-14)
+
+On-demand made opening a just-arrived attachment a wait in front of the
+person who had just been told it arrived: the click queued, the part came
+down, the chip spun. New mail is the mail most likely to be opened, and it
+is a few messages, not eleven gigabytes. So **what an incremental pass
+announces as new mail fetches its attachments as it arrives**, on the
+backfill's fresh lane: its text first, then its payloads, up to
+`BackfillPolicy::fresh_payload_bytes` (25 MB a message, the large
+providers' own attachment limit), parts taken in order while they fit.
+`never` still means never, an excluded folder is still excluded, background
+fetching turned off still means on open only, and a metered connection
+holds the payloads in the queue until it is not. A first sync's backlog is
+not new mail and stays on demand — the measurement above is about that
+backlog, and it stands.
 
 ### Inline parts ride with the text
 
