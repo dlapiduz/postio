@@ -112,14 +112,67 @@ fn question_mark_opens_the_key_map_and_closes_it() {
     assert!(focus.has_surface(), "the key map is on the stack at once");
     assert_eq!(
         shown(&focus.handle(Input::Command(CommandId::CheatSheet))),
-        vec![Intent::CloseSurface(SurfaceKind::KeyMap)],
-        "`?` again closes it"
+        vec![
+            Intent::CloseSurface(SurfaceKind::KeyMap),
+            Intent::KeyboardHome
+        ],
+        "`?` again closes it, and takes it off the stack"
     );
+    assert!(!focus.has_surface());
+}
+
+/// The Mac is not told twice: the controller closed the key map, so the
+/// Mac takes the panel down and says nothing back (an echo could land after
+/// a reopening and close the new one). Closed by its own keys, it is off
+/// the stack at once and the keyboard is the list's again.
+#[test]
+fn the_key_map_closed_by_its_own_keys_gives_the_keyboard_back() {
+    for close in [CommandId::CheatSheet, CommandId::Back] {
+        let mut focus = focus();
+        let _ = focus.handle(Input::Command(CommandId::CheatSheet));
+        assert_eq!(
+            shown(&focus.handle(Input::Command(close))),
+            vec![
+                Intent::CloseSurface(SurfaceKind::KeyMap),
+                Intent::KeyboardHome
+            ],
+            "{close:?} closes it and sends the keyboard home"
+        );
+        assert!(
+            !focus.has_surface(),
+            "{close:?}: nothing is left over the list"
+        );
+        assert!(
+            shown(&focus.handle(Input::Command(CommandId::Search)))
+                .iter()
+                .any(|intent| matches!(intent, Intent::OpenBar { .. })),
+            "after {close:?}, `/` opens the bar again rather than being swallowed"
+        );
+        let _ = focus.handle(Input::Command(CommandId::Back));
+        assert_eq!(
+            shown(&focus.handle(Input::Command(CommandId::CheatSheet))),
+            vec![Intent::OpenKeyMap],
+            "after {close:?}, `?` opens it again rather than closing it"
+        );
+    }
+}
+
+/// A click on the dim is the toolkit's close, which the Mac does report.
+#[test]
+fn the_key_map_closed_by_a_click_outside_gives_the_keyboard_back() {
+    let mut focus = focus();
+    let _ = focus.handle(Input::Command(CommandId::CheatSheet));
     assert_eq!(
         shown(&focus.handle(Input::SurfaceClosed(SurfaceKind::KeyMap))),
         vec![Intent::KeyboardHome]
     );
     assert!(!focus.has_surface());
+    assert!(
+        shown(&focus.handle(Input::Command(CommandId::Search)))
+            .iter()
+            .any(|intent| matches!(intent, Intent::OpenBar { .. })),
+        "`/` opens the bar again"
+    );
 }
 
 #[test]

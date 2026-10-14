@@ -567,7 +567,8 @@ pub enum Intent {
     /// `None`.
     Empty(Option<postio_ui::focus_state::EmptyInbox>),
     /// Show the key map (`?`). The controller has put it on the stack; it
-    /// closes with [`Intent::CloseSurface`]`(KeyMap)`.
+    /// closes with [`Intent::CloseSurface`]`(KeyMap)`, which takes it off
+    /// again (no [`Input::SurfaceClosed`] follows).
     OpenKeyMap,
     /// Draw Filtered, whole: its tabs, its rows, the row with the keyboard.
     Filtered(Box<FilteredView>),
@@ -1778,7 +1779,10 @@ impl FocusController {
             _ => {}
         }
         if self.surfaces.top() != Some(SurfaceKind::Message) {
-            return self.surfaces.close_top(id).or_else(|| {
+            let closed = self.surfaces.close_top(id);
+            // A dialog closed there takes what it held with it.
+            self.forget_closed();
+            return closed.or_else(|| {
                 // The key map and a dialog take the keyboard: what does not
                 // close them does nothing (GTK's dialog close rule).
                 (self.surfaces.takes_keyboard() && keys::key_map_takes(id)).then(Vec::new)

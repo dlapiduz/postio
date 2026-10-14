@@ -527,3 +527,31 @@ fn d_in_a_digest_edits_its_rule() {
     assert_eq!(view.create, "Save");
     assert_eq!(view.from.as_deref(), Some("from:news@ledger.example"));
 }
+
+/// Escape on the rule sheet, and its Cancel (which is Back): the controller
+/// closes it and the Mac says nothing back, so the dialog is off the stack
+/// at once and the list's keys work again, not swallowed by a dialog that
+/// is no longer there.
+#[test]
+fn back_on_the_rule_dialog_gives_the_keyboard_back() {
+    let mut focus = mac();
+    let _ = focus.landed(&List, true);
+    let _ = run(&mut focus, CommandId::NextMessage);
+    assert!(rule(&run(&mut focus, CommandId::DigestRule)).is_some());
+    assert_eq!(
+        shown(&run(&mut focus, CommandId::Back)),
+        vec![
+            Intent::CloseSurface(SurfaceKind::Dialog),
+            Intent::KeyboardHome
+        ]
+    );
+    assert!(!focus.has_surface(), "nothing is left over the list");
+    assert!(
+        !shown(&run(&mut focus, CommandId::NextMessage)).is_empty(),
+        "`j` moves the cursor again"
+    );
+    assert!(
+        rule(&run(&mut focus, CommandId::DigestRule)).is_some(),
+        "and `d` opens a fresh dialog"
+    );
+}

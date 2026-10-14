@@ -308,6 +308,19 @@ impl Surfaces {
         if !closes {
             return None;
         }
+        // The key map and a dialog come off here, as the bar does: the
+        // controller closed them, so the Mac says nothing back (an echo
+        // could land after a reopening and close the new one). Left on the
+        // stack to wait for that echo, they kept the keyboard, and every
+        // key after `?` `?` or Escape was swallowed.
+        if matches!(top, SurfaceKind::KeyMap | SurfaceKind::Dialog) {
+            self.remove(top);
+            let mut steps = vec![Step::Show(Intent::CloseSurface(top))];
+            if self.stack.is_empty() {
+                steps.push(Step::Show(Intent::KeyboardHome));
+            }
+            return Some(steps);
+        }
         // The frontend closes it and says so; the stack follows then.
         Some(vec![Step::Show(Intent::CloseSurface(top))])
     }
