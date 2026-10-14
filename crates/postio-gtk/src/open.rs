@@ -993,7 +993,7 @@ impl OpenMessage {
         });
     }
 
-    /// Whether a to-do's card offers Task `t` beside Snooze: once a vault is
+    /// Whether a to-do's card offers Task `T` beside Snooze: once a vault is
     /// configured (spec C9). Read when a card is next drawn.
     pub fn set_capture(&self, capture: bool) {
         self.capture.set(capture);
@@ -1150,7 +1150,7 @@ impl OpenMessage {
     }
 
     /// The hit's own conversation: how many messages it has, and the list
-    /// `[` and `]` step through, once the store has said.
+    /// `p` and `n` step through, once the store has said.
     fn read_hit_thread(&self, message: MessageId) {
         use postio_model::listing::MailStore as _;
         let client = self.client.clone();
@@ -1329,7 +1329,7 @@ impl OpenMessage {
         }
     }
 
-    /// Read the conversation's messages, so `[` and `]` can step through
+    /// Read the conversation's messages, so `p` and `n` can step through
     /// them, and find `showing` among them.
     fn read_thread(&self, thread: postio_model::ThreadId, showing: MessageId) {
         let client = self.client.clone();
@@ -1354,7 +1354,7 @@ impl OpenMessage {
         });
     }
 
-    /// Step `by` messages through the conversation: `[` is -1, `]` is 1.
+    /// Step `by` messages through the conversation: `p` is -1, `n` is 1.
     /// Nothing happens past either end, or before the conversation is read.
     pub fn step_thread(&self, by: isize) {
         let (next, message) = {
@@ -1542,7 +1542,7 @@ impl OpenMessage {
                     // belongs to this message. The shared rule names the
                     // list and withholds it from mail on its way out; the band
                     // is for list mail only (`List-Id` or `List-Unsubscribe`),
-                    // while `U` is not (`FocusWindow::act`).
+                    // while `M` is not (`FocusWindow::act`).
                     let offer = reading.row.as_deref().and_then(|row| {
                         postio_ui::unsubscribe::banner(
                             reading.send_state,
@@ -1564,7 +1564,7 @@ impl OpenMessage {
         });
     }
 
-    /// "Latest of 6 in this thread · [ earlier message", for a thread.
+    /// "Latest of 6 in this thread · p earlier message", for a thread.
     fn show_thread_chip(&self, messages: u32, latest: bool) {
         while let Some(child) = self.thread_chip.first_child() {
             self.thread_chip.remove(&child);
@@ -1708,7 +1708,7 @@ impl OpenMessage {
         self.subtitle.text().to_string()
     }
 
-    /// What `o` offers for the message on screen: its links, each with the
+    /// What `A` offers for the message on screen: its links, each with the
     /// words it was written behind and its full target, then its parts.
     pub fn choices(&self) -> Vec<crate::chooser::Choice> {
         use crate::chooser::Choice;
@@ -1936,7 +1936,7 @@ impl OpenMessage {
         }
     }
 
-    /// How many of the conversation's messages `[` and `]` can step
+    /// How many of the conversation's messages `p` and `n` can step
     /// through: none until the conversation has been read.
     pub fn thread_known(&self) -> usize {
         self.thread.borrow().len()

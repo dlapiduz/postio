@@ -424,7 +424,7 @@ mod tests {
     #[test]
     fn find_looks_through_the_source_while_it_is_shown() {
         let mut app = opened(FRAME);
-        update(&mut app, press('v'));
+        update(&mut app, press('V'));
         update(
             &mut app,
             Input::Source {

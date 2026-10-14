@@ -7,7 +7,7 @@
 # about half the time. Fixed on the Focus branch before storyboards existed,
 # so this is pinned.
 #
-# Focus only, and reached the way a person reaches it, by `g d`: it needs no
+# Focus only, and reached the way a person reaches it, by `g r`: it needs no
 # preset, because the demo's one rule ("Newsletters") is in its config. The
 # rules page and the remove confirmation are not in the shared observation
 # (the view stays `list`), so the checks pin what is: every key is received,

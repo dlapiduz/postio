@@ -22,7 +22,7 @@ use postio_widgets::present::compose as shared;
 
 use super::frame::Frame;
 
-/// Which message `e`, `E` and `f` answer: the row the cursor is on.
+/// Which message `r`, `a` and `f` answer: the row the cursor is on.
 pub type Current = Rc<dyn Fn() -> Option<MessageId>>;
 
 /// Open the draft behind a Drafts row for editing.
@@ -169,7 +169,7 @@ fn resume(
     shared::install_resume(composer, client, last_id, Some(on_note))
 }
 
-/// `e`, `E` and `f` answer the row the cursor is on. A reply starts with its
+/// `r`, `a` and `f` answer the row the cursor is on. A reply starts with its
 /// conversation's labels, marked as the thread's (FR-053, screen 06); a
 /// forward starts a conversation of its own, and none.
 fn reply_source(composer: &Composer, frame: &Rc<Frame>, client: &Client, current: Current) {

@@ -163,24 +163,30 @@ fn the_canvas_navigation_set_works_in_the_list() {
 }
 
 #[test]
-fn the_canvas_action_set_works_in_the_list() {
+fn gmails_action_set_works_in_the_list() {
     let mut resolver = resolver();
 
+    // Gmail's keys (docs/PRODUCT.md §8), and the alternates kept beside them.
     for (keys, expected) in [
-        ("e", CommandId::Reply),
-        ("E", CommandId::ReplyAll),
+        ("r", CommandId::Reply),
+        ("a", CommandId::ReplyAll),
         ("f", CommandId::Forward),
-        ("a", CommandId::Archive),
-        ("A", CommandId::ArchiveThread),
-        // The one keymap's (specs/007-postio-focus contracts/keymap.md).
+        ("e", CommandId::Archive),
+        ("E", CommandId::ArchiveThread),
+        ("z", CommandId::Undo),
         ("ctrl+z", CommandId::Undo),
-        ("*", CommandId::Flag),
-        ("s", CommandId::Snooze),
-        ("r", CommandId::ToggleRead),
+        ("s", CommandId::Flag),
+        ("b", CommandId::Snooze),
+        ("I", CommandId::ToggleRead),
+        ("U", CommandId::ToggleRead),
         ("l", CommandId::AddLabel),
-        ("m", CommandId::Move),
+        ("v", CommandId::Move),
+        ("#", CommandId::Delete),
         ("Delete", CommandId::Delete),
         ("c", CommandId::Compose),
+        ("* a", CommandId::SelectAll),
+        ("o", CommandId::OpenMessage),
+        ("u", CommandId::PrevView),
     ] {
         assert_eq!(
             press(&mut resolver, keys, KeyContext::List),
@@ -223,7 +229,7 @@ fn the_composer_keys_work_and_the_list_keys_do_not() {
         );
     }
 
-    for keys in ["a", "A", "c", "j", "?", "/"] {
+    for keys in ["e", "E", "c", "j", "?", "/"] {
         assert_eq!(
             press(&mut resolver, keys, KeyContext::Composer),
             Outcome::Unhandled,
@@ -235,8 +241,8 @@ fn the_composer_keys_work_and_the_list_keys_do_not() {
     // resolve while composing, so `Composer::dispatch` gets the chance to
     // explain why it is refusing instead of the key vanishing silently.
     for (keys, expected) in [
-        ("e", CommandId::Reply),
-        ("E", CommandId::ReplyAll),
+        ("r", CommandId::Reply),
+        ("a", CommandId::ReplyAll),
         ("f", CommandId::Forward),
     ] {
         assert_eq!(
@@ -316,7 +322,7 @@ fn a_keys_override_reaches_the_resolver_and_frees_the_default() {
         Outcome::Command("archive".to_owned())
     );
     assert_eq!(
-        press(&mut resolver, "a", KeyContext::List),
+        press(&mut resolver, "e", KeyContext::List),
         Outcome::Unhandled,
         "the default it replaced is gone, not still lying around"
     );
@@ -340,7 +346,7 @@ fn an_unusable_override_leaves_the_command_its_default() {
     let mut resolver = Resolver::new(keymap);
 
     assert_eq!(
-        press(&mut resolver, "a", KeyContext::List),
+        press(&mut resolver, "e", KeyContext::List),
         Outcome::Command("archive".to_owned()),
         "a broken binding must not cost the command its key"
     );

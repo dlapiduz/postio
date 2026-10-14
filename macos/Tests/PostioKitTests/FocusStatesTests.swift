@@ -34,7 +34,7 @@ import Testing
         nextDigest: "Next digest: Weekly \u{b7} Newsletters, Saturday 16:00",
         shortcuts: [
             EmptyShortcutFfi(key: "g f", words: "186 filtered today", command: "go_to_filtered"),
-            EmptyShortcutFfi(key: "g r", words: "archive", command: "go_to_archive"),
+            EmptyShortcutFfi(key: "g a", words: "archive", command: "go_to_archive"),
             EmptyShortcutFfi(key: "c", words: "compose", command: "compose"),
         ])
 
@@ -114,7 +114,7 @@ import Testing
         let words = EmptyInboxWords(Self.empty)
         #expect(words.heading == "Inbox is empty")
         #expect(words.lines == [Self.empty.nextDigest!])
-        #expect(words.shortcuts.map(\.cap) == ["g f", "g r", "c"])
+        #expect(words.shortcuts.map(\.cap) == ["g f", "g a", "c"])
         #expect(words.shortcuts.map(\.words) == ["186 filtered today", "archive", "compose"])
         #expect(words.shortcuts.map(\.command) == ["go_to_filtered", "go_to_archive", "compose"])
     }

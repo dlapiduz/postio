@@ -35,7 +35,7 @@ check   = { keyboard.region = "results" }
 id      = "look"
 command = "quick_look"
 check   = { keyboard.region = "results" }
-expect  = "Space opens Quick Look over the list, 780 wide, with a deep shadow and nothing dimmed behind it. Its header reads “Quick Look · 1 of …” with “j k moves through results while it stays open”, then Open ↩, Archive a and Close Space. Under it the first result's subject in large bold type with “atlas” and “budget” marked, the sender line (name, address, recipients, date, thread size), “N matches in this conversation · ] [ jump between them”, and a card per match: where on the left (Body, Earlier reply, Subject, a file's name) with who and when under it, the passage on the right with the words marked. One card has the accent ring."
+expect  = "Space opens Quick Look over the list, 780 wide, with a deep shadow and nothing dimmed behind it. Its header reads “Quick Look · 1 of …” with “j k moves through results while it stays open”, then Open ↩, Archive e and Close Space. Under it the first result's subject in large bold type with “atlas” and “budget” marked, the sender line (name, address, recipients, date, thread size), “N matches in this conversation · ] [ jump between them”, and a card per match: where on the left (Body, Earlier reply, Subject, a file's name) with who and when under it, the passage on the right with the words marked. One card has the accent ring."
 
 [[step]]
 command = "next_message"

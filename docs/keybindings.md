@@ -49,17 +49,17 @@ command from inside a text field.
 | `k` or `Up` | Previous message | List, conversation, reader, search, digest, Filtered view |  | `prev_message` |
 | `g g` | First message | List, conversation, reader, search |  | `first_message` |
 | `G` | Last message | List, conversation, reader, search |  | `last_message` |
-| `Return` or `Right` | Open message | List, conversation, search, digest, Filtered view |  | `open_message` |
+| `Return` or `o` or `Right` | Open message | List, conversation, search, digest, Filtered view |  | `open_message` |
 | `x` | Toggle selection | List, conversation, reader, search |  | `toggle_selection` |
 | `J` or `shift+Down` | Extend selection down | List, reader, search |  | `extend_selection_down` |
 | `K` or `shift+Up` | Extend selection up | List, reader, search |  | `extend_selection_up` |
-| `X` or `ctrl+a` | Select all | List, conversation, reader, search |  | `select_all` |
-| `Left` | Previous view | List, conversation, reader |  | `prev_view` |
+| `* a` or `ctrl+a` or `X` | Select all | List, conversation, reader, search |  | `select_all` |
+| `Left` or `u` | Previous view | List, conversation, reader |  | `prev_view` |
 | `Escape` | Back | Everywhere |  | `back` |
 | `alt+o` | Toggle result order | Search |  | `toggle_result_order` |
-| `]` or `alt+Down` | Next message in conversation | Conversation, reader |  | `next_in_conversation` |
-| `[` or `alt+Up` | Previous message in conversation | Conversation, reader |  | `prev_in_conversation` |
-| `z` | Fold or unfold this message | Conversation |  | `toggle_fold` |
+| `n` or `alt+Down` | Next message in conversation | Conversation, reader |  | `next_in_conversation` |
+| `p` or `alt+Up` | Previous message in conversation | Conversation, reader |  | `prev_in_conversation` |
+| `Z` | Fold or unfold this message | Conversation |  | `toggle_fold` |
 | `ctrl+o` | View original | List, conversation, reader |  | `view_original` |
 | `ctrl+shift+o` or `alt+o` | Reader view | List, conversation, reader |  | `toggle_reader_view` |
 | `alt+d` | Darken this message | List, conversation, reader (not the terminal) |  | `darken_message` |
@@ -70,17 +70,17 @@ command from inside a text field.
 | `ctrl+plus` or `ctrl+equal` or `ctrl+KP_Add` | Zoom in | List, conversation, reader (not the terminal) |  | `zoom_in` |
 | `ctrl+minus` or `ctrl+KP_Subtract` | Zoom out | List, conversation, reader (not the terminal) |  | `zoom_out` |
 | `ctrl+0` or `ctrl+KP_0` | Actual size | List, conversation, reader (not the terminal) |  | `zoom_reset` |
-| `O` or `ctrl+shift+e` | Expand all | Conversation |  | `expand_all` |
-| `e` or `ctrl+r` | Reply | List, conversation, reader, composer |  | `reply` |
-| `E` or `ctrl+shift+r` | Reply to all | List, conversation, reader, composer |  | `reply_all` |
+| `;` or `ctrl+shift+e` | Expand all | Conversation |  | `expand_all` |
+| `r` or `ctrl+r` | Reply | List, conversation, reader, composer |  | `reply` |
+| `a` or `ctrl+shift+r` | Reply to all | List, conversation, reader, composer |  | `reply_all` |
 | `f` or `ctrl+shift+f` | Forward | List, conversation, reader, composer |  | `forward` |
-| `a` or `ctrl+shift+a` | Archive | List, conversation, reader | Undoable | `archive` |
-| `A` | Archive thread | List, conversation, reader, digest | Undoable | `archive_thread` |
-| `Delete` | Delete | List, conversation, reader | Undoable | `delete` |
-| `m` | Move to… | List, conversation, reader | Undoable | `move` |
-| `*` | Flag | List, conversation, reader | Undoable | `flag` |
-| `r` | Mark read or unread | List, conversation, reader | Undoable | `toggle_read` |
-| `s` | Snooze | List, conversation, reader | Undoable | `snooze` |
+| `e` or `ctrl+shift+a` | Archive | List, conversation, reader | Undoable | `archive` |
+| `E` | Archive thread | List, conversation, reader, digest | Undoable | `archive_thread` |
+| `#` or `Delete` | Delete | List, conversation, reader | Undoable | `delete` |
+| `v` | Move to… | List, conversation, reader | Undoable | `move` |
+| `s` | Flag | List, conversation, reader | Undoable | `flag` |
+| `I` or `U` | Mark read or unread | List, conversation, reader | Undoable | `toggle_read` |
+| `b` | Snooze | List, conversation, reader | Undoable | `snooze` |
 | `B` | Unsnooze | List, conversation, reader | Undoable | `unsnooze` |
 | `h` or `ctrl+h` | Remind if no reply… | List, conversation, reader, composer | Undoable | `remind_if_no_reply` |
 | `l` | Add label… | List, conversation, reader | Undoable | `add_label` |
@@ -88,8 +88,8 @@ command from inside a text field.
 | `Y` | Decline invitation | List, conversation, reader | Undo briefly | `decline_invite` |
 | `d` | Digest rule… | List, conversation, reader, digest |  | `digest_rule` |
 | `D` | Stop digesting this sender | Reader, digest | Undoable | `stop_digesting_sender` |
-| `v` | View source | List, conversation, reader |  | `view_source` |
-| `o` | Open attachment or link… | List, conversation, reader |  | `open_attachment_or_link` |
+| `V` | View source | List, conversation, reader |  | `view_source` |
+| `A` | Open attachment or link… | List, conversation, reader |  | `open_attachment_or_link` |
 | `-` | Dismiss marker | List, conversation, reader | Undoable | `dismiss_marker` |
 | `.` | More actions | Reader |  | `more_actions` |
 | `F8` | Read beside the list or over it | List |  | `toggle_reading_pane` |
@@ -116,7 +116,7 @@ command from inside a text field.
 | `ctrl+shift+7` or `alt+7` | Numbered list | Composer |  | `numbered_list` |
 | `ctrl+shift+k` or `alt+k` | Insert link… | Composer |  | `insert_link` |
 | `ctrl+shift+9` or `alt+9` | Quote block | Composer |  | `quote_block` |
-| `ctrl+z` | Undo | List, conversation, reader, account list, digest, Filtered view |  | `undo` |
+| `z` or `ctrl+z` | Undo | List, conversation, reader, account list, digest, Filtered view |  | `undo` |
 | `ctrl+k` | Command palette | Everywhere |  | `command_palette` |
 | `?` | Keyboard shortcuts | List, conversation, reader |  | `cheat_sheet` |
 | `ctrl+comma` or `alt+comma` | Settings | Everywhere |  | `settings` |
@@ -125,19 +125,19 @@ command from inside a text field.
 | `ctrl+q` or `ctrl+w` | Quit Postio | Everywhere |  | `quit` |
 | `i i` | Show remote images | List, conversation, reader |  | `show_images` |
 | `i a` | Always show images from this sender | List, conversation, reader |  | `always_show_images` |
-| `U` | Unsubscribe from this list | List, conversation, reader, digest |  | `unsubscribe` |
-| `g o` | Go to folders | List, conversation, reader, search |  | `go_to_folders` |
+| `M` | Unsubscribe from this list | List, conversation, reader, digest |  | `unsubscribe` |
+| `g l` | Go to folders | List, conversation, reader, search |  | `go_to_folders` |
 | `g i` | Go to inbox | List, conversation, reader, search, folder list, digest, Filtered view |  | `go_to_inbox` |
-| `g t` | Go to drafts | List, conversation, reader, search, folder list |  | `go_to_drafts` |
-| `g s` | Go to sent | List, conversation, reader, search, folder list |  | `go_to_sent` |
-| `g *` | Go to flagged | List, conversation, reader, search, folder list |  | `go_to_flagged` |
-| `g r` | Go to archive | List, conversation, reader, search, folder list |  | `go_to_archive` |
-| `g z` | Go to snoozed | List, conversation, reader, search, folder list |  | `go_to_snoozed` |
-| `g b` | Go to outbox | List, conversation, reader, search, folder list |  | `go_to_outbox` |
+| `g d` | Go to drafts | List, conversation, reader, search, folder list |  | `go_to_drafts` |
+| `g t` | Go to sent | List, conversation, reader, search, folder list |  | `go_to_sent` |
+| `g s` | Go to flagged | List, conversation, reader, search, folder list |  | `go_to_flagged` |
+| `g a` | Go to archive | List, conversation, reader, search, folder list |  | `go_to_archive` |
+| `g b` | Go to snoozed | List, conversation, reader, search, folder list |  | `go_to_snoozed` |
+| `g o` | Go to outbox | List, conversation, reader, search, folder list |  | `go_to_outbox` |
 | `g j` | Go to junk | List, conversation, reader, search, folder list |  | `go_to_junk` |
 | `g #` | Go to trash | List, conversation, reader, search, folder list |  | `go_to_trash` |
 | `g f` | Go to Filtered | List, conversation, reader, search, folder list |  | `go_to_filtered` |
-| `g d` | Go to digest rules | List, conversation, reader, search, folder list |  | `go_to_digest_rules` |
+| `g r` | Go to digest rules | List, conversation, reader, search, folder list |  | `go_to_digest_rules` |
 | `alt+1` | Saved search 1 | List, conversation, reader, search, folder list |  | `saved_search_1` |
 | `alt+2` | Saved search 2 | List, conversation, reader, search, folder list |  | `saved_search_2` |
 | `alt+3` | Saved search 3 | List, conversation, reader, search, folder list |  | `saved_search_3` |
@@ -149,7 +149,7 @@ command from inside a text field.
 | `r` | Rebuild search index | Account list |  | `rebuild_account_index` |
 | `m` | Set as default account | Account list |  | `set_default_account` |
 | `M` | Map mailbox role | Account list | Undoable | `map_mailbox_role` |
-| `g a` | Next scope | List, folder list |  | `next_scope` |
+| `g c` | Next scope | List, folder list |  | `next_scope` |
 | `F5` | Refresh | List, conversation, reader |  | `refresh` |
 | `Page_Down` or `space` | Scroll reading pane down | List, conversation, reader |  | `scroll_reader_down` |
 | `Page_Up` or `shift+space` | Scroll reading pane up | List, conversation, reader |  | `scroll_reader_up` |
@@ -172,8 +172,8 @@ command from inside a text field.
 | `6` | Reason 6 | Filtered view |  | `filtered_tab_6` |
 | `7` | Reason 7 | Filtered view |  | `filtered_tab_7` |
 | `F` | Filter what is in the inbox… | List | Undoable | `sweep_inbox` |
-| `t` | Capture a task… | List, conversation, reader, capture sheet |  | `capture_task` |
-| `n` | Capture a note… | List, conversation, reader, capture sheet |  | `capture_note` |
+| `T` | Capture a task… | List, conversation, reader, capture sheet |  | `capture_task` |
+| `N` | Capture a note… | List, conversation, reader, capture sheet |  | `capture_note` |
 | `ctrl+p` | Change project | Capture sheet |  | `capture_change_project` |
 | `alt+s` | Use the subject instead | Capture sheet |  | `capture_use_subject` |
 | `ctrl+Return` or `alt+Return` | Add to the vault | Capture sheet |  | `capture_write` |

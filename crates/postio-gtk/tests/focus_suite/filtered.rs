@@ -265,7 +265,7 @@ pub fn the_strip_counts_what_was_filtered_today() {
             "with its key: {said:?}"
         );
 
-        support::keys(&window, &["g", "o"]);
+        support::keys(&window, &["g", "l"]);
         let places = window.places().expect("the folders popover");
         assert!(
             crate::settle_until(async || places.names().contains(&"Filtered".to_owned())).await,

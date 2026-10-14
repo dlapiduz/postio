@@ -159,7 +159,7 @@ mod tests {
         let mut keys = keys(&[]);
         assert_eq!(
             keys.press(
-                &key(KeyCode::Char('a'), KeyModifiers::NONE),
+                &key(KeyCode::Char('e'), KeyModifiers::NONE),
                 KeyContext::List,
                 false
             ),

@@ -212,10 +212,10 @@ pub fn a_drafts_row_names_who_it_is_to() {
             .await
             .expect("the terminal saves its draft");
 
-        support::keys(&window, &["g", "t"]);
+        support::keys(&window, &["g", "d"]);
         assert!(
             crate::settle_until(async || support::subjects(&window) == ["Harbor notes"]).await,
-            "g t did not list Drafts"
+            "g d did not list Drafts"
         );
         let drawn = |window: &postio_gtk::window::FocusWindow| {
             window
@@ -237,7 +237,7 @@ pub fn a_drafts_row_names_who_it_is_to() {
     });
 }
 
-/// US11 scenario 3 by the keyboard (T080): `g t` lists Drafts, and `Enter`
+/// US11 scenario 3 by the keyboard (T080): `g d` lists Drafts, and `Enter`
 /// on a draft opens it in the composer rather than in the reader.
 pub fn g_t_lists_drafts_and_enter_opens_one_to_edit() {
     crate::gtk_case(async {
@@ -254,10 +254,10 @@ pub fn g_t_lists_drafts_and_enter_opens_one_to_edit() {
             .await
             .expect("the terminal saves its draft");
 
-        support::keys(&window, &["g", "t"]);
+        support::keys(&window, &["g", "d"]);
         assert!(
             crate::settle_until(async || support::subjects(&window) == ["Harbor notes"]).await,
-            "g t did not list Drafts: {:?} under {:?}",
+            "g d did not list Drafts: {:?} under {:?}",
             support::subjects(&window),
             window.place_name()
         );

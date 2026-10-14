@@ -1,4 +1,4 @@
-//! The capture sheet's state (terminal.md, "Obsidian capture"): `t` or `n`
+//! The capture sheet's state (terminal.md, "Obsidian capture"): `T` or `N`
 //! on a message writes a task or a note into the person's vault.
 //!
 //! The text is the marker's sentence, verbatim, or the subject; the due day

@@ -1,7 +1,7 @@
 # The reading walk: open, walk the thread, reply, send, leave
 # (ux-architect §4).
 #
-# `Return` opens the thread over the list, `[`/`]` step its messages, `e`
+# `Return` opens the thread over the list, `p`/`n` step its messages, `r`
 # replies to the one shown, `Ctrl+Return` sends, `Esc` returns. Each step
 # asks the §4 questions: where am I, did the app tell me, did I lose
 # anything. The runner has no network, so `send` only queues.
@@ -25,12 +25,12 @@ expect  = "The thread is open over the list on its newest message."
 [[step]]
 command = "prev_in_conversation"
 check   = { reading.id = "6" }
-expect  = "`[` shows the message before it."
+expect  = "`p` shows the message before it."
 
 [[step]]
 command = "next_in_conversation"
 check   = { reading.id = "7" }
-expect  = "`]` moves back."
+expect  = "`n` moves back."
 
 [[step]]
 id      = "reply"

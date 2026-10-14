@@ -13,7 +13,7 @@ pub fn one_ctrl_z_returns_all_three_after_the_toast_has_gone() {
         }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
-        support::keys(&window, &["x", "j", "x", "j", "x", "j", "a"]);
+        support::keys(&window, &["x", "j", "x", "j", "x", "j", "e"]);
         assert!(
             crate::settle_until(async || support::subjects(&window) == ["Fourth", "Fifth"]).await,
             "the three never left: {:?}",
@@ -60,8 +60,8 @@ fn toast_of(window: &postio_gtk::window::FocusWindow) -> (Option<String>, bool) 
 /// The toast counts what the person archived -- rows, not the messages
 /// inside them -- and an undo says it was an undo, not that the mail was
 /// archived. Frame by frame (2026-10 review): a thread of three archived with
-/// `a` said "Archived 3 messages" for the one row the person chose, and the
-/// toast after `u` repeated "Archived …" with its button gone.
+/// `e` said "Archived 3 messages" for the one row the person chose, and the
+/// toast after `z` repeated "Archived …" with its button gone.
 pub fn the_toast_counts_the_row_and_says_when_it_was_undone() {
     crate::gtk_case(async {
         if !support::display() {
@@ -84,7 +84,7 @@ pub fn the_toast_counts_the_row_and_says_when_it_was_undone() {
             support::subjects(&window)
         );
 
-        support::keys(&window, &["j", "a"]);
+        support::keys(&window, &["j", "e"]);
         assert!(
             crate::settle_until(async || support::subjects(&window).len() == 1).await,
             "the thread did not leave: {:?}",
@@ -126,7 +126,7 @@ pub fn an_undo_puts_the_cursor_on_the_row_it_brought_back() {
         }
         let fixture = Fixture::empty().await;
         let (window, _client) = fixture.five().await;
-        support::keys(&window, &["j", "a"]);
+        support::keys(&window, &["j", "e"]);
         assert!(
             crate::settle_until(async || support::subjects(&window).len() == 4).await,
             "Second did not leave: {:?}",

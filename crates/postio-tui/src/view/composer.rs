@@ -799,8 +799,8 @@ mod tests {
             },
         );
         for (key_char, kind) in [
-            ('e', postio_body::replying::ReplyKind::Reply),
-            ('E', postio_body::replying::ReplyKind::ReplyAll),
+            ('r', postio_body::replying::ReplyKind::Reply),
+            ('a', postio_body::replying::ReplyKind::ReplyAll),
             ('f', postio_body::replying::ReplyKind::Forward),
         ] {
             let effects = update(&mut app, press(key_char));

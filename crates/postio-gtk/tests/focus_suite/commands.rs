@@ -1,5 +1,5 @@
 //! Commands Focus offers and must answer (T236, T238, T257): the go-to keys
-//! `g s`, `g r`, `g z` and `g *`, Unsnooze on `B`, and Flag on `*`, each
+//! `g t`, `g a`, `g b` and `g s`, Unsnooze on `B`, and Flag on `s`, each
 //! pressed as GTK delivers it, and each judged by what the list shows and
 //! what the store holds.
 
@@ -63,7 +63,7 @@ pub async fn flag(client: &postio_client::Client, message: MessageId) {
         .expect("flagged");
 }
 
-/// `g s` and `g r` go to the Sent and Archive folders, as `g t` goes to
+/// `g t` and `g a` go to the Sent and Archive folders, as `g d` goes to
 /// Drafts; `g i` comes back.
 pub fn g_s_and_g_r_list_sent_and_archive() {
     crate::gtk_case(async {
@@ -80,16 +80,16 @@ pub fn g_s_and_g_r_list_sent_and_archive() {
         fixture.file_in(archive, "Old archive", 30).await;
         let (window, _client) = fixture.open().await;
 
-        support::keys(&window, &["g", "s"]);
+        support::keys(&window, &["g", "t"]);
         showing(&window, "Sent", &["Sent note"]).await;
-        support::keys(&window, &["g", "r"]);
+        support::keys(&window, &["g", "a"]);
         showing(&window, "Archive", &["Old archive"]).await;
         support::keys(&window, &["g", "i"]);
         showing(&window, "Inbox", &["In the inbox"]).await;
     });
 }
 
-/// `g z` lists what is snoozed, and `g *` what is flagged.
+/// `g b` lists what is snoozed, and `g s` what is flagged.
 pub fn g_z_lists_snoozed_and_g_star_lists_flagged() {
     crate::gtk_case(async {
         if !support::display() {
@@ -114,9 +114,9 @@ pub fn g_z_lists_snoozed_and_g_star_lists_flagged() {
         let (window, client) = fixture.open().await;
         flag(&client, atlas).await;
 
-        support::keys(&window, &["g", "z"]);
+        support::keys(&window, &["g", "b"]);
         showing(&window, "Snoozed", &["Harbor draft"]).await;
-        support::keys(&window, &["g", "asterisk"]);
+        support::keys(&window, &["g", "s"]);
         showing(&window, "Flagged", &["Atlas budget"]).await;
     });
 }
@@ -138,7 +138,7 @@ async fn in_snoozed() -> (Fixture, Window, MessageId) {
         .await;
     snooze(&fixture, atlas).await;
     let (window, _client) = fixture.open().await;
-    support::keys(&window, &["g", "z"]);
+    support::keys(&window, &["g", "b"]);
     showing(&window, "Snoozed", &["Atlas budget"]).await;
     (fixture, window, atlas)
 }
@@ -262,8 +262,8 @@ pub fn b_in_the_open_message_unsnoozes_it() {
     });
 }
 
-/// `*` flags the row; the store has it, `g *` lists it, the row carries no
-/// mark, and Undo clears it. `*` again unflags.
+/// `s` flags the row; the store has it, `g s` lists it, the row carries no
+/// mark, and Undo clears it. `s` again unflags.
 pub fn star_flags_the_row_and_undo_clears_it() {
     crate::gtk_case(async {
         if !support::display() {
@@ -283,14 +283,14 @@ pub fn star_flags_the_row_and_undo_clears_it() {
             .await;
         let (window, _client) = fixture.open().await;
         let before = window.rows_on_screen();
-        support::keys(&window, &["j", "j", "asterisk"]);
+        support::keys(&window, &["j", "j", "s"]);
         assert!(
             crate::settle_until(async || stored(&fixture, atlas)
                 .await
                 .flags
                 .contains(&Flag::Flagged))
             .await,
-            "`*` did not flag it"
+            "`s` did not flag it"
         );
         assert!(
             crate::settle_until(async || window.toast_showing().is_some()).await,
@@ -306,7 +306,7 @@ pub fn star_flags_the_row_and_undo_clears_it() {
             "the row carries a flag mark: {:?}",
             window.rows_on_screen()
         );
-        support::keys(&window, &["g", "asterisk"]);
+        support::keys(&window, &["g", "s"]);
         showing(&window, "Flagged", &["Atlas budget"]).await;
         support::keys(&window, &["g", "i"]);
         showing(&window, "Inbox", &["Staffing plan", "Atlas budget"]).await;
@@ -322,7 +322,7 @@ pub fn star_flags_the_row_and_undo_clears_it() {
         );
 
         // Pressed on a flagged row, it clears the flag.
-        support::keys(&window, &["j", "j", "asterisk"]);
+        support::keys(&window, &["j", "j", "s"]);
         assert!(
             crate::settle_until(async || stored(&fixture, atlas)
                 .await
@@ -330,20 +330,20 @@ pub fn star_flags_the_row_and_undo_clears_it() {
                 .contains(&Flag::Flagged))
             .await
         );
-        support::keys(&window, &["asterisk"]);
+        support::keys(&window, &["s"]);
         assert!(
             crate::settle_until(async || !stored(&fixture, atlas)
                 .await
                 .flags
                 .contains(&Flag::Flagged))
             .await,
-            "a second `*` did not unflag it"
+            "a second `s` did not unflag it"
         );
     });
 }
 
 /// The row menu says Flag on an unflagged row and Unflag on a flagged one,
-/// and runs the same command `*` does.
+/// and runs the same command `s` does.
 pub fn the_row_menu_flags_and_unflags() {
     crate::gtk_case(async {
         if !support::display() {
@@ -360,7 +360,7 @@ pub fn the_row_menu_flags_and_unflags() {
             .iter()
             .position(|text| text == "Flag")
             .unwrap_or_else(|| panic!("no Flag in the menu: {said:?}"));
-        assert_eq!(said.get(at + 1).map(String::as_str), Some("*"), "{said:?}");
+        assert_eq!(said.get(at + 1).map(String::as_str), Some("s"), "{said:?}");
         crate::row_menu::choose(&menu, "focus-row-menu-flag");
         assert!(
             crate::settle_until(async || stored(&fixture, atlas)
@@ -399,27 +399,27 @@ pub fn the_row_menu_flags_and_unflags() {
     });
 }
 
-/// `A`, Archive thread, archives the row's conversation: a Focus row is one,
-/// so it does what `a` does.
+/// `E`, Archive thread, archives the row's conversation: a Focus row is one,
+/// so it does what `e` does.
 pub fn capital_a_archives_the_conversation() {
     crate::gtk_case(async {
         if !support::display() {
             return;
         }
         let (_fixture, window) = support::three_in_the_inbox().await;
-        support::keys(&window, &["A"]);
+        support::keys(&window, &["E"]);
         assert!(
             crate::settle_until(
                 async || support::subjects(&window) == ["Harbor draft", "Atlas budget"]
             )
             .await,
-            "`A` left the conversation in the inbox: {:?}",
+            "`E` left the conversation in the inbox: {:?}",
             support::subjects(&window)
         );
     });
 }
 
-/// Focus is one inbox across accounts, so `g z` and `g *` list every
+/// Focus is one inbox across accounts, so `g b` and `g s` list every
 /// account's snoozed and flagged mail, not the first account's.
 pub fn g_z_and_g_star_span_every_account() {
     crate::gtk_case(async {
@@ -449,9 +449,9 @@ pub fn g_z_and_g_star_span_every_account() {
         flag(&client, first_flagged).await;
         flag(&client, second_flagged).await;
 
-        support::keys(&window, &["g", "z"]);
+        support::keys(&window, &["g", "b"]);
         showing(&window, "Snoozed", &["Second asleep", "First asleep"]).await;
-        support::keys(&window, &["g", "asterisk"]);
+        support::keys(&window, &["g", "s"]);
         showing(&window, "Flagged", &["Second starred", "First starred"]).await;
     });
 }

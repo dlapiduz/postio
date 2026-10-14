@@ -380,11 +380,11 @@ mod tests {
             "space toggles a label \u{b7} Return closes \u{b7} typing a name that \
              doesn\u{2019}t exist offers \u{201c}Create label\u{201d}."
         );
-        // Undo is `mod+z`, spelled for each platform: both asserted from
-        // either host, so a Mac run is not a red Linux expectation.
+        // Undo is Gmail's `z` on both platforms, asserted from either host,
+        // so a Mac run is not a red Linux expectation.
         for (platform, undo) in [
-            (postio_config::paths::Platform::Freedesktop, "ctrl+z"),
-            (postio_config::paths::Platform::Apple, "cmd+z"),
+            (postio_config::paths::Platform::Freedesktop, "z"),
+            (postio_config::paths::Platform::Apple, "z"),
         ] {
             assert_eq!(
                 move_footnote(&Keymap::resolve_on(&Default::default(), platform)),
@@ -408,7 +408,7 @@ mod tests {
         assert_eq!(
             snooze_footnote(Keymap::defaults()),
             "The message leaves the inbox and comes back at the top at that time. \
-             Snoozed mail is under g z."
+             Snoozed mail is under g b."
         );
         assert!(
             remind_footnote(saturday_afternoon())

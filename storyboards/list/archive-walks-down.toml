@@ -1,10 +1,10 @@
 # Archive under the cursor, and the row below takes its place (#1687, #1746).
 #
 # The defect: archiving or deleting under the cursor moved the cursor
-# somewhere else, so the next `a` archived a message the person never looked
+# somewhere else, so the next `e` archived a message the person never looked
 # at. The classic app's #1687 was fixed and pinned here; Focus has its own
 # form of it, #1746: the archived row's cursor was not handed to the row
-# that takes its place, so the cursor was gone and the next `a` archived
+# that takes its place, so the cursor was gone and the next `e` archived
 # nothing. Focus opens with the cursor on index 0, so the two `j` leave it on
 # index 1 and then 2.
 apps   = ["focus"]

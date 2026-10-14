@@ -4,7 +4,7 @@
 # and the key was the thing the commit was about -- a key under the dialog
 # that does nothing is the same family as #1546's dead keys. Fixed on the
 # Focus branch before storyboards existed, so this is pinned: with the
-# message open, `Delete` removes its conversation, offers Undo, and the
+# message open, `#` (or the Delete key) removes its conversation, offers Undo, and the
 # dialog goes on to the next message.
 #
 # Wide, so Delete is a visible button in the action row and not folded into
@@ -28,7 +28,7 @@ command = "next_message"
 command = "open_message"
 settle  = { until = { view = "reader" } }
 check   = { view = "reader", reading.id = "90", keyboard.region = "reader", rows.count = 60 }
-expect  = "The message is open, its action row showing Delete with the cap `Del`."
+expect  = "The message is open, its action row showing Delete with the cap `#`, Gmail's key for it."
 
 [[step]]
 command = "delete"

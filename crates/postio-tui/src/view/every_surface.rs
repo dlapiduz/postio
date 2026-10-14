@@ -107,10 +107,10 @@ fn chrome() -> Vec<Control> {
         ctl("⌕ Search", "/"),
         ctl("ctrl+k", "<C-k>"),
         ctl("? keys", "?"),
-        ctl("Inbox ▾", "go"),
+        ctl("Inbox ▾", "gl"),
         ctl("⚑ Has action", "!"),
         ctl("186 filtered today", "gf"),
-        ctl("4 digest rules", "gd"),
+        ctl("4 digest rules", "gr"),
     ]
 }
 
@@ -135,7 +135,7 @@ fn cases() -> Vec<Case> {
                 vec![
                     ctl("Accept y", "y"),
                     ctl("Decline Y", "Y"),
-                    ctl("Reply e", "e").after("jj"),
+                    ctl("Reply r", "r").after("jj"),
                     ctl("Tomás Reyes", "jjj"),
                 ],
             ]
@@ -175,13 +175,13 @@ fn cases() -> Vec<Case> {
                 Has("2 selected"),
             ],
             controls: vec![
-                ctl("Archive a", "a"),
-                ctl("Snooze s", "s"),
-                ctl("Mark read r", "r"),
+                ctl("Archive e", "e"),
+                ctl("Snooze b", "b"),
+                ctl("Mark read I", "I"),
                 ctl("Digest these… d", "d"),
                 ctl("Label l", "l"),
-                ctl("Move m", "m"),
-                ctl("Delete Del", "<Del>"),
+                ctl("Move v", "v"),
+                ctl("Delete #", "#"),
                 ctl("x toggle", "x"),
                 ctl("J K extend", "J"),
                 ctl("K extend", "K"),
@@ -191,8 +191,8 @@ fn cases() -> Vec<Case> {
             ..case("bulk bar", "selected", (160, 36))
         },
         Case {
-            marks: vec![Has("✓ Archived 1 message"), Has("Undo ctrl+z")],
-            controls: vec![ctl("Undo ctrl+z", "<C-z>")],
+            marks: vec![Has("✓ Archived 1 message"), Has("Undo z")],
+            controls: vec![ctl("Undo z", "z")],
             holds: false,
             ..case("toast", "toast", (120, 36))
         },
@@ -227,7 +227,7 @@ fn cases() -> Vec<Case> {
             marks: vec![Styled("Inbox is empty", BOLD)],
             controls: vec![
                 ctl("Filtered g f", "gf"),
-                ctl("Archive g r", "gr"),
+                ctl("Archive g a", "ga"),
                 ctl("Compose c", "c").nth(1),
             ],
             holds: false,
@@ -247,11 +247,11 @@ fn cases() -> Vec<Case> {
                 ctl("↑ k", "k").after("j"),
                 ctl("↓ j", "j"),
                 ctl("Esc ✕", "<Esc>"),
-                ctl("Reply e", "e"),
-                ctl("Reply all E", "E"),
+                ctl("Reply r", "r"),
+                ctl("Reply all a", "a"),
                 ctl("Forward f", "f"),
-                ctl("Archive a", "a"),
-                ctl("Snooze s", "s"),
+                ctl("Archive e", "e"),
+                ctl("Snooze b", "b"),
                 ctl("Remind h", "h"),
                 ctl("More .", "."),
                 ctl("+ Label l", "l"),
@@ -281,14 +281,14 @@ fn cases() -> Vec<Case> {
         Case {
             then: ".",
             marks: vec![Has("▌Label"), Has("╭ More")],
-            controls: vec![ctl("Move", "m"), ctl("Delete", "<Del>")],
+            controls: vec![ctl("Move", "v"), ctl("Delete", "#")],
             holds: false,
             ..case("the More menu", "open", (120, 36))
         },
         Case {
             then: ".",
             marks: vec![Has("▌Label"), Has("╭ More")],
-            controls: vec![ctl("Move", "m")],
+            controls: vec![ctl("Move", "v")],
             holds: false,
             modal: false,
             ..case("the More menu beside the list", "pane", (140, 36))
@@ -309,11 +309,11 @@ fn cases() -> Vec<Case> {
                 ctl("↑ k", "k").after("j"),
                 ctl("↓ j", "j"),
                 ctl("Esc ✕", "<Esc>"),
-                ctl("Reply e", "e"),
-                ctl("Reply all E", "E"),
+                ctl("Reply r", "r"),
+                ctl("Reply all a", "a"),
                 ctl("Forward f", "f"),
-                ctl("Archive a", "a"),
-                ctl("Snooze s", "s"),
+                ctl("Archive e", "e"),
+                ctl("Snooze b", "b"),
                 ctl("Remind h", "h"),
                 ctl("More .", "."),
                 ctl("+ Label l", "l"),
@@ -332,7 +332,7 @@ fn cases() -> Vec<Case> {
                 Styled("To-do", BOLD),
                 Styled("Please send", ITALIC),
             ],
-            controls: vec![ctl("Task t", "t"), ctl("Snooze s", "s")],
+            controls: vec![ctl("Task T", "T"), ctl("Snooze b", "b")],
             holds: false,
             ..case("a to-do's row", "capture", (120, 36))
         },
@@ -439,9 +439,9 @@ fn cases() -> Vec<Case> {
             controls: vec![
                 ctl("↓ j", "j"),
                 ctl("Esc ✕", "<Esc>"),
-                ctl("Archive a", "a"),
-                ctl("Snooze s", "s"),
-                ctl("Reply e", "e"),
+                ctl("Archive e", "e"),
+                ctl("Snooze b", "b"),
+                ctl("Reply r", "r"),
             ],
             holds: false,
             ..case("a filtered message open for itself", "filtered", (120, 36))
@@ -466,7 +466,7 @@ fn cases() -> Vec<Case> {
         Case {
             marks: vec![Has("≡"), Has("[1]"), Styled("[1]", REVERSED)],
             controls: vec![
-                ctl("Archive all 14 A", "A"),
+                ctl("Archive all 14 E", "E"),
                 ctl("14 messages  tab", "<Tab>"),
                 ctl("Edit rule and cadence d", "d"),
                 ctl("The 8:10 train moves", "]"),
@@ -488,13 +488,13 @@ fn cases() -> Vec<Case> {
         Case {
             marks: vec![Has("▌")],
             controls: vec![
-                ctl("Archive all 14 A", "A"),
+                ctl("Archive all 14 E", "E"),
                 ctl("Summary", "<Tab>"),
                 ctl("Rail Notes", "j"),
                 ctl("↵ open", "<Enter>").nth(0),
                 ctl("tab summary / messages", "<Tab>"),
                 ctl("D stop digesting the sender", "D"),
-                ctl("U unsubscribe", "U"),
+                ctl("M unsubscribe", "M"),
             ],
             holds: false,
             ..case("digest list", "digest-list", (120, 36))
@@ -505,7 +505,7 @@ fn cases() -> Vec<Case> {
                 ctl("‹ Summary Esc", "<Esc>"),
                 ctl("j k next / previous source", "j"),
                 ctl("D stop digesting the sender", "D"),
-                ctl("U unsubscribe", "U"),
+                ctl("M unsubscribe", "M"),
             ],
             holds: false,
             ..case("digest email", "digest-email", (120, 36))
@@ -515,7 +515,7 @@ fn cases() -> Vec<Case> {
             controls: vec![
                 ctl("‹ Inbox g i", "gi"),
                 ctl("↵ edit", "<Enter>"),
-                ctl("Del remove and release", "<Del>"),
+                ctl("# remove and release", "#"),
                 ctl("Esc inbox", "<Esc>"),
                 ctl("Receipts", "j"),
             ],
@@ -535,11 +535,11 @@ fn cases() -> Vec<Case> {
         Case {
             marks: vec![
                 Has("╭"),
-                StyledAt("Task t", 1, REVERSED),
+                StyledAt("Task T", 1, REVERSED),
                 Styled("Add task", BOLD),
             ],
             controls: vec![
-                ctl("Note n", "n").after("<Tab>"),
+                ctl("Note N", "N").after("<Tab>"),
                 ctl(" Today ", "<Right>").nth(1).after("<Tab>"),
                 ctl(" Fri ", "<Left>").nth(1).after("<Tab><Right>"),
                 ctl("use the subject instead alt+s", "<A-s>"),

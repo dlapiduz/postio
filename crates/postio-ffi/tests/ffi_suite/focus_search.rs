@@ -150,7 +150,12 @@ async fn show_all_keeps_the_query_among_the_recent_searches() {
     session.invoke("search");
     let _ = dropdown(&session, 10, |view| view.state == DropdownStateFfi::Empty).await;
     session.focus_bar_typed("harbor".to_owned());
-    let view = dropdown(&session, 10, |view| view.footer_count.is_some()).await;
+    // The empty panel's own count can land after the typing (#1838), so
+    // wait for the words' panel, not for the first panel with a count.
+    let view = dropdown(&session, 10, |view| {
+        view.state == DropdownStateFfi::Words && view.footer_count.is_some()
+    })
+    .await;
     assert_eq!(view.state, DropdownStateFfi::Words);
     session.focus_search_show_all();
     // Closed and opened again: the query is the newest recent search.

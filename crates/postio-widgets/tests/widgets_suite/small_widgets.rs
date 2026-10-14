@@ -77,7 +77,7 @@ pub fn an_action_bar_dispatches_the_command_its_cap_advertises() {
         bar.button(CommandId::Reply)
             .expect("Reply is in the bar")
             .key(),
-        "e",
+        "r",
         "a bar caps itself from the registry defaults the moment it exists"
     );
 
@@ -94,11 +94,11 @@ pub fn an_action_bar_dispatches_the_command_its_cap_advertises() {
     let mut overrides = postio_config::KeyBindings::default();
     overrides
         .overrides_mut()
-        .insert("reply".to_string(), "r".to_string());
+        .insert("reply".to_string(), "w".to_string());
     bar.set_keymap(&Keymap::resolve(&overrides));
     assert_eq!(
         bar.button(CommandId::Reply).expect("still there").key(),
-        "r",
+        "w",
         "a rebind reaches the cap, not only the keyboard"
     );
 }

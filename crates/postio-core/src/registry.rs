@@ -9,10 +9,11 @@
 //!
 //! # Where the bindings come from
 //!
-//! The design canvas: `e` reply, `a` archive, `A` archive thread, `u` undo,
-//! `t` thread. The original brief proposed `r` for reply; the canvas was newer
-//! and won, and docs/PRODUCT.md §8 records the resolution rather than the
-//! argument.
+//! Gmail's keyboard shortcuts, wherever Postio has the command: `e` archive,
+//! `r` reply, `a` reply all, `#` delete, `s` flag, `b` snooze, `z` undo,
+//! `g i` the inbox. A command Gmail has no key for keeps its own, or takes a
+//! new one in Gmail's style where Gmail's displaced it. docs/PRODUCT.md §8
+//! records the decision (the maintainer's, 2026-10-14) and the keys it moved.
 //! The ids and their defaults are the same vocabulary `postio-config`'s
 //! `DEFAULT_BINDINGS` fixed, so `[keys]` overrides land on the right command.
 //! Everything here is a *default*; the user's `[keys]` wins at resolve time.
@@ -296,7 +297,7 @@ pub struct CommandSpec {
     /// (`"a"`, `"A"`, `"ctrl+k"`, `"g g"`). Overridable via `[keys]`.
     pub default_binding: &'static str,
     /// Secondary bindings for the same command — the arrow keys beside `j`/`k`,
-    /// `l` beside `Return`. Not overridable; `[keys]` replaces the primary.
+    /// `o` beside `Return`. Not overridable; `[keys]` replaces the primary.
     pub alternate_bindings: &'static [&'static str],
     /// The contexts this command is meaningful in — its context predicate.
     pub contexts: ContextSet,
@@ -364,7 +365,7 @@ const CHROME: RequirementSet = RequirementSet::NONE;
 /// Reading the message list, a thread and a single message: the surfaces where
 /// a message action means something.
 const MESSAGE_SURFACES: &[Context] = &[Context::List, Context::Conversation, Context::Reader];
-/// Where the capture sheet's `t` and `n` work: from a message, and in the
+/// Where the capture sheet's `T` and `N` work: from a message, and in the
 /// sheet itself, where they switch it between a task and a note.
 const CAPTURE_SURFACES: &[Context] = &[
     Context::List,
@@ -479,12 +480,11 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::OpenMessage,
         title: "Open message",
-        // `Return` is what config.toml documents, and `Right` goes one level
-        // in the way `Left` comes back out. `l` was the vim-style open until
-        // the one keymap gave it to labels (specs/007-postio-focus
-        // contracts/keymap.md).
+        // `Return` is what config.toml documents, `o` is Gmail's open
+        // (docs/PRODUCT.md §8), and `Right` goes one level in the way `Left`
+        // comes back out.
         default_binding: "Return",
-        alternate_bindings: &["Right"],
+        alternate_bindings: &["o", "Right"],
         // And a row of Focus's Filtered view or digest window.
         contexts: ctx(&[Context::List, Context::Conversation, Context::Search])
             .with(Context::Filtered)
@@ -515,7 +515,7 @@ static SPECS: &[CommandSpec] = &[
         alternate_bindings: &["shift+Down"],
         // `LIST_SURFACES` minus the conversation: there is no row selection
         // to extend while the keyboard is inside the pane, which walks one
-        // thread's messages on `]` and `[` (#1007). `shift+Down` still
+        // thread's messages on `n` and `p` (#1007). `shift+Down` still
         // reaches this everywhere it ever did.
         contexts: ctx(SELECTION_SURFACES),
         destructive: false,
@@ -536,12 +536,11 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::SelectAll,
         title: "Select all",
-        // Shifted `x`, the key that selects one row: the same verb, for all
-        // of them (specs/007-postio-focus contracts/keymap.md). `mod+a`
-        // stays, for the hand that reaches for it from every other
-        // application.
-        default_binding: "X",
-        alternate_bindings: &["mod+a"],
+        // Gmail's `* a` (docs/PRODUCT.md §8). `mod+a` stays, for the hand
+        // that reaches for it from every other application, and `X`, shifted
+        // `x`, the key that selects one row.
+        default_binding: "* a",
+        alternate_bindings: &["mod+a", "X"],
         contexts: ctx(LIST_SURFACES).with(Context::Results),
         destructive: false,
         recovery: Recovery::None,
@@ -550,10 +549,10 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::PrevView,
         title: "Previous view",
-        // `Left`, the way back out that `Right` goes in. `h` is Focus's
-        // remind key under the one keymap.
+        // `Left`, the way back out that `Right` goes in, and Gmail's `u`,
+        // back to the list (docs/PRODUCT.md §8). `h` is Focus's remind key.
         default_binding: "Left",
-        alternate_bindings: &[],
+        alternate_bindings: &["u"],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::None,
@@ -587,12 +586,11 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::NextInConversation,
         title: "Next message in conversation",
-        // `]` and `[`: `j` walks the list of conversations, and these walk
-        // the messages of the one that is open -- in the macOS pane, and in
-        // Focus's reading dialog, which steps through the thread
-        // (specs/007-postio-focus contracts/keymap.md). `J`/`K` extend the
-        // list's selection.
-        default_binding: "]",
+        // Gmail's `n` and `p` (docs/PRODUCT.md §8): `j` walks the list of
+        // conversations, and these walk the messages of the one that is
+        // open -- in the macOS pane, and in Focus's reading dialog, which
+        // steps through the thread. `J`/`K` extend the list's selection.
+        default_binding: "n",
         alternate_bindings: &["alt+Down"],
         contexts: ctx(&[Context::Conversation, Context::Reader]),
         destructive: false,
@@ -602,7 +600,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::PrevInConversation,
         title: "Previous message in conversation",
-        default_binding: "[",
+        default_binding: "p",
         alternate_bindings: &["alt+Up"],
         contexts: ctx(&[Context::Conversation, Context::Reader]),
         destructive: false,
@@ -618,10 +616,10 @@ static SPECS: &[CommandSpec] = &[
         // turns pages with. The maintainer settled it the other way (#1402).
         //
         // Folding keeps a key rather than losing one: the stacked pane still
-        // folds. `z` is free across the table and is where a vim user already
-        // looks -- `za` toggles a fold, and the whole family lives under `z`.
+        // folds. `Z`, because Gmail's `z` is undo (docs/PRODUCT.md §8) and a
+        // vim user still looks under `z` for a fold.
         title: "Fold or unfold this message",
-        default_binding: "z",
+        default_binding: "Z",
         alternate_bindings: &[],
         contexts: ctx(&[Context::Conversation]),
         destructive: false,
@@ -688,11 +686,9 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::SwitchTreatment,
         title: "Show original or app colours",
-        // `⇧O` (the design handoff, SPEC.md section 7): `o` opens an
-        // attachment or a link, and the shifted letter does the larger thing
-        // to the same message -- shows the whole of it as sent. Free in the
-        // reader: `O` expands a conversation and orders search results, and
-        // neither is a reader surface.
+        // `⇧O` (the design handoff, SPEC.md section 7): the shifted open,
+        // which does the larger thing to the open message -- shows the whole
+        // of it as sent. Gmail binds no `O`.
         default_binding: "O",
         alternate_bindings: &[],
         // The open message only: the list has no body to draw either way.
@@ -781,11 +777,8 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::ExpandAll,
         title: "Expand all",
-        // `o` was the drill-in column's order toggle until #1003 retired it,
-        // which is what makes this letter available. Shifted, because it acts
-        // on the whole conversation -- the same relationship `a`/`A` already
-        // has between a message and its thread.
-        default_binding: "O",
+        // Gmail's `;`, expand the entire conversation (docs/PRODUCT.md §8).
+        default_binding: ";",
         alternate_bindings: &["mod+shift+e"],
         // Only where there is a conversation to expand. Offering it on the
         // list would be a key that does nothing most of the time.
@@ -797,7 +790,8 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Reply,
         title: "Reply",
-        default_binding: "e",
+        // Gmail's `r` (docs/PRODUCT.md §8).
+        default_binding: "r",
         alternate_bindings: &["mod+r"],
         contexts: ctx(REPLY_SURFACES).with(Context::Results),
         destructive: false,
@@ -807,7 +801,8 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::ReplyAll,
         title: "Reply to all",
-        default_binding: "E",
+        // Gmail's `a` (docs/PRODUCT.md §8).
+        default_binding: "a",
         alternate_bindings: &["mod+shift+r"],
         contexts: ctx(REPLY_SURFACES),
         destructive: false,
@@ -827,7 +822,8 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Archive,
         title: "Archive",
-        default_binding: "a",
+        // Gmail's `e` (docs/PRODUCT.md §8).
+        default_binding: "e",
         alternate_bindings: &["mod+shift+a"],
         contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
         // Sweeping a screenful out of the inbox is exactly the case docs/PRODUCT.md §16
@@ -839,7 +835,9 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::ArchiveThread,
         title: "Archive thread",
-        default_binding: "A",
+        // Shifted archive, for the whole conversation: the pair `e`/`E` is
+        // what `a`/`A` was before the Gmail keymap (docs/PRODUCT.md §8).
+        default_binding: "E",
         alternate_bindings: &[],
         // In a digest it archives the whole digest: "archive everything this
         // row stands for" (specs/007-postio-focus research R4).
@@ -851,10 +849,10 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Delete,
         title: "Delete",
-        // The key that says it. `d` is Focus's digest key under the one
-        // keymap, and "delete" has one key everywhere it is offered.
-        default_binding: "Delete",
-        alternate_bindings: &[],
+        // Gmail's `#` (docs/PRODUCT.md §8), and the key that says it. `d`
+        // is Focus's digest key under the one keymap.
+        default_binding: "#",
+        alternate_bindings: &["Delete"],
         contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
         destructive: true,
         recovery: Recovery::Undo,
@@ -863,7 +861,8 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Move,
         title: "Move to…",
-        default_binding: "m",
+        // Gmail's `v`, "move to" (docs/PRODUCT.md §8).
+        default_binding: "v",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
         destructive: false,
@@ -877,25 +876,26 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Flag,
         title: "Flag",
-        // `*`, a star: `s` snoozes under the one keymap
-        // (specs/007-postio-focus contracts/keymap.md).
-        default_binding: "*",
+        // Gmail's `s`, its star (docs/PRODUCT.md §8). `*` is Gmail's
+        // selection prefix (`* a`).
+        default_binding: "s",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
         recovery: Recovery::Undo,
-        // Every app offers it, Focus on `*` with no mark on the row (spec
+        // Every app offers it, Focus on `s` with no mark on the row (spec
         // C13): a flag another client set has to be clearable from here.
         requires: MAIL,
     },
     CommandSpec {
         id: CommandId::ToggleRead,
         title: "Mark read or unread",
-        // `r` for read, one key for both directions: the verb toggles
-        // (`Command::ToggleRead` with no state). `U` unsubscribes under the
-        // one keymap (specs/007-postio-focus contracts/keymap.md).
-        default_binding: "r",
-        alternate_bindings: &[],
+        // Gmail's `I` and `U`, mark read and mark unread (docs/PRODUCT.md
+        // §8). Postio's verb toggles (`Command::ToggleRead` with no state),
+        // so both keys reach it: on an unread message `I` reads it, on a
+        // read one `U` makes it unread, which are the cases each key is for.
+        default_binding: "I",
+        alternate_bindings: &["U"],
         contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
         destructive: false,
         recovery: Recovery::Undo,
@@ -904,9 +904,8 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Snooze,
         title: "Snooze",
-        // `s`, the one keymap's snooze (specs/007-postio-focus
-        // contracts/keymap.md); `B` still unsnoozes.
-        default_binding: "s",
+        // Gmail's `b` (docs/PRODUCT.md §8); `B`, shifted, unsnoozes.
+        default_binding: "b",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
         destructive: false,
@@ -1001,7 +1000,8 @@ static SPECS: &[CommandSpec] = &[
         title: "View source",
         // Focus's for now. The other apps adopt it with a source view of
         // their own, and the key is kept free for them.
-        default_binding: "v",
+        // `V`: Gmail has no key for it, and gives `v` to Move.
+        default_binding: "V",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
@@ -1011,7 +1011,9 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::OpenAttachmentOrLink,
         title: "Open attachment or link…",
-        default_binding: "o",
+        // `A`, for attachments: Gmail has no key for it, and gives `o` to
+        // opening the conversation (docs/PRODUCT.md §8).
+        default_binding: "A",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
@@ -1615,11 +1617,11 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Undo,
         title: "Undo",
-        // `mod+z`, the undo every other application has taught
-        // (specs/007-postio-focus contracts/keymap.md). A terminal delivers
-        // it as `ctrl+z`, and nothing there suspends.
-        default_binding: "mod+z",
-        alternate_bindings: &[],
+        // Gmail's `z` (docs/PRODUCT.md §8), and `mod+z`, the undo every
+        // other application has taught. A terminal delivers it as `ctrl+z`,
+        // and nothing there suspends.
+        default_binding: "z",
+        alternate_bindings: &["mod+z"],
         // Plus the account list. #464 built account removal as a soft delete
         // with a toast wired straight to AccountRepository::restore rather
         // than through the global stack, and said so because Remove was not a
@@ -1738,9 +1740,10 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::Unsubscribe,
         title: "Unsubscribe from this list",
         // Shifted and deliberate: an unsubscribe tells the sender the address
-        // is read, so it is never one stray keystroke away. `U`, and in a
-        // digest too (specs/007-postio-focus contracts/keymap.md).
-        default_binding: "U",
+        // is read, so it is never one stray keystroke away. `M`, beside
+        // Gmail's `m` that mutes a conversation, because Gmail's `U` marks
+        // unread (docs/PRODUCT.md §8). In a digest too.
+        default_binding: "M",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES).with(Context::Digest),
         destructive: false,
@@ -1750,10 +1753,9 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::GoToFolders,
         title: "Go to folders",
-        // `g` is already the "go to" prefix — `g g` is the first message — so
-        // "go to folders" reads as one idiom rather than a second one. Focus
-        // opens its folders popover. `g f` is Focus's Filtered.
-        default_binding: "g o",
+        // Gmail's `g l`, go to label (docs/PRODUCT.md §8): Focus opens its
+        // folders popover, where the labels are. `g f` is Focus's Filtered.
+        default_binding: "g l",
         alternate_bindings: &[],
         contexts: ctx(LIST_SURFACES),
         destructive: false,
@@ -1790,8 +1792,30 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::GoToDrafts,
         title: "Go to drafts",
         // `g` is already this app's "go to" prefix -- `g g` is the first
-        // message, `g o` the folders -- so a destination reads as the
-        // same idiom rather than a second one. `t`, since `g d` is Focus's digest rules (specs/007-postio-focus contracts/keymap.md).
+        // message, `g l` the folders -- so a destination reads as the
+        // same idiom rather than a second one. Gmail's `g d` (docs/PRODUCT.md §8).
+        //
+        // Targets the *role*, not a name: an inbox a provider calls something
+        // else, or names in another language, is still where `g i` goes.
+        default_binding: "g d",
+        alternate_bindings: &[],
+        // The surfaces a person is standing on when they want to be somewhere
+        // else -- the folder list included. Not the composer, where `g` is a
+        // letter being typed.
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        // Going somewhere destroys nothing, so there is nothing to get back.
+        recovery: Recovery::None,
+        // The store, like every other way of moving between folders: there
+        // are no folders to go to without one.
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::GoToSent,
+        title: "Go to sent",
+        // `g` is already this app's "go to" prefix -- `g g` is the first
+        // message, `g l` the folders -- so a destination reads as the
+        // same idiom rather than a second one. Gmail's `g t` (docs/PRODUCT.md §8).
         //
         // Targets the *role*, not a name: an inbox a provider calls something
         // else, or names in another language, is still where `g i` goes.
@@ -1809,11 +1833,12 @@ static SPECS: &[CommandSpec] = &[
         requires: MAIL,
     },
     CommandSpec {
-        id: CommandId::GoToSent,
-        title: "Go to sent",
+        id: CommandId::GoToFlagged,
+        title: "Go to flagged",
         // `g` is already this app's "go to" prefix -- `g g` is the first
-        // message, `g o` the folders -- so a destination reads as the
-        // same idiom rather than a second one. `s` for sent, now that the drafts have `t` (specs/007-postio-focus contracts/keymap.md).
+        // message, `g l` the folders -- so a destination reads as the
+        // same idiom rather than a second one. Gmail's `g s`, its starred,
+        // which Postio calls Flagged (docs/PRODUCT.md §8); `s` flags.
         //
         // Targets the *role*, not a name: an inbox a provider calls something
         // else, or names in another language, is still where `g i` goes.
@@ -1831,33 +1856,11 @@ static SPECS: &[CommandSpec] = &[
         requires: MAIL,
     },
     CommandSpec {
-        id: CommandId::GoToFlagged,
-        title: "Go to flagged",
-        // `g` is already this app's "go to" prefix -- `g g` is the first
-        // message, `g o` the folders -- so a destination reads as the
-        // same idiom rather than a second one. `*`, a star, the key flagging has (specs/007-postio-focus contracts/keymap.md), and the sidebar says Flagged (docs/PRODUCT.md).
-        //
-        // Targets the *role*, not a name: an inbox a provider calls something
-        // else, or names in another language, is still where `g i` goes.
-        default_binding: "g *",
-        alternate_bindings: &[],
-        // The surfaces a person is standing on when they want to be somewhere
-        // else -- the folder list included. Not the composer, where `g` is a
-        // letter being typed.
-        contexts: ctx(GO_SURFACES),
-        destructive: false,
-        // Going somewhere destroys nothing, so there is nothing to get back.
-        recovery: Recovery::None,
-        // The store, like every other way of moving between folders: there
-        // are no folders to go to without one.
-        requires: MAIL,
-    },
-    CommandSpec {
         id: CommandId::GoToArchive,
         title: "Go to archive",
-        // `r` for the archive, which had no letter until the one keymap
-        // (specs/007-postio-focus contracts/keymap.md). A role, like the rest.
-        default_binding: "g r",
+        // Gmail's `g a`, all mail, which is where archived mail is
+        // (docs/PRODUCT.md §8). A role, like the rest.
+        default_binding: "g a",
         alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
         destructive: false,
@@ -1867,8 +1870,8 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::GoToSnoozed,
         title: "Go to snoozed",
-        // `z`, the sleeping letter.
-        default_binding: "g z",
+        // Gmail's `g b`, beside `b` that snoozes (docs/PRODUCT.md §8).
+        default_binding: "g b",
         alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
         destructive: false,
@@ -1878,8 +1881,8 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::GoToOutbox,
         title: "Go to outbox",
-        // `b`, the box that holds what is on its way out: `o` is the folders.
-        default_binding: "g b",
+        // `o` for outbox: Gmail has none, and gives `g b` to the snoozed.
+        default_binding: "g o",
         alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
         destructive: false,
@@ -1899,7 +1902,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::GoToTrash,
         title: "Go to trash",
-        // `#`, the key that deletes, as `*` is the key that flags.
+        // `#`, the key that deletes (Gmail's, docs/PRODUCT.md §8).
         default_binding: "g #",
         alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
@@ -1921,7 +1924,8 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::GoToDigestRules,
         title: "Go to digest rules",
-        default_binding: "g d",
+        // `r` for rules: Gmail's `g d` is the drafts (docs/PRODUCT.md §8).
+        default_binding: "g r",
         alternate_bindings: &[],
         contexts: ctx(GO_SURFACES),
         destructive: false,
@@ -2051,9 +2055,9 @@ static SPECS: &[CommandSpec] = &[
         // everywhere, never "primary" and never "main".
         title: "Set as default account",
         // `m` for "make default". Free within `Context::Accounts`: the other
-        // four rows here use `Return`, `d`, `c` and `r`, and `Move`'s `m` is
-        // scoped to the message surfaces, which this context does not layer
-        // over.
+        // four rows here use `Return`, `d`, `c` and `r`, and Accounts
+        // layers over Global alone, so nothing in a message surface is
+        // shadowed.
         default_binding: "m",
         alternate_bindings: &[],
         contexts: ctx(&[Context::Accounts]),
@@ -2071,9 +2075,9 @@ static SPECS: &[CommandSpec] = &[
         // `M` for map. This branch was cut when `m` was free and #960 took it
         // for `SetDefaultAccount` in the meantime; shift is how this app
         // spells the neighbour of a letter already spoken for (`a`/`A`,
-        // `j`/`J`), so the mnemonic survives the collision. `Move`'s own `m`
-        // is scoped to the message surfaces and this context layers over
-        // Global alone, so nothing is shadowed either way.
+        // `j`/`J`), so the mnemonic survives the collision. This context
+        // layers over Global alone, so `Unsubscribe`'s `M` in the message
+        // surfaces is not shadowed.
         default_binding: "M",
         alternate_bindings: &[],
         contexts: ctx(&[Context::Accounts]),
@@ -2088,7 +2092,8 @@ static SPECS: &[CommandSpec] = &[
         title: "Next scope",
         // `g` is already the app's "go to" prefix (`g g`, `g f`), and this is
         // the same gesture aimed at an account rather than a row or a folder.
-        default_binding: "g a",
+        // `c` to cycle: Gmail's `g a` is all mail, the archive here.
+        default_binding: "g c",
         alternate_bindings: &[],
         // Reachable from the surfaces a scope actually changes -- the folder
         // list it re-roots and the message list it re-fills. Not from the
@@ -2361,7 +2366,8 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::CaptureTask,
         // The ellipsis says a sheet opens before anything is written.
         title: "Capture a task…",
-        default_binding: "t",
+        // Gmail's `Shift+T`, add to Tasks (docs/PRODUCT.md §8).
+        default_binding: "T",
         alternate_bindings: &[],
         // From a message, and inside the sheet, where its Task toggle shows
         // the same key (screen 25).
@@ -2373,7 +2379,8 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::CaptureNote,
         title: "Capture a note…",
-        default_binding: "n",
+        // `N`, beside the task's `T`: Gmail's `n` steps the conversation.
+        default_binding: "N",
         alternate_bindings: &[],
         contexts: ctx(CAPTURE_SURFACES),
         destructive: false,
@@ -2984,7 +2991,7 @@ mod tests {
     /// `bindings_do_not_collide_within_a_context` can only say the two do not
     /// collide -- not which of them won.
     #[test]
-    fn space_pages_in_a_conversation_and_z_folds() {
+    fn space_pages_in_a_conversation_and_shift_z_folds() {
         let keymap = crate::config::Keymap::defaults();
         assert_eq!(
             keymap.command_for(Context::Conversation, "space"),
@@ -2994,7 +3001,7 @@ mod tests {
              is expected to page with"
         );
         assert_eq!(
-            keymap.command_for(Context::Conversation, "z"),
+            keymap.command_for(Context::Conversation, "Z"),
             Some(CommandId::ToggleFold.into()),
             "folding must keep a key: the stacked pane still folds, and \
              taking `space` away without giving it somewhere else would lose \
@@ -3065,20 +3072,20 @@ mod tests {
         // #1227: this check used to ask `postio-config`'s `DEFAULT_BINDINGS`,
         // which lists 23 commands out of 79. `Flag` is one of the 56 it never
         // knew about, so proposing its key read as free -- and the settings
-        // pane let a rebind silently take `s` (its key then; `*` since the
-        // one keymap) away from a command that was using it, with no
+        // pane let a rebind silently take `s` (its key then, and again since
+        // the Gmail keymap) away from a command that was using it, with no
         // "Already used by" to stop it.
         let bindings = postio_config::KeyBindings::default();
         assert_eq!(
             binding_conflict(
                 CommandId::NextMessage,
-                "*",
+                "s",
                 &bindings,
                 Platform::Freedesktop
             )
             .map(|spec| spec.id),
             Some(CommandId::Flag),
-            "`*` is Flag's default and Flag shares a context with NextMessage"
+            "`s` is Flag's default and Flag shares a context with NextMessage"
         );
     }
 
@@ -3135,7 +3142,7 @@ mod tests {
     #[test]
     fn a_binding_resolves_back_to_its_command() {
         assert_eq!(
-            lookup_binding(Context::List, "a").map(|spec| spec.id),
+            lookup_binding(Context::List, "e").map(|spec| spec.id),
             Some(CommandId::Archive)
         );
         assert_eq!(
@@ -3143,7 +3150,7 @@ mod tests {
             Some(CommandId::OpenMessage),
             "alternate bindings resolve too"
         );
-        assert_eq!(lookup_binding(Context::Composer, "a"), None);
+        assert_eq!(lookup_binding(Context::Composer, "e"), None);
         assert_eq!(lookup_binding(Context::List, "ctrl+alt+q"), None);
     }
 

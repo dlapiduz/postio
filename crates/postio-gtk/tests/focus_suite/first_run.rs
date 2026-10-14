@@ -527,10 +527,10 @@ pub fn the_list_keys_work_while_the_first_sync_fills_the_inbox() {
             "the bar counts one: {:?}",
             support::texts(&bar)
         );
-        support::keys(&window, &["a"]);
+        support::keys(&window, &["e"]);
         assert!(
             crate::settle_until(async || support::subjects(&window).len() == 2).await,
-            "a archived nothing: {:?}",
+            "e archived nothing: {:?}",
             support::subjects(&window)
         );
     });

@@ -1,4 +1,4 @@
-//! The folders popover (US4 scenario 6, T088; screen 10): `g o` lists the
+//! The folders popover (US4 scenario 6, T088; screen 10): `g l` lists the
 //! places to go, typing filters them, and `Enter` goes to the first one --
 //! the list shows it, and the header names it.
 
@@ -24,8 +24,8 @@ pub fn g_o_then_trav_and_enter_shows_travel() {
             "the inbox never reached the screen"
         );
 
-        support::keys(&window, &["g", "o"]);
-        let places = window.places().expect("g o opened the folders popover");
+        support::keys(&window, &["g", "l"]);
+        let places = window.places().expect("g l opened the folders popover");
         assert!(
             crate::settle_until(async || places.names().contains(&"Travel".to_owned())).await,
             "the popover never listed Travel: {:?}",
@@ -39,8 +39,8 @@ pub fn g_o_then_trav_and_enter_shows_travel() {
         );
         support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
         assert!(!places.is_open(), "Escape closed the popover");
-        support::keys(&window, &["g", "o"]);
-        assert!(places.is_open(), "g o opened it again");
+        support::keys(&window, &["g", "l"]);
+        assert!(places.is_open(), "g l opened it again");
         places.set_filter("trav");
         assert_eq!(places.names(), ["Travel"], "typing filters the places");
         support::click_row_saying(&window, &window, "Travel");
@@ -69,7 +69,7 @@ pub fn g_o_then_trav_and_enter_shows_travel() {
     });
 }
 
-/// The popover lists Flagged (`g *`) and Snoozed (`g z`) among the
+/// The popover lists Flagged (`g s`) and Snoozed (`g b`) among the
 /// mailboxes, each with its key inside the row, and choosing one lists the
 /// same cross-account view the key does.
 pub fn flagged_and_snoozed_are_listed_and_open_their_views() {
@@ -96,9 +96,9 @@ pub fn flagged_and_snoozed_are_listed_and_open_their_views() {
         let (window, client) = fixture.open().await;
         crate::commands::flag(&client, atlas).await;
 
-        support::keys(&window, &["g", "o"]);
-        let places = window.places().expect("g o opened the folders popover");
-        for (name, key) in [("Flagged", "g *"), ("Snoozed", "g z")] {
+        support::keys(&window, &["g", "l"]);
+        let places = window.places().expect("g l opened the folders popover");
+        for (name, key) in [("Flagged", "g s"), ("Snoozed", "g b")] {
             assert!(
                 crate::settle_until(async || places.names().contains(&name.to_owned())).await,
                 "the popover never listed {name}: {:?}",
@@ -121,7 +121,7 @@ pub fn flagged_and_snoozed_are_listed_and_open_their_views() {
             support::subjects(&window),
             window.place_name()
         );
-        support::keys(&window, &["g", "o"]);
+        support::keys(&window, &["g", "l"]);
         support::click_row_saying(&window, &window, "Snoozed");
         assert!(
             crate::settle_until(async || {
@@ -155,8 +155,8 @@ pub fn every_mailbox_shows_its_key_and_the_footer_follows_the_highlight() {
             "the inbox never reached the screen"
         );
 
-        support::keys(&window, &["g", "o"]);
-        let places = window.places().expect("g o opened the folders popover");
+        support::keys(&window, &["g", "l"]);
+        let places = window.places().expect("g l opened the folders popover");
         assert!(
             crate::settle_until(async || places.names().contains(&"Junk".to_owned())).await,
             "the popover never listed Junk: {:?}",
@@ -235,8 +235,8 @@ pub fn every_place_shows_its_count() {
         crate::commands::flag(&client, atlas).await;
         crate::commands::flag(&client, harbor).await;
 
-        support::keys(&window, &["g", "o"]);
-        let places = window.places().expect("g o opened the folders popover");
+        support::keys(&window, &["g", "l"]);
+        let places = window.places().expect("g l opened the folders popover");
         assert!(
             crate::settle_until(async || places.names().contains(&"Harbor".to_owned())).await,
             "the popover never listed the labels: {:?}",

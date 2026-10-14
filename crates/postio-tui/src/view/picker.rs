@@ -286,9 +286,9 @@ mod tests {
     }
 
     #[test]
-    fn s_opens_the_snooze_box_under_the_rows_subject_column_with_numbered_presets() {
+    fn b_opens_the_snooze_box_under_the_rows_subject_column_with_numbered_presets() {
         let mut app = opened(36);
-        update(&mut app, press('s'));
+        update(&mut app, press('b'));
         let drawn = screen(120, 36, &app);
         let lines: Vec<&str> = drawn.lines().collect();
         let top = lines
@@ -321,7 +321,7 @@ mod tests {
         assert!(drawn.contains("Or type a date: “tue 9am”"), "{drawn}");
         assert!(drawn.contains("tab"), "{drawn}");
         assert!(
-            drawn.contains("Snoozed mail is") && drawn.contains("under g z."),
+            drawn.contains("Snoozed mail is") && drawn.contains("under g b."),
             "{drawn}"
         );
     }
@@ -329,7 +329,7 @@ mod tests {
     #[test]
     fn a_number_chooses_a_preset_and_snoozes_the_row_until_then() {
         let mut app = opened(36);
-        update(&mut app, press('s'));
+        update(&mut app, press('b'));
         let effects = update(&mut app, press('2'));
         let until = snooze_presets()[1].1.with_timezone(&Utc);
         let commands = sent(&effects);
@@ -349,7 +349,7 @@ mod tests {
     #[test]
     fn tab_goes_to_the_typed_date_and_enter_takes_it_when_it_is_one() {
         let mut app = opened(36);
-        update(&mut app, press('s'));
+        update(&mut app, press('b'));
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
         for c in "tue 9am".chars() {
             update(&mut app, press(c));
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn words_that_are_no_date_send_nothing_and_say_what_to_type() {
         let mut app = opened(36);
-        update(&mut app, press('s'));
+        update(&mut app, press('b'));
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
         for c in "receipts".chars() {
             update(&mut app, press(c));
@@ -413,7 +413,7 @@ mod tests {
         for _ in 0..17 {
             update(&mut app, press('j'));
         }
-        update(&mut app, press('s'));
+        update(&mut app, press('b'));
         let drawn = screen(120, 24, &app);
         let lines: Vec<&str> = drawn.lines().collect();
         let top = lines
@@ -580,9 +580,9 @@ mod more {
     }
 
     #[test]
-    fn m_lists_recent_then_all_folders_and_a_number_moves_to_a_recent_one() {
+    fn v_lists_recent_then_all_folders_and_a_number_moves_to_a_recent_one() {
         let mut app = opened();
-        let effects = update(&mut app, press('m'));
+        let effects = update(&mut app, press('v'));
         assert!(effects.contains(&Effect::ReadRecentMoves), "{effects:?}");
         update(
             &mut app,
@@ -618,7 +618,7 @@ mod more {
     #[test]
     fn a_filtered_folder_moves_on_enter_and_a_move_does_not_go_there() {
         let mut app = opened();
-        update(&mut app, press('m'));
+        update(&mut app, press('v'));
         update(&mut app, Input::RecentMoves(Vec::new()));
         type_text(&mut app, "arch");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
@@ -636,7 +636,7 @@ mod more {
     #[test]
     fn a_click_chooses_a_row_and_a_click_outside_does_nothing() {
         let mut app = opened();
-        update(&mut app, press('s'));
+        update(&mut app, press('b'));
         let hits = hits_of(120, 36, &app);
         let drawn = screen(120, 36, &app);
         let row = drawn

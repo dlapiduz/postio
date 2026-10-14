@@ -21,6 +21,10 @@
 //! the open message's app colours or original (T213), among them. `quit`
 //! gained `ctrl+w`, Close window, so the window that says why there is no
 //! mail closes as every desktop window does (T216).
+//!
+//! The Gmail keymap (docs/PRODUCT.md §8, the maintainer's decision of
+//! 2026-10-14) is the second: every row it changed is a default moved to
+//! Gmail's key for the command, or off a key Gmail's took.
 
 use postio_config::KeyBindings;
 use postio_config::paths::Platform;

@@ -137,8 +137,8 @@ pub fn no_transition_outruns_the_budget_and_reduced_motion_stills_them() {
         }));
         assert!(crate::settle_until(async || window.banner_showing().is_some()).await);
         let mut problems = over_budget(window.upcast_ref());
-        support::keys(&window, &["j", "s"]);
-        let picker = window.open_picker().expect("s opened a picker");
+        support::keys(&window, &["j", "b"]);
+        let picker = window.open_picker().expect("b opened a picker");
         assert!(crate::settle_until(async || picker.is_shown()).await);
         problems.extend(over_budget(picker.popover().upcast_ref()));
         support::press(&window, "Escape", gtk::gdk::ModifierType::empty());

@@ -231,10 +231,10 @@ mod tests {
     }
 
     #[test]
-    fn g_o_opens_a_44_wide_box_under_the_strips_left_end_with_its_sections_and_keys() {
+    fn g_l_opens_a_44_wide_box_under_the_strips_left_end_with_its_sections_and_keys() {
         let mut app = opened(true);
         update(&mut app, press('g'));
-        let effects = update(&mut app, press('o'));
+        let effects = update(&mut app, press('l'));
         assert!(effects.contains(&Effect::ReadPlaceDetails), "{effects:?}");
         update(&mut app, details());
         let drawn = screen(120, 36, &app);
@@ -257,10 +257,10 @@ mod tests {
             "{}",
             row("Inbox")
         );
-        assert!(row("Archive").contains("g r"), "{}", row("Archive"));
-        assert!(row("Sent").contains("g s"), "{}", row("Sent"));
-        assert!(row("Snoozed").contains("g z"), "{}", row("Snoozed"));
-        assert!(row("Flagged").contains("g *"), "{}", row("Flagged"));
+        assert!(row("Archive").contains("g a"), "{}", row("Archive"));
+        assert!(row("Sent").contains("g t"), "{}", row("Sent"));
+        assert!(row("Snoozed").contains("g b"), "{}", row("Snoozed"));
+        assert!(row("Flagged").contains("g s"), "{}", row("Flagged"));
         assert!(row("Outbox").contains('2'), "{}", row("Outbox"));
         assert!(row("Filtered").contains("186 today") && row("Filtered").contains("g f"));
         assert!(row("Projects").contains("40"), "{}", row("Projects"));
@@ -280,7 +280,7 @@ mod tests {
     fn outbox_and_filtered_are_listed_only_while_they_have_something_to_say() {
         let mut app = opened(false);
         update(&mut app, press('g'));
-        update(&mut app, press('o'));
+        update(&mut app, press('l'));
         update(
             &mut app,
             Input::PlaceDetails(PlaceDetails {
@@ -300,7 +300,7 @@ mod tests {
     fn typing_filters_and_enter_goes_there() {
         let mut app = opened(true);
         update(&mut app, press('g'));
-        update(&mut app, press('o'));
+        update(&mut app, press('l'));
         update(&mut app, details());
         type_text(&mut app, "proj");
         let drawn = screen(120, 36, &app);
@@ -325,7 +325,7 @@ mod tests {
     fn the_inbox_is_focuss_own_and_filtered_runs_its_command() {
         let mut app = opened(true);
         update(&mut app, press('g'));
-        update(&mut app, press('o'));
+        update(&mut app, press('l'));
         let effects = update(
             &mut app,
             crate::test_support::key(KeyCode::Enter, KeyModifiers::NONE),
@@ -342,15 +342,15 @@ mod tests {
     fn the_g_keys_work_from_inside_and_escape_closes() {
         let mut app = opened(true);
         update(&mut app, press('g'));
-        update(&mut app, press('o'));
+        update(&mut app, press('l'));
         update(&mut app, press('g'));
-        let effects = update(&mut app, press('r'));
+        let effects = update(&mut app, press('a'));
         assert!(
             effects.contains(&Effect::Open(ListScope::Mailbox(MailboxId::new(2)))),
             "{effects:?}"
         );
         update(&mut app, press('g'));
-        update(&mut app, press('o'));
+        update(&mut app, press('l'));
         update(&mut app, press('g'));
         update(&mut app, press('x'));
         let drawn = screen(120, 36, &app);

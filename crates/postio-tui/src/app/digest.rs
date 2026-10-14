@@ -1,6 +1,6 @@
 //! The digest window: opening a delivery from its row, the summary's
-//! references, the plain list, an email inside the window, and `A`, `D`
-//! and `U`.
+//! references, the plain list, an email inside the window, and `E`, `D`
+//! and `M`.
 //!
 //! The state is `crate::digest`; the drawing is `view::digest`.
 
@@ -484,7 +484,7 @@ mod tests {
         let app = opened((120, 36), true);
         let drawn = screen(120, 36, &app);
         assert!(
-            line_with(&drawn, "Weekly · Newsletters").contains("Archive all 14 A"),
+            line_with(&drawn, "Weekly · Newsletters").contains("Archive all 14 E"),
             "{drawn}"
         );
         assert!(
@@ -781,9 +781,9 @@ mod tests {
     }
 
     #[test]
-    fn a_archives_the_whole_delivery_and_closes() {
+    fn shift_e_archives_the_whole_delivery_and_closes() {
         let mut app = opened((120, 36), true);
-        let effects = update(&mut app, press('A'));
+        let effects = update(&mut app, press('E'));
         assert!(
             effects.contains(&Effect::Send(Command::ArchiveDigest {
                 delivery: DeliveryId::new(1),
@@ -832,9 +832,9 @@ mod tests {
     }
 
     #[test]
-    fn u_leaves_the_focused_messages_list_and_ctrl_z_undoes() {
+    fn shift_m_leaves_the_focused_messages_list_and_ctrl_z_undoes() {
         let mut app = opened((120, 36), true);
-        let effects = update(&mut app, press('U'));
+        let effects = update(&mut app, press('M'));
         assert!(
             effects.contains(&Effect::Unsubscribe(MessageId::new(21))),
             "{effects:?}"
@@ -1066,7 +1066,7 @@ mod tests {
     }
 
     #[test]
-    fn a_archives_the_delivery_once_from_any_page_and_not_a_message() {
+    fn shift_e_archives_the_delivery_once_from_any_page_and_not_a_message() {
         let archived = |effects: &[Effect]| {
             let sent = sent(effects);
             assert_eq!(
@@ -1081,23 +1081,23 @@ mod tests {
         // From the summary, on the second statement.
         let mut app = opened((120, 36), true);
         update(&mut app, press(']'));
-        archived(&update(&mut app, press('A')));
+        archived(&update(&mut app, press('E')));
         assert!(app.digest().is_none() && app.reading().is_none());
         assert_eq!(app.focus(), Focus::List);
         // From the list.
         let mut app = opened((120, 36), true);
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
         update(&mut app, press('j'));
-        archived(&update(&mut app, press('A')));
+        archived(&update(&mut app, press('E')));
         // From an email in the window.
         let mut app = opened((120, 36), true);
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         update(&mut app, email_body(21));
-        archived(&update(&mut app, press('A')));
+        archived(&update(&mut app, press('E')));
         assert!(app.digest().is_none() && app.reading().is_none());
         // The lower case is not it.
         let mut app = opened((120, 36), true);
-        let effects = update(&mut app, press('a'));
+        let effects = update(&mut app, press('e'));
         assert!(
             !sent(&effects).contains(&&Command::ArchiveDigest {
                 delivery: DeliveryId::new(1),
@@ -1122,8 +1122,8 @@ mod tests {
             drawn.contains("Stop digesting rail@example.com?"),
             "the third statement is Rail Notes':\n{drawn}"
         );
-        // Nothing else answers it: not `A`, not `D` again, not a letter.
-        for other in ['A', 'D', 'y', 'j'] {
+        // Nothing else answers it: not `E`, not `D` again, not a letter.
+        for other in ['E', 'D', 'y', 'j'] {
             let effects = update(&mut app, press(other));
             assert!(sent(&effects).is_empty(), "{other}: {effects:?}");
         }
@@ -1180,12 +1180,12 @@ mod tests {
     }
 
     #[test]
-    fn u_follows_the_focused_statement_as_d_does() {
+    fn shift_m_follows_the_focused_statement_as_d_does() {
         let mut app = opened((120, 36), true);
         update(&mut app, press(']'));
         update(&mut app, press(']'));
         update(&mut app, press(']'));
-        let effects = update(&mut app, press('U'));
+        let effects = update(&mut app, press('M'));
         assert!(
             effects.contains(&Effect::Unsubscribe(MessageId::new(23))),
             "{effects:?}"

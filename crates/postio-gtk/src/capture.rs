@@ -1,5 +1,5 @@
-//! The capture sheet (spec 007 US15, T158; screen 25): `t` on a message
-//! captures a task into the person's Obsidian vault, `n` a note.
+//! The capture sheet (spec 007 US15, T158; screen 25): `T` on a message
+//! captures a task into the person's Obsidian vault, `N` a note.
 //!
 //! - **The text** is the action sentence, verbatim, when the message has a
 //!   marker that quotes one, and its subject otherwise; `alt+s` puts the

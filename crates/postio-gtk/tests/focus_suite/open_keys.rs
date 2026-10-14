@@ -179,7 +179,7 @@ pub fn a_toast_raised_under_the_open_message_is_drawn_over_it() {
         three(&fixture).await;
         let window = opened(&fixture).await;
         let reading = window.reading().expect("open");
-        support::deliver(&window, "a");
+        support::deliver(&window, "e");
         assert!(
             crate::settle_until(async || window.toast_showing().is_some()).await,
             "archiving raised no toast"

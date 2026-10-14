@@ -1,7 +1,7 @@
 //! Reading a message marks it read (T237; screens.md, "Reading marks it
 //! read"): a message that stays open, in the dialog or in the pane beside the
 //! list, for `postio_ui::dwell::DWELL_TO_READ` stops being bold; one stepped
-//! past, or closed, sooner stays unread; and `r` in the open message gives
+//! past, or closed, sooner stays unread; and `I` in the open message gives
 //! the bold back. Each read off what the rows drew.
 
 use postio_ui::dwell::DWELL_TO_READ;
@@ -90,10 +90,10 @@ pub fn a_message_the_composer_replaced_is_not_marked_read() {
 
         support::deliver(&window, "Return");
         assert!(crate::settle_until(async || showing(&window).as_deref() == Some("First")).await);
-        support::deliver(&window, "e");
+        support::deliver(&window, "r");
         assert!(
             crate::settle_until(async || window.composer().is_some_and(|c| c.is_open())).await,
-            "e opened no composer"
+            "r opened no composer"
         );
         crate::settle_for(DWELL_TO_READ * 2).await;
         assert_eq!(
@@ -165,7 +165,7 @@ pub fn a_message_closed_before_the_dwell_stays_unread() {
     });
 }
 
-/// `r` in the open message, once the dwell has marked it read, marks it
+/// `I` in the open message, once the dwell has marked it read, marks it
 /// unread again, and the dwell does not take that back while it stays open:
 /// the person's choice wins over the clock. In the dialog and in the pane.
 pub fn r_in_the_open_message_marks_it_unread_again() {
@@ -195,12 +195,12 @@ pub fn r_in_the_open_message_marks_it_unread_again() {
                 "{subject} was never marked read"
             );
             assert!(
-                support::deliver(&window, "r"),
-                "r reached nothing in the open message"
+                support::deliver(&window, "I"),
+                "I reached nothing in the open message"
             );
             assert!(
                 crate::settle_until(async || bold(&window, subject) == Some(true)).await,
-                "r in the open message (pane: {pane}) did not mark {subject} unread again"
+                "I in the open message (pane: {pane}) did not mark {subject} unread again"
             );
             crate::settle_for(DWELL_TO_READ * 2).await;
             assert_eq!(
@@ -251,7 +251,7 @@ pub fn a_message_in_a_window_that_lost_focus_stays_unread() {
 }
 
 /// Coming back to the window does not start the clock again on a message
-/// the clock was finished with: one `r` marked unread stays unread.
+/// the clock was finished with: one `I` marked unread stays unread.
 pub fn refocusing_does_not_take_back_r() {
     crate::gtk_case(async {
         if !support::display() {
@@ -266,7 +266,7 @@ pub fn refocusing_does_not_take_back_r() {
             crate::settle_until(async || bold(&window, "First") == Some(false)).await,
             "First was never marked read"
         );
-        assert!(support::deliver(&window, "r"), "r reached nothing");
+        assert!(support::deliver(&window, "I"), "I reached nothing");
         assert!(crate::settle_until(async || bold(&window, "First") == Some(true)).await);
         window.focus_changed(false);
         window.focus_changed(true);

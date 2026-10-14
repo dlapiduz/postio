@@ -359,16 +359,38 @@ repeated here, for the same reason they are not repeated anywhere else.
 
 Worth knowing before reading that table: every Postio app — the desktop app,
 the terminal and macOS — has one keymap, the registry's
-(`specs/007-postio-focus/contracts/keymap.md`). `e` replies and `a` archives,
-`A` archives a thread, `mod+z` undoes, `r` marks read or unread, `s` snoozes,
-`]`/`[` walk a thread in the open message, and `mod+Return` sends. A command
-only some apps offer keeps its key in the others and leaves it free there.
-The original brief proposed `r` for reply; the design won that, and the one
-keymap settled the rest. Every one is overridable from `[keys]` in
-`config.toml`, keyed by command id — which makes command ids a file format
-that is not renamed casually (`ARCHITECTURE.md` §3): the one keymap renamed
-two, `mark_unread` to `toggle_read` and `focus_sidebar` to `go_to_folders`,
-and kept no alias.
+(`specs/007-postio-focus/contracts/keymap.md`), and **it is Gmail's**
+(<https://support.google.com/mail/answer/6594>) wherever Postio has the
+command. `e` archives, `r` replies, `a` replies to all, `f` forwards, `#`
+deletes, `s` flags (Gmail's star; the app says Flagged), `b` snoozes, `l`
+labels, `v` moves, `Shift+I`/`Shift+U` mark read and unread, `z` undoes,
+`o` opens, `u` goes back to the list, `n`/`p` walk a thread in the open
+message, `;` expands a conversation, `* a` selects all, `x` selects one,
+`.` opens More, `Shift+T` captures a task, `c` composes, `/` searches, `?`
+shows the key map, `mod+Return` sends, and `g i`, `g s`, `g t`, `g d`,
+`g a`, `g b` and `g l` go to the inbox, flagged, sent, drafts, archive (all
+mail), snoozed and the folders. A command Gmail has no key for keeps its
+own (`h` remind, `y`/`Y` invitations, `d`/`D` digests, `-` dismiss a
+marker, `!` has-action), or takes a new one in Gmail's style where Gmail's
+displaced it: `E` archives a thread, `V` views source, `A` opens an
+attachment or link, `N` captures a note, `M` unsubscribes, `Z` folds one
+message, `g o` the outbox, `g r` the digest rules, `g c` the next scope.
+Two of Gmail's keys land on one Postio verb: `I` and `U` both reach
+`toggle_read`, which toggles, so each does what it says on the message it
+is meant for. Gmail keys with no Postio command (`m` mute, `!` spam, `* n`
+deselect, `:` collapse, `g k`) stay unbound rather than borrowed, except `!`,
+which keeps Postio's has-action filter.
+
+A command only some apps offer keeps its key in the others and leaves it
+free there. The original brief proposed `r` for reply and the design canvas
+gave it `e`; the maintainer chose Gmail's keymap on 2026-10-14, so that a
+person arriving from Gmail's web client loses no muscle memory, and that
+reversed the canvas's `e` reply, `a` archive and `r` read. Every binding is
+overridable from `[keys]` in `config.toml`, keyed by command id — which
+makes command ids a file format that is not renamed casually
+(`ARCHITECTURE.md` §3): the Gmail keymap moved defaults and renamed none;
+the one keymap before it renamed two, `mark_unread` to `toggle_read` and
+`focus_sidebar` to `go_to_folders`, and kept no alias.
 
 ---
 

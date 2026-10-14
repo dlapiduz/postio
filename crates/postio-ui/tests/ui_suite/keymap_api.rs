@@ -214,7 +214,7 @@ fn a_key_another_app_keeps_is_bound_to_nothing_here() {
     );
     for app in [Frontend::Terminal, Frontend::Focus] {
         assert_eq!(
-            press(app, Context::List, "a"),
+            press(app, Context::List, "e"),
             Outcome::Command("archive".to_owned()),
             "{app:?} lost a key every app has"
         );

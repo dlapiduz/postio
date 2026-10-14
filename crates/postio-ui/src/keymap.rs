@@ -207,6 +207,8 @@ const PUNCTUATION_NAMES: &[(&str, char)] = &[
     ("semicolon", ';'),
     ("colon", ':'),
     ("asterisk", '*'),
+    // Delete, Gmail's key for it (docs/PRODUCT.md §8).
+    ("numbersign", '#'),
     ("underscore", '_'),
     ("less", '<'),
     ("greater", '>'),

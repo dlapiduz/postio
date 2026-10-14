@@ -84,8 +84,8 @@ fn key_palette_and_menu_paths_converge_on_one_handler() {
 
     // The keymap: a keystroke resolves through the registry.
     let from_key = Command::default_for(
-        registry::lookup_binding(Context::List, "a")
-            .expect("`a` is archive")
+        registry::lookup_binding(Context::List, "e")
+            .expect("`e` is archive")
             .id,
     );
     // The palette: a row is a registry entry.

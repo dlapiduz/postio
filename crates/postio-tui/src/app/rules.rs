@@ -1,4 +1,4 @@
-//! The digest rules (`g d`) and the rule dialog (`d`).
+//! The digest rules (`g r`) and the rule dialog (`d`).
 //!
 //! The state is `crate::rules` and `crate::rule_dialog`; the drawing is
 //! `view::rules` and `view::rule_dialog`. The rules take Filtered's keys
@@ -32,7 +32,7 @@ impl App {
         usize::from(self.window().list.height.saturating_sub(1))
     }
 
-    /// `g d`: every rule, in place of the strip and the list.
+    /// `g r`: every rule, in place of the strip and the list.
     pub(super) fn go_to_digest_rules(&mut self) -> Vec<Effect> {
         let list = Rules::new(self.features.digests.0.clone());
         let names = list.names();
@@ -573,7 +573,7 @@ mod tests {
     fn open_rules(size: (u16, u16)) -> App {
         let mut app = inbox(size);
         update(&mut app, press('g'));
-        let effects = update(&mut app, press('d'));
+        let effects = update(&mut app, press('r'));
         let names = vec!["Newsletters".to_owned(), "Receipts".to_owned()];
         assert!(
             effects.contains(&Effect::Ask(Ask::Waiting(names.clone()))),
@@ -597,7 +597,7 @@ mod tests {
     }
 
     #[test]
-    fn g_d_lists_every_rule_with_when_it_delivers_what_it_holds_and_what_it_matches() {
+    fn g_r_lists_every_rule_with_when_it_delivers_what_it_holds_and_what_it_matches() {
         let app = open_rules((120, 30));
         assert_eq!(app.focus(), Focus::Rules);
         let drawn = screen(120, 30, &app);
@@ -625,7 +625,7 @@ mod tests {
         seed_places(&mut app, places_with_features());
         show_focus(&mut app, vec![]);
         update(&mut app, press('g'));
-        update(&mut app, press('d'));
+        update(&mut app, press('r'));
         let drawn = screen(120, 30, &app);
         assert!(drawn.contains("No digest rules yet"), "{drawn}");
         assert!(

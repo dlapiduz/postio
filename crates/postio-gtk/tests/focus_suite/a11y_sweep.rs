@@ -179,7 +179,7 @@ fn surfaces() -> Vec<Surface> {
         },
         Surface {
             name: "the snooze picker",
-            open: |window| support::keys(window, &["j", "s"]),
+            open: |window| support::keys(window, &["j", "b"]),
             shown: |window| window.open_picker().is_some_and(|picker| picker.is_shown()),
         },
         Surface {

@@ -425,7 +425,7 @@ mod tests {
             .find(|entry| entry.id == ActionId::Builtin(CommandId::Archive))
             .expect("archive");
 
-        assert_eq!(archive.binding.as_deref(), Some("a"));
+        assert_eq!(archive.binding.as_deref(), Some("e"));
     }
 
     #[test]

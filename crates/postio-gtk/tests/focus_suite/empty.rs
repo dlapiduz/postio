@@ -76,7 +76,7 @@ pub fn with_filtering_the_empty_inbox_counts_what_was_filtered_today() {
                 "no {expected:?}: {said:?}"
             );
         }
-        for key in ["g f", "g r", "c"] {
+        for key in ["g f", "g a", "c"] {
             assert!(
                 said.contains(&key.to_owned()),
                 "no keycap {key:?}: {said:?}"

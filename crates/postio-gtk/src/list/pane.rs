@@ -96,7 +96,7 @@ impl ListPane {
         });
 
         // The cursor, not the selection: GTK's name, Postio's meaning
-        // (`postio_ui::selection`). What `a` would archive is kept apart.
+        // (`postio_ui::selection`). What `e` would archive is kept apart.
         let cursor = keep_the_cursor(feed.list());
         let view = gtk::ListView::new(Some(cursor.clone()), Some(factory));
         view.set_header_factory(Some(&day_headings(feed.list())));
@@ -132,7 +132,7 @@ impl ListPane {
         }
     }
 
-    /// Whether a to-do's row offers Task `t` beside Snooze: once a vault is
+    /// Whether a to-do's row offers Task `T` beside Snooze: once a vault is
     /// configured (spec C9).
     pub fn set_capture(&self, capture: bool) {
         if self.capture.replace(capture) != capture {
@@ -396,7 +396,7 @@ fn hold_the_top(
 /// Without autoselect -- the window puts the cursor on a list's first row
 /// itself, once the rows land -- a
 /// `GtkSingleSelection` whose row is removed selects nothing, so after an
-/// archive the next `a` acted on nothing (#1746). The row that slides into
+/// archive the next `e` acted on nothing (#1746). The row that slides into
 /// the removed one's place takes the cursor instead,
 /// by `postio_ui::selection::cursor_after_change`.
 ///

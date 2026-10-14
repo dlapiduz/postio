@@ -34,7 +34,7 @@ pub fn cap(key: &str) -> String {
         .join("+")
 }
 
-/// The toast as it is drawn: `✓ Archived 3 messages · Undo ctrl+z`, or
+/// The toast as it is drawn: `✓ Archived 3 messages · Undo z`, or
 /// `✕` and the words of a failure, and where Undo is within it.
 pub struct Toast {
     /// The mark, the words and the undo offer.
@@ -316,13 +316,13 @@ mod tests {
         let line = bottom(&drawn);
         assert!(line.trim_start().starts_with("2 selected"), "{drawn}");
         for wanted in [
-            "Archive a",
-            "Snooze s",
-            "Mark read r",
+            "Archive e",
+            "Snooze b",
+            "Mark read I",
             "Digest these… d",
             "Label l",
-            "Move m",
-            "Delete Del",
+            "Move v",
+            "Delete #",
             "x toggle  J K extend  Esc clear",
         ] {
             assert!(line.contains(wanted), "{wanted} missing:\n{drawn}");
@@ -393,15 +393,16 @@ mod tests {
     }
 
     #[test]
-    fn x_with_shift_selects_all_as_a_predicate_and_the_bar_counts_the_list() {
+    fn star_a_selects_all_as_a_predicate_and_the_bar_counts_the_list() {
         let mut app = inbox((140, 24));
-        update(&mut app, press('X'));
+        update(&mut app, press('*'));
+        update(&mut app, press('a'));
         let drawn = screen(140, 24, &app);
         assert!(
             bottom(&drawn).trim_start().starts_with("6 selected"),
             "{drawn}"
         );
-        let effects = update(&mut app, press('a'));
+        let effects = update(&mut app, press('e'));
         assert!(
             effects
                 .iter()
@@ -468,7 +469,7 @@ mod tests {
         let drawn = screen(120, 24, &app);
         assert_eq!(
             bottom(&drawn).trim_end(),
-            " ✓ Archived 3 messages · Undo ctrl+z",
+            " ✓ Archived 3 messages · Undo z",
             "{drawn}"
         );
         done(&mut app, "Label added", false);
@@ -520,8 +521,7 @@ mod tests {
         let line = bottom(&drawn);
         assert!(line.contains("1 selected"), "{drawn}");
         assert!(
-            line.trim_end()
-                .ends_with("✓ Archived 3 messages · Undo ctrl+z"),
+            line.trim_end().ends_with("✓ Archived 3 messages · Undo z"),
             "{drawn}"
         );
     }
@@ -533,7 +533,7 @@ mod tests {
         let drawn = screen(60, 14, &app);
         let line = bottom(&drawn);
         assert!(line.contains("1 selected"), "{drawn}");
-        assert!(line.contains("Archive a"), "{drawn}");
+        assert!(line.contains("Archive e"), "{drawn}");
         assert!(!line.contains("Esc clear"), "{drawn}");
         assert!(!line.contains("Delete"), "{drawn}");
     }

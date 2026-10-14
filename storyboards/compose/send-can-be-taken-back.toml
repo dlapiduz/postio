@@ -5,7 +5,7 @@
 # in the Outbox, and cancelling its send hands the draft back. The runner has
 # no network, and `send` only queues, which is what this needs.
 #
-# Re-expressed for Focus (T265): the Outbox is a place in `g o`, a queued
+# Re-expressed for Focus (T265): the Outbox is a place in `g l`, a queued
 # message opens to be read with the verbs that settle it (T239), and Cancel
 # send takes it out of the Outbox and back to Drafts.
 apps   = ["focus"]

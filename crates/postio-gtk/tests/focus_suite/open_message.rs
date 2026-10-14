@@ -82,7 +82,7 @@ pub fn enter_opens_the_conversation_over_the_list_at_once() {
         ] {
             assert!(said.contains(expected), "no {expected:?} in {said}");
         }
-        for key in ["e", "E", "f", "a", "s", "h", "l", "m"] {
+        for key in ["r", "a", "f", "e", "b", "h", "l", "v"] {
             assert!(
                 support::texts(&reading.dialog()).contains(&key.to_owned()),
                 "the toolbar shows no key {key}: {said}"
@@ -202,8 +202,8 @@ pub fn j_and_k_step_the_list_behind_the_dialog() {
     });
 }
 
-/// US2 scenario 3: a thread opens on its latest message; `[` shows the one
-/// before it and the position line says so, and `]` steps back.
+/// US2 scenario 3: a thread opens on its latest message; `p` shows the one
+/// before it and the position line says so, and `n` steps back.
 pub fn brackets_step_through_the_thread() {
     crate::gtk_case(async {
         if !support::display() {
@@ -230,10 +230,10 @@ pub fn brackets_step_through_the_thread() {
             "the conversation's messages were never read"
         );
 
-        support::press(&window, "bracketleft", gdk::ModifierType::empty());
+        support::press(&window, "p", gdk::ModifierType::empty());
         assert!(
             crate::settle_until(async || reading.body_text().contains("Message 2")).await,
-            "[ did not show the earlier message: {:?}",
+            "p did not show the earlier message: {:?}",
             reading.body_text()
         );
         assert_eq!(
@@ -242,18 +242,18 @@ pub fn brackets_step_through_the_thread() {
         );
         assert_eq!(
             reading.thread_chip_said(),
-            "2 of 3 in this thread [ earlier message ] later message",
+            "2 of 3 in this thread p earlier message n later message",
             "the line above the subject says where the dialog is"
         );
-        support::press(&window, "bracketright", gdk::ModifierType::empty());
+        support::press(&window, "n", gdk::ModifierType::empty());
         assert!(
             crate::settle_until(async || reading.body_text().contains("Message 3")).await,
-            "] did not step back"
+            "n did not step back"
         );
         assert_eq!(reading.subtitle(), "Message 1 of 1 \u{b7} thread of 3");
         assert_eq!(
             reading.thread_chip_said(),
-            "Latest of 3 in this thread [ earlier message"
+            "Latest of 3 in this thread p earlier message"
         );
     });
 }
@@ -510,7 +510,7 @@ pub fn deleting_from_the_dialog_moves_to_the_next_message() {
         // Archive the last one: the previous message.
         support::keys(&window, &["j"]);
         assert!(crate::settle_until(async || reading.title() == "Staffing").await);
-        support::keys(&window, &["a"]);
+        support::keys(&window, &["e"]);
         assert!(
             crate::settle_until(async || reading.title() == "Harbor draft").await,
             "at the end the dialog should show the previous: {:?}",

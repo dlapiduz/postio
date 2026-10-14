@@ -1,4 +1,4 @@
-# A one-message thread shows one Reply, and `e` opens one composer (#1173,
+# A one-message thread shows one Reply, and `r` opens one composer (#1173,
 # #822).
 #
 # The defect: a single message drew a per-message Reply row and the

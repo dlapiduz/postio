@@ -485,10 +485,7 @@ mod tests {
             "{effects:?}"
         );
         let drawn = screen(120, 30, &app);
-        assert!(
-            drawn.contains("✓ Restored 1 message · Undo ctrl+z"),
-            "{drawn}"
-        );
+        assert!(drawn.contains("✓ Restored 1 message · Undo z"), "{drawn}");
     }
 
     #[test]
@@ -532,7 +529,7 @@ mod tests {
             drawn.contains("2 messages in the inbox would move to Filtered, each with its reason."),
             "{drawn}"
         );
-        assert!(drawn.contains("One ctrl+z puts them back."), "{drawn}");
+        assert!(drawn.contains("One z puts them back."), "{drawn}");
         assert!(drawn.contains("Move 2 to Filtered"), "{drawn}");
         let effects = update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert!(
@@ -638,7 +635,7 @@ mod tests {
     #[test]
     fn a_verb_on_the_open_message_acts_on_it_not_on_the_inboxs_cursor() {
         let mut app = reading_the_second((120, 30));
-        let effects = update(&mut app, press('a'));
+        let effects = update(&mut app, press('e'));
         assert!(
             effects
                 .iter()
@@ -655,7 +652,7 @@ mod tests {
     #[test]
     fn a_picker_over_the_open_message_is_about_it_and_snoozes_it() {
         let mut app = reading_the_second((120, 30));
-        update(&mut app, press('s'));
+        update(&mut app, press('b'));
         let drawn = screen(120, 30, &app);
         assert!(drawn.contains("Ledger · Filtered 12"), "{drawn}");
         let effects = update(&mut app, press('2'));
@@ -679,7 +676,7 @@ mod tests {
         let effects = update(&mut app, press('f'));
         serve_filtered(&mut app, effects, &TABS, &filed());
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        update(&mut app, press('a'));
+        update(&mut app, press('e'));
         assert_eq!(
             app.selection().selection(),
             postio_core::Selection::These(vec![MessageId::new(1)]),
@@ -722,7 +719,7 @@ mod tests {
         assert_eq!(app.cursor(), 0);
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(app.focus(), Focus::Reader);
-        update(&mut app, press('a'));
+        update(&mut app, press('e'));
         assert_eq!(
             resolved(&app),
             Some(postio_core::Resolved::Messages(vec![MessageId::new(3)]))

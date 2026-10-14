@@ -104,7 +104,7 @@ pub fn autosave_writes_off_the_main_thread_and_keeps_one_row() {
 }
 
 pub fn opening_a_draft_or_a_reply_reads_nothing_on_the_main_thread() {
-    // The composer asks "what does a new draft sign with" and "what is `e`
+    // The composer asks "what does a new draft sign with" and "what is `r`
     // replying to" through seams that once answered with store reads on the
     // GTK thread: two cold connections, five statements and a body decode in
     // front of a reply.
@@ -136,7 +136,7 @@ pub fn opening_a_draft_or_a_reply_reads_nothing_on_the_main_thread() {
         );
 
         support::keys(&window, &["j"]);
-        let counts = counted(|| support::keys(&window, &["e"]));
+        let counts = counted(|| support::keys(&window, &["r"]));
         assert_eq!(
             counts.statements, 0,
             "asking to reply ran {} statements on the GTK thread",
@@ -144,7 +144,7 @@ pub fn opening_a_draft_or_a_reply_reads_nothing_on_the_main_thread() {
         );
         assert!(
             crate::settle_until(async || window.compose_dialog().is_some()).await,
-            "`e` never opened a reply to the message on screen"
+            "`r` never opened a reply to the message on screen"
         );
     });
 }

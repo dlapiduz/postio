@@ -33,7 +33,7 @@ pub fn the_undo_toast_names_the_key_that_undoes() {
             return;
         }
         let (_fixture, window) = support::three_in_the_inbox().await;
-        support::keys(&window, &["j", "a"]);
+        support::keys(&window, &["j", "e"]);
         assert!(
             crate::settle_until(async || window.toast_showing().is_some()).await,
             "archiving raised no toast"

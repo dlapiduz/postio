@@ -1,4 +1,4 @@
-//! `o`: open an attachment or a link (US2 scenario 9, T071). The message's
+//! `A`: open an attachment or a link (US2 scenario 9, T071). The message's
 //! links and parts are offered, each link's full target shown before
 //! anything opens, and nothing opens until one is chosen.
 
@@ -38,10 +38,10 @@ pub fn o_offers_the_links_and_parts_and_opens_only_what_is_chosen() {
             "the body never arrived"
         );
 
-        support::keys(&window, &["o"]);
+        support::keys(&window, &["A"]);
         assert!(
             crate::settle_until(async || !window.choices_shown().is_empty()).await,
-            "o offered nothing"
+            "A offered nothing"
         );
         let offered = window.choices_shown();
         assert!(

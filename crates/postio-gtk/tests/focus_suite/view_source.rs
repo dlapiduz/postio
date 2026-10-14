@@ -1,4 +1,4 @@
-//! `v` shows the raw source (US2 scenario 5, T068): the message as it came,
+//! `V` shows the raw source (US2 scenario 5, T068): the message as it came,
 //! header lines first, from the list or from the open message -- read
 //! through `Client::raw_source`, which fetches only when asked.
 
@@ -36,7 +36,7 @@ pub fn v_shows_the_raw_message_from_the_list_and_from_the_open_message() {
             crate::settle_until(async || support::subjects(&window).len() == 1).await,
             "the inbox never reached the screen"
         );
-        support::keys(&window, &["j", "v"]);
+        support::keys(&window, &["j", "V"]);
         let shows = |window: &postio_gtk::window::FocusWindow| {
             window.source_shown().is_some_and(|text| {
                 text.contains("X-Postio-Fixture: raw source") && text.contains("Subject: Budget")
@@ -55,10 +55,10 @@ pub fn v_shows_the_raw_message_from_the_list_and_from_the_open_message() {
 
         support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         assert!(window.reading().is_some_and(|reading| reading.is_open()));
-        support::keys(&window, &["v"]);
+        support::keys(&window, &["V"]);
         assert!(
             crate::settle_until(async || shows(&window)).await,
-            "v in the open message did not show its raw source"
+            "V in the open message did not show its raw source"
         );
     });
 }

@@ -3,8 +3,8 @@
 //! Every app shares one keymap (spec 007, Clarifications), and a command only
 //! another app offers keeps its key there. Focus binds only the commands it
 //! offers (`Resolver::from_commands_for(.., Frontend::Focus)`, T029), so a
-//! key the keymap keeps for another frontend -- `p` opens the terminal's parts panel --
-//! does what an unbound key does here, rather than reaching a command Focus
+//! key the keymap keeps for another frontend -- `ctrl+shift+e` hands the
+//! terminal's composer to an editor -- does what an unbound key does here, rather than reaching a command Focus
 //! would refuse as "not wired up".
 
 use postio_core::{Frontend, Keymap};
@@ -36,9 +36,9 @@ mod tests {
             "the one keymap binds cleanly: {problems:?}"
         );
         assert_eq!(
-            press(&mut resolver, "a", KeyContext::List),
+            press(&mut resolver, "e", KeyContext::List),
             Outcome::Command("archive".into()),
-            "a archives in Focus's list"
+            "e archives in Focus's list, as in Gmail"
         );
         assert_eq!(
             press(&mut resolver, "!", KeyContext::List),
@@ -46,14 +46,14 @@ mod tests {
             "! is Focus's own: the has-action filter"
         );
         assert_eq!(
-            press(&mut resolver, "*", KeyContext::List),
+            press(&mut resolver, "s", KeyContext::List),
             Outcome::Command("flag".into()),
-            "* flags in Focus too, with no mark on the row (C13, T257)"
+            "s flags in Focus too, with no mark on the row (C13, T257)"
         );
         assert_eq!(
-            press(&mut resolver, "p", KeyContext::Reader),
+            press(&mut resolver, "ctrl+shift+e", KeyContext::Composer),
             Outcome::Unhandled,
-            "p opens the three-pane apps' parts panel; Focus has none"
+            "ctrl+shift+e is the terminal composer's external editor; Focus has none"
         );
     }
 

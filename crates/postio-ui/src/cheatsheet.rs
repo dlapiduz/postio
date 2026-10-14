@@ -510,7 +510,7 @@ mod tests {
             .find(|row| row.id == Some(ActionId::Builtin(CommandId::Archive)))
             .expect("archive");
 
-        assert_eq!(archive.binding.as_deref(), Some("a"));
+        assert_eq!(archive.binding.as_deref(), Some("e"));
     }
 
     #[test]

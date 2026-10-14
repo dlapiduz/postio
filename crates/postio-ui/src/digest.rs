@@ -763,14 +763,15 @@ mod tests {
             rules_empty_hint(postio_core::Keymap::defaults()),
             "Press d on a message to digest its sender"
         );
-        // Linux's spelling; on a Mac `Delete` is the BackSpace key.
+        // Linux's spelling, though Delete's default, Gmail's `#`, is the
+        // same on a Mac.
         let linux = postio_core::Keymap::resolve_on(
             &Default::default(),
             postio_config::paths::Platform::Freedesktop,
         );
         assert_eq!(
             crate::hints::line(&rules_footer(&linux)),
-            "Return edit \u{b7} Delete remove and release \u{b7} Escape inbox"
+            "Return edit \u{b7} # remove and release \u{b7} Escape inbox"
         );
         assert!(remove_body(1).contains("1 message "));
     }

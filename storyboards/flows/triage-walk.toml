@@ -2,7 +2,7 @@
 #
 # Walk down, archive, walk, archive, change your mind. Each archive must
 # say what happened and offer undo; the cursor stays on the row that took
-# the archived one's place; `u` brings the last one back. The thirty-thread
+# the archived one's place; `z` brings the last one back. The thirty-thread
 # seed is long enough that nothing runs out.
 #
 # Re-expressed for Focus (T265): the cursor opens on index 0, so `j` moves it

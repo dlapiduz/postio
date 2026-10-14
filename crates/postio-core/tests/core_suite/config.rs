@@ -59,8 +59,8 @@ fn service_with(toml: &str) -> ConfigService {
 #[test]
 fn an_override_that_takes_a_default_key_is_reported() {
     for (taker, victim, key) in [
-        (CommandId::Reply, "archive", "a"),
-        (CommandId::Reply, "flag", "*"),
+        (CommandId::Reply, "archive", "e"),
+        (CommandId::Reply, "flag", "s"),
     ] {
         let mut overrides = KeyBindings::default();
         overrides
@@ -143,10 +143,13 @@ fn without_a_file_the_registry_defaults_are_the_keymap() {
     ] {
         let keymap = Keymap::resolve_on(&KeyBindings::default(), platform);
 
-        assert_eq!(keymap.binding(CommandId::Archive), Some("a"));
-        assert_eq!(
-            keymap.binding(CommandId::Undo),
-            Some(postio_config::keys::expand_mod("mod+z", platform).as_str())
+        assert_eq!(keymap.binding(CommandId::Archive), Some("e"));
+        assert_eq!(keymap.binding(CommandId::Undo), Some("z"));
+        assert!(
+            keymap
+                .bindings(CommandId::Undo)
+                .contains(&postio_config::keys::expand_mod("mod+z", platform)),
+            "{platform:?}: undo keeps the chord every other application taught"
         );
         assert!(
             keymap.problems().is_empty(),
@@ -168,9 +171,9 @@ fn without_a_file_the_registry_defaults_are_the_keymap() {
 
 #[test]
 fn an_override_rebinds_the_command_and_keeps_its_alternates() {
-    let keymap = Keymap::resolve(&bindings(&[("open_message", "o")]));
+    let keymap = Keymap::resolve(&bindings(&[("open_message", "w")]));
 
-    assert_eq!(keymap.binding(CommandId::OpenMessage), Some("o"));
+    assert_eq!(keymap.binding(CommandId::OpenMessage), Some("w"));
     assert!(
         keymap
             .bindings(CommandId::OpenMessage)
@@ -178,7 +181,7 @@ fn an_override_rebinds_the_command_and_keeps_its_alternates() {
         "the registry's alternates are not the file's to replace"
     );
     assert_eq!(
-        keymap.command_for(Context::List, "o"),
+        keymap.command_for(Context::List, "w"),
         Some(ActionId::Builtin(CommandId::OpenMessage))
     );
     assert_eq!(
@@ -196,13 +199,13 @@ fn a_key_resolves_only_in_the_contexts_its_command_lives_in() {
     let keymap = Keymap::resolve_on(&KeyBindings::default(), Platform::Freedesktop);
 
     assert_eq!(
-        keymap.command_for(Context::List, "a"),
+        keymap.command_for(Context::List, "e"),
         Some(ActionId::Builtin(CommandId::Archive))
     );
     assert_eq!(
-        keymap.command_for(Context::Composer, "a"),
+        keymap.command_for(Context::Composer, "e"),
         None,
-        "`a` is a letter while composing"
+        "`e` is a letter while composing"
     );
     assert_eq!(
         keymap.command_for(Context::Composer, "ctrl+k"),
@@ -231,7 +234,7 @@ fn an_unusable_binding_falls_back_to_the_default_and_says_why() {
     // not fall over if one ever reaches it.
     let keymap = Keymap::resolve(&bindings(&[("archive", "ctrl+")]));
 
-    assert_eq!(keymap.binding(CommandId::Archive), Some("a"));
+    assert_eq!(keymap.binding(CommandId::Archive), Some("e"));
     let problem = keymap.problems().first().expect("a problem was reported");
     assert!(problem.contains("archive"), "{problem}");
 }
@@ -240,7 +243,7 @@ fn an_unusable_binding_falls_back_to_the_default_and_says_why() {
 fn an_override_for_a_command_this_build_does_not_know_is_only_a_warning() {
     let keymap = Keymap::resolve(&bindings(&[("summarize_thread", "ctrl+i")]));
 
-    assert_eq!(keymap.binding(CommandId::Archive), Some("a"));
+    assert_eq!(keymap.binding(CommandId::Archive), Some("e"));
     assert_eq!(keymap.command_for(Context::List, "ctrl+i"), None);
     assert!(
         keymap
@@ -254,7 +257,7 @@ fn an_override_for_a_command_this_build_does_not_know_is_only_a_warning() {
 
 #[test]
 fn an_override_takes_a_key_from_the_default_that_had_it() {
-    // `a` is Archive's default. Someone who writes `delete = "a"` has said
+    // `e` is Archive's default. Someone who writes `delete = "e"` has said
     // what they want, and a default is only a suggestion — so the override
     // takes the key and Archive gives it up rather than the line being
     // ignored.
@@ -267,18 +270,18 @@ fn an_override_takes_a_key_from_the_default_that_had_it() {
     // of two commands won depend on the order of a table they have never
     // seen — so adding a command with a popular default could quietly take a
     // key somebody was already using. See `postio-7bc`.
-    let keymap = Keymap::resolve(&bindings(&[("delete", "a")]));
+    let keymap = Keymap::resolve(&bindings(&[("delete", "e")]));
 
     assert_eq!(
-        keymap.command_for(Context::List, "a"),
+        keymap.command_for(Context::List, "e"),
         Some(ActionId::Builtin(CommandId::Delete))
     );
-    // Archive lost `a` and keeps its chord: the canvas' second keyboard layer
+    // Archive lost `e` and keeps its chord: the canvas' second keyboard layer
     // means most commands have two bindings, so losing one is no longer the
     // same as losing all of them.
     assert_ne!(
         keymap.binding(CommandId::Archive),
-        Some("a"),
+        Some("e"),
         "the override took the key"
     );
     assert!(
@@ -289,11 +292,11 @@ fn an_override_takes_a_key_from_the_default_that_had_it() {
     );
 
     // A command whose *only* binding is taken is palette-only rather than
-    // dead, which is the case this test was written for. `Delete` is
-    // Delete's under the one keymap, and Delete has no second layer.
-    let keymap = Keymap::resolve(&bindings(&[("flag", "Delete")]));
+    // dead, which is the case this test was written for. `b` is Snooze's
+    // under the Gmail keymap, and Snooze has no second layer.
+    let keymap = Keymap::resolve(&bindings(&[("flag", "b")]));
     assert_eq!(
-        keymap.binding(CommandId::Delete),
+        keymap.binding(CommandId::Snooze),
         None,
         "the command that lost its only key is palette-only rather than dead"
     );
@@ -301,7 +304,7 @@ fn an_override_takes_a_key_from_the_default_that_had_it() {
         keymap
             .problems()
             .iter()
-            .any(|problem| problem.contains("delete")),
+            .any(|problem| problem.contains("snooze")),
         "{:?}",
         keymap.problems()
     );
@@ -311,7 +314,6 @@ fn an_override_takes_a_key_from_the_default_that_had_it() {
 fn two_overrides_wanting_one_key_are_settled_by_registry_order() {
     // Between two explicit choices there is nothing to prefer, so the order
     // is at least deterministic, and the one that loses is told.
-    // Linux's, whose Delete is `Delete`; the Mac's is BackSpace.
     let keymap = Keymap::resolve_on(
         &bindings(&[("archive", "q"), ("delete", "q")]),
         postio_config::paths::Platform::Freedesktop,
@@ -323,7 +325,7 @@ fn two_overrides_wanting_one_key_are_settled_by_registry_order() {
     );
     assert_eq!(
         keymap.binding(CommandId::Delete),
-        Some("Delete"),
+        Some("#"),
         "the loser falls back to its own default, which nobody took"
     );
     assert!(

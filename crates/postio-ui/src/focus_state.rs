@@ -1006,7 +1006,7 @@ mod tests {
             empty.shortcuts,
             vec![
                 (
-                    Some("g r".to_owned()),
+                    Some("g a".to_owned()),
                     "archive".to_owned(),
                     CommandId::GoToArchive
                 ),

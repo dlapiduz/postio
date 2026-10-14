@@ -4,7 +4,7 @@
 # parents, and the focus stayed on a row that left with its message. The key
 # then started at a widget with no parents and never reached the window, so
 # `j`, `z` and Esc did nothing until a click. Fixed on the Focus branch
-# before storyboards existed, so this is pinned: after `a` removes the row
+# before storyboards existed, so this is pinned: after `e` removes the row
 # the cursor was on, the very next `j` must move the cursor, and the
 # keyboard must still be reachable (`keyboard.reachable` is false exactly
 # when a key pressed now would be dropped).

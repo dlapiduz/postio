@@ -454,7 +454,7 @@ mod tests {
         // it.
         let chord =
             postio_config::keys::expand_mod("mod+shift+a", postio_config::paths::Platform::host());
-        assert_eq!(archive.keys, ["a".to_owned(), chord]);
+        assert_eq!(archive.keys, ["e".to_owned(), chord]);
     }
 
     #[test]

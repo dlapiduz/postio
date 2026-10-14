@@ -105,7 +105,7 @@ pub fn replying_to_a_tracking_link_shows_the_notice_and_a_same_domain_link_does_
         let source = html_only_message("shop.example.org", "click.tracker.example.org");
         move |answer| answer(Some((source.clone(), an_account())))
     });
-    press(&window, "e");
+    press(&window, "r");
     assert!(composer.is_open());
     assert!(notice.is_visible());
     assert!(
@@ -125,7 +125,7 @@ pub fn replying_to_a_tracking_link_shows_the_notice_and_a_same_domain_link_does_
         let source = html_only_message("shop.example.org", "shop.example.org");
         move |answer| answer(Some((source.clone(), an_account())))
     });
-    press(&window, "e");
+    press(&window, "r");
     assert!(composer.is_open());
     assert!(
         !notice.is_visible(),

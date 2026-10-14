@@ -619,7 +619,7 @@ pub struct App {
     answering: bool,
     /// Where the keyboard is.
     focus: Focus,
-    /// The folders, views and saved searches the finder and `g o` read.
+    /// The folders, views and saved searches the finder and `g l` read.
     places: crate::places::Places,
     /// The privacy pane's log, once read.
     privacy: Option<Privacy>,
@@ -2148,7 +2148,7 @@ impl App {
         ))
     }
 
-    /// `s`, `h`, `l` or `m`: the picker, over the row the keyboard is on.
+    /// `b`, `h`, `l` or `v`: the picker, over the row the keyboard is on.
     fn open_picker(&mut self, kind: crate::pickers::Kind) -> Vec<Effect> {
         use crate::pickers::{Kind, Picker};
         let Some(target) = self.picker_target() else {
@@ -2372,7 +2372,7 @@ impl App {
         }
     }
 
-    /// `g o`, or a click on the strip's place.
+    /// `g l`, or a click on the strip's place.
     fn open_folders(&mut self) -> Vec<Effect> {
         let from = match (&self.places_box, self.focus) {
             (Some(open), _) => open.from(),
@@ -5049,7 +5049,7 @@ pub(crate) mod tests {
         update(&mut app, press('j'));
         assert_eq!(app.cursor(), 4);
 
-        let effects = update(&mut app, press('a'));
+        let effects = update(&mut app, press('e'));
 
         let sent: Vec<_> = effects
             .iter()
@@ -5071,7 +5071,7 @@ pub(crate) mod tests {
         let opening = open_list(&mut app, 10);
         serve(&mut app, opening);
         update(&mut app, press('j'));
-        update(&mut app, press('a'));
+        update(&mut app, press('e'));
         assert_eq!(
             app.state()
                 .read(|state| state.resolve(&postio_core::MessageTarget::Selection)),
@@ -5091,7 +5091,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_undoable_action_is_announced_and_ctrl_z_sends_undo() {
+    fn an_undoable_action_is_announced_and_z_or_ctrl_z_sends_undo() {
         let mut app = app((120, 30));
         let opening = open_list(&mut app, 10);
         serve(&mut app, opening);
@@ -5103,13 +5103,16 @@ pub(crate) mod tests {
             }),
         );
         assert_eq!(app.notice(), Some("Archived 12 messages"));
-        assert_eq!(app.notice_undo(), Some("ctrl+z"));
+        assert_eq!(app.notice_undo(), Some("z"));
 
-        let effects = update(&mut app, key(KeyCode::Char('z'), KeyModifiers::CONTROL));
-        assert!(
-            effects.contains(&Effect::Send(postio_core::Command::Undo)),
-            "{effects:?}"
-        );
+        // `z`, Gmail's, and `ctrl+z`, the one every other application taught.
+        for input in [press('z'), key(KeyCode::Char('z'), KeyModifiers::CONTROL)] {
+            let effects = update(&mut app, input);
+            assert!(
+                effects.contains(&Effect::Send(postio_core::Command::Undo)),
+                "{effects:?}"
+            );
+        }
         update(
             &mut app,
             Input::Host(postio_core::Event::UndoPerformed {
@@ -5225,14 +5228,14 @@ pub(crate) mod tests {
 
     #[test]
     fn in_the_composer_a_letter_is_typed_not_run() {
-        // T053: `a` is Archive in the list and a letter in the composer.
+        // T053: `e` is Archive in the list and a letter in the composer.
         let mut app = app((160, 40));
         let opening = open_list(&mut app, 3);
         serve(&mut app, opening);
         app.compose(postio_model::Draft::new(postio_model::AccountId::new(1)));
         assert_eq!(app.focus(), Focus::Composer);
 
-        let effects = update(&mut app, press('a'));
+        let effects = update(&mut app, press('e'));
         assert!(
             !effects
                 .iter()
@@ -5240,7 +5243,7 @@ pub(crate) mod tests {
             "a letter ran a command: {effects:?}"
         );
         let composer = app.composer().expect("still composing");
-        assert_eq!(composer.value(crate::composer::Field::To), "a");
+        assert_eq!(composer.value(crate::composer::Field::To), "e");
 
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(app.focus(), Focus::List, "Escape leaves the composer");
@@ -5256,7 +5259,7 @@ pub(crate) mod tests {
         update(&mut app, press('j'));
         let row = app.cursor();
 
-        let effects = update(&mut app, press('e'));
+        let effects = update(&mut app, press('r'));
         let asked = effects.iter().find_map(|effect| match effect {
             Effect::ReplySource { kind, message } => Some((*kind, *message)),
             _ => None,
@@ -5410,7 +5413,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn g_r_and_g_z_open_the_archive_and_the_snoozed_view_as_the_desktop_does() {
+    fn g_a_and_g_b_open_the_archive_and_the_snoozed_view_as_the_desktop_does() {
         // specs/007-postio-focus T162: the one keymap's two new
         // destinations, by role, as the classic app's `act` reaches them.
         let mut app = app((160, 40));
@@ -5420,7 +5423,7 @@ pub(crate) mod tests {
         let account = postio_model::AccountId::new(1);
 
         update(&mut app, press('g'));
-        let effects = update(&mut app, press('r'));
+        let effects = update(&mut app, press('a'));
         assert_eq!(opens(&effects), vec![ListScope::Mailbox(MailboxId::new(2))]);
         update(
             &mut app,
@@ -5431,7 +5434,7 @@ pub(crate) mod tests {
         );
 
         update(&mut app, press('g'));
-        let effects = update(&mut app, press('z'));
+        let effects = update(&mut app, press('b'));
         assert_eq!(opens(&effects), vec![ListScope::Snoozed(account)]);
     }
 
@@ -6895,7 +6898,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             app.notice(),
-            Some("ada removed — ctrl+z to undo"),
+            Some("ada removed — z to undo"),
             "the key the removal names is the key undo has"
         );
         assert_eq!(
@@ -7230,15 +7233,15 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn in_the_reader_o_expands_the_quoted_history_and_folds_it_again() {
+    fn in_the_reader_semicolon_expands_the_quoted_history_and_folds_it_again() {
         let mut app = app((160, 40));
         reading_a_long_quoted_reply(&mut app);
         assert!(!reader_text(&app).contains("quoted words"));
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(app.focus(), Focus::Reader);
-        update(&mut app, press('O'));
+        update(&mut app, press(';'));
         assert!(reader_text(&app).contains("quoted words"), "expanded");
-        update(&mut app, press('O'));
+        update(&mut app, press(';'));
         assert!(!reader_text(&app).contains("quoted words"), "folded again");
     }
 
@@ -7631,18 +7634,18 @@ pub(crate) mod tests {
             "only the newest, which is shown (FR-195)"
         );
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
-        let stepped = update(&mut app, press('['));
+        let stepped = update(&mut app, press('p'));
         assert!(
             stepped.contains(&Effect::ReadBody(MessageId::new(2))),
             "{stepped:?}"
         );
-        let again = update(&mut app, press(']'));
+        let again = update(&mut app, press('n'));
         assert!(
             !again.iter().any(|e| matches!(e, Effect::ReadBody(_))),
             "read once: {again:?}"
         );
-        update(&mut app, press('['));
-        update(&mut app, press('['));
+        update(&mut app, press('p'));
+        update(&mut app, press('p'));
         for id in 1..=3 {
             update(
                 &mut app,
@@ -7675,27 +7678,27 @@ pub(crate) mod tests {
                 "{drawn}"
             );
             let _ = (id, who);
-            update(&mut app, press(']'));
+            update(&mut app, press('n'));
         }
     }
 
     #[test]
-    fn brackets_in_the_reader_walk_the_conversation() {
+    fn n_and_p_in_the_reader_walk_the_conversation() {
         let mut app = app((160, 40));
         reading_a_conversation(&mut app);
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(app.reading().unwrap().current, 2, "it opens on the newest");
-        update(&mut app, press('['));
+        update(&mut app, press('p'));
         assert_eq!(app.reading().unwrap().current, 1);
-        update(&mut app, press('['));
+        update(&mut app, press('p'));
         assert_eq!(app.reading().unwrap().current, 0);
-        update(&mut app, press('['));
+        update(&mut app, press('p'));
         assert_eq!(
             app.reading().unwrap().current,
             0,
             "nothing before the first"
         );
-        update(&mut app, press(']'));
+        update(&mut app, press('n'));
         assert_eq!(app.reading().unwrap().current, 1);
     }
 
@@ -7744,11 +7747,11 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn shift_u_asks_to_leave_the_list_of_the_message_being_read() {
+    fn shift_m_asks_to_leave_the_list_of_the_message_being_read() {
         let mut app = app((160, 40));
         reading_a_conversation(&mut app);
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        let effects = update(&mut app, key(KeyCode::Char('U'), KeyModifiers::SHIFT));
+        let effects = update(&mut app, key(KeyCode::Char('M'), KeyModifiers::SHIFT));
         assert!(
             effects.contains(&Effect::Unsubscribe(MessageId::new(3))),
             "the message being read, the newest: {effects:?}"

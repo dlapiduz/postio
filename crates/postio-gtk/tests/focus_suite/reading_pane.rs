@@ -389,7 +389,7 @@ pub fn the_composer_takes_over_the_pane() {
         support::deliver(&window, "Return");
         assert!(crate::settle_until(async || pane_title(&window).is_some()).await);
 
-        support::keys(&window, &["e"]);
+        support::keys(&window, &["r"]);
         assert!(
             crate::settle_until(async || {
                 window.reading_pane().is_some_and(|pane| {
@@ -398,7 +398,7 @@ pub fn the_composer_takes_over_the_pane() {
                 })
             })
             .await,
-            "e did not put the composer in the pane: {:?}",
+            "r did not put the composer in the pane: {:?}",
             window.reading_pane().map(|pane| support::texts(&pane))
         );
         assert!(
@@ -550,7 +550,7 @@ pub fn archiving_steps_the_pane_past_the_message() {
         assert!(
             crate::settle_until(async || pane_title(&window).as_deref() == Some("Second")).await
         );
-        support::deliver(&window, "a");
+        support::deliver(&window, "e");
         assert!(
             crate::settle_until(async || pane_title(&window).as_deref() == Some("Third")).await,
             "the pane did not step past the archived message: {:?}",
@@ -569,7 +569,7 @@ pub fn archiving_steps_the_pane_past_the_message() {
             "G moved the cursor without the pane: {:?}",
             pane_title(&window)
         );
-        support::deliver(&window, "a");
+        support::deliver(&window, "e");
         assert!(
             crate::settle_until(async || pane_title(&window).as_deref() == Some("Fourth")).await,
             "the last row archived did not leave the pane on the previous one: {:?}",
@@ -596,7 +596,7 @@ pub fn a_key_pressed_while_archiving_settles_keeps_its_cursor() {
         assert!(
             crate::settle_until(async || pane_title(&window).as_deref() == Some("Second")).await
         );
-        support::deliver(&window, "a");
+        support::deliver(&window, "e");
         support::deliver(&window, "G");
         assert!(
             crate::settle_until(async || support::subjects(&window).len() == 4).await,

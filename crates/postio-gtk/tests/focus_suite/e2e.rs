@@ -10,7 +10,7 @@
 //! assertions, one per direction:
 //!
 //!   1. **wire -> window**: the first sync's rows appear in the list.
-//!   2. **key -> wire**: `a` on a row ends with the message in the
+//!   2. **key -> wire**: `e` on a row ends with the message in the
 //!      *server's* Archive and out of its INBOX.
 //!   3. **server -> window**: a message delivered mid-watch is listed.
 //!
@@ -145,7 +145,7 @@ pub fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
             SEEDED.len()
         );
 
-        // 2. key -> wire: `a` ends with the message in the server's Archive.
+        // 2. key -> wire: `e` ends with the message in the server's Archive.
         support::keys(&window, &["j"]);
         let focused = window
             .cursor_row()
@@ -166,7 +166,7 @@ pub fn a_keystroke_reaches_the_server_and_a_delivery_reaches_the_list() {
             server.uids(ARCHIVE_PATH).is_empty(),
             "the fixture's Archive starts empty, or archiving proves nothing"
         );
-        support::keys(&window, &["a"]);
+        support::keys(&window, &["e"]);
         // Local-first means the row leaves the list at once; the server's
         // copy moving is the queue draining over the wire.
         assert!(

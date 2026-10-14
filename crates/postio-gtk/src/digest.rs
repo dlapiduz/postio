@@ -10,7 +10,7 @@
 //!
 //! Its keys are the keymap's `Context::Digest`: `⇧A` archives all of it
 //! as one undo, `d` edits its rule, `D` stops digesting the focused
-//! message's sender once confirmed, `U` unsubscribes from its list,
+//! message's sender once confirmed, `M` unsubscribes from its list,
 //! `]`/`[` move between references, `Tab` toggles the summary, and
 //! `Escape` closes -- or, over an email opened from a reference, goes back
 //! to the summary. The rows answer the arrows and `Enter` themselves.
@@ -415,7 +415,7 @@ impl DigestWindow {
         self.digest.borrow().clone()
     }
 
-    /// The focused message, if any: what `D` and `U` act on -- the list's
+    /// The focused message, if any: what `D` and `M` act on -- the list's
     /// cursor, kept in step with the focused reference while the summary or
     /// its email is on screen.
     pub fn focused(&self) -> Option<MessageSummary> {
@@ -802,7 +802,7 @@ impl DigestWindow {
     }
 
     /// Redraw the reference card under the paragraphs for the focused
-    /// reference's message, sync the list's cursor to it (so `D` and `U`
+    /// reference's message, sync the list's cursor to it (so `D` and `M`
     /// act on it), and ring its chip.
     fn show_focused_reference(&self) {
         for chip in self.reference_chips.borrow().iter() {

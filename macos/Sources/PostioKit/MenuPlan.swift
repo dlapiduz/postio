@@ -101,7 +101,7 @@ public enum MenuPlan {
     /// Which of a command's bindings a menu draws.
     ///
     /// **The chord, when there is one.** Both keyboard layers are always on —
-    /// `e` replies and so does `⌘R` — but a menu is where a Mac user looks
+    /// `r` replies and so does `⌘R` — but a menu is where a Mac user looks
     /// for the second, and the shortcut column is shaped for it. The
     /// mnemonic is not lost: the cheat sheet lists every binding, which is
     /// what it is for.
@@ -212,6 +212,7 @@ public enum MenuPlan {
         case "minus": return "-"
         case "equal": return "="
         case "asterisk": return "*"
+        case "numbersign": return "#"
         case "underscore": return "_"
         case "less": return "<"
         case "greater": return ">"

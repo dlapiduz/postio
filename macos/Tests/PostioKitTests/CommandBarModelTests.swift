@@ -25,7 +25,7 @@ struct CommandBarModelTests {
         var invoked: [String] = []
         var bindings: [String: String] = [
             "archive": "a",
-            "go_to_archive": "g r",
+            "go_to_archive": "g a",
             "command_palette": "cmd+k",
             "saved_search_1": "alt+1",
             "saved_search_2": "alt+2",
@@ -61,7 +61,7 @@ struct CommandBarModelTests {
         line(.command, 2, "Archive", detail: "the focused message", key: "a", command: "archive"),
         line(.command, 3, "Archive everything read, older than a week"),
         line(.heading, 4, "Go to", selectable: false),
-        line(.place, 5, "in:Archive", detail: "18,204 conversations", key: "g r", command: "go_to_archive"),
+        line(.place, 5, "in:Archive", detail: "18,204 conversations", key: "g a", command: "go_to_archive"),
         line(.hint, 6, "Commands only", key: ">", selectable: false),
         line(
             .message, 7, "Invoice 2026-08", detail: "Attached is the invoice", sender: "Ada",
@@ -104,7 +104,7 @@ struct CommandBarModelTests {
         let caps = model.rows.map(\.cap)
         #expect(caps[1] == "e", "the user's binding, spelled as a cap")
         #expect(caps[2] == nil, "a command with no key draws no cap")
-        #expect(caps[4] == "g r", "a sequence is one cap, its presses spaced")
+        #expect(caps[4] == "g a", "a sequence is one cap, its presses spaced")
         #expect(caps[5] == ">", "a hint's prefix is its cap")
         #expect(model.rows[1].detail == "the focused message")
         #expect(model.rows[6].sender == "Ada")

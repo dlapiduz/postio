@@ -57,14 +57,20 @@ fn a_bound_key_answers_the_command_it_is_bound_to() {
     // The registry's own defaults, not a keymap this test built: the point of
     // the boundary is that the frontend gets *these*.
     assert_eq!(
-        typed(&session, "a", UiContext::List, false),
+        typed(&session, "e", UiContext::List, false),
         KeyOutcomeFfi::Command {
             id: "archive".to_string()
         },
-        "`a` in the list is archive"
+        "`e` in the list is archive"
     );
-    // Undo is the primary accelerator's `z` under the one keymap
-    // (specs/007-postio-focus contracts/keymap.md): ⌘Z here as everywhere
+    assert_eq!(
+        typed(&session, "z", UiContext::List, false),
+        KeyOutcomeFfi::Command {
+            id: "undo".to_string()
+        },
+        "`z` in the list is Gmail's undo"
+    );
+    // And the primary accelerator's `z` beside it: ⌘Z here as everywhere
     // else on a Mac.
     assert_eq!(
         session.key(Some("z"), None, PRIMARY, UiContext::List, false),

@@ -56,10 +56,10 @@ your current client around until you trust it.
   appears: typed into the command bar, saved as a pinned search, or written
   into `config.toml`. `from:ada has:attach after:2026-01-01` is a
   query you can type, and results appear as you type it.
-- **Every action has a key.** `j`/`k` move, `e` replies, `a` archives,
-  `Ctrl+Z` undoes anything, `/` searches, `Ctrl+K` runs any command by name,
-  `?` shows the key map. Every app has the same keys, and every binding is
-  rebindable. The mouse works too and is never required.
+- **Every action has a key, and it is Gmail's.** `j`/`k` move, `e`
+  archives, `r` replies, `#` deletes, `z` (or `Ctrl+Z`) undoes, `/` searches,
+  `Ctrl+K` runs any command by name, `?` shows the key map. Every app has
+  the same keys, and every binding is rebindable. The mouse works too and is never required.
 - **All your accounts, one inbox.** Several IMAP, Gmail or JMAP accounts,
   each synced by its own engine, grouped into one unified inbox at read
   time. Sign in with a password, an app-specific password, or OAuth 2 through

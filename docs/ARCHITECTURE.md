@@ -262,7 +262,7 @@ Two separate decisions that are usually conflated, and both are correctness
 issues rather than preferences.
 
 **The list has a cursor *and* a selection.** The cursor is where the keyboard
-is: `j`/`k` move it, and an open message follows. The selection is what `a`
+is: `j`/`k` move it, and an open message follows. The selection is what `e`
 would archive. Most of the time they are the same row, which is exactly why
 conflating them is the classic bug — it only surfaces once a selection is more
 than one row, and then every bulk action lands somewhere the user did not
@@ -340,7 +340,7 @@ backend learns them is in
 **What this decision does NOT say.** A real IMAP mailbox is *not* a saved
 search. It is server state with a `UIDVALIDITY`, a message set that physically
 lives there, and a `MailboxRole` (`Inbox`, `Archive`, `Sent`, `Drafts`,
-`Trash`, `Junk`, `Flagged`, `Regular`). `a` archives *into* one. Two kinds
+`Trash`, `Junk`, `Flagged`, `Regular`). `e` archives *into* one. Two kinds
 of place look alike and behave differently: real mailboxes that mail moves
 between, and views — Flagged, Snoozed, Filtered, the Outbox, and on macOS
 the pinned searches — that are queries re-run on open.

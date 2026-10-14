@@ -4,7 +4,7 @@
 # Flagged back to the inbox. The list must stay Flagged and the cursor stay
 # put.
 #
-# Re-expressed for Focus (T265): `g *` lists flagged mail (eight rows in the
+# Re-expressed for Focus (T265): `g s` lists flagged mail (eight rows in the
 # small seed, T257), and the reload is the engine saying the mailboxes
 # changed.
 apps   = ["focus"]
