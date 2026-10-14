@@ -350,9 +350,18 @@ mod tests {
                         let path = head.split_whitespace().nth(1).unwrap_or("/").to_owned();
                         h.lock().expect("never poisoned").push(head);
                         std::thread::sleep(hold);
+                        // Out of flight before the answer goes: the client finishes on
+                        // these bytes and the next batch may connect at once, so a
+                        // decrement after `write_all` raced it and counted a fetch
+                        // that had already ended against one that had just begun.
+                        l.fetch_sub(1, Ordering::SeqCst);
                         let mut stream = stream;
                         let _ = stream.write_all(&answer(&path, port));
-                        l.fetch_sub(1, Ordering::SeqCst);
+                        // Linger before closing, as a real server may. The client
+                        // does not wait for the close, so this costs nothing, and it
+                        // turns a count that drops late from one red run in many
+                        // into a red run every time.
+                        std::thread::sleep(Duration::from_millis(30));
                     });
                 }
             });
