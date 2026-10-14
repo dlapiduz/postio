@@ -47,20 +47,20 @@ import Testing
         }
     }
 
-    /// A window AppKit keeps as wide as it was made: a CI runner's screen is
-    /// 1024 wide, and a titled window is otherwise squeezed onto it, so the
-    /// toolbar lays out for a width the test never asked for.
-    final class Unconstrained: NSWindow {
-        override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
-            frameRect
-        }
+    /// Whether this screen holds a window `width` wide. A CI runner's is
+    /// 1024: AppKit squeezes a wider titled window onto it, and one kept
+    /// wider anyway hangs off the screen, where the toolbar lays out for a
+    /// width nobody sees. So the cases at the design's 1440 run only where
+    /// a 1440 window fits, and 1024 runs everywhere.
+    static func screenHolds(_ width: CGFloat) -> Bool {
+        (NSScreen.main?.visibleFrame.width ?? 0) >= width
     }
 
     /// A window `width` wide with the inbox's toolbar shape: Compose, a
     /// flexible space, the field.
     static func window(width: CGFloat) -> (NSWindow, Delegate) {
-        let window = Unconstrained(
-            contentRect: NSRect(x: 40, y: 40, width: width, height: 700),
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 40, width: width, height: 700),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -73,7 +73,7 @@ import Testing
         toolbar.allowsUserCustomization = false
         window.toolbar = toolbar
         window.orderFront(nil)
-        #expect(window.frame.width == width, "as wide as asked, whatever the screen")
+        #expect(window.frame.width == width, "as wide as asked: the screen holds it")
         return (window, delegate)
     }
 
@@ -98,10 +98,18 @@ import Testing
         #expect(box.field.placeholderAttributedString?.string == "Search mail or run a command")
     }
 
-    // 3000 is wider than any screen this runs on, so a window squeezed onto
-    // the screen fails here too, not only on a narrow CI runner.
-    @Test(arguments: [CGFloat(1440), CGFloat(1024), CGFloat(3000)])
-    func openedTheFieldGrowsLeftwardWithItsRightEdge12FromTheWindows(width: CGFloat) {
+    @Test func openedTheFieldGrowsLeftwardWithItsRightEdge12FromTheWindows() {
+        Self.opens(width: 1024)
+    }
+
+    @Test(.enabled("the screen is narrower than the design's window") {
+        await ToolbarSearchBoxTests.screenHolds(1440)
+    })
+    func openedAt1440TheFieldIs860() {
+        Self.opens(width: 1440)
+    }
+
+    static func opens(width: CGFloat) {
         let (window, delegate) = Self.window(width: width)
         defer { window.close() }
         let box = delegate.box
@@ -125,7 +133,7 @@ import Testing
     }
 
     @Test func atRestItIs320By28AndClosingPutsItBack() {
-        let (window, delegate) = Self.window(width: 1440)
+        let (window, delegate) = Self.window(width: 1024)
         defer { window.close() }
         let box = delegate.box
         let resting = Self.frame(of: box.frameView, in: window)
@@ -133,8 +141,8 @@ import Testing
         #expect(resting.height == ToolbarSearchBox.restingHeight)
         #expect(!box.ringed)
 
-        box.open(true, windowWidth: 1440)
-        box.open(false, windowWidth: 1440)
+        box.open(true, windowWidth: 1024)
+        box.open(false, windowWidth: 1024)
         let back = Self.frame(of: box.frameView, in: window)
         #expect(back == resting)
         #expect(!box.ringed)
