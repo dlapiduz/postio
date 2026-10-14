@@ -288,6 +288,8 @@ pub struct SyncingFfi {
     pub initial_sync_messages: u32,
     /// Master switch for desktop notifications on new mail.
     pub notify: bool,
+    /// The unread count on the app's icon.
+    pub badge: bool,
 }
 
 /// One saved search, as the Filters pane draws it.
@@ -440,6 +442,7 @@ pub fn settings_syncing(text: String) -> Option<SyncingFfi> {
         attachment_fetch: sync.attachment_fetch.into(),
         initial_sync_messages: sync.initial_sync_messages,
         notify: sync.notify,
+        badge: sync.badge,
     })
 }
 
@@ -459,6 +462,7 @@ pub fn settings_patch_syncing(text: String, syncing: SyncingFfi) -> Result<Strin
     sync.attachment_fetch = syncing.attachment_fetch.into();
     sync.initial_sync_messages = syncing.initial_sync_messages;
     sync.notify = syncing.notify;
+    sync.badge = syncing.badge;
     patch_sync(&text, &sync).map_err(|err| SettingsError::Invalid {
         message: err.to_string(),
     })

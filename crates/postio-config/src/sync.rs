@@ -12,6 +12,7 @@
 //! initial_sync_messages = 5000
 //! notify = true            # desktop notifications for new mail
 //! notify_roles = ["inbox"] # which mailboxes' arrivals notify
+//! badge = true             # unread count on the app's icon
 //! ```
 
 use serde::{Deserialize, Deserializer, Serialize};
@@ -143,6 +144,11 @@ pub struct SyncConfig {
     /// ignored rather than rejected, the same tolerance `extra` gives unknown
     /// keys elsewhere in this file.
     pub notify_roles: Vec<String>,
+    /// Show the inbox's unread count on the application's icon -- the Dock,
+    /// on the Mac. Separate from [`notify`](Self::notify): a count that
+    /// waits quietly is what somebody who turned the interruptions off may
+    /// still want.
+    pub badge: bool,
     /// Keys this version of Postio does not know, preserved verbatim.
     #[serde(flatten)]
     pub extra: Extras,
@@ -178,6 +184,8 @@ struct RawSyncConfig {
     notify: bool,
     #[serde(default = "notify_roles")]
     notify_roles: Vec<String>,
+    #[serde(default = "crate::yes")]
+    badge: bool,
     #[serde(flatten)]
     extra: Extras,
 }
@@ -207,6 +215,7 @@ impl<'de> Deserialize<'de> for SyncConfig {
             initial_sync_messages: raw.initial_sync_messages,
             notify: raw.notify,
             notify_roles: raw.notify_roles,
+            badge: raw.badge,
             extra: raw.extra,
         })
     }
@@ -225,6 +234,7 @@ impl Default for SyncConfig {
             initial_sync_messages: initial_sync_messages(),
             notify: true,
             notify_roles: notify_roles(),
+            badge: true,
             extra: Extras::new(),
         }
     }
@@ -284,6 +294,15 @@ mod tests {
             sync.notify_roles,
             vec!["inbox".to_owned(), "flagged".to_owned()]
         );
+    }
+
+    #[test]
+    fn the_unread_badge_is_on_unless_the_file_turns_it_off() {
+        assert!(SyncConfig::default().badge);
+        let sync: SyncConfig = toml::from_str("").expect("parse");
+        assert!(sync.badge, "a file that never heard of the key shows it");
+        let sync: SyncConfig = toml::from_str("badge = false\n").expect("parse");
+        assert!(!sync.badge);
     }
 
     #[test]

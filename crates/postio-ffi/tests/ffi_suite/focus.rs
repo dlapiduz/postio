@@ -198,6 +198,56 @@ fn the_strip_says_what_gtk_s_strip_says() {
     session.shutdown();
 }
 
+/// The Dock's badge is the strip's unread figure, carried as a number on
+/// the same read: the strip is re-read on every change to the inbox, so
+/// the badge costs no read of its own.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_strip_carries_its_unread_figure_as_a_number() {
+    let session = inbox_of(&["Atlas budget", "Lunch"]).await;
+    let strip = session.focus_strip().expect("the strip");
+    let counts = session.focus_counts().expect("the counts");
+    assert_eq!(counts.unread, 2, "{counts:?}");
+    assert_eq!(strip.unread, counts.unread, "the number the words say");
+    assert!(strip.counts.contains("2 unread"), "{}", strip.counts);
+    session.shutdown();
+}
+
+/// `[sync] notify` and `[sync] badge` are the session's, kept current while
+/// it runs: the Mac's settings pane writes the file, and the Dock follows.
+#[tokio::test(flavor = "multi_thread")]
+async fn notices_follow_the_sync_table_while_the_app_runs() {
+    let directory = tempfile::tempdir().expect("a directory");
+    let path = directory.path().join("config.toml");
+    std::fs::write(&path, "[sync]\nbadge = false\n").expect("written");
+    let session = Session::open(SessionOptions::in_memory().with_config_file_for_test(&path))
+        .expect("a session");
+    assert_eq!(
+        session.notices(),
+        postio_ffi::NoticesFfi {
+            notify: true,
+            badge: false
+        }
+    );
+
+    std::fs::write(&path, "[sync]\nnotify = false\n").expect("rewritten");
+    assert!(
+        heard(&session, 5, |event| matches!(
+            event,
+            postio_ffi::UiEvent::NoticesChanged
+        ))
+        .await,
+        "the frontend is told, so the Dock repaints"
+    );
+    assert_eq!(
+        session.notices(),
+        postio_ffi::NoticesFfi {
+            notify: false,
+            badge: true
+        }
+    );
+    session.shutdown();
+}
+
 /// A session whose inbox holds one conversation per subject, newest first.
 pub(crate) async fn inbox_of(subjects: &[&str]) -> std::sync::Arc<Session> {
     let database = test_support::memory().await;

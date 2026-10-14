@@ -91,7 +91,7 @@ pub use cost::{
 pub use dwell::{DwellArmFfi, dwell_on_cursor};
 pub use event::{ConnectionStateFfi, FailureReasonFfi, NoticeKindFfi, ToastKindFfi, UiEvent};
 pub use finder::{FinderAnswerFfi, FinderHitFfi};
-pub use focus::{FocusCountsFfi, FocusStripFfi};
+pub use focus::{FocusCountsFfi, FocusStripFfi, NoticesFfi};
 pub use focus_bar::{
     BarLineFfi, BarLineKindFfi, BarModeFfi, BarSelectFfi, BarViewFfi, PlaceEntryFfi, PlaceMarkFfi,
 };

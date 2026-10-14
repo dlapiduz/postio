@@ -718,6 +718,9 @@ pub struct Session {
     /// `[focus]` as it stands: what the strip's words depend on (filtering
     /// on, how many digest rules), kept current by `follow_config`.
     focus_config: Mutex<postio_config::FocusConfig>,
+    /// `[sync] notify` and `[sync] badge` as they stand, kept current by
+    /// `follow_config`.
+    notices: Mutex<crate::NoticesFfi>,
     /// `config.toml`, watched while the session lives: a change to `[keys]`
     /// rebinds at once and a change to `[focus]` reaches the engine, as in
     /// the GTK app (`follow_config`). `None` for a session given a document
@@ -1853,6 +1856,7 @@ impl Session {
                 wired: host.wired(),
                 _focus: engage_focus(&host, &config.focus, &source),
                 focus_config: Mutex::new(config.focus.clone()),
+                notices: Mutex::new(crate::NoticesFfi::from(&sync_config)),
                 _host: host,
                 config_watch: Mutex::new(None),
                 focus_list: crate::focus_list::FocusDriver::new(
@@ -1953,6 +1957,7 @@ impl Session {
             wired: host.wired(),
             _focus: engage_focus(&host, &focus_config, &source),
             focus_config: Mutex::new(focus_config.clone()),
+            notices: Mutex::new(crate::NoticesFfi::from(&sync_config)),
             _host: host,
             #[cfg(feature = "testing")]
             _scratch: None,
@@ -3846,6 +3851,15 @@ impl Session {
                     postio_ui::saved_search::pinned(service.config()),
                 ));
             }
+            if update.changed.sync {
+                let notices = crate::NoticesFfi::from(&service.config().sync);
+                let mut kept = session.notices.lock().expect("notices lock");
+                if *kept != notices {
+                    *kept = notices;
+                    drop(kept);
+                    let _ = session.local.0.try_send(UiEvent::NoticesChanged);
+                }
+            }
             if update.changed.focus {
                 *session.focus_config.lock().expect("focus config lock") =
                     service.config().focus.clone();
@@ -3879,6 +3893,11 @@ impl Session {
         driver.input(postio_focus::Input::SavedSearches(saved));
         driver.input(postio_focus::Input::Keymap(self.keymap()));
         driver.input(postio_focus::Input::Config(self.focus_config()));
+    }
+
+    /// `[sync] notify` and `[sync] badge` as they stand.
+    pub(crate) fn notices_now(&self) -> crate::NoticesFfi {
+        *self.notices.lock().expect("notices lock")
     }
 
     /// `[focus]` as it stands.

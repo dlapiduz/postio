@@ -16,7 +16,7 @@ import Testing
     ]
 
     static let strip = FocusStripFfi(
-        counts: "312 \u{b7} 41 unread", hasAction: "Has action \u{b7} 7",
+        counts: "312 \u{b7} 41 unread", unread: 41, hasAction: "Has action \u{b7} 7",
         filteredToday: "186 filtered today", digestRules: "4 digest rules")
 
     @Test func theWordsAreTheEnginesAsTheyCame() {
@@ -42,7 +42,7 @@ import Testing
     @Test func whatTheEngineLeavesOutIsNotDrawn() {
         // C10: the filtered and digest counts only while in use, decided in Rust.
         let quiet = FocusStripFfi(
-            counts: "312", hasAction: "Has action \u{b7} 0", filteredToday: nil, digestRules: nil)
+            counts: "312", unread: 0, hasAction: "Has action \u{b7} 0", filteredToday: nil, digestRules: nil)
         let words = HeaderStripWords(strip: quiet, hasActionOn: false) { Self.keys[$0] }
         #expect(words.filtered == nil)
         #expect(words.digestRules == nil)

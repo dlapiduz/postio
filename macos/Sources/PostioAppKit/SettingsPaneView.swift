@@ -992,6 +992,7 @@ public struct SettingsPaneView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle("Sync as soon as Postio opens", isOn: syncBinding(current, \.syncOnStartup))
                         Toggle("Notify me about new mail", isOn: syncBinding(current, \.notify))
+                        Toggle("Show the unread count on the Dock icon", isOn: syncBinding(current, \.badge))
                     }
                     .toggleStyle(.checkbox)
                 }
