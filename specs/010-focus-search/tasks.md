@@ -336,7 +336,7 @@ it understood.
 - [x] T137 Final sweep: capture all 13 screens at 1440×900 light, and 06 and 07 dark, against their PNGs; every difference listed in `docs/notes/<date>-focus-search-final.md`, none unexplained (SC-005)
 - [x] T138 Final bench run on the dev Mac recorded in the same note (SC-001–SC-003)
 - [x] T139 Run `/speckit-analyze` over spec.md, plan.md and tasks.md and fix what it finds
-- [ ] T140 *Not done here: the landing is the lead's, after review. #1803 has landed and the branch is rebased onto `main` (2026-10-13); the rest of this task is the pull request itself.* Rebase onto `main` (after #1803 lands), confirm `docs/keybindings.md` regenerates clean and T003 is green, and land with `scripts/issue-land.sh --detach --full-suite` (the Linux CI run is what proves GTK); label the PR `interactions-unreviewed`
+- [x] T140 *Landed as #1826 (4418e2ae, 2026-10-14), every check green, the full Linux suite included.* Rebase onto `main` (after #1803 lands), confirm `docs/keybindings.md` regenerates clean and T003 is green, and land with `scripts/issue-land.sh --detach --full-suite` (the Linux CI run is what proves GTK); label the PR `interactions-unreviewed`
 
 ---
 
