@@ -94,6 +94,10 @@ The store is Turso (ADR 0038). Its planner and defaults are not SQLite's, and mo
 
 **Decide QRESYNC from the `CAPABILITY` list after login, never from the `* ENABLED` echo.** Take expunges from `SELECT`'s `vanished_earlier`, not from `FETCH (VANISHED)`. An empty capability list after login is an error. Do not use `watch::ImapMailboxWatch`.
 
+**A Unix socket path has a length limit, and the agent socket sits beside the store.** macOS allows 104 bytes, Linux 108. `POSTIO_STORE` under a deep temporary directory (the scratchpad, `target/tmp`) makes `agents/mcp.sock` too long to bind, and the app only logs that agents will not be answered. Use a short directory, such as one from `mktemp -d` under `$TMPDIR`.
+
+**`UnixStream::try_clone` shares the non-blocking flag.** Turning a clone into a tokio stream to read the peer's credentials makes the original non-blocking too, and its next timed read fails with `EINVAL`. `postio_mcp::socket::peer_of` sets the flag back.
+
 **Nothing under `postio-host` may print to stdout.** `postio-mcp` runs the host in its own process, and its stdout is the JSON-RPC channel to the agent. A stray `println!` there breaks the session for the agent and makes no error in Postio. Log through `tracing`, which writes to stderr.
 
 **Install tracing with `set_global_default`, never `.init()`.** `.init()` takes the process's only `log` slot and leaves io-imap's skip counter inert, so a fetch that dropped responses reports success (`crates/postio-session/src/logging.rs`).

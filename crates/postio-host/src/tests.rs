@@ -5077,7 +5077,8 @@ fn an_agent_s_change_lands_on_the_window_s_undo_and_the_window_is_told() {
     // offer the change makes, as it would for its own keystroke.
     let world = World::new();
     let (desktop, desktop_events) = world.frontend(ClientKind::Focus);
-    let agent = world.host().connector().connect_agent();
+    let (agent, beside) = world.host().connector().connect_agent();
+    assert!(beside, "a window is open");
     let agent_events = agent.events();
 
     let invocation = world
@@ -5112,7 +5113,8 @@ fn an_agent_s_change_lands_on_the_window_s_undo_and_the_window_is_told() {
 #[test]
 fn an_agent_with_no_window_to_stand_beside_keeps_its_own_undo() {
     let world = World::new();
-    let agent = world.host().connector().connect_agent();
+    let (agent, beside) = world.host().connector().connect_agent();
+    assert!(!beside, "no window is open");
     let events = agent.events();
     world.send(
         &agent,

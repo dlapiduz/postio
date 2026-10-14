@@ -167,6 +167,12 @@ fn an_open_app_answers_the_agent_and_its_window_sees_the_change() {
         json!({"messages": [message]}),
     );
     assert_eq!(archived["isError"], false, "{archived}");
+    assert!(
+        archived["content"][0]["text"]
+            .as_str()
+            .is_some_and(|notice| notice.contains("window can undo it")),
+        "{archived}"
+    );
     // The window the person is looking at was told, as for its own key.
     assert!(
         said.any(|line| line.is_ok_and(|line| line.starts_with("window: Archived 1 message"))),

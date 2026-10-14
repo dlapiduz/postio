@@ -173,6 +173,10 @@ throwaway vault).
 - `POSTIO_DEMO_STATE=offline|auth|first-sync|synced` makes the account's sync
   state what the engine would have reported.
 - `POSTIO_WINDOW_SIZE=1440x900`, `POSTIO_APPEARANCE=light|dark`.
+- `POSTIO_DEMO_AGENTS=<dir>/agents/mcp.sock` has the demo answer agents on
+  that socket. Run `postio-mcp` with `POSTIO_STORE=<dir>/postio.db` to reach
+  it, and with `POSTIO_CONFIG` naming a file whose `[mcp]` shares
+  `test@example.com`. Keep `<dir>` short (see gotchas: socket path length).
 
 `scripts/macos-shot.sh <name> --seed small --both` builds, launches over the
 seed, photographs the window and its children with `screencapture -l`, and

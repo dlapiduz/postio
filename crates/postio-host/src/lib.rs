@@ -725,14 +725,18 @@ impl Connector {
     /// hears the undo offer each of the agent's commands makes, as it would
     /// for its own keystroke. Its tracked sends still answer the agent. With
     /// no window connected, it is an ordinary client with its own undo.
-    pub fn connect_agent(&self) -> Client {
+    ///
+    /// Answers the client, and whether it stands beside a window.
+    pub fn connect_agent(&self) -> (Client, bool) {
         let window = self.inner.window();
+        let beside = window.is_some();
         let (id, events) = self.inner.join_beside(ClientKind::Mcp, window);
-        Client::new(Arc::new(Local {
+        let client = Client::new(Arc::new(Local {
             inner: Arc::clone(&self.inner),
             client: id,
             events,
-        }))
+        }));
+        (client, beside)
     }
 }
 

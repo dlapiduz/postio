@@ -24,6 +24,7 @@ pub trait Backend {
 pub struct Lease {
     client: Option<Client>,
     host: Option<Host>,
+    beside_window: bool,
 }
 
 impl Lease {
@@ -32,6 +33,12 @@ impl Lease {
         self.client
             .as_ref()
             .expect("held until the lease is dropped")
+    }
+
+    /// Whether the client stands beside an open app window, whose undo
+    /// takes back what it does.
+    pub fn beside_window(&self) -> bool {
+        self.beside_window
     }
 }
 
@@ -91,6 +98,7 @@ impl Backend for Installed {
         Ok(Lease {
             client: Some(client),
             host: Some(host),
+            beside_window: false,
         })
     }
 }
@@ -110,11 +118,13 @@ impl Held {
 
 impl Backend for Held {
     fn lease(&mut self) -> Result<Lease, String> {
+        // Beside the app's window when there is one, so what the agent
+        // does is on that window's undo (ADR 0041, amended 2026-10-14).
+        let (client, beside_window) = self.connector.connect_agent();
         Ok(Lease {
-            // Beside the app's window when there is one, so what the agent
-            // does is on that window's undo (ADR 0041, amended 2026-10-14).
-            client: Some(self.connector.connect_agent()),
+            client: Some(client),
             host: None,
+            beside_window,
         })
     }
 }

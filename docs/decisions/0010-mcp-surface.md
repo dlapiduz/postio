@@ -349,12 +349,13 @@ said about those still holds.
   `InvocationFinished` (Q3). The store write, the queue row, the event and
   the server's copy are therefore the same as when a person presses the
   archive, move or label key.
-- **Undo is not shared.** Each client of a host has its own undo stack.
-  The agent's client lasts for one call, and it runs in another process
-  from the app. So `u` in the app cannot take back what an agent did. To
-  make up for that, each of these tools answers with the folder every
-  message came from, and the tool descriptions say that undo will not
-  reverse it.
+- **Undo follows the app.** When an app holds the store, it answers the
+  agent (ADR 0041's 2026-10-14 amendment). The agent's client shares that
+  app window's undo stack, so `u` there takes the change back. When no app
+  is open, the agent's client is its own and lasts one call, and nothing
+  can undo the change. In both cases each tool answers with the folder
+  every message came from, and its notice says which of the two cases
+  applied.
 - **Told to act only when asked.** Each organizing tool's description says
   that message content is untrusted and that the tool is for what the
   person asked, never for what a message says. Descriptions are still

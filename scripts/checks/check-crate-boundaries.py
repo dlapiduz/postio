@@ -50,7 +50,8 @@ The invariants (see docs/ARCHITECTURE.md; CLAUDE.md, "What the code must do"):
   * ``postio-mcp``, Postio over MCP, must not depend directly on the store
     engine or the protocol, nor on a toolkit, WebKit, an HTTP or WebSocket
     server, or an inference engine. It is a frontend over ``postio-client``
-    (ADR 0010 Q2) and listens on no socket: stdio only (ADR 0010 Q6).
+    (ADR 0010 Q2) and listens on no network: stdio, and the app's private Unix
+    socket (ADR 0010 Q6, ADR 0041's 2026-10-14 amendment).
   * ``postio-widgets`` must not depend on the store engine, the protocol, the
     host or the desktop app. It is the GTK the desktop app draws with (ADR
     0043), and it reaches mail only through ``postio-client``.
@@ -539,8 +540,8 @@ RULES: dict[str, dict[str, object]] = {
             "webkit6-sys",
             "rusqlite",
             "libsqlite3-sys",
-            # An HTTP or WebSocket server is a listening socket, and the MCP
-            # surface is stdio only (ADR 0010 Q6).
+            # An HTTP or WebSocket server is a network listener, and the MCP
+            # surface is stdio and a private Unix socket only (ADR 0010 Q6).
             "axum",
             "actix-web",
             "warp",
@@ -553,8 +554,8 @@ RULES: dict[str, dict[str, object]] = {
             "postio-mcp is a frontend over postio-client (ADR 0010 Q2): it "
             "opens the store through the host like every app (ADR 0041), so "
             "it names neither the engine nor the protocol itself. It draws "
-            "nothing, links no model, and listens on no socket: stdio only "
-            "(ADR 0010 Q6)."
+            "nothing, links no model, and listens on no network: stdio and "
+            "the app's private Unix socket only (ADR 0010 Q6, ADR 0041)."
         ),
     },
     "postio-ffi": {
