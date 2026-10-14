@@ -570,6 +570,180 @@ async fn new_inbox_mail_is_synced_while_the_archive_s_headers_run() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn new_inbox_mail_is_synced_while_the_wave_only_fetches_bodies() {
+    // The same promise after the headers are done. A wave that has run out
+    // of folders keeps itself alive claiming bodies beside no lanes at all,
+    // and the only thing that looked at INBOX was a committed header batch:
+    // with no header batches left, nothing looked until the whole backfill
+    // was over -- an hour on a real account, while new mail went unseen.
+    //
+    // Causal: when the new message lands, the archive must still be missing
+    // bodies.
+    let backend = Arc::new(
+        MockBackend::builder()
+            .mailbox(folder("INBOX", &[], 10))
+            .mailbox(folder("Archive", &["\\Archive"], 600))
+            .build(),
+    );
+    backend.refuse_creates("no new folders here");
+    backend.set_latency(LATENCY);
+
+    let (database, engine, _directory) = engine_over(backend.clone()).await;
+
+    until("every header to land", async || {
+        stored(&database, "INBOX").await == Some(10)
+            && stored(&database, "Archive").await == Some(600)
+    })
+    .await;
+    // Slow the bodies down so the body-only stretch is unmistakable.
+    backend.set_latency(Duration::from_millis(150));
+    assert!(
+        bodies_missing(&database, "Archive")
+            .await
+            .is_some_and(|missing| missing > 100),
+        "the archive's bodies were done before the question could be asked"
+    );
+
+    backend
+        .append("INBOX", &AppendMessage::new(message(11)))
+        .await
+        .expect("the mock accepts new mail");
+
+    until("the new message to be synced", async || {
+        stored(&database, "INBOX").await == Some(11)
+    })
+    .await;
+    let missing = bodies_missing(&database, "Archive").await.unwrap_or(0);
+    assert!(
+        missing > 0,
+        "the new INBOX message was synced only once the archive's bodies were \
+         all down, so new mail waited out the whole backfill"
+    );
+    drop(engine);
+}
+
+/// A message whose words are a line and whose attachment is six megabytes,
+/// stated part by part as a server would report it: the whole is over the
+/// background lane's five-megabyte cap, and its text is far under it.
+fn a_note_with_a_large_attachment() -> MockMessage {
+    // "AAA" is "QUFB" in base64, so the encoded payload can be written out
+    // without an encoder: nineteen groups to a 76-column line.
+    const LINES: usize = 105_264;
+    let decoded = (LINES * 19 * 3) as u64;
+    let line = format!("{}\r\n", "QUFB".repeat(19));
+    let encoded = line.repeat(LINES);
+    let raw = format!(
+        "From: Ada Lovelace <ada@example.com>\r\n\
+         To: Postio <postio@example.net>\r\n\
+         Subject: The plans\r\n\
+         Message-ID: <plans@example.com>\r\n\
+         Date: Wed, 1 Jul 2026 09:00:00 +0000\r\n\
+         Content-Type: multipart/mixed; boundary=b\r\n\
+         \r\n\
+         --b\r\n\
+         Content-Type: text/plain; charset=utf-8\r\n\
+         \r\n\
+         The plans are attached.\r\n\
+         --b\r\n\
+         Content-Type: application/pdf; name=plans.pdf\r\n\
+         Content-Transfer-Encoding: base64\r\n\
+         Content-Disposition: attachment; filename=plans.pdf\r\n\
+         \r\n\
+         {encoded}\
+         --b--\r\n"
+    );
+    let structure = postio_account::backend::BodyStructure::from_parts(
+        "multipart/mixed",
+        [
+            postio_account::backend::PartNode::new("1", "text/plain", 23)
+                .with_charset("utf-8")
+                .with_encoding("7bit"),
+            postio_account::backend::PartNode::new("2", "application/pdf", decoded)
+                .with_encoding("base64")
+                .with_filename("plans.pdf"),
+        ],
+    );
+    MockMessage::new(raw.into_bytes())
+        .with_structure(structure)
+        .with_part("1", &b"The plans are attached."[..])
+        .with_part("2", encoded.into_bytes())
+}
+
+/// Whether `message`'s text and every attachment are on this machine.
+async fn readable_with_attachments(database: &Store, message: MessageId) -> bool {
+    let Ok(connection) = database.connect().await else {
+        return false;
+    };
+    let Ok(Some(message)) = MessageRepository::new(&connection).get(message).await else {
+        return false;
+    };
+    !matches!(
+        message.sync.body_state,
+        postio_model::BodyState::NotFetched | postio_model::BodyState::HeadersOnly
+    ) && !message.attachments.is_empty()
+        && message
+            .attachments
+            .iter()
+            .all(|attachment| attachment.blob_id.is_some())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn new_mail_and_its_attachments_come_down_ahead_of_the_backlog() {
+    // New mail used to join the back of the queue it found: behind the
+    // batch on the wire, its words fetched only when the background lane
+    // reached it, and its attachments not until somebody clicked and waited.
+    // A note over the five-megabyte cap -- measured against the whole
+    // message, attachment and all -- never had its words fetched at all.
+    //
+    // So: a note carrying six megabytes arrives while the archive's bodies
+    // are still coming down, and its text and its attachment must both be
+    // local while the archive is still missing bodies.
+    let backend = Arc::new(
+        MockBackend::builder()
+            .mailbox(folder("INBOX", &[], 10))
+            .mailbox(folder("Archive", &["\\Archive"], 600))
+            .build(),
+    );
+    backend.refuse_creates("no new folders here");
+    backend.set_latency(LATENCY);
+
+    let (database, engine, _directory) = engine_over(backend.clone()).await;
+
+    until("every header to land", async || {
+        stored(&database, "INBOX").await == Some(10)
+            && stored(&database, "Archive").await == Some(600)
+    })
+    .await;
+    backend.set_latency(Duration::from_millis(150));
+    assert!(
+        bodies_missing(&database, "Archive")
+            .await
+            .is_some_and(|missing| missing > 100),
+        "the archive's bodies were done before the question could be asked"
+    );
+
+    backend.deliver("INBOX", a_note_with_a_large_attachment());
+    until("the new message to be synced", async || {
+        stored(&database, "INBOX").await == Some(11)
+    })
+    .await;
+    let (_, arrived) = newest_message(&database, "INBOX").await;
+
+    until(
+        "the new message's text and attachment to be local",
+        async || readable_with_attachments(&database, arrived).await,
+    )
+    .await;
+    let missing = bodies_missing(&database, "Archive").await.unwrap_or(0);
+    assert!(
+        missing > 0,
+        "the new message became readable only once the archive's bodies were \
+         all down, so it waited behind the whole backlog"
+    );
+    drop(engine);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_slow_pass_does_not_hold_the_folders_queued_behind_the_wave() {
     // The live incident in
     // `docs/notes/2026-09-13-a-slow-pass-stops-every-folder-behind-it.md`:

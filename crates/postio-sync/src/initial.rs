@@ -69,6 +69,7 @@ use postio_storage::{Checkout, WritePriority};
 use crate::drain::SyncError;
 use crate::filing::{FiledMessage, FilingPass};
 use postio_account::cancel::CancelToken;
+use postio_model::MessageId;
 
 /// This module's result type.
 pub type Result<T> = std::result::Result<T, SyncError>;
@@ -193,10 +194,20 @@ pub struct Progress {
 }
 
 /// What a completed (or resumed) pass did.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Report {
     /// Messages that were not known locally before this pass.
     pub inserted: usize,
+    /// The ids of what a [`Coverage::Everything`] pass inserted, and empty
+    /// on every other pass.
+    ///
+    /// A backend with no MODSEQ re-reads the folder on every pass after the
+    /// first, so what such a pass inserts is exactly the mail that arrived
+    /// since the last one (#1704). A first sync's inserts are not arrivals,
+    /// and collecting them would hold a whole mailbox's ids for nothing.
+    pub arrived: Vec<MessageId>,
+    /// Of `arrived`, the ones a filing pass took out of the inbox's view.
+    pub filed_away: Vec<MessageId>,
     /// Messages already present that this pass wrote again — resumed rows
     /// from an earlier interrupted pass land here, harmlessly.
     pub updated: usize,
@@ -479,6 +490,10 @@ pub(crate) async fn enumerate(
         report.inserted += batch.inserted;
         report.updated += batch.updated;
         report.threaded += batch.threaded;
+        if coverage == Coverage::Everything {
+            report.arrived.extend(batch.arrived);
+            report.filed_away.extend(batch.filed_away);
+        }
 
         // One real yield per batch, and it is load-bearing. The read-ahead
         // above primes the next fetch *before* the commit, so by the time the
@@ -683,7 +698,7 @@ pub(crate) async fn commit_batch_filing(
         let mailbox_id = mailbox.id;
         let role = mailbox.role;
         let known_uids = &known;
-        let ((upsert, written), held) = write_unit(connection, || {
+        let ((upsert, written, effects), held) = write_unit(connection, || {
             // `BEGIN IMMEDIATE`, which is what `transaction` opens at the
             // outermost level, and for the reason #79 records: the first
             // statement inside is a read, and a deferred transaction that then
@@ -722,6 +737,7 @@ pub(crate) async fn commit_batch_filing(
                 // What this unit inserted, to the filing pass when there is
                 // one, in this same transaction: the rows it only refreshed
                 // were here before, and are not arrivals.
+                let mut effects = crate::filing::FilingEffects::default();
                 if let Some(filing) = filing
                     && !upsert.inserted_ids.is_empty()
                 {
@@ -735,15 +751,19 @@ pub(crate) async fn commit_batch_filing(
                             role,
                         })
                         .collect();
-                    crate::filing::file_arrivals(&connection, filing, mailbox_id, &filed).await;
+                    effects =
+                        crate::filing::file_arrivals(&connection, filing, mailbox_id, &filed).await;
                 }
 
-                Ok::<_, SyncError>((upsert, written))
+                Ok::<_, SyncError>((upsert, written, effects))
             })
         })
         .await?;
 
         report.inserted += upsert.inserted;
+        report.arrived.extend(&upsert.inserted_ids);
+        report.filed_away.extend(effects.filtered);
+        report.filed_away.extend(effects.held);
         report.updated += upsert.updated;
         report.threaded += written.len();
 

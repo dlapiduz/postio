@@ -623,11 +623,29 @@ pub struct BackfillCandidate {
     pub remote_id: RemoteId,
     /// `RFC822.SIZE`, as the header fetch reported it.
     pub size: u64,
+    /// What a text-axis fetch of it costs: [`size`](Self::size) less the
+    /// attachment parts `BODYSTRUCTURE` reported, which that fetch leaves on
+    /// the server (ADR 0017).
+    ///
+    /// What the background lane's size cap is measured against. Against the
+    /// whole message, a short note carrying a six-megabyte PDF never had its
+    /// few kilobytes of words fetched at all. An estimate, and a low one by
+    /// whatever small inline images ride with the text; equal to `size` for a
+    /// row whose structure was never recorded, which is fetched whole.
+    pub text_size: u64,
     /// When the server received it. The backlog's secondary sort key.
     pub received_at: DateTime<Utc>,
     /// That mailbox's role, so the backlog can rank a body by the folder it
     /// is in before it ranks it by date.
     pub mailbox_role: MailboxRole,
+}
+
+impl BackfillCandidate {
+    /// With its [`text_size`](Self::text_size), never above the whole.
+    fn with_text_size(mut self, text_size: u64) -> Self {
+        self.text_size = text_size.min(self.size);
+        self
+    }
 }
 
 /// What an account's mail costs, and how much of it is here.
@@ -2030,7 +2048,8 @@ impl<'a> MessageRepository<'a> {
             let read = |row: &Row| {
                 Ok((
                     row.col::<i64>(7)?,
-                    read_backfill_candidate(row, mailbox_id, role_at(row, 6)?)?,
+                    read_backfill_candidate(row, mailbox_id, role_at(row, 6)?)?
+                        .with_text_size(row.col::<i64>(8)? as u64),
                 ))
             };
             let rows = if arm.uses_parser_version {
@@ -2160,7 +2179,7 @@ impl<'a> MessageRepository<'a> {
             self.connection,
             "SELECT messages.id, messages.uid, messages.size, messages.received_at,
                     mailboxes.path, messages.remote_id, messages.mailbox_id,
-                    mailboxes.role
+                    mailboxes.role, MAX(0, messages.size - (SELECT COALESCE(SUM(attachments.size), 0) FROM attachments WHERE attachments.message_id = messages.id AND attachments.part_id IS NOT NULL))
                FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
               WHERE messages.id = ?1
                 AND messages.body_state <> 'full'
@@ -2171,7 +2190,8 @@ impl<'a> MessageRepository<'a> {
         .await?;
         crate::sql::first_of(&mut statement, [message_id.get()], |row| {
             let mailbox_id = MailboxId::new(row.col(6)?);
-            read_backfill_candidate(row, mailbox_id, role_at(row, 7)?)
+            Ok(read_backfill_candidate(row, mailbox_id, role_at(row, 7)?)?
+                .with_text_size(row.col::<i64>(8)? as u64))
         })
         .await
     }
@@ -2303,7 +2323,8 @@ const BACKFILL_ARMS: [BackfillArm; 3] = [
 fn backfill_arm(predicate: &str) -> String {
     format!(
         "SELECT messages.id, messages.uid, messages.size, messages.received_at, \
-                mailboxes.path, messages.remote_id, mailboxes.role, messages.sort_at
+                mailboxes.path, messages.remote_id, mailboxes.role, messages.sort_at, \
+                MAX(0, messages.size - (SELECT COALESCE(SUM(attachments.size), 0) FROM attachments WHERE attachments.message_id = messages.id AND attachments.part_id IS NOT NULL))
            FROM messages JOIN mailboxes ON mailboxes.id = messages.mailbox_id
           WHERE messages.mailbox_id = ?1 AND {predicate}
             AND messages.uid IS NOT NULL
@@ -2902,6 +2923,8 @@ fn read_backfill_candidate(
         mailbox_id,
         uid: Uid::new(row.col::<i64>(1)? as u32),
         size: row.col::<i64>(2)? as u64,
+        // The whole message until a query that knows better says so.
+        text_size: row.col::<i64>(2)? as u64,
         received_at: from_millis(row.col(3)?),
         mailbox_path: row.col(4)?,
         remote_id: RemoteId::new(row.col::<String>(5)?),

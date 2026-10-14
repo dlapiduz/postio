@@ -2215,9 +2215,15 @@ async fn pump_body(
     let requests: Vec<_> = claims.iter().map(|claim| claim.request.clone()).collect();
     let prefetched = match store.connect_background().await {
         Ok(connection) => {
+            // Background only if every claim in the batch is: one the user
+            // or an arrival is waiting on lifts the whole command.
+            let quiet = claims
+                .iter()
+                .all(|claim| claim.priority == backfill::Priority::Background)
+                .then(|| background_backend(parts));
             let cache = backfill::prefetch_text_sections(
                 &connection,
-                parts.backend.as_ref(),
+                quiet.as_deref().unwrap_or(parts.backend.as_ref()),
                 &requests,
                 &cancel,
             )
@@ -2338,10 +2344,12 @@ async fn fetch_one_body(
     // so a borrow held across the await below would be the second borrower's
     // panic — the kind that compiles and then only fails under load.
     let mut mine = prefetched.map(|cache| cache.borrow_mut().split_for(&claim.request.remote_id));
+    let quiet =
+        (claim.priority == backfill::Priority::Background).then(|| background_backend(parts));
     let result = backfill::fetch_body(
         &connection,
         &parts.blobs,
-        parts.backend.as_ref(),
+        quiet.as_deref().unwrap_or(parts.backend.as_ref()),
         &claim.request,
         inline_cap,
         mine.as_mut(),
@@ -2968,7 +2976,11 @@ async fn sync_wave(
     // A job taken off the inbox that the wave could not answer: the caller
     // serves it the moment the wave returns. See [`attend`].
     let mut handed_back: Option<Job> = None;
-    let mut last_look: Option<Instant> = None;
+    // When the wave next asks the watcher about the inbox. On a clock of its
+    // own, not on header commits: a wave whose folders are all done keeps
+    // fetching bodies with no batch left to ring, and new mail went unseen
+    // until the whole backfill was over. See [`Look`].
+    let mut look_at = Some(tokio::time::Instant::now());
     // Beside the lanes, never inside a handler: a handler runs while the
     // passes are suspended, and a pass suspends *holding the write gate*
     // (`initial::commit_batch` takes it per unit and awaits the statements
@@ -2978,7 +2990,11 @@ async fn sync_wave(
     // `STATUS` are futures of their own, polled with everything else, and
     // the handlers only start them and settle what they return.
     let mut bodies = FuturesUnordered::new();
-    let mut probes = FuturesUnordered::new();
+    // The inbox's watch, beside the lanes: an `IDLE` on the pool's watch
+    // connection, or a `STATUS` where the server cannot idle. At most one.
+    let mut looks: FuturesUnordered<futures_util::future::LocalBoxFuture<'_, Look>> =
+        FuturesUnordered::new();
+    let mut idle_cancel: Option<postio_account::cancel::CancelToken> = None;
     // At most one drain at a time, beside the lanes, for a queued write the
     // person made during the wave (#1593). See [`attend`].
     let mut drains = FuturesUnordered::new();
@@ -2986,8 +3002,21 @@ async fn sync_wave(
     let make_bodies = |claims: Vec<postio_sync::backfill::Claim>, inline_cap: Option<u64>| async move {
         fetch_bodies(parts, store, inline_cap, claims).await
     };
-    let make_probe = |mailbox: MailboxId, path: String| async move {
-        (mailbox, parts.backend.status(&path).await)
+    let make_look = |step: Watch| -> Option<futures_util::future::LocalBoxFuture<'_, Look>> {
+        match step {
+            Watch::Idle {
+                mailbox,
+                path,
+                timeout,
+                cancel,
+            } => Some(Box::pin(async move {
+                Look::Woke(mailbox, parts.backend.idle(&path, timeout, &cancel).await)
+            })),
+            Watch::Poll { mailbox, path } => Some(Box::pin(async move {
+                Look::Observed(mailbox, parts.backend.status(&path).await)
+            })),
+            Watch::Wait { .. } => None,
+        }
     };
     // What the wave does with whatever asked for its attention, at every
     // place it is asked: a body request starts a fetch beside the lanes, a
@@ -3045,7 +3074,9 @@ async fn sync_wave(
         };
     }
 
-    while !running.is_empty() || !bodies.is_empty() || !probes.is_empty() || !drains.is_empty() {
+    // `looks` is not a reason to keep going: an `IDLE` lasts minutes, and the
+    // wave winds it down below once its own work is done.
+    while !running.is_empty() || !bodies.is_empty() || !drains.is_empty() {
         tokio::select! {
             biased;
             // Completions first: a wave that is already finishing should
@@ -3081,6 +3112,11 @@ async fn sync_wave(
                         message: error.message().to_string(),
                         account: Some(parts.account),
                     });
+                }
+                // New mail the pass found starts down now, beside whatever
+                // background batch is on the wire, not after it.
+                if !asked_to_stop {
+                    act_on!(Asked::FetchNow);
                 }
                 // The interruption conditions, checked here as well as in
                 // the arms below: `biased;` polls completions first, so
@@ -3142,6 +3178,11 @@ async fn sync_wave(
             // flow continuous rather than one batch per tick.
             Some(results) = bodies.next(), if !bodies.is_empty() => {
                 settle_bodies(parts, state, results).await;
+                // An arrival whose text just landed has its attachments
+                // queued behind it; they go now too.
+                if !asked_to_stop {
+                    act_on!(Asked::FetchNow);
+                }
                 if !asked_to_stop
                     && bodies.is_empty()
                     && let Some(claims) = claim_bodies_for_the_wave(parts, store, state, inbox, &active).await
@@ -3170,14 +3211,14 @@ async fn sync_wave(
                     cancel.cancel();
                 }
             }
-            // The `STATUS` on the watched inbox came back. A change to a
-            // folder no lane is syncing gets a lane of its own, now, beside
-            // the ones already running: not by cancelling them -- a
-            // half-done pass costs its resume, and the folders in the lanes
-            // are the big ones -- and not by queueing behind them, which is
-            // the hour this exists to avoid. A change to a folder that is
-            // mid-pass is that pass's to find, and the observation has still
-            // primed the watcher.
+            // The inbox's watch came back. A change to a folder no lane is
+            // syncing gets a lane of its own, now, beside the ones already
+            // running: not by cancelling them -- a half-done pass costs its
+            // resume, and the folders in the lanes are the big ones -- and
+            // not by queueing behind them, which is the hour this exists to
+            // avoid. A change to a folder that is mid-pass is queued for one
+            // more pass after it: the running pass may have asked the server
+            // before the delivery, and a queued INBOX is taken first.
             //
             // The watcher's first look at a folder always reads as a change
             // (there is no earlier signature), so the inbox gets one
@@ -3186,42 +3227,57 @@ async fn sync_wave(
             // also what catches mail that arrived while the inbox's own pass
             // was running -- the same reason `keep_watch` re-syncs on a first
             // observation.
-            Some((mailbox, result)) = probes.next(), if !probes.is_empty() => {
-                let now = Utc::now();
-                match result {
-                    Ok(status) => {
-                        let wake = state
-                            .watcher
-                            .as_mut()
-                            .map(|watcher| watcher.observed(mailbox, &status, now));
-                        if wake == Some(Wake::Changed)
-                            && !active.contains(&mailbox)
-                            && !asked_to_stop
-                        {
-                            state.to_sync.retain(|queued| *queued != mailbox);
-                            match store.connect_background().await {
-                                Ok(connection) => {
-                                    tracing::debug!(
-                                        mailbox = mailbox.get(),
-                                        "a watched folder changed during the wave; syncing it beside the lanes"
-                                    );
-                                    admitted.push(mailbox);
-                                    active.push(mailbox);
-                                    running.push(make_pass(mailbox, connection));
-                                }
-                                Err(error) => {
-                                    state.to_sync.push_front(mailbox);
-                                    tracing::warn!(%error, "no connection for a changed folder's lane");
-                                }
+            Some(look) = looks.next(), if !looks.is_empty() => {
+                idle_cancel = None;
+                look_at = Some(tokio::time::Instant::now());
+                if let Some(mailbox) = settle_look(parts, state, look)
+                    && !asked_to_stop
+                {
+                    if active.contains(&mailbox) {
+                        if !state.to_sync.contains(&mailbox) {
+                            state.to_sync.push_front(mailbox);
+                        }
+                    } else {
+                        state.to_sync.retain(|queued| *queued != mailbox);
+                        match store.connect_background().await {
+                            Ok(connection) => {
+                                tracing::debug!(
+                                    mailbox = mailbox.get(),
+                                    "a watched folder changed during the wave; syncing it beside the lanes"
+                                );
+                                admitted.push(mailbox);
+                                active.push(mailbox);
+                                running.push(make_pass(mailbox, connection));
+                            }
+                            Err(error) => {
+                                state.to_sync.push_front(mailbox);
+                                tracing::warn!(%error, "no connection for a changed folder's lane");
                             }
                         }
                     }
-                    Err(error) => {
-                        if let Some(watcher) = state.watcher.as_mut() {
-                            watcher.failed(mailbox, now);
+                }
+            }
+            // Time to ask the watcher about the inbox again.
+            () = sleep_until_look(look_at), if look_at.is_some() && looks.is_empty() && !asked_to_stop => {
+                look_at = None;
+                let step = state
+                    .watcher
+                    .as_mut()
+                    .map_or(Watch::Wait { until: None }, |watcher| watcher.next_push(Utc::now()));
+                match step {
+                    Watch::Wait { until } => {
+                        let delay = until
+                            .map(|at| (at - Utc::now()).to_std().unwrap_or_default())
+                            .unwrap_or(POLL_INTERVAL);
+                        look_at = Some(
+                            tokio::time::Instant::now() + delay.clamp(WATCH_FLOOR, POLL_INTERVAL),
+                        );
+                    }
+                    step => {
+                        if let Watch::Idle { cancel, .. } = &step {
+                            idle_cancel = Some(cancel.clone());
                         }
-                        let moved = state.supervisor.observe(&error, now);
-                        announce_link(parts, state, moved);
+                        looks.extend(make_look(step));
                     }
                 }
             }
@@ -3230,13 +3286,6 @@ async fn sync_wave(
             // [`claim_bodies_for_the_wave`] for why a wave cannot leave either until
             // it is over.
             _ = yield_point.notified(), if !asked_to_stop => {
-                if probes.is_empty()
-                    && last_look.is_none_or(|at| at.elapsed() >= WATCH_FLOOR)
-                    && let Some((mailbox, path)) = watched_inbox_due(state)
-                {
-                    last_look = Some(Instant::now());
-                    probes.push(make_probe(mailbox, path));
-                }
                 if bodies.is_empty()
                     && let Some(claims) = claim_bodies_for_the_wave(parts, store, state, inbox, &active).await
                 {
@@ -3244,6 +3293,20 @@ async fn sync_wave(
                     bodies.push(make_bodies(claims, inline_cap));
                 }
             }
+        }
+    }
+
+    // The inbox's watch is wound down, never dropped: a dropped `IDLE` hands
+    // the pool a session still inside the command (#755). What it saw is
+    // queued for the loop rather than lost.
+    if let Some(cancel) = idle_cancel.take() {
+        cancel.cancel();
+    }
+    while let Some(look) = looks.next().await {
+        if let Some(mailbox) = settle_look(parts, state, look)
+            && !state.to_sync.contains(&mailbox)
+        {
+            state.to_sync.push_back(mailbox);
         }
     }
 
@@ -3283,8 +3346,8 @@ async fn sync_wave(
 /// wave is the whole engine while it runs.
 ///
 /// So the passes ring [`Committed::batch`]'s yield point once per committed
-/// batch, and the wave answers: this, for bodies, and [`watched_inbox_due`]
-/// for new mail, under every guard the between-wave pump uses. The fetches
+/// batch, and the wave answers with this, under every guard the between-wave
+/// pump uses; the inbox is watched on a clock of its own ([`Look`]). The fetches
 /// themselves run as futures beside the lanes (see `sync_wave`), so the
 /// headers keep flowing while they are on the wire -- and the next batch is
 /// claimed as each lands, so bodies flow for the length of the wave.
@@ -3324,27 +3387,75 @@ async fn claim_bodies_for_the_wave(
     (!claims.is_empty()).then_some(claims)
 }
 
-/// The watched inbox, if the watcher says it is due a look.
+/// The account's server for work nobody is waiting on: the archive's
+/// headers and the background lane's bodies. See
+/// [`MailBackend::for_background`].
+fn background_backend(parts: &EngineParts) -> Arc<dyn MailBackend> {
+    parts
+        .backend
+        .for_background()
+        .unwrap_or_else(|| Arc::clone(&parts.backend))
+}
+
+/// What the wave's watch on the inbox came back with.
 ///
-/// # Only the watched inbox
+/// # Its own clock, and a real `IDLE`
 ///
-/// `keep_watch`'s `next_poll` walks every folder, and every folder's first
-/// observation reads as a change (there is no earlier signature to compare
-/// against), so polling them all from inside a wave would stop the wave once
-/// per folder for nothing. The inbox is the folder a person is waiting on, so
-/// the wave asks the watcher about that one only (`next_push`), and the rest
-/// keep being watched between waves exactly as before. An `Idle` step is
-/// taken as a `Poll`, as `keep_watch` does while downloading: a wave holds
-/// its connections, and an `IDLE` would hold another for minutes.
+/// The wave used to look at the inbox only when a lane committed a batch of
+/// headers, and took an `Idle` step as a `Poll`. Once every folder's headers
+/// were down, the wave went on fetching bodies with no batch left to ring,
+/// and nothing looked at the inbox until the whole backfill was over. So the
+/// wave asks the watcher on a clock of its own, and holds the `IDLE` it is
+/// given: `idle` runs on the pool's dedicated watch connection, so it costs
+/// the lanes and the bodies nothing, and a delivery is pushed rather than
+/// found on the next look.
 ///
-/// A change to a folder this wave is currently syncing is not a change worth
-/// acting on — its pass will pick it up — but the observation still counts:
-/// it is what gives the watcher the signature that makes the *next*
-/// observation meaningful.
-fn watched_inbox_due(state: &mut State) -> Option<(MailboxId, String)> {
-    match state.watcher.as_mut()?.next_push(Utc::now()) {
-        Watch::Idle { mailbox, path, .. } | Watch::Poll { mailbox, path } => Some((mailbox, path)),
-        Watch::Wait { .. } => None,
+/// Only the inbox. `keep_watch`'s `next_poll` walks every folder, and every
+/// folder's first observation reads as a change, so polling them all from
+/// inside a wave would start a pass per folder for nothing. The inbox is the
+/// folder a person is waiting on; the rest are watched between waves.
+enum Look {
+    /// An `IDLE` returned.
+    Woke(
+        MailboxId,
+        Result<Vec<postio_account::backend::MailboxEvent>, BackendError>,
+    ),
+    /// A `STATUS` returned.
+    Observed(
+        MailboxId,
+        Result<postio_account::backend::MailboxStatus, BackendError>,
+    ),
+}
+
+/// Reports a [`Look`] to the watcher, and answers the mailbox it says
+/// changed.
+fn settle_look(parts: &EngineParts, state: &mut State, look: Look) -> Option<MailboxId> {
+    let now = Utc::now();
+    let (mailbox, wake) = match look {
+        Look::Woke(mailbox, Ok(events)) => {
+            (mailbox, state.watcher.as_mut()?.woke(mailbox, &events, now))
+        }
+        Look::Observed(mailbox, Ok(status)) => (
+            mailbox,
+            state.watcher.as_mut()?.observed(mailbox, &status, now),
+        ),
+        Look::Woke(mailbox, Err(error)) | Look::Observed(mailbox, Err(error)) => {
+            if let Some(watcher) = state.watcher.as_mut() {
+                watcher.failed(mailbox, now);
+            }
+            let moved = state.supervisor.observe(&error, now);
+            announce_link(parts, state, moved);
+            return None;
+        }
+    };
+    (wake == Wake::Changed).then_some(mailbox)
+}
+
+/// Sleeps until `at`, or forever when there is no look to take.
+async fn sleep_until_look(at: Option<tokio::time::Instant>) {
+    match at {
+        Some(at) => tokio::time::sleep_until(at).await,
+        None => std::future::pending().await,
     }
 }
 
@@ -3363,9 +3474,15 @@ async fn fetch_bodies(
     let requests: Vec<_> = claims.iter().map(|claim| claim.request.clone()).collect();
     let prefetched = match store.connect_background().await {
         Ok(connection) => {
+            // Background only if every claim in the batch is: one the user
+            // or an arrival is waiting on lifts the whole command.
+            let quiet = claims
+                .iter()
+                .all(|claim| claim.priority == backfill::Priority::Background)
+                .then(|| background_backend(parts));
             let cache = backfill::prefetch_text_sections(
                 &connection,
-                parts.backend.as_ref(),
+                quiet.as_deref().unwrap_or(parts.backend.as_ref()),
                 &requests,
                 &cancel,
             )
@@ -3426,6 +3543,9 @@ async fn settle_bodies(
 struct PassOutcome {
     mailbox: MailboxId,
     result: Result<SyncSummary, PassFailure>,
+    /// What the pass announced as new mail: their bodies, and then their
+    /// attachments, go on the backfill's fresh lane when it settles.
+    arrived: Vec<MessageId>,
 }
 
 impl PassOutcome {
@@ -3459,6 +3579,7 @@ mod pass_outcome_tests {
         PassOutcome {
             mailbox: MailboxId::new(1),
             result,
+            arrived: Vec::new(),
         }
     }
 
@@ -3526,6 +3647,7 @@ async fn sync_pass(
     let failed = |failure: PassFailure| PassOutcome {
         mailbox,
         result: Err(failure),
+        arrived: Vec::new(),
     };
     let record = match MailboxRepository::new(connection).get(mailbox).await {
         Ok(Some(record)) => record,
@@ -3539,6 +3661,12 @@ async fn sync_pass(
 
     // A folder *path* is a name the user chose for a container, not a message
     // and not an address; it is what makes a per-mailbox line legible at all.
+    // INBOX is what a person is waiting on, new mail included; every other
+    // folder's headers are a backfill, and take a shared connection only
+    // when nothing a person asked for wants it.
+    let quiet =
+        (record.role != postio_model::MailboxRole::Inbox).then(|| background_backend(parts));
+    let backend = quiet.as_deref().unwrap_or(parts.backend.as_ref());
     tracing::Span::current().record("path", record.path.as_str());
     tracing::Span::current().record("incremental", synced_before);
     tracing::info!("sync started");
@@ -3573,14 +3701,9 @@ async fn sync_pass(
     let result = if synced_before {
         // Its arrivals go to the filing pass, when a host in Focus mode gave
         // this engine one; a first sync, below, never files (spec 007).
-        resync::resync_mailbox_filing(
-            connection,
-            parts.backend.as_ref(),
-            &record,
-            filing,
-            cancel,
-            |progress| committed.batch(progress),
-        )
+        resync::resync_mailbox_filing(connection, backend, &record, filing, cancel, |progress| {
+            committed.batch(progress)
+        })
         .await
         .map(|outcome| {
             if let resync::Outcome::Incremental {
@@ -3600,16 +3723,29 @@ async fn sync_pass(
                     .collect();
                 only_arrivals = *vanished == 0 && *changed == ids.len() && filed_away.is_empty();
             }
+            // A backend with no MODSEQ re-reads the folder on every pass
+            // after the first: this *is* its incremental pass, and what it
+            // inserted arrived since the last one (#1704). Every other full
+            // pass -- a rebuild, a renumbering, MODSEQ going backwards -- is
+            // a reload, and announcing it would be the notification storm.
+            if let resync::Outcome::Full {
+                reason: postio_model::FullResyncReason::NoModSeq,
+                report,
+            } = &outcome
+            {
+                arrived = report
+                    .arrived
+                    .iter()
+                    .copied()
+                    .filter(|id| !report.filed_away.contains(id))
+                    .collect();
+            }
             summarise_resync(outcome)
         })
     } else {
-        initial::sync_mailbox(
-            connection,
-            parts.backend.as_ref(),
-            &record,
-            cancel,
-            |progress| committed.batch(progress),
-        )
+        initial::sync_mailbox(connection, backend, &record, cancel, |progress| {
+            committed.batch(progress)
+        })
         .await
         .map(|report| SyncSummary {
             inserted: report.inserted,
@@ -3669,7 +3805,7 @@ async fn sync_pass(
             parts.events.emit(Event::NewMail {
                 account: parts.account,
                 mailbox,
-                messages: arrived,
+                messages: arrived.clone(),
             });
         }
     }
@@ -3677,6 +3813,7 @@ async fn sync_pass(
     PassOutcome {
         mailbox,
         result: result.map_err(PassFailure::Failed),
+        arrived,
     }
 }
 
@@ -3691,7 +3828,11 @@ async fn settle_pass(
     connection: &Checkout,
     outcome: PassOutcome,
 ) -> Result<SyncSummary, EngineError> {
-    let PassOutcome { mailbox, result } = outcome;
+    let PassOutcome {
+        mailbox,
+        result,
+        arrived,
+    } = outcome;
     let now = Utc::now();
 
     // A pass the wave cancelled is not a failure and not a completed pass: it
@@ -3755,6 +3896,18 @@ async fn settle_pass(
                             message: error.to_string(),
                             account: Some(parts.account),
                         });
+                    }
+                }
+
+                // What just arrived goes ahead of the backlog the seed above
+                // joined: its words, then its attachments, so new mail is
+                // readable -- and its attachments openable -- by the time
+                // anybody reaches for it. See `Backfill::arrived`.
+                for message in &arrived {
+                    if let Err(error) =
+                        backfill::request_arrived(connection, &mut state.backfill, *message).await
+                    {
+                        tracing::debug!(%error, "an arrival could not be queued for its body");
                     }
                 }
 
@@ -4393,6 +4546,7 @@ mod tests {
             uid: postio_model::Uid::new(n),
             remote_id: postio_model::RemoteId::new(format!("1:{n}")),
             size: 100,
+            text_size: 100,
             rank: 0,
             received_at: Utc::now(),
             want: postio_sync::Want::Text,

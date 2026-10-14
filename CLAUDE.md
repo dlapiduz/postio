@@ -148,8 +148,8 @@ it and it overrides the pin). The Mac app's build loops are in
 |---|---|
 | Why the change is shaped this way | the commit body |
 | What you found along the way | a comment on the issue |
-| Work you found, less than ~10 minutes | fix it now, in its own commit |
-| Work you found, more than that | `scripts/issue-file.sh`, which searches for duplicates first; comment on the existing issue if it finds one |
+| Work you found that bears on what you are doing | fix it now, in its own commit, whatever its size |
+| Work you found that is tangential, or that you cannot do now | `scripts/issue-file.sh`, which searches for duplicates first; comment on the existing issue if it finds one |
 | A design call an agent can make | label `needs-architecture` (`/ux-architect`'s queue) |
 | A call only the maintainer can make | label `needs-maintainer`, with the question and options |
 | A trap future sessions must know | `docs/gotchas.md`, or a dated note in `docs/notes/` listed in its README |

@@ -302,3 +302,43 @@ async fn a_background_view_shares_the_pool_with_its_interactive_one() {
         "the second view must reuse the first one's connection, not open its own"
     );
 }
+
+#[tokio::test]
+async fn an_imap_backend_offers_a_background_view_through_the_trait() {
+    // The sync engine holds a `dyn MailBackend` and can only reach the
+    // background view through the trait. Without it the archive's backfill
+    // and a click on an attachment queued for the same connections as equals.
+    let server = TestServer::builder()
+        .mailbox(TestMailbox::new("INBOX").corpus(["plain-text-simple"]))
+        .start()
+        .await;
+    let store = MemorySecretStore::new();
+    let key = AccountKey::new(server.account());
+    store
+        .store(&key, &Password::new(server.password()))
+        .await
+        .expect("seed the keyring");
+    let pool = Arc::new(ConnectionPool::new(
+        server.settings(),
+        key,
+        Arc::new(store),
+        Arc::new(RustlsConnector::new().expect("a connector")),
+        PoolConfig::default(),
+    ));
+
+    let interactive: Arc<dyn MailBackend> = Arc::new(ImapBackend::over(Arc::clone(&pool)));
+    let background = interactive
+        .for_background()
+        .expect("an IMAP backend has priorities to give");
+
+    interactive.connect().await.expect("connect");
+    background
+        .list_mailboxes(&MailboxFilter::all())
+        .await
+        .expect("list");
+    assert_eq!(
+        pool.stats().opened,
+        1,
+        "the background view must be the same pool, not a second one"
+    );
+}

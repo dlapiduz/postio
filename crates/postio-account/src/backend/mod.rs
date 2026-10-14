@@ -108,6 +108,18 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
     /// Short name of this backend, for diagnostics.
     fn describe(&self) -> &'static str;
 
+    /// The same server, on the same connections, for work nobody is waiting
+    /// on -- or `None` where the backend has no priorities to give.
+    ///
+    /// A backfill holding every shared connection makes a click wait for one
+    /// to come free; a backend that queues by priority hands the next free
+    /// connection to the click instead. The sync engine takes this for the
+    /// archive's headers and the background lane's bodies, and keeps `self`
+    /// for whatever a person is waiting on.
+    fn for_background(&self) -> Option<std::sync::Arc<dyn MailBackend>> {
+        None
+    }
+
     /// Opens a session and authenticates.
     ///
     /// Returns the capability set observed **after** authentication. An empty

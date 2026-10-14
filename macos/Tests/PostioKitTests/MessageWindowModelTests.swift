@@ -135,6 +135,43 @@ struct MessageWindowModelTests {
         #expect(source.documents.last?.1 == .paper)
     }
 
+    @Test func aBodyThatLandsWhileOpenIsReadAgainInPlace() async {
+        // #1788: the window drew "Downloading this message" and never
+        // looked again when the words came.
+        let source = Source()
+        let (model, _) = Self.model(source)
+        model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
+        await model.settled()
+        model.apply(.switchTreatment)
+        await model.settled()
+        let documents = source.documents.count
+        model.bodyLanded(8)
+        await model.settled()
+        #expect(source.documents.count == documents, "a body nobody is reading")
+        model.bodyLanded(7)
+        await model.settled()
+        #expect(source.documents.count == documents + 1)
+        #expect(source.documents.last?.0 == 7)
+        #expect(source.documents.last?.1 == .appColours, "the treatment chosen stays")
+        #expect(source.views.last?.0 == 7, "its chips too: a fetch replaces them")
+        #expect(model.keepsScroll, "the place being read stays")
+        #expect(model.place?.message == 7 && model.shown == 7)
+    }
+
+    @Test func aBodyThatLandsUnderTheSourceLeavesTheSource() async {
+        let source = Source()
+        let (model, _) = Self.model(source)
+        model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
+        await model.settled()
+        model.apply(.viewSource)
+        await model.settled()
+        let documents = source.documents.count
+        model.bodyLanded(7)
+        await model.settled()
+        #expect(model.showingSource)
+        #expect(source.documents.count == documents)
+    }
+
     @Test func aBracketShowsTheMessageTheEngineNamedInPlace() async {
         let source = Source()
         source.earlier = 5

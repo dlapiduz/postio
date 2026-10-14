@@ -96,6 +96,10 @@ impl MailBackend for ImapBackend {
         "imap"
     }
 
+    fn for_background(&self) -> Option<Arc<dyn MailBackend>> {
+        Some(Arc::new(self.background()))
+    }
+
     async fn connect(&self) -> BackendResult<Capabilities> {
         // Acquiring opens a connection when none is parked, and the session
         // refuses an empty post-auth capability list on the way (ADR 0001,

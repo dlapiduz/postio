@@ -497,7 +497,9 @@ reading depend on it. Attachment payloads are different — they are ~90% of a
 mailbox by weight and contribute nothing to search but their filename — so they
 arrive when the user opens or saves one, and a message whose text is local but
 whose payloads are not is a normal, fully searchable, fully readable state.
-Inline images small enough to matter for rendering come with the text, so HTML
+New mail is the exception: its attachments, up to 25 MB a message, come down
+right after its text as it arrives, so the one you were just told about opens
+at once. Inline images small enough to matter for rendering come with the text, so HTML
 mail reads correctly offline. Someone who wants a complete archive can ask for
 attachments eagerly; someone on a metered link can refuse them entirely.
 [ADR 0017](decisions/0017-backfill-cost-attachments-memory-disk-encryption.md)
@@ -561,7 +563,9 @@ images small enough to matter for rendering — runs to completion for every
 message, and is what §7's search and §15's offline promise are made of. The
 *payload axis* — attachment bytes — defaults to fetching on open, because it is
 around nine tenths of a mailbox by weight and contributes nothing to search but
-a filename. A message with its text local and its payloads not is the ordinary
+a filename; new mail's attachments are the exception and arrive with it.
+New mail jumps the backlog: an arrival's text, then its attachments, are
+fetched behind only what the person has opened. A message with its text local and its payloads not is the ordinary
 steady state, not a half-synced one.
 [ADR 0017](decisions/0017-backfill-cost-attachments-memory-disk-encryption.md)
 prices both axes against a real 81,744-message account and settles the memory,

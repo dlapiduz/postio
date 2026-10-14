@@ -80,6 +80,8 @@ struct Inner {
     /// Where `config.toml` is, when the host was opened on one: where Focus
     /// writes the person's corrections, unless told otherwise.
     config_path: Mutex<Option<std::path::PathBuf>>,
+    /// The bodies a reading pane has asked for (#1788).
+    asked_bodies: reading::AskedBodies,
 }
 
 /// The engine syncing each account: at most one per account, however many
@@ -484,6 +486,7 @@ impl Host {
             offers: Mutex::new(HashMap::new()),
             oauth_offers: Mutex::new(HashMap::new()),
             sign_ins: Mutex::new(HashMap::new()),
+            asked_bodies: reading::AskedBodies::default(),
         });
         let pump = Arc::clone(&inner);
         inner.runtime().spawn(async move {
@@ -1242,7 +1245,7 @@ impl Inner {
             Req::Readings { messages, offline } => {
                 reading::readings(&self.wiring.database, &messages, offline)
                     .await
-                    .map_or_else(Resp::Failed, Resp::Readings)
+                    .map_or_else(Resp::Failed, |read| self.opened(read))
             }
             Req::ThreadReadings {
                 thread,
@@ -1250,7 +1253,7 @@ impl Inner {
                 offline,
             } => reading::thread_readings(&self.wiring.database, thread, limit as usize, offline)
                 .await
-                .map_or_else(Resp::Failed, Resp::Readings),
+                .map_or_else(Resp::Failed, |read| self.opened(read)),
             Req::InlinePart {
                 message,
                 content_id,
@@ -1415,6 +1418,18 @@ impl Inner {
         };
         self.hub.emit(Event::MailboxesChanged { account });
         Ok(())
+    }
+
+    /// A reading pane's answer, after asking for each body it draws as
+    /// "Downloading this message": the pane is a person opening it (#1788).
+    fn opened(&self, readings: Vec<postio_client::protocol::Reading>) -> Resp {
+        for message in self
+            .asked_bodies
+            .to_ask(&readings, std::time::Instant::now())
+        {
+            self.fetch_body(message);
+        }
+        Resp::Readings(readings)
     }
 
     /// Ask every engine for `message`'s body ahead of its backfill: a person

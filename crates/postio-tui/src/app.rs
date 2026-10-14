@@ -4220,6 +4220,22 @@ impl App {
                 return self.say_as(Tone::Failed, reason, None);
             }
             Event::Error { message, .. } => return self.say_as(Tone::Failed, message, None),
+            // The words of a message on screen just landed (#1788): read that
+            // one again, in place. Only one already drawn: a read still on
+            // its way will see them anyway, and the list is never re-read.
+            Event::BodyLoaded { message, .. } => {
+                let drawn = self.reading.as_ref().is_some_and(|reading| {
+                    reading
+                        .members
+                        .iter()
+                        .any(|member| member.id == *message && member.body.is_some())
+                });
+                return if drawn {
+                    vec![Effect::ReadBody(*message)]
+                } else {
+                    Vec::new()
+                };
+            }
             _ => {}
         }
         if moved {
@@ -7109,6 +7125,63 @@ pub(crate) mod tests {
         let drawn = reader_text(&app);
         assert!(drawn.contains("Hello Ada,"), "{drawn}");
         assert!(drawn.contains("quoted line"), "{drawn}");
+    }
+
+    #[test]
+    fn a_body_that_lands_while_its_message_is_open_is_read_again_and_drawn() {
+        // #1788: the reader said "Downloading this message" and never
+        // looked again when the body came.
+        let mut app = app((160, 40));
+        let opening = open_list(&mut app, 5);
+        serve(&mut app, opening);
+        let message = row(0).id;
+        app.open_reading(message);
+        update(
+            &mut app,
+            Input::Body {
+                message,
+                answer: Ok(postio_client::protocol::Body::Partial),
+            },
+        );
+        let cursor = app.cursor();
+        let account = postio_model::AccountId::new(1);
+        let elsewhere = update(
+            &mut app,
+            Input::Host(postio_core::Event::BodyLoaded {
+                account,
+                message: row(3).id,
+            }),
+        );
+        assert_eq!(
+            reads(&elsewhere),
+            0,
+            "a body nobody is reading: {elsewhere:?}"
+        );
+        let landed = update(
+            &mut app,
+            Input::Host(postio_core::Event::BodyLoaded { account, message }),
+        );
+        assert!(
+            landed.contains(&Effect::ReadBody(message)) && reads(&landed) == 1,
+            "the open message is read again, once: {landed:?}"
+        );
+        update(
+            &mut app,
+            Input::Body {
+                message,
+                answer: Ok(postio_client::protocol::Body::Ready {
+                    body: postio_model::MessageBody {
+                        text: Some("The tide gate opens at nine.\n".into()),
+                        html: None,
+                    },
+                    encoding_problems: false,
+                }),
+            },
+        );
+        let drawn = reader_text(&app);
+        assert!(drawn.contains("The tide gate opens at nine."), "{drawn}");
+        assert_eq!(app.cursor(), cursor, "the list did not move");
+        assert_eq!(app.reader_top(), 0);
     }
 
     #[test]

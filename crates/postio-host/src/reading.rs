@@ -97,3 +97,96 @@ pub async fn thread_readings(
     }
     Ok(read)
 }
+
+/// How long a body asked for and never delivered stays asked for. After
+/// that, the next reading of it asks again: the fetch failed, or the link
+/// was down, and a person opening it again is asking again.
+const ASKED_PATIENCE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The bodies a reading pane has asked the engines for, and when (#1788).
+///
+/// A pane draws a message whose body is not here as "Downloading this
+/// message", and that is a promise: reading it is the person opening it,
+/// which is the one thing allowed to reach for its words ahead of the
+/// backfill (`ARCHITECTURE.md` §11). Every frontend reads a pane through
+/// [`readings`], so the promise is kept here once rather than in each of
+/// them. A pane is read again on every repaint, though, and a second ask
+/// while the first is on the wire is a second fetch (`Backfill::finished`
+/// re-offers it), so each message is asked for once until its body lands.
+#[derive(Default)]
+pub(crate) struct AskedBodies {
+    asked: std::sync::Mutex<std::collections::HashMap<MessageId, std::time::Instant>>,
+}
+
+impl AskedBodies {
+    /// Which of `readings` to ask the engines for now: those whose body is
+    /// not here and not asked for within [`ASKED_PATIENCE`]. A body that is
+    /// here is forgotten, so a message is never remembered past its fetch.
+    pub(crate) fn to_ask(&self, readings: &[Reading], now: std::time::Instant) -> Vec<MessageId> {
+        let mut asked = self.asked.lock().expect("never poisoned");
+        asked.retain(|_, when| now.saturating_duration_since(*when) < ASKED_PATIENCE);
+        let mut ask = Vec::new();
+        for reading in readings {
+            match reading.body {
+                Body::Partial => {
+                    if let std::collections::hash_map::Entry::Vacant(first) =
+                        asked.entry(reading.message)
+                    {
+                        first.insert(now);
+                        ask.push(reading.message);
+                    }
+                }
+                // Offline is the frontend saying "do not reach"; a foreign
+                // draft, a missing or an empty body has nothing to fetch.
+                Body::Offline | Body::Missing | Body::Empty | Body::ForeignDraft => {}
+                Body::Ready { .. } => {
+                    asked.remove(&reading.message);
+                }
+            }
+        }
+        ask
+    }
+}
+
+#[cfg(test)]
+mod asked_tests {
+    use super::*;
+
+    fn reading(message: i64, body: Body) -> Reading {
+        Reading {
+            message: MessageId::new(message),
+            body,
+            row: None,
+            send_state: None,
+        }
+    }
+
+    #[test]
+    fn a_body_not_here_is_asked_for_once_until_it_lands() {
+        let asked = AskedBodies::default();
+        let now = std::time::Instant::now();
+        let absent = [reading(1, Body::Partial)];
+        assert_eq!(asked.to_ask(&absent, now), vec![MessageId::new(1)]);
+        assert!(asked.to_ask(&absent, now).is_empty(), "a repaint");
+        let later = now + ASKED_PATIENCE;
+        assert_eq!(
+            asked.to_ask(&absent, later),
+            vec![MessageId::new(1)],
+            "never delivered, so opening it again asks again"
+        );
+    }
+
+    #[test]
+    fn only_a_body_not_here_and_reachable_is_asked_for() {
+        let asked = AskedBodies::default();
+        let now = std::time::Instant::now();
+        let read = [
+            reading(1, Body::Offline),
+            reading(2, Body::Missing),
+            reading(3, Body::Empty),
+            reading(4, Body::ForeignDraft),
+            reading(5, Body::Partial),
+        ];
+        assert_eq!(asked.to_ask(&read, now), vec![MessageId::new(5)]);
+    }
+}

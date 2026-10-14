@@ -202,12 +202,28 @@ public final class MessageWindowModel {
         report(moreOpen, find.isOpen)
     }
 
+    /// `BodyLoaded` (#1788): `message`'s words are on this machine now. If
+    /// it is the one on screen, read it again in place -- its chrome, whose
+    /// chips a body fetch replaces, and its document, keeping the treatment
+    /// chosen and the place being read. Not under the source `v` put there,
+    /// and nothing for any other message.
+    public func bodyLanded(_ message: Int64) {
+        guard place != nil, shown == message else { return }
+        loadView(message)
+        if !showingSource { loadDocument(keepingScroll: true) }
+    }
+
     /// Show `message` in the window: its chrome and its body, read again.
     private func show(_ message: Int64) {
         shown = message
         chosen = nil
         source = nil
         showingSource = false
+        loadView(message)
+        loadDocument(keepingScroll: false)
+    }
+
+    private func loadView(_ message: Int64) {
         guard let place else { return }
         let token = gate.begin()
         let source = engine
@@ -219,7 +235,6 @@ public final class MessageWindowModel {
                 guard let self, self.gate.isCurrent(token) else { return }
                 self.view = view
             })
-        loadDocument(keepingScroll: false)
     }
 
     private func loadDocument(keepingScroll: Bool) {
