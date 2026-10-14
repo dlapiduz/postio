@@ -223,12 +223,6 @@ impl SessionOptions {
         }
     }
 
-    /// An in-memory session over a database the caller already seeded.
-    ///
-    /// A list test needs rows in the store *before* the session opens it, and
-    /// there is no way to reach in afterwards -- the wiring is private, which
-    /// is the point of it.
-    #[cfg(feature = "testing")]
     /// Answer agents' calls on the socket at `path` (ADR 0041, amended
     /// 2026-10-14), as a session over a store file always does: for the
     /// demo, which has no file to sit beside.
@@ -238,6 +232,12 @@ impl SessionOptions {
         self
     }
 
+    /// An in-memory session over a database the caller already seeded.
+    ///
+    /// A list test needs rows in the store *before* the session opens it, and
+    /// there is no way to reach in afterwards -- the wiring is private, which
+    /// is the point of it.
+    #[cfg(feature = "testing")]
     pub fn in_memory_with(database: postio_storage::Store) -> Self {
         Self {
             seeded: Some(database),
