@@ -254,17 +254,17 @@ public struct MessageWindowView<BodyView: View>: View {
     let run: (String) -> Void
     let alwaysForSender: () -> Void
     let verbFrames: ([String: CGRect]) -> Void
-    let bodyView: (FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
+    let bodyView: (Int64, FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
 
     /// `verbFrames` hears where the action row's buttons are, by command,
-    /// whenever they move.
+    /// whenever they move. `body` draws a message's body, given which.
     public init(
         model: MessageWindowModel,
         binding: @escaping (String) -> String?,
         run: @escaping (String) -> Void,
         alwaysForSender: @escaping () -> Void,
         verbFrames: @escaping ([String: CGRect]) -> Void = { _ in },
-        @ViewBuilder body: @escaping (FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
+        @ViewBuilder body: @escaping (Int64, FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
     ) {
         self.model = model
         self.binding = binding
@@ -312,19 +312,65 @@ public struct MessageWindowView<BodyView: View>: View {
     private var content: some View {
         if model.showingSource {
             MessageSourceView(source: model.source)
-        } else if let view = model.view {
-            MessageContentView(
-                words: MessageHeaderWords(view: view, binding: binding),
-                document: model.document,
-                binding: binding,
-                run: run,
-                alwaysForSender: alwaysForSender,
-                body: bodyView)
-                // A new message is read from its top; `O` keeps the place.
-                .id(model.shown)
+        } else if let view = model.view, let displayed = model.displayed {
+            // The message on screen, and under it, out of sight, the one a
+            // step reached until its body is drawn. One `ForEach` by message,
+            // so the body that was drawn out of sight is the very one that
+            // comes up -- its web view kept, not made again blank. A new
+            // message is read from its top; `O` keeps the place.
+            ZStack(alignment: .top) {
+                ForEach(layers(displayed: displayed, view: view), id: \.message) { layer in
+                    let front = layer.message == displayed
+                    MessageContentView(
+                        words: MessageHeaderWords(view: layer.view, binding: binding),
+                        document: layer.document,
+                        binding: binding,
+                        run: run,
+                        alwaysForSender: alwaysForSender,
+                        body: { document, card in bodyView(layer.message, document, card) })
+                        .environment(\.messageBodyDrawn) { model.bodyDrawn(layer.message) }
+                        .opacity(front ? 1 : 0)
+                        .zIndex(front ? 1 : 0)
+                        .allowsHitTesting(front)
+                        .accessibilityHidden(!front)
+                }
+            }
         } else {
             Color.clear
         }
+    }
+}
+
+extension MessageWindowView {
+    /// One message the window draws, on screen or waiting under it.
+    struct Layer {
+        let message: Int64
+        let view: FocusMessageViewFfi
+        let document: FocusReaderDocumentFfi?
+    }
+
+    /// What the window draws: the message on screen, then the one a step
+    /// reached, if any.
+    func layers(displayed: Int64, view: FocusMessageViewFfi) -> [Layer] {
+        var layers = [Layer(message: displayed, view: view, document: model.document)]
+        if let next = model.incoming, next.message != displayed {
+            layers.append(Layer(message: next.message, view: next.view, document: next.document))
+        }
+        return layers
+    }
+}
+
+/// Said by a message's body once it has its height and has painted, so a
+/// body drawn out of sight can come up whole (`MessageWindowModel.bodyDrawn`).
+private struct MessageBodyDrawnKey: EnvironmentKey {
+    static let defaultValue: @MainActor @Sendable () -> Void = {}
+}
+
+extension EnvironmentValues {
+    /// What a message's body calls once it is drawn.
+    public var messageBodyDrawn: @MainActor @Sendable () -> Void {
+        get { self[MessageBodyDrawnKey.self] }
+        set { self[MessageBodyDrawnKey.self] = newValue }
     }
 }
 

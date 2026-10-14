@@ -569,9 +569,9 @@ final class Engine {
                 model?.keepForSender { session?.alwaysTreatment(sender: $0, treatment: $1) }
             },
             verbFrames: { [weak self] in self?.verbFrames = $0 }
-        ) { [weak session, weak model] document, card in
+        ) { [weak session, weak model] message, document, card in
             MessageBodyView(
-                message: model?.shown ?? 0,
+                message: message,
                 document: document,
                 sentence: card?.sentence,
                 find: model?.find.request,

@@ -42,15 +42,35 @@ public final class MessageWindowModel {
         public let total: UInt32
     }
 
+    /// One message as the window draws it: its chrome and its body, read
+    /// together so neither is ever drawn over the other message's.
+    public struct Screen: Equatable, Sendable {
+        public let message: Int64
+        public let view: FocusMessageViewFfi
+        public let document: FocusReaderDocumentFfi
+    }
+
+    /// How long a step waits for the next body to say it is drawn before
+    /// showing it anyway: long enough for a web view's first paint, short
+    /// enough that a body that never says so still comes.
+    public static let drawPatience: Duration = .milliseconds(200)
+
     /// The row the window shows, or `nil` while it is closed.
     public private(set) var place: Place?
     /// The message on screen: the row's, or one of its conversation's that
     /// `[` or `]` stepped to.
     public private(set) var shown: Int64?
-    /// What surrounds the body, once read.
+    /// The message whose chrome and body are on screen: `shown`, once it
+    /// is read and its body drawn.
+    public private(set) var displayed: Int64?
+    /// What surrounds the body on screen.
     public private(set) var view: FocusMessageViewFfi?
-    /// The body, its treatment and the window's geometry, once read.
+    /// The body on screen, its treatment and the window's geometry.
     public private(set) var document: FocusReaderDocumentFfi?
+    /// The message a step reached, read whole and drawn out of sight until
+    /// its body says it is drawn (`bodyDrawn`): what keeps `j` from showing
+    /// a header over the last body, or a body still finding its height.
+    public private(set) var incoming: Screen?
     /// The treatment `O` chose for this message, or `nil` for the rule's
     /// (or the sender's remembered) choice.
     public private(set) var chosen: TreatmentFfi?
@@ -112,6 +132,8 @@ public final class MessageWindowModel {
         let wasOpen = (moreOpen, find.isOpen)
         place = nil
         shown = nil
+        displayed = nil
+        incoming = nil
         view = nil
         document = nil
         chosen = nil
@@ -209,8 +231,18 @@ public final class MessageWindowModel {
     /// and nothing for any other message.
     public func bodyLanded(_ message: Int64) {
         guard place != nil, shown == message else { return }
-        loadView(message)
-        if !showingSource { loadDocument(keepingScroll: true) }
+        if showingSource {
+            loadView(message)
+        } else {
+            read(message, keepingScroll: displayed == message)
+        }
+    }
+
+    /// The body of `message`, drawn out of sight, has its height and has
+    /// painted: put it on screen.
+    public func bodyDrawn(_ message: Int64) {
+        guard let incoming, incoming.message == message else { return }
+        put(incoming)
     }
 
     /// Show `message` in the window: its chrome and its body, read again.
@@ -219,8 +251,51 @@ public final class MessageWindowModel {
         chosen = nil
         source = nil
         showingSource = false
-        loadView(message)
-        loadDocument(keepingScroll: false)
+        read(message, keepingScroll: false)
+    }
+
+    /// Read `message`'s chrome and body together. The message on screen is
+    /// replaced in place; another waits as `incoming` until its body is
+    /// drawn, or `drawPatience` has passed.
+    private func read(_ message: Int64, keepingScroll: Bool) {
+        guard let place else { return }
+        let token = gate.begin()
+        let documentToken = documentGate.begin()
+        let source = engine
+        let chosen = chosen
+        let width = mainWidth
+        pending.append(
+            Task { [weak self] in
+                let (view, document) = await Task.detached {
+                    async let view = source.focusMessageView(
+                        message: message, index: place.index, total: place.total)
+                    async let document = source.focusReaderDocument(
+                        message: message, remote: .blocked, chosen: chosen, mainWidth: width)
+                    return await (view, document)
+                }.value
+                guard let self, self.gate.isCurrent(token), self.documentGate.isCurrent(documentToken)
+                else { return }
+                let next = Screen(message: message, view: view, document: document)
+                if self.displayed == nil || self.displayed == message {
+                    self.put(next, keepingScroll: keepingScroll)
+                } else {
+                    self.incoming = next
+                    self.pending.append(
+                        Task { [weak self] in
+                            try? await Task.sleep(for: Self.drawPatience)
+                            self?.bodyDrawn(message)
+                        })
+                }
+            })
+    }
+
+    /// `screen` is what the window draws now.
+    private func put(_ screen: Screen, keepingScroll: Bool = false) {
+        incoming = nil
+        keepsScroll = keepingScroll
+        displayed = screen.message
+        view = screen.view
+        document = screen.document
     }
 
     private func loadView(_ message: Int64) {
@@ -232,13 +307,19 @@ public final class MessageWindowModel {
                 let view = await Task.detached {
                     source.focusMessageView(message: message, index: place.index, total: place.total)
                 }.value
-                guard let self, self.gate.isCurrent(token) else { return }
+                guard let self, self.gate.isCurrent(token), self.displayed == message else { return }
                 self.view = view
             })
     }
 
+    /// The body again, for the message on screen; a step still on its way
+    /// is read again whole.
     private func loadDocument(keepingScroll: Bool) {
         guard let message = shown else { return }
+        guard displayed == message else {
+            read(message, keepingScroll: false)
+            return
+        }
         let token = documentGate.begin()
         let source = engine
         let chosen = chosen
@@ -249,7 +330,7 @@ public final class MessageWindowModel {
                     source.focusReaderDocument(
                         message: message, remote: .blocked, chosen: chosen, mainWidth: width)
                 }.value
-                guard let self, self.documentGate.isCurrent(token) else { return }
+                guard let self, self.documentGate.isCurrent(token), self.displayed == message else { return }
                 self.keepsScroll = keepingScroll
                 self.document = document
             })

@@ -23,6 +23,10 @@ import WebKit
 ///   header block and the body together; the web view hands the wheel on.
 /// - **The action sentence** is marked in the body, the accent at 8% with a
 ///   2pt accent underline (SPEC section 5), when the body holds it whole.
+/// - **Out of sight until drawn.** A new web view paints white at the
+///   minimum height, then at its measured height before its document, so
+///   the body stays transparent until it has its height and has painted,
+///   then says so (`messageBodyDrawn`). Stepping showed all three frames.
 ///
 /// The height, the fit and the mark are Postio's own script, run in the
 /// client's content world on the main actor; the sender's script never runs
@@ -37,7 +41,9 @@ public struct MessageBodyView: View {
     let resolveFont: (String) -> Data?
 
     @State private var height: CGFloat = BodyHeight.minimum
+    @State private var drawn = false
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.messageBodyDrawn) private var sayDrawn
 
     /// The sheet's corner.
     public static let sheetRadius: CGFloat = 6
@@ -69,21 +75,28 @@ public struct MessageBodyView: View {
         let web = MessageWebView(
             message: message, document: document, sentence: sentence, find: find,
             onFound: onFound, resolveCid: resolveCid, resolveFont: resolveFont,
-            onHeight: { height = $0 })
+            onHeight: { height = $0 },
+            onDrawn: {
+                drawn = true
+                sayDrawn()
+            })
             .frame(height: height)
-        if paper {
-            web
-                .overlay {
-                    if scheme == .dark {
-                        Rectangle().fill(Color.black.opacity(Self.paperDim)).allowsHitTesting(false)
+        Group {
+            if paper {
+                web
+                    .overlay {
+                        if scheme == .dark {
+                            Rectangle().fill(Color.black.opacity(Self.paperDim)).allowsHitTesting(false)
+                        }
                     }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: Self.sheetRadius))
-                .overlay(
-                    RoundedRectangle(cornerRadius: Self.sheetRadius).strokeBorder(.separator, lineWidth: 1))
-        } else {
-            web
+                    .clipShape(RoundedRectangle(cornerRadius: Self.sheetRadius))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Self.sheetRadius).strokeBorder(.separator, lineWidth: 1))
+            } else {
+                web
+            }
         }
+        .opacity(drawn ? 1 : 0)
     }
 }
 
@@ -159,6 +172,21 @@ public enum MessageBodyMeasure {
         return answer as? Double
     }
 
+    /// Wait for the web view to paint twice: once for the frame the height
+    /// was set in, once more for that size drawn. Bounded, so a view that
+    /// is not painting (no window) does not hold the body back.
+    public static func painted(_ view: WKWebView) async throws {
+        _ = try await view.callAsyncJavaScript(
+            """
+            await Promise.race([
+                new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))),
+                new Promise(r => setTimeout(r, 100)),
+            ]);
+            return true;
+            """,
+            arguments: [:], in: nil, contentWorld: .defaultClient)
+    }
+
     /// Mark the first place the body holds `sentence` whole, inside one run
     /// of text, with `fill` behind it and a 2px `line` under it. Whether it
     /// was found: a sentence the sender's markup split across elements is
@@ -212,6 +240,7 @@ struct MessageWebView: NSViewRepresentable {
     let resolveCid: (Int64, String) -> InlinePart?
     let resolveFont: (String) -> Data?
     let onHeight: (CGFloat) -> Void
+    let onDrawn: () -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(resolveCid: resolveCid, resolveFont: resolveFont)
@@ -231,12 +260,14 @@ struct MessageWebView: NSViewRepresentable {
         view.setAccessibilityRole(.group)
         view.setAccessibilityRoleDescription("article")
         view.setAccessibilityLabel("Message")
-        coordinator.show(document, of: message, sentence: sentence, in: view, onHeight: onHeight)
+        coordinator.show(
+            document, of: message, sentence: sentence, in: view, onHeight: onHeight, onDrawn: onDrawn)
         return view
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
-        context.coordinator.show(document, of: message, sentence: sentence, in: view, onHeight: onHeight)
+        context.coordinator.show(
+            document, of: message, sentence: sentence, in: view, onHeight: onHeight, onDrawn: onDrawn)
         context.coordinator.finder.perform(find, in: view, onFound: onFound)
     }
 
@@ -264,7 +295,7 @@ struct MessageWebView: NSViewRepresentable {
         /// Load `document` unless it is the one on screen.
         func show(
             _ document: FocusReaderDocumentFfi, of message: Int64, sentence: String?,
-            in view: WKWebView, onHeight: @escaping (CGFloat) -> Void
+            in view: WKWebView, onHeight: @escaping (CGFloat) -> Void, onDrawn: @escaping () -> Void
         ) {
             guard showing?.message != message || showing?.html != document.html else { return }
             showing = (message, document.html)
@@ -289,17 +320,18 @@ struct MessageWebView: NSViewRepresentable {
                 self.policy.didFinish = { [weak self] view in
                     self?.laidOut(
                         view, paper: paper, column: column, floor: floor, sentence: sentence,
-                        onHeight: onHeight)
+                        onHeight: onHeight, onDrawn: onDrawn)
                 }
                 noteReaderRender()
                 view.loadHTMLString(document.html, baseURL: nil)
             }
         }
 
-        /// The document is in: fit it, mark the sentence, and say how tall.
+        /// The document is in: fit it, mark the sentence, say how tall, and
+        /// once that height has painted, say it is drawn.
         private func laidOut(
             _ view: WKWebView, paper: Bool, column: CGFloat, floor: Double, sentence: String?,
-            onHeight: @escaping (CGFloat) -> Void
+            onHeight: @escaping (CGFloat) -> Void, onDrawn: @escaping () -> Void
         ) {
             Task { @MainActor [weak view] in
                 guard let view else { return }
@@ -316,6 +348,8 @@ struct MessageWebView: NSViewRepresentable {
                 if let height = try? await MessageBodyMeasure.contentHeight(of: view) {
                     onHeight(BodyHeight.clamped(height * zoom))
                 }
+                try? await MessageBodyMeasure.painted(view)
+                onDrawn()
                 if let height = try? await MessageBodyMeasure.settledHeight(of: view) {
                     onHeight(BodyHeight.clamped(height * zoom))
                 }
