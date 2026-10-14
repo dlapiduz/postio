@@ -5066,6 +5066,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "postio-mcp"
+version = "0.4.2"
+dependencies = [
+ "chrono",
+ "postio-account",
+ "postio-body",
+ "postio-client",
+ "postio-config",
+ "postio-core",
+ "postio-demo",
+ "postio-host",
+ "postio-index",
+ "postio-mcp",
+ "postio-model",
+ "postio-search",
+ "postio-session",
+ "postio-storage",
+ "postio-workspace-hack",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "postio-model"
 version = "0.4.2"
 dependencies = [
