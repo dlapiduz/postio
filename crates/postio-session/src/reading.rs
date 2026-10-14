@@ -323,8 +323,9 @@ pub async fn message_parts(database: &Store, message: MessageId) -> Result<Messa
 ///
 /// # This is allowed to reach the network, and almost nothing else is
 ///
-/// The reading pane never does — a body that is not here simply does not
-/// draw. This does, and only because the user named these bytes: they pressed
+/// The reading pane reaches only for the words of the message a person
+/// opened (`postio-host`'s `AskedBodies`, #1788), never for a part. This
+/// does, and only because the user named these bytes: they pressed
 /// save, or dragged this part, or chose "Open with…" on it. That is the
 /// difference `ARCHITECTURE.md` §11 turns on, and it is why the *listing*
 /// call above cannot do this and this one is never called speculatively.

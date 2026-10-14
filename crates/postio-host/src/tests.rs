@@ -2560,6 +2560,75 @@ fn a_posted_fetch_body_brings_the_opened_messages_body_and_says_so() {
     );
 }
 
+#[test]
+fn reading_a_message_whose_body_is_not_here_asks_for_it_once() {
+    // #1788: the reader said "Downloading this message" and nothing asked
+    // for it. Opening it is the person asking; a repaint is not asking again.
+    let mock = server_with_one_message();
+    let world = syncing_world(mock.clone());
+    let (client, events) = world.frontend(ClientKind::Tui);
+    world.host().start_syncing();
+    let message = eventually(&world, || row_titled(&world, &client, "Tide gate"));
+    let read = |offline| {
+        world
+            .rt
+            .block_on(client.readings(vec![message], offline))
+            .expect("an answer")
+            .pop()
+            .expect("a reading")
+            .body
+    };
+    // Offline, the pane says so and nothing is asked of the server.
+    assert_eq!(read(true), postio_client::protocol::Body::Offline);
+    assert!(mock.body_fetches().is_empty(), "offline asks for nothing");
+
+    assert_eq!(read(false), postio_client::protocol::Body::Partial);
+    assert_eq!(read(false), postio_client::protocol::Body::Partial);
+    assert_eq!(read(false), postio_client::protocol::Body::Partial);
+
+    world.hear(
+        &events,
+        |event| matches!(event, Event::BodyLoaded { message: loaded, .. } if *loaded == message),
+    );
+    match read(false) {
+        postio_client::protocol::Body::Ready { body, .. } => {
+            let text = body.text.expect("a text part");
+            assert!(text.contains("The tide gate opens at nine."), "{text}");
+        }
+        other => panic!("the body never arrived: {other:?}"),
+    }
+    // Settled against the engine's own queue rather than a wall clock: once
+    // it is idle, any second fetch the repaints queued has already run.
+    let engine = world
+        .host()
+        .inner
+        .engines
+        .running
+        .lock()
+        .expect("never poisoned")
+        .values()
+        .next()
+        .cloned()
+        .expect("the account's engine");
+    let idle = || {
+        let progress = world
+            .rt
+            .block_on(engine.backfill_progress())
+            .expect("the engine answers");
+        (progress.pending == 0 && progress.in_flight == 0 && progress.stored >= 1).then_some(())
+    };
+    eventually(&world, idle);
+    world.rt.block_on(async {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    });
+    eventually(&world, idle);
+    assert_eq!(
+        mock.body_fetches(),
+        vec!["INBOX".to_owned()],
+        "one open, one fetch, however often the pane is redrawn"
+    );
+}
+
 /// `count` messages in the inbox, oldest first, each with a raw-source blob
 /// of `size` bytes of its own, as `reclaim.rs` shapes a store to evict from.
 fn messages_with_blobs(world: &World, count: u8, size: usize) -> Vec<postio_model::ids::BlobId> {
