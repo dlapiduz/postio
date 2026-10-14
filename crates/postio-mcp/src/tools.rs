@@ -1148,11 +1148,14 @@ async fn organize(
         access.mailboxes.push(target.get());
     }
 
-    let done = match tool {
-        Tool::ArchiveMessages => "Archived",
-        Tool::MoveMessages => "Moved",
-        Tool::AddLabel => "Labelled",
-        _ => "Took the label off",
+    let (done, reverse) = match tool {
+        Tool::ArchiveMessages => (
+            "Archived",
+            "move each message back to the folder it came from",
+        ),
+        Tool::MoveMessages => ("Moved", "move each message back to the folder it came from"),
+        Tool::AddLabel => ("Labelled", "take the label off again"),
+        _ => ("Took the label off", "put the label back"),
     };
     let messages: Vec<Value> = rows
         .iter()
@@ -1167,8 +1170,8 @@ async fn organize(
     }
     Ok((
         format!(
-            "{done} {} message(s). Postio's undo cannot take this back; to reverse it, \
-             move each message back to the folder it came from, or take the label off.",
+            "{done} {} message(s). Postio's undo cannot take this back; to reverse \
+             it, {reverse}.",
             rows.len()
         ),
         mail,
