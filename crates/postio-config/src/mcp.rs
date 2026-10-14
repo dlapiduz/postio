@@ -9,6 +9,7 @@
 //! ```toml
 //! [mcp.accounts."ada@example.com"]
 //! mailboxes = ["INBOX", "Receipts"]   # folder paths; "*" shares every one
+//! actions = ["archive", "move", "label"]   # optional; none by default
 //! ```
 
 use std::collections::BTreeMap;
@@ -35,6 +36,11 @@ pub struct McpAccount {
     /// shares every folder. Empty shares nothing.
     #[serde(default)]
     pub mailboxes: Vec<String>,
+    /// What an agent may do to the shared mail besides read it and write
+    /// drafts: any of `"archive"`, `"move"` and `"label"`. Empty -- the
+    /// default -- allows none of them.
+    #[serde(default)]
+    pub actions: Vec<String>,
     /// Keys this version of Postio does not know, preserved verbatim.
     #[serde(flatten)]
     pub extra: Extras,
@@ -58,6 +64,22 @@ mod tests {
         .expect("parses");
         let shared = &config.mcp.accounts["ada@example.com"];
         assert_eq!(shared.mailboxes, ["INBOX", "Receipts"]);
+    }
+
+    #[test]
+    fn an_account_allows_no_actions_until_it_names_them() {
+        let config =
+            Config::from_toml_str("[mcp.accounts.\"ada@example.com\"]\nmailboxes = [\"*\"]\n")
+                .expect("parses");
+        assert!(config.mcp.accounts["ada@example.com"].actions.is_empty());
+        let config = Config::from_toml_str(
+            "[mcp.accounts.\"ada@example.com\"]\nmailboxes = [\"*\"]\nactions = [\"archive\", \"label\"]\n",
+        )
+        .expect("parses");
+        assert_eq!(
+            config.mcp.accounts["ada@example.com"].actions,
+            ["archive", "label"]
+        );
     }
 
     #[test]

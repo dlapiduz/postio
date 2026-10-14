@@ -6,6 +6,7 @@ mod drafts;
 mod harness;
 mod injection;
 mod opt_in;
+mod organize;
 mod protocol;
 mod reading;
 mod stdio;

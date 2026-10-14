@@ -238,6 +238,17 @@ invisible to every tool, including the one that lists accounts. The
 server reads this section again on every call, so removing a line
 takes effect on the agent's next call.
 
+`actions` lets the agent organize the shared mail as well as read it:
+any of `"archive"`, `"move"` and `"label"`. Without it, the agent
+can read and write drafts, and nothing more. Moves stay between
+shared folders and never reach the Trash or Junk.
+
+```toml
+[mcp.accounts."ada@example.com"]
+mailboxes = ["*"]
+actions = ["archive", "move", "label"]
+```
+
 ## `[mailboxes]`
 
 Maps a role Postio already knows (`archive`, `sent`, `trash`, ...) to

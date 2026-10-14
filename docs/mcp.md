@@ -6,7 +6,8 @@ mail you choose to share and write drafts for you to review. It speaks the
 input and output. The agent starts it as a subprocess, and it listens on no
 port.
 
-It can read mail and save a draft. It cannot send mail. The design is in
+It can read mail and save a draft. If you allow it, it can also archive,
+move and label mail. It cannot send or delete mail. The design is in
 [ADR 0010](https://github.com/dlapiduz/postio/blob/main/docs/decisions/0010-mcp-surface.md).
 
 ## Building it
@@ -74,10 +75,46 @@ Any MCP client that launches a stdio server works the same way. If your
 | `read_message` | One message: its headers, its attachments' names and sizes, and its body as plain text. |
 | `read_thread` | The shared messages of one conversation, oldest first. |
 | `create_draft` | A new message, a reply (`reply_to`, optionally `reply_all`) or a forward (`forward`), saved as a draft. |
+| `archive_messages` | Files messages into their account's archive. Needs `"archive"` in `actions`. |
+| `move_messages` | Moves messages into another shared folder: the inbox, the archive or an ordinary folder. Needs `"move"`. |
+| `add_label` | Puts a label on messages, making the label if it does not exist. Needs `"label"`. |
+| `remove_label` | Takes a label off messages. Needs `"label"`. |
 
-There is no tool to send, forward, archive, move, delete, flag or mark mail
-read. These tools do not exist, so no message can trick an agent into
-calling one. Reading a message does not mark it read.
+There is no tool to send, forward, delete, flag or mark mail read. These
+tools do not exist, so no message can trick an agent into calling one.
+Reading a message does not mark it read.
+
+## Letting an agent organize mail
+
+Archiving, moving and labelling are off until you switch them on, account
+by account, with `actions`:
+
+```toml
+[mcp.accounts."ada@example.com"]
+mailboxes = ["INBOX", "Archive", "Receipts"]
+actions = ["archive", "move", "label"]   # any of the three
+```
+
+Each of these tools does what the same key does in Postio. The message
+moves or gets its label on this computer straight away, and your server
+gets the change the next time Postio syncs. Some rules always apply:
+
+- **Both ends have to be shared.** The messages have to be in folders you
+  listed, and so does the folder they go to. To archive, the account's
+  archive folder has to be listed too.
+- **Nothing goes to the Trash or Junk.** Moving mail there is deleting it,
+  so `move_messages` refuses those folders even when you have shared them.
+  It also refuses Drafts, Sent and the Outbox.
+- **Postio's undo cannot take it back.** `u` in Postio undoes what you did
+  in that app. An agent's change happens in another process, with its own
+  history, which ends when the call does. Each of these tools tells the
+  agent which folder every message came from, so you can ask it to put them
+  back, or move them yourself.
+- **Labels sync like yours.** A label is the same label Postio's own label
+  key uses. On an IMAP account it is saved to the server as a keyword.
+
+The tool descriptions tell the agent to use these only when you asked it
+to, and never because a message says so.
 
 A draft appears in Postio's Drafts like one you started yourself, and it is
 saved to your server's Drafts folder at the next sync, as an autosave is. It
@@ -101,7 +138,9 @@ the agent can do:
   that block contains only counts and outcomes.
 - Tool names and descriptions are fixed text. Nothing from your mail
   appears in them.
-- The only write is a draft, and a draft stays in Postio until you send it.
+- A draft stays in Postio until you send it. Archiving, moving and
+  labelling are off unless you switch them on, and none of them can delete
+  mail.
 
 ## What it reads, and when
 
