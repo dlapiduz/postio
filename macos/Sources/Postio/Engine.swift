@@ -464,6 +464,8 @@ final class Engine {
             let strip = await Task.detached { try? session.focusStrip() }.value
             countsReading = false
             if let strip { focusStrip = strip }
+            // The Dock's count is the strip's unread figure, on this read.
+            notifications.unread(focusStrip?.unread, badge: session.notices().badge)
             if countsOwed {
                 countsOwed = false
                 refreshCounts()
@@ -544,6 +546,7 @@ final class Engine {
     /// one once its document says how wide (M1).
     private func openMessage(_ message: Int64, index: UInt32, total: UInt32) {
         guard let model = messageWindow, let session, let main = mainWindow else { return }
+        notifications.opened(message)
         let fresh = model.open(
             message: message, index: index, total: total, mainWidth: Int32(main.frame.width))
         Task { @MainActor [weak self, weak model] in
@@ -1377,6 +1380,9 @@ final class Engine {
             // them (T106): the session has the new keymap by now.
             if menuPlan.apply(event) { mountMenuBar() }
             if keyMap.isOpen, let session { keyMap.refresh(session.focusKeyMap()) }
+        case .noticesChanged:
+            // `[sync] badge` or `notify` moved: the Dock follows at once.
+            notifications.unread(focusStrip?.unread, badge: session?.notices().badge ?? true)
         case .surfacedChanged:
             // The list re-reads what it surfaces and says so itself; the
             // strip's counts may have moved with it.
@@ -1609,7 +1615,8 @@ final class Engine {
             // screen" by that rule; the application being in front is.
             showing: nil,
             isActive: NSApplication.shared.isActive,
-            mailboxName: mailboxes.first { $0.id == arrival.mailbox }?.name
+            mailboxName: mailboxes.first { $0.id == arrival.mailbox }?.name,
+            enabled: session?.notices().notify ?? true
         )
         guard case let .deliver(notification) = decision else { return }
         notifications.post(notification)

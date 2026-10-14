@@ -28,6 +28,8 @@ public enum Suppressed: Equatable, Sendable {
     case nothingArrived
     /// It landed in the folder the user is looking at, right now.
     case alreadyOnScreen
+    /// `[sync] notify = false`: the person turned new-mail notifications off.
+    case turnedOff
 }
 
 /// What to do about an arrival.
@@ -49,6 +51,8 @@ public struct MailNotification: Equatable, Sendable {
     public let mailbox: Int64
     /// The one message a single arrival is about, if it is one.
     public let message: Int64?
+    /// Notification Center's group: one per account (`thread(account:)`).
+    public let thread: String
 }
 
 /// Deciding whether new mail is worth interrupting somebody for.
@@ -69,12 +73,16 @@ public enum MailNotifier {
     /// user is watching, and treating "this is the open mailbox" as sufficient
     /// is the version of this check that silently swallows the notification
     /// somebody actually needed.
+    ///
+    /// `enabled` is `[sync] notify`, the switch in Settings.
     public static func decide(
         _ arrival: MailArrival,
         showing: Int64?,
         isActive: Bool,
-        mailboxName: String?
+        mailboxName: String?,
+        enabled: Bool = true
     ) -> NotificationDecision {
+        guard enabled else { return .suppress(.turnedOff) }
         let decision = decideNotification(
             arrival: MailArrivalFfi(mailbox: arrival.mailbox, messages: arrival.messages),
             showing: showing,
@@ -94,7 +102,8 @@ public enum MailNotifier {
                     title: notification.title,
                     body: notification.body,
                     mailbox: notification.mailbox,
-                    message: notification.message
+                    message: notification.message,
+                    thread: thread(account: arrival.account)
                 )
             )
         }

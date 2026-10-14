@@ -144,6 +144,10 @@ public final class PostioSession {
     /// The header strip's words, composed by the engine (`focus_strip`).
     public func focusStrip() throws -> FocusStripFfi { try inner.focusStrip() }
 
+    /// `[sync] notify` and `[sync] badge` as they stand; `NoticesChanged`
+    /// says when they move. No I/O.
+    public func notices() -> NoticesFfi { inner.notices() }
+
     // MARK: Focus's surfaces
 
     /// A surface opened over the list: the keys are its now (the
