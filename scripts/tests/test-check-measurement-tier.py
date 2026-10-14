@@ -114,6 +114,26 @@ def main() -> int:
     case("a measurement beside a capability-ignored test",
          config=config_with(FILTER), files=neighbour, expect_fail=False)
 
+    # `profile.ci-full` holds the storyboard passes out because
+    # `profile.ci-storyboards` runs them. The two spellings must agree, or a
+    # test is held out of one and selected by neither.
+    passes = "binary(focus_suite) & test(/^every_command::/)"
+    split = (
+        config_with(FILTER)
+        + "[profile.ci-full]\n"
+        + f"default-filter = 'not (binary(cache_pressure) + ({passes}))'\n"
+        + "[profile.ci-storyboards]\n"
+        + f"default-filter = '{passes}'\n"
+    )
+    case("the storyboard split agrees with itself", config=split, files=good,
+         expect_fail=False)
+    drifted = split.replace(
+        "default-filter = 'binary(focus_suite) & test(/^every_command::/)'",
+        "default-filter = 'binary(focus_suite) & test(/^every_command_renamed::/)'",
+    )
+    case("ci-full holds out what ci-storyboards does not run", config=drifted,
+         files=good, expect_fail=True, mentions="ci-storyboards")
+
     # No filter at all is a tier that has been deleted, not an empty one.
     case("no default-filter", config="[profile.default]\nretries = 0\n",
          files=good, expect_fail=True)

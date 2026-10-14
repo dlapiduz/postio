@@ -219,10 +219,13 @@ slow-timeout = { period = "120s", terminate-after = 10 }
 #
 # `profile.nightly` keeps `all()` deliberately: on a workstation "run
 # everything" should mean everything, and `-E` narrows it there.
+#
+# It also holds out Focus's two storyboard passes, which
+# `profile.ci-storyboards` below runs instead, in a job of their own.
 [profile.ci-full]
 # Same clock as `profile.nightly` -- these are the same tests.
 slow-timeout = { period = "120s", terminate-after = 6 }
-default-filter = 'not binary(cache_pressure)'
+default-filter = 'not (binary(cache_pressure) + (binary(focus_suite) & (test(/^every_command::/) | test(/^storyboard_catalogue::/))))'
 # One red crate hiding a thousand passing tests is the wrong shape for a
 # report nobody is watching live, and for a release gate it is worse: it would
 # name one failure when the next line might be the reason.
@@ -268,3 +271,22 @@ threads-required = "num-test-threads"
 [[profile.default.overrides]]
 filter = 'binary(focus_suite) & (test(/^every_command::/) | test(/^storyboard_catalogue::/))'
 threads-required = "num-test-threads"
+
+# Those two storyboard passes, as a run of their own.
+#
+# `every_command` (~411 s on CI) and `storyboard_catalogue` (~275 s) each
+# take every test thread while they run, so inside `profile.ci-full` they
+# stopped the rest of the suite for about twelve minutes of every nightly
+# and every release gate. Nothing else had to wait for them: they need the
+# compositor to themselves, not the runner. So `profile.ci-full` holds them
+# out and this profile selects exactly them, and `nightly.yml` and
+# `release.yml` run it as a job of its own in parallel with the suite. The
+# threads-required override above still keeps the two apart from each other.
+#
+# The selection is written twice, here and negated in `profile.ci-full`, as
+# nextest config has no bindings; `scripts/checks/check-measurement-tier.py`
+# fails if the two stop naming the same tests.
+[profile.ci-storyboards]
+slow-timeout = { period = "120s", terminate-after = 6 }
+default-filter = 'binary(focus_suite) & (test(/^every_command::/) | test(/^storyboard_catalogue::/))'
+fail-fast = false

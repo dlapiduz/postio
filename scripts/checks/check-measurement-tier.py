@@ -129,6 +129,23 @@ def main() -> int:
                     f"saying so (#1450)."
                 )
 
+    # 4. What `profile.ci-full` holds out for `profile.ci-storyboards` to run
+    #    is the very thing that profile selects. nextest config has no
+    #    bindings, so the expression is written twice, and a rename that
+    #    reaches one copy would hold a test out of the nightly while the
+    #    other job selected nothing -- green, and running neither.
+    profiles = tomllib.loads(CONFIG.read_text()).get("profile", {})
+    passes = profiles.get("ci-storyboards", {}).get("default-filter")
+    if passes is not None:
+        full = profiles.get("ci-full", {}).get("default-filter", "")
+        if not (full.startswith("not ") and f"({passes})" in full):
+            problems.append(
+                "profile.ci-full's default-filter does not hold out exactly "
+                f"what profile.ci-storyboards runs ({passes!r}); the two must "
+                "name the same tests, or one is held out of the nightly and "
+                "run nowhere"
+            )
+
     if problems:
         print("measurement-tier check failed:", file=sys.stderr)
         for problem in problems:
