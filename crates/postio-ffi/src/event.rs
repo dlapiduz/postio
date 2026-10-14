@@ -528,6 +528,15 @@ pub enum UiEvent {
         /// The copy.
         copy: Option<crate::focus_search::FileCopyFfi>,
     },
+    /// A message's words are now on this machine (#1788): if it is the one
+    /// a window shows, read its document again, in place. It crossed as
+    /// `Other` before.
+    BodyLoaded {
+        /// The account.
+        account: i64,
+        /// The message whose body landed.
+        message: i64,
+    },
 }
 
 /// How a Focus toast is drawn.
@@ -668,6 +677,10 @@ impl From<postio_core::Event> for UiEvent {
                 done,
                 total,
             },
+            Event::BodyLoaded { account, message } => UiEvent::BodyLoaded {
+                account: account.into(),
+                message: message.into(),
+            },
             other => UiEvent::Other {
                 kind: variant_name(&other).to_string(),
             },
@@ -784,6 +797,22 @@ mod tests {
             }
             other => panic!("expected Notice, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_landed_body_crosses_with_its_message() {
+        // #1788: the Mac's message window draws a body that lands while it
+        // is open, so it must know which one landed.
+        assert_eq!(
+            UiEvent::from(postio_core::Event::BodyLoaded {
+                account: 3.into(),
+                message: 42.into(),
+            }),
+            UiEvent::BodyLoaded {
+                account: 3,
+                message: 42,
+            }
+        );
     }
 
     #[test]
