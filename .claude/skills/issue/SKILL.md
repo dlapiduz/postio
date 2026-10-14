@@ -120,8 +120,9 @@ scripts/issue-release.sh <n> --abandon    # hand it back to the pool
 ## When something is in the way
 
 - **A bug blocks you:** fix it on your branch and say so in the PR.
-- **The issue is wrong or bigger than it says:** comment with what you found,
-  file the rest with `scripts/issue-file.sh`, keep going on your part.
+- **The issue is wrong or bigger than it says:** comment with what you found
+  and fix the rest on your branch. File with `scripts/issue-file.sh` only what
+  is tangential to the issue or cannot be done now.
 - **It needs a design or architecture call an agent can make:**
   `needs-architecture` plus a comment with the question and options, release
   with `--abandon`, take something else.
