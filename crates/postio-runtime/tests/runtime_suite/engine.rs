@@ -516,6 +516,82 @@ async fn a_resync_that_finds_new_mail_announces_it() {
 }
 
 #[tokio::test]
+async fn a_modseq_less_resync_that_finds_new_mail_announces_it() {
+    // #1704. A server with no MODSEQ (Gmail and JMAP, an IMAP server without
+    // CONDSTORE) re-reads the folder on every pass after the first, so its
+    // steady-state pass is a full one -- and only incremental passes
+    // announced anything. Its deliveries were stored and never announced.
+    // The first pass must still announce nothing.
+    let database = test_support::memory().await;
+    let account =
+        postio_storage::test_support::account(&database.connect().await.expect("a connection"))
+            .await;
+    let mailbox = {
+        let connection = database.connect().await.expect("a connection");
+        let mut mailbox = postio_model::Mailbox::new(account.id, "INBOX", Some('/'));
+        postio_storage::repository::MailboxRepository::new(&connection)
+            .create(&mut mailbox)
+            .await
+            .expect("the folder is created");
+        mailbox
+    };
+    let mut inbox = MockMailbox::new("INBOX");
+    for n in 1..=3u32 {
+        inbox = inbox.message(MockMessage::new(numbered(n)));
+    }
+    let backend = Arc::new(
+        MockBackend::builder()
+            .capabilities(["IMAP4rev1"])
+            .mailbox(inbox)
+            .build(),
+    );
+    let (engine, events, _directory) = engine_over_arc(&database, account.id, backend.clone());
+
+    engine.sync(mailbox.id).await.expect("a first sync");
+    assert!(
+        !announced(&events)
+            .iter()
+            .any(|event| matches!(event, Event::NewMail { .. })),
+        "a first sync must never announce new mail"
+    );
+
+    for n in 4..=5u32 {
+        backend
+            .append(
+                "INBOX",
+                &postio_account::backend::AppendMessage::new(numbered(n)),
+            )
+            .await
+            .expect("the server takes delivery");
+    }
+    engine.sync(mailbox.id).await.expect("a resync");
+
+    let arrived: Vec<_> = announced(&events)
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::NewMail { messages, .. } => Some(messages),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(arrived.len(), 2, "exactly the two messages that arrived");
+}
+
+/// A small message numbered `n`, with reserved addresses.
+fn numbered(n: u32) -> Vec<u8> {
+    format!(
+        "From: Ada Lovelace <ada@example.com>\r\n\
+         To: Postio <postio@example.net>\r\n\
+         Subject: numbered {n}\r\n\
+         Message-ID: <numbered-{n}@example.com>\r\n\
+         Date: Mon, 1 Jun 2026 09:00:00 +0000\r\n\
+         \r\n\
+         Number {n}.\r\n"
+    )
+    .into_bytes()
+}
+
+#[tokio::test]
 async fn mail_arriving_on_a_resync_is_an_arrival_rather_than_a_reload() {
     // Issue #72: the list flickered on every sync tick. Both halves of the
     // reason are here rather than in the view.

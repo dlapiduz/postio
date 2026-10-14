@@ -3683,6 +3683,23 @@ async fn sync_pass(
                     .collect();
                 only_arrivals = *vanished == 0 && *changed == ids.len() && filed_away.is_empty();
             }
+            // A backend with no MODSEQ re-reads the folder on every pass
+            // after the first: this *is* its incremental pass, and what it
+            // inserted arrived since the last one (#1704). Every other full
+            // pass -- a rebuild, a renumbering, MODSEQ going backwards -- is
+            // a reload, and announcing it would be the notification storm.
+            if let resync::Outcome::Full {
+                reason: postio_model::FullResyncReason::NoModSeq,
+                report,
+            } = &outcome
+            {
+                arrived = report
+                    .arrived
+                    .iter()
+                    .copied()
+                    .filter(|id| !report.filed_away.contains(id))
+                    .collect();
+            }
             summarise_resync(outcome)
         })
     } else {
