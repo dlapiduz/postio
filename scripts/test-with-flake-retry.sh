@@ -51,6 +51,16 @@
 # is what tells the two apart -- which is the same judgement a session would
 # otherwise make by hand, badly, under time pressure.
 #
+# Further arguments are cargo target selection (`-p a --test=b ...`) used by
+# the first run *and* each retry, and `POSTIO_NEXTEST_FILTER`, when set, is
+# a filterset that narrows the first run. Together they are how a pull
+# request re-runs only the tests a red nightly failed
+# (`scripts/ci-nightly-rerun.py`) without building the whole workspace.
+#
+# `POSTIO_FAILED_TESTS_FILE`, when set, receives the tests that failed
+# twice, one `<binary_id> <test name>` per line -- the nightly uploads it,
+# and that list is what a pull request then re-runs.
+#
 # Exit status: 0 if the suite passed, or every failure was confirmed a
 # flake by an isolated rerun. 1 if any test failed twice.
 set -uo pipefail
@@ -58,16 +68,29 @@ set -uo pipefail
 PROFILE="${1:-ci}"
 # Empty means the whole workspace, which is what the release gate wants.
 PACKAGE="${2:-}"
+if [ "$#" -ge 2 ]; then shift 2; else shift "$#"; fi
+# `${a[@]+"${a[@]}"}` throughout: bash 3.2 calls an empty array unbound
+# under `set -u`.
+SELECT=("$@")
 if [ -n "$PACKAGE" ]; then
     SCOPE=(-p "$PACKAGE")
+elif [ "${#SELECT[@]}" -gt 0 ]; then
+    SCOPE=()
 else
     SCOPE=(--workspace)
+fi
+FILTER=()
+if [ -n "${POSTIO_NEXTEST_FILTER:-}" ]; then
+    # A test this names may be gone on this branch; that is a fix, not an
+    # error.
+    FILTER=(--no-tests=warn -E "$POSTIO_NEXTEST_FILTER")
 fi
 
 LOG="$(mktemp)"
 trap 'rm -f "$LOG"' EXIT
 
-cargo nextest run "${SCOPE[@]}" --profile "$PROFILE" --no-fail-fast 2>&1 | tee "$LOG"
+cargo nextest run ${SCOPE[@]+"${SCOPE[@]}"} ${SELECT[@]+"${SELECT[@]}"} \
+    --profile "$PROFILE" --no-fail-fast ${FILTER[@]+"${FILTER[@]}"} 2>&1 | tee "$LOG"
 STATUS="${PIPESTATUS[0]}"
 
 if [ "$STATUS" -eq 0 ]; then
@@ -113,7 +136,7 @@ for spec in "${FAILURES[@]}"; do
     binary_id="${spec%% *}"
     test_name="${spec#* }"
     echo "release gate: retrying isolated: $spec" >&2
-    if cargo nextest run --profile "$PROFILE" -E "binary_id($binary_id) & test(=$test_name)"; then
+    if cargo nextest run ${SELECT[@]+"${SELECT[@]}"} --profile "$PROFILE" -E "binary_id($binary_id) & test(=$test_name)"; then
         echo "release gate: confirmed a flake: $spec" >&2
         # On a runner, an annotation too: the nightly runs through here, and a
         # flake this forgives must still be visible on the green run (#1710).
@@ -125,6 +148,13 @@ for spec in "${FAILURES[@]}"; do
         REAL_FAILURES+=("$spec")
     fi
 done
+
+if [ -n "${POSTIO_FAILED_TESTS_FILE:-}" ]; then
+    : > "$POSTIO_FAILED_TESTS_FILE"
+    for spec in ${REAL_FAILURES[@]+"${REAL_FAILURES[@]}"}; do
+        printf '%s\n' "$spec" >> "$POSTIO_FAILED_TESTS_FILE"
+    done
+fi
 
 if [ "${#REAL_FAILURES[@]}" -gt 0 ]; then
     echo >&2

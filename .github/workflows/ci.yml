@@ -347,10 +347,11 @@ jobs:
 
   # Three jobs, because the question has two halves and one answer.
   #
-  # `nightly-status` asks what the last completed run concluded and never
-  # fails. `nightly-rerun` runs the nightly *here*, on this pull request, but
-  # only when that answer was red. `nightly` is the check the ruleset requires
-  # and is green if either half says so.
+  # `nightly-status` asks what the last completed run concluded, and if it was
+  # red, *what* in it was red; it never fails. `nightly-rerun` runs that much
+  # of the nightly *here*, on this pull request, but only when the answer was
+  # red. `nightly` is the check the ruleset requires and is green if either
+  # half says so.
   #
   # # Why a pull request re-runs it at all
   #
@@ -366,10 +367,24 @@ jobs:
   # it is earned rather than granted -- any pull request that fixes the
   # nightly clears the block, not only one somebody designated.
   #
-  # The cost is real and is the point: while the nightly is red every pull
-  # request pays for the full suite and the coverage floors, so the run goes
-  # from about four minutes to about twenty-five. A broken nightly is supposed
-  # to be uncomfortable until somebody fixes it.
+  # # Why only what was red
+  #
+  # It used to re-run the whole nightly, on the theory that a broken nightly
+  # should be uncomfortable until somebody fixes it. Measured, it was mostly
+  # waste: 45% of pull-request runs took that path, at a 46-minute median
+  # against 6 when the nightly is green, and 28% of all runner-hours -- while
+  # five of the seven red nightlies were the Docs job alone (one broken
+  # intra-doc link) and the other two were one GTK test each.
+  #
+  # The claim the gate makes is unchanged: "the nightly passes on this
+  # branch". It is proved by re-running what failed, which is the part of
+  # the nightly that could still be failing -- a red Docs job re-runs Docs,
+  # a red suite re-runs the tests that failed twice there (the nightly
+  # uploads them as `nightly-failed-tests`). Fixing the failure on a branch
+  # still clears the gate, and only fixing it does. When the red set cannot
+  # be read it falls back to every job, with the suite minus the measurement
+  # tier. `scripts/ci-nightly-rerun.py` has the rules and its self-test holds
+  # them.
   nightly-status:
     name: Last nightly
     runs-on: ubuntu-latest
@@ -378,7 +393,16 @@ jobs:
       # The run `nightly` links to when it refuses. Undeclared, it was the
       # empty string and the refusal pointed at nothing.
       url: ${{ steps.ask.outputs.url }}
+      # What to re-run; see `scripts/ci-nightly-rerun.py`. Left empty (the
+      # step below broke), `nightly.yml` runs everything, as it used to.
+      only: ${{ steps.scope.outputs.only }}
+      profile: ${{ steps.scope.outputs.profile }}
+      tests: ${{ steps.scope.outputs.tests }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts
+
       # Never fails. Its job is to answer, and `nightly` below is what turns
       # the answer into a verdict -- a step that exited non-zero here would
       # take `nightly-rerun` with it and there would be nothing to prove.
@@ -395,7 +419,7 @@ jobs:
           set -euo pipefail
           last=$(gh api \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/nightly.yml/runs?status=completed&branch=main&per_page=1" \
-            --jq '.workflow_runs[0] | "\(.conclusion)\t\(.html_url)\t\(.created_at)"' 2>/dev/null || true)
+            --jq '.workflow_runs[0] | "\(.conclusion)\t\(.html_url)\t\(.created_at)\t\(.id)"' 2>/dev/null || true)
 
           if [ -z "$last" ] || [ "$last" = "null" ]; then
             echo "No completed Nightly to judge."
@@ -406,6 +430,7 @@ jobs:
           conclusion=$(printf '%s' "$last" | cut -f1)
           url=$(printf '%s' "$last" | cut -f2)
           when=$(printf '%s' "$last" | cut -f3)
+          id=$(printf '%s' "$last" | cut -f4)
           # Any completed run on `main` counts, scheduled or dispatched -- `gh
           # workflow run Nightly` after landing a fix is a documented way to
           # clear this, and filtering to `event=schedule` would silently ignore
@@ -416,6 +441,7 @@ jobs:
           echo "Last Nightly: $conclusion ($when)"
           echo "  $url"
           echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
 
           case "$conclusion" in
             success|cancelled|skipped)
@@ -423,9 +449,29 @@ jobs:
               ;;
             *)
               echo "green=false" >> "$GITHUB_OUTPUT"
-              echo "::warning::The last Nightly failed ($url) — running it on this pull request to see whether this change fixes it."
+              echo "::warning::The last Nightly failed ($url) — re-running what failed on this pull request to see whether this change fixes it."
               ;;
           esac
+
+      # Which jobs were red, and in the suite, which tests. Never fails
+      # either: whatever it cannot read becomes "everything" in the script.
+      - name: Ask what in it was red
+        id: scope
+        if: steps.ask.outputs.green == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.ask.outputs.id }}
+        run: |
+          set -uo pipefail
+          work="${RUNNER_TEMP}/nightly-red"
+          mkdir -p "$work"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs?per_page=100" \
+            > "$work/jobs.json" 2>/dev/null || echo '{"jobs": []}' > "$work/jobs.json"
+          # Absent when the suite was green, or failed before naming a test.
+          gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" -n nightly-failed-tests \
+            -D "$work/failed" 2>/dev/null || true
+          python3 scripts/ci-nightly-rerun.py scope --jobs "$work/jobs.json" \
+            --failed-tests "$work/failed/failed.txt" | tee -a "$GITHUB_OUTPUT" || true
 
   # The nightly itself, on this pull request's merge commit. Skipped entirely
   # while the last one is green, which is almost always.
@@ -434,6 +480,10 @@ jobs:
     needs: nightly-status
     if: needs.nightly-status.outputs.green != 'true'
     uses: ./.github/workflows/nightly.yml
+    with:
+      only: ${{ needs.nightly-status.outputs.only }}
+      profile: ${{ needs.nightly-status.outputs.profile }}
+      tests: ${{ needs.nightly-status.outputs.tests }}
 
   nightly:
     name: Nightly is green
@@ -474,8 +524,9 @@ jobs:
           echo "that nightly. A red one means nothing is checking them."
           echo
           echo "This is not a deadlock: fix it on this branch and the re-run above"
-          echo "goes green, which is what clears this check. There is no override,"
-          echo "because there does not need to be one."
+          echo "(of what failed in that run, not the whole nightly) goes green,"
+          echo "which is what clears this check. There is no override, because"
+          echo "there does not need to be one."
           exit 1
 
   docs:

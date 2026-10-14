@@ -44,9 +44,33 @@ on:
   #
   # Reused rather than copied. A second definition of "what the nightly runs"
   # living in `ci.yml` would drift from this one, and the day it did, a pull
-  # request would clear a gate by passing something narrower than the thing
+  # request would clear a gate by passing something other than the thing
   # that was failing.
+  #
+  # The inputs narrow it to *what was red*, and only that:
+  # `scripts/ci-nightly-rerun.py` reads the red run and decides. Re-running
+  # everything to clear one broken doc link put 45% of pull-request runs on
+  # a 46-minute path. Called with no inputs (`full-suite.yml`, a schedule,
+  # a dispatch) it is the whole nightly, as it always was.
   workflow_call:
+    inputs:
+      only:
+        description: >-
+          Space-separated subset of `coverage doc tests doctests` to run.
+          Empty runs every job.
+        type: string
+        default: ""
+      profile:
+        description: The nextest profile for the suite.
+        type: string
+        default: ci-full
+      tests:
+        description: >-
+          The tests to run, one `<binary_id> <test name>` per line, as the
+          nightly's `nightly-failed-tests` artifact lists them. Empty runs the
+          profile's whole reach.
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -98,7 +122,9 @@ jobs:
   coverage:
     name: Coverage floors
     needs: changed
-    if: needs.changed.outputs.run == 'true'
+    # `inputs.only` is null on a schedule or a dispatch, and empty from a
+    # caller that passed nothing: both mean every job.
+    if: needs.changed.outputs.run == 'true' && (!inputs.only || contains(format(' {0} ', inputs.only), ' coverage '))
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -186,7 +212,7 @@ jobs:
   doc:
     name: Docs
     needs: changed
-    if: needs.changed.outputs.run == 'true'
+    if: needs.changed.outputs.run == 'true' && (!inputs.only || contains(format(' {0} ', inputs.only), ' doc '))
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -214,7 +240,7 @@ jobs:
   full-suite:
     name: Full suite
     needs: changed
-    if: needs.changed.outputs.run == 'true'
+    if: needs.changed.outputs.run == 'true' && (!inputs.only || contains(format(' {0} ', inputs.only), ' tests ') || contains(format(' {0} ', inputs.only), ' doctests '))
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -300,20 +326,62 @@ jobs:
       #
       # Through the flake-retry script, as the release gate runs the same
       # suite (#1710). A red nightly is not a private matter: it makes every
-      # pull request re-run this workflow until it goes green, and the
+      # pull request re-run what failed here until it goes green, and the
       # nightly was red 8 days of 20 -- one of them a GTK editor case that
       # failed at 361 s under the suite's load and passes alone. A test that
       # fails again in isolation still fails the run; one that does not is a
       # `::warning::` on it, so a forgiven flake is still seen.
+      #
+      # The tests that fail twice are written to `nightly-failed-tests`
+      # (uploaded below), and that list is what a pull request re-runs while
+      # this nightly is red: `scripts/ci-nightly-rerun.py` turns it into the
+      # target selection and filter this step is handed as `inputs.tests`.
+      # The step's name is how that script recognises it: keep the prefix
+      # `cargo nextest run`.
       - name: cargo nextest run --profile ci-full
+        if: ${{ !inputs.only || contains(format(' {0} ', inputs.only), ' tests ') }}
         env:
           POSTIO_TEST_PATIENCE: "3"
-        run: dbus-run-session -- scripts/test-with-flake-retry.sh ci-full
+          POSTIO_FAILED_TESTS_FILE: ${{ runner.temp }}/nightly-failed-tests/failed.txt
+          PROFILE: ${{ inputs.profile || 'ci-full' }}
+          TESTS: ${{ inputs.tests }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$POSTIO_FAILED_TESTS_FILE")"
+          if [ -z "$TESTS" ]; then
+            exec dbus-run-session -- scripts/test-with-flake-retry.sh "$PROFILE"
+          fi
+
+          echo "Re-running only what the last nightly failed:"
+          printf '%s\n' "$TESTS" | sed 's/^/  /'
+          printf '%s\n' "$TESTS" | python3 scripts/ci-nightly-rerun.py cargo-args > "$RUNNER_TEMP/select"
+          printf '%s\n' "$TESTS" | python3 scripts/ci-nightly-rerun.py filter > "$RUNNER_TEMP/filter"
+          select=()
+          while IFS= read -r arg; do select+=("$arg"); done < "$RUNNER_TEMP/select"
+          if [ "${#select[@]}" -eq 0 ]; then
+            echo "Every binary that failed is gone from this branch; nothing left to fail."
+            exit 0
+          fi
+          POSTIO_NEXTEST_FILTER="$(cat "$RUNNER_TEMP/filter")" \
+            dbus-run-session -- scripts/test-with-flake-retry.sh "$PROFILE" "" "${select[@]}"
+
+      - name: Keep the failed tests for the pull requests that follow
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nightly-failed-tests
+          path: ${{ runner.temp }}/nightly-failed-tests/
+          if-no-files-found: ignore
+          retention-days: 14
 
       # nextest does not run doctests and does not say so, so switching this
       # job to it would have silently dropped them -- `cargo test --workspace`
       # ran them before. #1440 is about their only other home being CI.
+      #
+      # Run even when the suite failed, so a red nightly says whether the
+      # doctests were red too and a pull request re-runs them only if so.
       - name: cargo test --doc
+        if: ${{ !cancelled() && (!inputs.only || contains(format(' {0} ', inputs.only), ' doctests ')) }}
         env:
           POSTIO_TEST_PATIENCE: "3"
         run: dbus-run-session -- cargo test --workspace --doc

@@ -79,8 +79,9 @@ are covered by tests.
 failure on your PR is yours, on the same branch (`issue-claim.sh --resume
 <n>`). A failure in code your diff does not touch is probably someone
 else's: reproduce it alone and search the issues before re-running. While
-the last nightly is red, every PR re-runs it, and fixing it on your branch
-is how to clear `Nightly is green`.
+the last nightly is red, every PR re-runs what was red on it (its failed
+jobs, and in the suite only its failed tests), and fixing that on your
+branch is how to clear `Nightly is green`.
 
 ## What the code must do
 

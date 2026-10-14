@@ -46,9 +46,10 @@ printf '%s\\n' "$*" >> "$STUB_DIR/calls"
 
 # The first run, whichever scope it asked for: the whole workspace for a
 # release, or one crate for the pull-request job that runs the widget
-# suite. The retry below is scoped by filter expression either way.
+# suite, or the targets a red nightly's failures live in. Only the first
+# run asks for --no-fail-fast; the retry below is one test and need not.
 if printf '%s' "$*" | grep -q -- "nextest run" \
-   && printf '%s' "$*" | grep -qE -- "--workspace|-p [a-z-]+"; then
+   && printf '%s' "$*" | grep -q -- "--no-fail-fast"; then
     if [ -f "$STUB_DIR/workspace-passes" ]; then
         echo "Summary [   0.010s] 400 tests run: 400 passed, 0 skipped"
         exit 0
@@ -95,10 +96,16 @@ exit 1
 
 
 def run(
-    stub_dir: Path, *args: str, actions: bool = False
+    stub_dir: Path,
+    *args: str,
+    actions: bool = False,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     environment = dict(os.environ)
     environment.pop("GITHUB_ACTIONS", None)
+    environment.pop("POSTIO_NEXTEST_FILTER", None)
+    environment.pop("POSTIO_FAILED_TESTS_FILE", None)
+    environment.update(env or {})
     if actions:
         environment["GITHUB_ACTIONS"] = "true"
     environment["PATH"] = f"{stub_dir / 'bin'}:{environment['PATH']}"
@@ -270,6 +277,62 @@ def main() -> int:
             "a coloured failure that passes alone is a flake",
             result.returncode == 0,
             f"exit {result.returncode}; output:\n{out}",
+        )
+
+    # ── a red nightly's failures, re-run on a pull request ───────────
+    # `ci.yml` re-runs only what the last nightly failed: target selection
+    # builds just those binaries, and a filter runs just those tests. The
+    # selection has to reach the isolated retry too, or one failure there
+    # builds the whole workspace the narrowing was meant to avoid.
+    with tempfile.TemporaryDirectory() as directory:
+        stub_dir = stub(Path(directory), flags=("b-thing-fails-again",))
+        result = run(
+            stub_dir,
+            "ci-full",
+            "",
+            "-p",
+            "fake-crate",
+            "--test=fake_suite",
+            env={
+                "POSTIO_NEXTEST_FILTER": "binary_id(fake-crate::fake_suite) & test(=tests::a_thing)"
+            },
+        )
+        calls = (stub_dir / "calls").read_text(encoding="utf-8").splitlines()
+        first = calls[0] if calls else ""
+        retries = calls[1:]
+        case(
+            "target selection replaces --workspace on the first run",
+            "-p fake-crate --test=fake_suite" in first and "--workspace" not in first,
+            f"first run was:\n{first}",
+        )
+        case(
+            "the filter narrows the first run, and a test gone from the branch is no error",
+            "-E binary_id(fake-crate::fake_suite) & test(=tests::a_thing)" in first
+            and "--no-tests=warn" in first,
+            f"first run was:\n{first}",
+        )
+        case(
+            "each isolated retry keeps the target selection",
+            len(retries) == 2
+            and all("-p fake-crate --test=fake_suite" in call for call in retries),
+            f"retries were:\n{retries}",
+        )
+        case(
+            "a narrowed run that still fails, fails",
+            result.returncode != 0,
+            f"exit {result.returncode}",
+        )
+
+    # ── what failed twice is written down for the next pull request ──
+    with tempfile.TemporaryDirectory() as directory:
+        stub_dir = stub(Path(directory), flags=("b-thing-fails-again",))
+        failed = Path(directory) / "failed.txt"
+        run(stub_dir, env={"POSTIO_FAILED_TESTS_FILE": str(failed)})
+        written = failed.read_text(encoding="utf-8") if failed.exists() else "<absent>"
+        case(
+            "only the test that failed twice is written, as `<binary_id> <test>`",
+            written == "fake-crate::fake_suite tests::b_thing\n",
+            f"the file held:\n{written!r}",
         )
 
     # ── a failure with nothing to retry: original status stands ──────
