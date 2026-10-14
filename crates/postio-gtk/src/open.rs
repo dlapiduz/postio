@@ -1206,6 +1206,18 @@ impl OpenMessage {
         self.load(message, generation);
     }
 
+    /// `BodyLoaded` (#1788): `message`'s words are on this machine now. If
+    /// it is the one on screen and was drawn without them, read it again
+    /// and draw it in place: the same generation, nothing cleared first and
+    /// the view left where it is, so "Downloading this message" goes
+    /// straight to the body. Only the open message is read, never the list.
+    pub fn body_landed(&self, message: MessageId) {
+        if !self.is_open() || self.shown.get() != Some(message) || self.body.borrow().is_some() {
+            return;
+        }
+        self.load(message, self.generation.get());
+    }
+
     /// Draw the action row for a message whose draft is in `state`: the
     /// received verbs for mail on its way nowhere, and otherwise the verbs
     /// that settle that state (T239; `focus_dialog::send_verbs`).

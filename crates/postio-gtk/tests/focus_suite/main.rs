@@ -26,6 +26,7 @@ mod a11y_sweep;
 mod across_apps;
 mod add_account_running;
 mod bar;
+mod body_lands;
 mod buttons;
 mod capture;
 mod chrome;
@@ -236,6 +237,10 @@ const CASES: &[(&str, fn())] = &[
         "visible_window::opening_and_switching_large_folders_asks_a_bounded_number_of_pages",
         visible_window::opening_and_switching_large_folders_asks_a_bounded_number_of_pages
             as fn(),
+    ),
+    (
+        "body_lands::a_body_that_lands_while_its_message_is_open_is_drawn_in_place",
+        body_lands::a_body_that_lands_while_its_message_is_open_is_drawn_in_place as fn(),
     ),
     (
         "list_reload::a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone",
