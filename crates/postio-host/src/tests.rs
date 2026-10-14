@@ -798,6 +798,199 @@ fn a_frontend_lists_a_messages_parts_and_saves_one() {
     assert_eq!(std::fs::read(&to).unwrap(), b"%PDF-1.7 the report");
 }
 
+#[test]
+fn saving_a_new_attachment_fetches_from_its_own_account() {
+    use postio_account::backend::{BodyStructure, MockBackend, MockMailbox, MockMessage, PartNode};
+    use postio_model::{Account, EmailAddress};
+    use postio_storage::repository::AccountRepository;
+
+    for action in [
+        "save",
+        "save-missing",
+        "save-all",
+        "open",
+        "source",
+        "export",
+        "body",
+        "reading",
+    ] {
+        let server = |payload: &str| {
+            let text = format!("See attached: {payload}");
+            let raw = format!(
+                "Message-ID: <report@example.com>\r\nFrom: ada@example.com\r\n\
+             Subject: Report\r\nContent-Type: multipart/mixed; boundary=parts\r\n\r\n\
+             --parts\r\nContent-Type: text/plain\r\n\r\n{text}\r\n\
+             --parts\r\nContent-Type: application/pdf\r\n\
+             Content-Disposition: attachment; filename=report.pdf\r\n\
+             Content-Transfer-Encoding: 7bit\r\n\r\n{payload}\r\n--parts--\r\n"
+            );
+            MockBackend::builder()
+                .mailbox(
+                    MockMailbox::new("INBOX").message(
+                        MockMessage::new(raw.into_bytes())
+                            .with_structure(BodyStructure::from_parts(
+                                "multipart/mixed",
+                                [
+                                    PartNode::new("1", "text/plain", text.len() as u64)
+                                        .with_encoding("7bit"),
+                                    PartNode::new("2", "application/pdf", payload.len() as u64)
+                                        .with_encoding("7bit")
+                                        .with_filename("report.pdf"),
+                                ],
+                            ))
+                            .with_part("1", text.as_bytes())
+                            .with_part("2", payload.as_bytes()),
+                    ),
+                )
+                .build()
+        };
+        let first = server(if action == "save-missing" {
+            ""
+        } else {
+            "%PDF first account"
+        });
+        let second = server("%PDF second account");
+        let world = syncing_world(first.clone());
+        let (client, _) = world.frontend(ClientKind::Focus);
+        world.host().start_syncing();
+        eventually(&world, || row_titled(&world, &client, "Report"));
+
+        let account = world.rt.block_on(async {
+            let connection = world.database.connect().await.unwrap();
+            let mut account = Account::new(
+                "Second",
+                EmailAddress::new(None::<String>, "second@example.com"),
+            );
+            AccountRepository::new(&connection)
+                .create(&mut account)
+                .await
+                .unwrap();
+            account
+        });
+        let wiring = world
+            .host()
+            .inner
+            .wiring
+            .clone()
+            .with_mail(postio_session::MailOverride {
+                backend: std::sync::Arc::new(second.clone()),
+                smtp: std::sync::Arc::new(postio_smtp::transport::ScriptedConnector::new(
+                    postio_smtp::transport::SmtpScript::new("220 ready"),
+                )),
+            });
+        let engine = postio_session::engine::start(&account, &wiring).unwrap();
+        super::adopt(&wiring, &world.host().inner.engines, account.id, engine);
+        let message = eventually(&world, || {
+            world.rt.block_on(async {
+                let connection = world.database.read().await.ok()?;
+                let inbox = postio_storage::repository::MailboxRepository::new(&connection)
+                    .list_for_account(account.id)
+                    .await
+                    .ok()?
+                    .into_iter()
+                    .find(|mailbox| mailbox.path == "INBOX")?;
+                let page = client
+                    .list_page(PageRequest {
+                        scope: ListScope::Mailbox(inbox.id),
+                        offset: 0,
+                        limit: 10,
+                    })
+                    .await
+                    .ok()?;
+                match page {
+                    ListPage::Messages(page) => page.rows.first().map(|row| row.id),
+                    ListPage::Threads(page) => page.rows.first().map(|row| row.representative.id),
+                }
+            })
+        });
+        let cost = test_support::counting::counted(|| {
+            assert!(
+                world
+                    .rt
+                    .block_on(world.host().inner.engine_for_message(message))
+                    .is_some()
+            );
+        });
+        assert_eq!(cost.statements, 1, "routing reads only the account key");
+        assert_eq!(cost.rows, 1, "routing never loads a mailbox or its parts");
+        let part = world.rt.block_on(client.parts(message)).unwrap().remove(0);
+        assert!(part.blob_id.is_none(), "new mail has no downloaded payload");
+        let out = tempfile::tempdir().unwrap();
+        let to = out.path().join("report.pdf");
+        match action {
+            "save" | "save-missing" => {
+                world
+                    .rt
+                    .block_on(client.save_part(message, part.id, to.clone()))
+                    .unwrap();
+                assert_eq!(std::fs::read(&to).unwrap(), b"%PDF second account");
+            }
+            "save-all" => {
+                assert_eq!(
+                    world
+                        .rt
+                        .block_on(client.save_parts(message, vec![(part.id, to.clone())]))
+                        .unwrap(),
+                    0
+                );
+                assert_eq!(std::fs::read(&to).unwrap(), b"%PDF second account");
+            }
+            "open" => {
+                let path = world
+                    .rt
+                    .block_on(client.open_part(message, part.id))
+                    .unwrap();
+                assert_eq!(std::fs::read(&path).unwrap(), b"%PDF second account");
+                std::fs::remove_file(path).unwrap();
+            }
+            "source" => {
+                let raw = world.rt.block_on(client.raw_source(message)).unwrap();
+                assert!(
+                    String::from_utf8(raw)
+                        .unwrap()
+                        .contains("%PDF second account")
+                );
+            }
+            "export" => {
+                world
+                    .rt
+                    .block_on(client.export_messages(vec![(message, to.clone())]))
+                    .unwrap();
+                assert!(
+                    String::from_utf8(std::fs::read(&to).unwrap())
+                        .unwrap()
+                        .contains("%PDF second account")
+                );
+            }
+            "body" | "reading" => {
+                if action == "reading" {
+                    let read = world
+                        .rt
+                        .block_on(client.readings(vec![message], false))
+                        .unwrap();
+                    assert_eq!(read[0].message, message);
+                } else {
+                    client.fetch_body(message);
+                }
+                eventually(&world, || {
+                    match world.rt.block_on(client.body(message)).ok()? {
+                        postio_client::protocol::Body::Ready { body, .. } => body
+                            .text
+                            .filter(|text| text.contains("%PDF second account")),
+                        _ => None,
+                    }
+                });
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            first.body_fetches().is_empty(),
+            "the other account must not fetch it"
+        );
+        assert!(!second.body_fetches().is_empty());
+    }
+}
+
 /// A draft to `account`, saying `words`.
 fn a_draft(account: postio_model::AccountId, words: &str) -> postio_model::Draft {
     let mut draft = postio_model::Draft::new(account);
@@ -4468,15 +4661,20 @@ fn a_search_whose_caller_has_gone_stops_on_the_host() {
     // its reader and its CPU while the one that replaced it waits.
     //
     // Every reader turn is held here, so the host's search waits for one:
-    // a piece of work in flight, holding the host (its task's share of
-    // `Inner`) for as long as it lives. Dropped, it must let go without
-    // ever reading a row.
+    // a search in flight. Its own probe ends when the future returns or is
+    // dropped, without counting unrelated background tasks. Dropped, it
+    // must let go without ever reading a row.
     let seed = SearchSeed::new();
     let host = seed.host.as_ref().expect("running");
     let query = postio_search::parse("atlas budget", postio_demo::today().date_naive());
     // Warm: whatever the host starts lazily on a first search is started.
     seed.conversations("atlas budget");
-    let idle = std::sync::Arc::strong_count(&host.inner);
+    assert_eq!(
+        host.inner
+            .searches_in_flight
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
 
     let held: Vec<postio_storage::Reader> = seed.rt.block_on(async {
         let mut held = Vec::new();
@@ -4504,12 +4702,18 @@ fn a_search_whose_caller_has_gone_stops_on_the_host() {
     });
     assert!(waited, "the search waits for a reader turn");
     postio_test_support::wait_until("the host to be working on the search", || {
-        std::sync::Arc::strong_count(&host.inner) > idle
+        host.inner
+            .searches_in_flight
+            .load(std::sync::atomic::Ordering::SeqCst)
+            == 1
     });
 
     drop(call);
     postio_test_support::wait_until("the host to stop the abandoned search", || {
-        std::sync::Arc::strong_count(&host.inner) == idle
+        host.inner
+            .searches_in_flight
+            .load(std::sync::atomic::Ordering::SeqCst)
+            == 0
     });
 
     drop(held);
