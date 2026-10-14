@@ -570,6 +570,59 @@ async fn new_inbox_mail_is_synced_while_the_archive_s_headers_run() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn new_inbox_mail_is_synced_while_the_wave_only_fetches_bodies() {
+    // The same promise after the headers are done. A wave that has run out
+    // of folders keeps itself alive claiming bodies beside no lanes at all,
+    // and the only thing that looked at INBOX was a committed header batch:
+    // with no header batches left, nothing looked until the whole backfill
+    // was over -- an hour on a real account, while new mail went unseen.
+    //
+    // Causal: when the new message lands, the archive must still be missing
+    // bodies.
+    let backend = Arc::new(
+        MockBackend::builder()
+            .mailbox(folder("INBOX", &[], 10))
+            .mailbox(folder("Archive", &["\\Archive"], 600))
+            .build(),
+    );
+    backend.refuse_creates("no new folders here");
+    backend.set_latency(LATENCY);
+
+    let (database, engine, _directory) = engine_over(backend.clone()).await;
+
+    until("every header to land", async || {
+        stored(&database, "INBOX").await == Some(10)
+            && stored(&database, "Archive").await == Some(600)
+    })
+    .await;
+    // Slow the bodies down so the body-only stretch is unmistakable.
+    backend.set_latency(Duration::from_millis(150));
+    assert!(
+        bodies_missing(&database, "Archive")
+            .await
+            .is_some_and(|missing| missing > 100),
+        "the archive's bodies were done before the question could be asked"
+    );
+
+    backend
+        .append("INBOX", &AppendMessage::new(message(11)))
+        .await
+        .expect("the mock accepts new mail");
+
+    until("the new message to be synced", async || {
+        stored(&database, "INBOX").await == Some(11)
+    })
+    .await;
+    let missing = bodies_missing(&database, "Archive").await.unwrap_or(0);
+    assert!(
+        missing > 0,
+        "the new INBOX message was synced only once the archive's bodies were \
+         all down, so new mail waited out the whole backfill"
+    );
+    drop(engine);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_slow_pass_does_not_hold_the_folders_queued_behind_the_wave() {
     // The live incident in
     // `docs/notes/2026-09-13-a-slow-pass-stops-every-folder-behind-it.md`:
