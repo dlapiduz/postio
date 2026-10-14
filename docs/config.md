@@ -221,6 +221,22 @@ the search dropdown, never a banner or a notification. A date that keeps
 rolling is written relative (`after:90d`, the last 90 days) and one that
 stays put as a day (`after:2026-07-01`); both are the one query language.
 
+## `[mcp.accounts."<address>"]`
+
+What an AI agent may read through `postio-mcp`, Postio's MCP server
+([agents and MCP](mcp.md)). **Nothing is shared until a table here
+names an account**, keyed by its address, and the folders in it.
+
+```toml
+[mcp.accounts."ada@example.com"]
+mailboxes = ["INBOX", "Receipts"]   # folder paths; "*" shares every folder
+```
+
+An account without a table, or whose table names no folder, is
+invisible to every tool, including the one that lists accounts. The
+server reads this section again on every call, so removing a line
+takes effect on the agent's next call.
+
 ## `[mailboxes]`
 
 Maps a role Postio already knows (`archive`, `sent`, `trash`, ...) to

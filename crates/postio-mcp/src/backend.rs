@@ -48,22 +48,42 @@ impl Drop for Lease {
 /// each call and closed after it.
 pub struct Installed {
     config: Option<PathBuf>,
+    store: PathBuf,
     secrets: Arc<dyn postio_account::secret::SecretStore>,
 }
 
 impl Installed {
-    /// The store `config.toml` at `config` is wired by, its key in `secrets`.
+    /// This installation's store, wired as `config.toml` at `config` says,
+    /// its key in `secrets`.
     pub fn new(
         config: Option<PathBuf>,
         secrets: Arc<dyn postio_account::secret::SecretStore>,
     ) -> Self {
-        Installed { config, secrets }
+        Installed::at(config, postio_session::paths::store_path(), secrets)
+    }
+
+    /// [`Installed::new`], over the store at `store`.
+    pub fn at(
+        config: Option<PathBuf>,
+        store: PathBuf,
+        secrets: Arc<dyn postio_account::secret::SecretStore>,
+    ) -> Self {
+        Installed {
+            config,
+            store,
+            secrets,
+        }
     }
 }
 
 impl Backend for Installed {
     fn lease(&mut self) -> Result<Lease, String> {
-        let host = Host::open(self.config.as_deref(), Arc::clone(&self.secrets), &|_| {})
+        let host = Host::open_at(
+            self.config.as_deref(),
+            &self.store,
+            Arc::clone(&self.secrets),
+            &|_| {},
+        )
             .map_err(|refusal| refusal.to_string())?;
         let client = host.connect(ClientKind::Mcp);
         Ok(Lease {
