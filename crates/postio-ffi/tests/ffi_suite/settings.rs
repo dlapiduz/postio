@@ -508,6 +508,7 @@ const SYNCING: &str = "\
 check_for_mail = \"poll\"
 poll_interval_secs = 900
 notify = false
+badge = false
 a_key_this_build_does_not_know = 1
 
 # hand-written, and it should stay that way
@@ -522,6 +523,7 @@ fn the_sync_pane_reads_the_sync_table() {
     assert_eq!(syncing.check_for_mail, postio_ffi::CheckForMailFfi::Poll);
     assert_eq!(syncing.poll_interval_secs, 900);
     assert!(!syncing.notify);
+    assert!(!syncing.badge, "the Dock's unread count, switched off");
     assert!(
         syncing.sync_on_startup,
         "a key that is not in the file is its default, not an error"
@@ -561,6 +563,7 @@ fn every_sync_field_survives_a_round_trip() {
     syncing.attachment_fetch = postio_ffi::AttachmentFetchFfi::Never;
     syncing.initial_sync_messages = 250;
     syncing.notify = true;
+    syncing.badge = true;
 
     let written = settings_patch_syncing(SYNCING.to_owned(), syncing.clone()).expect("patch");
     let read_back = settings_syncing(written).expect("the patched file parses");

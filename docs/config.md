@@ -43,6 +43,7 @@ The macOS app's appearance. The desktop app and the terminal read none of these:
 | `initial_sync_messages` | integer | `5000` | How many messages the first sync reaches back for, newest first. |
 | `notify` | boolean | `true` | Master switch for desktop notifications on new mail. |
 | `notify_roles` | array of strings | `["inbox"]` | Which mailbox roles produce a notification when mail arrives in them. |
+| `badge` | boolean | `true` | Show how many inbox conversations are unread on the app's icon (the Dock, on the Mac). Nothing is shown at zero. |
 
 ## `[storage]`
 

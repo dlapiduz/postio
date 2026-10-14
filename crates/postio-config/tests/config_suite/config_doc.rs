@@ -130,6 +130,12 @@ const ENTRIES: &[Entry] = &[
         default: "[\"inbox\"]",
         description: "Which mailbox roles produce a notification when mail arrives in them.",
     },
+    Entry {
+        path: "sync.badge",
+        kind: "boolean",
+        default: "true",
+        description: "Show how many inbox conversations are unread on the app's icon (the Dock, on the Mac). Nothing is shown at zero.",
+    },
     // ── [storage] ─────────────────────────────────────────────────────
     Entry {
         path: "storage.max_bytes",

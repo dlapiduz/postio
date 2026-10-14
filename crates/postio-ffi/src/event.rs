@@ -537,6 +537,11 @@ pub enum UiEvent {
         /// The message whose body landed.
         message: i64,
     },
+    /// `[sync] notify` or `[sync] badge` changed while the app ran: read
+    /// `notices` again, and repaint the app icon's count.
+    ///
+    /// Boundary-local, raised by the session's config watcher.
+    NoticesChanged,
 }
 
 /// How a Focus toast is drawn.

@@ -40,12 +40,39 @@ impl From<postio_client::protocol::FocusCounts> for FocusCountsFfi {
 pub struct FocusStripFfi {
     /// "312 · 41 unread".
     pub counts: String,
+    /// The unread figure `counts` says, as a number: the Dock's badge.
+    /// Carried on the strip's own read, which is re-read on every change to
+    /// the inbox, so the badge costs no read of its own.
+    pub unread: u32,
     /// "Has action · 7".
     pub has_action: String,
     /// "186 filtered today", or nothing.
     pub filtered_today: Option<String>,
     /// "4 digest rules", or nothing.
     pub digest_rules: Option<String>,
+}
+
+/// What `[sync]` says about telling somebody mail is waiting: whether new
+/// mail notifies, and whether the app's icon carries the unread count.
+/// Kept current while the session runs; [`UiEvent::NoticesChanged`] says
+/// when it moved.
+///
+/// [`UiEvent::NoticesChanged`]: crate::UiEvent::NoticesChanged
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct NoticesFfi {
+    /// `[sync] notify`: post a notification for new mail.
+    pub notify: bool,
+    /// `[sync] badge`: show the unread count on the app's icon.
+    pub badge: bool,
+}
+
+impl From<&postio_config::SyncConfig> for NoticesFfi {
+    fn from(sync: &postio_config::SyncConfig) -> Self {
+        NoticesFfi {
+            notify: sync.notify,
+            badge: sync.badge,
+        }
+    }
 }
 
 #[uniffi::export]
@@ -123,11 +150,18 @@ impl Session {
         let rules = config.digests.len();
         Ok(FocusStripFfi {
             counts: postio_ui::focus_row::strip_counts(counts.conversations, counts.unread),
+            unread: counts.unread,
             has_action: postio_ui::focus_row::has_action_label(Some(counts.has_action)),
             filtered_today: (config.filtering && counts.filtered_today > 0)
                 .then(|| postio_ui::filtered::today(counts.filtered_today)),
             digest_rules: (rules > 0).then(|| postio_ui::focus_row::digest_rules(rules)),
         })
+    }
+
+    /// Whether new mail notifies and whether the icon carries the unread
+    /// count, as `config.toml` says now. No I/O: the session keeps it.
+    pub fn notices(&self) -> NoticesFfi {
+        self.notices_now()
     }
 
     /// The header strip's counts, read now.
