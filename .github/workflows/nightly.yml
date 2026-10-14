@@ -54,10 +54,10 @@ on:
   # a dispatch) it is the whole nightly, as it always was.
   workflow_call:
     inputs:
+      # Single-line descriptions: `scripts/checks/ci-expected-workflows.py`
+      # reads this file with a small YAML reader that has no folded scalars.
       only:
-        description: >-
-          Space-separated subset of `coverage doc tests doctests` to run.
-          Empty runs every job.
+        description: "Space-separated subset of: coverage doc tests doctests. Empty runs every job."
         type: string
         default: ""
       profile:
@@ -65,10 +65,7 @@ on:
         type: string
         default: ci-full
       tests:
-        description: >-
-          The tests to run, one `<binary_id> <test name>` per line, as the
-          nightly's `nightly-failed-tests` artifact lists them. Empty runs the
-          profile's whole reach.
+        description: "The tests to run, one '<binary_id> <test name>' per line, as the nightly-failed-tests artifact lists them. Empty runs the profile's whole reach."
         type: string
         default: ""
 
