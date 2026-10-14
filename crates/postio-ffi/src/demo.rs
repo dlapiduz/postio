@@ -110,6 +110,14 @@ fn open(name: &str) -> Result<Arc<Session>, SessionError> {
         *kept = Some(vault);
     }
     let options = crate::SessionOptions::in_memory_with(database).with_config_for_test(&config);
+    // `POSTIO_DEMO_AGENTS=<socket>` has the demo answer agents there, so
+    // `postio-mcp` can be driven against an open app (ADR 0041, amended
+    // 2026-10-14). Off unless asked: the demo otherwise writes nothing to
+    // disk.
+    let options = match std::env::var_os("POSTIO_DEMO_AGENTS").filter(|path| !path.is_empty()) {
+        Some(socket) => options.answering_agents_at(socket),
+        None => options,
+    };
     // The search seed's files have their bytes on this machine, so the
     // attachment indexer the session starts reads them (spec 010 step 9):
     // its rows name the blobs a store under the test keys gives the bytes.

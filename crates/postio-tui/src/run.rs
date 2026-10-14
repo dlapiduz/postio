@@ -163,6 +163,13 @@ pub fn run() -> ExitCode {
     // Focus's engine before anything could sync (FR-186).
     let _focus = engage_focus(&host, &config, config_path.as_deref());
     let host = Arc::new(host);
+    // While this terminal has the store, it answers agents' calls (ADR
+    // 0041, amended 2026-10-14).
+    let _agents = postio_mcp::socket::listen_installed(host.connector(), config_path.clone())
+        .inspect_err(|error| {
+            tracing::warn!(%error, "agents will not be answered by this terminal: {error}");
+        })
+        .ok();
     let _focus_follow = config_path
         .as_deref()
         .and_then(|path| follow_focus_config(&host, path));

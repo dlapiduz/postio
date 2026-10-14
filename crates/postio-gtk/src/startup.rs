@@ -45,6 +45,9 @@ pub struct Session {
     state: SharedState,
     focus: FocusHandle,
     syncing: Cell<bool>,
+    /// The agent socket, while this window's host answers agents (ADR
+    /// 0041, amended 2026-10-14).
+    agents: std::cell::RefCell<Option<postio_mcp::socket::Listener>>,
 }
 
 impl Session {
@@ -143,7 +146,27 @@ impl Session {
 
     /// Stop the engines and mark a clean end, before the host is dropped.
     pub fn stop(&self) {
+        // Agents first: nothing answers them once the host has stopped.
+        self.agents.borrow_mut().take();
         self.host.stop();
+    }
+
+    /// Answer agents' calls on the socket beside the store at `store`, the
+    /// `[mcp]` of `config_path` deciding what they may read and do, while
+    /// this session lasts. Only the app that opened the store does: a test
+    /// or a demo window is no one's to answer for.
+    pub fn answer_agents(&self, store: &std::path::Path, config_path: Option<&std::path::Path>) {
+        match postio_mcp::socket::listen(
+            postio_mcp::socket::path_for(store),
+            self.host.connector(),
+            config_path.map(std::path::Path::to_path_buf),
+            postio_mcp::Audit::to_file(store.with_file_name("mcp-access.log")),
+        ) {
+            Ok(listener) => *self.agents.borrow_mut() = Some(listener),
+            Err(error) => {
+                tracing::warn!(%error, "agents will not be answered by this window: {error}");
+            }
+        }
     }
 }
 
@@ -231,6 +254,7 @@ pub fn adopt_at(
         state,
         focus,
         syncing: Cell::new(false),
+        agents: std::cell::RefCell::new(None),
     }
 }
 
@@ -379,6 +403,7 @@ pub fn open(
                     timeline.mark(Phase::Store);
                 }
                 let session = adopt_at(&window, host, &config, opener.config_path());
+                session.answer_agents(&opener.store, opener.config_path());
                 opened(session);
             }
             Err(refusal) => {
