@@ -131,6 +131,17 @@ pub struct BackfillPolicy {
     /// What to do about attachment payloads — the *other* axis, governed
     /// separately from everything above it.
     pub attachments: AttachmentPolicy,
+    /// The most attachment bytes fetched unasked for one message that has
+    /// just arrived, or `None` for no limit.
+    ///
+    /// New mail is the mail a person is about to open, so its attachments
+    /// follow its text down rather than waiting for a click (maintainer,
+    /// 2026-10-14): a part is on the machine by the time anybody reaches for
+    /// it. Parts are taken in order while they fit. Only arrivals, never the
+    /// archive -- that is [`AttachmentPolicy::Eager`]'s question -- and never
+    /// under [`AttachmentPolicy::Never`] or on a metered connection that
+    /// pauses the background lane.
+    pub fresh_payload_bytes: Option<u64>,
 }
 
 /// When an attachment's bytes are downloaded — ADR 0017's payload axis.
@@ -190,6 +201,9 @@ impl Default for BackfillPolicy {
             // download.
             max_inline_bytes: Some(256 * 1024),
             attachments: AttachmentPolicy::default(),
+            // Twenty-five megabytes: the attachment limit of the large mail
+            // providers, so whatever was sent as an attachment at all fits.
+            fresh_payload_bytes: Some(25 * 1024 * 1024),
         }
     }
 }
@@ -203,6 +217,8 @@ impl Default for BackfillPolicy {
 pub enum Priority {
     /// The user is waiting for this one.
     Interactive,
+    /// It has just arrived, and is the mail most likely to be opened next.
+    Fresh,
     /// Nobody has asked; it is being fetched so that they can read it offline
     /// later.
     Background,
@@ -267,9 +283,10 @@ impl Prefetched {
 /// How many bytes of fetched-ahead sections may be held at once.
 ///
 /// A batch does not stream: every answer is in memory together, which is the
-/// trade it makes for the round trips. Bounded against `RFC822.SIZE`, which
-/// the header sync already recorded, and conservatively — the whole message's
-/// size stands in for the text section's, which is always smaller.
+/// trade it makes for the round trips. Bounded against
+/// [`BodyRequest::text_size`] -- the whole message less the attachment parts
+/// the header sync recorded -- so a short note carrying a large PDF is not
+/// priced as the PDF.
 const PREFETCH_BUDGET: u64 = 8 * 1024 * 1024;
 
 /// How many messages may be named in one `UID FETCH`, whatever their size.
@@ -314,7 +331,7 @@ pub async fn prefetch_text_sections(
         if !matches!(request.want, Want::Text) {
             continue;
         }
-        if request.size > budget {
+        if request.text_size > budget {
             continue;
         }
         let Ok(Some(message)) = messages.get(request.message).await else {
@@ -339,7 +356,7 @@ pub async fn prefetch_text_sections(
             }
         }
         if wanted {
-            budget = budget.saturating_sub(request.size);
+            budget = budget.saturating_sub(request.text_size);
         }
     }
 
@@ -377,9 +394,12 @@ pub struct BodyRequest {
     pub uid: Uid,
     /// The backend's own identity — what the fetch is addressed by (#543).
     pub remote_id: postio_model::RemoteId,
-    /// `RFC822.SIZE`, as the header fetch reported it — what the cap is
-    /// measured against.
+    /// `RFC822.SIZE`, as the header fetch reported it.
     pub size: u64,
+    /// What fetching its text alone costs: `size` less the attachment parts
+    /// [`Want::Text`] leaves on the server. What the cap is measured against
+    /// for a text request; see `BackfillCandidate::text_size`.
+    pub text_size: u64,
     /// Where this body's mailbox sits in the sync queue, from
     /// [`crate::order::sync_priority`]. **Lower is fetched sooner**, and it
     /// outranks [`received_at`](Self::received_at) entirely.
@@ -438,6 +458,17 @@ pub enum Want {
     HeaderBlock,
 }
 
+impl BodyRequest {
+    /// Roughly how many bytes fetching it moves: its text for
+    /// [`Want::Text`], every byte otherwise.
+    pub fn fetched_bytes(&self) -> u64 {
+        match self.want {
+            Want::Text => self.text_size,
+            _ => self.size,
+        }
+    }
+}
+
 impl Want {
     /// Folds another request for the same message into this one.
     ///
@@ -471,6 +502,7 @@ impl From<BackfillCandidate> for BodyRequest {
             uid: candidate.uid,
             remote_id: candidate.remote_id,
             size: candidate.size,
+            text_size: candidate.text_size,
             rank: crate::order::sync_priority(candidate.mailbox_role),
             received_at: candidate.received_at,
             // The text axis is the default; the payload axis opts in.
@@ -550,6 +582,7 @@ impl BackfillProgress {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Lane {
     Background,
+    Fresh,
     Interactive,
     InFlight,
 }
@@ -592,6 +625,13 @@ pub struct Backfill {
     policy: BackfillPolicy,
     /// The user's clicks, in the order they made them.
     interactive: VecDeque<BodyRequest>,
+    /// Mail that has just arrived, in the order it did: behind a click and
+    /// ahead of everything else. See [`Backfill::arrived`].
+    fresh: VecDeque<BodyRequest>,
+    /// An arrival's attachments, queued on [`fresh`](Self::fresh) once its
+    /// text is stored -- the words first, because they are what the list and
+    /// the reader show.
+    followups: HashMap<MessageId, BodyRequest>,
     /// Everything else, newest first.
     background: BinaryHeap<Entry>,
     lanes: HashMap<MessageId, Lane>,
@@ -633,6 +673,8 @@ impl Backfill {
         Self {
             policy,
             interactive: VecDeque::new(),
+            fresh: VecDeque::new(),
+            followups: HashMap::new(),
             background: BinaryHeap::new(),
             lanes: HashMap::new(),
             progress: BackfillProgress::default(),
@@ -723,7 +765,7 @@ impl Backfill {
         if self
             .policy
             .max_body_bytes
-            .is_some_and(|cap| request.size > cap)
+            .is_some_and(|cap| request.fetched_bytes() > cap)
         {
             self.progress.skipped += 1;
             self.set_aside.insert(request.message);
@@ -790,9 +832,9 @@ impl Backfill {
                 }
                 return;
             }
-            Some(Lane::Background) => {
-                // The stale heap entry is skipped on its way out; the count
-                // does not move, because the message did not leave the queue.
+            Some(Lane::Background | Lane::Fresh) => {
+                // The stale entry is skipped on its way out; the count does
+                // not move, because the message did not leave the queue.
                 self.lanes.insert(request.message, Lane::Interactive);
             }
             None => {
@@ -801,6 +843,72 @@ impl Backfill {
             }
         }
         self.interactive.push_back(request);
+    }
+
+    /// Queues what a message that has just arrived needs: its text, then
+    /// its attachments once the text is stored. Answers whether anything
+    /// joined the queue.
+    ///
+    /// Behind a click and ahead of the backlog, and none of the pauses for
+    /// being in the user's way apply: the user being active is exactly when
+    /// new mail is wanted. What does apply is what the user said about
+    /// downloading at all -- `background` off means on-open only -- and a
+    /// store at its disk ceiling. The text is exempt from the size cap,
+    /// measured as it is against the words alone; a whole-message fallback
+    /// is not. Attachments wait out a metered connection in the queue.
+    pub fn arrived(&mut self, text: Option<BodyRequest>, payloads: Option<BodyRequest>) -> bool {
+        if self.cancelled || !self.policy.background || self.disk_full {
+            return false;
+        }
+        let Some(message) = text
+            .as_ref()
+            .or(payloads.as_ref())
+            .map(|request| request.message)
+        else {
+            return false;
+        };
+        let text = text.filter(|request| {
+            request.want == Want::Text
+                || !self
+                    .policy
+                    .max_body_bytes
+                    .is_some_and(|cap| request.fetched_bytes() > cap)
+        });
+        // The words are already here, or never will be by this lane: the
+        // attachments go straight on.
+        let Some(text) = text else {
+            return payloads.is_some_and(|payloads| self.queue_fresh(payloads));
+        };
+        match self.lanes.get(&message) {
+            // Already on its way, or the user beat the arrival to it: the
+            // attachments follow whatever fetch is running.
+            Some(Lane::InFlight | Lane::Interactive | Lane::Fresh) => {
+                if let Some(payloads) = payloads {
+                    self.followups.insert(message, payloads);
+                }
+                false
+            }
+            Some(Lane::Background) | None => {
+                self.set_aside.remove(&message);
+                if let Some(payloads) = payloads {
+                    self.followups.insert(message, payloads);
+                }
+                self.queue_fresh(text)
+            }
+        }
+    }
+
+    /// Puts `request` on the fresh lane, promoting it out of the backlog.
+    fn queue_fresh(&mut self, request: BodyRequest) -> bool {
+        match self.lanes.get(&request.message) {
+            Some(Lane::InFlight | Lane::Interactive | Lane::Fresh) => return false,
+            // The stale heap entry is skipped on its way out.
+            Some(Lane::Background) => {}
+            None => self.progress.pending += 1,
+        }
+        self.lanes.insert(request.message, Lane::Fresh);
+        self.fresh.push_back(request);
+        true
     }
 
     /// Hands out the next body to fetch, or `None` when there is nothing to do
@@ -814,8 +922,8 @@ impl Backfill {
             return None;
         }
 
-        if let Some(request) = self.take_interactive() {
-            return Some(self.claim(request, Priority::Interactive));
+        if let Some(claim) = self.next_interactive_body() {
+            return Some(claim);
         }
         if !self.background_runs() {
             return None;
@@ -834,12 +942,19 @@ impl Backfill {
     /// interactive request starts at the next free slot — one body's wait,
     /// which is the bound the serial loop used to give — without the window
     /// pulling more background work into a call that is supposed to return.
+    ///
+    /// Mail that has just arrived comes next, by the same reasoning: it is
+    /// what the person is about to open, and it must not wait for a window
+    /// of background fetches to drain either.
     pub fn next_interactive_body(&mut self) -> Option<Claim> {
         if self.cancelled {
             return None;
         }
-        let request = self.take_interactive()?;
-        Some(self.claim(request, Priority::Interactive))
+        if let Some(request) = self.take_interactive() {
+            return Some(self.claim(request, Priority::Interactive));
+        }
+        let request = self.take_fresh()?;
+        Some(self.claim(request, Priority::Fresh))
     }
 
     /// Records what became of a claim.
@@ -852,6 +967,9 @@ impl Backfill {
             Outcome::Stored { bytes } => {
                 self.progress.stored += 1;
                 self.progress.bytes += bytes;
+                if let Some(payloads) = self.followups.remove(&message) {
+                    self.queue_fresh(payloads);
+                }
             }
             // Set aside, both of them. The row stays `body_state <> 'full'`
             // either way, so it comes back from `needing_backfill` on every
@@ -862,10 +980,12 @@ impl Backfill {
             // offered once more on the next reconnection, and once more on
             // the next start, which is the retry a transient failure earns.
             Outcome::Gone => {
+                self.followups.remove(&message);
                 self.progress.gone += 1;
                 self.set_aside.insert(message);
             }
             Outcome::Failed { .. } => {
+                self.followups.remove(&message);
                 self.progress.failed += 1;
                 self.set_aside.insert(message);
             }
@@ -888,6 +1008,8 @@ impl Backfill {
         self.cancelled = true;
         self.cancel.cancel();
         self.interactive.clear();
+        self.fresh.clear();
+        self.followups.clear();
         self.background.clear();
         self.lanes.clear();
         self.deferred.clear();
@@ -919,6 +1041,22 @@ impl Backfill {
             }
         }
         None
+    }
+
+    /// The next arrival, oldest first. Attachments stay queued while a
+    /// metered connection pauses the background lane, and go once it does
+    /// not; text goes regardless, being small and the point.
+    fn take_fresh(&mut self) -> Option<BodyRequest> {
+        let held_back = self.policy.pause_on_metered && self.metered;
+        let position = self.fresh.iter().position(|request| {
+            self.lanes.get(&request.message) == Some(&Lane::Fresh)
+                && !(held_back && matches!(request.want, Want::Payloads(_)))
+        })?;
+        // Stale entries in front of it are dropped on the way.
+        let request = self.fresh.remove(position)?;
+        self.fresh
+            .retain(|queued| self.lanes.get(&queued.message) == Some(&Lane::Fresh));
+        Some(request)
     }
 
     fn take_background(&mut self) -> Option<BodyRequest> {
@@ -1122,6 +1260,80 @@ pub async fn request_payloads(
     };
     backfill.request_now(request);
     Ok(true)
+}
+
+/// Queues what a message that has just arrived needs, on the fresh lane:
+/// its text, and then whichever of its attachments fit
+/// [`BackfillPolicy::fresh_payload_bytes`]. Answers whether anything joined
+/// the queue.
+///
+/// Called for the messages an incremental pass announces as new mail -- not
+/// for a first sync's backlog, which is the background lane's. A folder
+/// excluded from backfill is excluded here too: this is still Postio
+/// fetching what nobody has asked for yet.
+pub async fn request_arrived(
+    connection: &Connection,
+    backfill: &mut Backfill,
+    message_id: MessageId,
+) -> Result<bool> {
+    let messages = MessageRepository::new(connection);
+    let Some(candidate) = messages.backfill_candidate(message_id).await? else {
+        return Ok(false);
+    };
+    if MailboxRepository::new(connection)
+        .backfill_excluded(candidate.mailbox_id)
+        .await?
+    {
+        return Ok(false);
+    }
+    let Some(message) = messages.get(message_id).await? else {
+        return Ok(false);
+    };
+    let policy = backfill.policy();
+    let text_local = matches!(
+        message.sync.body_state,
+        postio_model::BodyState::Partial | postio_model::BodyState::Full
+    );
+
+    let mut payloads = None;
+    if policy.attachments != AttachmentPolicy::Never {
+        let mut room = policy.fresh_payload_bytes.unwrap_or(u64::MAX);
+        let mut wanted = Vec::new();
+        for attachment in &message.attachments {
+            if attachment.blob_id.is_some() || attachment.part_headers.is_none() {
+                continue;
+            }
+            // An inline part under the cap rides with the text (ADR 0017),
+            // so asking for it again would fetch it twice.
+            let rides_with_text = !text_local
+                && attachment.disposition == postio_model::Disposition::Inline
+                && policy
+                    .max_inline_bytes
+                    .is_some_and(|cap| attachment.size <= cap);
+            let Some(part) = attachment.part_id.clone() else {
+                continue;
+            };
+            if rides_with_text || attachment.size > room {
+                continue;
+            }
+            room -= attachment.size;
+            wanted.push(part);
+        }
+        if !wanted.is_empty() {
+            let mut request = BodyRequest::from(candidate.clone());
+            request.want = Want::Payloads(wanted);
+            payloads = Some(request);
+        }
+    }
+    let text = (!text_local).then(|| {
+        let mut request = BodyRequest::from(candidate);
+        // A row whose structure was never recorded has no sections to name.
+        if message.content_type.is_none() {
+            request.want = Want::Whole;
+        }
+        request
+    });
+    Ok(backfill.arrived(text, payloads))
 }
 
 /// Queue a header-block fetch for every row in `mailbox_id` that can get one
@@ -2049,6 +2261,7 @@ mod tests {
             path: "INBOX".to_owned(),
             uid: Uid::new(uid),
             size,
+            text_size: size,
             rank: crate::order::sync_priority(postio_model::MailboxRole::Inbox),
             received_at: at(uid as i64),
             want: Want::Text,
@@ -2332,6 +2545,128 @@ mod tests {
                 .await
                 .expect("lookup"),
             "no local row at all is the same answer, not an error"
+        );
+        assert!(backfill.next_body().is_none());
+    }
+
+    fn payloads(uid: u32) -> BodyRequest {
+        let mut request = request(uid, 6_000_000);
+        request.want = Want::Payloads(vec!["2".to_owned()]);
+        request
+    }
+
+    #[test]
+    fn an_arrival_goes_behind_a_click_and_ahead_of_the_backlog() {
+        let mut backfill = Backfill::new(BackfillPolicy::default());
+        backfill.enqueue(request(1, 10));
+        backfill.request_now(request(2, 10));
+        assert!(backfill.arrived(Some(request(3, 10)), None));
+
+        let order: Vec<_> = std::iter::from_fn(|| backfill.next_body())
+            .map(|claim| (claim.request.uid.get(), claim.priority))
+            .collect();
+        assert_eq!(
+            order,
+            [
+                (2, Priority::Interactive),
+                (3, Priority::Fresh),
+                (1, Priority::Background),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_arrival_is_not_held_back_by_the_user_being_active() {
+        // The pauses keep speculation out of the way; new mail is what the
+        // person is waiting for.
+        let mut backfill = Backfill::new(BackfillPolicy::default());
+        backfill.set_user_active(true);
+        backfill.arrived(Some(request(1, 10)), None);
+        assert_eq!(
+            backfill.next_body().map(|claim| claim.priority),
+            Some(Priority::Fresh)
+        );
+    }
+
+    #[test]
+    fn the_cap_is_measured_against_the_text_that_is_fetched() {
+        // A short note carrying six megabytes: over the cap whole, far under
+        // it in words.
+        let mut note = request(1, 6_000_000);
+        note.text_size = 2_000;
+        let mut backfill = Backfill::new(BackfillPolicy::default());
+        assert!(backfill.enqueue(note.clone()), "its words are small");
+
+        note.want = Want::Whole;
+        let mut backfill = Backfill::new(BackfillPolicy::default());
+        assert!(
+            !backfill.enqueue(note),
+            "fetched whole it is six megabytes, and the cap stands"
+        );
+    }
+
+    #[test]
+    fn an_arrival_s_attachments_follow_its_text() {
+        let mut backfill = Backfill::new(BackfillPolicy::default());
+        backfill.arrived(Some(request(1, 6_000_000)), Some(payloads(1)));
+
+        let text = backfill.next_body().expect("the text first");
+        assert_eq!(text.request.want, Want::Text);
+        assert!(
+            backfill.next_body().is_none(),
+            "the attachments wait for the words"
+        );
+        backfill.finished(text.request.message, Outcome::Stored { bytes: 10 });
+
+        let attachments = backfill.next_body().expect("then the attachments");
+        assert_eq!(attachments.priority, Priority::Fresh);
+        assert_eq!(
+            attachments.request.want,
+            Want::Payloads(vec!["2".to_owned()])
+        );
+    }
+
+    #[test]
+    fn an_arrival_s_attachments_wait_out_a_metered_connection() {
+        let mut backfill = Backfill::new(BackfillPolicy::default());
+        backfill.set_metered(true);
+        backfill.arrived(None, Some(payloads(1)));
+        backfill.arrived(Some(request(2, 10)), None);
+        assert_eq!(
+            backfill.next_body().map(|claim| claim.request.uid.get()),
+            Some(2),
+            "text goes on a metered connection; attachments do not"
+        );
+        assert!(backfill.next_body().is_none());
+
+        backfill.set_metered(false);
+        assert_eq!(
+            backfill.next_body().map(|claim| claim.request.uid.get()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn an_arrival_fetches_nothing_when_background_fetching_is_off() {
+        let policy = BackfillPolicy {
+            background: false,
+            ..BackfillPolicy::default()
+        };
+        let mut backfill = Backfill::new(policy);
+        assert!(!backfill.arrived(Some(request(1, 10)), Some(payloads(1))));
+        assert!(backfill.next_body().is_none());
+    }
+
+    #[test]
+    fn a_failed_text_drops_the_attachments_that_were_to_follow_it() {
+        let mut backfill = Backfill::new(BackfillPolicy::default());
+        backfill.arrived(Some(request(1, 10)), Some(payloads(1)));
+        let text = backfill.next_body().expect("the text");
+        backfill.finished(
+            text.request.message,
+            Outcome::Failed {
+                reason: "gone".to_owned(),
+            },
         );
         assert!(backfill.next_body().is_none());
     }

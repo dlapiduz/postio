@@ -3105,6 +3105,11 @@ async fn sync_wave(
                         account: Some(parts.account),
                     });
                 }
+                // New mail the pass found starts down now, beside whatever
+                // background batch is on the wire, not after it.
+                if !asked_to_stop {
+                    act_on!(Asked::FetchNow);
+                }
                 // The interruption conditions, checked here as well as in
                 // the arms below: `biased;` polls completions first, so
                 // completions arriving back to back could starve those arms —
@@ -3165,6 +3170,11 @@ async fn sync_wave(
             // flow continuous rather than one batch per tick.
             Some(results) = bodies.next(), if !bodies.is_empty() => {
                 settle_bodies(parts, state, results).await;
+                // An arrival whose text just landed has its attachments
+                // queued behind it; they go now too.
+                if !asked_to_stop {
+                    act_on!(Asked::FetchNow);
+                }
                 if !asked_to_stop
                     && bodies.is_empty()
                     && let Some(claims) = claim_bodies_for_the_wave(parts, store, state, inbox, &active).await
@@ -3509,6 +3519,9 @@ async fn settle_bodies(
 struct PassOutcome {
     mailbox: MailboxId,
     result: Result<SyncSummary, PassFailure>,
+    /// What the pass announced as new mail: their bodies, and then their
+    /// attachments, go on the backfill's fresh lane when it settles.
+    arrived: Vec<MessageId>,
 }
 
 impl PassOutcome {
@@ -3542,6 +3555,7 @@ mod pass_outcome_tests {
         PassOutcome {
             mailbox: MailboxId::new(1),
             result,
+            arrived: Vec::new(),
         }
     }
 
@@ -3609,6 +3623,7 @@ async fn sync_pass(
     let failed = |failure: PassFailure| PassOutcome {
         mailbox,
         result: Err(failure),
+        arrived: Vec::new(),
     };
     let record = match MailboxRepository::new(connection).get(mailbox).await {
         Ok(Some(record)) => record,
@@ -3769,7 +3784,7 @@ async fn sync_pass(
             parts.events.emit(Event::NewMail {
                 account: parts.account,
                 mailbox,
-                messages: arrived,
+                messages: arrived.clone(),
             });
         }
     }
@@ -3777,6 +3792,7 @@ async fn sync_pass(
     PassOutcome {
         mailbox,
         result: result.map_err(PassFailure::Failed),
+        arrived,
     }
 }
 
@@ -3791,7 +3807,11 @@ async fn settle_pass(
     connection: &Checkout,
     outcome: PassOutcome,
 ) -> Result<SyncSummary, EngineError> {
-    let PassOutcome { mailbox, result } = outcome;
+    let PassOutcome {
+        mailbox,
+        result,
+        arrived,
+    } = outcome;
     let now = Utc::now();
 
     // A pass the wave cancelled is not a failure and not a completed pass: it
@@ -3855,6 +3875,18 @@ async fn settle_pass(
                             message: error.to_string(),
                             account: Some(parts.account),
                         });
+                    }
+                }
+
+                // What just arrived goes ahead of the backlog the seed above
+                // joined: its words, then its attachments, so new mail is
+                // readable -- and its attachments openable -- by the time
+                // anybody reaches for it. See `Backfill::arrived`.
+                for message in &arrived {
+                    if let Err(error) =
+                        backfill::request_arrived(connection, &mut state.backfill, *message).await
+                    {
+                        tracing::debug!(%error, "an arrival could not be queued for its body");
                     }
                 }
 
@@ -4493,6 +4525,7 @@ mod tests {
             uid: postio_model::Uid::new(n),
             remote_id: postio_model::RemoteId::new(format!("1:{n}")),
             size: 100,
+            text_size: 100,
             rank: 0,
             received_at: Utc::now(),
             want: postio_sync::Want::Text,

@@ -825,6 +825,23 @@ impl MockBackend {
         self.notify.notify_waiters();
     }
 
+    /// Delivers `message` to `mailbox` as new mail, announced to whatever is
+    /// idling there -- [`append`](MailBackend::append) with the structure and
+    /// part bytes an `APPEND` cannot carry.
+    pub fn deliver(&self, mailbox: &str, message: MockMessage) {
+        {
+            let mut state = self.state();
+            let Ok(index) = state.index_of(mailbox) else {
+                return;
+            };
+            let folder = &mut state.mailboxes[index];
+            folder.push_arriving(message);
+            let count = folder.messages.len() as u32;
+            self.announce(&mut state, index, MailboxEvent::Exists { count });
+        }
+        self.notify.notify_waiters();
+    }
+
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().expect("mock backend mutex")
     }

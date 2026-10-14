@@ -133,6 +133,7 @@ async fn a_first_sync_issues_no_full_scan_of_a_table_that_grows() {
             uid: Uid::new(uid),
             remote_id: postio_model::RemoteId::new(format!("{VALIDITY}:{uid}")),
             size: 1_024,
+            text_size: 1_024,
             rank: postio_sync::order::sync_priority(inbox.role),
             received_at: at(uid as i64),
             want: Want::Text,
