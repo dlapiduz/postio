@@ -15,7 +15,68 @@ pub const EVERY_FOLDER: &str = "*";
 /// The accounts and folders an agent may read.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Scope {
-    accounts: Vec<(String, Folders)>,
+    accounts: Vec<(String, Folders, Actions)>,
+}
+
+/// What an agent may do to a shared account's mail besides read it and
+/// write drafts (ADR 0010, as amended 2026-10-14). None until `actions`
+/// names them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Actions {
+    /// File messages into the account's archive.
+    pub archive: bool,
+    /// Move messages into another shared folder.
+    pub move_: bool,
+    /// Put a label on a message or take one off.
+    pub label: bool,
+}
+
+/// One of [`Actions`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    /// `"archive"`.
+    Archive,
+    /// `"move"`.
+    Move,
+    /// `"label"`.
+    Label,
+}
+
+impl Action {
+    /// How `[mcp]` spells it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Action::Archive => "archive",
+            Action::Move => "move",
+            Action::Label => "label",
+        }
+    }
+}
+
+impl Actions {
+    /// The actions `names` lists; a name this build does not know allows
+    /// nothing.
+    pub fn from_names<'a>(names: impl IntoIterator<Item = &'a String>) -> Actions {
+        let mut actions = Actions::default();
+        for name in names {
+            match name.trim().to_ascii_lowercase().as_str() {
+                "archive" => actions.archive = true,
+                "move" => actions.move_ = true,
+                "label" => actions.label = true,
+                _ => {}
+            }
+        }
+        actions
+    }
+
+    /// Whether `action` is allowed.
+    pub fn allows(self, action: Action) -> bool {
+        match action {
+            Action::Archive => self.archive,
+            Action::Move => self.move_,
+            Action::Label => self.label,
+        }
+    }
 }
 
 /// Which of an account's folders are shared.
@@ -70,7 +131,11 @@ impl Scope {
                 } else {
                     Folders::Only(paths)
                 };
-                Some((address.trim().to_ascii_lowercase(), folders))
+                Some((
+                    address.trim().to_ascii_lowercase(),
+                    folders,
+                    Actions::from_names(&shared.actions),
+                ))
             })
             .collect();
         Scope { accounts }
@@ -104,8 +169,26 @@ impl Scope {
         let address = address.trim().to_ascii_lowercase();
         self.accounts
             .iter()
-            .find(|(shared, _)| *shared == address)
-            .map(|(_, folders)| folders)
+            .find(|(shared, ..)| *shared == address)
+            .map(|(_, folders, _)| folders)
+    }
+
+    /// What the agent may do in the account at `address`: nothing when the
+    /// account is not shared.
+    pub fn actions(&self, address: &str) -> Actions {
+        let address = address.trim().to_ascii_lowercase();
+        self.accounts
+            .iter()
+            .find(|(shared, ..)| *shared == address)
+            .map(|(.., actions)| *actions)
+            .unwrap_or_default()
+    }
+
+    /// Whether any shared account allows `action`.
+    pub fn anywhere(&self, action: Action) -> bool {
+        self.accounts
+            .iter()
+            .any(|(.., actions)| actions.allows(action))
     }
 }
 
@@ -153,6 +236,29 @@ mod tests {
         assert!(!folders.allows("receipts"));
         assert!(!folders.allows("Archive"));
         assert!(!folders.allows("Receipts/2026"));
+    }
+
+    #[test]
+    fn actions_are_none_until_named_and_only_those_named() {
+        let none = scope("[mcp.accounts.\"ada@example.com\"]\nmailboxes = [\"*\"]\n");
+        assert_eq!(none.actions("ada@example.com"), Actions::default());
+        assert!(!none.anywhere(Action::Archive));
+
+        let some = scope(
+            "[mcp.accounts.\"ada@example.com\"]\nmailboxes = [\"*\"]\n\
+             actions = [\"Archive\", \"label\", \"delete\"]\n",
+        );
+        let actions = some.actions("ada@example.com");
+        assert!(actions.allows(Action::Archive));
+        assert!(actions.allows(Action::Label));
+        assert!(!actions.allows(Action::Move));
+        assert_eq!(some.actions("grace@example.org"), Actions::default());
+    }
+
+    #[test]
+    fn actions_on_an_account_that_shares_no_folder_allow_nothing() {
+        let scope = scope("[mcp.accounts.\"ada@example.com\"]\nactions = [\"archive\"]\n");
+        assert!(!scope.anywhere(Action::Archive));
     }
 
     #[test]

@@ -30,6 +30,10 @@ pub const OTHER: &str = "other@example.org";
 pub const INBOX_ONLY: &str = "[mcp.accounts.\"test@example.com\"]\nmailboxes = [\"INBOX\"]\n";
 /// `[mcp]` sharing every folder of Ada's account.
 pub const EVERY_FOLDER: &str = "[mcp.accounts.\"test@example.com\"]\nmailboxes = [\"*\"]\n";
+/// `[mcp]` sharing every folder of Ada's account, and letting the agent
+/// archive, move and label in it.
+pub const ORGANIZE: &str = "[mcp.accounts.\"test@example.com\"]\nmailboxes = [\"*\"]\n\
+actions = [\"archive\", \"move\", \"label\"]\n";
 
 /// The words every message here is found by, so a search can reach them all.
 pub const COMMON: &str = "harborview";
@@ -54,6 +58,11 @@ pub struct World {
     pub ada: AccountId,
     pub other: AccountId,
     pub inbox: MailboxId,
+    pub archive: MailboxId,
+    /// An ordinary folder: "Projects".
+    pub projects: MailboxId,
+    pub trash: MailboxId,
+    pub junk: MailboxId,
     /// In the inbox: "Atlas budget", from Grace.
     pub budget: MessageId,
     /// In the archive: "Quarterly numbers".
@@ -79,7 +88,7 @@ impl World {
             .build()
             .expect("a runtime");
         let directory = tempfile::tempdir().expect("a directory");
-        let (database, ada, other, inbox, archive, other_inbox) = rt.block_on(async {
+        let (database, ada, other, inbox, archive, other_inbox, folders) = rt.block_on(async {
             let database = test_support::memory().await;
             let connection = database.connect().await.expect("a connection");
             postio_index::index::ensure_schema(&connection)
@@ -88,6 +97,10 @@ impl World {
             let (account, inbox) = test_support::account_with_inbox(&connection).await;
             let archive = test_support::mailbox(&connection, &account, "Archive").await;
             test_support::mailbox(&connection, &account, "Drafts").await;
+            let mut folders = Vec::new();
+            for path in ["Projects", "Trash", "Junk"] {
+                folders.push(test_support::mailbox(&connection, &account, path).await.id);
+            }
             let mut other =
                 postio_model::Account::new("Other", EmailAddress::new(Some("Other Person"), OTHER));
             other.incoming.host = "imap.example.org".to_owned();
@@ -104,6 +117,7 @@ impl World {
                 inbox,
                 archive.id,
                 other_inbox.id,
+                folders,
             )
         });
 
@@ -138,6 +152,10 @@ impl World {
             ada,
             other,
             inbox,
+            archive,
+            projects: folders[0],
+            trash: folders[1],
+            junk: folders[2],
             budget: MessageId::UNASSIGNED,
             archived: MessageId::UNASSIGNED,
             html: MessageId::UNASSIGNED,
@@ -301,6 +319,35 @@ impl World {
     /// The host, for a case that asks it something directly.
     pub fn host(&self) -> &Host {
         &self.host
+    }
+}
+
+impl World {
+    /// The folder `message` is in now.
+    pub fn mailbox_of(&self, message: MessageId) -> MailboxId {
+        self.rt.block_on(async {
+            let connection = self.database.connect().await.expect("a connection");
+            MessageRepository::new(&connection)
+                .get(message)
+                .await
+                .expect("a read")
+                .expect("the message is there")
+                .mailbox_id
+        })
+    }
+
+    /// The names of the labels `message` carries.
+    pub fn labels_of(&self, message: MessageId) -> Vec<String> {
+        self.rt.block_on(async {
+            let connection = self.database.connect().await.expect("a connection");
+            let labels = postio_storage::repository::LabelRepository::new(&connection);
+            let ids = labels.for_message(message).await.expect("a read");
+            let all = labels.list(self.ada).await.expect("the labels");
+            all.into_iter()
+                .filter(|label| ids.contains(&label.id))
+                .map(|label| label.name)
+                .collect()
+        })
     }
 }
 

@@ -20,6 +20,8 @@ pub struct Access {
     pub messages: Vec<i64>,
     /// Drafts written.
     pub drafts: Vec<i64>,
+    /// Labels put on or taken off.
+    pub labels: Vec<i64>,
 }
 
 /// How a call ended.
@@ -93,6 +95,7 @@ impl Audit {
             "mailboxes": access.mailboxes,
             "messages": access.messages,
             "drafts": access.drafts,
+            "labels": access.labels,
             "outcome": outcome.as_str(),
         });
         let written = (|| {

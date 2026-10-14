@@ -15,8 +15,8 @@ postio-mcp: Postio's mail, for an AI agent, over the Model Context Protocol.
 
 An MCP client starts it and speaks JSON-RPC on its stdin and stdout; it
 listens on no socket. It reads the accounts and folders config.toml's
-[mcp] section shares, and nothing else, and it can save drafts but never
-send, move or delete mail.
+[mcp] section shares, and nothing else. It can save drafts, and archive,
+move and label where [mcp] allows it, but never send or delete mail.
 
 Usage: postio-mcp [--config <file>] [--audit <file>]
 

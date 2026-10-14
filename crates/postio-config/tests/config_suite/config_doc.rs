@@ -682,6 +682,17 @@ fn render() -> String {
          server reads this section again on every call, so removing a line\n\
          takes effect on the agent's next call.\n\
          \n\
+         `actions` lets the agent organize the shared mail as well as read it:\n\
+         any of `\"archive\"`, `\"move\"` and `\"label\"`. Without it, the agent\n\
+         can read and write drafts, and nothing more. Moves stay between\n\
+         shared folders and never reach the Trash or Junk.\n\
+         \n\
+         ```toml\n\
+         [mcp.accounts.\"ada@example.com\"]\n\
+         mailboxes = [\"*\"]\n\
+         actions = [\"archive\", \"move\", \"label\"]\n\
+         ```\n\
+         \n\
          ## `[mailboxes]`\n\
          \n\
          Maps a role Postio already knows (`archive`, `sent`, `trash`, ...) to\n\

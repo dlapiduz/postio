@@ -154,8 +154,10 @@ and stdout; it listens on no socket. It is a client of `postio-host` like
 the other apps, and it opens the store for each tool call and closes it
 afterwards, so it never keeps the person's own mail client out. It reads
 only the accounts and folders `[mcp]` in `config.toml` shares, returns
-bodies as `postio-body` text inside a block labelled untrusted, and its one
-write is a draft: it has no tool that sends, moves, deletes or marks mail.
+bodies as `postio-body` text inside a block labelled untrusted. It writes
+drafts, and archives, moves and labels where `[mcp]`'s `actions` allow it,
+by the same commands the apps send; it has no tool that sends, deletes or
+marks mail.
 
 Dashed borders mark the crates whose dependency closure CI polices
 (`scripts/checks/check-crate-boundaries.py`). Not drawn: every crate also
@@ -538,11 +540,15 @@ Two constraints already decided, before any of it is built:
   on `postio-z3b.2` rather than an afterthought.
 
 **`postio-mcp` meets both by having fewer tools** (ADR 0010, #14). It has no
-send, forward, delete, move or mark-read tool for a confirmation to guard.
-Its one write is a draft, which leaves only when the person sends it from
-Postio. Its injection test (`crates/postio-mcp/tests/mcp_suite/injection.rs`)
-reads ADR 0009's hostile fixture and asserts that no operation, no draft and
-no connection follow.
+send, forward, delete or mark-read tool for a confirmation to guard, and a
+draft leaves only when the person sends it from Postio. Archive, move and
+label are its other writes, added by the maintainer on 2026-10-14: each is
+off until the person names it in `[mcp]`'s `actions`, none can reach the
+Trash or Junk, and none can be undone from the app, so each answers with
+where every message came from. Its injection test
+(`crates/postio-mcp/tests/mcp_suite/injection.rs`) reads ADR 0009's hostile
+fixture and asserts that no operation, no move, no label, no draft and no
+connection follow, with every organizing verb switched on.
 
 **The one exception is Focus's model** (the constitution's Scope,
 `specs/007-postio-focus` research R16). `postio-ai` is built, and narrower

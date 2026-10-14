@@ -7,7 +7,7 @@
 //!
 //! # A frontend, not a side door
 //!
-//! Every read and the one write go through `postio-client`, served by a
+//! Every read and every write go through `postio-client`, served by a
 //! `postio-host` in this process, exactly as the terminal's and the desktop
 //! app's do (ADR 0010 Q2, ADR 0041). Nothing here opens the database on its
 //! own terms. One app has the store at a time, so the store is opened for a
@@ -21,9 +21,12 @@
 //! # What an agent can do
 //!
 //! Read what the person has shared in `[mcp]` (see [`scope`]), and write a
-//! draft. There is no send, archive, move, delete or mark-read tool, absent
-//! rather than gated (ADR 0010 Q4): a draft is local, and mail leaves only
-//! when the person opens the draft in Postio and sends it.
+//! draft: a draft is local, and mail leaves only when the person opens it in
+//! Postio and sends it. Where `[mcp]`'s `actions` allow it, archive, move
+//! between shared folders and label (ADR 0010, amended 2026-10-14), each by
+//! the command the apps send for the same gesture. There is no send,
+//! forward, delete or mark-read tool, absent rather than gated (ADR 0010
+//! Q4), and a move into the Trash or Junk is refused as the delete it is.
 //!
 //! # Mail is untrusted
 //!

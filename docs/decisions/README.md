@@ -18,7 +18,7 @@ decision stands.
 | [0007](0007-address-book.md) | The address book: one table, two provenances | Built, except vCard import/export and a management surface |
 | [0008](0008-filters-and-rules.md) | Filters and rules: one language, two evaluators | Saved searches, `header:` and the digest-rule matcher built; the rules engine is on `feature/rules`, not on `main` |
 | [0009](0009-ai-subsystem.md) | The AI subsystem | `postio-ai` built as the client for a local model Focus uses; summarise, draft and semantic search not built |
-| [0010](0010-mcp-surface.md) | Exposing Postio over MCP | Built: `postio-mcp` |
+| [0010](0010-mcp-surface.md) | Exposing Postio over MCP | Built: `postio-mcp`; amended 2026-10-14 to allow archive, move and label |
 | [0011](0011-docs-site.md) | The docs site | Built |
 | [0012](0012-add-account-and-orientation.md) | Adding a second account, and orienting a first-time user | Built |
 | [0013](0013-event-fanout.md) | Event fan-out: a hub between producers and subscribers | Built |
