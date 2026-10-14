@@ -1547,6 +1547,10 @@ const CASES: &[(&str, fn())] = &[
         settings::a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings as fn(),
     ),
     (
+        "settings::a_click_into_settings_as_it_opens_waits_for_it_to_open",
+        settings::a_click_into_settings_as_it_opens_waits_for_it_to_open as fn(),
+    ),
+    (
         "capture::t_on_an_open_message_opens_the_task_sheet",
         capture::t_on_an_open_message_opens_the_task_sheet as fn(),
     ),

@@ -930,3 +930,72 @@ pub fn a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings() {
         );
     });
 }
+
+/// A click aimed into Settings the moment it is up lands where the person
+/// aimed: libadwaita opens a dialog by scaling it from 0.8 to 1 in its
+/// allocation, so until it has opened every row in it is smaller and
+/// elsewhere each frame, and a press there and a release a frame later are
+/// at two places -- no click. A person waits for what they see to stop
+/// moving; the press waits for the row to be drawn at its own size, still
+/// (#1817).
+pub fn a_click_into_settings_as_it_opens_waits_for_it_to_open() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window, _directory, _path) = one_message_under("").await;
+        mod_comma(&window);
+        let dialog = settings_shown(&window).await.expect("Settings opened");
+        let row = section_rows(&dialog)
+            .into_iter()
+            .find(|(name, _)| name == "Filtering")
+            .map(|(_, row)| row)
+            .expect("Settings lists Filtering");
+
+        // Where the row is drawn when the press reaches it, against its own
+        // size: the two differ only while the dialog is still opening.
+        // Drawn width and height, then its own.
+        type Sizes = Vec<(f32, f32, f32, f32)>;
+        let pressed: std::rc::Rc<std::cell::RefCell<Sizes>> = std::rc::Rc::default();
+        let watch = gtk::GestureClick::new();
+        watch.set_propagation_phase(gtk::PropagationPhase::Capture);
+        watch.connect_pressed({
+            let pressed = std::rc::Rc::clone(&pressed);
+            let row = row.downgrade();
+            move |_, _, _, _| {
+                let Some(row) = row.upgrade() else {
+                    return;
+                };
+                let Some(native) = row.native() else {
+                    return;
+                };
+                if let (Some(drawn), Some(own)) =
+                    (row.compute_bounds(&native), row.compute_bounds(&row))
+                {
+                    pressed.borrow_mut().push((
+                        drawn.width(),
+                        drawn.height(),
+                        own.width(),
+                        own.height(),
+                    ));
+                }
+            }
+        });
+        row.add_controller(watch);
+
+        support::click(&window, &row, 1);
+        let presses = pressed.borrow().clone();
+        assert_eq!(presses.len(), 1, "one press reached Filtering's row");
+        let (width, height, own_width, own_height) = presses[0];
+        assert!(
+            (width - own_width).abs() < 0.5 && (height - own_height).abs() < 0.5,
+            "the press waited for Settings to open: the row was drawn {width}x{height}, \
+             its own size is {own_width}x{own_height}"
+        );
+        assert!(
+            crate::settle_until(async || pane_title(&dialog) == "Filtering").await,
+            "clicking Filtering shows its pane, not {:?}",
+            pane_title(&dialog)
+        );
+    });
+}
