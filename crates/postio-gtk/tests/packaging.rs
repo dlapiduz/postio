@@ -16,6 +16,8 @@ use postio_gtk::app::{APP_ID, ICON_NAME};
 
 /// The binary the manifest builds and the entry launches.
 const BINARY: &str = "postio";
+/// The extraction helper, installed beside it (spec 010 D28).
+const HELPER: &str = "postio-extract-helper";
 
 /// The Flatpak the desktop app ships in, named after the id.
 const MANIFEST: &str = "flatpak/dev.postio.Postio.json";
@@ -243,9 +245,11 @@ fn the_desktop_entry_passes_the_freedesktop_validator() {
 }
 
 /// The desktop Flatpak builds Focus as `postio`, runs it, and installs its
-/// entry and metainfo. It builds nothing else.
+/// entry and metainfo. The only other thing it builds is the extraction
+/// helper, which the attachment indexer looks for beside its own executable
+/// (spec 010 D28).
 #[test]
-fn the_desktop_flatpak_builds_and_installs_postio_only() {
+fn the_desktop_flatpak_builds_and_installs_postio_and_its_helper_only() {
     let manifest = read(MANIFEST);
     assert!(
         manifest.contains(&format!("\"command\": \"{BINARY}\"")),
@@ -257,24 +261,33 @@ fn the_desktop_flatpak_builds_and_installs_postio_only() {
         .iter()
         .filter(|line| line.contains("cargo") && line.contains(" build "))
         .collect();
-    let built = format!("--package postio-gtk --bin {BINARY}");
+    let built = [
+        format!("--package postio-gtk --bin {BINARY}"),
+        format!("--package postio-session --bin {HELPER}"),
+    ];
     assert!(
-        builds.len() == 1 && builds[0].contains(&built),
-        "the manifest should build `{built}` and nothing else, got {builds:#?}"
+        builds.len() == built.len()
+            && built
+                .iter()
+                .all(|one| builds.iter().any(|line| line.contains(one.as_str()))),
+        "the manifest should build {built:?} and nothing else, got {builds:#?}"
     );
-    let binary = format!("target/release/{BINARY} /app/bin/{BINARY}\"");
-    assert!(
-        commands.iter().any(|line| line.contains(&binary)),
-        "the manifest never installs /app/bin/{BINARY}"
-    );
+    for name in [BINARY, HELPER] {
+        let binary = format!("target/release/{name} /app/bin/{name}\"");
+        assert!(
+            commands.iter().any(|line| line.contains(&binary)),
+            "the manifest never installs /app/bin/{name}"
+        );
+    }
     let installed_binaries: Vec<&&str> = commands
         .iter()
         .filter(|line| line.contains("/app/bin/"))
         .collect();
     assert_eq!(
         installed_binaries.len(),
-        1,
-        "the manifest installs more than one binary: {installed_binaries:#?}"
+        2,
+        "the manifest installs a binary besides {BINARY} and {HELPER}: \
+         {installed_binaries:#?}"
     );
 
     for (source, installed) in [

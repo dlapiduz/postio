@@ -5,7 +5,8 @@
 //! command that gains all three and is still listed fails too, so the list
 //! can only shrink.
 
-use postio_core::{CommandId, Frontend, Keymap, registry};
+use postio_config::paths::Platform;
+use postio_core::{ActionId, CommandId, CommandSpec, Frontend, Keymap, registry};
 
 use crate::support;
 
@@ -91,6 +92,15 @@ const NOT_YET: &[&str] = &[
     "capture_write",
 ];
 
+/// What Focus offers on Linux: less what the registry keeps off it
+/// (`registry::offered_on`), which no surface here draws or answers.
+fn focus_commands_on_linux() -> impl Iterator<Item = &'static CommandSpec> {
+    registry::all().filter(|spec| {
+        spec.requires.offered_by(Frontend::Focus)
+            && registry::offered_on(ActionId::Builtin(spec.id), Platform::Freedesktop)
+    })
+}
+
 pub fn every_focus_command_has_a_key_a_bar_row_and_a_control() {
     crate::gtk_case(async {
         if !support::display() {
@@ -102,7 +112,7 @@ pub fn every_focus_command_has_a_key_a_bar_row_and_a_control() {
         let controls = window.controls();
         let mut missing = Vec::new();
         let mut listed_but_whole = Vec::new();
-        for spec in registry::all().filter(|spec| spec.requires.offered_by(Frontend::Focus)) {
+        for spec in focus_commands_on_linux() {
             let id: CommandId = spec.id;
             let mut lacks = Vec::new();
             if keymap.binding(id).is_none() {
@@ -151,7 +161,7 @@ pub fn every_offered_command_that_is_whole_reaches_a_handler() {
         }
         let (_fixture, window) = support::three_in_the_inbox().await;
         let mut unanswered = Vec::new();
-        for spec in registry::all().filter(|spec| spec.requires.offered_by(Frontend::Focus)) {
+        for spec in focus_commands_on_linux() {
             let id: CommandId = spec.id;
             if NOT_YET.contains(&id.as_str()) || NOT_RUN.contains(&id) {
                 continue;
