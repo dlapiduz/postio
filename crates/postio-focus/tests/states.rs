@@ -122,6 +122,28 @@ fn counted(focus: &mut FocusController, conversations: u32, filtered_today: u32)
     ))
 }
 
+/// Answer the accounts read `effects` asked for: a store whose mail last
+/// synced `last_synced`, `None` for one never synced.
+fn read_accounts(
+    focus: &mut FocusController,
+    effects: &[Effect],
+    last_synced: Option<DateTime<chrono::Utc>>,
+) -> Vec<Effect> {
+    let Some((ticket, _)) = asks(effects)
+        .into_iter()
+        .find(|(_, request)| *request == Request::Accounts)
+    else {
+        panic!("the accounts are asked about");
+    };
+    focus.handle(Input::Reply(
+        ticket,
+        Reply::Accounts(Ok(AccountsRead {
+            facts: vec![ada()],
+            last_synced,
+        })),
+    ))
+}
+
 #[test]
 fn offline_says_so_in_the_banner_and_the_label() {
     let mut focus = focus();
@@ -276,6 +298,11 @@ fn an_empty_inbox_before_its_first_sync_offers_only_compose() {
     let mut focus = focus();
     let _ = focus.open(INBOX);
     let effects = counted(&mut focus, 0, 0);
+    assert!(
+        empties(&effects).is_empty(),
+        "nothing is said before it is known whether mail ever synced"
+    );
+    let effects = read_accounts(&mut focus, &effects, None);
     let keymap = focus.keymap().clone();
     let page = focus_state::empty_inbox(&FocusConfig::default(), 0, &keymap, &at()).saying(
         &InboxSaying::Syncing { progress: None },
@@ -339,6 +366,53 @@ fn an_empty_inbox_after_a_pass_offers_only_what_exists() {
 }
 
 #[test]
+fn an_empty_inbox_a_past_pass_left_says_it_is_empty_without_sync_news() {
+    // A store an earlier run synced, opened while sync has said nothing yet
+    // (or never will, as in the demo): no rows is not "Syncing".
+    let mut focus = focus();
+    let _ = focus.open(INBOX);
+    let effects = counted(&mut focus, 0, 186);
+    for page in empties(&effects).into_iter().flatten() {
+        assert_ne!(
+            page.heading, "Syncing your inbox\u{2026}",
+            "nothing has said the inbox is syncing"
+        );
+    }
+    assert_eq!(
+        asks(&effects)
+            .iter()
+            .filter(|(_, request)| *request == Request::Accounts)
+            .count(),
+        1,
+        "an empty inbox asks when mail last synced"
+    );
+    let effects = read_accounts(&mut focus, &effects, Some(at().to_utc()));
+    let page = empties(&effects)
+        .pop()
+        .flatten()
+        .expect("the inbox says it is empty");
+    assert_eq!(page.heading, "Inbox is empty");
+    assert_eq!(
+        page.shortcuts
+            .iter()
+            .map(|(_, words, command)| (words.as_str(), *command))
+            .collect::<Vec<_>>(),
+        vec![
+            ("186 filtered today", CommandId::GoToFiltered),
+            ("archive", CommandId::GoToArchive),
+            ("compose", CommandId::Compose),
+        ],
+        "screen 16: Filtered, Archive and Compose"
+    );
+    assert!(
+        asks(&counted(&mut focus, 0, 186))
+            .iter()
+            .all(|(_, request)| *request != Request::Accounts),
+        "the accounts are read once"
+    );
+}
+
+#[test]
 fn an_inbox_with_mail_shows_the_list() {
     let mut focus = focus();
     let _ = focus.open(INBOX);
@@ -346,7 +420,8 @@ fn an_inbox_with_mail_shows_the_list() {
         empties(&counted(&mut focus, 4, 0)).is_empty(),
         "the list is what is drawn until something says otherwise"
     );
-    assert_eq!(empties(&counted(&mut focus, 0, 0)).len(), 1);
+    let effects = counted(&mut focus, 0, 0);
+    assert_eq!(empties(&read_accounts(&mut focus, &effects, None)).len(), 1);
     assert_eq!(
         empties(&counted(&mut focus, 1, 0)),
         vec![None],

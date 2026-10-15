@@ -1355,7 +1355,14 @@ final class Engine {
         }
         // The banner, the sync label and the empty page (T099): the
         // controller's words, held for the strip, the toolbar and the list.
-        if states.apply(event) != nil { return }
+        if let change = states.apply(event) {
+            // An empty inbox has no first page to land: the list under the
+            // page takes the keyboard when the page is drawn.
+            if change == .empty, states.empty != nil {
+                DispatchQueue.main.async { [weak self] in self?.listTakesTheKeyboard() }
+            }
+            return
+        }
         if let surface = FocusIntents.surface(event) {
             apply(surface)
             return
@@ -1417,7 +1424,8 @@ final class Engine {
     @ObservationIgnored
     private var listHadKeyboard = false
 
-    /// Once, when the list's first page lands: the table takes the keyboard
+    /// Once, when the list's first page lands or an empty inbox is drawn
+    /// over it: the table takes the keyboard
     /// (C30, the cursor's row is where the keys go). Left to AppKit, the
     /// window's first key view had it -- Inbox ▾, ringed, which Space
     /// would press -- until a surface sent the keyboard home.

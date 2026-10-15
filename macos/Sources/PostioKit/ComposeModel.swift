@@ -91,6 +91,20 @@ public final class ComposeModel: Identifiable {
     /// chosen ("Remind if no reply · Tue 29 Sep").
     public var remindWords: String { remindMeaning(at: remindAt) }
 
+    /// The labels sending applies to the conversation (screens 05 and 06):
+    /// a reply starts with its thread's. Saved and sent with the draft.
+    public private(set) var labels: [DraftLabelFfi]
+
+    /// Whether the labels are a fresh reply's thread's, untouched: the
+    /// Labels row says "from the thread" (screen 06).
+    public private(set) var labelsFromThread: Bool
+
+    /// Take a label off what sending applies.
+    public func removeLabel(_ id: Int64) {
+        labels.removeAll { $0.id == id }
+        labelsFromThread = false
+    }
+
     /// The quote a reply opened with, folded under what is written (screen
     /// 06): `body` holds only what is written above it, and `edited` puts
     /// it back, so what is saved and sent still quotes. `nil` once shown,
@@ -193,6 +207,9 @@ public final class ComposeModel: Identifiable {
         account = draft.account
         from = draft.from
         remindAt = draft.remindAt
+        labels = draft.labels
+        labelsFromThread =
+            draft.id == 0 && !draft.labels.isEmpty && (draft.kind == .reply || draft.kind == .replyAll)
         // A plain reply's quote folds under what is written (screen 06). A
         // rich draft keeps its document whole: the editing surface is the
         // one `editor.js` shared with GTK, and is not cut here.
@@ -473,6 +490,7 @@ public final class ComposeModel: Identifiable {
         edited.account = account
         edited.from = from
         edited.remindAt = remindAt
+        edited.labels = labels
         return edited
     }
 
@@ -545,6 +563,7 @@ public final class ComposeModel: Identifiable {
         draft.bodyHtml = saved.bodyHtml
         draft.rich = saved.rich
         draft.remindAt = saved.remindAt
+        draft.labels = saved.labels
         draft.account = saved.account
         draft.from = saved.from
         status = nil

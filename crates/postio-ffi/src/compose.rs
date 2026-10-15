@@ -115,6 +115,20 @@ pub struct DraftFfi {
     /// scenario 5).
     #[uniffi(default = None)]
     pub remind_at: Option<i64>,
+    /// The labels sending it applies to its conversation (spec 007 US3):
+    /// a reply starts with its thread's (screen 06), and one taken off
+    /// here stays off.
+    #[uniffi(default = [])]
+    pub labels: Vec<DraftLabelFfi>,
+}
+
+/// A label on a draft: its row, and its name to draw.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DraftLabelFfi {
+    /// The label's row.
+    pub id: i64,
+    /// What the chip says.
+    pub name: String,
 }
 
 /// One file attached to a draft.
@@ -203,6 +217,16 @@ pub(crate) fn to_ffi(draft: &Draft, from: String, path: String) -> DraftFfi {
             })
             .collect(),
         remind_at: draft.remind_at.map(|at| at.timestamp_millis()),
+        // Named by the session, which can read the store
+        // (`Session::named_labels`).
+        labels: draft
+            .labels
+            .iter()
+            .map(|id| DraftLabelFfi {
+                id: id.get(),
+                name: String::new(),
+            })
+            .collect(),
     }
 }
 
@@ -254,6 +278,11 @@ pub(crate) fn from_ffi(base: Draft, edited: &DraftFfi) -> Draft {
     draft.remind_at = edited
         .remind_at
         .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis);
+    draft.labels = edited
+        .labels
+        .iter()
+        .map(|label| postio_model::LabelId::new(label.id))
+        .collect();
     draft
 }
 

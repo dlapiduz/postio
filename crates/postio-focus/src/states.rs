@@ -16,7 +16,7 @@ use postio_config::FocusConfig;
 use postio_core::{CommandId, Event};
 use postio_model::{AccountId, FocusScope, ListScope};
 use postio_ui::focus_state::{
-    self, AccountFacts, Banner, BannerAction, EmptyInbox, EmptyPlace, SyncLabel,
+    self, AccountFacts, Banner, BannerAction, EmptyInbox, EmptyPlace, InboxSaying, SyncLabel,
 };
 use postio_ui::status::Trackers;
 
@@ -74,6 +74,9 @@ pub(crate) struct States {
     facts: Vec<AccountFacts>,
     /// The accounts already asked about.
     asked: BTreeSet<AccountId>,
+    /// Whether the accounts have been asked about at all, and answered:
+    /// until they have, when mail last synced is not known.
+    read: Reading,
     /// When mail last synced.
     last_synced: Option<DateTime<Utc>>,
     /// `[focus]`: the digests the empty inbox names, and whether Focus
@@ -88,6 +91,19 @@ pub(crate) struct States {
     /// The empty page drawn in the list's place, while one is: the list is
     /// what a frontend draws until told otherwise.
     empty: Option<EmptyInbox>,
+}
+
+/// How far the read of who the accounts are, and when mail last synced,
+/// has come.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Reading {
+    /// Nothing has asked.
+    #[default]
+    Unasked,
+    /// Asked, and not answered yet.
+    Asked,
+    /// Answered, or failed: what is known is all there is.
+    Read,
 }
 
 impl FocusController {
@@ -107,6 +123,9 @@ impl FocusController {
                     && self.states.asked.insert(account)
                 {
                     steps.push(Step::Ask(Request::Accounts));
+                    if self.states.read == Reading::Unasked {
+                        self.states.read = Reading::Asked;
+                    }
                 }
                 self.note_account(account)
             }
@@ -138,11 +157,14 @@ impl FocusController {
     /// Who the accounts are, and when mail last synced, as read: a banner
     /// waiting on a name can say it now.
     pub(crate) fn accounts_read(&mut self, read: Result<AccountsRead, String>) -> Vec<Step> {
+        self.states.read = Reading::Read;
         let read = match read {
             Ok(read) => read,
             Err(error) => {
                 tracing::debug!(%error, "Focus could not read who its accounts are");
-                return Vec::new();
+                // An empty page held back for the answer is drawn on what
+                // sync has said.
+                return self.show_empty();
             }
         };
         self.states.facts = read.facts;
@@ -231,13 +253,26 @@ impl FocusController {
     }
 
     /// The empty page, or the list, when that has changed (screen 16).
+    ///
+    /// An empty inbox that would say it is waiting on sync first asks when
+    /// mail last synced: a store an earlier run filled has nothing to wait
+    /// for, and sync may never say so (a demo, an account that stays
+    /// quiet). The page waits for that answer rather than claim a sync.
     pub(crate) fn show_empty(&mut self) -> Vec<Step> {
-        let empty = self.empty_page();
-        if self.states.empty == empty {
-            return Vec::new();
+        let (empty, waiting) = match self.empty_page() {
+            Page::Waiting => (self.states.empty.clone(), true),
+            Page::Shown(page) => (page, false),
+        };
+        let mut steps = Vec::new();
+        if waiting && self.states.read == Reading::Unasked {
+            self.states.read = Reading::Asked;
+            steps.push(Step::Ask(Request::Accounts));
         }
-        self.states.empty.clone_from(&empty);
-        vec![Step::Show(Intent::Empty(empty))]
+        if self.states.empty != empty {
+            self.states.empty.clone_from(&empty);
+            steps.push(Step::Show(Intent::Empty(empty)));
+        }
+        steps
     }
 
     /// What the list shows in its place, if anything: a place with nothing
@@ -246,7 +281,7 @@ impl FocusController {
     /// conversations says whether a pass has found nothing or none has
     /// finished yet. The has-action filter showing nothing is the list's
     /// own business.
-    fn empty_page(&self) -> Option<EmptyInbox> {
+    fn empty_page(&self) -> Page {
         let keymap = self.keymap();
         let place = match self.feed.scope() {
             // The window starts on its inbox.
@@ -255,19 +290,26 @@ impl FocusController {
             Some(ListScope::Focus(FocusScope::Flagged)) => Some(EmptyPlace::Flagged),
             Some(ListScope::Outbox(_)) => Some(EmptyPlace::Outbox),
             Some(ListScope::Mailbox(_)) => Some(EmptyPlace::Folder(self.states.place.clone())),
-            Some(_) => return None,
+            Some(_) => return Page::Shown(None),
         };
         if let Some(place) = place {
-            return (self.feed.has_landed() && self.feed.total() == 0)
-                .then(|| focus_state::empty_place(&place, keymap));
+            return Page::Shown(
+                (self.feed.has_landed() && self.feed.total() == 0)
+                    .then(|| focus_state::empty_place(&place, keymap)),
+            );
         }
         if self.cursor.has_action() {
-            return None;
+            return Page::Shown(None);
         }
-        let counts = self.counts.filter(|counts| counts.conversations == 0)?;
+        let Some(counts) = self.counts.filter(|counts| counts.conversations == 0) else {
+            return Page::Shown(None);
+        };
         let statuses = self.states.trackers.statuses(&self.states.tracked);
         let saying = focus_state::inbox_saying(&statuses, self.states.last_synced);
-        Some(
+        if self.states.read != Reading::Read && !matches!(saying, InboxSaying::Empty { .. }) {
+            return Page::Waiting;
+        }
+        Page::Shown(Some(
             focus_state::empty_inbox(
                 &self.states.config,
                 counts.filtered_today,
@@ -275,7 +317,7 @@ impl FocusController {
                 &self.now(),
             )
             .saying(&saying, keymap, &chrono::Local),
-        )
+        ))
     }
 
     /// The controller's clock: stopped by [`crate::Input::Clock`], or the
@@ -283,6 +325,15 @@ impl FocusController {
     pub(crate) fn now(&self) -> chrono::DateTime<chrono::Local> {
         self.pickers.clock.unwrap_or_else(postio_ui::clock::now)
     }
+}
+
+/// What [`FocusController::empty_page`] found.
+enum Page {
+    /// The page to draw in the list's place, or the list (`None`).
+    Shown(Option<EmptyInbox>),
+    /// An empty inbox whose words wait on when mail last synced: what is
+    /// drawn stays.
+    Waiting,
 }
 
 /// The account whose password was refused, or is missing: the one

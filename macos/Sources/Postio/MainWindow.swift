@@ -169,14 +169,21 @@ struct MainWindow: View {
                 Text("Postio is asking the Keychain for this store's key.")
             }
         case .open:
-            if let page = engine.states.empty {
+            if let table = engine.focusTable {
                 // Empty is a state, not a blank (screen 16): the controller's
                 // page, with its next digest and the shortcuts that lead
-                // somewhere, in the list's place until it says the list is
-                // back.
-                EmptyInbox(words: EmptyInboxWords(page)) { engine.run($0) }
-            } else if let table = engine.focusTable {
+                // somewhere, over the list until it says the list is back.
+                // The table stays under it, so the keyboard stays on the
+                // list rather than falling to the window's first key view
+                // (Inbox ▾, ringed, which Space would press).
                 FocusListView(table: table)
+                    .overlay {
+                        if let page = engine.states.empty {
+                            EmptyInbox(words: EmptyInboxWords(page)) { engine.run($0) }
+                        }
+                    }
+            } else if let page = engine.states.empty {
+                EmptyInbox(words: EmptyInboxWords(page)) { engine.run($0) }
             }
         case .refused:
             // Drawn in the inbox's place, above.
