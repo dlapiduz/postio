@@ -144,7 +144,7 @@ public struct ResultRowView: View {
     private func labelPill(_ pill: LabelPillFfi) -> some View {
         HStack(spacing: 5) {
             Circle()
-                .fill(LabelColour(hex: pill.color).map { AnyShapeStyle($0.swatch) } ?? AnyShapeStyle(.tertiary))
+                .fill(LabelColour.of(name: pill.name, stored: pill.color).map { AnyShapeStyle($0.swatch) } ?? AnyShapeStyle(.tertiary))
                 .frame(width: 6, height: 6)
             Text(pill.name).font(.system(size: 11.5)).foregroundStyle(.secondary)
         }

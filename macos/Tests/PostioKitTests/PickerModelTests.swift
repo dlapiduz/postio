@@ -98,13 +98,14 @@ struct PickerModelTests {
         #expect(picker.footnote == "Snoozed mail is under g z.")
     }
 
-    @Test func aLabelsDotIsItsOwnColourOrNone() {
+    @Test func aLabelsDotIsItsOwnColourOrOneFromItsName() {
         let (picker, _) = Self.model()
         picker.apply(.focusOpenPicker(view: Self.view(.label)))
         #expect(picker.rows.map(\.dot) == [true, true, true])
         #expect(picker.rows[0].colour == LabelColour(hex: "#c0703a"))
-        // Unset: drawn in the secondary colour, as the places popover's.
-        #expect(picker.rows[1].colour == nil)
+        // Unset: a colour from its name, as GTK draws it (FR-012).
+        #expect(picker.rows[1].colour == LabelColour.of(name: picker.rows[1].name, stored: nil))
+        #expect(picker.rows[1].colour != nil)
         #expect(picker.rows[0].applied)
         #expect(picker.rows.allSatisfy { $0.cap == nil })
     }

@@ -180,6 +180,17 @@ pub struct LabelPillFfi {
     pub color: Option<String>,
 }
 
+/// The colour a label's dot is drawn in, `#rrggbb`: `stored` when the
+/// label has one, else one of its own from its name, kept off the accent
+/// whose hue is `accent_hue` degrees (FR-012, FR-091). The rule GTK's dots
+/// follow (`postio_ui::label_colour`), so a label is one colour in both
+/// apps; a label with no colour of its own was a grey dot on the Mac.
+#[uniffi::export]
+pub fn label_dot_colour(name: String, stored: Option<String>, accent_hue: f64) -> String {
+    use postio_ui::label_colour::{Rgb, label_colour};
+    label_colour(&name, stored.as_deref().and_then(Rgb::from_hex), accent_hue).to_hex()
+}
+
 /// One action a marked row offers, with its button's words.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct FocusRowActionFfi {

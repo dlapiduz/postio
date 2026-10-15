@@ -43,17 +43,37 @@ public struct FilterBarView: View {
 
     /// The bar's height (§3.2).
     public static let height: CGFloat = 46
+    /// The fade over the filters' trailing edge, which is also the room
+    /// kept after the last one so it is never under the fade at rest.
+    static let fade: CGFloat = 32
 
     public var body: some View {
         HStack(spacing: 6) {
-            tabStrip
+            // The tabs and Sort keep their size: at 1024 wide the bar is
+            // too narrow for everything, and squeezing the tabs made
+            // "Conversations" "Conv…". The filters give way instead,
+            // scrolling sideways under a fade at their trailing edge.
+            tabStrip.fixedSize()
             Rectangle().fill(.separator).frame(width: 1, height: 18).padding(.horizontal, 6)
-            ForEach(query.buttons) { button in
-                FilterButton(button: button) { query.tap(button.kind) }
-                    .background(anchor(button.kind))
+            ScrollView(.horizontal) {
+                HStack(spacing: 6) {
+                    ForEach(query.buttons) { button in
+                        FilterButton(button: button) { query.tap(button.kind) }
+                            .background(anchor(button.kind))
+                    }
+                }
+                .padding(.vertical, 4)
+                .padding(.trailing, Self.fade)
             }
-            Spacer(minLength: 8)
-            Text(words.sort).font(.system(size: 12)).foregroundStyle(.tertiary)
+            .scrollIndicators(.never)
+            .mask(
+                HStack(spacing: 0) {
+                    Rectangle()
+                    LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
+                        .frame(width: Self.fade)
+                })
+            Text(words.sort).font(.system(size: 12)).foregroundStyle(.tertiary).fixedSize()
+                .padding(.leading, 6)
             sortMenu
         }
         .lineLimit(1)

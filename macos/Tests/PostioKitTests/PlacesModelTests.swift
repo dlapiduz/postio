@@ -72,7 +72,10 @@ struct PlacesModelTests {
         #expect(model.entries[1].mark == .symbol("doc"))
         #expect(model.entries[2].mark == .symbol("folder"))
         #expect(model.entries[4].mark == .dot(LabelColour(hex: "#2a9d8f")))
-        #expect(model.entries[5].mark == .dot(nil), "no colour of its own: the frontend's")
+        #expect(
+            model.entries[5].mark == .dot(LabelColour.of(name: model.entries[5].name, stored: nil)),
+            "no colour of its own: one from its name, as GTK's")
+        #expect(model.entries[5].mark != .dot(nil))
     }
 
     @Test func typingFiltersAndPutsTheHighlightOnTheFirst() {
@@ -184,5 +187,22 @@ struct PlacesModelTests {
         model.apply(.focusPlacesChanged)
         #expect(model.highlighted == 0)
         #expect(model.entries.first?.name == "Inbox")
+    }
+
+    @Test func filteredAndArchiveAreDrawnApart() {
+        let archive = PlacesModel.mark(.role(role: .archive))
+        let filtered = PlacesModel.mark(.filtered)
+        #expect(archive != filtered)
+        #expect(filtered == .symbol(PlacesModel.filteredSymbol))
+    }
+
+    @Test func thePopoverHangsRightwardFromTheButtonsLeftEdge() {
+        // The button at the window's left; a popover centred on it would
+        // put half its 392 outside the window.
+        let button = CGRect(x: 0, y: 0, width: 70, height: 24)
+        let rect = PlacesView.Metrics.positioningRect(button: button)
+        #expect(rect.midX - PlacesView.Metrics.width / 2 >= -PlacesView.Metrics.leadIn)
+        #expect(rect.minX == button.minX - PlacesView.Metrics.leadIn)
+        #expect(rect.height == button.height)
     }
 }

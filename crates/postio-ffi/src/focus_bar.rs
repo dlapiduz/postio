@@ -181,6 +181,9 @@ pub enum PlaceMarkFfi {
         /// from the name.
         color: Option<String>,
     },
+    /// Filtered's own mark. It is not a mailbox, and drawn with Archive's
+    /// role it was a second Archive in the list, one row under the first.
+    Filtered,
 }
 
 /// One place the folders popover lists.
@@ -212,6 +215,9 @@ impl PlaceEntryFfi {
             token,
             section: entry.section.title().to_owned(),
             mark: match entry.mark {
+                _ if entry.command == Some(postio_core::CommandId::GoToFiltered) => {
+                    PlaceMarkFfi::Filtered
+                }
                 postio_ui::places::Mark::Role(role) => PlaceMarkFfi::Role { role: role.into() },
                 postio_ui::places::Mark::Dot(color) => PlaceMarkFfi::Dot { color },
             },
@@ -269,5 +275,16 @@ impl Session {
     /// What the popover's filter says before anything is typed.
     pub fn focus_places_placeholder(&self) -> String {
         postio_ui::places::FILTER_PLACEHOLDER.to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filtered_is_marked_apart_from_archive() {
+        let filtered = PlaceEntryFfi::of(1, postio_ui::places::filtered_entry(3));
+        assert_eq!(filtered.mark, PlaceMarkFfi::Filtered);
     }
 }

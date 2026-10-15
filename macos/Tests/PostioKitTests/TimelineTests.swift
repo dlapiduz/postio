@@ -25,6 +25,17 @@ struct TimelineTests {
         #expect(MonthChart.spoken(month) == "Jul, 5,000+")
     }
 
+    /// The hint is two lines broken at its middle dot, as screen 06 draws
+    /// it, never a wrap that leaves "to narrow" alone on the second line.
+    @Test func theHintBreaksAtItsMiddleDot() {
+        #expect(TimelineView.hintLines("Matches by month \u{b7} drag across months to narrow")
+            == "Matches by month\ndrag across months to narrow")
+        // A range's hint keeps the rest together on the second line.
+        #expect(TimelineView.hintLines("Sep \u{2013} Oct \u{b7} drag again \u{b7} x")
+            == "Sep \u{2013} Oct\ndrag again \u{b7} x")
+        #expect(TimelineView.hintLines("One line") == "One line")
+    }
+
     @Test func aDragFromBar3ToBar5ReportsThreeToFiveOnceOnReleaseNeverDuring() {
         var reports: [[UInt32]] = []
         let drag = TimelineDrag(bars: 12) { reports.append([$0, $1]) }

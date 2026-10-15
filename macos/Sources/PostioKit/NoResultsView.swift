@@ -165,12 +165,19 @@ public struct NoResultsView: View {
                     Text(way.query)
                         .font(.system(size: 11.5, design: .monospaced))
                         .foregroundStyle(.tertiary)
-                        // A query with whole addresses outgrows one line
-                        // beside its count; it wraps rather than hide a
-                        // term in an ellipsis.
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                        // One line, so every way out is the same 50 tall
+                        // (screen 13). A query with whole addresses
+                        // outgrows it beside its count: it tightens first,
+                        // then gives up its middle -- the first term and
+                        // the last stay -- and the whole query is the
+                        // row's tooltip and what a screen reader hears.
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .allowsTightening(true)
+                        .truncationMode(.middle)
+                        .help(way.query)
                 }
+                .layoutPriority(1)
                 Spacer(minLength: 8)
                 Text(way.count)
                     .font(.system(size: 13, weight: .bold))

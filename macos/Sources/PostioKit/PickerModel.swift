@@ -267,7 +267,7 @@ public final class PickerModel {
             Row(
                 id: row.token, section: row.section, name: row.name, detail: row.detail,
                 cap: KeyCapSpelling.cap(row.key), dot: row.dot,
-                colour: row.dot ? LabelColour(hex: row.color) : nil,
+                colour: row.dot ? LabelColour.of(name: row.name, stored: row.color) : nil,
                 applied: row.applied, create: row.create)
         }
         highlighted = highlight(after: previous, was: previousHighlight, typedChanged: typedChanged)

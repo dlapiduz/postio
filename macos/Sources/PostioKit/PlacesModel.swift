@@ -172,7 +172,7 @@ public final class PlacesModel {
             section = place.section
             return Entry(
                 id: place.token, heading: heading, name: place.name, count: place.count,
-                mark: Self.mark(place.mark),
+                mark: Self.mark(place.mark, name: place.name),
                 cap: place.command.flatMap { KeyCapSpelling.cap(engine.binding(for: $0)) },
                 footer: place.footer)
         }
@@ -183,12 +183,18 @@ public final class PlacesModel {
         }
     }
 
-    static func mark(_ mark: PlaceMarkFfi) -> Mark {
+    static func mark(_ mark: PlaceMarkFfi, name: String = "") -> Mark {
         switch mark {
         case let .role(role): return .symbol(symbol(for: role))
-        case let .dot(color): return .dot(LabelColour(hex: color))
+        case let .dot(color): return .dot(LabelColour.of(name: name, stored: color))
+        // Filtered: what the rules held back, the system's filter glyph,
+        // so it is not a second Archive one row under the first.
+        case .filtered: return .symbol(filteredSymbol)
         }
     }
+
+    /// The SF Symbol Filtered is drawn with.
+    static let filteredSymbol = "line.3.horizontal.decrease.circle"
 
     /// The SF Symbol a mailbox's role is drawn with (screen 10).
     static func symbol(for role: MailboxRoleFfi) -> String {

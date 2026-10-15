@@ -468,7 +468,9 @@ async fn folder_names(
 
 /// The people whose address or a word of whose name begins with `prefix`,
 /// most written-to either way first, ties by the latest either way (D21).
-/// Everyone, when nothing is typed yet. One statement.
+/// Everyone, when nothing is typed yet, but you: your own addresses are on
+/// every message you sent and would always rank first, so they are left
+/// out as the People tab leaves them out. One statement.
 async fn people(
     connection: &Connection,
     account: AccountScope,
@@ -495,6 +497,7 @@ async fn people(
                         max(c.times_seen) AS seen, max(c.last_seen_at) AS last_seen
                    FROM contacts c
                   WHERE c.suppressed = 0 {scope}
+                    AND c.address_normalized NOT IN ({own})
                     AND (c.address_normalized LIKE ?1 ESCAPE '\\'
                          OR lower(coalesce(c.name, c.address_name, '')) LIKE ?1 ESCAPE '\\'
                          OR lower(coalesce(c.name, c.address_name, '')) LIKE ?2 ESCAPE '\\')
@@ -504,7 +507,8 @@ async fn people(
           ORDER BY p.seen + coalesce(w.sent_count, 0) DESC,
                    max(coalesce(p.last_seen, 0), coalesce(w.last_sent_at, 0)) DESC,
                    p.address
-          LIMIT ?3"
+          LIMIT ?3",
+        own = super::people::OWN_ADDRESSES
     );
     let found = sql::all(connection, &sql, params, |row| {
         let received: i64 = row.col::<Option<i64>>(2)?.unwrap_or(0);

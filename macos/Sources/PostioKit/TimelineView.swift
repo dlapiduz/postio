@@ -34,6 +34,15 @@ public struct TimelineView: View {
     }
 
     public static let height: CGFloat = 66
+
+    /// The hint as the two lines screen 06 draws, broken at its first
+    /// middle dot: "Matches by month" over "drag across months to narrow".
+    /// Left to wrap at the column's width it broke wherever the width ran
+    /// out, and at 1440 that left "to narrow" alone on the second line.
+    static func hintLines(_ hint: String) -> String {
+        guard let dot = hint.range(of: " \u{b7} ") else { return hint }
+        return hint[..<dot.lowerBound] + "\n" + hint[dot.upperBound...]
+    }
     /// The tallest bar.
     public static let barHeight: CGFloat = 36
 
@@ -66,6 +75,7 @@ public struct TimelineView: View {
     /// The hint, and ⌥←/⌥→ "steps a month" after it while a range is
     /// selected (screen 09).
     private var hintText: Text {
+        let hint = Self.hintLines(hint)
         guard let step else { return Text(hint) }
         let cap = KeyCapSpelling.cap(step.key) ?? step.key
         return Text("\(hint) \u{b7} ") + Text(cap).font(.system(size: 11, design: .monospaced))

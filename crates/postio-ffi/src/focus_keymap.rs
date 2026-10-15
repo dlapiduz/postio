@@ -33,6 +33,9 @@ pub struct KeyMapSheetFfi {
     pub rebind_footer: String,
     /// "The mouse works everywhere: every key has a visible button."
     pub mouse_footer: String,
+    /// "More below", under the columns while rows lie past the panel's
+    /// edge.
+    pub more_below: String,
 }
 
 /// One group of the key map: "Move and select", "Act (row or selection)".
@@ -97,6 +100,7 @@ pub(crate) fn sheet(keymap: &postio_core::Keymap) -> KeyMapSheetFfi {
             .collect(),
         rebind_footer: keymap_sheet::rebind_footer(platform).to_owned(),
         mouse_footer: keymap_sheet::MOUSE_FOOTER.to_owned(),
+        more_below: keymap_sheet::MORE_BELOW.to_owned(),
     }
 }
 

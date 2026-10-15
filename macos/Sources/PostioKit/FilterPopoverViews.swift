@@ -179,7 +179,7 @@ struct PopoverRowView: View {
     }
 
     private var labelColour: AnyShapeStyle {
-        LabelColour(hex: row.color).map { AnyShapeStyle($0.swatch) } ?? AnyShapeStyle(.secondary)
+        LabelColour.of(name: row.title, stored: row.color).map { AnyShapeStyle($0.swatch) } ?? AnyShapeStyle(.secondary)
     }
 
     /// An avatar's fill: one of the system's hues, by the name, so a person

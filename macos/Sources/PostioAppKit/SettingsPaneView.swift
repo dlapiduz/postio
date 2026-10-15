@@ -683,12 +683,12 @@ public struct SettingsPaneView: View {
             VStack(alignment: .leading, spacing: 0) {
                 if current.isEmpty {
                     ContentUnavailableView {
-                        Label("No filters", systemImage: "line.3.horizontal.decrease.circle")
+                        Label("No saved searches", systemImage: "line.3.horizontal.decrease.circle")
                     } description: {
-                        Text(
-                            "A filter is a saved search. Add one below, or write "
-                                + "`[saved_searches.<name>]` in the config file."
-                        )
+                        // One literal, so the table name is set as code: a
+                        // concatenation is a plain String, and it showed
+                        // its backticks.
+                        Text("Add one below, or write `[saved_searches.<name>]` in the config file.")
                     }
                     .frame(maxHeight: .infinity)
                 } else {

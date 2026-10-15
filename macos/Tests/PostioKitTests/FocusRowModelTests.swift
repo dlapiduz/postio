@@ -108,14 +108,21 @@ import Testing
         #expect(model.pills.map(\.name) == ["Atlas", "Home"])
     }
 
-    @Test func aPillKeepsTheColourItsLabelWasGivenAndNoneWhenItHasNone() {
+    @Test func aPillKeepsTheColourItsLabelWasGivenAndOneOfItsOwnWhenItHasNone() {
         let pills = [
             LabelPillFfi(name: "Atlas", color: "#ff8000"),
             LabelPillFfi(name: "Home", color: nil),
+            LabelPillFfi(name: "Kids", color: nil),
         ]
         let model = FocusRowModel(Self.row(pills: pills), binding: Self.binding)
         #expect(model.pills[0].colour == LabelColour(red: 1, green: 128.0 / 255, blue: 0))
-        #expect(model.pills[1].colour == nil)
+        // FR-012: a label with no colour of its own gets one from its name,
+        // the same one GTK draws (`postio_ui::label_colour`), never grey.
+        let home = LabelColour.of(name: "Home", stored: nil)
+        #expect(home != nil)
+        #expect(model.pills[1].colour == home)
+        #expect(LabelColour.of(name: "Home", stored: nil) == LabelColour.of(name: " home ", stored: nil))
+        #expect(LabelColour.of(name: "Kids", stored: "#ff8000") == model.pills[0].colour)
         // Not a colour: drawn as the plain dot rather than guessed at.
         #expect(LabelColour(hex: "orange") == nil)
         #expect(LabelColour(hex: "#12345") == nil)
@@ -181,6 +188,13 @@ import Testing
         #expect(KeyCapSpelling.cap("1\u{2013}4") == "1\u{2013}4")
         #expect(KeyCapSpelling.cap("/") == "/")
         #expect(KeyCapSpelling.cap(nil) == nil)
+        // Escape and Tab are words on a cap, as every design screen and
+        // KEYS.md spell them ("Esc close", "Tab into the chips"): the
+        // menu's ⎋ and ⇥ are unreadable at a cap's 10 pt. A chord keeps
+        // the menu's glyphs, where the system draws them.
+        #expect(KeyCapSpelling.cap("Escape") == "Esc")
+        #expect(KeyCapSpelling.cap("Tab") == "Tab")
+        #expect(KeyCapSpelling.cap("shift+Tab") == "⇧⇥")
     }
 
     // MARK: the marker's words

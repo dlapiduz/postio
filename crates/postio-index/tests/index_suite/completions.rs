@@ -448,3 +448,42 @@ async fn a_completion_count_stops_at_its_cap_and_says_it_is_a_floor() {
     let label = found.labels.first().expect("the label");
     assert_eq!((label.count, label.capped), (10, false));
 }
+
+#[tokio::test]
+async fn from_never_offers_you_however_often_you_write() {
+    // You are on every message you sent, so you write to "each other"
+    // more than anyone: ranked so, you came first under `from:`. The
+    // People tab leaves your own addresses out (T132); so does this.
+    let (_database, connection, _account, _inbox) = store().await;
+    let own: String = connection
+        .query("SELECT address FROM accounts", ())
+        .await
+        .expect("query")
+        .next()
+        .await
+        .expect("row")
+        .expect("an account")
+        .get(0)
+        .expect("its address");
+    for (address, seen) in [(own.as_str(), 400), ("ada@example.com", 5)] {
+        connection
+            .execute(
+                "INSERT INTO contacts (account_id, name, address, address_normalized,
+                                       times_seen, last_seen_at, suppressed)
+                 VALUES (NULL, NULL, ?1, lower(?1), ?2, ?3, 0)",
+                (address, seen, now().timestamp_millis()),
+            )
+            .await
+            .expect("a contact");
+    }
+
+    let found = completions(&connection, AccountScope::Unified, "", Some(Field::From))
+        .await
+        .expect("completions");
+    let offered: Vec<&str> = found
+        .people
+        .iter()
+        .map(|person| person.address.as_str())
+        .collect();
+    assert_eq!(offered, ["ada@example.com"], "never yourself");
+}
