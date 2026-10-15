@@ -135,19 +135,6 @@ const IGNORED: &[&str] = &[
     // Failed on CI in two places that do not touch this crate; held out
     // by scripts/quarantine-flakes.py until #1787 finds the race.
     "settings_wiring::the_account_verbs_have_keys_on_the_focused_row",
-    // Settings' clicks miss on CI's loaded runner, about 46 failed jobs in two
-    // weeks across pull requests that do not touch Settings: a press lands
-    // while the dialog is still opening and the release misses. Held out of
-    // the default run until #1817 makes the click wait; run by name.
-    "settings::mod_comma_and_the_menu_open_settings_in_focuss_frame",
-    "settings::every_section_focus_shows_is_reachable_and_appearance_is_not",
-    "settings::the_signature_editor_has_the_keyboard_and_says_what_it_is",
-    "settings::a_signature_made_in_settings_signs_the_next_message",
-    "settings::a_folder_left_out_of_backfill_is_written_and_shown",
-    "settings::mod_e_opens_config_toml_in_the_persons_editor",
-    "settings::a_saved_search_deleted_in_settings_leaves_alt_1_to_the_next",
-    "settings::filtering_turned_off_in_settings_is_written_and_the_strip_follows",
-    "settings::a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings",
 ];
 
 const CASES: &[(&str, fn())] = &[
@@ -1545,6 +1532,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "settings::a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings",
         settings::a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings as fn(),
+    ),
+    (
+        "settings::a_click_into_settings_as_it_opens_waits_for_it_to_open",
+        settings::a_click_into_settings_as_it_opens_waits_for_it_to_open as fn(),
     ),
     (
         "capture::t_on_an_open_message_opens_the_task_sheet",

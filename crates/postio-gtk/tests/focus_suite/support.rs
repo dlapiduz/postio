@@ -1045,6 +1045,7 @@ pub fn click_row_saying(
         });
         if let Some(row) = row {
             let native = native_of(&row, window);
+            wait_to_be_still(&native, &row);
             // Mapped is not laid out: a row built a moment ago has no size
             // until the next frame, and nothing can be clicked at no size.
             let point = row
@@ -1087,6 +1088,7 @@ pub fn click_in(
     n_press: i32,
 ) {
     let native = native_of(widget.as_ref(), window);
+    wait_to_be_still(&native, widget.as_ref());
     let (x, y) = wait_to_be_pickable(&native, widget.as_ref(), x, y);
     click_on(&native, x, y, n_press);
 }
@@ -1110,8 +1112,9 @@ pub fn click(
     {
         crate::settle();
     }
-    let (width, height) = (widget.width() as f32, widget.height() as f32);
     let native = native_of(widget, window);
+    wait_to_be_still(&native, widget);
+    let (width, height) = (widget.width() as f32, widget.height() as f32);
     let (x, y) = wait_to_be_pickable(&native, widget, width / 2.0, height / 2.0);
     click_on(&native, x, y, n_press);
 }
@@ -1123,6 +1126,78 @@ fn native_of(widget: &gtk::Widget, window: &postio_gtk::window::FocusWindow) -> 
         .native()
         .map(|native| native.upcast())
         .unwrap_or_else(|| window.clone().upcast())
+}
+
+/// Wait for `widget` to stop moving on `native`, the surface a click lands
+/// on: a person clicks what has stopped where they see it. libadwaita opens
+/// a dialog by scaling it from 0.8 to 1 in its allocation (a bottom sheet
+/// slides instead), so until it has opened a button in it is smaller and
+/// somewhere else every frame. A press then and a release a frame later are
+/// at two places, and the release misses: every Settings flake on CI
+/// (#1817). Measured in `native`'s coordinates, frame by frame -- within the
+/// dialog, as [`settle_still`] measures, nothing moves while the whole
+/// dialog grows -- and until `widget` is drawn at its own size, which no
+/// frame of a dialog's opening is.
+fn wait_to_be_still(native: &gtk::Widget, widget: &gtk::Widget) {
+    use gtk::prelude::*;
+    // Where it was drawn on each frame, if anywhere.
+    type Frames = Vec<Option<gtk::graphene::Rect>>;
+    let frames: std::rc::Rc<std::cell::RefCell<Frames>> = std::rc::Rc::default();
+    // A tick callback keeps the frame clock running, so frames come while
+    // this waits even when nothing else asks for one.
+    let tick = widget.add_tick_callback({
+        let frames = std::rc::Rc::clone(&frames);
+        let native = native.clone();
+        move |widget, _| {
+            frames.borrow_mut().push(widget.compute_bounds(&native));
+            gtk::glib::ControlFlow::Continue
+        }
+    });
+    let at_rest = |widget: &gtk::Widget| {
+        let frames = frames.borrow();
+        let [.., Some(before), Some(last)] = frames.as_slice() else {
+            return false;
+        };
+        // Its own size: its box in its own space, which no transform above
+        // it scales (its `width()` is the content box, without border or
+        // padding, so it is not the thing to compare).
+        let Some(own) = widget.compute_bounds(widget) else {
+            return false;
+        };
+        before == last
+            && (last.width() - own.width()).abs() < 0.5
+            && (last.height() - own.height()).abs() < 0.5
+    };
+    let started = std::time::Instant::now();
+    let deadline = started + postio_test_support::scaled(std::time::Duration::from_secs(10));
+    // A frame comes every few milliseconds on a surface that is drawn; none
+    // in this long is one that is not, and there is no motion to wait out.
+    let first_frames = started + postio_test_support::scaled(std::time::Duration::from_secs(1));
+    loop {
+        crate::settle();
+        // A widget that has left the screen draws no frames -- a list that
+        // redraws replaces its rows -- and is not one to wait on: the caller
+        // finds what is there now, or its pick says what is.
+        if at_rest(widget)
+            || !widget.is_mapped()
+            || (frames.borrow().len() < 2 && std::time::Instant::now() > first_frames)
+        {
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            // No frames at all is a surface the compositor is not drawing,
+            // not motion: the pick that follows still has to reach it.
+            assert!(
+                frames.borrow().len() < 2,
+                "the {} never came to rest on screen: {:?}",
+                widget.type_().name(),
+                frames.borrow().iter().rev().take(3).collect::<Vec<_>>()
+            );
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    tick.remove();
 }
 
 /// The window coordinates of (`x`, `y`) in `widget`, once that is a place a
