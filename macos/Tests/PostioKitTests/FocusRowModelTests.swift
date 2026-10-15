@@ -188,6 +188,13 @@ import Testing
     @Test func theQuoteIsDrawnVerbatimInsideQuotationMarks() {
         let model = FocusRowModel(Self.row(marker: Self.question), binding: Self.binding)
         #expect(
+        // Escape and Tab are words on a cap, as every design screen and
+        // KEYS.md spell them ("Esc close", "Tab into the chips"): the
+        // menu's ⎋ and ⇥ are unreadable at a cap's 10 pt. A chord keeps
+        // the menu's glyphs, where the system draws them.
+        #expect(KeyCapSpelling.cap("Escape") == "Esc")
+        #expect(KeyCapSpelling.cap("Tab") == "Tab")
+        #expect(KeyCapSpelling.cap("shift+Tab") == "⇧⇥")
             model.marker?.quoted
                 == "\u{201c}Can you approve these by Friday so finance can close the quarter?\u{201d}"
         )

@@ -62,7 +62,7 @@ import Testing
 
     @Test func theCloseKeysAreCapsWithTheControllersWords() {
         let words = KeyMapSheetWords(Self.sheet)
-        #expect(words.closeCaps == ["?", "⎋"])
+        #expect(words.closeCaps == ["?", "Esc"])
         #expect(words.closeOr == "or")
         #expect(words.closeWord == "close")
     }

@@ -100,6 +100,12 @@ public enum KeyCapSpelling {
 
 /// One row of Focus's list, as the Mac lays it out.
 ///
+        // Escape and Tab are words on a cap, as every screen of the pack
+        // and KEYS.md spell them ("Esc close", "Tab into the chips"). The
+        // menu's ⎋ and ⇥ are drawn by the system at menu size; at a cap's
+        // 10 pt they are specks. A chord (`shift+Tab`) keeps the glyphs.
+        case "escape", "esc": return "Esc"
+        case "tab": return "Tab"
 /// Built from `FocusRowFfi`, which already carries every word the row
 /// says: the presenters GTK's row uses made them, so the two apps cannot
 /// word a row differently. What is decided here is only layout -- which
