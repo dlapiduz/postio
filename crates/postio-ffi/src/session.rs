@@ -361,7 +361,7 @@ impl ConfigSource {
     /// The file this source reads and the session watches, if it is one.
     fn path(&self) -> Option<std::path::PathBuf> {
         match self {
-            ConfigSource::Installed => postio_config::paths::config_path().ok(),
+            ConfigSource::Installed => crate::settings::config_path().ok(),
             ConfigSource::File(path) => Some(path.clone()),
             ConfigSource::Document(_) => None,
         }
@@ -382,7 +382,9 @@ impl ConfigSource {
 fn load_config(source: &ConfigSource) -> postio_config::Config {
     let parsed = match source {
         ConfigSource::Document(text) => postio_config::Config::from_toml_str(text).ok(),
-        ConfigSource::Installed => postio_config::Config::load().ok(),
+        ConfigSource::Installed => crate::settings::config_path()
+            .ok()
+            .and_then(|path| postio_config::Config::load_from_path(&path).ok()),
         ConfigSource::File(path) => postio_config::Config::load_from_path(path).ok(),
     };
     parsed.unwrap_or_else(|| {
@@ -483,7 +485,7 @@ fn answer_agents(
         .unwrap_or_else(postio_mcp::Audit::none);
     let config = source
         .path()
-        .or_else(|| postio_config::paths::config_path().ok());
+        .or_else(|| crate::settings::config_path().ok());
     Mutex::new(
         postio_mcp::socket::listen(socket, host.connector(), config, audit)
             .inspect_err(|error| {

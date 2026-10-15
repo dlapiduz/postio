@@ -109,7 +109,13 @@ fn open(name: &str) -> Result<Arc<Session>, SessionError> {
     {
         *kept = Some(vault);
     }
-    let options = crate::SessionOptions::in_memory_with(database).with_config_for_test(&config);
+    // The session reads, and watches, the demo's own file -- the one the
+    // Settings window shows and saves to -- never the installed one.
+    let file = demo_config_file();
+    std::fs::write(&file, &config).map_err(|error| SessionError::StoreUnavailable {
+        message: format!("The demo's settings could not be written: {error}"),
+    })?;
+    let options = crate::SessionOptions::in_memory_with(database).with_config_file_for_test(&file);
     // `POSTIO_DEMO_AGENTS=<socket>` has the demo answer agents there, so
     // `postio-mcp` can be driven against an open app (ADR 0041, amended
     // 2026-10-14). Off unless asked: the demo otherwise writes nothing to
@@ -174,6 +180,67 @@ fn demo_config(screen: Option<&str>) -> std::io::Result<(String, Option<tempfile
 /// process: it is a throwaway, but the session reads it until it quits.
 #[cfg(feature = "demo")]
 static DEMO_VAULT: std::sync::Mutex<Option<tempfile::TempDir>> = std::sync::Mutex::new(None);
+
+/// The demo's own `config.toml`, when this process is a demo: what
+/// `settings_path`, `start_logging` and the session all read instead of the
+/// installed file, so a demo never reads, seeds or saves anybody's settings.
+///
+/// A demo is asked for with `POSTIO_DEMO` -- read here because the log and
+/// the Settings window ask for the path before the demo's store is open --
+/// or by having opened one. `None` in any other process, and always in a
+/// build without demos.
+pub(crate) fn config_file() -> Option<std::path::PathBuf> {
+    #[cfg(feature = "demo")]
+    {
+        config_file_in(&|name| std::env::var(name).ok())
+    }
+    #[cfg(not(feature = "demo"))]
+    {
+        None
+    }
+}
+
+/// The directory the demo's `config.toml` lives in, for the life of the
+/// process: a throwaway, made the first time a demo asks for it.
+#[cfg(feature = "demo")]
+static DEMO_CONFIG: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+
+/// [`config_file`] over an arbitrary environment.
+#[cfg(feature = "demo")]
+fn config_file_in(env: &dyn Fn(&str) -> Option<String>) -> Option<std::path::PathBuf> {
+    if DEMO_CONFIG.get().is_none() && env("POSTIO_DEMO").is_none_or(|seed| seed.is_empty()) {
+        return None;
+    }
+    Some(demo_config_file())
+}
+
+/// The demo's `config.toml`, made with the demo's own settings if it is not
+/// there yet. When no throwaway directory can be made, a path nothing can
+/// write: falling back to the installed file is the one thing this must
+/// never do.
+#[cfg(feature = "demo")]
+fn demo_config_file() -> std::path::PathBuf {
+    let made = DEMO_CONFIG
+        .get()
+        .map(|dir| Ok(dir.path().to_path_buf()))
+        .unwrap_or_else(|| {
+            let dir = tempfile::Builder::new()
+                .prefix("postio-demo-config")
+                .tempdir()?;
+            std::fs::write(
+                dir.path().join(postio_config::paths::CONFIG_FILE_NAME),
+                postio_demo::config(),
+            )?;
+            Ok::<_, std::io::Error>(DEMO_CONFIG.get_or_init(|| dir).path().to_path_buf())
+        });
+    match made {
+        Ok(dir) => dir.join(postio_config::paths::CONFIG_FILE_NAME),
+        Err(error) => {
+            tracing::warn!(%error, "the demo has no settings file; Settings will show none");
+            std::path::PathBuf::from("/nonexistent/postio-demo/config.toml")
+        }
+    }
+}
 
 #[cfg(not(feature = "demo"))]
 fn open(_seed: &str) -> Result<Arc<Session>, SessionError> {
@@ -272,6 +339,42 @@ mod tests {
         let (text, vault) = demo_config(None).expect("a config");
         assert_eq!(text, postio_demo::config());
         assert!(vault.is_none());
+    }
+
+    /// The demo touches nobody's files: the Settings window, the log's
+    /// `[logging]` and its first-run seeding all ask for `config.toml`, and
+    /// in a demo the answer is the demo's own throwaway file -- the one the
+    /// session reads -- never the installed one under Application Support.
+    #[test]
+    fn a_demo_s_config_file_is_its_own_never_the_installed_one() {
+        let session = Session::open_demo("small:25".to_owned()).expect("the demo opens");
+        let path = crate::settings::settings_path().expect("a path");
+        let installed = postio_config::paths::config_path().expect("the installed path");
+        assert!(
+            !std::path::Path::new(&path).starts_with(installed.parent().expect("its directory")),
+            "{path}"
+        );
+        let text = crate::settings::settings_load(path.clone());
+        let config = postio_config::Config::from_toml_str(&text).expect("the demo's file parses");
+        assert!(
+            config.focus.vault.is_some(),
+            "the file the session reads: {text}"
+        );
+        session.shutdown();
+    }
+
+    /// Before any demo has opened -- `start_logging` and the Settings
+    /// window's path are asked for first -- `POSTIO_DEMO` alone is enough.
+    #[test]
+    fn asking_for_a_demo_is_enough_to_keep_the_installed_file_out_of_it() {
+        if DEMO_CONFIG.get().is_none() {
+            assert_eq!(config_file_in(&|_| None), None, "no demo, no redirect");
+            assert_eq!(config_file_in(&|_| Some(String::new())), None);
+        }
+        let asked = |name: &str| (name == "POSTIO_DEMO").then(|| "small".to_owned());
+        let file = config_file_in(&asked).expect("a demo's file");
+        let installed = postio_config::paths::config_path().expect("the installed path");
+        assert!(!file.starts_with(installed.parent().expect("its directory")));
     }
 
     /// Whether the session says an event `wanted` picks, draining what it
