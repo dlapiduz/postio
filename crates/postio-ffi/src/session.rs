@@ -2951,11 +2951,13 @@ impl Session {
         let (database, _) = self.store_and_blobs()?;
         let account = self.writing_account(&database).await?;
         let draft = postio_model::Draft::new(account.id);
-        Some(crate::compose::to_ffi(
-            &draft,
-            account.address.to_string(),
-            self.drafts_path(),
-        ))
+        Some(
+            self.named_labels(
+                &database,
+                crate::compose::to_ffi(&draft, account.address.to_string(), self.drafts_path()),
+            )
+            .await,
+        )
     }
 
     /// A draft from a link. See [`mailto_draft_ffi`](Self::mailto_draft_ffi).
@@ -3063,12 +3065,30 @@ impl Session {
             .get(source.account_id)
             .await
             .ok()??;
-        let draft = build(&source, &account);
-        Some(crate::compose::to_ffi(
-            &draft,
-            account.address.to_string(),
-            self.drafts_path(),
-        ))
+        let mut draft = build(&source, &account);
+        // A reply starts with its conversation's labels (screen 06,
+        // FR-053), as GTK's composer does; a forward starts a conversation
+        // of its own, and none.
+        if matches!(
+            draft.kind,
+            postio_model::DraftKind::Reply | postio_model::DraftKind::ReplyAll
+        ) && let Some(thread) = source.thread_id
+        {
+            draft.labels = postio_storage::repository::LabelRepository::new(&connection)
+                .for_threads(&[thread])
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(_, label)| label.id)
+                .collect();
+        }
+        Some(
+            self.named_labels(
+                &database,
+                crate::compose::to_ffi(&draft, account.address.to_string(), self.drafts_path()),
+            )
+            .await,
+        )
     }
 
     /// Save. See [`save_draft_ffi`](Self::save_draft_ffi).
@@ -3089,7 +3109,13 @@ impl Session {
             .await
             .map(|account| account.address.to_string())
             .unwrap_or_default();
-        Some(crate::compose::to_ffi(&draft, from, self.drafts_path()))
+        Some(
+            self.named_labels(
+                &database,
+                crate::compose::to_ffi(&draft, from, self.drafts_path()),
+            )
+            .await,
+        )
     }
 
     /// The draft whose message row is `message`, or `None` when it is not a
@@ -3111,7 +3137,13 @@ impl Session {
             .await
             .map(|account| account.address.to_string())
             .unwrap_or_default();
-        Some(crate::compose::to_ffi(&draft, from, self.drafts_path()))
+        Some(
+            self.named_labels(
+                &database,
+                crate::compose::to_ffi(&draft, from, self.drafts_path()),
+            )
+            .await,
+        )
     }
 
     /// Narrow pasted markup to what a message may carry, and say what that
@@ -3212,11 +3244,13 @@ impl Session {
             .save_and_sync(&mut draft, chrono::Utc::now())
             .await
             .ok()?;
-        Some(crate::compose::to_ffi(
-            &draft,
-            edited.from.clone(),
-            self.drafts_path(),
-        ))
+        Some(
+            self.named_labels(
+                &database,
+                crate::compose::to_ffi(&draft, edited.from.clone(), self.drafts_path()),
+            )
+            .await,
+        )
     }
 
     /// Throw a draft away. See
@@ -3485,11 +3519,12 @@ impl Session {
             .map_err(|error| crate::ComposeError::Refused {
                 message: format!("The draft could not be saved: {error}"),
             })?;
-        Ok(crate::compose::to_ffi(
-            &draft,
-            edited.from.clone(),
-            self.drafts_path(),
-        ))
+        Ok(self
+            .named_labels(
+                database,
+                crate::compose::to_ffi(&draft, edited.from.clone(), self.drafts_path()),
+            )
+            .await)
     }
 
     /// Send. See [`send_draft_ffi`](Self::send_draft_ffi).
@@ -3637,6 +3672,33 @@ impl Session {
             fresh
         };
         Some(crate::compose::from_ffi(base, edited))
+    }
+
+    /// `draft` with its labels' names, read by id: the composer draws a
+    /// chip for each. A label since deleted is left off.
+    async fn named_labels(
+        &self,
+        database: &postio_storage::Store,
+        mut draft: crate::DraftFfi,
+    ) -> crate::DraftFfi {
+        if draft.labels.is_empty() {
+            return draft;
+        }
+        let Ok(connection) = database.read().await else {
+            return draft;
+        };
+        let labels = postio_storage::repository::LabelRepository::new(&connection);
+        let mut named = Vec::with_capacity(draft.labels.len());
+        for label in &draft.labels {
+            if let Ok(Some(found)) = labels.get(postio_model::LabelId::new(label.id)).await {
+                named.push(crate::DraftLabelFfi {
+                    id: label.id,
+                    name: found.name,
+                });
+            }
+        }
+        draft.labels = named;
+        draft
     }
 
     /// The account a new message is written from: the default one.

@@ -1132,6 +1132,7 @@ fn a_reply_all_to_a_list_does_not_look_like_a_reply() {
         path: "/tmp/mail".to_owned(),
         attachments: Vec::new(),
         remind_at: None,
+        labels: Vec::new(),
     };
     assert_eq!(
         postio_ffi::recipient_summary(draft.clone()).as_deref(),
@@ -1392,6 +1393,7 @@ fn the_composers_words_are_postio_uis() {
         path: String::new(),
         attachments: Vec::new(),
         remind_at: None,
+        labels: Vec::new(),
     };
     assert_eq!(
         postio_ffi::draft_summary(draft),
@@ -1440,5 +1442,64 @@ async fn choosing_another_account_moves_the_draft_to_it() {
     assert_eq!(
         stored.account_id, second,
         "the draft moved to the account chosen"
+    );
+}
+
+/// Screen 06: a reply starts with its conversation's labels, by name, so
+/// the composer can draw them "from the thread"; one taken off stays off
+/// once saved, and sending applies what is left (`postio-sync`'s send).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reply_starts_with_its_threads_labels_and_keeps_what_is_left() {
+    let (session, database, message) = a_message_to_answer().await;
+    {
+        let connection = database.connect().await.expect("a connection");
+        let source = MessageRepository::new(&connection)
+            .get(postio_model::MessageId::new(message))
+            .await
+            .expect("a read")
+            .expect("the message");
+        postio_storage::repository::ThreadingRepository::new(&connection, source.account_id)
+            .thread(&source)
+            .await
+            .expect("in a conversation");
+        let labels = postio_storage::repository::LabelRepository::new(&connection);
+        for name in ["Harbor", "Atlas"] {
+            let mut label = postio_model::Label::new(source.account_id, name);
+            let id = labels.create(&mut label).await.expect("a label");
+            labels.attach(source.id, id).await.expect("labelled");
+        }
+    }
+
+    let draft = session.reply_draft(message, true).await.expect("a reply");
+    let mut names: Vec<_> = draft
+        .labels
+        .iter()
+        .map(|label| label.name.clone())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["Atlas", "Harbor"],
+        "the thread's labels come with the reply"
+    );
+
+    let mut edited = draft.clone();
+    edited.labels.retain(|label| label.name == "Harbor");
+    let saved = session.save_draft(edited).await.expect("saved");
+    let reopened = session.draft(saved.id).await.expect("the draft again");
+    assert_eq!(
+        reopened
+            .labels
+            .iter()
+            .map(|label| label.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Harbor"],
+        "a label taken off stays off"
+    );
+
+    let fresh = session.forward_draft(message).await.expect("a forward");
+    assert!(
+        fresh.labels.is_empty(),
+        "a forward starts a conversation of its own"
     );
 }
