@@ -22,7 +22,7 @@ postio-search = { workspace = true }
 # OOXML packages are zips. No default features: those pull bzip2, zstd,
 # lzma and AES, none of which an Office file uses; deflate through
 # flate2's Rust backend is all a .docx/.xlsx/.pptx needs.
-zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }
+zip = { version = "9.0.3", default-features = false, features = ["deflate-flate2"] }
 # 0.41, the version already in the graph (through `wayland-scanner`), so
 # the workspace holds one copy; 0.42 adds nothing these walkers use.
 quick-xml = "0.41.0"
