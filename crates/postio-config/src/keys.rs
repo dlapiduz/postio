@@ -22,8 +22,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::paths::Platform;
 use crate::Result;
+use crate::paths::Platform;
 
 /// Modifiers a binding may combine with a key.
 ///

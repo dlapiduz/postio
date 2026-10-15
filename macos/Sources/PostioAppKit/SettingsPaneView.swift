@@ -937,7 +937,7 @@ public struct SettingsPaneView: View {
                             }
                             .pickerStyle(.segmented)
                             .labelsHidden()
-                            .fixedSize()
+                            .equalSegments(3, each: 80)
                             // What the choice costs, in the unit being chosen
                             // between — the sentence is the boundary's, so
                             // GTK says the same one.
@@ -947,7 +947,7 @@ public struct SettingsPaneView: View {
                                     : "Folders without push still poll every "
                                         + settingsHumanizeInterval(seconds: current.pollIntervalSecs)
                             )
-                            .font(.system(.footnote, design: .monospaced))
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
                         }
                     }
@@ -960,7 +960,7 @@ public struct SettingsPaneView: View {
                         }
                         .pickerStyle(.segmented)
                         .labelsHidden()
-                        .fixedSize()
+                        .equalSegments(4, each: 72)
                     }
                     Spacer(minLength: 0)
                 }
@@ -973,7 +973,7 @@ public struct SettingsPaneView: View {
                         }
                         .pickerStyle(.segmented)
                         .labelsHidden()
-                        .fixedSize()
+                        .equalSegments(2, each: 116)
                     }
                     field("DOWNLOAD ATTACHMENTS") {
                         Picker("", selection: syncBinding(current, \.attachmentFetch)) {
@@ -983,7 +983,7 @@ public struct SettingsPaneView: View {
                         }
                         .pickerStyle(.segmented)
                         .labelsHidden()
-                        .fixedSize()
+                        .equalSegments(3, each: 116)
                     }
                     Spacer(minLength: 0)
                 }
@@ -1211,5 +1211,19 @@ public struct SettingsPaneView: View {
             get: { current.editor },
             set: { value in store.applyComposing { $0.editor = value } }
         )
+    }
+}
+
+extension View {
+    /// A segmented picker of `count` segments, each `each` wide.
+    ///
+    /// `.fixedSize()` gives every segment its own label's width, so "Push"
+    /// sat beside a wider "Manual" and "Never" beside "Ahead of time": the
+    /// row read as uneven rather than as one control. Canvas 3f's segments
+    /// share the control's width equally, and one width per picker, wide
+    /// enough for its longest label, is how a fixed frame gets that from
+    /// AppKit's control underneath.
+    fileprivate func equalSegments(_ count: Int, each: CGFloat) -> some View {
+        frame(width: CGFloat(count) * each)
     }
 }
