@@ -14,13 +14,18 @@ import SwiftUI
 /// here. Every change goes back through `CaptureModel`.
 public struct CaptureView: View {
     let model: CaptureModel
+    /// How tall the content is, unscrolled, each time that changes: the
+    /// window is sized to it (screen 25 draws no grey below the footnote),
+    /// and grows when the project list opens.
+    let onContentHeight: ((CGFloat) -> Void)?
 
     @FocusState private var focus: Field?
 
     private enum Field: Hashable { case text, filter }
 
-    public init(model: CaptureModel) {
+    public init(model: CaptureModel, onContentHeight: ((CGFloat) -> Void)? = nil) {
         self.model = model
+        self.onContentHeight = onContentHeight
     }
 
     /// The window's width, as screen 25 draws it.
@@ -29,8 +34,11 @@ public struct CaptureView: View {
     public var body: some View {
         VStack(spacing: 0) {
             if let view = model.view {
-                top(view)
-                Divider()
+                VStack(spacing: 0) {
+                    top(view)
+                    Divider()
+                }
+                .measuredHeight()
                 ScrollView(.vertical) {
                     VStack(alignment: .leading, spacing: 14) {
                         Text(view.from).font(.system(size: 13)).foregroundStyle(.secondary)
@@ -54,8 +62,12 @@ public struct CaptureView: View {
                         }
                     }
                     .padding(20)
+                    .measuredHeight()
                 }
             }
+        }
+        .onPreferenceChange(ContentHeight.self) { height in
+            if height > 0 { onContentHeight?(height.rounded(.up)) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(MessageSurface.chrome)
@@ -247,5 +259,24 @@ public struct CaptureView: View {
             Text(view.footnote).font(.system(size: 12)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+/// The heights of the parts of capture's window that are measured, added
+/// up: the bar along the top and everything the scroll view holds.
+private struct ContentHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value += nextValue()
+    }
+}
+
+extension View {
+    /// Report this view's height into `ContentHeight`.
+    fileprivate func measuredHeight() -> some View {
+        background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: ContentHeight.self, value: proxy.size.height)
+            })
     }
 }
