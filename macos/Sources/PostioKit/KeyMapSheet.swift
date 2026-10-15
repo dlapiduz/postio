@@ -38,6 +38,8 @@ public struct KeyMapSheetWords: Equatable, Sendable {
     public let rebind: String
     /// "The mouse works everywhere: …".
     public let mouse: String
+    /// "More below", while rows lie past the panel's edge.
+    public let more: String
 
     public init(_ sheet: KeyMapSheetFfi) {
         title = sheet.title
@@ -64,6 +66,7 @@ public struct KeyMapSheetWords: Equatable, Sendable {
         }
         rebind = sheet.rebindFooter
         mouse = sheet.mouseFooter
+        more = sheet.moreBelow
     }
 }
 
@@ -134,6 +137,20 @@ public struct KeyMapPanel: View {
     /// The pack's panel at 1440 × 900.
     public static let size = CGSize(width: 1100, height: 760)
 
+    /// Whether rows lie below the visible part of the columns: the content's
+    /// bottom edge, in the scroll view's own coordinates, past the bottom of
+    /// the viewport by more than a point.
+    static func moreBelow(contentBottom: CGFloat, viewport: CGFloat) -> Bool {
+        contentBottom > viewport + 1
+    }
+
+    /// How tall the fade over the last visible rows is.
+    static let fadeHeight: CGFloat = 56
+
+    /// Where the columns' bottom edge is, in the scroll view's space.
+    @State private var contentBottom: CGFloat = 0
+    @State private var viewport: CGFloat = 0
+
     public var body: some View {
         ZStack {
             Rectangle()
@@ -146,6 +163,34 @@ public struct KeyMapPanel: View {
                 .padding(.horizontal, 24)
                 .padding(.vertical, 18)
         }
+    }
+
+    /// Whether the columns are taller than the room they have.
+    private var isScrollable: Bool { contentBottom > viewport + 1 && viewport > 0 }
+
+    /// The fade over the last visible rows, and the line under it.
+    private func moreCue(_ scroll: @escaping () -> Void) -> some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(.background)
+                .mask(LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom))
+                .frame(height: Self.fadeHeight)
+                .allowsHitTesting(false)
+            Button(action: scroll) {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+                    Text(words.more)
+                }
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .background(.background)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .transition(.opacity)
     }
 
     private var panel: some View {
@@ -172,20 +217,47 @@ public struct KeyMapPanel: View {
             // Every command Focus offers here is in it -- far more rows than
             // the pack's picture -- so the columns scroll inside the panel,
             // and the heading and the footers stay put.
-            ScrollView {
-                HStack(alignment: .top, spacing: 28) {
-                    ForEach(Array(words.columns.enumerated()), id: \.offset) { _, column in
-                        VStack(alignment: .leading, spacing: 22) {
-                            ForEach(column, id: \.title) { group in
-                                KeyMapGroupView(group: group)
+            //
+            // A Mac hides an idle scroller, so nothing said the columns went
+            // on: they stopped mid-row at the panel's edge. While rows lie
+            // below, the scroller stays drawn and the last rows fade under a
+            // "more below" line, which a click scrolls by a page.
+            ScrollViewReader { reader in
+                ScrollView {
+                    HStack(alignment: .top, spacing: 24) {
+                        ForEach(Array(words.columns.enumerated()), id: \.offset) { _, column in
+                            VStack(alignment: .leading, spacing: 22) {
+                                ForEach(column, id: \.title) { group in
+                                    KeyMapGroupView(group: group)
+                                }
                             }
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
                         }
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+                    .padding(.bottom, 16)
+                    .background(
+                        GeometryReader { content in
+                            Color.clear.preference(
+                                key: KeyMapContentBottom.self,
+                                value: content.frame(in: .named(KeyMapContentBottom.space)).maxY)
+                        })
+                    Color.clear.frame(height: 0).id(KeyMapContentBottom.end)
+                }
+                .coordinateSpace(name: KeyMapContentBottom.space)
+                .scrollIndicators(isScrollable ? .visible : .automatic)
+                .background(
+                    GeometryReader { box in
+                        Color.clear
+                            .onAppear { viewport = box.size.height }
+                            .onChange(of: box.size.height) { _, height in viewport = height }
+                    })
+                .onPreferenceChange(KeyMapContentBottom.self) { contentBottom = $0 }
+                .overlay(alignment: .bottom) {
+                    if Self.moreBelow(contentBottom: contentBottom, viewport: viewport) {
+                        moreCue { withAnimation(.easeOut(duration: 0.1)) { reader.scrollTo(KeyMapContentBottom.end, anchor: .bottom) } }
                     }
                 }
-                .padding(.bottom, 16)
             }
-            .scrollIndicators(.automatic)
             Divider()
             HStack {
                 Text(words.rebind)
@@ -219,17 +291,34 @@ private struct KeyMapGroupView: View {
                 .padding(.bottom, 6)
             ForEach(group.rows, id: \.command) { row in
                 HStack(alignment: .center, spacing: 8) {
+                    // One line, so every row is 30 and the columns' rows
+                    // line up across the panel: a long title ("Previous
+                    // message in conversation" beside `p ⌥↑`) tightens to
+                    // fit rather than wrap, and the cap keeps its size.
                     Text(row.title)
                         .font(.system(size: 13))
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .allowsTightening(true)
                     Spacer(minLength: 8)
-                    if let cap = row.cap { KeyCap(cap) }
+                    if let cap = row.cap { KeyCap(cap).fixedSize() }
                 }
-                .frame(minHeight: 30)
+                .frame(height: 30)
                 .overlay(alignment: .bottom) { Divider() }
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(row.cap.map { "\(row.title), \($0)" } ?? row.title)
             }
         }
+    }
+}
+
+/// The bottom edge of the key map's columns, in its scroll view's space:
+/// how the panel knows rows lie below what it shows.
+private struct KeyMapContentBottom: PreferenceKey {
+    static let space = "keymap.scroll"
+    static let end = "keymap.end"
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }

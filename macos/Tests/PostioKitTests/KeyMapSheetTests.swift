@@ -38,7 +38,8 @@ import Testing
         ],
         columns: [[0], [2], [1, 3], [7]],
         rebindFooter: "Rebind anything in ~/Library/Application Support/Postio/config.toml under [keys]",
-        mouseFooter: "The mouse works everywhere: every key has a visible button.")
+        mouseFooter: "The mouse works everywhere: every key has a visible button.",
+        moreBelow: "More below")
 
     // MARK: the words, laid out
 
@@ -67,6 +68,15 @@ import Testing
         #expect(words.closeWord == "close")
     }
 
+    /// Every command is in the key map, more than fit at 1440 x 900, so
+    /// the panel says there is more below until the last row is in view.
+    @Test func thePanelSaysThereIsMoreBelowUntilTheEnd() {
+        #expect(KeyMapPanel.moreBelow(contentBottom: 1400, viewport: 600))
+        #expect(KeyMapPanel.moreBelow(contentBottom: 601.5, viewport: 600))
+        #expect(!KeyMapPanel.moreBelow(contentBottom: 600.5, viewport: 600))
+        #expect(!KeyMapPanel.moreBelow(contentBottom: 300, viewport: 600))
+    }
+
     @Test func theFooterNamesTheConfigFileAndItsTable() {
         // C3: `[keys]` in `config.toml`, not a `keys.toml`, whatever the
         // pack's footer says.
@@ -75,6 +85,7 @@ import Testing
         #expect(words.rebind.contains("[keys]"))
         #expect(!words.rebind.contains("keys.toml"))
         #expect(words.mouse == Self.sheet.mouseFooter)
+        #expect(words.more == "More below")
         #expect(words.title == "Keys")
         #expect(words.subtitle == Self.sheet.subtitle)
     }

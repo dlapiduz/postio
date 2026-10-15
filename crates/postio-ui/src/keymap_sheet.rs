@@ -388,6 +388,10 @@ pub fn rebind_footer(platform: postio_config::paths::Platform) -> &'static str {
 /// The footer's line about the mouse.
 pub const MOUSE_FOOTER: &str = "The mouse works everywhere: every key has a visible button.";
 
+/// The line under the columns while more rows lie below them: a panel
+/// that scrolls says so rather than stopping mid-row at its edge.
+pub const MORE_BELOW: &str = "More below";
+
 /// What the keys that close it are followed by, and joined with.
 pub const CLOSE_WORD: &str = "close";
 /// See [`CLOSE_WORD`].
