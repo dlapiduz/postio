@@ -1138,6 +1138,24 @@ fn native_of(widget: &gtk::Widget, window: &postio_gtk::window::FocusWindow) -> 
 /// dialog, as [`settle_still`] measures, nothing moves while the whole
 /// dialog grows -- and until `widget` is drawn at its own size, which no
 /// frame of a dialog's opening is.
+/// Whether `widget` is drawn at its own size now: no transform above it
+/// scales it.
+///
+/// What a wait that saw no frames still has to check. A stalled frame clock
+/// on a loaded runner draws no frames either, and it stalls an opening
+/// dialog's scale with it: taking "no frames" alone as "nothing moving"
+/// clicked Settings at 0.81 of its size (#1817).
+fn drawn_at_own_size(native: &gtk::Widget, widget: &gtk::Widget) -> bool {
+    use gtk::prelude::*;
+    match (widget.compute_bounds(native), widget.compute_bounds(widget)) {
+        (Some(drawn), Some(own)) => {
+            (drawn.width() - own.width()).abs() < 0.5
+                && (drawn.height() - own.height()).abs() < 0.5
+        }
+        _ => true,
+    }
+}
+
 fn wait_to_be_still(native: &gtk::Widget, widget: &gtk::Widget) {
     use gtk::prelude::*;
     // Where it was drawn on each frame, if anywhere.
@@ -1180,7 +1198,9 @@ fn wait_to_be_still(native: &gtk::Widget, widget: &gtk::Widget) {
         // finds what is there now, or its pick says what is.
         if at_rest(widget)
             || !widget.is_mapped()
-            || (frames.borrow().len() < 2 && std::time::Instant::now() > first_frames)
+            || (frames.borrow().len() < 2
+                && std::time::Instant::now() > first_frames
+                && drawn_at_own_size(native, widget))
         {
             break;
         }
