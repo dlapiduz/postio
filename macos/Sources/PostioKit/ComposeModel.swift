@@ -219,6 +219,8 @@ public final class ComposeModel: Identifiable {
         } else {
             body = draft.body
         }
+        htmlAtSwitch = bodyHtml
+        textAtSwitch = plainText
     }
 
     /// The window's title: the subject, or what an unnamed draft is called.
@@ -386,14 +388,46 @@ public final class ComposeModel: Identifiable {
     /// The marks are kept, because the switch is on the document: turning it
     /// back on must cost nothing.
     ///
-    /// Words already in the plain field are not overwritten. Somebody who
-    /// wrote plain, tried Rich and came back has text there that is theirs.
+    /// Words already in the plain field are not overwritten while the
+    /// document is as Rich found it: somebody who wrote plain, tried Rich
+    /// and came back has text there that is theirs. Once the document has
+    /// been written in, it is the newer of the two and `text` replaces them.
     public func switchedToPlain(text: String) {
         rich = false
-        if body.isEmpty {
+        if body.isEmpty || bodyHtml != htmlAtSwitch {
             body = text
+            quoteFold = nil
         }
+        textAtSwitch = plainText
     }
+
+    /// The Rich/Plain switch has gone to Rich; `html` is what the plain
+    /// text reads as as a document.
+    ///
+    /// The same moment as ``switchedToPlain(text:)`` from the other side. New
+    /// drafts open plain, so a document of nothing was what most people met
+    /// on turning Rich on: their words gone from the window, and the empty
+    /// document the record from the first keystroke.
+    ///
+    /// The marks are kept while the plain text is as it was when Rich was
+    /// left, so the round trip still costs nothing; words written in Plain
+    /// since are newer, and replace them.
+    public func switchedToRich(html: String) {
+        rich = true
+        if (bodyHtml ?? "").isEmpty || plainText != textAtSwitch {
+            bodyHtml = html
+        }
+        htmlAtSwitch = bodyHtml
+    }
+
+    /// Everything the plain field holds, its folded quote included.
+    public var plainText: String { body + (quoteFold?.quote ?? "") }
+
+    /// The document as it stood when the switch last went to Rich, and the
+    /// plain text as it stood when it last went to Plain: what tells
+    /// whether either was written in since.
+    private var htmlAtSwitch: String?
+    private var textAtSwitch: String?
 
     /// Ask for a picture to put in the body, or say why this draft cannot
     /// take one.
@@ -484,7 +518,7 @@ public final class ComposeModel: Identifiable {
         edited.cc = cc
         edited.bcc = bcc
         edited.subject = subject
-        edited.body = body + (quoteFold?.quote ?? "")
+        edited.body = plainText
         edited.bodyHtml = bodyHtml
         edited.rich = rich
         edited.account = account

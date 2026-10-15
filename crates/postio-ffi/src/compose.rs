@@ -338,9 +338,11 @@ fn body_of(edited: &DraftFfi) -> MessageBody {
 
     // Rich with no document yet is the other direction of the same switch:
     // written plain, then turned Rich. The words are in the plain field, and
-    // building the document from nothing would discard them.
+    // building the document from nothing would discard them. The same
+    // document the switch shows (`Session::rich_html_of`): the field is what
+    // was typed, not flowed text, and a reply's `>` lines are its quote.
     let document = if marks.is_empty() {
-        postio_body::Document::from_flowed_text(&edited.body)
+        postio_body::Document::from_text_quoting(&edited.body)
     } else {
         postio_body::parse(marks)
     };
@@ -469,7 +471,13 @@ pub fn composer_title(kind: DraftKindFfi) -> String {
 #[uniffi::export]
 pub fn draft_summary(draft: DraftFfi) -> String {
     let base = Draft::new(postio_model::AccountId::new(draft.account));
-    postio_ui::compose::summary(&from_ffi(base, &draft))
+    let mut built = from_ffi(base, &draft);
+    // What will be sent: a draft turned Plain keeps its marks for the way
+    // back, and `send_draft` drops them, so the footer must too.
+    if !built.rich {
+        built.body.html = None;
+    }
+    postio_ui::compose::summary(&built)
 }
 
 /// "Draft saved locally 16:12", for a save that landed at `at` (epoch

@@ -293,6 +293,45 @@ impl Document {
         Document { blocks }
     }
 
+    /// [`from_text`](Self::from_text), with each run of `>` lines a
+    /// [`Block::Quote`] of the text under the marker.
+    ///
+    /// What the composer's Rich switch builds from the plain field, which
+    /// for a reply ends in the quoted original. A quote within a quote
+    /// nests. Text with no `>` line is exactly what `from_text` makes.
+    pub fn from_text_quoting(text: &str) -> Self {
+        let text = text.replace("\r\n", "\n");
+        let mut blocks = Vec::new();
+        for para in text.split("\n\n") {
+            let lines: Vec<&str> = para.split('\n').collect();
+            let mut start = 0;
+            while start < lines.len() {
+                let quoted = lines[start].starts_with('>');
+                let end = lines[start..]
+                    .iter()
+                    .position(|line| line.starts_with('>') != quoted)
+                    .map_or(lines.len(), |n| start + n);
+                let run = &lines[start..end];
+                if quoted {
+                    let inner: Vec<&str> = run
+                        .iter()
+                        .map(|line| {
+                            let line = &line[1..];
+                            line.strip_prefix(' ').unwrap_or(line)
+                        })
+                        .collect();
+                    blocks.push(Block::Quote(
+                        Self::from_text_quoting(&inner.join("\n")).blocks,
+                    ));
+                } else {
+                    blocks.extend(Self::from_text(&run.join("\n")).blocks);
+                }
+                start = end;
+            }
+        }
+        Document { blocks }
+    }
+
     /// The document `format=flowed` (RFC 3676) text means — the inverse of
     /// [`to_flowed_text`](Self::to_flowed_text): every soft-wrapped run of
     /// physical lines becomes the one logical line it was wrapped from, and

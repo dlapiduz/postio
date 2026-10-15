@@ -1,5 +1,6 @@
 import PostioFFI
 import Testing
+import WebKit
 
 @testable import PostioAppKit
 @testable import PostioKit
@@ -206,5 +207,73 @@ import Testing
         let model = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>marks</p>", body: "typed"))
         model.switchedToPlain(text: "marks")
         #expect(model.body == "typed")
+    }
+
+    @Test func theEditorAnswersEverySchemeItsShellNames() {
+        // The shell loads at `postio-editor:///`. With no handler for that
+        // scheme WebKit never started the load: Rich was an empty box that
+        // could not be typed in, with nothing logged anywhere.
+        let configuration = WKWebViewConfiguration()
+        ComposeEditor.answerSchemes(
+            in: configuration, cid: CidSchemeHandler { _, _ in nil })
+        let base = URL(string: ComposeEditor.Coordinator.base)?.scheme
+        #expect(base == "postio-editor")
+        #expect(configuration.urlSchemeHandler(forURLScheme: base ?? "") != nil)
+        #expect(configuration.urlSchemeHandler(forURLScheme: "postio-cid") != nil)
+    }
+
+    @Test func switchingToRichCarriesThePlainWordsIntoTheDocument() {
+        // New drafts open plain, so this is the first thing Rich does for
+        // most people. The surface was seeded from a document of nothing:
+        // the words vanished from the window, and the first keystroke there
+        // made the empty document the record.
+        let model = ComposeModel(id: 4, draft: draft(body: "The gate closes at six."))
+
+        model.switchedToRich(html: "<p>The gate closes at six.</p>")
+
+        #expect(model.rich)
+        #expect(model.bodyHtml == "<p>The gate closes at six.</p>")
+    }
+
+    @Test func goingBackToRichUntouchedKeepsTheMarks() {
+        // Plain and back with nothing typed costs nothing (#1271).
+        let model = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>a<em>b</em></p>"))
+        model.switchedToPlain(text: "ab")
+
+        model.switchedToRich(html: "<p>ab</p>")
+
+        #expect(model.bodyHtml == "<p>a<em>b</em></p>")
+    }
+
+    @Test func whatWasTypedInPlainIsWhatRichShowsNext() {
+        // The marks came back over the words written since, and the window
+        // showed (and saved) the message as it was before Plain.
+        let model = ComposeModel(id: 4, draft: draft(rich: true, html: "<p>a<em>b</em></p>"))
+        model.switchedToPlain(text: "ab")
+        model.body = "ab, and more"
+
+        model.switchedToRich(html: "<p>ab, and more</p>")
+
+        #expect(model.bodyHtml == "<p>ab, and more</p>")
+    }
+
+    @Test func whatWasTypedInRichIsWhatPlainShowsNext() {
+        // The other direction: plain words kept over the document written
+        // since, so Plain showed what was there before Rich.
+        let model = ComposeModel(id: 4, draft: draft(body: "typed"))
+        model.switchedToRich(html: "<p>typed</p>")
+        model.bodyHtml = "<p>typed, then more</p>"
+
+        model.switchedToPlain(text: "typed, then more")
+
+        #expect(model.body == "typed, then more")
+    }
+
+    @Test func theDocumentRichStartsFromIncludesAFoldedQuote() {
+        // A reply's quote is folded out of `body`; leaving it out of the
+        // document would drop it from a rich reply.
+        let model = ComposeModel(
+            id: 4, draft: draft(body: "Yes.\n\nOn Monday, Bo wrote:\n> Six?\n"))
+        #expect(model.plainText == model.edited.body)
     }
 }
