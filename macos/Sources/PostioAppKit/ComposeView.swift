@@ -29,6 +29,10 @@ public struct ComposeView: View {
     private let close: () -> Void
 
     @FocusState private var focus: Field?
+    /// Asks the rich surface for the keyboard. A web view is not a SwiftUI
+    /// field, so `focus = .body` reached only the plain editor: a rich
+    /// reply opened with the keyboard nowhere, and typing did nothing.
+    @State private var richKeyboard = 0
     /// Whether the Link button is asking where to point.
     @State private var askingForLink = false
     @State private var confirmingDiscard = false
@@ -128,6 +132,7 @@ public struct ComposeView: View {
             // it, its text selected.
             try? await Task.sleep(for: .milliseconds(60))
             focus = model.to.isEmpty ? .to : .body
+            if !model.to.isEmpty && model.rich { richKeyboard += 1 }
         }
         .onAppear {
             // Which editor the hand-off names, read now: this window may
@@ -373,7 +378,7 @@ public struct ComposeView: View {
             // marks have to apply to something, and on both frontends
             // that something is a contenteditable web view over
             // `postio_body`'s dialect.
-            ComposeEditor(session: session, model: model)
+            ComposeEditor(session: session, model: model, keyboard: richKeyboard)
                 .disabled(model.isHandedOff)
                 .accessibilityLabel("Message body")
                 .frame(maxWidth: Metrics.readingWidth + 2 * Metrics.inset)
@@ -538,14 +543,9 @@ public struct ComposeView: View {
                     .accessibilityLabel("This message goes to \(recipients)")
                 Text("\u{b7}").foregroundStyle(.secondary)
             }
-            Picker("", selection: Bindable(model).rich) {
+            Picker("", selection: richSwitch) {
                 Text("Rich").tag(true)
                 Text("Plain").tag(false)
-            }
-            // Everything typed in Rich went into the document (#1293).
-            .onChange(of: model.rich) { was, now in
-                guard was, !now, let html = model.bodyHtml, !html.isEmpty else { return }
-                model.switchedToPlain(text: session.plainTextOf(html))
             }
             .pickerStyle(.segmented)
             .controlSize(.small)
@@ -561,6 +561,27 @@ public struct ComposeView: View {
         .padding(.horizontal, Metrics.inset - 8)
         .frame(height: 48)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    /// The Rich/Plain switch, carrying the words across as it flips.
+    ///
+    /// In the setter rather than an `onChange`: that runs after the body is
+    /// drawn, and the rich surface seeds itself once, when it is made, so it
+    /// would already be showing the stale document (#1293).
+    private var richSwitch: Binding<Bool> {
+        Binding(
+            get: { model.rich },
+            set: { rich in
+                guard rich != model.rich else { return }
+                if rich {
+                    model.switchedToRich(html: session.richHtmlOf(model.plainText))
+                    // The keyboard was in the plain editor, which is gone.
+                    if focus == .body { richKeyboard += 1 }
+                } else {
+                    model.switchedToPlain(text: session.plainTextOf(model.bodyHtml ?? ""))
+                }
+            }
+        )
     }
 
     // -- what the buttons do ------------------------------------------------

@@ -320,7 +320,9 @@ impl Document {
                             line.strip_prefix(' ').unwrap_or(line)
                         })
                         .collect();
-                    blocks.push(Block::Quote(Self::from_text_quoting(&inner.join("\n")).blocks));
+                    blocks.push(Block::Quote(
+                        Self::from_text_quoting(&inner.join("\n")).blocks,
+                    ));
                 } else {
                     blocks.extend(Self::from_text(&run.join("\n")).blocks);
                 }

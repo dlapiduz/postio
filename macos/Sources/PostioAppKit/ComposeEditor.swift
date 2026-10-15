@@ -37,10 +37,13 @@ import PostioKit
 public struct ComposeEditor: NSViewRepresentable {
     private let session: PostioSession
     private let model: ComposeModel
+    /// Raised each time the surface should take the keyboard.
+    private let keyboard: Int
 
-    public init(session: PostioSession, model: ComposeModel) {
+    public init(session: PostioSession, model: ComposeModel, keyboard: Int = 0) {
         self.session = session
         self.model = model
+        self.keyboard = keyboard
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -66,11 +69,7 @@ public struct ComposeEditor: NSViewRepresentable {
             )
         )
         configuration.userContentController = controller
-        // Pictures in the body, from the draft's own parts and nowhere else
-        // (#1571). The shell's CSP has always named `postio-cid:` as the one
-        // image source it allows; nothing answered it, so a draft reopened
-        // with a picture in it drew a broken one.
-        configuration.setURLSchemeHandler(coordinator.cid, forURLScheme: "postio-cid")
+        Self.answerSchemes(in: configuration, cid: coordinator.cid)
 
         let view = PastingWebView(frame: .zero, configuration: configuration)
         view.onPaste = { [weak coordinator] html in
@@ -95,6 +94,22 @@ public struct ComposeEditor: NSViewRepresentable {
         context.coordinator.applyPendingMark(in: view)
         context.coordinator.insertPendingPaste(in: view)
         context.coordinator.insertPendingImage(in: view)
+        context.coordinator.takeKeyboard(keyboard, in: view)
+    }
+
+    /// Every scheme the shell names, answered.
+    ///
+    /// Pictures in the body, from the draft's own parts and nowhere else
+    /// (#1571): the shell's CSP has always named `postio-cid:` as the one
+    /// image source it allows; nothing answered it, so a draft reopened with
+    /// a picture in it drew a broken one.
+    ///
+    /// And the shell's own base, refused like the reader's
+    /// (`ClosedSchemeHandler`). With no handler WebKit never started the
+    /// load at all, and Rich drew an empty box nobody could type in.
+    static func answerSchemes(in configuration: WKWebViewConfiguration, cid: CidSchemeHandler) {
+        configuration.setURLSchemeHandler(cid, forURLScheme: "postio-cid")
+        configuration.setURLSchemeHandler(ClosedSchemeHandler(), forURLScheme: Coordinator.baseScheme)
     }
 
     /// The two channels the bridge reports on, named as the script names
@@ -128,6 +143,45 @@ public struct ComposeEditor: NSViewRepresentable {
             cid = CidSchemeHandler { draft, contentId in
                 session.resolveDraftCid(draft: draft, contentId: contentId)
             }
+        }
+
+        /// The last keyboard request this surface has granted.
+        private var keyboardGranted = 0
+
+        /// Take the keyboard, with the caret at the start of the document,
+        /// if `request` is a new one.
+        ///
+        /// On the next turn of the run loop: a surface made in this update
+        /// has no window yet, and one made by the Rich switch is replacing
+        /// the plain editor that still has it.
+        func takeKeyboard(_ request: Int, in view: WKWebView) {
+            guard request != keyboardGranted else { return }
+            keyboardGranted = request
+            owesKeyboard = true
+            DispatchQueue.main.async { [weak self, weak view] in
+                guard let self, let view, !view.isLoading else { return }
+                self.grantKeyboard(in: view)
+            }
+        }
+
+        /// A request that arrived while the shell was still loading, for
+        /// `didFinish` to grant: a caret set in a page that then loads is lost.
+        private var owesKeyboard = false
+
+        private func grantKeyboard(in view: WKWebView) {
+            guard owesKeyboard, let window = view.window else { return }
+            owesKeyboard = false
+            window.makeFirstResponder(view)
+            view.evaluateJavaScript(
+                "document.body.focus(); "
+                    + "const r = document.createRange(); "
+                    + "r.setStart(document.body, 0); r.collapse(true); "
+                    + "const s = getSelection(); s.removeAllRanges(); s.addRange(r);"
+            )
+        }
+
+        public func webView(_ view: WKWebView, didFinish navigation: WKNavigation!) {
+            grantKeyboard(in: view)
         }
 
         /// Load the editing shell with whatever the draft already holds.
@@ -234,7 +288,8 @@ public struct ComposeEditor: NSViewRepresentable {
         /// A fixed, non-`http(s)` base, so edited content is never
         /// same-origin with anything real — the reader's reasoning, applied
         /// to the one view that does run script.
-        static let base = "postio-editor:///"
+        static let base = "\(baseScheme):///"
+        static let baseScheme = "postio-editor"
 
         /// The CSP: no remote origin can be named, and the only styles are
         /// the shell's own.
@@ -244,10 +299,18 @@ public struct ComposeEditor: NSViewRepresentable {
             """
             <!doctype html><html><head><meta charset="utf-8">
             <meta http-equiv="Content-Security-Policy" content="\(Self.policy)">
+            <meta name="color-scheme" content="light dark">
             <style>
-              html, body { margin: 0; padding: 12px; background: transparent; }
-              body { font: -apple-system-body; color: -apple-system-label;
-                     outline: none; }
+              /* The plain body's measures (ComposeView.Metrics): 15pt on a
+                 21pt line, its first letter under the field labels' --
+                 `-apple-system-body` is 13pt, and the two switched size and
+                 place under the writer at every Rich/Plain flip. */
+              html { margin: 0; padding: 0; background: transparent; }
+              body { margin: 0; padding: 14px 20px; min-height: calc(100vh - 28px);
+                     font: 15px/21px -apple-system, sans-serif;
+                     color: -apple-system-label; caret-color: -apple-system-label;
+                     outline: none; overflow-wrap: break-word; }
+              a { color: -apple-system-blue; }
               blockquote { margin: 0 0 0 12px; padding-left: 8px;
                            border-left: 2px solid rgba(127,127,127,0.5); }
             </style></head>

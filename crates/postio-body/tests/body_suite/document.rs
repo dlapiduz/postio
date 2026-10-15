@@ -829,9 +829,8 @@ fn a_plain_reply_turned_rich_quotes_what_it_quoted() {
     // The Rich switch builds its document from the plain field, and a
     // reply's plain field ends in `>` lines. As paragraphs they arrived in
     // the editor as literal angle brackets, a quote nobody could see as one.
-    let document = Document::from_text_quoting(
-        "Yes, six.\n\nOn Monday, Bo wrote:\n> Six?\n> >> Or seven?\n",
-    );
+    let document =
+        Document::from_text_quoting("Yes, six.\n\nOn Monday, Bo wrote:\n> Six?\n> >> Or seven?\n");
     let (_, html) = postio_body::render(&document);
     assert_eq!(
         html,

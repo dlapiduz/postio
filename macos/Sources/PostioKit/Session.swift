@@ -637,6 +637,12 @@ public final class PostioSession {
         inner.plainTextOf(html: html)
     }
 
+    /// What a plain body reads as as a document: the switch flipping the
+    /// other way, to Rich.
+    public func richHtmlOf(_ text: String) -> String {
+        inner.richHtmlOf(text: text)
+    }
+
     /// The script that applies a mark to the composer's selection, or `nil`
     /// for a command that is not one of the marks.
     public func markScript(_ command: String) -> String? {
