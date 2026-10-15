@@ -362,7 +362,8 @@ public struct DigestTitle: View {
         VStack(spacing: 1) {
             HStack(spacing: 5) {
                 if model.view?.page != .email {
-                    Image(systemName: "square.stack").font(.system(size: 11, weight: .semibold))
+                    // The digest's mark, as its row in the list draws it (screen 22).
+                    Image(systemName: "square.stack.3d.up").font(.system(size: 11, weight: .semibold))
                 }
                 Text(model.view?.title ?? "")
                     .font(.system(size: 13.5, weight: .bold))
