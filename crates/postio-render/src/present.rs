@@ -403,13 +403,18 @@ pub(crate) fn plan(doc: &BaseDocument, request: &RenderRequest) -> Plan {
             Presentation::Styled | Presentation::SenderDark => {}
         }
         // An image keeps its intended canvas behind it (FR-015): a
-        // transparent logo is never composited over the dark ground.
+        // transparent logo is never composited over the dark ground. Only
+        // an image that paints: a held-back one has no source and is the
+        // reader's placeholder, which white turned into a white box with
+        // its alt text unreadable on it.
         if matches!(presentation, Presentation::Adapted | Presentation::Darkened) {
             for id in &all {
                 if doc
                     .get_node(*id)
                     .and_then(|n| n.element_data())
-                    .is_some_and(|e| e.name.local == local_name!("img"))
+                    .is_some_and(|e| {
+                        e.name.local == local_name!("img") && e.attr(local_name!("src")).is_some()
+                    })
                 {
                     rules.add(*id, format!("background-color: {} !important", css(paper)));
                 }

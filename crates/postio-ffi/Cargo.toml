@@ -60,6 +60,10 @@ postio-search.workspace = true
 postio-session.workspace = true
 postio-smtp.workspace = true
 postio-storage.workspace = true
+# Every blocking call runs the engine on a stack this crate owns, not
+# the caller's: Swift calls in from cooperative-pool threads with 512 KiB
+# (`src/stack.rs`).
+stacker = "0.1.25"
 tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }

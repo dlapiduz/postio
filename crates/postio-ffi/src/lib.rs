@@ -70,6 +70,7 @@ mod saved_search;
 mod search;
 mod session;
 mod settings;
+mod stack;
 mod unsubscribe;
 
 pub use account::{AccountFfi, ConnectionReportFfi, RepairRouteFfi};

@@ -438,3 +438,35 @@ fn the_markup_guard_decides_what_the_render_guard_decides() {
         );
     }
 }
+
+/// A held-back picture is Postio's placeholder, not the sender's pixels,
+/// so in dark it is drawn on the app's ground like the rest of the column.
+/// The white kept behind an image in dark (spec 006 FR-015) is for a
+/// picture that paints; behind a placeholder it was a white box over the
+/// dark column with the alt text in light ink on it, invisible (the message
+/// window spec, section 7: the sender's colours never meet the app's).
+#[test]
+fn a_held_back_picture_in_dark_is_drawn_on_the_apps_ground() {
+    let doc = drawn(
+        "html-newsletter-many-tables",
+        Some(Treatment::AppColours),
+        DARK,
+        480.0,
+    );
+    // Everything above the first section's heading: the sender's logo
+    // and the section's picture, both held back, and nothing else.
+    let heading = cluster_of(&doc, "Release notes, part 1").rect;
+    let raster = postio_render::rasterize(&doc);
+    let width = raster.width as usize;
+    for y in 0..(heading.y0 as usize) {
+        for x in 0..width {
+            let i = (y * width + x) * 4;
+            let [r, g, b] = [raster.rgba[i], raster.rgba[i + 1], raster.rgba[i + 2]];
+            assert!(
+                r < 200 || g < 200 || b < 200,
+                "a white placeholder at ({x}, {y}) in dark: {:?}",
+                [r, g, b]
+            );
+        }
+    }
+}

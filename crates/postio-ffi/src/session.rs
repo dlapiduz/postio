@@ -5184,6 +5184,10 @@ pub fn start_over_with(options: SessionOptions) -> Result<StartedOverFfi, Sessio
     })
 }
 
+/// Turn an engine future into a value for a synchronous export, on a stack
+/// this crate owns: Swift calls in from threads with 512 KiB, and the
+/// engine's deepest compile does not fit what is left of one
+/// ([`crate::stack`]).
 pub(crate) fn blocking<T>(future: impl std::future::Future<Output = T>) -> T {
-    postio_session::blocking::now(future)
+    crate::stack::on_engine_stack(|| postio_session::blocking::now(future))
 }

@@ -36,6 +36,7 @@ mod focus_scroll;
 mod focus_search;
 mod focus_states;
 mod focus_surfaces;
+mod foreign_stack;
 mod host;
 mod keys;
 mod notice;
