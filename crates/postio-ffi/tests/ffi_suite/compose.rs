@@ -851,6 +851,19 @@ async fn the_plain_text_of_a_document_is_available_on_its_own() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn plain_text_turned_rich_is_a_document_of_the_same_words() {
+    // What the switch seeds the rich surface with when it flips to Rich: the
+    // same document the save would build from the plain field, so what the
+    // window shows is what would be sent.
+    let (session, _, _) = a_message_to_answer().await;
+    let html = session.rich_html_of("The gate closes at six.\n\nBring <the> key.");
+    assert_eq!(
+        html,
+        "<p>The gate closes at six.</p><p>Bring &lt;the&gt; key.</p>"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn switching_the_other_way_keeps_the_words_too() {
     // Plain -> Rich -> send. The document is built from the plain text, so
     // nothing typed is lost in that direction either.
@@ -1396,9 +1409,21 @@ fn the_composers_words_are_postio_uis() {
         labels: Vec::new(),
     };
     assert_eq!(
-        postio_ffi::draft_summary(draft),
+        postio_ffi::draft_summary(draft.clone()),
         "Plain text \u{b7} 6 words"
     );
+    // Turned Plain, the draft keeps its marks for the way back (#1271), and
+    // sending drops them; the footer read the kept marks and said "Rich text"
+    // under a switch set to Plain.
+    let mut switched = draft;
+    switched.body_html = Some("<p>Hi <strong>Ada</strong>,</p>".to_owned());
+    switched.rich = false;
+    assert_eq!(
+        postio_ffi::draft_summary(switched.clone()),
+        "Plain text \u{b7} 6 words"
+    );
+    switched.rich = true;
+    assert!(postio_ffi::draft_summary(switched).starts_with("Rich text"));
     let at = chrono::Utc::now().timestamp_millis();
     assert!(postio_ffi::draft_saved_words(at).starts_with("Draft saved locally "));
     assert_eq!(postio_ffi::remind_meaning(None), "Remind if no reply");

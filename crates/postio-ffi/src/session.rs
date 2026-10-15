@@ -995,6 +995,12 @@ impl Session {
         self.plain_text_of(&html)
     }
 
+    /// A plain body as a document. See [`Session::rich_html_of`].
+    #[uniffi::method(name = "richHtmlOf")]
+    pub fn rich_html_of_ffi(&self, text: String) -> String {
+        self.rich_html_of(&text)
+    }
+
     /// The script that applies a mark to the composer's selection.
     ///
     /// `nil` for a command that is not one of the marks. See
@@ -3189,6 +3195,19 @@ impl Session {
     /// would tell the next reader this was a paste.
     pub fn plain_text_of(&self, html: &str) -> String {
         postio_body::render(&postio_body::parse(html)).0
+    }
+
+    /// What a plain body reads as as a document.
+    ///
+    /// What the Rich/Plain switch needs at the moment it flips to Rich: the
+    /// counterpart of [`Session::plain_text_of`]. The surface was seeded
+    /// with no document at all, so the words written in Plain left the
+    /// window, and the first keystroke made the empty document the record.
+    ///
+    /// The same document `body_of` builds from a plain field when a rich
+    /// draft arrives with none, so what Rich shows is what would be sent.
+    pub fn rich_html_of(&self, text: &str) -> String {
+        postio_body::render(&postio_body::Document::from_text_quoting(text)).1
     }
 
     /// The script that applies a mark, from
