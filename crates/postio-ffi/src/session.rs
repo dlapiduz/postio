@@ -361,7 +361,7 @@ impl ConfigSource {
     /// The file this source reads and the session watches, if it is one.
     fn path(&self) -> Option<std::path::PathBuf> {
         match self {
-            ConfigSource::Installed => postio_config::paths::config_path().ok(),
+            ConfigSource::Installed => crate::settings::config_path().ok(),
             ConfigSource::File(path) => Some(path.clone()),
             ConfigSource::Document(_) => None,
         }
@@ -382,7 +382,9 @@ impl ConfigSource {
 fn load_config(source: &ConfigSource) -> postio_config::Config {
     let parsed = match source {
         ConfigSource::Document(text) => postio_config::Config::from_toml_str(text).ok(),
-        ConfigSource::Installed => postio_config::Config::load().ok(),
+        ConfigSource::Installed => crate::settings::config_path()
+            .ok()
+            .and_then(|path| postio_config::Config::load_from_path(&path).ok()),
         ConfigSource::File(path) => postio_config::Config::load_from_path(path).ok(),
     };
     parsed.unwrap_or_else(|| {
@@ -483,7 +485,7 @@ fn answer_agents(
         .unwrap_or_else(postio_mcp::Audit::none);
     let config = source
         .path()
-        .or_else(|| postio_config::paths::config_path().ok());
+        .or_else(|| crate::settings::config_path().ok());
     Mutex::new(
         postio_mcp::socket::listen(socket, host.connector(), config, audit)
             .inspect_err(|error| {
@@ -5096,27 +5098,6 @@ impl Session {
     }
 }
 
-/// Run `future` to completion on this thread, blocking until it answers.
-///
-/// # Why the FFI blocks
-///
-/// The exported surface is synchronous, because that is what a Swift caller
-/// asked for: `session.search(query)` returns a count, not a task. The store
-/// underneath is async now, so something has to turn a future back into a
-/// value, and it is here rather than in every method.
-///
-/// These were blocking reads before as well -- the storage layer was
-/// synchronous and these methods called it directly. What changed is the
-/// spelling. The contract on the surface is unchanged and is documented on
-/// `Session::open`: a caller must not invoke these on the main actor.
-///
-/// # One implementation, in `postio-session`
-///
-/// This used to be a fourth copy of the same four lines, and it was the copy
-/// that had only half of them: a runtime built here and blocked on panics
-/// outright when the caller is already on one. `postio_session::blocking::now`
-/// is the whole of it, and the reason it is shared is that every crate that
-/// has needed this has got it wrong once.
 /// What the reader offers about `message`'s list, with the account that
 /// would own the activation.
 ///
@@ -5184,10 +5165,30 @@ pub fn start_over_with(options: SessionOptions) -> Result<StartedOverFfi, Sessio
     })
 }
 
-/// Turn an engine future into a value for a synchronous export, on a stack
-/// this crate owns: Swift calls in from threads with 512 KiB, and the
-/// engine's deepest compile does not fit what is left of one
+/// Run `future` to completion on this thread, blocking until it answers,
+/// on a stack this crate owns: Swift calls in from threads with 512 KiB,
+/// and the engine's deepest compile does not fit what is left of one
 /// ([`crate::stack`]).
+///
+/// # Why the FFI blocks
+///
+/// The exported surface is synchronous, because that is what a Swift caller
+/// asked for: `session.search(query)` returns a count, not a task. The store
+/// underneath is async now, so something has to turn a future back into a
+/// value, and it is here rather than in every method.
+///
+/// These were blocking reads before as well -- the storage layer was
+/// synchronous and these methods called it directly. What changed is the
+/// spelling. The contract on the surface is unchanged and is documented on
+/// `Session::open`: a caller must not invoke these on the main actor.
+///
+/// # One implementation, in `postio-session`
+///
+/// This used to be a fourth copy of the same four lines, and it was the copy
+/// that had only half of them: a runtime built here and blocked on panics
+/// outright when the caller is already on one. `postio_session::blocking::now`
+/// is the whole of it, and the reason it is shared is that every crate that
+/// has needed this has got it wrong once.
 pub(crate) fn blocking<T>(future: impl std::future::Future<Output = T>) -> T {
     crate::stack::on_engine_stack(|| postio_session::blocking::now(future))
 }

@@ -9,7 +9,7 @@
 //! body_fetch = "lazy"      # lazy | eager
 //! attachment_fetch = "on_open" # on_open | eager | never
 //! max_inline_bytes = 262144   # inline parts under this ride with the text
-//! initial_sync_messages = 5000
+//! initial_sync_messages = 5000 # or "all"
 //! notify = true            # desktop notifications for new mail
 //! notify_roles = ["inbox"] # which mailboxes' arrivals notify
 //! badge = true             # unread count on the app's icon
@@ -17,7 +17,7 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{ConfigError, Extras};
+use crate::Extras;
 
 /// How Postio learns about new mail (#867).
 ///
@@ -88,6 +88,46 @@ fn initial_sync_messages() -> u32 {
     5_000
 }
 
+/// [`SyncConfig::initial_sync_messages`] with no cap: the first sync reaches
+/// back for everything the server has. Written to the file as `"all"`.
+pub const ALL_MESSAGES: u32 = u32::MAX;
+
+/// `initial_sync_messages` in the file: a count, or `"all"` for
+/// [`ALL_MESSAGES`]. The file is something a person reads, and
+/// `4294967295` is how a `u32` says "no cap", not how a person does.
+mod depth {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use super::ALL_MESSAGES;
+
+    const ALL: &str = "all";
+
+    pub(super) fn serialize<S: Serializer>(count: &u32, serializer: S) -> Result<S::Ok, S::Error> {
+        if *count == ALL_MESSAGES {
+            serializer.serialize_str(ALL)
+        } else {
+            serializer.serialize_u32(*count)
+        }
+    }
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Written {
+        Count(u32),
+        Word(String),
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+        match Written::deserialize(deserializer)? {
+            Written::Count(count) => Ok(count),
+            Written::Word(word) if word == ALL => Ok(ALL_MESSAGES),
+            Written::Word(word) => Err(serde::de::Error::custom(format!(
+                "`initial_sync_messages` is a number of messages or \"{ALL}\", not \"{word}\""
+            ))),
+        }
+    }
+}
+
 /// 256 KiB — ADR 0017's number for [`SyncConfig::max_inline_bytes`].
 fn max_inline_bytes() -> u64 {
     256 * 1024
@@ -134,7 +174,9 @@ pub struct SyncConfig {
     /// correctly offline without pulling the forty-megabyte video somebody
     /// embedded. `0` turns the rule off.
     pub max_inline_bytes: u64,
-    /// How many messages the first sync reaches back for, newest first.
+    /// How many messages the first sync reaches back for, newest first;
+    /// [`ALL_MESSAGES`] (`"all"` in the file) for no cap.
+    #[serde(serialize_with = "depth::serialize")]
     pub initial_sync_messages: u32,
     /// Master switch for desktop notifications on new mail.
     pub notify: bool,
@@ -178,7 +220,10 @@ struct RawSyncConfig {
     attachment_fetch: AttachmentFetch,
     #[serde(default = "max_inline_bytes")]
     max_inline_bytes: u64,
-    #[serde(default = "initial_sync_messages")]
+    #[serde(
+        default = "initial_sync_messages",
+        deserialize_with = "depth::deserialize"
+    )]
     initial_sync_messages: u32,
     #[serde(default = "crate::yes")]
     notify: bool,
@@ -250,20 +295,7 @@ impl Default for SyncConfig {
 /// survive; see `patch_ui`'s own doc for why that half of the promise is
 /// deliberate rather than an oversight.
 pub fn patch_sync(text: &str, sync: &SyncConfig) -> crate::Result<String> {
-    let mut doc = text
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|err| ConfigError::parse(None, &err))?;
-    doc.as_table_mut().remove("sync");
-
-    let fragment = toml::to_string(&SyncOnly { sync })
-        .map_err(|err| ConfigError::Serialize(err.to_string()))?;
-    let fragment_doc = fragment
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|err| ConfigError::parse(None, &err))?;
-    if let Some(item) = fragment_doc.as_table().get("sync") {
-        doc.as_table_mut().insert("sync", item.clone());
-    }
-    Ok(doc.to_string())
+    crate::splice::replace_section(text, "sync", &SyncOnly { sync })
 }
 
 /// Serializes as just a `[sync]` table, with no other section — [`patch_sync`]'s
@@ -277,6 +309,35 @@ struct SyncOnly<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// "Everything" is a choice a person makes (onboarding's sync window),
+    /// and the file is something a person reads: it says `"all"`, not the
+    /// largest number a `u32` holds.
+    #[test]
+    fn no_cap_on_the_first_sync_is_written_as_all_and_read_back() {
+        let sync = SyncConfig {
+            initial_sync_messages: ALL_MESSAGES,
+            ..SyncConfig::default()
+        };
+        let written = patch_sync("", &sync).expect("patch");
+        assert!(
+            written.contains("initial_sync_messages = \"all\""),
+            "{written}"
+        );
+        assert!(!written.contains(&u32::MAX.to_string()), "{written}");
+        let read: SyncOnlyOwned = toml::from_str(&written).expect("parse");
+        assert_eq!(read.sync.initial_sync_messages, ALL_MESSAGES);
+
+        let counted: SyncConfig =
+            toml::from_str("initial_sync_messages = 500\n").expect("a count still parses");
+        assert_eq!(counted.initial_sync_messages, 500);
+        assert!(toml::from_str::<SyncConfig>("initial_sync_messages = \"some\"\n").is_err());
+    }
+
+    #[derive(Deserialize)]
+    struct SyncOnlyOwned {
+        sync: SyncConfig,
+    }
 
     #[test]
     fn notifications_default_on_for_inbox_only() {

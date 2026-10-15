@@ -131,6 +131,31 @@ public final class SecondaryWindowController: NSObject, NSWindowDelegate {
         present(window, parent)
     }
 
+    /// Make the open window as tall as `contentHeight` of content, for a
+    /// surface sized by what it shows rather than by the main window
+    /// (capture, screen 25): its top stays where it is, so a list opening
+    /// inside it grows it downward, and it is never taller than the message
+    /// window would be nor hangs below the main window. Nothing when no
+    /// window is open.
+    public func fit(contentHeight: CGFloat) {
+        guard let window, let parent else { return }
+        let content = NSRect(x: 0, y: 0, width: window.frame.width, height: contentHeight)
+        let wanted = window.frameRect(forContentRect: content).height
+        let frame = Self.fitted(window.frame, height: wanted, over: parent.frame)
+        guard frame != window.frame else { return }
+        window.setFrame(frame, display: true)
+    }
+
+    /// `frame` made `wanted` tall from its top, within what `placed`
+    /// allows over `parent`.
+    public static func fitted(_ frame: NSRect, height wanted: CGFloat, over parent: NSRect) -> NSRect {
+        let tallest = max(minimumHeight, parent.height - heightInset)
+        let height = min(wanted, tallest)
+        let lowest = (parent.midY - tallest / 2).rounded()
+        return NSRect(
+            x: frame.minX, y: max(frame.maxY - height, lowest), width: frame.width, height: height)
+    }
+
     /// Close `kind` if it is the one open; nothing otherwise. Reported
     /// through `onClosed`, once.
     public func close(_ kind: SurfaceKindFfi) {

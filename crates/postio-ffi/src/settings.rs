@@ -840,13 +840,26 @@ impl From<ThemeFfi> for Theme {
 /// `postio_config::paths` already resolves this, per platform and per
 /// `$XDG_CONFIG_HOME`, and a frontend that guessed would edit a file nothing
 /// loads.
+///
+/// In a demo, the demo's own throwaway file (`demo::config_file`).
 #[uniffi::export]
 pub fn settings_path() -> Result<String, SettingsError> {
-    postio_config::paths::config_path()
+    config_path()
         .map(|path| path.display().to_string())
         .map_err(|err| SettingsError::Invalid {
             message: err.to_string(),
         })
+}
+
+/// The `config.toml` this process reads: the installed one, or in a demo
+/// the demo's own. Every path this crate hands out or opens goes through
+/// here, so a demo cannot reach the installed file by a route nobody
+/// thought of.
+pub(crate) fn config_path() -> postio_config::Result<std::path::PathBuf> {
+    match crate::demo::config_file() {
+        Some(file) => Ok(file),
+        None => postio_config::paths::config_path(),
+    }
 }
 
 /// The file at `path`, or an empty document when it is not there yet.

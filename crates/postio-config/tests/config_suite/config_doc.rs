@@ -114,9 +114,9 @@ const ENTRIES: &[Entry] = &[
     },
     Entry {
         path: "sync.initial_sync_messages",
-        kind: "integer",
+        kind: "integer or string",
         default: "5000",
-        description: "How many messages the first sync reaches back for, newest first.",
+        description: "How many messages the first sync reaches back for, newest first, or `\"all\"` for everything the server has.",
     },
     Entry {
         path: "sync.notify",

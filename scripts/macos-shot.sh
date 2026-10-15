@@ -20,7 +20,8 @@
 # as screen 04 draws it.
 #
 # Needs Screen Recording for the terminal, once. Never touches the store on
-# disk or the network: the demo is in memory, and its mail is invented.
+# disk, the installed config.toml or the network: the demo is in memory, its
+# mail is invented, and its settings are a throwaway file under $TMPDIR.
 set -euo pipefail
 
 TREE=$(git rev-parse --show-toplevel)

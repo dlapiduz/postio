@@ -38,7 +38,8 @@ pub fn start_logging() {
     if STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
-    let config_path = postio_config::paths::config_path().ok();
+    // The installed file, or a demo's own: a demo seeds and watches nobody's.
+    let config_path = crate::settings::config_path().ok();
     let logging = logging::init(
         &config_path
             .as_deref()

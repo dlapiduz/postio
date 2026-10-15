@@ -63,6 +63,36 @@ struct SecondaryWindowTests {
         #expect(tall.window?.frame.height == 820)
     }
 
+    @Test func aSurfaceSizedToItsContentGrowsDownwardAndStaysUnderTheMessageWindowsHeight() {
+        // Capture is as tall as what it shows (screen 25): no grey below
+        // the footnote, and when the project list opens the window grows
+        // down from where its top already is, never past the message
+        // window's height or off the main window.
+        let (controller, _) = Self.controller()
+        let main = Self.main()
+        controller.show(.capture, content: NSView(), width: 660, height: 600, title: "", over: main)
+        let window = controller.window
+        let chrome = (window?.frame.height ?? 0) - (window?.contentLayoutRect.height ?? 0)
+        let top = window?.frame.maxY
+
+        controller.fit(contentHeight: 420)
+        #expect(window?.frame.height == 420 + chrome)
+        #expect(window?.frame.maxY == top, "it grows and shrinks from its top")
+        #expect(window?.frame.width == 660)
+
+        controller.fit(contentHeight: 560)
+        #expect(window?.frame.height == 560 + chrome)
+        #expect(window?.frame.maxY == top)
+
+        controller.fit(contentHeight: 5000)
+        #expect(window?.frame.height == 820, "no taller than the message window")
+        #expect((window?.frame.minY ?? 0) >= main.frame.minY, "and never off the main window")
+
+        controller.close(.capture)
+        controller.fit(contentHeight: 300)
+        #expect(controller.window == nil, "fitting nothing open does nothing")
+    }
+
     @Test func itIsAChildOfTheMainWindowAndNeverMinimisesToTheDock() {
         let (controller, _) = Self.controller()
         let main = Self.main()

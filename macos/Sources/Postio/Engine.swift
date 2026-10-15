@@ -758,21 +758,41 @@ final class Engine {
     /// Capture, as the controller's intents leave it.
     private(set) var capture: CaptureModel?
 
-    /// How tall capture's window is: screen 25's, a form rather than a page.
-    private static let captureHeight: CGFloat = 620
+    /// How tall capture's window opens before its content has been
+    /// measured: about screen 25's with the project list closed.
+    private static let captureHeight: CGFloat = 500
 
     /// What the controller said about capture.
     private func apply(_ change: CaptureModel.Change) {
         switch change {
         case .open:
             guard let model = capture, let main = mainWindow else { return }
+            // As tall as what it shows (screen 25), and taller when the
+            // project list opens: the content says how tall it is, and the
+            // window follows from its top.
+            var measured: CGFloat?
             let hosting = NSHostingView(
-                rootView: CaptureView(model: model).preferredColorScheme(colorScheme))
+                rootView: CaptureView(model: model) { [weak self] height in
+                    measured = height
+                    guard let self, self.secondary.kind == .capture else { return }
+                    self.secondary.fit(contentHeight: height)
+                }
+                .preferredColorScheme(colorScheme))
             hosting.sizingOptions = []
+            // Laid out once before the window exists, so it opens at its
+            // content's height rather than jumping to it.
+            hosting.setFrameSize(NSSize(width: CaptureView.width, height: 2000))
+            hosting.layoutSubtreeIfNeeded()
+            let height = measured.map {
+                NSWindow.frameRect(
+                    forContentRect: NSRect(x: 0, y: 0, width: CaptureView.width, height: $0),
+                    styleMask: [.titled, .closable, .resizable]
+                ).height
+            } ?? Self.captureHeight
             // A secondary window (M4): it replaces the message or digest
             // window it was opened from.
             secondary.show(
-                .capture, content: hosting, width: CaptureView.width, height: Self.captureHeight,
+                .capture, content: hosting, width: CaptureView.width, height: height,
                 title: model.view?.field ?? "", over: main)
         case .redraw:
             break

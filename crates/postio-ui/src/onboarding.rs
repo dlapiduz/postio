@@ -246,7 +246,7 @@ pub enum SyncWindow {
     /// default depth.
     #[default]
     LastYear,
-    /// No cap: the highest count the field can hold.
+    /// No cap: `"all"` in the file.
     Everything,
 }
 
@@ -263,7 +263,7 @@ impl SyncWindow {
         match self {
             SyncWindow::LastMonth => 500,
             SyncWindow::LastYear => 5_000,
-            SyncWindow::Everything => u32::MAX,
+            SyncWindow::Everything => postio_config::sync::ALL_MESSAGES,
         }
     }
 

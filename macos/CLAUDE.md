@@ -163,7 +163,9 @@ Swift colour.
 
 `POSTIO_DEMO=<seed>` starts the app over an in-memory store of invented mail
 (a build with the FFI `demo` feature; `scripts/macos-build.sh` does it for
-`macos-shot.sh`). It reads no Keychain and touches neither disk nor network.
+`macos-shot.sh`). It reads no Keychain, no store and no network, and its
+`config.toml` (Settings, `⌘E`, `[logging]`) is a throwaway under `$TMPDIR`,
+never the installed one (`postio_ffi::demo::config_file`).
 Seeds: `small` (the inbox), and `small:<n>` for the screen `n` needs
 (`small:22` the digest, `small:23` a digest email, `small:25` capture with a
 throwaway vault).
