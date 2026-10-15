@@ -409,6 +409,48 @@ pub(crate) fn passage(passage: &Passage) -> Vec<Run> {
     runs
 }
 
+/// The most of a hit's passage the dropdown keeps before its first match,
+/// in characters (screen 03: "charged to the Atlas budget line").
+pub(crate) const HIT_LEAD: usize = 16;
+
+/// `cut` with at most [`HIT_LEAD`] characters before its first match,
+/// starting on a word: the dropdown's row has room for about 45 characters
+/// after "Sender · Subject", where a window cut for the results' row would
+/// draw only the words before the match.
+pub(crate) fn led(cut: &Passage) -> Passage {
+    let Some(first) = cut.ranges.first().map(|range| range.start) else {
+        return cut.clone();
+    };
+    let text = &cut.text;
+    if !text.is_char_boundary(first) || text[..first].chars().count() <= HIT_LEAD {
+        return cut.clone();
+    }
+    let mut start = text[..first]
+        .char_indices()
+        .rev()
+        .nth(HIT_LEAD - 1)
+        .map_or(0, |(at, _)| at);
+    // Onto a word's start: forward to the next space's end, never past the
+    // match.
+    if !text[..start].ends_with(char::is_whitespace) {
+        start = text[start..first]
+            .find(char::is_whitespace)
+            .map_or(first, |space| start + space);
+    }
+    let start = start + (text[start..first].len() - text[start..first].trim_start().len());
+    Passage {
+        text: text[start..].to_owned(),
+        ranges: cut
+            .ranges
+            .iter()
+            .filter(|range| range.start >= start)
+            .map(|range| range.start - start..range.end - start)
+            .collect(),
+        elided_start: true,
+        elided_end: cut.elided_end,
+    }
+}
+
 /// A query as a recent row draws it: words as words, a query as one.
 fn query_runs(query: &str) -> Vec<Run> {
     let operators = query
@@ -657,7 +699,7 @@ pub(crate) fn hit_row(
         .matches
         .iter()
         .find_map(|each| each.passage.as_ref())
-        .map(passage)
+        .map(|cut| passage(&led(cut)))
         .unwrap_or_default();
     DropdownRow {
         token: shown.token,
