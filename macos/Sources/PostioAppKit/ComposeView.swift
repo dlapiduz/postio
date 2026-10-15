@@ -62,6 +62,12 @@ public struct ComposeView: View {
         static let labelSize: CGFloat = 13
         static let suggestionWidth: CGFloat = 440
         static let suggestionsShown = 6
+        /// The body's reading column (screen 05): lines no longer than a
+        /// reader's, however wide the window.
+        static let readingWidth: CGFloat = 720
+        /// 15 pt at 1.65 (screen 05).
+        static let bodySize: CGFloat = 15
+        static let bodyLeading: CGFloat = 6
     }
 
     public init(
@@ -103,6 +109,10 @@ public struct ComposeView: View {
                     .accessibilityLabel("Subject")
             }
             Divider()
+            if !model.labels.isEmpty {
+                labelsRow
+                Divider()
+            }
             if model.rich { formatBar }
             bodyEditor
             if !model.attachments.isEmpty { attachments }
@@ -197,6 +207,43 @@ public struct ComposeView: View {
     }
 
     private var fromAddress: String { chosen?.address ?? "" }
+
+    /// Labels: what sending applies to the conversation, each a chip with
+    /// its ×, and "from the thread" while a reply's are its thread's
+    /// (screens 05 and 06). Drawn only while there are some: nothing here
+    /// adds one yet, and an empty row would be furniture.
+    private var labelsRow: some View {
+        row("Labels") {
+            HStack(spacing: 6) {
+                ForEach(model.labels, id: \.id) { label in
+                    HStack(spacing: 6) {
+                        Text(label.name)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .lineLimit(1)
+                        Button { model.removeLabel(label.id) } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Remove the label \(label.name)")
+                    }
+                    .padding(.horizontal, 9)
+                    .frame(height: 24)
+                    .background(Capsule().fill(.quaternary))
+                    .accessibilityElement(children: .contain)
+                }
+            }
+            Spacer(minLength: 12)
+            if model.labelsFromThread {
+                Text("from the thread")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Labels")
+    }
 
     /// A recipient field, with the list of what completes it hanging under
     /// it while it is being typed in.
@@ -329,16 +376,22 @@ public struct ComposeView: View {
             ComposeEditor(session: session, model: model)
                 .disabled(model.isHandedOff)
                 .accessibilityLabel("Message body")
+                .frame(maxWidth: Metrics.readingWidth + 2 * Metrics.inset)
+                .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             VStack(alignment: .leading, spacing: 0) {
                 TextEditor(text: Bindable(model).body)
-                    .font(.system(size: 15))
+                    .font(.system(size: Metrics.bodySize))
+                    .lineSpacing(Metrics.bodyLeading)
                     .scrollContentBackground(.hidden)
+                    .modifier(NoWritingToolsAffordance())
                     .focused($focus, equals: .body)
                     .disabled(model.isHandedOff)
                     .accessibilityLabel("Message body")
                 if let fold = model.quoteFold { quoteFold(fold) }
             }
+            .frame(maxWidth: Metrics.readingWidth, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, Metrics.inset - 5)
             .padding(.vertical, 14)
         }
@@ -541,6 +594,22 @@ public struct ComposeView: View {
     private func tooltip(_ title: String, _ command: String) -> String {
         guard let chord = session.accelerator(for: command) else { return title }
         return "\(title) (\(chord))"
+    }
+}
+
+/// The plain body without Writing Tools. Its affordance, a round button
+/// AppKit hangs off a text view's leading edge, straddled the window's
+/// border at the first line of an empty body whichever field had the
+/// keyboard; `.limited` keeps it. And it is a model reading the message
+/// being written, which Postio does not bring in (no AI in
+/// Postio itself, v1 scope).
+private struct NoWritingToolsAffordance: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.writingToolsBehavior(.disabled)
+        } else {
+            content
+        }
     }
 }
 

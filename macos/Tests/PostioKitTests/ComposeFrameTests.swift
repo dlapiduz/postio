@@ -62,6 +62,27 @@ import Testing
         #expect(model.summary == "Plain text \u{b7} 5 words")
     }
 
+    @Test func aReplysLabelsAreTheThreadsUntilOneIsTakenOff() {
+        var reply = Self.draft(kind: .replyAll)
+        reply.labels = [DraftLabelFfi(id: 4, name: "Harbor"), DraftLabelFfi(id: 9, name: "Atlas")]
+        let model = ComposeModel(id: 1, draft: reply)
+        #expect(model.labels.map(\.name) == ["Harbor", "Atlas"])
+        #expect(model.labelsFromThread, "screen 06: \"from the thread\"")
+        #expect(!model.isDirty)
+
+        model.removeLabel(9)
+        #expect(model.labels.map(\.name) == ["Harbor"])
+        #expect(!model.labelsFromThread, "no longer the thread's as it was")
+        #expect(model.edited.labels.map(\.id) == [4], "saved and sent with the draft")
+        #expect(model.isDirty)
+    }
+
+    @Test func aNewMessagesLabelsAreNotTheThreads() {
+        var fresh = Self.draft(kind: .new, to: "", body: "")
+        fresh.labels = [DraftLabelFfi(id: 4, name: "Harbor")]
+        #expect(!ComposeModel(id: 1, draft: fresh).labelsFromThread)
+    }
+
     @Test func remindIfNoReplyRidesOnTheDraftAndSaysItsDay() {
         let model = ComposeModel(id: 1, draft: Self.draft())
         #expect(model.remindAt == nil)
