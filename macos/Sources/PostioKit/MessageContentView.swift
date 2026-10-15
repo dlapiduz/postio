@@ -402,6 +402,7 @@ struct MessageActionCard: View {
                 .frame(height: 20)
                 .overlay(
                     RoundedRectangle(cornerRadius: 3).strokeBorder(Color.accentColor, lineWidth: 1))
+                .fixedSize()
             if let date = card.date {
                 Text(date)
                     .font(.system(size: 12, design: .monospaced))
@@ -415,11 +416,15 @@ struct MessageActionCard: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    // First claim on the card's width: without it the
+                    // stack split the room evenly and the sentence wrapped
+                    // into a third of the card beside empty space.
+                    .layoutPriority(1)
             } else {
                 Spacer(minLength: 0)
             }
             if let status = card.status {
-                Text(status).font(.system(size: 13)).foregroundStyle(.secondary)
+                Text(status).font(.system(size: 13)).foregroundStyle(.secondary).fixedSize()
             }
             ForEach(card.actions, id: \.command) { key in
                 button(key)
@@ -445,6 +450,7 @@ struct MessageActionCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .fixedSize()
     }
 }
 
