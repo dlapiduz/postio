@@ -108,7 +108,10 @@ pub use focus_message::{
 pub use focus_pickers::{
     PickerAnchorFfi, PickerFieldFfi, PickerKindFfi, PickerRowFfi, PickerViewFfi,
 };
-pub use focus_reader::{FocusReaderDocumentFfi, RenderModeWordsFfi, TreatmentFfi};
+pub use focus_reader::{
+    FocusMessageColumnFfi, FocusReaderDocumentFfi, RenderModeWordsFfi, TreatmentFfi,
+    focus_message_column,
+};
 pub use focus_search::{
     ConversationOrderFfi, DropdownRowFfi, DropdownRowKindFfi, DropdownSectionFfi, DropdownStateFfi,
     DropdownViewFfi, FileCardFfi, FileCopyFfi, FilePreviewFfi, FilesHeaderFfi, FilterButtonFfi,

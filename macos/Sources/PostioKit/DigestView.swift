@@ -2,7 +2,7 @@ import PostioFFI
 import SwiftUI
 
 // The digest's window (specs/009-focus-macos T114, screens 22 and 23): the
-// message window's size with a 560 column (M1). Its title area -- the
+// message window's size and column (M1). Its title area -- the
 // stacked icon, the title and its line, "Archive all" on the summary and
 // the list, "‹ Summary" and the stepper on an email -- is drawn into the
 // window's unified toolbar (`DigestWindowChrome` in PostioAppKit), from the

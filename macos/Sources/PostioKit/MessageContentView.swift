@@ -41,7 +41,7 @@ public enum MessageRhythm {
     /// Under the last block.
     public static let bottom: CGFloat = 32
     /// The column for a body in app colours, until the engine has said
-    /// (`min(560, w - 80)` at any width the window opens at).
+    /// (the smallest window's, `640 - 80`).
     public static let column: CGFloat = 560
 
     /// The subject: SF Pro bold 26/32, the largest text in the window.
@@ -56,6 +56,21 @@ public enum MessageRhythm {
     /// An attachment chip: 40 tall, radius 8.
     public static let chipHeight: CGFloat = 40
     public static let chipRadius: CGFloat = 8
+}
+
+/// The message window's column at the window's own width (M1): the
+/// person may resize the window, and the column is then the geometry's for
+/// the width it has, not the one it opened at.
+public enum MessageColumn {
+    /// The column, and whether More folds, in a window `window` wide
+    /// showing `document`; the document's own until the window has a width.
+    public static func at(window: CGFloat, document: FocusReaderDocumentFfi) -> FocusMessageColumnFfi {
+        guard window > 0 else {
+            return FocusMessageColumnFfi(
+                columnWidth: document.columnWidth, foldsIntoMore: document.foldsIntoMore)
+        }
+        return focusMessageColumn(windowWidth: Int32(window.rounded()), treatment: document.treatmentShown)
+    }
 }
 
 /// The header block's words: the engine's, with keys spelled.
@@ -181,11 +196,19 @@ public struct MessageContentView<BodyView: View>: View {
         bodyView = body
     }
 
-    private var column: CGFloat {
-        document.map { CGFloat($0.columnWidth) } ?? MessageRhythm.column
+    /// The column in a window `width` wide.
+    private func column(_ width: CGFloat) -> CGFloat {
+        document.map { CGFloat(MessageColumn.at(window: width, document: $0).columnWidth) }
+            ?? MessageRhythm.column
     }
 
     public var body: some View {
+        GeometryReader { proxy in
+            scroll(column: column(proxy.size.width))
+        }
+    }
+
+    private func scroll(column: CGFloat) -> some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 0) {
                 if let thread = words.thread {

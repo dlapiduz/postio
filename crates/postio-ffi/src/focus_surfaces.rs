@@ -157,7 +157,7 @@ impl From<postio_focus::DigestPage> for DigestPageFfi {
 }
 
 /// The digest's window, drawn whole (screens 22 and 23), at the message
-/// window's size with a 560 column (M1).
+/// window's size and column (M1).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct DigestViewFfi {
     /// The delivery, as `FocusOpenDigest` named it.
@@ -866,8 +866,8 @@ pub struct FocusDigestGeometryFfi {
 
 /// The digest's window beside a main window `main_width` wide, on the
 /// Mac: the message window's width (`clamp(640, W − 2·max(96, 0.18·W),
-/// 720)`), so a reference opened inside it never resizes it, and the
-/// summary's column, `min(560, w − 80)` (M1). Its height is the message
+/// 880)`), so a reference opened inside it never resizes it, and the
+/// summary's column, `min(960, w − 80)` (M1). Its height is the message
 /// window's as well, which the window controller already keeps.
 #[uniffi::export]
 pub fn focus_digest_geometry(main_width: i32) -> FocusDigestGeometryFfi {

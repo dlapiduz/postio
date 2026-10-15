@@ -254,6 +254,10 @@ struct MessageWebView: NSViewRepresentable {
         // a handler set on the copy afterwards is never asked.
         configuration.setURLSchemeHandler(coordinator.font, forURLScheme: ReaderConfiguration.fontScheme)
         let view = MessageBodySurface(frame: .zero, configuration: configuration)
+        view.onWidth = { [weak coordinator, weak view] _ in
+            guard let view else { return }
+            coordinator?.resized(view)
+        }
         view.navigationDelegate = coordinator.policy
         view.uiDelegate = coordinator.policy
         view.allowsBackForwardNavigationGestures = false
@@ -281,6 +285,9 @@ struct MessageWebView: NSViewRepresentable {
         private var showing: (message: Int64, html: String)?
         private var rulesInstalled = false
         private var task: Task<Void, Never>?
+        /// What a resize fits again: set once the document is laid out.
+        private var fit: (paper: Bool, column: CGFloat, floor: Double, onHeight: (CGFloat) -> Void)?
+        private var refit: Task<Void, Never>?
 
         init(resolveCid: @escaping (Int64, String) -> InlinePart?, resolveFont: @escaping (String) -> Data?) {
             cid = CidSchemeHandler(resolve: resolveCid)
@@ -299,6 +306,8 @@ struct MessageWebView: NSViewRepresentable {
         ) {
             guard showing?.message != message || showing?.html != document.html else { return }
             showing = (message, document.html)
+            fit = nil
+            refit?.cancel()
             cid.message = message
             let paper = document.treatmentShown == .paper
             // Paper is the sender's page as sent: light, on white, whatever
@@ -333,8 +342,12 @@ struct MessageWebView: NSViewRepresentable {
             _ view: WKWebView, paper: Bool, column: CGFloat, floor: Double, sentence: String?,
             onHeight: @escaping (CGFloat) -> Void, onDrawn: @escaping () -> Void
         ) {
-            Task { @MainActor [weak view] in
+            Task { @MainActor [weak self, weak view] in
                 guard let view else { return }
+                // The column the window has now: the person may have
+                // resized it since the document was asked for.
+                let column = view.frame.width > 0 ? view.frame.width : column
+                self?.fit = (paper, column, floor, onHeight)
                 var zoom = 1.0
                 if paper, let width = try? await MessageBodyMeasure.layoutWidth(of: view) {
                     zoom = PaperFit.zoom(column: column, measured: CGFloat(width), floor: floor)
@@ -355,6 +368,33 @@ struct MessageWebView: NSViewRepresentable {
                 }
             }
         }
+
+        /// The window was resized, and the body with it: the text has
+        /// reflowed to the new column, so fit the paper to it again and say
+        /// the new height. The sentence stays marked; the document stays.
+        func resized(_ view: WKWebView) {
+            guard let fit, view.frame.width > 0, view.frame.width != fit.column else { return }
+            self.fit = (fit.paper, view.frame.width, fit.floor, fit.onHeight)
+            refit?.cancel()
+            refit = Task { @MainActor [weak view] in
+                guard let view, !Task.isCancelled else { return }
+                var zoom = 1.0
+                if fit.paper {
+                    // Measured unzoomed: at the old zoom, a sheet that
+                    // flows to its column measures the old column.
+                    view.pageZoom = 1
+                    if let width = try? await MessageBodyMeasure.layoutWidth(of: view) {
+                        guard !Task.isCancelled else { return }
+                        zoom = PaperFit.zoom(column: view.frame.width, measured: CGFloat(width), floor: fit.floor)
+                        view.pageZoom = zoom
+                    }
+                }
+                guard !Task.isCancelled,
+                    let height = try? await MessageBodyMeasure.contentHeight(of: view)
+                else { return }
+                fit.onHeight(BodyHeight.clamped(height * zoom))
+            }
+        }
     }
 }
 
@@ -363,6 +403,15 @@ struct MessageWebView: NSViewRepresentable {
 /// whole document. A paper sheet wider than its column at the floor keeps
 /// the sideways wheel, which is the one scroll it has of its own.
 final class MessageBodySurface: ReaderSurface {
+    /// Told the new width whenever the window's resize changes it.
+    var onWidth: ((CGFloat) -> Void)?
+
+    override func setFrameSize(_ size: NSSize) {
+        let was = frame.width
+        super.setFrameSize(size)
+        if size.width != was, size.width > 0 { onWidth?(size.width) }
+    }
+
     override func scrollWheel(with event: NSEvent) {
         if abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) {
             super.scrollWheel(with: event)

@@ -688,7 +688,7 @@ final class Engine {
     }
 
     /// Open the digest's window over the main window, the message window's
-    /// size with a 560 column (M1), replacing whatever secondary window is
+    /// size and column (M1), replacing whatever secondary window is
     /// up (M4).
     private func showDigest() {
         guard let model = digest, let session, let main = mainWindow else { return }
