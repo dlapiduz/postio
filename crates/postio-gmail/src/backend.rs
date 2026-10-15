@@ -35,8 +35,20 @@ impl fmt::Debug for GmailBackend {
 }
 
 fn gmail_error(context: &str, error: GmailClientStdError) -> BackendError {
+    // Google answers a per-minute quota with a 403, the status a refused
+    // credential has too. Read as auth, a busy mailbox asked for a sign-in
+    // to be repaired rather than for a wait.
+    let rate_limited = match &error {
+        GmailClientStdError::Send(send) => send.is_rate_limited(),
+        _ => false,
+    };
     let reason = format!("{context}: {error}");
-    if reason.contains("401") || reason.contains("403") {
+    if rate_limited {
+        BackendError::RateLimited {
+            retry_after: None,
+            reason,
+        }
+    } else if reason.contains("401") || reason.contains("403") {
         BackendError::Auth {
             account: String::new(),
             reason,
@@ -561,5 +573,48 @@ impl GmailBackend {
                 destination_remote_id: RemoteId::new(id),
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use io_gmail::v1::send::{GmailApiError, GmailSendError};
+
+    use super::*;
+
+    fn api(status: u16, reason: &str) -> GmailClientStdError {
+        GmailClientStdError::Send(GmailSendError::Api(GmailApiError {
+            status,
+            message: "refused".into(),
+            reasons: vec![reason.into()],
+            ..Default::default()
+        }))
+    }
+
+    #[test]
+    fn a_throttled_403_is_a_rate_limit_not_a_bad_credential() {
+        let error = gmail_error("messages.get", api(403, "userRateLimitExceeded"));
+        assert!(
+            matches!(error, BackendError::RateLimited { .. }),
+            "got {error:?}"
+        );
+        assert!(error.is_transient());
+    }
+
+    #[test]
+    fn a_429_is_a_rate_limit() {
+        let error = gmail_error("messages.list", api(429, "rateLimitExceeded"));
+        assert!(
+            matches!(error, BackendError::RateLimited { .. }),
+            "got {error:?}"
+        );
+    }
+
+    #[test]
+    fn a_refused_credential_is_still_auth() {
+        for status in [401, 403] {
+            let error = gmail_error("getProfile", api(status, "authError"));
+            assert!(matches!(error, BackendError::Auth { .. }), "got {error:?}");
+        }
     }
 }

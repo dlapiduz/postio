@@ -56,7 +56,8 @@ litemap = { version = "0.8", default-features = false, features = ["alloc"] }
 lock_api = { version = "0.4", features = ["arc_lock"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 memchr = { version = "2" }
-nom = { version = "7" }
+minimal-lexical = { version = "0.2", default-features = false, features = ["std"] }
+nom = { version = "7", default-features = false, features = ["std"] }
 num-bigint = { version = "0.4" }
 num-integer = { version = "0.1", features = ["i128"] }
 num-traits = { version = "0.2", features = ["i128"] }
@@ -152,7 +153,8 @@ litemap = { version = "0.8", default-features = false, features = ["alloc"] }
 lock_api = { version = "0.4", features = ["arc_lock"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 memchr = { version = "2" }
-nom = { version = "7" }
+minimal-lexical = { version = "0.2", default-features = false, features = ["std"] }
+nom = { version = "7", default-features = false, features = ["std"] }
 num-bigint = { version = "0.4" }
 num-integer = { version = "0.1", features = ["i128"] }
 num-traits = { version = "0.2", features = ["i128"] }
@@ -210,6 +212,7 @@ zvariant = { version = "5", features = ["enumflags2", "gvariant", "serde_bytes"]
 aho-corasick = { version = "1" }
 linux-raw-sys = { version = "0.12", default-features = false, features = ["auxvec", "elf", "errno", "general", "if_ether", "io_uring", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
+nom = { version = "7" }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
 serde_spanned = { version = "1", default-features = false, features = ["serde", "std"] }
 simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
@@ -220,6 +223,7 @@ toml = { version = "1" }
 aho-corasick = { version = "1" }
 linux-raw-sys = { version = "0.12", default-features = false, features = ["auxvec", "elf", "errno", "general", "if_ether", "io_uring", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
+nom = { version = "7" }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
 serde_spanned = { version = "1", default-features = false, features = ["serde", "std"] }
 simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
@@ -230,6 +234,7 @@ toml = { version = "1" }
 aho-corasick = { version = "1" }
 linux-raw-sys = { version = "0.12", default-features = false, features = ["auxvec", "elf", "errno", "general", "if_ether", "io_uring", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
+nom = { version = "7" }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
 serde_spanned = { version = "1", default-features = false, features = ["serde", "std"] }
 simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
@@ -240,6 +245,7 @@ toml = { version = "1" }
 aho-corasick = { version = "1" }
 linux-raw-sys = { version = "0.12", default-features = false, features = ["auxvec", "elf", "errno", "general", "if_ether", "io_uring", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
+nom = { version = "7" }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
 serde_spanned = { version = "1", default-features = false, features = ["serde", "std"] }
 simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
@@ -252,6 +258,7 @@ errno = { version = "0.3" }
 half = { version = "2" }
 libc = { version = "0.2", default-features = false, features = ["extra_traits"] }
 mio = { version = "1", features = ["net", "os-ext"] }
+nom = { version = "7" }
 objc2 = { version = "0.6", features = ["disable-encoding-assertions"] }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
 simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
@@ -263,6 +270,7 @@ errno = { version = "0.3" }
 half = { version = "2" }
 libc = { version = "0.2", default-features = false, features = ["extra_traits"] }
 mio = { version = "1", features = ["net", "os-ext"] }
+nom = { version = "7" }
 objc2 = { version = "0.6", features = ["disable-encoding-assertions"] }
 rustix = { version = "1", features = ["io_uring", "pipe", "process", "stdio", "system", "termios", "time"] }
 simdutf8 = { version = "0.1", features = ["aarch64_neon", "public_imp"] }
