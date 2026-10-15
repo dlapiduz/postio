@@ -130,7 +130,7 @@ public struct MessageHeaderWords: Equatable {
             Thread(text: $0.text, earlier: $0.earlier.map(key), later: $0.later.map(key))
         }
         subject = view.subject
-        labels = view.labels.map { Pill(name: $0.name, colour: LabelColour(hex: $0.color)) }
+        labels = view.labels.map { Pill(name: $0.name, colour: LabelColour.of(name: $0.name, stored: $0.color)) }
         addLabel = key(view.addLabel)
         fields = view.fields
         date = view.date

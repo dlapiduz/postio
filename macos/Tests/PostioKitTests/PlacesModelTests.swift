@@ -72,7 +72,10 @@ struct PlacesModelTests {
         #expect(model.entries[1].mark == .symbol("doc"))
         #expect(model.entries[2].mark == .symbol("folder"))
         #expect(model.entries[4].mark == .dot(LabelColour(hex: "#2a9d8f")))
-        #expect(model.entries[5].mark == .dot(nil), "no colour of its own: the frontend's")
+        #expect(
+            model.entries[5].mark == .dot(LabelColour.of(name: model.entries[5].name, stored: nil)),
+            "no colour of its own: one from its name, as GTK's")
+        #expect(model.entries[5].mark != .dot(nil))
     }
 
     @Test func typingFiltersAndPutsTheHighlightOnTheFirst() {
@@ -185,7 +188,6 @@ struct PlacesModelTests {
         #expect(model.highlighted == 0)
         #expect(model.entries.first?.name == "Inbox")
     }
-}
 
     @Test func filteredAndArchiveAreDrawnApart() {
         let archive = PlacesModel.mark(.role(role: .archive))
@@ -203,3 +205,4 @@ struct PlacesModelTests {
         #expect(rect.minX == button.minX - PlacesView.Metrics.leadIn)
         #expect(rect.height == button.height)
     }
+}

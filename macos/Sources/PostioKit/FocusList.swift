@@ -33,6 +33,18 @@ public struct LabelColour: Equatable, Sendable {
         self.blue = blue
     }
 
+    /// The hue of the accent label dots keep away from (FR-091), in
+    /// degrees. The system blue's until the app reads the user's accent
+    /// (`PostioAppKit`), which it does at launch and on every change.
+    nonisolated(unsafe) public static var accentHue: Double = 211
+
+    /// The dot for a label named `name`: its stored colour, else one of its
+    /// own from its name, as GTK draws it (`label_dot_colour`). `nil` only
+    /// for a name the engine could not colour, which it always can.
+    public static func of(name: String, stored: String?) -> LabelColour? {
+        LabelColour(hex: labelDotColour(name: name, stored: stored, accentHue: accentHue))
+    }
+
     public init?(hex: String?) {
         guard let hex, hex.count == 7, hex.first == "#",
               let value = UInt32(hex.dropFirst(), radix: 16)
@@ -88,6 +100,12 @@ public enum KeyCapSpelling {
         // it, a modifier held for a click as its glyph.
         switch press.lowercased() {
         case "space": return "Space"
+        // Escape and Tab are words on a cap, as every screen of the pack
+        // and KEYS.md spell them ("Esc close", "Tab into the chips"). The
+        // menu's ⎋ and ⇥ are drawn by the system at menu size; at a cap's
+        // 10 pt they are specks. A chord (`shift+Tab`) keeps the glyphs.
+        case "escape", "esc": return "Esc"
+        case "tab": return "Tab"
         case "alt", "option": return "⌥"
         case "cmd", "command": return "⌘"
         case "shift": return "⇧"
@@ -100,12 +118,6 @@ public enum KeyCapSpelling {
 
 /// One row of Focus's list, as the Mac lays it out.
 ///
-        // Escape and Tab are words on a cap, as every screen of the pack
-        // and KEYS.md spell them ("Esc close", "Tab into the chips"). The
-        // menu's ⎋ and ⇥ are drawn by the system at menu size; at a cap's
-        // 10 pt they are specks. A chord (`shift+Tab`) keeps the glyphs.
-        case "escape", "esc": return "Esc"
-        case "tab": return "Tab"
 /// Built from `FocusRowFfi`, which already carries every word the row
 /// says: the presenters GTK's row uses made them, so the two apps cannot
 /// word a row differently. What is decided here is only layout -- which
@@ -190,7 +202,7 @@ public struct FocusRowModel: Equatable, Sendable {
         hasAttachments = row.hasAttachments
         sendState = row.sendState
         pills = row.pills.prefix(Self.maxPills).map {
-            Pill(name: $0.name, colour: LabelColour(hex: $0.color))
+            Pill(name: $0.name, colour: LabelColour.of(name: $0.name, stored: $0.color))
         }
         marker = row.marker.map { line in
             Marker(

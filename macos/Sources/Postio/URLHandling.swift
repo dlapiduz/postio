@@ -34,6 +34,7 @@ final class URLHandler: NSObject, NSApplicationDelegate {
         // view whose window it thinks is covered -- the message window's
         // body came out blank or not, by where the terminal stood.
         if DemoMode.seed != nil { NSApp.activate(ignoringOtherApps: true) }
+        AccentHue.follow()
         MenuBar.reassert()
         DispatchQueue.main.async { MenuBar.reassert() }
     }
