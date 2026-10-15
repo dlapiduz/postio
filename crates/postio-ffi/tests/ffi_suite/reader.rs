@@ -489,10 +489,10 @@ async fn a_newsletter_opens_on_paper_and_can_be_switched_and_remembered() {
         "the rule's own choice offers nothing to keep"
     );
     assert_eq!(document.sender_choice, None);
-    // A 1440-wide main window: the message window is 720 wide, and paper's
-    // column is 640 of it.
-    assert_eq!(document.window_width, 720);
-    assert_eq!(document.column_width, 640);
+    // A 1440-wide main window: the message window is 880 wide, and paper's
+    // column is 800 of it.
+    assert_eq!(document.window_width, 880);
+    assert_eq!(document.column_width, 800);
     assert!(document.paper_floor > 0.0 && document.paper_floor < 1.0);
 
     let switched = session.focus_reader_document(
@@ -503,7 +503,7 @@ async fn a_newsletter_opens_on_paper_and_can_be_switched_and_remembered() {
     );
     assert_eq!(switched.treatment_shown, TreatmentFfi::AppColours);
     assert_eq!(switched.treatment_classified, TreatmentFfi::Paper);
-    assert_eq!(switched.column_width, 560, "app colours' column");
+    assert_eq!(switched.column_width, 800, "app colours' column");
     let offered = switched.render_mode.expect("still HTML");
     assert!(offered.offer_always);
     assert_eq!(
@@ -519,10 +519,10 @@ async fn a_newsletter_opens_on_paper_and_can_be_switched_and_remembered() {
 
     // A 1024-wide main window: the window narrows (655, the formula
     // rounded; the pack draws 656) and Label, Move and Delete fold into
-    // More; app colours' column still fits whole.
+    // More; the column is the window less 80.
     let narrow = session.focus_reader_document(id, RemoteImagesFfi::Blocked, None, 1024);
     assert_eq!(narrow.window_width, 655);
-    assert_eq!(narrow.column_width, 560);
+    assert_eq!(narrow.column_width, 575);
     assert!(narrow.folds_into_more);
     session.shutdown();
 }

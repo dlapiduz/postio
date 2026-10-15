@@ -89,6 +89,28 @@ pub struct FocusReaderDocumentFfi {
     pub paper_floor: f64,
 }
 
+/// The message window's column, at the window's own width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct FocusMessageColumnFfi {
+    /// The content column, for the treatment shown.
+    pub column_width: i32,
+    /// Whether Label, Move and Delete fold into More at that width.
+    pub folds_into_more: bool,
+}
+
+/// The column of a message window `window_width` wide, for a body shown as
+/// `treatment`: what the window reads at once the person resizes it (M1).
+/// The document's `column_width` is the window's as it opened.
+#[uniffi::export]
+pub fn focus_message_column(window_width: i32, treatment: TreatmentFfi) -> FocusMessageColumnFfi {
+    let geometry =
+        postio_ui::focus_dialog::Geometry::for_platform(postio_config::paths::Platform::Apple);
+    FocusMessageColumnFfi {
+        column_width: geometry.column_width(window_width, treatment.into()),
+        folds_into_more: geometry.folds_into_more(window_width),
+    }
+}
+
 #[uniffi::export]
 impl Session {
     /// `message` as Focus's message window draws it, beside a main window

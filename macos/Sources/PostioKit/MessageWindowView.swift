@@ -275,11 +275,22 @@ public struct MessageWindowView<BodyView: View>: View {
     }
 
     public var body: some View {
+        GeometryReader { proxy in
+            window(width: proxy.size.width)
+        }
+    }
+
+    /// Whether More folds in a window `width` wide: the geometry's at the
+    /// width the person left it, not the one it opened at.
+    private func folds(_ width: CGFloat) -> Bool {
+        model.document.map { MessageColumn.at(window: width, document: $0).foldsIntoMore } ?? false
+    }
+
+    private func window(width: CGFloat) -> some View {
         VStack(spacing: 0) {
             if let view = model.view {
                 MessageActionRow(
-                    words: MessageChromeWords(
-                        view: view, folds: model.document?.foldsIntoMore ?? false, binding: binding),
+                    words: MessageChromeWords(view: view, folds: folds(width), binding: binding),
                     moreOpen: model.moreOpen,
                     run: run,
                     setMore: { model.apply($0 ? .showMore : .closeMore) })

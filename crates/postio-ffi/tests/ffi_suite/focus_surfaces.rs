@@ -395,19 +395,32 @@ async fn inbox_with_config(subjects: &[&str], config: &str) -> Arc<Session> {
         .expect("a session")
 }
 
-/// The digest's window is the message window's size with a 560 column
-/// (M1), so opening a reference inside it never resizes it: the Mac asks
-/// the one geometry rather than keeping the numbers itself.
+/// The digest's window is the message window's size and column (M1), so
+/// opening a reference inside it never resizes it: the Mac asks the one
+/// geometry rather than keeping the numbers itself.
 #[test]
-fn the_digest_window_is_the_message_window_s_width_with_a_560_column() {
+fn the_digest_window_is_the_message_window_s_width_and_column() {
     let at = postio_ffi::focus_digest_geometry;
-    // Screen 22: 720 at 1440.
-    assert_eq!(at(1440).window_width, 720);
-    assert_eq!(at(1440).column_width, 560);
+    assert_eq!(at(1440).window_width, 880);
+    assert_eq!(at(1440).column_width, 800);
     // The formula, rounded, between its ends.
     assert_eq!(at(1024).window_width, 655);
-    assert_eq!(at(1024).column_width, 560);
+    assert_eq!(at(1024).column_width, 575);
     // Never narrower than 640, and the column keeps its inset.
     assert_eq!(at(700).window_width, 640);
     assert_eq!(at(700).column_width, 560);
+}
+
+/// A message window the person resized reads at its own width: the
+/// column is asked of the geometry for the window as it now is, not kept
+/// from the width it opened at.
+#[test]
+fn a_resized_message_window_s_column_follows_its_width() {
+    use postio_ffi::TreatmentFfi;
+    let at = postio_ffi::focus_message_column;
+    assert_eq!(at(880, TreatmentFfi::AppColours).column_width, 800);
+    assert_eq!(at(1080, TreatmentFfi::AppColours).column_width, 960);
+    assert_eq!(at(1080, TreatmentFfi::Paper).column_width, 1000);
+    assert!(at(680, TreatmentFfi::AppColours).folds_into_more);
+    assert!(!at(880, TreatmentFfi::AppColours).folds_into_more);
 }

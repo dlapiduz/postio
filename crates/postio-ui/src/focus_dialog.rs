@@ -122,14 +122,17 @@ impl Geometry {
     };
 
     /// The Mac's: a window of its own (spec 009 M1, the Mac pack's
-    /// `message-window/SPEC.md` §1 and §3).
+    /// `message-window/SPEC.md` §1 and §3, widened). The pack's 720 window
+    /// and 560 column read narrow on a Mac, and its column stopped at 560
+    /// whatever the person widened the window to; the column is the
+    /// window less 80, up to a measure no screen makes unreadable.
     pub const MAC: Geometry = Geometry {
         dialog_min: 640,
-        dialog_max: 720,
+        dialog_max: 880,
         more_below: 700,
-        app_column: 560,
+        app_column: 960,
         app_inset: 80,
-        paper_column: 640,
+        paper_column: 1040,
         paper_inset: 80,
         digest: None,
     };
@@ -704,27 +707,46 @@ mod tests {
     }
 
     #[test]
-    fn the_mac_window_is_at_most_720() {
+    fn the_mac_window_is_at_most_880() {
         let mac = Geometry::for_platform(Platform::Apple);
         // The pack draws 1024 as 656: its formula, 655.36, rounded up. We
         // round to the nearest pixel, as Linux does; the 1px is listed in the
         // phase-3 comparison.
         assert_eq!(mac.dialog_width(1024), 655);
-        assert_eq!(mac.dialog_width(1280), 720);
-        assert_eq!(mac.dialog_width(1440), 720);
-        assert_eq!(mac.dialog_width(1920), 720);
+        assert_eq!(mac.dialog_width(1280), 819);
+        assert_eq!(mac.dialog_width(1440), 880);
+        assert_eq!(mac.dialog_width(1920), 880);
         assert_eq!(mac.dialog_width(800), 640);
         assert_eq!(mac.dialog_height(900), 820);
     }
 
+    /// A column is the window's width less 80, so a window the person
+    /// widens reads wider, up to a measure no screen makes unreadable.
     #[test]
-    fn the_mac_columns_are_560_and_640_less_80() {
+    fn the_mac_columns_are_the_window_less_80() {
         let mac = Geometry::for_platform(Platform::Apple);
-        assert_eq!(mac.column_width(720, Treatment::AppColours), 560);
-        assert_eq!(mac.column_width(720, Treatment::Paper), 640);
-        assert_eq!(mac.column_width(655, Treatment::AppColours), 560);
+        assert_eq!(mac.column_width(880, Treatment::AppColours), 800);
+        assert_eq!(mac.column_width(880, Treatment::Paper), 800);
+        assert_eq!(mac.column_width(655, Treatment::AppColours), 575);
         assert_eq!(mac.column_width(655, Treatment::Paper), 575);
         assert_eq!(mac.column_width(600, Treatment::AppColours), 520);
+        assert_eq!(mac.column_width(1000, Treatment::AppColours), 920);
+        assert_eq!(mac.column_width(1400, Treatment::AppColours), 960);
+        assert_eq!(mac.column_width(1400, Treatment::Paper), 1040);
+    }
+
+    #[test]
+    fn a_wider_mac_window_reads_wider_from_its_default() {
+        let mac = Geometry::for_platform(Platform::Apple);
+        for main in [1280, 1440, 1920] {
+            let window = mac.dialog_width(main);
+            for treatment in [Treatment::AppColours, Treatment::Paper] {
+                assert!(
+                    mac.column_width(window + 80, treatment) > mac.column_width(window, treatment),
+                    "{main}: {treatment:?} grows past the default {window}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -738,7 +760,7 @@ mod tests {
     #[test]
     fn the_digest_window_is_the_message_window_on_the_mac_and_fixed_on_linux() {
         let mac = Geometry::for_platform(Platform::Apple);
-        assert_eq!(mac.digest_size(1440, 900), (720, 820));
+        assert_eq!(mac.digest_size(1440, 900), (880, 820));
         assert_eq!(mac.digest_size(1024, 768), (655, 688));
         let linux = Geometry::for_platform(Platform::Freedesktop);
         assert_eq!(linux.digest_size(1440, 900), (980, 820));

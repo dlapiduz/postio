@@ -67,7 +67,7 @@ filling its silences:
 
 | # | Topic | Decision |
 |---|---|---|
-| M1 | Window geometry | The Mac pack's numbers apply **on the Mac only**: message window `clamp(640, W − 2·max(96, 0.18·W), 720)`; text column `min(560, w − 80)`; paper column `min(640, w − 80)`; More fold below 700; the digest window is the message window's size with a 560 column. Linux keeps spec 007's numbers. Both live in the one shared geometry, keyed by platform |
+| M1 | Window geometry | The Mac pack's numbers apply **on the Mac only**: message window `clamp(640, W − 2·max(96, 0.18·W), 880)`; text column `min(960, w − 80)`; paper column `min(1040, w − 80)`, `w` the window's width as the person left it; More fold below 700; the digest window is the message window's size and column. The pack's 720 and 560 read narrow and did not grow with the window (data-model.md). Linux keeps spec 007's numbers. Both live in the one shared geometry, keyed by platform |
 | M2 | Pack vs spec 007 | **Spec 007's recorded decisions win** wherever the Mac pack contradicts them. In particular: C3, bindings under `[keys]` in `config.toml`, not `keys.toml`; C4, Filtered never deletes; C6, C8, C9, gating on a model, the detector and a vault; C10, header counts only while in use; C12, Delete is undoable; C19, `X` selects every conversation in the view; C24, ⌘K opens the bar with `>` typed; C26, the action card is the accent at 8% light and 12% dark; C7, no Markdown toggle; C25, a body drawn in app colours is set in Barlow, the chrome in the system font; C30, every list opens with the cursor on its first row |
 | M3 | Features Linux lacks | Task after sending (⌘T), a separate Bcc key (⌘⇧B), show quoted text (⌘⇧Q), the row's "Task in <project> · due <day>" line (spec 007 FR-181), a digest reference's email shown under its paragraph, and the action row on an email opened from a digest are built **after the Mac reaches parity, in the shared layers, so both apps get them** |
 | M4 | Secondary windows | **One secondary window at a time** on the Mac (email, digest, compose, capture). Raw source and a message opened from a digest's list replace the window's content in place rather than stacking. The reading pane beside the list (`F8`, spec 007 FR-038) comes after parity |
@@ -178,7 +178,7 @@ widths from M1, differences listed.
 **Acceptance Scenarios**:
 
 1. **Given** a main window `W` wide, **When** a message opens, **Then** its
-   window is `clamp(640, W − 2·max(96, 0.18·W), 720)` wide and `H − 80` tall,
+   window is `clamp(640, W − 2·max(96, 0.18·W), 880)` wide and `H − 80` tall,
    and stepping with `j`/`k` never resizes it.
 2. **Given** a body the engine classifies as painting its own page, **When**
    it is shown, **Then** it is drawn as sent on a white sheet, dimmed in dark

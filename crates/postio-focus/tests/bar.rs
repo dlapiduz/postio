@@ -1963,6 +1963,67 @@ mod dropdown {
         assert_eq!(marked, ["Atlas", "budget"]);
     }
 
+    /// The dropdown's passage has the room after "Sender · Subject" and no
+    /// more, about 45 characters at 1440: a window cut for the results'
+    /// row, a third of 120 before the match or more near the body's end,
+    /// drew only the words before it (screen 03 leads with the match).
+    #[test]
+    fn a_hits_passage_leads_with_its_match() {
+        let rows = List::of(1);
+        let mut focus = mac_search();
+        let _ = opened(&mut focus, &rows);
+        let effects = searched(&mut focus, "atlas budget", atlas_budget(), &rows);
+        let (ticket, request) = asks(&effects)
+            .into_iter()
+            .find(|(_, request)| matches!(request, Request::Passages { .. }))
+            .expect("the hits' passages are asked for");
+        let Request::Passages { stamp, .. } = request else {
+            unreachable!()
+        };
+        let cut = "over. Could you initial page four as well? The movers come on \
+                   Monday and we sign the Atlas budget on Friday at ten.";
+        let at = cut.find("Atlas").unwrap();
+        let passage = Passage {
+            text: cut.to_owned(),
+            ranges: vec![at..at + 5, at + 6..at + 12],
+            elided_start: true,
+            elided_end: false,
+        };
+        let effects = focus.handle(Input::Reply(
+            ticket,
+            Reply::Passages {
+                stamp,
+                answer: Ok(vec![(
+                    MessageId::new(2),
+                    vec![Match {
+                        source: Source::Body,
+                        passage: Some(passage),
+                        when: None,
+                    }],
+                )]),
+            },
+        ));
+        let view = dropdown(&effects);
+        let detail = &view.sections[0].rows[1].detail;
+        let before: String = detail
+            .iter()
+            .take_while(|run| !run.highlighted)
+            .map(|run| run.text.as_str())
+            .collect();
+        assert!(
+            before.chars().count() <= 24,
+            "the match is drawn within the room: {before:?}"
+        );
+        assert!(
+            before.starts_with('\u{2026}'),
+            "what was cut is said: {before:?}"
+        );
+        assert_eq!(
+            text(detail),
+            "\u{2026}and we sign the Atlas budget on Friday at ten."
+        );
+    }
+
     #[test]
     fn an_answer_for_words_since_changed_is_dropped() {
         let rows = List::of(1);

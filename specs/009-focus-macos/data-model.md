@@ -61,19 +61,25 @@ Validation rules:
 
 | Quantity | Linux (unchanged) | Apple (M1) |
 |---|---|---|
-| message width from main width `W` | current formula, max 820 | `clamp(640, W − 2·max(96, 0.18·W), 720)` |
+| message width from main width `W` | current formula, max 820 | `clamp(640, W − 2·max(96, 0.18·W), 880)` |
 | message height | `H − 80` | `H − 80` |
-| text column | `min(480, w − 96)` | `min(560, w − 80)` |
-| paper column | `min(640, w − 48)` | `min(640, w − 80)` |
+| text column | `min(480, w − 96)` | `min(960, w − 80)`, `w` the window as it is now |
+| paper column | `min(640, w − 48)` | `min(1040, w − 80)`, likewise |
 | More fold | below 760, or when the row does not fit | below 700 |
-| digest window | 980 × 820 | the message window's size, column 560 |
+| digest window | 980 × 820 | the message window's size and column |
 | paper zoom floor | 0.85 | 0.85 |
 
-Test values (Apple): W = 1024 → 655; 1280 → 720; 1440 → 720; 1920 → 720. At
-1440 the text column is 560 and paper is 640. At 1024 the text column is 560
-and paper is 575 (a 640 newsletter at about 0.9). The pack draws 1024 as 656
-and paper as 576: its own formula rounded up, where Postio rounds to the
-nearest pixel as Linux does. The 1px is listed in the phase-3 comparison.
+Test values (Apple): W = 1024 → 655; 1280 → 819; 1440 → 880; 1920 → 880. At
+1440 both columns are 800. At 1024 both are 575 (a 640 newsletter at about
+0.9). The pack draws 1024 as 656: its own formula rounded up, where Postio
+rounds to the nearest pixel as Linux does. The 1px is listed in the phase-3
+comparison.
+
+The pack's 720 window and 560 text column read narrow on a Mac, and its
+column stopped at 560 however wide the person made the window (2026-10-14,
+the maintainer). The window opens at up to 880, and its column is the
+window's own width less 80, recomputed whenever the person resizes it, up
+to 960 for text and 1040 for paper.
 
 ## Records that cross the FFI
 
