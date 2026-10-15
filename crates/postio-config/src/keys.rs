@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::paths::Platform;
-use crate::{ConfigError, Result};
+use crate::Result;
 
 /// Modifiers a binding may combine with a key.
 ///
@@ -270,25 +270,15 @@ impl KeyBindings {
 /// `[saved_searches.<key>]` needs one — but `toml_edit`'s fragment splice still
 /// needs *some* struct to serialize from, hence [`KeysOnly`].
 pub fn patch_keys(text: &str, overrides: &BTreeMap<String, String>) -> Result<String> {
-    let mut doc = text
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|err| ConfigError::parse(None, &err))?;
-    doc.as_table_mut().remove("keys");
-
-    // As `patch_filters` documents: an empty map still serializes as a bare
-    // `[keys]` header, which would reintroduce the dangling header this
-    // exists to avoid -- so the empty case skips serialization entirely.
-    if !overrides.is_empty() {
-        let fragment = toml::to_string(&KeysOnly { keys: overrides })
-            .map_err(|err| ConfigError::Serialize(err.to_string()))?;
-        let fragment_doc = fragment
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|err| ConfigError::parse(None, &err))?;
-        if let Some(item) = fragment_doc.as_table().get("keys") {
-            doc.as_table_mut().insert("keys", item.clone());
-        }
+    // An empty map still serializes as a bare header (`toml` has no other
+    // spelling for a table with no keys), the dangling header this exists
+    // to avoid -- so the empty case only removes the section.
+    if overrides.is_empty() {
+        let mut doc = crate::splice::parse(text)?;
+        doc.as_table_mut().remove("keys");
+        return Ok(doc.to_string());
     }
-    Ok(doc.to_string())
+    crate::splice::replace_section(text, "keys", &KeysOnly { keys: overrides })
 }
 
 /// Serializes as just `[keys]`, with no other section — [`patch_keys`]'s

@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Config, ConfigError, Extras, Result};
+use crate::{Config, Extras, Result};
 
 /// One entry of `[saved_searches]`.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -240,27 +240,15 @@ impl Config {
 /// not the kind of TOML a person hand-annotates the way `[ui]`/`[sync]` are,
 /// so that tradeoff is deliberate rather than an oversight.
 pub fn patch_filters(text: &str, filters: &BTreeMap<String, FilterConfig>) -> Result<String> {
-    let mut doc = text
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|err| ConfigError::parse(None, &err))?;
-    doc.as_table_mut().remove("saved_searches");
-
-    // An empty map still serializes as a bare `[saved_searches]` header (`toml`
-    // has no other spelling for "a table with no keys"), which would
-    // reintroduce exactly the dangling header this is meant to avoid — so
-    // the empty case skips serialization entirely rather than trusting the
-    // fragment's text to say so.
-    if !filters.is_empty() {
-        let fragment = toml::to_string(&FiltersOnly { filters })
-            .map_err(|err| ConfigError::Serialize(err.to_string()))?;
-        let fragment_doc = fragment
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|err| ConfigError::parse(None, &err))?;
-        if let Some(item) = fragment_doc.as_table().get("saved_searches") {
-            doc.as_table_mut().insert("saved_searches", item.clone());
-        }
+    // An empty map still serializes as a bare header (`toml` has no other
+    // spelling for a table with no keys), the dangling header this exists
+    // to avoid -- so the empty case only removes the section.
+    if filters.is_empty() {
+        let mut doc = crate::splice::parse(text)?;
+        doc.as_table_mut().remove("saved_searches");
+        return Ok(doc.to_string());
     }
-    Ok(doc.to_string())
+    crate::splice::replace_section(text, "saved_searches", &FiltersOnly { filters })
 }
 
 /// Serializes as just `[saved_searches.<key>]` tables, with no other section —

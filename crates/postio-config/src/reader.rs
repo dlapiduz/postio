@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{ConfigError, Extras, Result};
+use crate::{Extras, Result};
 
 /// Every zoom step, in percent (spec 006 FR-021): a value off the list
 /// clamps to the nearest one, because the file is edited by hand.
@@ -67,19 +67,7 @@ pub fn save_zoom(path: &std::path::Path, percent: u16) -> Result<()> {
 /// Rewrites `text`'s `[reader]` table to match `reader`, leaving every
 /// other section and its comments untouched -- `patch_ui`'s tradeoff.
 pub fn patch_reader(text: &str, reader: &ReaderConfig) -> Result<String> {
-    let mut doc = text
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|err| ConfigError::parse(None, &err))?;
-    doc.as_table_mut().remove("reader");
-    let fragment = toml::to_string(&ReaderOnly { reader })
-        .map_err(|err| ConfigError::Serialize(err.to_string()))?;
-    let fragment_doc = fragment
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|err| ConfigError::parse(None, &err))?;
-    if let Some(item) = fragment_doc.as_table().get("reader") {
-        doc.as_table_mut().insert("reader", item.clone());
-    }
-    Ok(doc.to_string())
+    crate::splice::replace_section(text, "reader", &ReaderOnly { reader })
 }
 
 #[derive(Serialize)]

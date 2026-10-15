@@ -1023,16 +1023,23 @@ public struct SettingsPaneView: View {
     /// stopped — the only thing that could tell you a keystroke went wrong.
     ///
     /// Monospaced and not proportional, because it is TOML and alignment
-    /// carries meaning in it. `autocorrection` and the smart-quote
-    /// substitutions are off for the reason every code editor turns them
-    /// off: a curly quote in a TOML string is a parse error somebody did not
+    /// carries meaning in it -- a point under the panes' 12pt text, because
+    /// a monospaced face reads a size larger than a proportional one at the
+    /// same size, and the file should not look louder than the fields that
+    /// edit it (canvas 3f's editor is drawn the sidebar's size).
+    /// `autocorrection` and the smart-quote substitutions are off for the
+    /// reason every code editor turns them off: a curly quote in a TOML string is a parse error somebody did not
     /// type.
     @ViewBuilder private var configFile: some View {
         TextEditor(text: configBinding)
-            .font(.system(.body, design: .monospaced))
+            .font(.system(.subheadline, design: .monospaced))
+            .lineSpacing(3)
             .autocorrectionDisabled()
             .textEditorStyle(.plain)
             .scrollContentBackground(.hidden)
+            // Off the border, as any editor sets its text.
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
             .background(Color(nsColor: .textBackgroundColor))
             .overlay(
                 RoundedRectangle(cornerRadius: PostioTokens.radiusMd)

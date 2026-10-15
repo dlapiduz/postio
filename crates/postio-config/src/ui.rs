@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ConfigError, Extras, Result};
+use crate::{Extras, Result};
 
 /// Message-list row height in the macOS app. Airy is 40px rows; the other two
 /// tighten the same row anatomy rather than changing it.
@@ -88,20 +88,7 @@ impl Default for UiConfig {
 /// might be, so that is the deliberate half of the promise, not an
 /// oversight.
 pub fn patch_ui(text: &str, ui: &UiConfig) -> Result<String> {
-    let mut doc = text
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|err| ConfigError::parse(None, &err))?;
-    doc.as_table_mut().remove("ui");
-
-    let fragment =
-        toml::to_string(&UiOnly { ui }).map_err(|err| ConfigError::Serialize(err.to_string()))?;
-    let fragment_doc = fragment
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|err| ConfigError::parse(None, &err))?;
-    if let Some(item) = fragment_doc.as_table().get("ui") {
-        doc.as_table_mut().insert("ui", item.clone());
-    }
-    Ok(doc.to_string())
+    crate::splice::replace_section(text, "ui", &UiOnly { ui })
 }
 
 /// Serializes as just a `[ui]` table, with no other section — [`patch_ui`]'s

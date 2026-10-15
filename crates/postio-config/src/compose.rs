@@ -104,20 +104,7 @@ pub struct ComposeConfig {
 /// settings chosen from a segmented control are not the kind of TOML
 /// anyone hand-annotates.
 pub fn patch_compose(text: &str, compose: &ComposeConfig) -> crate::Result<String> {
-    let mut doc = text
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|err| crate::ConfigError::parse(None, &err))?;
-    doc.as_table_mut().remove("compose");
-
-    let fragment = toml::to_string(&ComposeOnly { compose })
-        .map_err(|err| crate::ConfigError::Serialize(err.to_string()))?;
-    let fragment_doc = fragment
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|err| crate::ConfigError::parse(None, &err))?;
-    if let Some(item) = fragment_doc.as_table().get("compose") {
-        doc.as_table_mut().insert("compose", item.clone());
-    }
-    Ok(doc.to_string())
+    crate::splice::replace_section(text, "compose", &ComposeOnly { compose })
 }
 
 /// Serializes as just a `[compose]` table — [`patch_compose`]'s bridge from

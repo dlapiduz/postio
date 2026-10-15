@@ -40,7 +40,7 @@ The macOS app's appearance. The desktop app and the terminal read none of these:
 | `body_fetch` | string | `"lazy"` | When message bodies are downloaded: `lazy` (headers first, bodies backfilled) or `eager`. |
 | `attachment_fetch` | string | `"on_open"` | When an attachment's bytes are downloaded: `on_open`, `eager`, or `never`. |
 | `max_inline_bytes` | integer | `262144` | The largest inline part fetched with the message's text rather than left on the payload axis. A `cid:` image under this size arrives with the body, so HTML mail reads correctly offline; `0` turns the rule off. |
-| `initial_sync_messages` | integer | `5000` | How many messages the first sync reaches back for, newest first. |
+| `initial_sync_messages` | integer or string | `5000` | How many messages the first sync reaches back for, newest first, or `"all"` for everything the server has. |
 | `notify` | boolean | `true` | Master switch for desktop notifications on new mail. |
 | `notify_roles` | array of strings | `["inbox"]` | Which mailbox roles produce a notification when mail arrives in them. |
 | `badge` | boolean | `true` | Show how many inbox conversations are unread on the app's icon (the Dock, on the Mac). Nothing is shown at zero. |

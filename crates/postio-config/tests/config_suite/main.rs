@@ -18,6 +18,7 @@
 
 mod config_doc;
 mod live;
+mod patch_spacing;
 mod schema;
 mod secrets;
 mod validate;
