@@ -1149,8 +1149,7 @@ fn drawn_at_own_size(native: &gtk::Widget, widget: &gtk::Widget) -> bool {
     use gtk::prelude::*;
     match (widget.compute_bounds(native), widget.compute_bounds(widget)) {
         (Some(drawn), Some(own)) => {
-            (drawn.width() - own.width()).abs() < 0.5
-                && (drawn.height() - own.height()).abs() < 0.5
+            (drawn.width() - own.width()).abs() < 0.5 && (drawn.height() - own.height()).abs() < 0.5
         }
         _ => true,
     }
