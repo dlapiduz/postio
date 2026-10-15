@@ -190,3 +190,54 @@ fn a_transparent_logo_keeps_its_canvas() {
     }
     assert!(found(app), "App colours: the logo is not over its canvas");
 }
+
+/// FR-015's canvas is for an image that paints. A held-back picture has no
+/// source and is the reader's placeholder, so a page drawn into dark gives
+/// it the dark ground, never a white box with its alt text unreadable on it.
+#[test]
+fn a_held_back_picture_gets_no_canvas_in_dark() {
+    let eml = "From: news@example.com\r\nTo: ada@example.com\r\nSubject: Notes\r\n\
+               MIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
+               <html><body style=\"background:#ffffff;color:#222222\">\
+               <p>Release notes for the week.</p>\
+               <img src=\"https://img.example.com/logo.png\" width=\"300\" height=\"40\" alt=\"Example Tools\">\
+               <p>Version 4.0 adds a dry run.</p></body></html>\r\n";
+    let parsed = postio_model::mime::parse(eml.as_bytes());
+    let body = postio_ui::reader::document::body_html_in(
+        &parsed.body,
+        postio_body::RemoteImages::Blocked,
+        postio_ui::reader::document::Rendering::Original,
+        None,
+    );
+    let html = postio_ui::reader::document::document_for(
+        &body.html,
+        &body.styles,
+        postio_body::RemoteImages::Blocked,
+        postio_ui::reader::document::sheet_for(
+            postio_ui::reader::document::Rendering::Original,
+            false,
+        ),
+    );
+    let doc = render(&request_for(html, DARK));
+    assert!(
+        matches!(
+            doc.messages[0].presentation,
+            Presentation::Adapted | Presentation::Darkened
+        ),
+        "the page is drawn into dark: {:?}",
+        doc.messages[0].presentation
+    );
+    let raster = postio_render::rasterize(&doc);
+    let width = raster.width as usize;
+    for y in 0..(raster.height as usize).min(200) {
+        for x in 0..width {
+            let i = (y * width + x) * 4;
+            let [r, g, b] = [raster.rgba[i], raster.rgba[i + 1], raster.rgba[i + 2]];
+            assert!(
+                r < 200 || g < 200 || b < 200,
+                "a white placeholder at ({x}, {y}) in dark: {:?}",
+                [r, g, b]
+            );
+        }
+    }
+}
