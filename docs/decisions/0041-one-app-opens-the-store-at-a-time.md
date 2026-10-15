@@ -1,6 +1,7 @@
 # ADR 0041 — One app opens the store at a time; each runs the host inside it
 
-- **Status:** Accepted (2026-09-25). Built
+- **Status:** Accepted (2026-09-25). Built. **Amended 2026-10-14**: the app with the store
+  answers agents on a private socket; see **Amendment** below
 - **Spec:** [`docs/archive/specs/005-tui-frontend`](../archive/specs/005-tui-frontend/spec.md)
   (FR-040–FR-043, User Story 6, Clarifications 2026-09-24)
 - **Related:** [ADR 0038](0038-the-store-is-turso-not-sqlcipher.md) (the engine
@@ -66,3 +67,62 @@ so we can only run one app at a time but it can be either or."
 Turso's multi-process mode supports `VACUUM`, closes its open panics, and
 offers a cross-process commit signal; or someone asks again for both apps at
 once and the daemon's cost is worth paying.
+
+---
+
+## Amendment (2026-10-14): the app with the store answers agents
+
+**Why.** `postio-mcp` (ADR 0010) runs in its own process, and under this
+ADR it could only say "Postio is already open in another window" while an
+app was open. The maintainer keeps the Mac app open all day, so the agent
+was useless exactly when the person was at their mail. The maintainer asked
+for this limit to be removed.
+
+**Decision.** The app that holds the store listens on a Unix domain socket
+beside it, `agents/mcp.sock`, and answers agents' tool calls itself.
+`postio-mcp` tries that socket first for every `tools/call`. It opens the
+store itself, as before, only when no app is listening.
+
+- **What crosses is MCP's JSON-RPC, one line each way, not the client
+  protocol.** Frontends still reach the host in-process, with no encoding,
+  as decided above. The app answers each line with the same
+  `postio_mcp::Server` that `postio-mcp` runs, over its own host
+  (`postio_mcp::socket`). This adds no API: JSON-RPC is already the wire
+  format, and there is still exactly one implementation of every tool.
+- **The checks run where the store is.** The app reads `[mcp]` from its own
+  `config.toml` on every call and writes the access log beside the store.
+  `postio-mcp`'s own `--config` does not apply to calls the app answers. The
+  app is the process that owns the mail, so it is the one that enforces
+  access to it. The checks stay in one place, whichever process answers.
+- **The agent acts beside the window.** `Connector::connect_agent` connects
+  the agent's client to the verbs (selection and undo stack) of the app
+  window that connected last, and forwards to that window the feedback the
+  agent's commands produce. The window therefore repaints, shows "Archived 1
+  message — Undo", and `u` / ⌘Z takes the change back, exactly as for the
+  person's own keystroke. Tracked sends still report back to the agent.
+  This was tried on the Mac demo: an archive made over MCP left the open
+  list at once with the undo toast showing, and ⌘Z brought it back.
+- **Who can connect.** There is no TCP and no port. The socket's folder is
+  `0700` and the socket is `0600`. Both ends read the other end's user id
+  from the kernel (peer credentials: `getpeereid` on macOS, `SO_PEERCRED` on
+  Linux, through tokio) and refuse any other user. `postio-mcp` also refuses
+  a socket, or a folder, that another user owns or that others can reach.
+- **Every app answers.** The desktop app (`startup::open`), the terminal
+  (`run`) and the Mac app (`postio-ffi`'s `Session::open` over a store file)
+  each listen while they hold the store. They stop listening and remove the
+  socket on shutdown. A socket left by a crash answers nothing, so the next
+  app replaces it. A socket that something still answers on is never taken
+  over. An in-memory session and the desktop app's demo do not listen. The
+  Mac demo listens only when `POSTIO_DEMO_AGENTS=<socket>` says so.
+
+**Rejected.** A serde encoding of `postio-client`'s `Req`/`Resp`, so that
+`postio-mcp` could be a remote client of the app's host. It would have
+meant ninety request kinds and every model type they carry crossing a
+process boundary, and versioning all of it, only so that `postio-mcp` could
+run the tools in its own process. Running them in the app costs nothing,
+because the app already links the same code.
+
+**Still true.** One app holds the store. The socket is how other processes
+reach that app; it does not let them hold the store too. Running the
+desktop app and the terminal at the same time still needs the daemon this
+ADR rejected.

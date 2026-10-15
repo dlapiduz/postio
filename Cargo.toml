@@ -187,6 +187,7 @@ postio-vault   = { path = "crates/postio-vault" }
 postio-storyboard = { path = "crates/postio-storyboard" }
 postio-focus = { path = "crates/postio-focus" }
 postio-demo = { path = "crates/postio-demo" }
+postio-mcp = { path = "crates/postio-mcp" }
 # Every member depends on it, so `-p` builds resolve third-party features
 # the way the workspace build does (ADR 0047). Managed by `cargo hakari`.
 postio-workspace-hack = { path = "crates/postio-workspace-hack" }

@@ -60,6 +60,9 @@ postio-focus.workspace = true
 # The store's host, in this process: one Postio at a time has the store
 # (ADR 0041), and Focus turns on its own mode in it.
 postio-host.workspace = true
+# Agents' calls, answered while this app has the store (ADR 0041, amended
+# 2026-10-14).
+postio-mcp.workspace = true
 postio-model.workspace = true
 # The rendered document's links and text, which `o` offers (US2).
 postio-render.workspace = true

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use postio_client::Client;
 use postio_client::protocol::ClientKind;
-use postio_host::Host;
+use postio_host::{Connector, Host};
 
 /// What a tool call reads and writes through.
 pub trait Backend {
@@ -24,6 +24,7 @@ pub trait Backend {
 pub struct Lease {
     client: Option<Client>,
     host: Option<Host>,
+    beside_window: bool,
 }
 
 impl Lease {
@@ -32,6 +33,12 @@ impl Lease {
         self.client
             .as_ref()
             .expect("held until the lease is dropped")
+    }
+
+    /// Whether the client stands beside an open app window, whose undo
+    /// takes back what it does.
+    pub fn beside_window(&self) -> bool {
+        self.beside_window
     }
 }
 
@@ -91,27 +98,33 @@ impl Backend for Installed {
         Ok(Lease {
             client: Some(client),
             host: Some(host),
+            beside_window: false,
         })
     }
 }
 
-/// A host started elsewhere and kept for the life of the server.
+/// A host something else started and keeps: the app's own, answering on
+/// the agent socket, or a demo's or a suite's.
 pub struct Held {
-    host: Arc<Host>,
+    connector: Connector,
 }
 
 impl Held {
-    /// Serve `host`.
-    pub fn new(host: Arc<Host>) -> Self {
-        Held { host }
+    /// Serve the host `connector` connects to.
+    pub fn new(connector: Connector) -> Self {
+        Held { connector }
     }
 }
 
 impl Backend for Held {
     fn lease(&mut self) -> Result<Lease, String> {
+        // Beside the app's window when there is one, so what the agent
+        // does is on that window's undo (ADR 0041, amended 2026-10-14).
+        let (client, beside_window) = self.connector.connect_agent();
         Ok(Lease {
-            client: Some(self.host.connect(ClientKind::Mcp)),
+            client: Some(client),
             host: None,
+            beside_window,
         })
     }
 }

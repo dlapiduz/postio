@@ -106,7 +106,7 @@ fn main() -> ExitCode {
                 }
             };
             let audit = options.audit.map_or_else(Audit::none, Audit::to_file);
-            let mut server = Server::new(postio_mcp::Held::new(host), config, audit);
+            let mut server = Server::new(postio_mcp::Held::new(host.connector()), config, audit);
             serve(stdin.lock(), stdout.lock(), &mut server)
         }
         #[cfg(not(feature = "demo"))]
@@ -117,7 +117,10 @@ fn main() -> ExitCode {
                 config.clone(),
                 Arc::new(postio_account::secret::KeyringSecretStore::default()),
             );
-            let mut server = Server::new(backend, config, audit);
+            // Answered by the Postio app when one is open and listening
+            // (ADR 0041, amended 2026-10-14); opened here when none is.
+            let mut server = Server::new(backend, config, audit)
+                .answered_by_app(postio_mcp::socket::installed_path());
             serve(stdin.lock(), stdout.lock(), &mut server)
         }
     };

@@ -129,6 +129,9 @@ struct Entry {
     actions: Actions,
     /// Where this client's own command events go, to be sorted.
     sink: EventSink,
+    /// Where this client hears everything: an agent acting beside it tells
+    /// it what the agent's commands said about themselves.
+    outbox: async_channel::Sender<EventEnvelope>,
     /// The tasks that carry this client's events, stopped when it leaves:
     /// the hub never closes a subscription on its own.
     tasks: Vec<tokio::task::AbortHandle>,
@@ -670,6 +673,15 @@ impl Host {
         postio_session::blocking::now(postio_session::end_session(&self.inner.wiring.database));
     }
 
+    /// What hands out clients of this host to something that outlives a
+    /// borrow of it: the agent socket's connections (ADR 0041, amended
+    /// 2026-10-14).
+    pub fn connector(&self) -> Connector {
+        Connector {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+
     /// A client of this host: every frontend's, in its own process.
     pub fn connect(&self, kind: ClientKind) -> Client {
         let (id, events) = self.inner.join(kind);
@@ -681,6 +693,53 @@ impl Host {
     }
 }
 
+/// Hands out clients of a host, from anywhere: a clone of what
+/// [`Host::connect`] uses, without the host's runtime.
+#[derive(Clone)]
+pub struct Connector {
+    inner: Arc<Inner>,
+}
+
+impl std::fmt::Debug for Connector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Connector").finish_non_exhaustive()
+    }
+}
+
+impl Connector {
+    /// A client of the host, as [`Host::connect`].
+    pub fn connect(&self, kind: ClientKind) -> Client {
+        let (id, events) = self.inner.join(kind);
+        Client::new(Arc::new(Local {
+            inner: Arc::clone(&self.inner),
+            client: id,
+            events,
+        }))
+    }
+
+    /// A client for an agent's calls ([`ClientKind::Mcp`]), standing beside
+    /// the app window that connected last.
+    ///
+    /// It shares that window's verbs, so what the agent does is on the
+    /// window's undo stack and `u` there takes it back, and the window
+    /// hears the undo offer each of the agent's commands makes, as it would
+    /// for its own keystroke. Its tracked sends still answer the agent. With
+    /// no window connected, it is an ordinary client with its own undo.
+    ///
+    /// Answers the client, and whether it stands beside a window.
+    pub fn connect_agent(&self) -> (Client, bool) {
+        let window = self.inner.window();
+        let beside = window.is_some();
+        let (id, events) = self.inner.join_beside(ClientKind::Mcp, window);
+        let client = Client::new(Arc::new(Local {
+            inner: Arc::clone(&self.inner),
+            client: id,
+            events,
+        }));
+        (client, beside)
+    }
+}
+
 impl Inner {
     fn runtime(&self) -> &tokio::runtime::Handle {
         &self.wiring.runtime
@@ -688,10 +747,48 @@ impl Inner {
 
     /// Register a client and start sorting its events.
     fn join(&self, kind: ClientKind) -> (ClientId, async_channel::Receiver<EventEnvelope>) {
+        self.join_beside(kind, None)
+    }
+
+    /// The window an agent stands beside: the app frontend that connected
+    /// last, if one is connected.
+    fn window(&self) -> Option<Entry> {
+        let clients = self.clients.lock().expect("never poisoned");
+        clients
+            .iter()
+            .filter(|(_, entry)| {
+                matches!(
+                    entry.kind,
+                    ClientKind::Focus | ClientKind::Ffi | ClientKind::Tui
+                )
+            })
+            .max_by_key(|(id, _)| id.0)
+            .map(|(_, entry)| entry.clone())
+    }
+
+    /// [`Inner::join`], sharing `beside`'s verbs -- its selection and its
+    /// undo stack -- when there is one, and telling it what this client's
+    /// commands say about themselves as well as telling this client.
+    fn join_beside(
+        &self,
+        kind: ClientKind,
+        beside: Option<Entry>,
+    ) -> (ClientId, async_channel::Receiver<EventEnvelope>) {
         let id = ClientId(self.next_client.fetch_add(1, Ordering::Relaxed));
-        let state = SharedState::default();
-        let actions = actions_for(&self.wiring, &state);
-        let verbs = Arc::new(verbs_over(&self.wiring, &state, actions.clone()));
+        let (state, actions, verbs) = match &beside {
+            Some(window) => (
+                window.state.clone(),
+                window.actions.clone(),
+                Arc::clone(&window.verbs),
+            ),
+            None => {
+                let state = SharedState::default();
+                let actions = actions_for(&self.wiring, &state);
+                let verbs = Arc::new(verbs_over(&self.wiring, &state, actions.clone()));
+                (state, actions, verbs)
+            }
+        };
+        let also_told = beside.map(|window| window.outbox);
         let (outbox, events) = async_channel::unbounded::<EventEnvelope>();
 
         // Everybody's news, from the engines and from every client's verbs.
@@ -716,10 +813,19 @@ impl Inner {
         // to everybody (the hub, which includes this client).
         let (sink, own) = event_channel();
         let hub = self.hub.clone();
+        let own_outbox = outbox.clone();
         let sorting = self.runtime().spawn(async move {
             while let Some(envelope) = own.next_tracked().await {
                 if is_feedback(&envelope.event) {
-                    if outbox.send(envelope).await.is_err() {
+                    // The window an agent acts beside hears it too: the undo
+                    // offer is on its stack. Untracked there, since the
+                    // tracked send is the agent's to hear.
+                    if let Some(window) = &also_told {
+                        let _ = window
+                            .send(EventEnvelope::untracked(envelope.event.clone()))
+                            .await;
+                    }
+                    if own_outbox.send(envelope).await.is_err() {
                         return;
                     }
                 } else {
@@ -740,6 +846,7 @@ impl Inner {
                 verbs,
                 actions,
                 sink,
+                outbox,
                 tasks: vec![hearing.abort_handle(), sorting.abort_handle()],
                 drafts: compose::DraftWriter::spawn(self.wiring.database.clone(), self.runtime()),
             },

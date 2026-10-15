@@ -116,6 +116,9 @@ pub struct SessionOptions {
     discovery: Option<Arc<dyn postio_account::discovery::DiscoveryTransport>>,
     #[cfg(feature = "testing")]
     mail: Option<postio_session::MailOverride>,
+    /// Where an in-memory session answers agents, if it does: the demo's.
+    #[cfg(feature = "testing")]
+    agents_at: Option<std::path::PathBuf>,
 }
 
 /// What a call against a session with no store answers.
@@ -163,6 +166,8 @@ impl SessionOptions {
             discovery: None,
             #[cfg(feature = "testing")]
             mail: None,
+            #[cfg(feature = "testing")]
+            agents_at: None,
         }
     }
 
@@ -216,6 +221,15 @@ impl SessionOptions {
             config: ConfigSource::Document(String::new()),
             ..Self::at_default_path()
         }
+    }
+
+    /// Answer agents' calls on the socket at `path` (ADR 0041, amended
+    /// 2026-10-14), as a session over a store file always does: for the
+    /// demo, which has no file to sit beside.
+    #[cfg(feature = "testing")]
+    pub fn answering_agents_at(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.agents_at = Some(path.into());
+        self
     }
 
     /// An in-memory session over a database the caller already seeded.
@@ -451,6 +465,34 @@ fn serve(
     }
 }
 
+/// Answer agents on the socket at `socket` with `host`, while the session
+/// lasts (ADR 0041, amended 2026-10-14): the Mac app is the one Postio
+/// most often open while an agent works, so its calls are served here
+/// rather than refused. `[mcp]` is read from the session's `config.toml`,
+/// or the installation's when the session has none of its own, and the
+/// access log is kept beside the store.
+fn answer_agents(
+    socket: std::path::PathBuf,
+    host: &Host,
+    source: &ConfigSource,
+) -> Mutex<Option<postio_mcp::socket::Listener>> {
+    let audit = socket
+        .parent()
+        .and_then(std::path::Path::parent)
+        .map(|store_dir| postio_mcp::Audit::to_file(store_dir.join("mcp-access.log")))
+        .unwrap_or_else(postio_mcp::Audit::none);
+    let config = source
+        .path()
+        .or_else(|| postio_config::paths::config_path().ok());
+    Mutex::new(
+        postio_mcp::socket::listen(socket, host.connector(), config, audit)
+            .inspect_err(|error| {
+                tracing::warn!(%error, "agents will not be answered by this app: {error}");
+            })
+            .ok(),
+    )
+}
+
 /// What `@` and `+` match against, read through the host.
 #[derive(Clone, Default)]
 struct FinderSources {
@@ -620,6 +662,9 @@ pub struct Session {
     /// the composer's footer says where a draft lives, and a footer naming a
     /// path the draft is not in is worse than no footer.
     store_at: std::path::PathBuf,
+    /// The agent socket, while this session answers agents (ADR 0041,
+    /// amended 2026-10-14). Taken at shutdown, before the store goes.
+    agents: Mutex<Option<postio_mcp::socket::Listener>>,
     /// The sign-in in flight, so closing the sheet can cancel it.
     ///
     /// A token rather than a task handle: cancelling has to unwind the
@@ -1728,6 +1773,7 @@ impl Session {
 
         #[cfg(feature = "testing")]
         if options.in_memory {
+            let agents_at = options.agents_at.clone();
             let database = match options.seeded {
                 Some(database) => database,
                 None => {
@@ -1833,6 +1879,10 @@ impl Session {
                 sign_in: Mutex::new(None),
                 sign_in_port: Arc::default(),
                 store_at: std::path::PathBuf::from(":memory:"),
+                agents: match agents_at {
+                    Some(socket) => answer_agents(socket, &host, &source),
+                    None => Mutex::new(None),
+                },
                 // A file of its own per session: an in-memory store has no
                 // directory to sit beside, and one shared path made a grant
                 // from one test true for the next.
@@ -1945,6 +1995,7 @@ impl Session {
                 .filter(|parent| !parent.as_os_str().is_empty())
                 .unwrap_or(&store_at)
                 .join("allowed-senders.toml"),
+            agents: answer_agents(postio_mcp::socket::path_for(&store_at), &host, &source),
             store_at,
             serial: next_serial(),
             thread_renders: Mutex::new(postio_ui::reader::document::RenderCache::default()),
@@ -4886,6 +4937,10 @@ impl Session {
     /// a window close racing an explicit quit — and taking the process down on
     /// the second one would turn an ordinary shutdown into a crash report.
     pub fn shutdown(&self) {
+        // Agents first: nothing should be answering once the store goes.
+        if let Ok(mut agents) = self.agents.lock() {
+            agents.take();
+        }
         if let Ok(mut guard) = self.wiring.lock() {
             guard.take();
         }

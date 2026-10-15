@@ -37,6 +37,10 @@ postio-model.workspace = true
 postio-search.workspace = true
 # Logging, and where the store is.
 postio-session.workspace = true
+# This process's user id, to check the agent socket's owner and peer.
+rustix = { version = "1", features = ["process"] }
+# The peer's credentials on the agent socket (std's are unstable).
+tokio = { workspace = true, features = ["net", "rt"] }
 # JSON-RPC 2.0 framing, one message per line (the MCP stdio transport).
 serde_json = { workspace = true }
 tracing = { workspace = true }

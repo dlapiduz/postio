@@ -34,6 +34,9 @@ postio-core.workspace = true
 postio-body.workspace = true
 # The store's host, in this process: one Postio at a time has the store.
 postio-host.workspace = true
+# Agents' calls, answered while this app has the store (ADR 0041, amended
+# 2026-10-14).
+postio-mcp.workspace = true
 postio-model.workspace = true
 postio-search.workspace = true
 # Logging, to journald: stderr is the screen this draws on.

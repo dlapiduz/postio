@@ -105,11 +105,12 @@ gets the change the next time Postio syncs. Some rules always apply:
 - **Nothing goes to the Trash or Junk.** Moving mail there is deleting it,
   so `move_messages` refuses those folders even when you have shared them.
   It also refuses Drafts, Sent and the Outbox.
-- **Postio's undo cannot take it back.** `u` in Postio undoes what you did
-  in that app. An agent's change happens in another process, with its own
-  history, which ends when the call does. Each of these tools tells the
-  agent which folder every message came from, so you can ask it to put them
-  back, or move them yourself.
+- **You can undo it in Postio, while Postio is open.** When the app is
+  open, the agent's change is made by that app, as if you had done it:
+  the "Archived 1 message — Undo" notice appears, and `u` (⌘Z on a Mac)
+  takes it back. When no Postio app is open, there is no undo history to
+  put it on. In both cases each of these tools tells the agent which
+  folder every message came from, so you can ask it to put them back.
 - **Labels sync like yours.** A label is the same label Postio's own label
   key uses. On an IMAP account it is saved to the server as a keyword.
 
@@ -148,12 +149,24 @@ the agent can do:
 computer. It does not sync, fetch or connect to anything. To see new mail,
 open Postio and let it sync.
 
+### When Postio is open
+
 Only one Postio app can have your mail store open at a time
 ([ADR 0041](https://github.com/dlapiduz/postio/blob/main/docs/decisions/0041-one-app-opens-the-store-at-a-time.md)).
-`postio-mcp` opens the store for each tool call and closes it right after,
-so it never keeps the desktop app or the terminal out. A call made while one
-of them is open fails with "Postio is already open in another window."
-Close that app, and the agent's next call will work.
+When the desktop app, the Mac app or the terminal has it open, that app
+answers the agent's tool calls itself. Its window repaints as the agent
+works, its undo takes back what the agent did, and it reads `[mcp]` from its
+own `config.toml`. When no app is open, `postio-mcp` opens the store for
+each call and closes it right after, so it never keeps the app out.
+
+The app and `postio-mcp` talk over a Unix domain socket at
+`agents/mcp.sock` in the folder that holds the store. It is not a network
+port: nothing on another computer can reach it. The folder is readable only
+by you (`0700`) and the socket only by you (`0600`). Both ends ask the
+operating system which user the other end runs as and refuse any other
+user. `postio-mcp` will not use a socket that belongs to someone else or
+that others can open, and an app that finds a socket left behind by a crash
+replaces it.
 
 ## The access log
 

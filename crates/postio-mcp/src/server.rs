@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use crate::audit::Audit;
 use crate::backend::Backend;
 use crate::scope::Scope;
+use crate::socket::{self, Asked};
 use crate::tools::{self, Tool};
 
 /// The protocol versions this server speaks, newest first. A client asking
@@ -26,6 +27,8 @@ pub struct Server<B: Backend> {
     backend: B,
     config: Option<PathBuf>,
     audit: Audit,
+    /// The agent socket a running Postio app answers on, asked first.
+    app: Option<PathBuf>,
 }
 
 impl<B: Backend> Server<B> {
@@ -35,7 +38,16 @@ impl<B: Backend> Server<B> {
             backend,
             config,
             audit,
+            app: None,
         }
+    }
+
+    /// The same server, handing each tool call to the Postio app listening
+    /// at `socket` when one is (ADR 0041, amended 2026-10-14), and
+    /// answering it here only when none is.
+    pub fn answered_by_app(mut self, socket: PathBuf) -> Self {
+        self.app = Some(socket);
+        self
     }
 
     /// Answer one line; `None` for a notification, which has no answer.
@@ -60,7 +72,14 @@ impl<B: Backend> Server<B> {
             "initialize" => Ok(initialize(&params)),
             "ping" => Ok(json!({})),
             "tools/list" => Ok(tools::definitions()),
-            "tools/call" => self.call(&params),
+            "tools/call" => match self.app.as_deref().map(|app| socket::ask(app, line)) {
+                Some(Asked::Answered(reply)) => return Some(reply),
+                Some(Asked::Refused(why)) => Ok(json!({
+                    "content": [{"type": "text", "text": format!("Postio did not answer: {why}.")}],
+                    "isError": true,
+                })),
+                Some(Asked::NoApp) | None => self.call(&params),
+            },
             _ => Err((METHOD_NOT_FOUND, "Postio does not answer that method.")),
         };
         Some(

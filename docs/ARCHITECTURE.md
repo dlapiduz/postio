@@ -150,9 +150,11 @@ frontend but a second application sharing a file.
 
 **`postio-mcp` is the frontend with no screen** (ADR 0010, [`mcp.md`](mcp.md)).
 An AI agent launches it and speaks the Model Context Protocol on its stdin
-and stdout; it listens on no socket. It is a client of `postio-host` like
-the other apps, and it opens the store for each tool call and closes it
-afterwards, so it never keeps the person's own mail client out. It reads
+and stdout. When an app holds the store, that app answers each call
+itself, over a private Unix socket beside the store (ADR 0041's 2026-10-14
+amendment), and the agent's change lands on that window's undo. When no app
+is open, `postio-mcp` opens the store for one call and closes it afterwards,
+so it never keeps the person's own mail client out. It reads
 only the accounts and folders `[mcp]` in `config.toml` shares, returns
 bodies as `postio-body` text inside a block labelled untrusted. It writes
 drafts, and archives, moves and labels where `[mcp]`'s `actions` allow it,
@@ -172,7 +174,9 @@ their own process and reach mail only through `postio-client`, whose in-process
 transport is a spawn and a oneshot. The host is where every store operation
 is written once -- paging, reading, search, compose, settings, onboarding,
 sync and upkeep -- and the frontends draw. Whichever app starts first holds
-the store; the other says so and waits to be asked again.
+the store; the other says so and waits to be asked again. An AI agent's
+calls are the exception that proves it: they reach the app that holds the
+store over its agent socket, rather than opening the store a second time.
 
 ---
 

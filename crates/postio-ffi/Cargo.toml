@@ -42,6 +42,9 @@ postio-account = { workspace = true, features = ["maildir"] }
 # (ADR 0041). Its commands and list reads go through that client.
 postio-client.workspace = true
 postio-host.workspace = true
+# Agents' calls, answered while this app has the store (ADR 0041, amended
+# 2026-10-14).
+postio-mcp.workspace = true
 postio-runtime.workspace = true
 postio-ui.workspace = true
 postio-vault.workspace = true
