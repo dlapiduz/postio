@@ -29,6 +29,21 @@ public struct PlacesView: View {
         public static let empty: CGFloat = 44
         /// The filter field's band above the list.
         public static let field: CGFloat = 52
+        /// How far left of the Inbox ▾ button the popover's left edge sits
+        /// (screen 10: the button at 12, the popover at 10).
+        public static let leadIn: CGFloat = 2
+
+        /// The rect the popover is shown from, in the button's own space.
+        ///
+        /// A popover is centred on the rect it hangs from. Hung from the
+        /// button itself -- at the window's left edge, and narrower than
+        /// the popover -- its left half fell outside the window, over
+        /// whatever was beside it. This rect starts at the button's left
+        /// edge and is the popover's width, so the popover hangs from there
+        /// to the right, inside the window, as screen 10 draws it.
+        public static func positioningRect(button: CGRect, width: CGFloat = width) -> CGRect {
+            CGRect(x: button.minX - leadIn, y: button.minY, width: width, height: button.height)
+        }
     }
 
     /// The list and its footer's height for what `model` holds, before

@@ -77,9 +77,29 @@ public final class PlacesPopover: NSObject, NSPopoverDelegate, NSSearchFieldDele
         field.placeholderString = model.placeholder
         resize()
         if !popover.isShown {
-            popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+            // Hung rightward from the button's left edge, inside the
+            // window (screen 10), with no arrow: the arrow would point at
+            // the middle of that rect rather than at the button.
+            // From the window's content view: AppKit clips the rect to the
+            // view it is given, and the button is narrower than the popover.
+            hideArrow()
+            let host = anchor.window?.contentView ?? anchor
+            let button = host.convert(anchor.bounds, from: anchor)
+            popover.show(
+                relativeTo: PlacesView.Metrics.positioningRect(button: button), of: host,
+                preferredEdge: host.isFlipped ? .maxY : .minY)
         }
         popover.contentViewController?.view.window?.makeFirstResponder(field)
+    }
+
+    /// The screen-10 popover has no arrow. AppKit has no public switch for
+    /// it before macOS 15's `hasFullSizeContent`; `shouldHideAnchor` is the
+    /// long-standing one, used only where the popover answers to it.
+    private func hideArrow() {
+        let key = "shouldHideAnchor"
+        if popover.responds(to: NSSelectorFromString("setShouldHideAnchor:")) {
+            popover.setValue(true, forKey: key)
+        }
     }
 
     /// The places were read again: the size follows them.
