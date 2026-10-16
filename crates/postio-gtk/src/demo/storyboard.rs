@@ -591,6 +591,23 @@ fn pump_until(max: Duration, mut done: impl FnMut() -> bool) -> bool {
     reached
 }
 
+/// Runs a store write to its end on the demo's runtime, off this thread, while
+/// the main loop keeps turning, and returns what it answered.
+fn off_thread<T: Send + 'static>(
+    work: impl std::future::Future<Output = Result<T, String>> + Send + 'static,
+) -> Result<T, String> {
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = send.send(super::on_runtime(work));
+    });
+    let mut answer = None;
+    pump_until(Duration::from_secs(10), || {
+        answer = receive.try_recv().ok();
+        answer.is_some()
+    });
+    answer.unwrap_or_else(|| Err("the store did not answer in time".to_owned()))
+}
+
 /// Turns the main loop for `duration`, so timers and frames happen.
 fn pump(duration: Duration) {
     let context = glib::MainContext::default();
@@ -827,8 +844,9 @@ fn deliver_input(
                 // hub, as a sync pass does: the window hears what the app
                 // would.
                 EnvEvent::NewMail => {
+                    let store = acting.store.clone();
                     let (mailbox, message) =
-                        postio_core::blocking::now(super::deliver_new_mail(&acting.store, account))
+                        off_thread(async move { super::deliver_new_mail(&store, account).await })
                             .map_err(|error| format!("new mail could not be filed: {error}"))?;
                     acting.sink.emit(Event::NewMail {
                         account,
@@ -837,11 +855,10 @@ fn deliver_input(
                     })
                 }
                 EnvEvent::BodyArrived => {
-                    let message = postio_core::blocking::now(super::deliver_held_body(
-                        &acting.store,
-                        account,
-                    ))
-                    .map_err(|error| format!("the body could not be stored: {error}"))?;
+                    let store = acting.store.clone();
+                    let message =
+                        off_thread(async move { super::deliver_held_body(&store, account).await })
+                            .map_err(|error| format!("the body could not be stored: {error}"))?;
                     acting.sink.emit(Event::BodyLoaded { account, message })
                 }
             };
