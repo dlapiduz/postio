@@ -94,6 +94,16 @@ pub struct FocusReaderDocumentFfi {
     pub paper_floor: f64,
 }
 
+/// A message as the window opens on it: what surrounds the body, and the
+/// body, from one read of the store (#1609, #1589).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct FocusMessageOpenFfi {
+    /// The chrome: subject, position, sender block, verbs, attachments.
+    pub view: crate::FocusMessageViewFfi,
+    /// The body, with the facts its render paid for.
+    pub document: FocusReaderDocumentFfi,
+}
+
 /// The message window's column, at the window's own width.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
 pub struct FocusMessageColumnFfi {
@@ -128,7 +138,37 @@ impl Session {
         chosen: Option<TreatmentFfi>,
         main_width: i32,
     ) -> FocusReaderDocumentFfi {
-        crate::session::blocking(self.focus_reader_answers(message, remote, chosen, main_width))
+        crate::session::blocking(async {
+            let reading = self.reading_of(message).await;
+            self.focus_reader_answers(reading.as_ref(), remote, chosen, main_width)
+        })
+    }
+
+    /// `message` as the window opens on it, shown from row `index` of
+    /// `total`: [`focus_message_view`](Self::focus_message_view) and
+    /// [`focus_reader_document`](Self::focus_reader_document) together, from
+    /// **one** read. Asked separately, each read and decoded the body for
+    /// itself, so every open paid for it twice (#1609). The two single
+    /// calls stay for what changes one half alone: `O`, a grant, a label.
+    pub fn focus_message_open(
+        &self,
+        message: i64,
+        index: u32,
+        total: u32,
+        remote: crate::RemoteImagesFfi,
+        chosen: Option<TreatmentFfi>,
+        main_width: i32,
+    ) -> FocusMessageOpenFfi {
+        let row = self.focus_row_of(message);
+        crate::session::blocking(async {
+            let reading = self.reading_of(message).await;
+            FocusMessageOpenFfi {
+                view: self
+                    .focus_message_answers(message, index, total, row, reading.as_ref())
+                    .await,
+                document: self.focus_reader_answers(reading.as_ref(), remote, chosen, main_width),
+            }
+        })
     }
 
     /// `message`'s raw RFC 822 source, every byte as the server sent it:
@@ -161,23 +201,26 @@ impl Session {
     /// `None`: "Always for this sender". Saved beside the remote-image
     /// grants, where GTK's reader keeps it.
     pub fn always_treatment(&self, sender: String, treatment: Option<TreatmentFfi>) {
-        let path = self.allow_list_path();
-        let mut list = postio_ui::allowlist::RemoteImageAllowList::load_from(&path);
-        list.set_treatment(&sender, treatment.map(Into::into));
-        if let Err(error) = list.save_to(&path) {
+        if let Err(error) =
+            self.amend_remote_images(|list| list.set_treatment(&sender, treatment.map(Into::into)))
+        {
             tracing::error!(%error, "a sender's treatment could not be saved: {error}");
         }
     }
 }
 
 impl Session {
-    async fn focus_reader_answers(
+    /// The document for the message `reading` read, or the plate for why
+    /// there is none. No store read of its own: the body, the row and the
+    /// send state are all on `reading`, which the caller read once.
+    fn focus_reader_answers(
         &self,
-        message: i64,
+        reading: Option<&postio_client::protocol::Reading>,
         remote: crate::RemoteImagesFfi,
         chosen: Option<TreatmentFfi>,
         main_width: i32,
     ) -> FocusReaderDocumentFfi {
+        use postio_client::protocol::Body;
         let geometry =
             postio_ui::focus_dialog::Geometry::for_platform(postio_config::paths::Platform::Apple);
         let window_width = geometry.dialog_width(main_width);
@@ -212,62 +255,42 @@ impl Session {
             )
         };
         let remote = postio_body::RemoteImages::from(remote);
-        let Some((database, _blobs)) = self.store_and_blobs() else {
+        let Some(reading) = reading else {
             return plate(Absent::Missing);
         };
-        let Ok(connection) = database.connect().await else {
-            return plate(Absent::Missing);
-        };
-        let offline = self.is_offline();
-        let (body, encoding_problems) = match postio_session::reading::load_body_or_reason(
-            &connection,
-            message.into(),
-            offline,
-        )
-        .await
-        {
-            postio_session::reading::Body::Ready {
+        let (body, encoding_problems) = match &reading.body {
+            Body::Ready {
                 body,
                 encoding_problems,
-            } => (body, encoding_problems),
-            postio_session::reading::Body::Absent(state) => return plate(state),
+            } => (body, *encoding_problems),
+            Body::Partial => return plate(Absent::Partial),
+            Body::Offline => return plate(Absent::Offline),
+            Body::Missing => return plate(Absent::Missing),
+            Body::Empty => return plate(Absent::Empty),
+            Body::ForeignDraft => return plate(Absent::ForeignDraft),
         };
-        let repository = postio_storage::repository::MessageRepository::new(&connection);
-        let id = postio_model::ids::MessageId::new(message);
-        let row = repository.get(id).await.ok().flatten();
-        let sender = row.as_ref().and_then(|row| {
-            row.from
-                .first()
-                .map(|address| address.address.to_lowercase())
+        let row = reading.row.as_deref();
+        let from = row.and_then(|row| row.from.first());
+        let sender = from.map(|address| address.address.to_lowercase());
+        // The send state is the banner's gate (#1525): mail on its way out
+        // is never offered a way to leave a list.
+        let unsubscribe = row.and_then(|row| {
+            postio_ui::unsubscribe::banner(
+                reading.send_state,
+                row.list_id.as_deref(),
+                row.promoted.map(|said| said.unsubscribe_offered),
+                &row.from,
+            )
+            .map(|offer| crate::UnsubscribeOfferFfi {
+                list_identifier: offer.list_identifier,
+                summary: offer.summary,
+                action: postio_ui::unsubscribe::ACTION.to_owned(),
+            })
         });
-        // The send state is the banner's gate (#1525): a read that fails
-        // means "do not offer", never "no send state".
-        let unsubscribe = match &row {
-            Some(row) => match repository.send_state(id).await {
-                Ok(send_state) => postio_ui::unsubscribe::banner(
-                    send_state,
-                    row.list_id.as_deref(),
-                    row.promoted.map(|said| said.unsubscribe_offered),
-                    &row.from,
-                )
-                .map(|offer| crate::UnsubscribeOfferFfi {
-                    list_identifier: offer.list_identifier,
-                    summary: offer.summary,
-                    action: postio_ui::unsubscribe::ACTION.to_owned(),
-                }),
-                Err(error) => {
-                    tracing::warn!(message, %error, "cannot read a message's send state");
-                    None
-                }
-            },
-            None => None,
-        };
-        let remembered = sender.as_deref().and_then(|sender| {
-            postio_ui::allowlist::RemoteImageAllowList::load_from(&self.allow_list_path())
-                .treatment_for(sender)
-        });
-        let rendered =
-            body_html_treated(&body, remote, chosen.map(Into::into).or(remembered), None);
+        let remembered = sender
+            .as_deref()
+            .and_then(|sender| self.with_remote_images(|list| list.treatment_for(sender)));
+        let rendered = body_html_treated(body, remote, chosen.map(Into::into).or(remembered), None);
         let treated = rendered.treated;
         let shown = treated.map_or(Treatment::AppColours, |treated| treated.shown);
         // The guard the renderer runs on Linux, run on the markup: the Mac's
@@ -279,9 +302,7 @@ impl Session {
             ),
             Treatment::Paper => rendered.html.clone(),
         };
-        let notice = self
-            .held_back_notice(&connection, message, rendered.held_back, remote)
-            .await;
+        let notice = self.held_back_notice(rendered.held_back, remote, from);
         let document = flow(
             &document_for_treated(&html, &rendered.styles, remote, shown),
             shown,

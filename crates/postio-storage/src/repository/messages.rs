@@ -1624,6 +1624,7 @@ impl<'a> MessageRepository<'a> {
               WHERE messages.id = ?1",
             [id.get()],
             |row| {
+                crate::store::BODY_LOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let text: Option<Vec<u8>> = row.col(0)?;
                 let html: Option<Vec<u8>> = row.col(1)?;
                 Ok(StoredBody {

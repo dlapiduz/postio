@@ -117,36 +117,53 @@ impl Session {
     ///
     /// A store read, so never on the main actor.
     pub fn focus_message_view(&self, message: i64, index: u32, total: u32) -> FocusMessageViewFfi {
-        // The marker is the list row's, read with its page: the card is
-        // the marked message's, so a message `[` stepped to has none. Found
-        // by the message, not by `index`, which counts messages where the
-        // list also draws digest rows.
-        let row = self
-            .focus_driver()
-            .row_of(message)
-            .filter(|row| row.id == message);
-        crate::session::blocking(self.focus_message_answers(message, index, total, row))
+        let row = self.focus_row_of(message);
+        crate::session::blocking(async {
+            let reading = self.reading_of(message).await;
+            self.focus_message_answers(message, index, total, row, reading.as_ref())
+                .await
+        })
     }
 }
 
 impl Session {
-    async fn focus_message_answers(
+    /// The Focus list's row for `message`, when it is the row's own message.
+    pub(crate) fn focus_row_of(&self, message: i64) -> Option<crate::FocusRowFfi> {
+        // The marker is the list row's, read with its page: the card is
+        // the marked message's, so a message `[` stepped to has none. Found
+        // by the message, not by `index`, which counts messages where the
+        // list also draws digest rows.
+        self.focus_driver()
+            .row_of(message)
+            .filter(|row| row.id == message)
+    }
+
+    /// Everything a pane draws of `message` -- its body, its row, its send
+    /// state -- on one reader turn of the store's owner. `None` with no
+    /// store to ask.
+    pub(crate) async fn reading_of(
+        &self,
+        message: i64,
+    ) -> Option<postio_client::protocol::Reading> {
+        self.client()?
+            .readings(vec![MessageId::new(message)], self.is_offline())
+            .await
+            .ok()
+            .and_then(|mut readings| readings.pop())
+    }
+
+    /// The chrome around `message`, from `reading` -- read once for the
+    /// chrome and the body together when the window opens.
+    pub(crate) async fn focus_message_answers(
         &self,
         message: i64,
         index: u32,
         total: u32,
         row: Option<crate::FocusRowFfi>,
+        reading: Option<&postio_client::protocol::Reading>,
     ) -> FocusMessageViewFfi {
         let id = MessageId::new(message);
         let client = self.client();
-        let reading = match &client {
-            Some(client) => client
-                .readings(vec![id], self.is_offline())
-                .await
-                .ok()
-                .and_then(|mut readings| readings.pop()),
-            None => None,
-        };
         let summary = match &client {
             Some(client) => client
                 .message_rows(vec![id])
@@ -177,7 +194,7 @@ impl Session {
                 .collect(),
             _ => Vec::new(),
         };
-        let account = match (&client, reading.as_ref().and_then(|r| r.row.as_deref())) {
+        let account = match (&client, reading.and_then(|r| r.row.as_deref())) {
             (Some(client), Some(row)) => {
                 let accounts = client.accounts().await.unwrap_or_default();
                 let enabled: Vec<_> = accounts.iter().filter(|account| account.enabled).collect();
@@ -207,7 +224,7 @@ impl Session {
         let step = |by: isize| {
             focus_dialog::step_thread(at, conversation.len(), by).map(|next| conversation[next])
         };
-        let send_state = reading.as_ref().and_then(|reading| reading.send_state);
+        let send_state = reading.and_then(|reading| reading.send_state);
         let position = focus_dialog::with_account(
             &focus_dialog::position_line(
                 index as usize,
@@ -228,7 +245,7 @@ impl Session {
                     .then(|| action(CommandId::NextInConversation, focus_dialog::LATER_MESSAGE)),
             });
 
-        let envelope = reading.as_ref().and_then(|reading| reading.row.as_deref());
+        let envelope = reading.and_then(|reading| reading.row.as_deref());
         let subject = postio_ui::reader::header::subject_text(
             envelope
                 .and_then(|row| row.subject.as_deref())
