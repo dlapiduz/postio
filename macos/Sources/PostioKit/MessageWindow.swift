@@ -98,12 +98,71 @@ public final class MessageWindowModel {
     @ObservationIgnored private let gate = RenderGate()
     @ObservationIgnored private let documentGate = RenderGate()
     @ObservationIgnored private var pending: [Task<Void, Never>] = []
+    /// What marks `shown` read once it has been in front of somebody for
+    /// `postio_ui::dwell`'s delay (#71, #1159). Set once, after `self` is.
+    @ObservationIgnored private var dwell: DwellClock?
+    /// Called with a message the read clock ran out on.
+    @ObservationIgnored private let markRead: (Int64) -> Void
+    /// Whether Postio is in the background, where nothing is being read.
+    @ObservationIgnored private var away = false
+    /// The message the read clock has finished with: run out on, or read
+    /// state set by the person. Not started again for it until another
+    /// message is shown (GTK's `settled`).
+    @ObservationIgnored private var settledRead: Int64?
 
     /// `report` is told More's and find's state whenever either changes:
     /// what the controller's Back closes first (`focus_reader_state`).
-    public init(source: any MessageWindowSource, report: @escaping (Bool, Bool) -> Void) {
+    /// `markRead` is given a message left open long enough to count as
+    /// read; `schedule` is the read clock's timer, injected for tests.
+    public init(
+        source: any MessageWindowSource,
+        report: @escaping (Bool, Bool) -> Void,
+        markRead: @escaping (Int64) -> Void = { _ in },
+        schedule: @escaping @MainActor (TimeInterval, @escaping () -> Void) -> DwellClock.Cancellable =
+            DwellClock.afterOnMain
+    ) {
         engine = source
         self.report = report
+        self.markRead = markRead
+        dwell = DwellClock(schedule: schedule) { [weak self] message in
+            self?.dwellRanOut(message)
+        }
+    }
+
+    /// Postio became the active app, or stopped being it. A message open
+    /// behind another app is not being read: the clock stops, and starts
+    /// again from the top on the way back, for a message it has not
+    /// already finished with (GTK's `set_window_active`).
+    public func setAppActive(_ active: Bool) {
+        away = !active
+        if away {
+            dwell?.stop()
+        } else if let shown, settledRead != shown {
+            armDwell()
+        }
+    }
+
+    /// The person set the read state themselves (`toggle_read`): the clock
+    /// stops and does not overrule them while this message stays open.
+    public func readStateSet() {
+        settledRead = shown
+        dwell?.stop()
+    }
+
+    /// Start the read clock on the message shown, if anybody is looking.
+    private func armDwell() {
+        guard place != nil, !away, let shown else {
+            dwell?.stop()
+            return
+        }
+        dwell?.cursorMoved(to: shown)
+    }
+
+    /// The clock ran out on `message`: it is read, if it is still shown.
+    private func dwellRanOut(_ message: Int64) {
+        settledRead = message
+        guard place != nil, shown == message else { return }
+        markRead(message)
     }
 
     /// `FocusOpenMessage`: show `message`, row `index` of `total`, opening
@@ -127,6 +186,8 @@ public final class MessageWindowModel {
 
     /// The window closed, however it did: forget the message.
     public func closed() {
+        dwell?.stop()
+        settledRead = nil
         _ = gate.begin()
         _ = documentGate.begin()
         let wasOpen = (moreOpen, find.isOpen)
@@ -251,6 +312,8 @@ public final class MessageWindowModel {
         chosen = nil
         source = nil
         showingSource = false
+        settledRead = nil
+        armDwell()
         read(message, keepingScroll: false)
     }
 
