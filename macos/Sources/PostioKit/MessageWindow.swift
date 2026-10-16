@@ -17,6 +17,9 @@ public protocol MessageWindowSource: AnyObject, Sendable {
     ) -> FocusReaderDocumentFfi
     /// The message as it came off the wire, for `v`.
     func rawSource(_ message: Int64) throws -> Data
+    /// Leave the list `message` came from: `nil` when the activation was
+    /// recorded, else why not. Writes, so never on the main actor.
+    func activateUnsubscribe(_ message: Int64) -> String?
 }
 
 extension PostioSession: MessageWindowSource {}
@@ -85,6 +88,8 @@ public final class MessageWindowModel {
     public private(set) var moreOpen = false
     /// Find in this message.
     public private(set) var find = FindInMessage()
+    /// Where each message's unsubscribe banner has got to (#1585).
+    public private(set) var unsubscribing = Unsubscribing()
 
     /// The main window's width the window opened beside: kept while it is
     /// open, so `j` and `k` never resize it (M1).
@@ -203,7 +208,31 @@ public final class MessageWindowModel {
         keepsScroll = false
         moreOpen = false
         find.close()
+        unsubscribing.clear()
         if wasOpen != (false, false) { tell() }
+    }
+
+    /// What `message`'s unsubscribe banner shows.
+    public func unsubscribeState(of message: Int64) -> Unsubscribing.State {
+        unsubscribing.state(of: message)
+    }
+
+    /// Leave the list the message on screen came from: the banner's button
+    /// and `M`, which are one command.
+    ///
+    /// **Only on deliberate activation**: nothing else here records one, and
+    /// the boundary re-derives the list from the message id and refuses a
+    /// message that offers nothing. A second press while the first is in
+    /// flight, or after it was recorded, does nothing.
+    public func unsubscribe() {
+        guard let message = displayed, unsubscribing.begin(message) else { return }
+        let source = engine
+        pending.append(
+            Task { [weak self] in
+                let complaint = await Task.detached { source.activateUnsubscribe(message) }.value
+                guard let self, self.place != nil else { return }
+                self.unsubscribing.finish(message, complaint: complaint)
+            })
     }
 
     /// `FocusReader`: what the open message does as its own.

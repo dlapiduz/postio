@@ -46,6 +46,8 @@ struct Seed {
     encoding_problems: bool,
     /// The `send_state` column, for the Outbox cases.
     send_state: Option<DraftState>,
+    /// Whether it carries a `List-Unsubscribe` (`messages.unsubscribe_offered`).
+    list_unsubscribe: bool,
 }
 
 /// A session over a store holding one message per seed, the store itself,
@@ -99,6 +101,10 @@ async fn a_store_with(
             let mut message = Message::new(account_id, inbox, Utc::now());
             message.from = vec![EmailAddress::new(Some("Weekly Digest"), seed.sender)];
             message.list_id = seed.list_id.map(str::to_owned);
+            message.promoted = Some(postio_model::promoted::PromotedHeaders {
+                unsubscribe_offered: seed.list_unsubscribe,
+                automation: 0,
+            });
             let id = repository.create(&mut message).await.expect("a message");
             repository
                 .set_body(
@@ -440,4 +446,96 @@ async fn the_privacy_pane_interleaves_every_accounts_log() {
         ],
         "the pane is one list over every account, newest first"
     );
+}
+
+/// The banner Focus's message window draws, as the document it opens with.
+fn focus_banner(session: &Session, message: i64) -> Option<postio_ffi::UnsubscribeOfferFfi> {
+    session
+        .focus_reader_document(message, RemoteImagesFfi::Blocked, None, 1440)
+        .unsubscribe
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn focus_draws_the_banner_over_list_mail_with_the_shared_words() {
+    // #1585: Focus's message window on the Mac had no banner at all, while
+    // GTK's drew one in its notice slot. The document the window already
+    // opens with carries it now, so the offer costs no second read.
+    let (session, ids, _database, _accounts) = a_store_with(&[
+        Seed {
+            sender: "weekly@mail.example.org",
+            list_id: Some("news.example.org"),
+            ..Seed::default()
+        },
+        Seed {
+            sender: "deals@shop.example.org",
+            list_unsubscribe: true,
+            ..Seed::default()
+        },
+    ])
+    .await;
+
+    let listed = focus_banner(&session, ids[0]).expect("a List-Id is list mail");
+    assert_eq!(listed.list_identifier, "news.example.org");
+    assert_eq!(
+        listed.summary,
+        postio_ui::unsubscribe::summary("news.example.org")
+    );
+    assert_eq!(listed.action, postio_ui::unsubscribe::ACTION);
+
+    let bulk = focus_banner(&session, ids[1]).expect("a List-Unsubscribe is list mail too");
+    assert_eq!(bulk.list_identifier, "shop.example.org");
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn focus_draws_no_banner_over_personal_mail_or_the_outbox() {
+    // The band is GTK's `postio_ui::unsubscribe::banner`: personal mail has
+    // neither header and stays clean, though `X` would still find a domain
+    // to leave; and nothing on its way out is offered at all (#1525).
+    let (session, ids, _database, _accounts) = a_store_with(&[
+        Seed {
+            sender: "grace@example.org",
+            ..Seed::default()
+        },
+        Seed {
+            sender: "ada@example.com",
+            list_id: Some("news.example.org"),
+            send_state: Some(DraftState::Queued),
+            ..Seed::default()
+        },
+        Seed {
+            sender: "weekly@mail.example.org",
+            list_id: Some("news.example.org"),
+            ..Seed::default()
+        },
+    ])
+    .await;
+
+    assert_eq!(focus_banner(&session, ids[0]), None, "personal mail");
+    assert_eq!(focus_banner(&session, ids[1]), None, "the Outbox");
+    // The control: the same fixture does draw one where it should.
+    assert!(focus_banner(&session, ids[2]).is_some());
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn focus_says_when_a_body_lost_a_part() {
+    let (session, ids, _database, _accounts) = a_store_with(&[
+        Seed {
+            sender: "weekly@news.example.org",
+            encoding_problems: true,
+            ..Seed::default()
+        },
+        Seed {
+            sender: "weekly@news.example.org",
+            ..Seed::default()
+        },
+    ])
+    .await;
+
+    let lost = session.focus_reader_document(ids[0], RemoteImagesFfi::Blocked, None, 1440);
+    assert!(lost.caveat.is_some(), "a body that lost a part says so");
+    let whole = session.focus_reader_document(ids[1], RemoteImagesFfi::Blocked, None, 1440);
+    assert_eq!(whole.caveat, None);
+    session.shutdown();
 }

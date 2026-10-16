@@ -335,9 +335,13 @@ public struct MessageWindowView<BodyView: View>: View {
                     MessageContentView(
                         words: MessageHeaderWords(view: layer.view, binding: binding),
                         document: layer.document,
+                        unsubscribe: model.unsubscribeState(of: layer.message),
                         binding: binding,
                         run: run,
                         alwaysForSender: alwaysForSender,
+                        // The command, as `M` runs it: one way to leave a
+                        // list, whichever was pressed.
+                        leave: { run(Intercepted.unsubscribe) },
                         body: { document, card in bodyView(layer.message, document, card) })
                         .environment(\.messageBodyDrawn) { model.bodyDrawn(layer.message) }
                         .opacity(front ? 1 : 0)

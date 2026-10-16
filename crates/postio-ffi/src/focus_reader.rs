@@ -68,6 +68,11 @@ pub struct FocusReaderDocumentFfi {
     pub notice: Option<crate::ReaderNoticeFfi>,
     /// What to say about a body that lost something in decoding.
     pub caveat: Option<String>,
+    /// The unsubscribe banner over list mail, or `None`: GTK's notice band
+    /// (`postio_ui::unsubscribe::banner`), which personal mail and mail on
+    /// its way out never get. Reading it records nothing; only
+    /// `activateUnsubscribe` does (#1585).
+    pub unsubscribe: Option<crate::UnsubscribeOfferFfi>,
     /// The treatment it is drawn in.
     pub treatment_shown: TreatmentFfi,
     /// What the rule chose, before any choice the person made.
@@ -182,6 +187,7 @@ impl Session {
                 html,
                 notice: None,
                 caveat: None,
+                unsubscribe: None,
                 treatment_shown: shown.into(),
                 treatment_classified: treated
                     .map_or(Treatment::AppColours, |treated| treated.classified)
@@ -226,16 +232,36 @@ impl Session {
             } => (body, encoding_problems),
             postio_session::reading::Body::Absent(state) => return plate(state),
         };
-        let sender = postio_storage::repository::MessageRepository::new(&connection)
-            .get(postio_model::ids::MessageId::new(message))
-            .await
-            .ok()
-            .flatten()
-            .and_then(|row| {
-                row.from
-                    .first()
-                    .map(|address| address.address.to_lowercase())
-            });
+        let repository = postio_storage::repository::MessageRepository::new(&connection);
+        let id = postio_model::ids::MessageId::new(message);
+        let row = repository.get(id).await.ok().flatten();
+        let sender = row.as_ref().and_then(|row| {
+            row.from
+                .first()
+                .map(|address| address.address.to_lowercase())
+        });
+        // The send state is the banner's gate (#1525): a read that fails
+        // means "do not offer", never "no send state".
+        let unsubscribe = match &row {
+            Some(row) => match repository.send_state(id).await {
+                Ok(send_state) => postio_ui::unsubscribe::banner(
+                    send_state,
+                    row.list_id.as_deref(),
+                    row.promoted.map(|said| said.unsubscribe_offered),
+                    &row.from,
+                )
+                .map(|offer| crate::UnsubscribeOfferFfi {
+                    list_identifier: offer.list_identifier,
+                    summary: offer.summary,
+                    action: postio_ui::unsubscribe::ACTION.to_owned(),
+                }),
+                Err(error) => {
+                    tracing::warn!(message, %error, "cannot read a message's send state");
+                    None
+                }
+            },
+            None => None,
+        };
         let remembered = sender.as_deref().and_then(|sender| {
             postio_ui::allowlist::RemoteImageAllowList::load_from(&self.allow_list_path())
                 .treatment_for(sender)
@@ -263,6 +289,7 @@ impl Session {
         FocusReaderDocumentFfi {
             notice,
             caveat: decode_caveat(encoding_problems).map(str::to_owned),
+            unsubscribe,
             render_mode: treated
                 .and_then(|treated| render_mode_words(treated, remembered))
                 .map(|words| RenderModeWordsFfi {

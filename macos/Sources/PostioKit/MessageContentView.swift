@@ -28,6 +28,9 @@ public enum MessageRhythm {
     public static let senderLabelColumn: CGFloat = 44
     /// The sender block to the action card.
     public static let senderToCard: CGFloat = 12
+    /// The last block above the body to the notice (the unsubscribe
+    /// banner), which then takes `cardToBody` below it.
+    public static let cardToNotice: CGFloat = 12
     /// The last block above the body to the render-mode line or the body.
     public static let cardToBody: CGFloat = 24
     /// The render-mode line to the body.
@@ -175,24 +178,32 @@ extension LabelColour {
 public struct MessageContentView<BodyView: View>: View {
     let words: MessageHeaderWords
     let document: FocusReaderDocumentFfi?
+    let unsubscribe: Unsubscribing.State
     let binding: (String) -> String?
     let run: (String) -> Void
     let alwaysForSender: () -> Void
+    let leave: () -> Void
     let bodyView: (FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
 
+    /// `unsubscribe` is where this message's banner has got to, and `leave`
+    /// is its button: the `unsubscribe` command, which `M` runs too.
     public init(
         words: MessageHeaderWords,
         document: FocusReaderDocumentFfi?,
+        unsubscribe: Unsubscribing.State = .offered,
         binding: @escaping (String) -> String?,
         run: @escaping (String) -> Void,
         alwaysForSender: @escaping () -> Void,
+        leave: @escaping () -> Void = {},
         @ViewBuilder body: @escaping (FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
     ) {
         self.words = words
         self.document = document
+        self.unsubscribe = unsubscribe
         self.binding = binding
         self.run = run
         self.alwaysForSender = alwaysForSender
+        self.leave = leave
         bodyView = body
     }
 
@@ -209,55 +220,144 @@ public struct MessageContentView<BodyView: View>: View {
     }
 
     private func scroll(column: CGFloat) -> some View {
-        ScrollView(.vertical) {
+        let blocks = MessageBlock.blocks(words: words, document: document, unsubscribe: unsubscribe)
+        return ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 0) {
-                if let thread = words.thread {
-                    MessageThreadLine(thread: thread, run: run)
-                        .padding(.bottom, MessageRhythm.markerToSubject)
-                }
-                Text(words.subject)
-                    .font(.system(size: MessageRhythm.subjectSize, weight: .bold))
-                    .lineSpacing(MessageRhythm.subjectLine - MessageRhythm.subjectSize - 5)
-                    .foregroundStyle(.primary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityAddTraits(.isHeader)
-                MessageLabelsLine(labels: words.labels, add: words.addLabel, run: run)
-                    .padding(.top, MessageRhythm.subjectToLabels)
-                MessageSenderBlock(fields: words.fields, date: words.date)
-                    .padding(.top, MessageRhythm.labelsToSender)
-                if let card = words.card {
-                    MessageActionCard(card: card, run: run)
-                        .padding(.top, MessageRhythm.senderToCard)
-                }
-                if let document {
-                    if let mode = document.renderMode {
-                        MessageRenderModeLine(
-                            line: RenderModeLine(mode, binding: binding), run: run,
-                            always: alwaysForSender)
-                            .padding(.top, MessageRhythm.cardToBody)
-                        bodyView(document, words.card)
-                            .padding(.top, MessageRhythm.modeLineToBody)
-                    } else {
-                        bodyView(document, words.card)
-                            .padding(.top, MessageRhythm.cardToBody)
-                    }
-                    if let caveat = document.caveat {
-                        Text(caveat)
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(.tertiary)
-                            .padding(.top, MessageRhythm.modeLineToBody)
-                    }
-                }
-                if !words.attachments.isEmpty {
-                    MessageAttachments(attachments: words.attachments)
-                        .padding(.top, MessageRhythm.bodyToAttachments)
+                // Exactly the blocks `MessageBlock.blocks` lists, each on the
+                // rhythm's gap from the one above: what is tested is what is
+                // drawn.
+                ForEach(Array(blocks.enumerated()), id: \.element.id) { index, block in
+                    draw(block)
+                        .padding(
+                            .top,
+                            MessageBlock.gap(above: block, after: index > 0 ? blocks[index - 1] : nil))
                 }
             }
             .frame(width: column, alignment: .leading)
             .padding(.top, MessageRhythm.top)
             .padding(.bottom, MessageRhythm.bottom)
             .frame(maxWidth: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private func draw(_ block: MessageBlock) -> some View {
+        switch block {
+        case let .thread(thread):
+            MessageThreadLine(thread: thread, run: run)
+        case let .subject(subject):
+            Text(subject)
+                .font(.system(size: MessageRhythm.subjectSize, weight: .bold))
+                .lineSpacing(MessageRhythm.subjectLine - MessageRhythm.subjectSize - 5)
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+        case .labels:
+            MessageLabelsLine(labels: words.labels, add: words.addLabel, run: run)
+        case .sender:
+            MessageSenderBlock(fields: words.fields, date: words.date)
+        case let .card(card):
+            MessageActionCard(card: card, run: run)
+        case let .unsubscribe(offer, state):
+            UnsubscribeBanner(offer: offer, state: state, leave: leave)
+        case let .renderMode(mode):
+            MessageRenderModeLine(
+                line: RenderModeLine(mode, binding: binding), run: run, always: alwaysForSender)
+        case .body:
+            if let document { bodyView(document, words.card) }
+        case let .caveat(caveat):
+            Text(caveat)
+                .font(.system(size: 12.5))
+                .foregroundStyle(.tertiary)
+        case .attachments:
+            MessageAttachments(attachments: words.attachments)
+        }
+    }
+}
+
+/// One block of the message window's content column, top to bottom.
+///
+/// The column draws `blocks` and nothing else, so the list is a statement
+/// about what is on screen: a notice the boundary carries but the column
+/// leaves out is a test failure here rather than a gap nobody sees (#1585,
+/// where the unsubscribe banner had no call site at all).
+public enum MessageBlock: Equatable, Identifiable {
+    /// "Latest of 6 in this thread  [ earlier message".
+    case thread(MessageHeaderWords.Thread)
+    /// The subject, the largest text in the window.
+    case subject(String)
+    /// The label pills, then "+ Label".
+    case labels
+    /// From, To and Cc, and the date.
+    case sender
+    /// The action card.
+    case card(MessageHeaderWords.Card)
+    /// The unsubscribe banner over list mail, and where it has got to. Gone
+    /// once the list is left: its absence is the confirmation.
+    case unsubscribe(UnsubscribeOfferFfi, Unsubscribing.State)
+    /// The render-mode line over an HTML body.
+    case renderMode(RenderModeWordsFfi)
+    /// The body, once it is read.
+    case body
+    /// What a body that lost a part in decoding says, under it.
+    case caveat(String)
+    /// The attachment chips.
+    case attachments
+
+    public var id: String {
+        switch self {
+        case .thread: "thread"
+        case .subject: "subject"
+        case .labels: "labels"
+        case .sender: "sender"
+        case .card: "card"
+        case .unsubscribe: "unsubscribe"
+        case .renderMode: "renderMode"
+        case .body: "body"
+        case .caveat: "caveat"
+        case .attachments: "attachments"
+        }
+    }
+
+    /// The column for a message whose header reads `words`, whose body is
+    /// `document` (`nil` while it is being read), and whose banner is at
+    /// `unsubscribe`.
+    public static func blocks(
+        words: MessageHeaderWords,
+        document: FocusReaderDocumentFfi?,
+        unsubscribe: Unsubscribing.State
+    ) -> [MessageBlock] {
+        var blocks: [MessageBlock] = []
+        if let thread = words.thread { blocks.append(.thread(thread)) }
+        blocks += [.subject(words.subject), .labels, .sender]
+        if let card = words.card { blocks.append(.card(card)) }
+        if let document {
+            if let offer = document.unsubscribe, unsubscribe != .left {
+                blocks.append(.unsubscribe(offer, unsubscribe))
+            }
+            if let mode = document.renderMode { blocks.append(.renderMode(mode)) }
+            blocks.append(.body)
+            if let caveat = document.caveat { blocks.append(.caveat(caveat)) }
+        }
+        if !words.attachments.isEmpty { blocks.append(.attachments) }
+        return blocks
+    }
+
+    /// The rhythm's gap above `block` when `previous` is drawn above it.
+    public static func gap(above block: MessageBlock, after previous: MessageBlock?) -> CGFloat {
+        switch block {
+        case .thread: 0
+        case .subject: previous == nil ? 0 : MessageRhythm.markerToSubject
+        case .labels: MessageRhythm.subjectToLabels
+        case .sender: MessageRhythm.labelsToSender
+        case .card: MessageRhythm.senderToCard
+        case .unsubscribe: MessageRhythm.cardToNotice
+        case .renderMode: MessageRhythm.cardToBody
+        case .body:
+            if case .renderMode = previous { MessageRhythm.modeLineToBody } else { MessageRhythm.cardToBody }
+        case .caveat: MessageRhythm.modeLineToBody
+        case .attachments: MessageRhythm.bodyToAttachments
         }
     }
 }

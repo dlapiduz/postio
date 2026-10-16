@@ -46,6 +46,17 @@ struct MessageWindowModelTests {
         }
 
         func rawSource(_ message: Int64) throws -> Data { try raw.get() }
+
+        private var _activated: [Int64] = []
+        /// What `activateUnsubscribe` answers: `nil` when it was recorded.
+        var refusal: String?
+        /// Every message an unsubscribe was recorded for, in order.
+        var activated: [Int64] { lock.withLock { _activated } }
+
+        func activateUnsubscribe(_ message: Int64) -> String? {
+            lock.withLock { _activated.append(message) }
+            return refusal
+        }
     }
 
     nonisolated static func view(_ message: Int64, earlier: Int64? = nil, later: Int64? = nil) -> FocusMessageViewFfi {
@@ -59,7 +70,8 @@ struct MessageWindowModelTests {
 
     nonisolated static func document(shown: TreatmentFfi, of message: Int64 = 0) -> FocusReaderDocumentFfi {
         FocusReaderDocumentFfi(
-            html: "<p>\(message)</p>", notice: nil, caveat: nil, treatmentShown: shown,
+            html: "<p>\(message)</p>", notice: nil, caveat: nil, unsubscribe: nil,
+            treatmentShown: shown,
             treatmentClassified: .paper, renderMode: nil, sender: "news@example.com",
             senderChoice: nil, windowWidth: 720, columnWidth: shown == .paper ? 640 : 560,
             foldsIntoMore: false, paperFloor: 0.85)
@@ -331,5 +343,58 @@ struct MessageWindowModelTests {
         #expect(kept.map(\.1) == [.appColours], "what was shown when it was pressed")
         #expect(model.chosen == nil)
         #expect(source.documents.last?.1 == nil, "asked again as the sender's own")
+    }
+
+    @Test func unsubscribingRecordsOneActivationForTheMessageOnScreen() async throws {
+        // Only on deliberate activation: opening the message recorded
+        // nothing, and pressing twice -- the banner's button, then `M` --
+        // records once (#1585).
+        let source = Source()
+        let (model, _) = Self.model(source)
+        model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
+        await model.settled()
+        #expect(source.activated.isEmpty, "reading a message records nothing")
+        #expect(model.unsubscribeState(of: 7) == .offered)
+
+        model.unsubscribe()
+        model.unsubscribe()
+        try await Self.until { model.unsubscribeState(of: 7) == .left }
+        #expect(model.unsubscribeState(of: 7) == .left, "the banner goes once it is recorded")
+        #expect(source.activated == [7])
+    }
+
+    @Test func aRefusedUnsubscribeSaysWhyAndCanBePressedAgain() async throws {
+        let source = Source()
+        source.refusal = "There is no list to leave."
+        let (model, _) = Self.model(source)
+        model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
+        await model.settled()
+
+        model.unsubscribe()
+        try await Self.until { model.unsubscribeState(of: 7) != .leaving }
+        #expect(model.unsubscribeState(of: 7) == .failed("There is no list to leave."))
+        source.refusal = nil
+        model.unsubscribe()
+        try await Self.until { model.unsubscribeState(of: 7) == .left }
+        #expect(source.activated == [7, 7])
+    }
+
+    @Test func unsubscribingWithNoMessageOnScreenDoesNothing() async {
+        let source = Source()
+        let (model, _) = Self.model(source)
+        model.unsubscribe()
+        await model.settled()
+        #expect(source.activated.isEmpty)
+    }
+
+    @Test func closingTheWindowForgetsWhatWasLeft() async throws {
+        let source = Source()
+        let (model, _) = Self.model(source)
+        model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
+        await model.settled()
+        model.unsubscribe()
+        try await Self.until { model.unsubscribeState(of: 7) == .left }
+        model.closed()
+        #expect(model.unsubscribeState(of: 7) == .offered)
     }
 }
