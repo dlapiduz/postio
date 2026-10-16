@@ -527,3 +527,75 @@ pub fn deleting_from_the_dialog_moves_to_the_next_message() {
         assert!(support::subjects(&window).is_empty());
     });
 }
+
+/// #1212: a draft written in another client opens with its notice and an
+/// action row that answers nothing -- no Reply, Reply all or Forward, which
+/// have no correspondent to answer -- while Archive and Delete stay. `r`
+/// does not open a composer either.
+pub fn a_draft_from_another_client_offers_no_reply() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Unsent thoughts",
+                "Half a sentence.",
+                10,
+            )
+            .await;
+        fixture.write_body(message, "Half a sentence.").await;
+        let connection = fixture.database.connect().await.expect("a connection");
+        let mut flags = postio_model::FlagSet::new();
+        flags.insert(postio_model::Flag::Draft);
+        postio_storage::repository::MessageRepository::new(&connection)
+            .set_flags(
+                message,
+                &flags,
+                postio_storage::repository::FlagSource::Server,
+            )
+            .await
+            .expect("the draft flag");
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        enter(&window);
+        let reading = window.reading().expect("Enter opened the message");
+        assert!(
+            crate::settle_until(async || reading.foreign_draft()).await,
+            "the message never showed as another client's draft"
+        );
+        let labelled = |label: &str| {
+            support::descendants(&reading.dialog())
+                .into_iter()
+                .any(|widget| {
+                    widget.is::<gtk::Button>()
+                        && widget.is_mapped()
+                        && support::texts(&widget).iter().any(|text| text == label)
+                })
+        };
+        for kept in ["Archive", "Delete"] {
+            assert!(
+                crate::settle_until(async || labelled(kept)).await,
+                "no {kept:?} on a draft from another client: {:?}",
+                support::texts(&reading.dialog())
+            );
+        }
+        for gone in ["Reply", "Reply all", "Forward"] {
+            assert!(
+                !labelled(gone),
+                "{gone:?} is offered on a draft from another client"
+            );
+        }
+        support::deliver(&window, "r");
+        crate::settle();
+        assert!(
+            window.compose_dialog().is_none(),
+            "r opened a composer on a draft from another client"
+        );
+    });
+}

@@ -821,6 +821,10 @@ const CASES: &[(&str, fn())] = &[
         open_keys::j_and_k_step_the_open_message_from_where_the_keyboard_is as fn(),
     ),
     (
+        "open_message::a_draft_from_another_client_offers_no_reply",
+        open_message::a_draft_from_another_client_offers_no_reply as fn(),
+    ),
+    (
         "open_reading::the_open_message_is_one_scrolling_column",
         open_reading::the_open_message_is_one_scrolling_column as fn(),
     ),
