@@ -65,11 +65,14 @@ never in `draft.to`, `draft.cc` or `draft.bcc`.
 **How it was reachable.** Not through the composer, whose subject field is a
 single-line entry. Through received mail: an RFC 2047 encoded word encodes
 arbitrary octets, CR and LF included, so a `Subject` arrives whose *decoded*
-value has real line breaks in it. That is not a parser bug — those octets were
-never folding whitespace, and reporting what arrived is what the parser
-promises — and `reply` then copies that subject into a draft. The same shape
-reaches a draft from its stored row, a `mailto:` URL, a rules action, and the
-FFI and MCP surfaces.
+value has real line breaks in it, because those octets were never folding
+whitespace, and `reply` then copied that subject into a draft. The parser now
+folds a decoded subject and display name to one line before anything draws or
+quotes it ([#1770](https://github.com/dlapiduz/postio/issues/1770): the same
+break drew a forged `Bcc:` line under the subject in the reader), but the
+generator does not rely on that: the same shape reaches a draft from a pasted
+subject, its stored row, a `mailto:` URL, a rules action, and the FFI and MCP
+surfaces.
 
 **Folded, not refused, and that is a decision.** Refusing reads as the safer
 answer and is the wrong one: the hostile value arrives from somebody else's

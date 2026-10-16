@@ -220,7 +220,8 @@ body's treatment (`postio_body::treatment`) is proven on real-shaped markup.
 | File | Exercises |
 |---|---|
 | `encoded-word-subject-and-names.eml` | The correct cases: adjacent encoded words that must be joined **without** a space, two charsets in one field, a folded `Subject` whose continuation begins with an encoded word, B and Q encodings side by side, and one plain ASCII display name. |
-| `encoded-word-crlf-in-header.eml` | An encoded word whose *decoded* text contains CR and LF, in both a `Subject` and a display name. Unfolding cannot remove them — the octets were never folding whitespace — so a decoded header value reaches the model with line breaks inside it, and anything that writes one back into a header has to say what it does about that. |
+| `encoded-word-crlf-in-header.eml` | An encoded word whose *decoded* text contains CR and LF, in both a `Subject` and a display name. Unfolding cannot remove them — the octets were never folding whitespace — so the decoder folds each run to one space (#1770). Before that, the break reached the reader as a fake `Bcc:` line and the generator as a fake header (#864). |
+| `encoded-word-control-chars-in-header.eml` | The wider hostile case (#1770): a subject split over two encoded words that decode to a forged `From:` and `Date:` line, an ANSI escape, NUL, BEL and a Unicode line separator, and a display name that decodes to a forged `Reply-To:` line. No List-Id and no List-Unsubscribe, so it must not be offered an Unsubscribe band either. |
 | `encoded-word-broken.eml` | The hostile cases: unterminated, invalid base64 payload, unknown charset, unknown encoding letter, and one that blows past the 75-character limit. Every one must degrade to raw text rather than failing the message. |
 
 ### Malformed and missing

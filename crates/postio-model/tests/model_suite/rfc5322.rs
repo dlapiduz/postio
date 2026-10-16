@@ -8,12 +8,13 @@
 //! **The gap the audit found is closed (#864).** A decoded header value
 //! carrying CR/LF reached the generator and turned the rest of that value
 //! into headers — reachably a `Bcc`, which is a copy of a reply going
-//! somewhere the sender never chose. Both halves are asserted here now: the
-//! *input* half, that such a value really does arrive
-//! (`encoded-word-crlf-in-header.eml`), and the outgoing half, that a
-//! generated message carries only the headers its draft asked for. Neither
-//! is worth much without the other — a parser that silently stripped the
-//! breaks would make the generator look fixed when it was not.
+//! somewhere the sender never chose. Both halves are asserted here: the
+//! *input* half, that the parser folds such a value to one line before
+//! anything draws or quotes it (#1770, `encoded-word-crlf-in-header.eml`),
+//! and the outgoing half, that a generated message carries only the headers
+//! its draft asked for whatever its subject holds. The second does not lean
+//! on the first: a subject can be typed or pasted, so the generator is
+//! tested on raw line breaks of its own.
 
 use postio_model::address::EmailAddress;
 use postio_model::{AccountId, Draft, Identity, MailboxId, Message, RfcMessageId, mime, outgoing};
@@ -309,22 +310,16 @@ fn message_id_equality_ignores_case_and_brackets() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_decoded_header_value_can_carry_cr_and_lf() {
-    // Not a bug in the parser: an encoded word encodes octets, `=0D=0A` is
-    // two of them, and reporting what arrived is what this parser promises.
-    // It is here because it is the *input* to the one gap the audit found,
-    // and because a future parser that silently stripped them would make the
-    // outgoing side look fixed when it was not. See
-    // `docs/rfc-compliance.md` and `encoded-word-crlf-in-header.eml`.
+fn a_decoded_header_value_arrives_as_one_line() {
+    // An encoded word encodes octets, and `=0D=0A` is two of them. Kept,
+    // they drew a forged `Bcc:` line under the subject in every reader
+    // (#1770), so the parser folds each run to one space. The text stays —
+    // a forged line reads as the odd subject it is — only the break goes.
     let parsed =
         mime::parse(postio_model::test_corpus::load("encoded-word-crlf-in-header").bytes());
-    assert!(
-        parsed
-            .subject
-            .as_deref()
-            .is_some_and(|subject| subject.contains(['\r', '\n'])),
-        "the fixture no longer delivers a header value with line breaks in it, \
-         so the case the outgoing side has to defend against is untested"
+    assert_eq!(
+        parsed.subject.as_deref(),
+        Some("Invoice attached Bcc: mallory@sender.invalid")
     );
 }
 
@@ -388,17 +383,15 @@ fn a_line_break_in_a_header_value_cannot_become_a_header() {
 #[test]
 fn replying_to_a_message_whose_subject_carries_line_breaks_writes_the_headers_the_draft_asked_for()
 {
-    // #864's acceptance, against the fixture that carries the real shape: a
-    // subject whose *decoded* value has CR/LF in it, which is how this
-    // reaches Postio without anybody typing it.
-    let parsed =
-        mime::parse(postio_model::test_corpus::load("encoded-word-crlf-in-header").bytes());
+    // #864's acceptance. The parser folds a decoded subject to one line now
+    // (#1770), so the break is put back by hand: a reply subject is also
+    // typed, pasted and edited, and the generator has to hold on its own.
     let mut draft = draft(
         "placeholder",
         vec![EmailAddress::new(Some("Grace"), "grace@example.net")],
     );
     draft.subject =
-        postio_model::subject::reply_subject(parsed.subject.as_deref().unwrap_or_default());
+        postio_model::subject::reply_subject("Invoice attached\r\nBcc: mallory@sender.invalid");
     assert!(
         draft.subject.contains(['\r', '\n']),
         "the reply subject no longer carries the break, so this asserts \

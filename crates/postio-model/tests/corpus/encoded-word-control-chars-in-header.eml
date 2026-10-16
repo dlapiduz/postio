@@ -1,0 +1,13 @@
+Message-ID: <20260302T091000.controlchars@sender.invalid>
+Date: Mon, 2 Mar 2026 09:10:00 +0000
+From: =?utf-8?Q?Billing=0AReply-To:_refunds=40sender=2Einvalid?= <billing@sender.invalid>
+To: ada@example.com
+Subject: =?utf-8?Q?Payment_overdue=0D=0AFrom:_Accounts_<accounts=40example=2Ecom>?=
+ =?utf-8?Q?=0ADate:_today=1B[31m_urgent=1B[0m=00=07=E2=80=A8end?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+A plain body. The headers are the point: the encoded words decode to a
+line break followed by a header-shaped line, a terminal escape, a NUL, a
+bell and a Unicode line separator. None of it should reach a reader as a
+second line of chrome.
