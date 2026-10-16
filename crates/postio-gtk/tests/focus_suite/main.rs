@@ -1151,6 +1151,11 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "store_unavailable::a_store_under_another_key_offers_a_fresh_store_and_keeps_the_old_one",
+        store_unavailable::a_store_under_another_key_offers_a_fresh_store_and_keeps_the_old_one
+            as fn(),
+    ),
+    (
         "one_keymap::a_registered_command_reaches_the_key_map_with_its_key",
         one_keymap::a_registered_command_reaches_the_key_map_with_its_key as fn(),
     ),
