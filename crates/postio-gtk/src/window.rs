@@ -912,6 +912,9 @@ impl FocusWindow {
                 if reached == glib::Propagation::Proceed
                     && let Outcome::Command(id) = &outcome
                     && let Ok(command) = id.parse::<CommandId>()
+                    // `Return` on the message already open is the message's
+                    // own (it scrolls), not the list's open.
+                    && command != CommandId::OpenMessage
                 {
                     self.act(command);
                     return glib::Propagation::Stop;
