@@ -2082,48 +2082,28 @@ impl<'a> MessageRepository<'a> {
     /// See [`StorageFootprint`] for what the numbers mean and why they are
     /// available before anything is downloaded.
     ///
-    /// Three aggregates rather than one query: they are over different tables
-    /// with different filters, and SQLite plans each against an index it
-    /// already has. This runs when a status line redraws, not per row.
+    /// Two reads of rows the store keeps, never a walk of the mail: the
+    /// weights are `account_footprints`, maintained by the triggers in
+    /// `schema/footprint.sql`, and completeness is a question about the
+    /// account's folders. The settings panel asks this each time it opens,
+    /// and it used to be three aggregates over every message (#1508).
     pub async fn footprint(&self, account_id: AccountId) -> Result<StorageFootprint> {
-        let (messages, total_bytes) = sql::one(
+        let (messages, total_bytes, attachment_bytes, local_bytes) = sql::first(
             self.connection,
-            "SELECT count(*), coalesce(sum(size), 0) FROM messages
-              WHERE account_id = ?1 AND deleted_locally = 0",
+            "SELECT messages, total_bytes, attachment_bytes, local_bytes
+               FROM account_footprints WHERE account_id = ?1",
             [account_id.get()],
-            |row| Ok((row.col::<i64>(0)? as u64, row.col::<i64>(1)? as u64)),
+            |row| {
+                Ok((
+                    row.col::<i64>(0)? as u64,
+                    row.col::<i64>(1)? as u64,
+                    row.col::<i64>(2)? as u64,
+                    row.col::<i64>(3)? as u64,
+                ))
+            },
         )
-        .await?;
-
-        let attachment_bytes: u64 = sql::one(
-            self.connection,
-            "SELECT coalesce(sum(a.size), 0) FROM attachments a
-               JOIN messages m ON m.id = a.message_id
-              WHERE m.account_id = ?1 AND m.deleted_locally = 0",
-            [account_id.get()],
-            |row| Ok(row.col::<i64>(0)? as u64),
-        )
-        .await?;
-
-        // What is local: a message's whole size once every part is here, and
-        // only its text while its payloads are still on the server. `partial`
-        // is the ordinary steady state under ADR 0017, not an edge case.
-        let local_bytes: u64 = sql::one(
-            self.connection,
-            "SELECT coalesce(sum(
-                        CASE m.body_state
-                          WHEN 'full' THEN m.size
-                          WHEN 'partial' THEN m.size - coalesce(
-                              (SELECT sum(a.size) FROM attachments a
-                                WHERE a.message_id = m.id AND a.blob_id IS NULL), 0)
-                          ELSE 0
-                        END), 0)
-               FROM messages m
-              WHERE m.account_id = ?1 AND m.deleted_locally = 0",
-            [account_id.get()],
-            |row| Ok(row.col::<i64>(0)? as u64),
-        )
-        .await?;
+        .await?
+        .unwrap_or_default();
 
         // Complete when no selectable mailbox is still waiting for its first
         // full header pass. Anything less and the totals above are a floor.
@@ -2151,17 +2131,18 @@ impl<'a> MessageRepository<'a> {
     ///
     /// A count, not a list: Postio never sends one automatically (CLAUDE.md's
     /// privacy section), so there is no per-message action for the privacy
-    /// pane to offer — only the fact of how often it was asked.
+    /// pane to offer — only the fact of how often it was asked. A row the
+    /// store keeps (`schema/footprint.sql`), not a count of its mail
+    /// (#1508).
     pub async fn read_receipt_requested_count(&self, account_id: AccountId) -> Result<u64> {
-        Ok(sql::one(
+        let counted = sql::first(
             self.connection,
-            "SELECT count(*) FROM messages
-              WHERE account_id = ?1 AND read_receipt_requested = 1
-                AND deleted_locally = 0",
+            "SELECT read_receipts FROM account_footprints WHERE account_id = ?1",
             [account_id.get()],
             |row| row.col::<i64>(0),
         )
-        .await? as u64)
+        .await?;
+        Ok(counted.unwrap_or(0) as u64)
     }
 
     /// One message's backfill candidate, if it still needs (part of) its body.

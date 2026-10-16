@@ -2449,11 +2449,10 @@ async fn emit_backfill_progress(
     drained: bool,
     now: std::time::Instant,
 ) {
-    // The footprint is four aggregates over `messages` and `attachments`, and
-    // this is called every 250 ms while a backfill runs. Recomputed only when
-    // the queue opens or drains -- the moments the totals can actually have
-    // moved by much -- and cached in between, so a status line redraw never
-    // costs a scan of an 81,744-message table.
+    // This is called every 250 ms while a backfill runs. The footprint is a
+    // kept row now (#1508), not a scan, but it is still a checkout and two
+    // reads: recomputed only when the queue opens or drains -- the moments
+    // the totals can actually have moved by much -- and cached in between.
     if state.footprint.is_none() || drained {
         state.footprint = measure(parts).await;
     }
