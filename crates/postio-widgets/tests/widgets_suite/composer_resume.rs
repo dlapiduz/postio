@@ -92,6 +92,17 @@ pub fn resuming_replaces_the_draft_the_composer_was_holding() {
     ));
     settle();
     assert_eq!(composer.test_subject(), "Tide gate interlock, revised");
+
+    // A draft that is a row in Drafts says so (#1759).
+    let saved = a_draft(3, "Sluice log", "quinn@example.net");
+    composer.resume(saved.clone());
+    settle();
+    assert_eq!(
+        composer.status(),
+        postio_ui::compose::saved_at(saved.updated_at),
+        "a reopened draft exists in Drafts; it must not claim to be in the \
+         composer only"
+    );
 }
 
 /// #1196: `c` on a *closed* composer starts a blank message.
