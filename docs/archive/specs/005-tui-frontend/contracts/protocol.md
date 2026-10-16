@@ -32,7 +32,7 @@ rather than rewritten.
 | Reading | `Body`, `Conversation`, `Readings`, `ThreadReadings`, `StoredBody`, `InlinePart`, `Unsubscribe`, `Parts`, `SavePart`, `SaveParts`, `OpenPart`, `ExportMessages` | `postio-host/src/{reading,parts,export}.rs` |
 | Search | `Search`, `SearchHits`, `Facets`, `Correspondents`, `Labels` | `postio-host/src/search.rs` over `postio_session::search` |
 | Compose | `SaveDraft`, `QueueSend`, `DiscardDraft`, `RecoverDraft`, `DraftBehind`, `CancelSend`, `SendFailure`, `Recipients`, `ReplySource`, `DefaultSignature`, `Attach { path, mime_type }`, `InlineImage`, `AttachmentBytes` | `postio-host/src/compose.rs`, one `DraftWriter` per client |
-| Accounts | `Discover`, `AddAccount`, `SaveAccount`, `SaveOAuthAccount`, `BeginOAuth`, `FinishOAuth`, `CancelOAuth`, `Account(AccountOp)`, `EditAccount`, `RebuildIndex` | `postio-host/src/onboarding.rs`, `postio_session::onboarding` |
+| Accounts | `Discover`, `AddAccount`, `SaveAccount`, `BeginOAuth`, `FinishOAuth`, `CancelOAuth`, `Account(AccountOp)`, `EditAccount`, `RebuildIndex` | `postio-host/src/onboarding.rs`, `postio_session::onboarding` |
 
 Since spec 007's T165, three of these carry more:
 

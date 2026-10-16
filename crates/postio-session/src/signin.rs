@@ -10,7 +10,9 @@
 //! asked permission for, and the wrong answer is invisible.
 //!
 //! So it lives here, beside [`crate::provision`], which is the same shape for
-//! a password. The desktop app adopting it is #1283.
+//! a password. Every frontend signs in through it: the desktop host, the
+//! terminal client (through the host), and the Mac app (#1283 retired the
+//! desktop's own copy).
 //!
 //! # The order everything happens in
 //!
@@ -36,6 +38,8 @@ use postio_account::imap::{ConnectionSettings, ImapSession, RustlsConnector};
 use postio_account::oauth::{self, BrowserOpener, Endpoints, OAuthError, TokenResponse};
 use postio_account::secret::{AccountKey, Password, SecretStore};
 use postio_model::account::{AuthMethod, TransportSecurity};
+use postio_model::ids::AccountId;
+use postio_model::{EmailAddress, Identity};
 use postio_storage::Store;
 use postio_storage::repository::AccountRepository;
 
@@ -151,9 +155,11 @@ pub async fn sign_in(
     })
 }
 
-/// The proof, before anything persists.
-async fn verify(settings: &AccountSettings, tokens: &TokenResponse) -> Result<(), SignInError> {
-    let connection = ConnectionSettings::new(
+/// The connection the proof opens: the account's own IMAP server, with the
+/// token presented as `XOAUTH2`. Presented any other way it is sent as a
+/// password, which no provider this path exists for accepts.
+pub fn verification_settings(settings: &AccountSettings) -> ConnectionSettings {
+    let mut connection = ConnectionSettings::new(
         settings.imap.host.clone(),
         settings.imap.port,
         // Carried rather than upgraded: the settings a user is shown are the
@@ -165,6 +171,13 @@ async fn verify(settings: &AccountSettings, tokens: &TokenResponse) -> Result<()
         },
         settings.login.clone(),
     );
+    connection.auth = AuthMethod::XOAuth2;
+    connection
+}
+
+/// The proof, before anything persists.
+async fn verify(settings: &AccountSettings, tokens: &TokenResponse) -> Result<(), SignInError> {
+    let connection = verification_settings(settings);
     let connector = RustlsConnector::new().map_err(|error| {
         SignInError::Failed(format!(
             "Postio could not start a TLS connection on this machine: {error}"
@@ -173,13 +186,18 @@ async fn verify(settings: &AccountSettings, tokens: &TokenResponse) -> Result<()
     ImapSession::open(&connection, &tokens.access_token, &connector)
         .await
         .map(|_| ())
-        .map_err(|error| SignInError::Failed(format!("The provider refused the token: {error}")))
+        // The sentences a person can act on (wrong port, no TLS, not an IMAP
+        // server), the same ones the password path shows.
+        .map_err(|error| SignInError::Failed(crate::onboarding::explain(&error)))
 }
 
 /// Write the account and its refresh token — the secret first, then the row.
 ///
 /// Answers the same [`crate::provision::Provisioned`] a password sign-in
 /// does, so a caller that has both routes has one answer to interpret.
+///
+/// `name` is what the person typed to be called; empty means unset, and the
+/// provider's name (or the address) stands in.
 pub async fn provision_oauth(
     database: &Store,
     secrets: Arc<dyn SecretStore>,
@@ -188,6 +206,7 @@ pub async fn provision_oauth(
     signed_in: SignedIn,
     scopes: &[String],
     refresh_token_lifetime_days: Option<u32>,
+    name: &str,
 ) -> Result<crate::provision::Provisioned, String> {
     let address = settings.email.clone();
     let key = AccountKey::new(address.clone());
@@ -246,63 +265,75 @@ pub async fn provision_oauth(
     // The account is already there and now has a working credential again.
     // Answering `AlreadyProvisioned` rather than `Created` is the truth
     // about the row, and the caller uses it to decide whether to start an
-    // engine for a new account.
+    // engine for a new account. The row is *repaired*, not left: the person
+    // may have moved servers, disabled it, or come over from a password, and
+    // it must name the grant just approved. Its identities stay as they are,
+    // because every saved draft points at one.
+    let oauth = postio_model::account::OAuthConfig {
+        client_id: client.client_id.clone(),
+        token_url: signed_in.endpoints.token.to_string(),
+        authorize_url: signed_in.endpoints.authorize.to_string(),
+        scopes: scopes.join(" "),
+        refresh_token_lifetime_days,
+    };
+    let connection = database
+        .connect()
+        .await
+        .map_err(|error| format!("Postio could not open its local store: {error}"))?;
+    let repository = AccountRepository::new(&connection);
     if let Some(id) = existing {
+        let mut row = repository
+            .list()
+            .await
+            .map_err(|error| format!("Postio could not read its local store: {error}"))?
+            .into_iter()
+            .find(|account| account.id == id)
+            .ok_or_else(|| "The account row vanished while it was being repaired.".to_owned())?;
+        apply_servers(&mut row, settings);
+        row.auth = AuthMethod::XOAuth2;
+        row.oauth = Some(oauth);
+        row.enabled = true;
+        repository
+            .update(&mut row)
+            .await
+            .map_err(|error| format!("Postio could not record the sign-in: {error}"))?;
         return Ok(crate::provision::Provisioned::AlreadyProvisioned(id));
     }
 
-    match write_row(
-        database,
-        settings,
-        client,
-        &signed_in.endpoints,
-        scopes,
-        refresh_token_lifetime_days,
-    )
-    .await
-    {
+    let mut account = crate::provision::account_from(settings);
+    let name = name.trim();
+    if !name.is_empty() {
+        // The From header and the sidebar, ahead of the provider's name.
+        let email = EmailAddress::new(Some(name.to_owned()), address.clone());
+        account.display_name = name.to_owned();
+        account.address = email.clone();
+        let mut identity = Identity::new(AccountId::UNASSIGNED, email);
+        identity.is_default = true;
+        account.identities = vec![identity];
+    }
+    // A browser sign-in is an IMAP account today; the Gmail REST backend is
+    // #546, gated on its preset row flipping after #195.
+    account.auth = AuthMethod::XOAuth2;
+    account.oauth = Some(oauth);
+    match repository.create(&mut account).await {
         Ok(id) => Ok(crate::provision::Provisioned::Created(id)),
-        Err(reason) => {
+        Err(error) => {
             // Rolled back the way `provision` rolls back a password: nothing
             // reads a credential no account row names, but leaving one is
             // untidy.
             let _ = secrets
                 .delete(&AccountKey::new(format!("{}#oauth-refresh", key.account())))
                 .await;
-            Err(reason)
+            Err(format!("Postio could not record the sign-in: {error}"))
         }
     }
 }
 
-/// The row write: the account, then its auth method and OAuth client.
-async fn write_row(
-    database: &Store,
-    settings: &AccountSettings,
-    client: &OAuthClient,
-    endpoints: &Endpoints,
-    scopes: &[String],
-    refresh_token_lifetime_days: Option<u32>,
-) -> Result<postio_model::ids::AccountId, String> {
-    let mut account = crate::provision::account_from(settings);
-    // A browser sign-in is an IMAP account today; the Gmail REST backend is
-    // #546, gated on its preset row flipping after #195.
-    account.auth = AuthMethod::XOAuth2;
-    account.oauth = Some(postio_model::account::OAuthConfig {
-        client_id: client.client_id.clone(),
-        token_url: endpoints.token.to_string(),
-        authorize_url: endpoints.authorize.to_string(),
-        scopes: scopes.join(" "),
-        refresh_token_lifetime_days,
-    });
-
-    let connection = database
-        .connect()
-        .await
-        .map_err(|error| format!("Postio could not open its local store: {error}"))?;
-    AccountRepository::new(&connection)
-        .create(&mut account)
-        .await
-        .map_err(|error| format!("Postio could not record the sign-in: {error}"))
+/// Put the signed-in servers on `account`, leaving its identities alone.
+fn apply_servers(account: &mut postio_model::account::Account, settings: &AccountSettings) {
+    let fresh = crate::provision::account_from(settings);
+    account.incoming = fresh.incoming;
+    account.outgoing = fresh.outgoing;
 }
 
 /// A cancelled flow is not a failure, and must not be reported as one.
