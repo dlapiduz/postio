@@ -1752,6 +1752,11 @@ final class Engine {
             // Esc from the raw source returns to the message (M4); the
             // controller does not know the source is up.
             messageWindow?.closeSource()
+        case Intercepted.unsubscribe where keyWindow.current == .message && messageWindow?.displayed != nil:
+            // The banner's button and `M` over the open message: the one
+            // deliberate act, recorded by the boundary (#1585). The
+            // controller has no message window of its own to do it in.
+            messageWindow?.unsubscribe()
         case Intercepted.back where placesPopover?.isShown == true:
             // The folders popover is not a surface the controller keeps:
             // Escape closes it here, and the keyboard goes home.
