@@ -120,8 +120,7 @@ public struct DropdownView: View {
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(.secondary)
                     .fixedSize()
-                ForEach(section.pills) { pill in pillView(pill) }
-                Spacer(minLength: 0)
+                PillsRow(pills: section.pills, run: run)
             }
             .padding(.horizontal, 16)
             .frame(height: Metrics.narrow)
@@ -133,10 +132,7 @@ public struct DropdownView: View {
                     header(section)
                 }
                 if !section.pills.isEmpty {
-                    HStack(spacing: 8) {
-                        ForEach(section.pills) { pill in pillView(pill) }
-                        Spacer(minLength: 0)
-                    }
+                    PillsRow(pills: section.pills, run: run)
                     .padding(.horizontal, 16)
                     .frame(height: Metrics.pills)
                 }
@@ -370,50 +366,6 @@ public struct DropdownView: View {
         }
     }
 
-    // MARK: pills
-
-    private func pillView(_ pill: DropdownModel.Pill) -> some View {
-        Button { run(pill.id) } label: {
-            HStack(spacing: 5) {
-                if let op = pill.op {
-                    Text(op).font(.system(size: 12, design: .monospaced)).foregroundStyle(.tertiary)
-                    Text(pill.label).font(.system(size: 12.5)).foregroundStyle(.primary)
-                } else {
-                    Text(pill.label).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(.primary)
-                }
-                if let count = pill.count {
-                    Text(count).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
-                }
-                // A quiet badge, never a banner (D15): the accent's tint,
-                // small, after the count.
-                if let fresh = pill.fresh {
-                    Text(fresh)
-                        .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(.tint)
-                        .padding(.horizontal, 5)
-                        .frame(height: 16)
-                        .background(Capsule().fill(.tint.opacity(0.12)))
-                }
-                if let cap = pill.cap { KeyCap(cap) }
-            }
-            .lineLimit(1)
-            .padding(.horizontal, 10)
-            .frame(height: 26)
-            // Narrow to's pills are filled capsules; a saved search's is an
-            // outlined key-like box (screens 03 and 01).
-            .background(
-                RoundedRectangle(cornerRadius: pill.op != nil ? 13 : 6)
-                    .fill(pill.op != nil ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: pill.op != nil ? 13 : 6)
-                    .strokeBorder(.separator, lineWidth: pill.op != nil ? 0 : 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .fixedSize()
-    }
-
     // MARK: the cheat sheet
 
     private func cheatSheet(_ rows: [DropdownModel.Row]) -> some View {
@@ -498,5 +450,105 @@ public struct DropdownView: View {
             text += piece
         }
         return text
+    }
+}
+
+/// A section's pills on one line (specs/010-focus-search, "Narrow to").
+///
+/// Each pill keeps its whole width, which is why the row is not an
+/// `HStack`: every pill fixed at its ideal size makes the row's ideal the
+/// sum of them, and a dropdown whose row is wider than its panel is laid
+/// out wider than the panel and clipped on both sides.
+struct PillsRow: View {
+    let pills: [DropdownModel.Pill]
+    let run: (UInt64) -> Void
+
+    /// How many of pills `widths` wide, `spacing` apart, fit in `room`,
+    /// from the first. Never fewer than one: Tab adds the first filter, so
+    /// the first pill is drawn even where it is cut.
+    static func fitting(widths: [CGFloat], spacing: CGFloat, room: CGFloat) -> Int {
+        var used: CGFloat = 0
+        for (index, width) in widths.enumerated() {
+            used += (index == 0 ? 0 : spacing) + width
+            if used > room { return max(index, min(widths.count, 1)) }
+        }
+        return widths.count
+    }
+
+    var body: some View {
+        Fitting(spacing: 8) {
+            ForEach(pills) { pill in pillView(pill) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Pills left to right at their own widths while they fit; the rest
+    /// are left out rather than squeezed, which a pill cannot be. Asks for
+    /// only the first pill's width, so the row never sets the dropdown's.
+    private struct Fitting: Layout {
+        let spacing: CGFloat
+
+        func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache _: inout ()) -> CGSize {
+            let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+            let height = sizes.map(\.height).max() ?? 0
+            return CGSize(width: proposal.width ?? sizes.first?.width ?? 0, height: height)
+        }
+
+        func placeSubviews(in bounds: CGRect, proposal _: ProposedViewSize, subviews: Subviews, cache _: inout ()) {
+            let widths = subviews.map { $0.sizeThatFits(.unspecified).width }
+            let shown = PillsRow.fitting(widths: widths, spacing: spacing, room: bounds.width)
+            var x = bounds.minX
+            for (index, subview) in subviews.enumerated() {
+                guard index < shown else {
+                    // Out of sight, past the panel's clipped edge.
+                    subview.place(at: CGPoint(x: bounds.maxX + 10_000, y: bounds.midY), anchor: .leading, proposal: .unspecified)
+                    continue
+                }
+                subview.place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading, proposal: .unspecified)
+                x += widths[index] + spacing
+            }
+        }
+    }
+
+    private func pillView(_ pill: DropdownModel.Pill) -> some View {
+        Button { run(pill.id) } label: {
+            HStack(spacing: 5) {
+                if let op = pill.op {
+                    Text(op).font(.system(size: 12, design: .monospaced)).foregroundStyle(.tertiary)
+                    Text(pill.label).font(.system(size: 12.5)).foregroundStyle(.primary)
+                } else {
+                    Text(pill.label).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(.primary)
+                }
+                if let count = pill.count {
+                    Text(count).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
+                }
+                // A quiet badge, never a banner (D15): the accent's tint,
+                // small, after the count.
+                if let fresh = pill.fresh {
+                    Text(fresh)
+                        .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(.tint)
+                        .padding(.horizontal, 5)
+                        .frame(height: 16)
+                        .background(Capsule().fill(.tint.opacity(0.12)))
+                }
+                if let cap = pill.cap { KeyCap(cap) }
+            }
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            // Narrow to's pills are filled capsules; a saved search's is an
+            // outlined key-like box (screens 03 and 01).
+            .background(
+                RoundedRectangle(cornerRadius: pill.op != nil ? 13 : 6)
+                    .fill(pill.op != nil ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: pill.op != nil ? 13 : 6)
+                    .strokeBorder(.separator, lineWidth: pill.op != nil ? 0 : 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
     }
 }
