@@ -169,6 +169,52 @@ async fn a_server_side_flag_change_and_deletion_both_reflect_locally() {
     );
 }
 
+/// RFC 7162 §3.2 obliges a server to raise `HIGHESTMODSEQ` on an expunge only
+/// if it supports QRESYNC. A CONDSTORE-only server may leave it alone, so a
+/// pass whose only news is a deletion sees the same value it recorded, plans
+/// `UpToDate`, and the deleted message stays in the list for ever.
+#[tokio::test]
+async fn a_deletion_that_leaves_highestmodseq_alone_still_reflects_locally() {
+    let backend = server_with_messages(3).await;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = local(&connection).await;
+    bootstrap(&connection, &backend, &inbox).await;
+
+    backend.expunge_keeps_mod_seq();
+    backend
+        .store_flags(
+            INBOX,
+            &[rid(3)],
+            &postio_account::backend::FlagChange::Add(FlagSet::from_iter([Flag::Deleted])),
+        )
+        .await
+        .expect("mark deleted");
+    // Another client's flag change moved the value; take it into the local
+    // state first so the expunge below is the only news.
+    resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("settle the flag change");
+    backend
+        .expunge(INBOX, Some(&[rid(3)]))
+        .await
+        .expect("expunge");
+
+    let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    assert!(
+        matches!(outcome, Outcome::Incremental { vanished: 1, .. }),
+        "the deletion is the whole of the news and must be found: {outcome:?}"
+    );
+    assert_eq!(
+        known_uids(&connection, &inbox).await,
+        vec![1, 2],
+        "the expunged message must be gone locally"
+    );
+}
+
 /// postio-66j's "watch out for": a flag change resyncs the message that
 /// already has a contact sighting from bootstrap, and must not add another
 /// one — `times_seen` counting flag changes as new mail would overstate every
