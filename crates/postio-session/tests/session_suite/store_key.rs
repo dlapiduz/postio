@@ -348,10 +348,9 @@ async fn a_store_under_another_key_is_started_over_not_retried() {
     );
 
     let ours = postio_storage::key::StoreKey::from_bytes([0x17; 32]);
-    let refusal = postio_session::open_store_at_reporting(&path, &ours, &|_| {})
-        .await
-        .err()
-        .expect("a store must not open under another key");
+    let Err(refusal) = postio_session::open_store_at_reporting(&path, &ours, &|_| {}).await else {
+        panic!("a store must not open under another key");
+    };
     assert_eq!(
         refusal.remedy,
         postio_session::Remedy::StartOver {
