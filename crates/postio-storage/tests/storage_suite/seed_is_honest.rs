@@ -106,3 +106,27 @@ async fn a_seeded_inbox_is_not_empty() {
         inbox.counts.total
     );
 }
+
+#[tokio::test]
+async fn the_seed_is_the_corpus_the_storyboards_were_pinned_on() {
+    // Every storyboard that counts rows or names a message id counts this
+    // seed, and the seed is a stream of random draws walked over the corpus
+    // in file order: one more fixture re-deals every mailbox after it, and the
+    // nightly's catalogue goes red on a number nobody changed (#1869 added
+    // `encoded-word-control-chars-in-header` and put one more message in the
+    // demo inbox). A fixture that is a hostile-header test rather than mail
+    // for a screenshot is left out of the seed (`UNSEEDED` in `seed.rs`); one that
+    // belongs in it is a deliberate change, made together with the
+    // storyboards' counts.
+    let database = test_support::memory().await;
+    let report = seed_small(&database, 1).await;
+
+    assert_eq!(
+        report.message_count, 79,
+        "the small seed filed {} messages; the storyboards are pinned on 79. \
+         If you added a corpus fixture, leave it out of the seed with \
+         `UNSEEDED` in `seed.rs` unless it should be in the demo, and then re-pin \
+         every `rows.count` and message id in `storyboards/`.",
+        report.message_count
+    );
+}

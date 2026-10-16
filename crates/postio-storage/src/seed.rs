@@ -150,6 +150,16 @@ pub async fn seed_small_downloaded(database: &Store, seed: u64) -> SeedReport {
     seed_corpus(database, seed, true).await
 }
 
+/// Corpus fixtures the seed does not file: hostile-header tests, not mail
+/// for a screenshot.
+///
+/// The seed walks the corpus in file order drawing a folder and a time for
+/// each, and the storyboards count rows and name message ids on the result,
+/// so one more fixture re-deals every mailbox after it. A fixture added for
+/// a parser test goes here; one that belongs in the demo is added to the seed
+/// together with the storyboards' counts (`seed_is_honest.rs` says when).
+const UNSEEDED: &[&str] = &["encoded-word-control-chars-in-header"];
+
 async fn seed_corpus(database: &Store, seed: u64, downloaded: bool) -> SeedReport {
     let connection = database.connect().await.expect("a checked-out connection");
     let account = seeded_account(&connection).await;
@@ -157,7 +167,10 @@ async fn seed_corpus(database: &Store, seed: u64, downloaded: bool) -> SeedRepor
     let mut rng = Rng::new(seed);
 
     let mut message_count = 0;
-    for fixture in test_corpus::all() {
+    for fixture in test_corpus::all()
+        .iter()
+        .filter(|fixture| !UNSEEDED.contains(&fixture.name()))
+    {
         let mailbox = weighted_mailbox(&folders, &mut rng);
         let received_at = recency(&mut rng, SMALL_SPREAD_DAYS);
         let parsed = postio_model::mime::parse(fixture.bytes());
