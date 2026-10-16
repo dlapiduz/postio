@@ -82,6 +82,7 @@ POSTIO_STORE=/tmp/postio.db POSTIO_STARTUP_TRACE=1 POSTIO_STARTUP_EXIT=1 \
 cargo bench -p postio-bench --bench store_reads    # the database read
 cargo bench -p postio-bench --bench search_budget  # the query
 cargo bench -p postio-bench --bench list_scroll    # the row draw
+cargo bench -p postio-bench --bench event_hub      # the event hub emit path
 
 # which window pays the first-realize toll (#790)
 cargo run -p postio-gtk --example first_realize -- splash real

@@ -107,5 +107,10 @@ harness = false
 name = "body_index_size"
 harness = false
 
+# The event hub's emit path, one to eight subscribers (#267, ADR 0013).
+[[bench]]
+name = "event_hub"
+harness = false
+
 [dependencies]
 postio-workspace-hack.workspace = true
