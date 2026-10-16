@@ -111,9 +111,15 @@ final class Engine {
             if accounts.isEmpty { firstRun = FirstRunModel(session: session) }
             vouch()
             focusTable = makeFocusTable(session)
-            messageWindow = MessageWindowModel(source: session) { [weak session] more, finding in
-                session?.focusReaderState(moreOpen: more, finding: finding)
-            }
+            // A message left open in the message window is read (#71,
+            // #1159): `MessageWindowModel` runs `postio_ui::dwell`'s clock
+            // on whatever it shows, and this is where the clock's answer goes.
+            messageWindow = MessageWindowModel(
+                source: session,
+                report: { [weak session] more, finding in
+                    session?.focusReaderState(moreOpen: more, finding: finding)
+                },
+                markRead: { [weak session] message in session?.markReadOnDwell(message) })
             makeBar(session)
             makePicker(session)
             filtered = FilteredModel(engine: session)
@@ -158,6 +164,19 @@ final class Engine {
                 MainActor.assumeIsolated {
                     guard KeyWindowTracker.isMain(window) else { return }
                     self?.refreshUndo()
+                }
+            }
+            // A message open behind another app is not being read: the
+            // read clock runs only while Postio is the active app, as it
+            // runs in GTK only while its window is.
+            messageWindow?.setAppActive(NSApplication.shared.isActive)
+            for (name, active) in [
+                (NSApplication.didBecomeActiveNotification, true),
+                (NSApplication.didResignActiveNotification, false),
+            ] {
+                NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) {
+                    [weak self] _ in
+                    MainActor.assumeIsolated { self?.messageWindow?.setAppActive(active) }
                 }
             }
             refreshUndo()
@@ -1813,6 +1832,9 @@ final class Engine {
                 if composer.sent { secondary.close(.composer) }
                 return true
             }
+            // Read or unread, set by the person: the read clock stops, so a
+            // message kept unread stays unread while it is open (T237).
+            if id == "toggle_read" { messageWindow?.readStateSet() }
             session?.invoke(id)
         }
         return true
