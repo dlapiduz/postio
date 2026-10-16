@@ -198,6 +198,7 @@ async fn verify(settings: &AccountSettings, tokens: &TokenResponse) -> Result<()
 ///
 /// `name` is what the person typed to be called; empty means unset, and the
 /// provider's name (or the address) stands in.
+#[allow(clippy::too_many_arguments)]
 pub async fn provision_oauth(
     database: &Store,
     secrets: Arc<dyn SecretStore>,
