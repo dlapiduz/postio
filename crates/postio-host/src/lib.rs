@@ -1416,6 +1416,10 @@ impl Inner {
                 self.fetch_body(message).await;
                 Resp::Done
             }
+            Req::FetchCarried { message, parts } => {
+                self.fetch_carried(message, parts).await;
+                Resp::Done
+            }
             Req::StorageCeiling(max_bytes) => {
                 maintenance::enforce_ceiling(&self.wiring, max_bytes);
                 Resp::Done
@@ -1601,6 +1605,26 @@ impl Inner {
         self.runtime().spawn(async move {
             if let Err(error) = engine.request_body(message).await {
                 tracing::warn!(message = message.get(), %error, "cannot fetch that body");
+            }
+        });
+    }
+
+    /// Queues the sections a freshly opened forward carries, through the
+    /// interactive lane, as the reader's chip does (#1690).
+    async fn fetch_carried(&self, message: postio_model::MessageId, parts: Vec<String>) {
+        let Some(engine) = self.engine_for_message(message).await else {
+            return;
+        };
+        self.runtime().spawn(async move {
+            match engine.request_payloads(message, parts).await {
+                Ok(queued) => tracing::debug!(
+                    message = message.get(),
+                    queued,
+                    "asked the engine for a forward's parts"
+                ),
+                Err(error) => {
+                    tracing::warn!(message = message.get(), %error, "cannot fetch a forward's parts");
+                }
             }
         });
     }

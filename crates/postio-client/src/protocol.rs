@@ -533,6 +533,16 @@ pub enum Req {
     /// Fetch this message's body ahead of the backfill: a person opened it.
     /// Posted; the body arrives as `BodyLoaded`.
     FetchBody(MessageId),
+    /// A forward of `message` was opened: fetch these sections of it ahead
+    /// of the send, so the attachments it carries are local by then (#1690).
+    /// Posted. Sent only for a forward -- a reply carries nothing, and
+    /// nothing leaves the machine that the person did not ask for.
+    FetchCarried {
+        /// The message being forwarded.
+        message: MessageId,
+        /// MIME section paths of the parts the forward carries.
+        parts: Vec<String>,
+    },
     /// `[storage] max_bytes` changed: bring the blob store under it.
     StorageCeiling(Option<u64>),
     /// Save an account whose credentials a frontend already proved: the

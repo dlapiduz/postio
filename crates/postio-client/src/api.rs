@@ -172,6 +172,7 @@ impl Req {
             Req::Filtered { .. } => "Filtered",
             Req::NoteMove(_) => "NoteMove",
             Req::FetchBody(_) => "FetchBody",
+            Req::FetchCarried { .. } => "FetchCarried",
             Req::StorageCeiling(_) => "StorageCeiling",
             Req::SaveAccount { .. } => "SaveAccount",
             Req::SaveOAuthAccount(_) => "SaveOAuthAccount",
@@ -237,6 +238,17 @@ impl Client {
     pub fn fetch_body(&self, message: MessageId) {
         self.counts.record("FetchBody");
         self.transport.post(Req::FetchBody(message));
+    }
+
+    /// A forward of `message` was opened: ask for the `parts` it carries now,
+    /// rather than when the send drains (#1690). Posted. Call it for a
+    /// forward only; [`postio_ui::compose::carried_sections`] names the parts.
+    pub fn fetch_carried(&self, message: MessageId, parts: Vec<String>) {
+        if parts.is_empty() {
+            return;
+        }
+        self.counts.record("FetchCarried");
+        self.transport.post(Req::FetchCarried { message, parts });
     }
 
     /// `[storage] max_bytes` changed: the host brings the blobs under it.
