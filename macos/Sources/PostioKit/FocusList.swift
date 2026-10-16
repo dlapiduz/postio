@@ -231,6 +231,11 @@ public struct FocusRowModel: Equatable, Sendable {
     /// Unread is bold (the Mac pack's global rules).
     public var bold: Bool { unread }
 
+    /// Unread also has the accent dot in the gutter. A marked row says so
+    /// on its second line; a dot there read as new mail. A digest's gutter
+    /// holds its stack.
+    public var dot: Bool { unread && layout != .digest }
+
     /// What VoiceOver says for the row: GTK's row says the same things in
     /// the same order (`postio-gtk` `list/row.rs`).
     public var accessibilityLabel: String {

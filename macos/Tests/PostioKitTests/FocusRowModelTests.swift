@@ -223,6 +223,21 @@ import Testing
         #expect(!FocusRowModel(Self.row(unread: false), binding: Self.binding).bold)
     }
 
+    /// The gutter's dot is unread mail, beside the bold; a row's action is
+    /// its second line, and a dot there read as new mail.
+    @Test func theDotIsUnreadNotAnAction() {
+        let dot = { (unread: Bool, marker: MarkerLineFfi?) in
+            FocusRowModel(Self.row(unread: unread, marker: marker), binding: Self.binding).dot
+        }
+        #expect(dot(true, nil))
+        #expect(dot(true, Self.question))
+        #expect(!dot(false, Self.question))
+        #expect(!dot(false, nil))
+        // A digest's gutter holds its stack.
+        #expect(
+            !FocusRowModel(Self.row(kind: .digest, unread: true), binding: Self.binding).dot)
+    }
+
     @Test func aScreenReaderHearsTheRowAndItsMarker() {
         let model = FocusRowModel(
             Self.row(unread: true, marker: Self.question), binding: Self.binding)
