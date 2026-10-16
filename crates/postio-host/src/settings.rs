@@ -41,9 +41,10 @@ const ROLES: [postio_model::MailboxRole; 5] = [
 /// account is enabled again. A row pending removal is on its way out, and
 /// showing it would let it be removed twice.
 ///
-/// The weights are `count(*)` and `sum(size)` over every message an account
-/// has -- 1.48s on a real store -- so a frontend asks for them only while
-/// the panel is on screen (#871).
+/// The weights are a row the store keeps per account (#1508), so asking is
+/// two point reads per account however much mail it holds. A frontend still
+/// asks only while the panel is on screen (#871): what a panel draws is read
+/// when the panel is looked at.
 pub async fn accounts(database: &Store, weights: bool) -> Result<Vec<AccountSettings>, StoreError> {
     let connection = database.read().await?;
     let accounts = AccountRepository::new(&connection).list().await?;
@@ -289,4 +290,81 @@ pub async fn retire_orientation(database: &Store) -> Result<(), StoreError> {
         .set(SEEN_KEY, &chrono::Utc::now().to_rfc3339())
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    //! Opening the settings panel reads a bounded amount, whatever the
+    //! mailbox holds (#1508).
+    //!
+    //! Opening settings is an interaction, budgeted at 16 ms
+    //! (`docs/PRODUCT.md` §18). The panel asks for every account's weight
+    //! and the privacy pane's read-receipt figure, and each used to be an
+    //! aggregate over every message the account held: one statement and
+    //! one row however much it read, so a statement or row count alone is
+    //! blind to it (`docs/notes/2026-09-11-an-aggregate-hides-from-a-row-
+    //! count.md`). Both are asked here: the counts at two sizes, and the
+    //! planner, for every statement the panel issued, whether it can walk
+    //! a table that grows with the store.
+
+    use postio_storage::Store;
+    use postio_storage::test_support::{self, counting};
+
+    /// An order of magnitude apart, so anything linear shows.
+    const SMALL: usize = 200;
+    const LARGE: usize = 2_000;
+
+    /// What the panel asks for when it opens.
+    async fn open_the_panel(database: &Store) {
+        let accounts = super::accounts(database, true).await.expect("the accounts");
+        assert!(
+            accounts.iter().all(|account| account.weight.is_some()),
+            "every account is weighed while the panel is on screen"
+        );
+        super::privacy(database).await.expect("the privacy log");
+    }
+
+    async fn seeded(size: usize) -> Store {
+        let database = test_support::memory().await;
+        postio_storage::seed::seed_large(&database, 7, size).await;
+        database
+    }
+
+    #[tokio::test]
+    async fn opening_settings_reads_a_bounded_amount_however_big_the_mailbox_is() {
+        let small = seeded(SMALL).await;
+        let large = seeded(LARGE).await;
+
+        let over_small = counting::counted_async(|| open_the_panel(&small)).await;
+        let over_large = counting::counted_async(|| open_the_panel(&large)).await;
+        // Compiles are left out: the first panel compiled what the second
+        // found in the thread's cache, which says nothing about size.
+        assert_eq!(
+            (over_small.statements, over_small.rows),
+            (over_large.statements, over_large.rows),
+            "opening settings over {LARGE} messages cost {over_large:?} where \
+             {SMALL} cost {over_small:?}"
+        );
+
+        counting::record();
+        open_the_panel(&large).await;
+        let issued = counting::recorded();
+        assert!(!issued.is_empty(), "nothing was recorded");
+        let connection = large.connect().await.expect("a connection");
+        let mut walks = Vec::new();
+        for sql in issued.keys() {
+            let steps = counting::unbounded(&connection, sql, counting::GROWING_TABLES).await;
+            if !steps.is_empty() {
+                walks.push(format!(
+                    "{steps:?}: {}",
+                    sql.split_whitespace().collect::<Vec<_>>().join(" ")
+                ));
+            }
+        }
+        assert!(
+            walks.is_empty(),
+            "opening settings reads all of a table that grows with the \
+             mailbox: {walks:#?}"
+        );
+    }
 }

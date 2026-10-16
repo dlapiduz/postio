@@ -240,6 +240,48 @@ UPDATE messages SET
 ALTER TABLE recent_searches ADD COLUMN capped INTEGER NOT NULL DEFAULT 0;
 ",
     },
+    // #1508: an account's weight and its read-receipt figure are a row kept
+    // by triggers, not aggregates over its mail. Each message's attachment
+    // bytes are filled from its rows, then each account's row from its
+    // messages, once, before the triggers that keep both from here on.
+    Migration {
+        from: stamp(0x804e_6e62),
+        to: stamp(0xd154_aa70),
+        statements: concat!(
+            "
+ALTER TABLE messages ADD COLUMN attachment_bytes INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE messages ADD COLUMN attachment_bytes_unfetched INTEGER NOT NULL DEFAULT 0;
+
+UPDATE messages SET
+    attachment_bytes = (SELECT coalesce(sum(a.size), 0) FROM attachments a
+                         WHERE a.message_id = messages.id),
+    attachment_bytes_unfetched = (SELECT coalesce(sum(a.size), 0) FROM attachments a
+                                   WHERE a.message_id = messages.id AND a.blob_id IS NULL);
+",
+            include_str!("schema/footprint.sql"),
+            "
+INSERT INTO account_footprints
+       (account_id, messages, total_bytes, attachment_bytes, local_bytes, read_receipts)
+SELECT a.id,
+       (SELECT count(*) FROM messages m
+         WHERE m.account_id = a.id AND m.deleted_locally = 0),
+       (SELECT coalesce(sum(m.size), 0) FROM messages m
+         WHERE m.account_id = a.id AND m.deleted_locally = 0),
+       (SELECT coalesce(sum(m.attachment_bytes), 0) FROM messages m
+         WHERE m.account_id = a.id AND m.deleted_locally = 0),
+       (SELECT coalesce(sum(CASE m.body_state
+                                WHEN 'full' THEN m.size
+                                WHEN 'partial' THEN m.size - m.attachment_bytes_unfetched
+                                ELSE 0 END), 0) FROM messages m
+         WHERE m.account_id = a.id AND m.deleted_locally = 0),
+       (SELECT count(*) FROM messages m
+         WHERE m.account_id = a.id AND m.deleted_locally = 0
+           AND m.read_receipt_requested = 1)
+  FROM accounts a;
+",
+        ),
+    },
 ];
 
 /// The steps that carry a store stamped `found` to [`FINGERPRINT`], in the
@@ -870,7 +912,12 @@ CREATE TABLE messages (
     -- order. `attachment_count`: its `attachments` rows.
     people_ids              TEXT,
     label_ids               TEXT,
-    attachment_count        INTEGER NOT NULL DEFAULT 0
+    attachment_count        INTEGER NOT NULL DEFAULT 0,
+    -- What its `attachments` rows weigh, and the part of that with no blob
+    -- here yet, kept by the triggers in `footprint.sql` so an account's
+    -- weight is a maintained row rather than a walk of its mail (#1508).
+    attachment_bytes            INTEGER NOT NULL DEFAULT 0,
+    attachment_bytes_unfetched  INTEGER NOT NULL DEFAULT 0
 );
 
 -- The body folded for the full-text index, one row per indexed message.
@@ -1381,7 +1428,8 @@ BEGIN
 END;;"#,
     include_str!("schema/content-locations.sql"),
     include_str!("schema/content-projection.sql"),
-    include_str!("schema/walk-columns.sql")
+    include_str!("schema/walk-columns.sql"),
+    include_str!("schema/footprint.sql")
 );
 
 /// What the schema declares, as names, without an engine.

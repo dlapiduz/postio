@@ -2697,10 +2697,10 @@ impl Session {
     /// `None` when there is nothing to weigh — a fresh account says nothing
     /// rather than `0 B`, which reads as a failure.
     ///
-    /// Three aggregates over `messages`, asked when a settings window opens
-    /// and not otherwise. Deliberately not cached: a stale size is a claim
-    /// about a store that has changed since, and the whole line is one a
-    /// person glances at once.
+    /// A row the store keeps per account (#1508), asked when a settings
+    /// window opens and not otherwise. Read fresh each time rather than
+    /// cached here: a stale size is a claim about a store that has changed
+    /// since, and the read is a point lookup.
     pub async fn account_weight(&self, account: i64) -> Option<String> {
         let (database, _) = self.store_and_blobs()?;
         let connection = database.connect().await.ok()?;
