@@ -3018,7 +3018,7 @@ impl Session {
             )
             .await?;
             signin::provision_oauth(
-                &database, secrets, &settings, &client, signed_in, &scopes, None,
+                &database, secrets, &settings, &client, signed_in, &scopes, None, "",
             )
             .await
             .map_err(signin::SignInError::Failed)
