@@ -684,6 +684,13 @@ pub struct Session {
     /// one gave every test in a run the same file — so a grant made by one
     /// test was in force for the next.
     allow_list_at: std::path::PathBuf,
+    /// The grants and treatments at [`allow_list_at`](Self::allow_list_at),
+    /// read once and kept (#1589). Every write to that file goes through
+    /// this session and through here, so what is kept is what is on disk:
+    /// a revoke in Settings is true for the next message drawn without the
+    /// next message drawn reading the file again. `None` until first asked,
+    /// and again after a write that failed, so the next read is the disk's.
+    allow_list_kept: Mutex<Option<postio_ui::allowlist::RemoteImageAllowList>>,
     /// This session's number within the process.
     ///
     /// Only [`handoff_dir`](Self::handoff_dir) needs it, and only on the
@@ -1903,6 +1910,7 @@ impl Session {
                         .unwrap_or_default()
                 )),
                 serial: next_serial(),
+                allow_list_kept: Mutex::new(None),
                 thread_renders: Mutex::new(postio_ui::reader::document::RenderCache::default()),
                 in_flight: Arc::default(),
                 reconnects: Arc::default(),
@@ -2006,6 +2014,7 @@ impl Session {
             agents: answer_agents(postio_mcp::socket::path_for(&store_at), &host, &source),
             store_at,
             serial: next_serial(),
+            allow_list_kept: Mutex::new(None),
             thread_renders: Mutex::new(postio_ui::reader::document::RenderCache::default()),
             in_flight: Arc::default(),
             reconnects: Arc::default(),
@@ -2342,19 +2351,52 @@ impl Session {
         self.amend_allow_list(|list| list.allow_domain(&domain));
     }
 
-    /// The standing grants, read fresh.
+    /// The standing grants.
     ///
-    /// Not cached: the file is small, this is asked once per message drawn,
-    /// and a cached copy is a copy that can disagree with the settings pane
-    /// that revokes a grant.
+    /// From memory: the file is read once per session and every write goes
+    /// through [`amend_remote_images`](Self::amend_remote_images), which
+    /// keeps the copy current -- so the settings pane that revokes a grant
+    /// and the next message drawn cannot disagree, and drawing a message is
+    /// not a disk read (#1589).
     pub(crate) fn allow_list(&self) -> postio_ui::allowlist::AllowList {
-        postio_ui::allowlist::AllowList::load_from(&self.allow_list_path())
+        self.with_remote_images(|list| list.grants().clone())
+    }
+
+    /// `read` over the grants and treatments, read from disk only the first
+    /// time. See [`allow_list_kept`](Self::allow_list_kept).
+    pub(crate) fn with_remote_images<T>(
+        &self,
+        read: impl FnOnce(&postio_ui::allowlist::RemoteImageAllowList) -> T,
+    ) -> T {
+        let mut kept = self.allow_list_kept.lock().expect("allow list lock");
+        read(kept.get_or_insert_with(|| {
+            postio_ui::allowlist::RemoteImageAllowList::load_from(&self.allow_list_path())
+        }))
+    }
+
+    /// Change the grants or treatments, write them, and keep what was
+    /// written. Best-effort: a change that could not be written is one the
+    /// user will be asked about again, which is the safe failure -- so it is
+    /// not kept either, and the next read goes back to the file.
+    pub(crate) fn amend_remote_images(
+        &self,
+        change: impl FnOnce(&mut postio_ui::allowlist::RemoteImageAllowList),
+    ) -> std::io::Result<()> {
+        let path = self.allow_list_path();
+        let mut kept = self.allow_list_kept.lock().expect("allow list lock");
+        let mut list = kept
+            .take()
+            .unwrap_or_else(|| postio_ui::allowlist::RemoteImageAllowList::load_from(&path));
+        change(&mut list);
+        list.save_to(&path)?;
+        *kept = Some(list);
+        Ok(())
     }
 
     /// Every grant. See
     /// [`remote_image_grants_ffi`](Self::remote_image_grants_ffi).
     pub fn remote_image_grants(&self) -> Vec<crate::GrantFfi> {
-        let list = postio_ui::allowlist::AllowList::load_from(&self.allow_list_path());
+        let list = self.allow_list();
         let addresses = list.addresses().map(|subject| crate::GrantFfi {
             subject: subject.to_owned(),
             whole_domain: false,
@@ -2376,15 +2418,11 @@ impl Session {
         self.amend_allow_list(|list| list.revoke(&subject));
     }
 
-    /// Read, change, write. Best-effort: a grant that could not be written
-    /// is one the user will be asked about again, which is the safe failure.
+    /// Change the grants alone. Through the shell, which writes the
+    /// senders' treatments back beside the grants; `AllowList` alone would
+    /// drop them.
     fn amend_allow_list(&self, change: impl FnOnce(&mut postio_ui::allowlist::AllowList)) {
-        let path = self.allow_list_path();
-        // Through the shell, which writes the senders' treatments back
-        // beside the grants; `AllowList` alone would drop them.
-        let mut list = postio_ui::allowlist::RemoteImageAllowList::load_from(&path);
-        change(list.grants_mut());
-        if let Err(error) = list.save_to(&path) {
+        if let Err(error) = self.amend_remote_images(|list| change(list.grants_mut())) {
             tracing::error!(%error, "the remote-image allow list could not be saved: {error}");
         }
     }
@@ -4436,9 +4474,11 @@ impl Session {
             ));
         };
         let offline = self.offline.load(std::sync::atomic::Ordering::SeqCst);
-        match postio_session::reading::load_body_or_reason(&connection, message.into(), offline)
-            .await
-        {
+        // The row the body was decided from, for the notice's sender, rather
+        // than a second read of it (#1589).
+        let (body, row) =
+            postio_session::reading::load_with_row(&connection, message.into(), offline).await;
+        match body {
             // `encoding_problems` is bound and not used *here* deliberately,
             // and is no longer the gap it was: the caveat it carries is
             // native chrome above the document rather than markup inside it
@@ -4473,9 +4513,11 @@ impl Session {
                 // out of the sanitize pass, which runs before reader view's
                 // reduce, so Reader and Original renders agree on them (a
                 // test pins that).
-                let notice = self
-                    .held_back_notice(&connection, message, drawn.held_back, remote)
-                    .await;
+                let notice = self.held_back_notice(
+                    drawn.held_back,
+                    remote,
+                    row.as_ref().and_then(|row| row.from.first()),
+                );
                 crate::ReaderDocumentFfi {
                     html: document_for(
                         &drawn.html,
@@ -4502,31 +4544,23 @@ impl Session {
     /// What a blocked render held back, as the notice above the body says
     /// it, with the sender the notice's grant would name: `None` for an
     /// allowed render, which holds nothing back, or one that held nothing.
-    pub(crate) async fn held_back_notice(
+    ///
+    /// `from` is the message's first sender, off the row the body was read
+    /// with: the notice costs no read of its own.
+    pub(crate) fn held_back_notice(
         &self,
-        connection: &postio_storage::store::Connection,
-        message: i64,
         held_back: postio_ui::reader::document::HeldBack,
         remote: postio_body::RemoteImages,
+        from: Option<&postio_model::EmailAddress>,
     ) -> Option<crate::ReaderNoticeFfi> {
         if remote == postio_body::RemoteImages::Blocked {
             let summary = held_back.summary();
             if summary.is_empty() {
                 None
             } else {
-                // The sender, for the grant the notice offers. A row
-                // read, not a body load — and only on the messages
-                // that actually held something back.
-                let sender = postio_storage::repository::MessageRepository::new(connection)
-                    .get(postio_model::ids::MessageId::new(message))
-                    .await
-                    .ok()
-                    .flatten()
-                    .and_then(|row| {
-                        row.from
-                            .first()
-                            .map(|address| address.address.to_lowercase())
-                    })
+                // The sender, for the grant the notice offers.
+                let sender = from
+                    .map(|address| address.address.to_lowercase())
                     .unwrap_or_default();
                 let domain = sender
                     .rsplit_once('@')

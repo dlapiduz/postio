@@ -268,6 +268,12 @@ impl RemoteImageAllowList {
         self.inner.is_empty()
     }
 
+    /// The grants themselves, to ask about or list -- domains included,
+    /// which [`senders`](Self::senders) leaves out.
+    pub fn grants(&self) -> &AllowList {
+        &self.inner
+    }
+
     /// The grants themselves, to change in memory -- a domain grant, a
     /// revoke -- without losing the treatments beside them when the list
     /// is saved.

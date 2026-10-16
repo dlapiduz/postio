@@ -266,3 +266,107 @@ async fn one_open_is_one_body_read_counted_at_the_sql_seam() {
     );
     session.shutdown();
 }
+
+/// The Mac's message window opens a message with one call that reads its
+/// body once and sanitises it once (#1609, #1589). It used to be two calls
+/// side by side -- the chrome around the body, and the document -- each with
+/// a store read of its own, so every open decompressed the body twice and
+/// read the row four times. Counted at the storage seam, which sees the
+/// store owner's thread as well as this one.
+#[tokio::test(flavor = "multi_thread")]
+async fn opening_a_message_in_focus_reads_and_sanitises_its_body_once() {
+    let (session, message) = a_message_with_everything().await;
+
+    let loads = test_support::counting::body_loads();
+    let sanitised = postio_ui::test_support::bodies_sanitised();
+    let open = session.focus_message_open(
+        message,
+        0,
+        1,
+        postio_ffi::RemoteImagesFfi::Blocked,
+        None,
+        1440,
+    );
+    let sanitised = postio_ui::test_support::bodies_sanitised() - sanitised;
+    let loads = test_support::counting::body_loads() - loads;
+
+    // What the person sees came along whole: the chrome, the body, and the
+    // facts the render paid for.
+    assert_eq!(open.view.message, message);
+    assert_eq!(
+        open.view.fields[0].people[0].address, "digest@lists.example.org",
+        "the sender block is the message's"
+    );
+    assert!(open.document.html.contains("hello"), "the body is drawn");
+    let notice = open
+        .document
+        .notice
+        .expect("two remote images were held back");
+    assert!(
+        notice.summary.starts_with("2 remote images"),
+        "{}",
+        notice.summary
+    );
+    assert!(open.document.caveat.is_some(), "the body was flagged");
+
+    assert_eq!(loads, 1, "one open decoded the body {loads} times");
+    assert_eq!(
+        sanitised, 1,
+        "one open sanitised the body {sanitised} times"
+    );
+    session.shutdown();
+}
+
+/// The standing grants are read once and kept, not read from disk for every
+/// message drawn (#1589) -- and kept current by the session's own writes,
+/// which are the only ones there are, so a revoke in Settings is true for the
+/// next message drawn.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_allow_list_is_kept_in_memory_and_current_through_its_writes() {
+    let (session, message) = a_message_with_everything().await;
+    let allowed = |session: &Session| {
+        session
+            .focus_reader_document(message, postio_ffi::RemoteImagesFfi::Blocked, None, 1440)
+            .notice
+            .expect("still held back: the render asked for is a blocked one")
+            .allowed
+    };
+    assert!(!allowed(&session));
+
+    session.allow_sender("digest@lists.example.org".to_owned());
+    assert!(allowed(&session), "a grant is true at once");
+
+    // Gone from disk behind the session's back: the session does not go
+    // back to the file to draw the next message.
+    let path = std::env::temp_dir();
+    let files: Vec<_> = std::fs::read_dir(&path)
+        .expect("the temporary directory")
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with(&format!("postio-allowed-{}-", std::process::id()))
+                })
+        })
+        // This session's, by the grant it holds, should another session in
+        // this process have a file of its own.
+        .filter(|path| {
+            std::fs::read_to_string(path)
+                .is_ok_and(|text| text.contains("digest@lists.example.org"))
+        })
+        .collect();
+    assert!(!files.is_empty(), "the grant was written through to disk");
+    for file in &files {
+        std::fs::remove_file(file).expect("the grants file goes");
+    }
+    assert!(
+        allowed(&session),
+        "drawing a message read the grants from disk again"
+    );
+
+    session.revoke_remote_images("digest@lists.example.org".to_owned());
+    assert!(!allowed(&session), "a revoke is true at once");
+    session.shutdown();
+}

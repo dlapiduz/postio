@@ -422,6 +422,18 @@ pub fn worth_reclaiming(free_pages: u64, total_pages: u64, page_size: u64) -> bo
 /// cost its own cache". Read through `test_support::counting::checkouts`.
 pub(crate) static CHECKOUTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// How many message bodies this process has read out of the store and
+/// decoded: one per row [`MessageRepository::body`] answers.
+///
+/// Process-wide for the reason [`CHECKOUTS`] is: the read happens on the
+/// store owner's thread, not the asker's. A body is most of a message's
+/// bytes and a decompression besides, so "opening a message reads its body
+/// once" is a budget in its own right (#1589). Read through
+/// `test_support::counting::body_loads`.
+///
+/// [`MessageRepository::body`]: crate::repository::MessageRepository::body
+pub(crate) static BODY_LOADS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// The store: a database handle and the path it came from.
 ///
 /// Cheap to clone — the engine's handle is an `Arc` inside — so it is passed

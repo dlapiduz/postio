@@ -318,3 +318,13 @@ fn walks_a_scope(step: &str) -> bool {
 pub fn checkouts() -> u64 {
     crate::store::CHECKOUTS.load(std::sync::atomic::Ordering::Relaxed)
 }
+
+/// How many message bodies this process has read and decoded so far.
+///
+/// Process-wide and monotonic, like [`checkouts`]: take a reading before and
+/// after. A second load of the same body is a second decompression of most
+/// of a message's bytes, which a statement budget sees only as one more
+/// statement among many (#1589).
+pub fn body_loads() -> u64 {
+    crate::store::BODY_LOADS.load(std::sync::atomic::Ordering::Relaxed)
+}
