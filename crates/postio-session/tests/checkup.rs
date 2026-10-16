@@ -159,6 +159,10 @@ async fn an_account_with_nothing_in_the_keyring_is_partial_rather_than_wrong() {
         "nothing was in the keyring: {}",
         report.message
     );
+    assert!(
+        !report.rejected_credential,
+        "nothing reached a server to refuse it"
+    );
 }
 
 #[tokio::test]
@@ -198,4 +202,34 @@ async fn renaming_an_account_that_is_gone_says_so() {
     .await
     .expect_err("there is no such account");
     assert!(error.contains("not in the store"), "{error}");
+}
+
+#[test]
+fn a_refused_password_is_reported_as_one_the_pane_can_replace() {
+    // A rotated app password is the ordinary end of every account that has
+    // one. A report that called it only "unreachable" left the settings row
+    // with nothing to offer but a retry, which a refused credential never
+    // passes (#1584).
+    let report = postio_session::checkup::failure(&BackendError::Auth {
+        account: ADDRESS.to_owned(),
+        reason: "AUTHENTICATIONFAILED".to_owned(),
+    });
+
+    assert!(!report.reachable);
+    assert!(report.rejected_credential, "{}", report.message);
+    assert!(!report.missing_credential);
+}
+
+#[test]
+fn a_server_that_did_not_answer_is_not_a_refused_password() {
+    // The positive control for the test above: a timeout asks for patience
+    // or a better host name, and offering a new password for it sends
+    // somebody to replace a credential that was never the problem.
+    let report = postio_session::checkup::failure(&BackendError::TimedOut {
+        context: "connect".to_owned(),
+        after: Duration::from_secs(30),
+    });
+
+    assert!(!report.reachable);
+    assert!(!report.rejected_credential, "{}", report.message);
 }

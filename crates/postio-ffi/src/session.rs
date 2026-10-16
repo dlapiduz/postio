@@ -2640,6 +2640,7 @@ impl Session {
         let refusal = |message: &str| crate::ConnectionReportFfi {
             reachable: false,
             missing_credential: false,
+            rejected_credential: false,
             message: message.to_owned(),
         };
         let Some((database, _)) = self.store_and_blobs() else {
@@ -2670,6 +2671,7 @@ impl Session {
         crate::ConnectionReportFfi {
             reachable: report.reachable,
             missing_credential: report.missing_credential,
+            rejected_credential: report.rejected_credential,
             message: report.message,
         }
     }

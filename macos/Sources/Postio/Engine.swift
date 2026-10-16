@@ -133,6 +133,13 @@ final class Engine {
             if DemoMode.seed == nil { _ = try? session.startSyncing() }
             // What sync would have said, for screens 16 to 19 (T101).
             if let said = DemoMode.state { _ = session.demoState(said) }
+            // A repair that went through clears what a test found wrong,
+            // from whichever window it was made in.
+            for repair in [accountRepair, bannerRepair] {
+                repair.repaired = { [weak self] account in
+                    self?.settingsActions.credentialRepaired(account)
+                }
+            }
             // An account added while this runs gets its engine here, which is
             // what makes it sync without a relaunch (#1299).
             settingsActions.accountAdded = { [weak self] in
