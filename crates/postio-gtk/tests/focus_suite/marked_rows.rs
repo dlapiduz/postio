@@ -97,7 +97,7 @@ pub fn a_marked_row_is_two_lines_whatever_its_state() {
 }
 
 /// A selected marked row shows one mark in its gutter, the checked box. The
-/// box and the marker's dot both stood at the gutter's centre on the first
+/// box and the unread dot both stood at the gutter's centre on the first
 /// line, so selecting a row with an action drew the check over the dot; the
 /// box takes the dot's place, as it takes a digest's stack, and the second
 /// line still says what the marker is.
@@ -153,6 +153,66 @@ pub fn a_selected_marked_row_shows_its_check_not_its_dot() {
             "and the second line still says what the marker is: {:?}",
             row.drawn().texts
         );
+    });
+}
+
+/// The gutter's dot is unread mail, beside the bold, as the search
+/// results draw it. A marked row says what it is on its second line; a dot
+/// for the marker read as new mail.
+pub fn the_dot_is_unread_mail_not_a_marker() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Atlas staffing",
+                "Sharing the draft.",
+                30,
+            )
+            .await;
+        let (asked, _) = fixture
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Re: Atlas Q3 budget",
+                "Can you approve these by Friday?",
+                10,
+            )
+            .await;
+        fixture.ask(asked, "Can you approve these by Friday?").await;
+        let connection = fixture.database.connect().await.expect("a connection");
+        postio_storage::sql::execute(
+            &connection,
+            "UPDATE messages SET seen = 1, flags = '\\Seen' WHERE id = ?1",
+            [asked.get()],
+        )
+        .await
+        .expect("read");
+        let (window, _client) = fixture.open().await;
+        let pane = window.pane().expect("the inbox");
+        let row = |two: bool| {
+            pane.rows_on_screen()
+                .into_iter()
+                .find(|row| row.item().is_some_and(|item| item.two_lines() == two))
+        };
+        assert!(
+            crate::settle_until(async || {
+                row(true).is_some_and(|row| row.drawn().accent.is_some())
+                    && row(false).is_some_and(|row| row.drawn().bold)
+            })
+            .await,
+            "the rows never drew"
+        );
+        let (marked, unread) = (row(true).expect("seen"), row(false).expect("seen"));
+        assert!(!marked.drawn().bold, "the marked one is read");
+        assert_eq!(
+            gutter_marks(&marked),
+            0,
+            "a read row has no dot, marker or not"
+        );
+        assert_eq!(gutter_marks(&unread), 1, "an unread row has its dot");
     });
 }
 

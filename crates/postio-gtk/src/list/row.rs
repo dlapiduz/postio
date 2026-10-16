@@ -121,7 +121,7 @@ const LEAST_FIRST_LINE: f32 = 40.0;
 /// Where a two-line row's lines sit (their centres), from screen 01.
 const FIRST_LINE: f32 = 22.0;
 const SECOND_LINE: f32 = 51.0;
-/// The marker dot in the gutter.
+/// The unread dot in the gutter.
 const GUTTER_CENTRE: f32 = 30.0;
 
 /// How far either side of the gutter's centre a press still hits the
@@ -611,6 +611,15 @@ impl RowWidget {
         };
         if drawn.picked {
             self.draw_picked(snapshot, &palette, middle);
+        } else if bold {
+            // Unread has the accent dot as well as the bold, as the search
+            // results do; a marked row says so on its second line. The
+            // checked box stands where the dot would, as it stands where a
+            // digest's stack would: both at once drew the check over it.
+            let dot = graphene::Rect::new(GUTTER_CENTRE - DOT / 2.0, middle - DOT / 2.0, DOT, DOT);
+            snapshot.push_rounded_clip(&gtk::gsk::RoundedRect::from_rect(dot, DOT / 2.0));
+            snapshot.append_color(&palette.accent, &dot);
+            snapshot.pop();
         }
 
         // The trailing column first, from the right edge in, so the middle
@@ -766,8 +775,7 @@ impl RowWidget {
         self.imp().drawn.replace(drawn);
     }
 
-    /// The second line of a marked row: the accent dot in the gutter, the
-    /// kind chip, the date, the quoted sentence, and on the right the
+    /// The second line of a marked row: the kind chip, the date, the quoted sentence, and on the right the
     /// actions that answer it with their keys -- or what is true instead.
     fn draw_marker(
         &self,
@@ -786,20 +794,6 @@ impl RowWidget {
             .capturing(capture);
         let width = self.width() as f32;
         drawn.accent = Some(palette.accent);
-
-        // The checked box stands where the dot would, as it stands where a
-        // digest's stack would: both at once drew the check over the dot.
-        if !drawn.picked {
-            let dot = graphene::Rect::new(
-                GUTTER_CENTRE - DOT / 2.0,
-                self.first_line() - DOT / 2.0,
-                DOT,
-                DOT,
-            );
-            snapshot.push_rounded_clip(&gtk::gsk::RoundedRect::from_rect(dot, DOT / 2.0));
-            snapshot.append_color(&palette.accent, &dot);
-            snapshot.pop();
-        }
 
         // The actions first, from the right edge in, so the quote knows its
         // room.
