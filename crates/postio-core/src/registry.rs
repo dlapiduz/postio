@@ -853,7 +853,11 @@ static SPECS: &[CommandSpec] = &[
         // is Focus's digest key under the one keymap.
         default_binding: "#",
         alternate_bindings: &["Delete"],
-        contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
+        // Filtered too: C4 forbids deleting automatically, not the person
+        // deleting what they see there.
+        contexts: ctx(MESSAGE_SURFACES)
+            .with(Context::Results)
+            .with(Context::Filtered),
         destructive: true,
         recovery: Recovery::Undo,
         requires: MAIL,
@@ -880,7 +884,7 @@ static SPECS: &[CommandSpec] = &[
         // selection prefix (`* a`).
         default_binding: "s",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES),
+        contexts: ctx(MESSAGE_SURFACES).with(Context::Filtered),
         destructive: false,
         recovery: Recovery::Undo,
         // Every app offers it, Focus on `s` with no mark on the row (spec
@@ -896,7 +900,7 @@ static SPECS: &[CommandSpec] = &[
         // read one `U` makes it unread, which are the cases each key is for.
         default_binding: "I",
         alternate_bindings: &["U"],
-        contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
+        contexts: ctx(MESSAGE_SURFACES).with(Context::Results).with(Context::Filtered),
         destructive: false,
         recovery: Recovery::Undo,
         requires: MAIL,
