@@ -821,6 +821,10 @@ const CASES: &[(&str, fn())] = &[
         open_keys::j_and_k_step_the_open_message_from_where_the_keyboard_is as fn(),
     ),
     (
+        "open_keys::d_in_the_open_message_opens_the_digest_rule",
+        open_keys::d_in_the_open_message_opens_the_digest_rule as fn(),
+    ),
+    (
         "open_reading::the_open_message_is_one_scrolling_column",
         open_reading::the_open_message_is_one_scrolling_column as fn(),
     ),
