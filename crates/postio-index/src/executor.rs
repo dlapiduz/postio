@@ -2296,23 +2296,19 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
 /// that into a single inverted-index lookup, the same cost class as free
 /// text.
 ///
-/// # Why the term is asked twice
+/// # How the column is named
 ///
-/// FTS5 scoped a match to one column inside the query string —
-/// `messages_fts MATCH 'sender:ada'`. This engine takes the columns as
-/// arguments instead, and `fts_match(sender, ?)` on its own is *correct* and
-/// **does not use the index**: a subset of an index's columns gets `SCAN`,
-/// which is exactly the per-message scan the paragraph above is about.
+/// The engine takes an index's columns as `fts_match`'s arguments, and
+/// `fts_match(sender, ?)` with fewer columns than the index covers **does
+/// not use the index**: it gets `SCAN`, which is exactly the per-message
+/// scan the paragraph above is about. Worse, that scalar form is true when
+/// *any one word* of the value is in the column, not the phrase, so pairing
+/// it with the five-column lookup found `from:ada@example.com` in mail sent
+/// to that address by anyone at `example.com` (#1699).
 ///
-/// So the term is asked twice. The five-column form narrows through the
-/// index to messages carrying the term *anywhere*; the one-column form then
-/// says which column it had to be in. Both are token matches, so
-/// `from:`/`to:`/`subject:`/`filename:`/`list:` keep matching whole tokens
-/// rather than substrings — and the per-row check only ever runs on what the
-/// index already narrowed to.
-///
-/// Verified in `turso_capabilities.rs`: a column subset alone scans, and the
-/// pair uses the index.
+/// So the column is named inside the query instead -- `sender:"ada@…"`,
+/// the index's own field syntax -- and the one five-column lookup answers
+/// "this phrase, in this column" through the index, with no per-row check.
 fn fts_column_condition(column: &str, value: &str) -> (String, Vec<turso::Value>) {
     let (contents, params) = fts_column_contents(column, value);
     (format!("m.content_id IN ({contents})"), params)
@@ -2333,20 +2329,17 @@ fn fts_column_set(column: &str, value: &str) -> (String, Vec<turso::Value>) {
     )
 }
 
-/// The contents whose `column` carries `value`, asked twice as
-/// [`fts_column_condition`] explains.
+/// The contents whose `column` carries `value` as a phrase, scoped to the
+/// column inside the query as [`fts_column_condition`] explains.
 fn fts_column_contents(column: &str, value: &str) -> (String, Vec<turso::Value>) {
-    let literal = fts_literal(value);
     (
-        format!(
-            "SELECT content_id FROM search_documents
-              WHERE fts_match(sender, recipients, subject, filenames, list_id, ?)
-                AND fts_match({column}, ?)"
-        ),
-        vec![
-            turso::Value::Text(literal.clone()),
-            turso::Value::Text(literal),
-        ],
+        "SELECT content_id FROM search_documents
+          WHERE fts_match(sender, recipients, subject, filenames, list_id, ?)"
+            .to_owned(),
+        vec![turso::Value::Text(format!(
+            "{column}:{}",
+            fts_literal(value)
+        ))],
     )
 }
 

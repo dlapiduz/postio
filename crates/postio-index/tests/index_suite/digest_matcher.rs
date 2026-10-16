@@ -227,6 +227,39 @@ async fn the_matcher_and_the_executor_agree_on_every_digest_query() {
 }
 
 #[tokio::test]
+async fn a_full_address_finds_the_mail_from_it_and_nothing_sent_to_it() {
+    // #1699: `from:quinn.abara@example.net` found 22 fixtures, five of them
+    // (then) from that address and the rest sent to it by senders sharing
+    // a word with it. Both evaluators must find exactly the ones from it.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let corpus = corpus(&connection).await;
+    let from_quinn: BTreeSet<MessageId> = corpus
+        .messages
+        .iter()
+        .filter(|(_, message)| {
+            message
+                .from
+                .iter()
+                .any(|from| from.address == "quinn.abara@example.net")
+        })
+        .map(|(_, message)| message.id)
+        .collect();
+    assert!(from_quinn.len() >= 5, "the corpus this test counts on");
+
+    let text = "from:quinn.abara@example.net";
+    let query = parse(text, today());
+    let executor = by_executor(&connection, &corpus, &query).await;
+    assert_eq!(
+        executor,
+        from_quinn,
+        "the executor also found {:?}",
+        names(&corpus, executor.difference(&from_quinn).copied())
+    );
+    assert_eq!(by_matcher(&corpus, &query, text), from_quinn);
+}
+
+#[tokio::test]
 async fn every_query_asks_something_the_corpus_answers_both_ways() {
     // The premise of the test above: a query every fixture answers alike
     // agrees trivially, and one expected to match nothing must not match.

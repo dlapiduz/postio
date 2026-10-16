@@ -25,20 +25,13 @@
 //!   and digits and lowercases them (tantivy's `default` analyzer), so
 //!   `from:ad` does not find `ada@example.com`, and `from:francoise` does not
 //!   find "Françoise": the metadata columns are not folded for diacritics.
-//! * **Two conditions, as the executor asks them.** `from:v` holds when
-//!   (1) `v`'s words appear, in order and adjacent, in *any* of the row's five
-//!   columns -- the executor's index lookup -- and (2) *any one* of `v`'s
-//!   words appears in the sender -- its per-row check, which the engine
-//!   answers word by word, not as a phrase. `to:`, `subject:`, `filename:`
-//!   and `list:` are the same with their own column in place of the sender
-//!   (`fts_column_condition`, all five).
-//!
-//! That last point has a consequence worth saying plainly: `from:` a full
-//! address also selects mail sent **to** that address by anyone whose own
-//! address shares one of its words (`example`, `com`). That is what search
-//! answers today, so it is what a rule answers too; the day the executor
-//! checks the column as a phrase (#1699), this module follows it, and the
-//! differential test is what says so.
+//! * **A phrase in one column.** `from:v` holds when `v`'s words appear, in
+//!   order and adjacent, in the sender -- the executor asks the index for
+//!   `sender:"v"` (`fts_column_condition`). `to:`, `subject:`, `filename:`
+//!   and `list:` are the same with their own column in place of the sender.
+//!   Until #1699 the executor's per-row check accepted any one of `v`'s words
+//!   in the column, so `from:` a full address also found mail sent to it;
+//!   it no longer does, and neither does this.
 //!
 //! # What it evaluates
 //!
@@ -93,16 +86,6 @@ impl Document {
             list_id: message.list_id.clone().unwrap_or_default(),
         }
     }
-
-    fn columns(&self) -> [&str; 5] {
-        [
-            &self.sender,
-            &self.recipients,
-            &self.subject,
-            &self.filenames,
-            &self.list_id,
-        ]
-    }
 }
 
 /// `coalesce(name, '') || ' ' || address`, joined by spaces.
@@ -148,12 +131,10 @@ struct Condition {
 /// One column condition, with its words worked out once.
 #[derive(Debug, Clone)]
 struct Alternative {
-    /// Which column the per-row check reads.
+    /// Which column the phrase must be in.
     column: Column,
     /// The value's words as the index holds them, with their positions.
     phrase: Vec<(usize, String)>,
-    /// The value's words as the per-row check compares them.
-    words: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -195,7 +176,6 @@ impl Matcher {
                         Ok(Alternative {
                             column,
                             phrase: indexed(value),
-                            words: scalar(value).collect(),
                         })
                     })
                     .collect::<Result<_, _>>()?;
@@ -238,12 +218,7 @@ impl Alternative {
             Column::Filenames => &document.filenames,
             Column::ListId => &document.list_id,
         };
-        let in_the_row = document
-            .columns()
-            .iter()
-            .any(|text| phrase_in(text, &self.phrase));
-        let in_the_column = scalar(column).any(|word| self.words.contains(&word));
-        in_the_row && in_the_column
+        phrase_in(column, &self.phrase)
     }
 }
 
@@ -274,12 +249,6 @@ fn indexed(text: &str) -> Vec<(usize, String)> {
         .filter(|(_, run)| run.len() < LONGEST_WORD)
         .map(|(position, run)| (position, lowercase(run)))
         .collect()
-}
-
-/// `text`'s words as the engine's scalar `fts_match` compares them: the same
-/// runs, lowercased, with no limit on length.
-fn scalar(text: &str) -> impl Iterator<Item = String> + '_ {
-    runs(text).map(lowercase)
 }
 
 /// Whether `phrase` occurs in `text` as the index finds a phrase: each word
@@ -383,23 +352,20 @@ mod tests {
     }
 
     #[test]
-    fn a_full_address_also_finds_mail_to_it_from_a_sender_sharing_a_word() {
-        // The executor's meaning today, reproduced so a rule agrees with its
-        // preview: the address is found in the recipients, and the sender
-        // shares "example" with it.
+    fn a_full_address_is_found_in_the_sender_and_nowhere_else() {
+        // #1699: the address is in the recipients, and the sender shares
+        // "example" with it. That is mail *to* the address, not from it.
         let reply = row(
             "Quinn Abara quinn.abara@example.net",
             "Ada Norwood ada.norwood@example.com",
             "",
         );
-        assert!(matcher("from:ada.norwood@example.com").matches_document(&reply));
-        // Sharing no word with it, the sender is not taken for it.
-        let stranger = row(
-            "Grace Hopper grace@navy.test",
-            "Ada Norwood ada.norwood@example.com",
-            "",
-        );
-        assert!(!matcher("from:ada.norwood@example.com").matches_document(&stranger));
+        assert!(!matcher("from:ada.norwood@example.com").matches_document(&reply));
+        assert!(matcher("to:ada.norwood@example.com").matches_document(&reply));
+        assert!(!matcher("to:quinn.abara@example.net").matches_document(&reply));
+        // Every word of the phrase in the sender, but not in order, is not
+        // the phrase either.
+        assert!(!matcher("from:\"example.net quinn\"").matches_document(&reply));
     }
 
     #[test]
@@ -435,10 +401,13 @@ mod tests {
         assert!(!matcher("filename:drawing.svg").matches_document(&minutes));
         assert!(matcher("to:ada subject:minutes").matches_document(&minutes));
         assert!(!matcher("to:ada -subject:minutes").matches_document(&minutes));
-        // As with `from:`, the phrase may be anywhere in the row, and one of
-        // its words must be in the column: "quinn" is in the row, not in
-        // the recipients.
+        // "quinn" is in the row, but not in the recipients.
         assert!(!matcher("to:quinn").matches_document(&minutes));
+        // "invite.ics" is a filename, and the subject shares "invite" with
+        // it: the phrase must be in the one column the operator names.
+        minutes.subject = "Minutes and invite".to_owned();
+        assert!(!matcher("subject:invite.ics").matches_document(&minutes));
+        assert!(matcher("subject:minutes").matches_document(&minutes));
     }
 
     #[test]
