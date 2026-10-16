@@ -41,11 +41,14 @@
 //!   all: `pimalaya-stream`'s default `Retry` budget is a minute *per
 //!   read*, and the DNS path armed no socket deadline whatsoever.
 //!
-//! What is still not bounded is `connect` on the HTTPS path.
-//! `Stream::connect_tcp`/`connect_tls` take no connect deadline, so a peer
-//! that accepts nothing leaves the OS default (a couple of minutes) as the
-//! ceiling. The DNS path does not have that hole — it resolves and calls
-//! [`TcpStream::connect_timeout`] itself. See #57.
+//! `Stream::connect_tcp`/`connect_tls` take no connect deadline, so the
+//! HTTP and HTTPS paths first call [`reach`]: resolve, then
+//! [`TcpStream::connect_timeout`] per address, then drop that socket. A
+//! peer that accepts nothing fails there within [`DISCOVERY_IO_TIMEOUT`]
+//! instead of parking the thread on the OS default (a couple of minutes).
+//! Only a host that stops accepting between `reach` and the real connect can
+//! still hang, and `pimalaya-stream` offers no way to hand it a socket we
+//! connected ourselves. See #57, #281.
 //!
 //! `postio-iigq` is the audit that found the original defect.
 
@@ -327,6 +330,51 @@ pub(crate) fn connect_options() -> pimalaya_stream::stream::TcpConnectOptions {
     }
 }
 
+/// Proves `host:port` accepts a connection within `timeout`, then lets go.
+///
+/// `pimalaya-stream` connects with no deadline and cannot be given a socket,
+/// so the deadline is spent here first: a peer that accepts nothing fails in
+/// `timeout` rather than the OS default.
+pub(crate) fn reach(
+    host: &str,
+    port: u16,
+    cancel: &CancelToken,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let mut last: Option<io::Error> = None;
+    for address in (host, port).to_socket_addrs()? {
+        if cancel.is_cancelled() {
+            anyhow::bail!("{CANCELLED}");
+        }
+        match TcpStream::connect_timeout(&address, timeout) {
+            Ok(_) => return Ok(()),
+            Err(err) => last = Some(err),
+        }
+    }
+    Err(match last {
+        Some(err) => err.into(),
+        None => anyhow::anyhow!("`{host}` resolved to no address"),
+    })
+}
+
+/// Opens a TLS stream to `host:port` for the autoconfig fetch, with the
+/// connect bounded by [`reach`] and every read by `timeout`.
+pub(crate) fn connect_https(
+    host: &str,
+    port: u16,
+    cancel: &CancelToken,
+    timeout: Duration,
+) -> anyhow::Result<Cancellable<pimalaya_stream::stream::Stream>> {
+    reach(host, port, cancel, timeout)?;
+    let options = pimalaya_stream::stream::TlsConnectOptions {
+        tls: PimalayaTransport::tls(),
+        retry: pimalaya_stream::retry::Retry::Until(timeout),
+        ..Default::default()
+    };
+    let stream = pimalaya_stream::stream::Stream::connect_tls(host, port, options)?;
+    Ok(Cancellable::new(stream, cancel.clone()))
+}
+
 /// Opens a plain TCP stream to `url`, bounded and cancellable.
 ///
 /// This is the DNS path. Written out rather than delegating to
@@ -413,7 +461,7 @@ impl DiscoveryTransport for PimalayaTransport {
         cancel: &CancelToken,
     ) -> Result<DiscoveryAutoconfig, TransportError> {
         use io_pim_discovery::autoconfig::client::DiscoveryAutoconfigClientStd;
-        use pimalaya_stream::stream::{Stream, TlsConnectOptions};
+        use pimalaya_stream::stream::Stream;
 
         let resolver = self.resolver.clone();
         let endpoint = endpoint.to_owned_endpoint();
@@ -436,7 +484,8 @@ impl DiscoveryTransport for PimalayaTransport {
                         .host_str()
                         .ok_or_else(|| anyhow::anyhow!("HTTP URL `{url}` has no host"))?;
                     let port = url.port_or_known_default().unwrap_or(80);
-                    let stream = Stream::connect_tcp(host, port, connect_options());
+                    let stream = reach(host, port, &cancel, DISCOVERY_IO_TIMEOUT)
+                        .and_then(|()| Stream::connect_tcp(host, port, connect_options()));
                     report_egress(&egress, host, port, stream.is_ok());
                     Ok(Cancellable::new(stream?, cancel.clone()))
                 }
@@ -449,14 +498,9 @@ impl DiscoveryTransport for PimalayaTransport {
                         .host_str()
                         .ok_or_else(|| anyhow::anyhow!("HTTPS URL `{url}` has no host"))?;
                     let port = url.port_or_known_default().unwrap_or(443);
-                    let options = TlsConnectOptions {
-                        tls: PimalayaTransport::tls(),
-                        retry: pimalaya_stream::retry::Retry::Until(DISCOVERY_IO_TIMEOUT),
-                        ..Default::default()
-                    };
-                    let stream = Stream::connect_tls(host, port, options);
+                    let stream = connect_https(host, port, &cancel, DISCOVERY_IO_TIMEOUT);
                     report_egress(&egress, host, port, stream.is_ok());
-                    Ok(Cancellable::new(stream?, cancel.clone()))
+                    stream
                 }
             };
             let tcp = {
@@ -808,5 +852,67 @@ mod tests {
         // probe itself uses -- otherwise the socket deadline would cut
         // healthy requests short instead of bounding abandoned ones.
         assert!(DISCOVERY_IO_TIMEOUT >= super::super::ProbeOptions::default().step_timeout);
+    }
+
+    // -- The connect deadline (#281) --------------------------------------
+
+    use std::net::TcpListener;
+    use std::time::Instant;
+
+    const SHORT: Duration = Duration::from_millis(400);
+
+    #[test]
+    fn a_listening_host_is_reachable() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        reach("127.0.0.1", port, &CancelToken::new(), SHORT).expect("accepts");
+    }
+
+    #[test]
+    fn a_host_that_refuses_is_not_reachable() {
+        let port = TcpListener::bind(("127.0.0.1", 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        assert!(reach("127.0.0.1", port, &CancelToken::new(), SHORT).is_err());
+    }
+
+    #[test]
+    fn a_cancelled_probe_does_not_connect() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let cancel = CancelToken::new();
+        cancel.cancel();
+
+        let err = reach("127.0.0.1", port, &cancel, SHORT).expect_err("cancelled");
+        assert!(err.to_string().contains("cancelled"), "{err}");
+        assert!(listener.accept().is_err(), "no connection was made");
+    }
+
+    #[test]
+    fn https_to_a_host_that_never_handshakes_gives_up_in_time() {
+        // Accepts the connection and then says nothing: the handshake read
+        // is what must end, inside the deadline plus slack.
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let held = std::thread::spawn(move || {
+            let (socket, _) = listener.accept().unwrap();
+            std::thread::sleep(Duration::from_millis(1500));
+            drop(socket);
+        });
+
+        let started = Instant::now();
+        // The handshake is lazy: it runs on the first read or write.
+        let mut stream = connect_https("127.0.0.1", port, &CancelToken::new(), SHORT)
+            .expect("the connect itself succeeds");
+        assert!(stream.write_all(b"GET / HTTP/1.1\r\n\r\n").is_err() || stream.flush().is_err());
+        assert!(
+            started.elapsed() < Duration::from_millis(1200),
+            "took {:?}",
+            started.elapsed()
+        );
+        held.join().unwrap();
     }
 }
