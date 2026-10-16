@@ -3,6 +3,7 @@
 //! words in place -- same message, same list row, same focus -- without
 //! being opened again.
 
+use gtk::prelude::*;
 use postio_core::Event;
 
 use crate::support::{self, Fixture};
