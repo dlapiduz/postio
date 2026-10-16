@@ -81,7 +81,8 @@ pub use unsubscribe::UnsubscribeRepository;
 
 pub use messages::{
     BackfillCandidate, ColumnFlag, DEFAULT_PAGE_SIZE, FlagSource, ListCursor, ListQuery, ListScope,
-    MessageListRow, MessageRepository, MessageSet, StorageFootprint, StoredBody, UpsertReport,
+    MessageListRow, MessageRepository, MessageSet, StorageFootprint, StoredBody, StoredServerState,
+    UpsertReport,
 };
 
 use chrono::{DateTime, Utc};
