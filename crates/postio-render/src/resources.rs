@@ -16,6 +16,15 @@ use crate::Scope;
 /// bundled faces (`postio_ui::reader::document::FONT_SCHEME`).
 pub const FONT_SCHEME: &str = "postio-font";
 
+/// What an `<img>` whose `postio-cid:` names no part of the message is
+/// pointed at instead: answered with a placeholder, so the picture's box
+/// says a picture is there rather than lying blank (#1764).
+pub(crate) const MISSING_PART: &str = "postio-missing-part:";
+
+/// The side of a missing part's placeholder when its `<img>` declares no
+/// size: small, but something a person can see.
+const MISSING_PART_SIDE: u32 = 24;
+
 /// The resource table.
 #[derive(Debug, Default)]
 pub struct Resources {
@@ -108,28 +117,43 @@ impl Resources {
         }
     }
 
-    fn lookup(&self, url: &str) -> Option<Bytes> {
-        #[cfg(feature = "test-hooks")]
-        self.hooks.run();
-        if let Some(rest) = url
+    /// The part a `postio-cid:` URL names: `None` when `url` is not one,
+    /// `Some(None)` when the message has no such part.
+    fn part(&self, url: &str) -> Option<Option<Bytes>> {
+        let rest = url
             .strip_prefix(postio_body::CID_SCHEME)
-            .and_then(|rest| rest.strip_prefix(':'))
-        {
-            // `postio-cid:<scope>/<id>`, or `postio-cid:<id>` unscoped. The
-            // encoded id never holds a `/` (postio-body's `part_uri`), and a
-            // part of one scope is never returned to another (FR-004).
-            let (scope, id) = match rest.split_once('/') {
-                Some((scope, id)) => (Some(scope.to_owned()), id),
-                None => (None, rest),
-            };
-            let id = postio_body::sanitize::percent_decode(id);
-            let part = self
-                .parts
+            .and_then(|rest| rest.strip_prefix(':'))?;
+        // `postio-cid:<scope>/<id>`, or `postio-cid:<id>` unscoped. The
+        // encoded id never holds a `/` (postio-body's `part_uri`), and a
+        // part of one scope is never returned to another (FR-004).
+        let (scope, id) = match rest.split_once('/') {
+            Some((scope, id)) => (Some(scope.to_owned()), id),
+            None => (None, rest),
+        };
+        let id = postio_body::sanitize::percent_decode(id);
+        Some(
+            self.parts
                 .lock()
                 .expect("the resource table is never poisoned")
                 .get(&(scope, id))
-                .cloned()?;
-            return self.admit(part);
+                .cloned(),
+        )
+    }
+
+    /// Whether `url` is a `postio-cid:` naming a part this table lacks.
+    pub(crate) fn is_missing_part(&self, url: &str) -> bool {
+        matches!(self.part(url), Some(None))
+    }
+
+    fn lookup(&self, url: &str) -> Option<Bytes> {
+        #[cfg(feature = "test-hooks")]
+        self.hooks.run();
+        if let Some(part) = self.part(url) {
+            return self.admit(part?);
+        }
+        if url.starts_with(MISSING_PART) {
+            self.placeholdered.fetch_add(1, Ordering::Relaxed);
+            return Some(stretched_placeholder(MISSING_PART_SIDE));
         }
         if url.starts_with("http://") || url.starts_with("https://") {
             let fetched = self
@@ -248,6 +272,22 @@ fn placeholder(width: u32, height: u32) -> Bytes {
         "<svg xmlns=\"http://www.w3.org/2000/svg\" {size}>\
          <rect width=\"100%\" height=\"100%\" fill=\"#8888\"/></svg>"
     ))
+}
+
+/// A flat placeholder `side` pixels square, in the colour of
+/// [`placeholder`]'s. A raster, not an SVG: the engine draws an SVG at its
+/// own aspect ratio inside the box, and a raster fills the box, whatever
+/// size its `<img>` declares.
+fn stretched_placeholder(side: u32) -> Bytes {
+    static PNG: std::sync::OnceLock<Bytes> = std::sync::OnceLock::new();
+    PNG.get_or_init(|| {
+        let mut out = Vec::new();
+        image::RgbaImage::from_pixel(side, side, image::Rgba([0x88, 0x88, 0x88, 0x88]))
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .expect("a flat PNG encodes");
+        Bytes::from(out)
+    })
+    .clone()
 }
 
 /// `bytes` as the engine may see them: a raster as it is, and an SVG

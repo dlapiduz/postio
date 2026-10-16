@@ -281,6 +281,7 @@ fn lay_out(
     };
     let mut doc = blitz_html::HtmlDocument::from_html(&request.document, config).into_inner();
     toggle_folds(&mut doc, &request.toggled_folds);
+    mark_missing_parts(&mut doc, &request.resources);
     if let Some(plan) = plan {
         let name = blitz_dom::QualName::new(
             None,
@@ -294,6 +295,34 @@ fn lay_out(
     }
     doc.resolve(0.0);
     doc
+}
+
+/// Point every `<img>` whose `postio-cid:` names no part of the message at
+/// a placeholder, before the first style pass. Left alone it would keep
+/// the size it declares and draw nothing in it: a blank band that says
+/// neither that a picture is there nor that it is not shown (#1764). Only
+/// an `<img>`: a missing part named by a CSS background stays unpainted,
+/// because a placeholder tiled behind text would cover it.
+fn mark_missing_parts(doc: &mut blitz_dom::BaseDocument, resources: &crate::Resources) {
+    let src = blitz_dom::local_name!("src");
+    let missing: Vec<blitz_dom::NodeId> = doc
+        .query_selector_all("img[src]")
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|id| {
+            doc.get_node(*id)
+                .and_then(|node| node.attr(src.clone()))
+                .is_some_and(|url| resources.is_missing_part(url))
+        })
+        .collect();
+    if missing.is_empty() {
+        return;
+    }
+    let name = blitz_dom::QualName::new(None, blitz_dom::ns!(), src);
+    let mut mutator = doc.mutate();
+    for id in missing {
+        mutator.set_attribute(id, name.clone(), crate::resources::MISSING_PART);
+    }
 }
 
 /// The most bytes the low-resolution copy may take.
