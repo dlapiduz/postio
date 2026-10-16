@@ -220,7 +220,13 @@ fn reply_source(composer: &Composer, frame: &Rc<Frame>, client: &Client, current
             if !opened {
                 return;
             }
-            if composer.draft().kind != postio_model::DraftKind::Forward {
+            if composer.draft().kind == postio_model::DraftKind::Forward {
+                // The person asked to forward, so the parts it carries are
+                // theirs to fetch now: local by the time they press send
+                // (#1690). A reply carries nothing and never gets here.
+                let carried = postio_ui::compose::carried_sections(&composer.draft().attachments);
+                client.fetch_carried(message, carried);
+            } else {
                 let ids = labels.iter().map(|label| label.id).collect();
                 frame.know(labels);
                 composer.start_with_labels(ids);
