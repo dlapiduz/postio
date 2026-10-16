@@ -334,7 +334,7 @@ fn quoted_tracking_domains(source: &Message) -> Vec<String> {
 /// region around it is a separate tab stop and must say the same thing.
 const BODY_NAME: &str = "Message body";
 
-const UNSAVED: &str = "draft is in the composer only";
+const UNSAVED: &str = postio_ui::compose::NOT_SAVED;
 
 /// What the status line says when opening compose came back to a kept draft.
 const RETAINED: &str = "still holding the draft Esc kept";
@@ -951,8 +951,9 @@ impl Composer {
         if self.is_open() {
             self.save();
         }
+        let status = postio_ui::compose::resumed_status(&draft);
         self.fill(draft);
-        self.set_status(UNSAVED);
+        self.set_status(&status);
         self.take_pane();
         self.set_visible(true);
         // Writing continues where it stopped: a draft that is already

@@ -617,6 +617,30 @@ pub fn saved_at(at: chrono::DateTime<chrono::Utc>) -> String {
     )
 }
 
+/// What the status line says of a draft that has no row anywhere yet.
+pub const NOT_SAVED: &str = "draft is in the composer only";
+
+/// What the status line says of a draft that was queued to send and is
+/// reopened while it still waits in the Outbox.
+pub const IN_OUTBOX: &str = "waiting in the Outbox";
+
+/// What a reopened draft's status line says about where it lives (#1759).
+///
+/// A draft with an id is a row in Drafts -- or, once queued, in the Outbox --
+/// so it never says it is "in the composer only"; that is for a composition
+/// nobody has saved. A saved draft names when that save landed, as the
+/// subtitle does after an autosave.
+pub fn resumed_status(draft: &postio_model::Draft) -> String {
+    use postio_model::DraftState;
+    if !draft.id.is_assigned() {
+        return NOT_SAVED.to_owned();
+    }
+    match draft.state {
+        DraftState::Queued | DraftState::Sending => IN_OUTBOX.to_owned(),
+        _ => saved_at(draft.updated_at),
+    }
+}
+
 /// What the reminder verb says: "Remind", as the message dialog's action
 /// row names the same command, and the day once one is chosen ("Remind ·
 /// Tue 29 Sep"), in the person's own time zone. The whole of it -- "if no
@@ -819,6 +843,23 @@ mod frame_tests {
     fn the_header_names_a_composition_as_the_screens_do() {
         assert_eq!(title(DraftKind::New), "New message");
         assert_eq!(title(DraftKind::ReplyAll), "Reply to all");
+    }
+
+    #[test]
+    fn a_reopened_draft_says_where_it_lives_not_that_it_is_unsaved() {
+        use postio_model::{DraftId, DraftState};
+        let mut draft = Draft::new(AccountId::UNASSIGNED);
+        assert_eq!(resumed_status(&draft), "draft is in the composer only");
+
+        draft.id = DraftId::new(7);
+        draft.updated_at = Utc.with_ymd_and_hms(2026, 3, 4, 16, 12, 0).unwrap();
+        assert_eq!(resumed_status(&draft), saved_at(draft.updated_at));
+        assert!(resumed_status(&draft).starts_with("Draft saved locally "));
+
+        for state in [DraftState::Queued, DraftState::Sending] {
+            draft.state = state;
+            assert_eq!(resumed_status(&draft), "waiting in the Outbox");
+        }
     }
 
     #[test]
