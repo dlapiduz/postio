@@ -129,4 +129,13 @@ async fn the_seed_is_the_corpus_the_storyboards_were_pinned_on() {
          every `rows.count` and message id in `storyboards/`.",
         report.message_count
     );
+
+    // The second account of the "two-accounts" seed walks the corpus too.
+    let second =
+        postio_storage::seed::seed_extra_account(&database, "Home", "home@example.net", 12).await;
+    assert_eq!(
+        second.message_count, 79,
+        "the extra account filed {} messages; the storyboards are pinned on 79",
+        second.message_count
+    );
 }

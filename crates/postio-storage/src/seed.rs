@@ -160,6 +160,13 @@ pub async fn seed_small_downloaded(database: &Store, seed: u64) -> SeedReport {
 /// together with the storyboards' counts (`seed_is_honest.rs` says when).
 const UNSEEDED: &[&str] = &["encoded-word-control-chars-in-header"];
 
+/// The corpus fixtures every small seed files, the extra account's included.
+fn seeded_corpus() -> impl Iterator<Item = &'static test_corpus::Fixture> {
+    test_corpus::all()
+        .iter()
+        .filter(|fixture| !UNSEEDED.contains(&fixture.name()))
+}
+
 async fn seed_corpus(database: &Store, seed: u64, downloaded: bool) -> SeedReport {
     let connection = database.connect().await.expect("a checked-out connection");
     let account = seeded_account(&connection).await;
@@ -167,10 +174,7 @@ async fn seed_corpus(database: &Store, seed: u64, downloaded: bool) -> SeedRepor
     let mut rng = Rng::new(seed);
 
     let mut message_count = 0;
-    for fixture in test_corpus::all()
-        .iter()
-        .filter(|fixture| !UNSEEDED.contains(&fixture.name()))
-    {
+    for fixture in seeded_corpus() {
         let mailbox = weighted_mailbox(&folders, &mut rng);
         let received_at = recency(&mut rng, SMALL_SPREAD_DAYS);
         let parsed = postio_model::mime::parse(fixture.bytes());
@@ -286,7 +290,7 @@ pub async fn seed_extra_account(
     let folders = create_folders(&connection, &account).await;
     let mut rng = Rng::new(seed);
     let mut message_count = 0;
-    for fixture in test_corpus::all() {
+    for fixture in seeded_corpus() {
         let mailbox = weighted_mailbox(&folders, &mut rng);
         let received_at = recency(&mut rng, SMALL_SPREAD_DAYS);
         let mut message = fixture.parse();
