@@ -442,3 +442,84 @@ fn an_excerpt_is_located_where_the_reader_draws_it() {
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }
+
+/// Where Blitz paints every glyph of the document, in CSS pixels, in
+/// paint order: the display list's own positions.
+fn painted_glyphs(doc: &RenderedDocument) -> Vec<kurbo::Point> {
+    doc.display_list
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            anyrender::recording::RenderCommand::GlyphRun(run) => Some(run),
+            _ => None,
+        })
+        .flat_map(|run| {
+            run.glyphs.iter().map(|glyph| {
+                let device =
+                    run.transform * kurbo::Point::new(f64::from(glyph.x), f64::from(glyph.y));
+                kurbo::Point::new(device.x / doc.scale, device.y / doc.scale)
+            })
+        })
+        .collect()
+}
+
+/// A marker's highlight starts on its sentence's first glyph (#1783): in
+/// a padded, inset paragraph whose line draws ligatures before the
+/// sentence ("ffi", "fl"), each of which Parley shapes as one glyph over
+/// several clusters, the box the index gives the sentence starts where
+/// Blitz paints its first letter, and ends where it paints the "?".
+#[test]
+fn a_highlight_starts_on_its_sentences_first_glyph() {
+    for scale in [1.0, 2.0] {
+        let request = RenderRequest {
+            generation: 1,
+            document: "<!DOCTYPE html><html><body style=\"margin:13px\">\
+                <p style=\"margin:0 0 0 21px;padding:9px 17px;border-left:3px solid #888;\
+                font-size:15px\">The office affiliates filed the flagged \
+                offers. Where is the budget?</p></body></html>"
+                .to_owned(),
+            plain_text: String::new(),
+            fallback: None,
+            over_cap: None,
+            resources: Arc::new(Resources::new()),
+            viewport: Viewport {
+                width: 800.0,
+                hidpi_scale: scale,
+                zoom: 1.0,
+            },
+            theme: Theme::default(),
+            darkened: Vec::new(),
+            toggled_folds: Vec::new(),
+            reader_view: Vec::new(),
+        };
+        let doc = postio_render::render(&request, fonts());
+        let glyphs = painted_glyphs(&doc);
+        let sentence = "Where is the budget?";
+        assert!(
+            glyphs.len() < doc.text.text.chars().count(),
+            "the line draws no ligature, so this test proves nothing: \
+             {} glyphs for {:?}",
+            glyphs.len(),
+            doc.text.text
+        );
+        // The sentence has no ligature: its glyphs are the line's last
+        // ones, one per letter, the spaces among them.
+        let first = glyphs[glyphs.len() - sentence.chars().count()];
+        let last = glyphs[glyphs.len() - 1];
+        let rects = doc.text.rects(range_of(&doc.text, sentence));
+        assert_eq!(rects.len(), 1, "one line: {rects:?}");
+        assert!(
+            (rects[0].x0 - first.x).abs() < 0.5,
+            "at {scale}x the highlight starts at {}, the W is painted at {}",
+            rects[0].x0,
+            first.x
+        );
+        let question = doc.text.rects(range_of(&doc.text, "?"))[0];
+        assert!(
+            (question.x0 - last.x).abs() < 0.5,
+            "at {scale}x the ? is boxed at {}, painted at {}",
+            question.x0,
+            last.x
+        );
+    }
+}
