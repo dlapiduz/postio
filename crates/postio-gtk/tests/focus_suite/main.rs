@@ -1385,6 +1385,10 @@ const CASES: &[(&str, fn())] = &[
         marked_rows::a_selected_marked_row_shows_its_check_not_its_dot as fn(),
     ),
     (
+        "marked_rows::the_dot_is_unread_mail_not_a_marker",
+        marked_rows::the_dot_is_unread_mail_not_a_marker as fn(),
+    ),
+    (
         "rows::a_row_shows_the_subject_and_first_line_exactly_as_they_arrived",
         rows::a_row_shows_the_subject_and_first_line_exactly_as_they_arrived as fn(),
     ),
