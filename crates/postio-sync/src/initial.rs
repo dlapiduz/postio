@@ -60,7 +60,7 @@ use chrono::Utc;
 use postio_account::backend::{
     BackendError, BackendResult, FetchedMessage, MailBackend, SelectMode, UidSet,
 };
-use postio_model::{Account, Mailbox, MailboxId, MailboxStatus, Message, Uid};
+use postio_model::{Account, Generation, Mailbox, MailboxId, MailboxStatus, Message, Uid};
 use postio_storage::repository::{
     AccountRepository, MessageRepository, SyncStateRepository, ThreadingRepository,
 };
@@ -674,7 +674,98 @@ pub async fn commit_batch(
 /// the unit's transaction, as the incremental pull hands its arrivals
 /// (`crate::filing`): what a modseq-less backend's steady-state pass needs,
 /// and nothing else asks for.
+///
+/// A row the store already holds as fetched is not written at all (#1719): a
+/// backend with no MODSEQ re-reads every header in the folder on every
+/// pass, and rewriting and re-threading each of them held the write lock for
+/// seconds over a folder where nothing had changed, and reported every row
+/// as updated, which redraws every list. See [`unchanged`].
 pub(crate) async fn commit_batch_filing(
+    connection: &Checkout,
+    mailbox: &Mailbox,
+    account: Option<&Account>,
+    known: &BTreeSet<u32>,
+    messages: &mut [Message],
+    filing: Option<&dyn FilingPass>,
+) -> Result<Report> {
+    let skip = unchanged(connection, mailbox, known, messages).await?;
+    if skip.is_empty() {
+        return write_batch(connection, mailbox, account, known, messages, filing).await;
+    }
+    let to_write: Vec<usize> = (0..messages.len())
+        .filter(|index| !skip.contains(index))
+        .collect();
+    let mut changed: Vec<Message> = to_write
+        .iter()
+        .map(|&index| messages[index].clone())
+        .collect();
+    let report = write_batch(connection, mailbox, account, known, &mut changed, filing).await?;
+    for (index, message) in to_write.into_iter().zip(changed) {
+        messages[index] = message;
+    }
+    Ok(report)
+}
+
+/// The positions in `messages` whose rows the store already holds exactly
+/// as fetched, each given the id and thread its row has.
+///
+/// Only messages whose uid the pass already knew are asked about, so a first
+/// sync, which knows none, reads nothing more than it did. A message under
+/// one `(UIDVALIDITY, UID)` is immutable on the server; what can change is
+/// its flags and keywords, and its MODSEQ where there is one. A row that was
+/// never threaded is written again, so the pass files it.
+///
+/// A row whose stored flags differ only because the queue still holds a
+/// local change is written as before, and `upsert_batch` keeps the local
+/// change (#317).
+async fn unchanged(
+    connection: &Checkout,
+    mailbox: &Mailbox,
+    known: &BTreeSet<u32>,
+    messages: &mut [Message],
+) -> Result<BTreeSet<usize>> {
+    let mut skip = BTreeSet::new();
+    let mut by_generation: std::collections::BTreeMap<u32, Vec<Uid>> = Default::default();
+    for message in messages.iter() {
+        if let (Some(uid), Some(validity)) = (message.server.uid, message.server.uid_validity)
+            && known.contains(&uid.get())
+        {
+            by_generation.entry(validity.get()).or_default().push(uid);
+        }
+    }
+    let repository = MessageRepository::new(connection);
+    for (validity, uids) in by_generation {
+        let stored: std::collections::HashMap<Uid, _> = repository
+            .server_states(mailbox.id, Generation::new(validity), &uids)
+            .await?
+            .into_iter()
+            .map(|state| (state.uid, state))
+            .collect();
+        for (index, message) in messages.iter_mut().enumerate() {
+            let Some(state) = message
+                .server
+                .uid
+                .filter(|_| message.server.uid_validity.map(|v| v.get()) == Some(validity))
+                .and_then(|uid| stored.get(&uid))
+            else {
+                continue;
+            };
+            let same = state.thread_id.is_some()
+                && state.remote_id == message.server.remote_id
+                && state.mod_seq == message.server.mod_seq
+                && state.flags == message.flags.persistable();
+            if same {
+                message.id = state.id;
+                message.thread_id = state.thread_id;
+                skip.insert(index);
+            }
+        }
+    }
+    Ok(skip)
+}
+
+/// [`commit_batch_filing`]'s write, of every message it is handed.
+async fn write_batch(
     connection: &Checkout,
     mailbox: &Mailbox,
     account: Option<&Account>,
