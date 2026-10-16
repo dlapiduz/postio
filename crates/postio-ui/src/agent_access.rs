@@ -56,6 +56,9 @@ pub const NO_ACTIVITY: &str = "No agent has used Postio yet.";
 pub const REVOKE_NOTE: &str =
     "Revoking takes effect on the agent's next call. A call already running finishes.";
 
+/// The heading over the path an agent's client should launch.
+pub const ENTRY_HEADING: &str = "Point your agent at";
+
 /// The button on one shared account.
 pub const REVOKE_ONE: &str = "Revoke";
 

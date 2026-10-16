@@ -52,6 +52,8 @@ pub struct AgentWordsFfi {
     pub activity_heading: String,
     /// What revoking does and does not do.
     pub revoke_note: String,
+    /// Heading over the path to launch.
+    pub entry_heading: String,
     /// The per-account button.
     pub revoke_one: String,
     /// The revoke-everything button.
@@ -66,6 +68,7 @@ pub fn settings_agent_words() -> AgentWordsFfi {
         nothing_shared: words::NOTHING_SHARED.to_owned(),
         activity_heading: words::ACTIVITY_HEADING.to_owned(),
         revoke_note: words::REVOKE_NOTE.to_owned(),
+        entry_heading: words::ENTRY_HEADING.to_owned(),
         revoke_one: words::REVOKE_ONE.to_owned(),
         revoke_all: words::REVOKE_ALL.to_owned(),
     }

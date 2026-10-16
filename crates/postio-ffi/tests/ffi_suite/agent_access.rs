@@ -73,6 +73,7 @@ fn the_pane_says_what_revoking_does_not_do() {
     let words = settings_agent_words();
     assert!(words.revoke_note.contains("next call"));
     assert!(words.nothing_shared.contains("No agent"));
+    assert_eq!(words.entry_heading, "Point your agent at");
 }
 
 #[tokio::test(flavor = "multi_thread")]
