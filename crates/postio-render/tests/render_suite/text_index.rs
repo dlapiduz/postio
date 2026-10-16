@@ -468,6 +468,9 @@ fn painted_glyphs(doc: &RenderedDocument) -> Vec<kurbo::Point> {
 /// sentence ("ffi", "fl"), each of which Parley shapes as one glyph over
 /// several clusters, the box the index gives the sentence starts where
 /// Blitz paints its first letter, and ends where it paints the "?".
+///
+/// The paragraph pins Barlow, which is bundled, so the ligatures do not
+/// depend on whichever fallback font the machine happens to have.
 #[test]
 fn a_highlight_starts_on_its_sentences_first_glyph() {
     for scale in [1.0, 2.0] {
@@ -475,7 +478,7 @@ fn a_highlight_starts_on_its_sentences_first_glyph() {
             generation: 1,
             document: "<!DOCTYPE html><html><body style=\"margin:13px\">\
                 <p style=\"margin:0 0 0 21px;padding:9px 17px;border-left:3px solid #888;\
-                font-size:15px\">The office affiliates filed the flagged \
+                font-size:15px;font-family:Barlow\">The office affiliates filed the flagged \
                 offers. Where is the budget?</p></body></html>"
                 .to_owned(),
             plain_text: String::new(),
