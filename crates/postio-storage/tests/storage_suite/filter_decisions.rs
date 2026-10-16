@@ -303,3 +303,72 @@ async fn filtered_mail_is_listed_newest_first_by_reason_and_counted_once() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_filtered_message_deleted_leaves_filtered_and_its_count_until_it_comes_back() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let trash = test_support::mailbox(&connection, &account, "Trash").await;
+    assert_eq!(trash.role, postio_model::MailboxRole::Trash);
+    let decisions = FilterDecisionRepository::new(&connection);
+    let mut made = Vec::new();
+    for hour in [9, 10] {
+        let id = MessageRepository::new(&connection)
+            .create(&mut Message::new(account.id, inbox, at(hour)))
+            .await
+            .expect("a message");
+        decisions
+            .record(&FilterDecision {
+                message: id,
+                reason: FilterReason::Notification,
+                source: None,
+                layer: FilterLayer::Header,
+                decided_at: at(hour),
+            })
+            .await
+            .expect("recorded");
+        made.push(id);
+    }
+    let move_to = async |message: MessageId, mailbox: postio_model::MailboxId| {
+        postio_storage::sql::execute(
+            &connection,
+            "UPDATE messages SET mailbox_id = ?1 WHERE id = ?2",
+            [mailbox.get(), message.get()],
+        )
+        .await
+        .expect("moved");
+    };
+    let shown = async || -> (Vec<MessageId>, Vec<MessageId>, u32) {
+        let all = decisions.filtered(None, 0, 50).await.expect("all");
+        let tab = decisions
+            .filtered(Some(FilterReason::Notification), 0, 50)
+            .await
+            .expect("a tab");
+        let count = decisions
+            .tabs()
+            .await
+            .expect("the tabs")
+            .into_iter()
+            .find(|(reason, _)| *reason == FilterReason::Notification)
+            .map_or(0, |(_, count)| count);
+        (
+            all.iter().map(|decision| decision.message).collect(),
+            tab.iter().map(|decision| decision.message).collect(),
+            count,
+        )
+    };
+
+    move_to(made[1], trash.id).await;
+    assert_eq!(
+        shown().await,
+        (vec![made[0]], vec![made[0]], 1),
+        "the deleted one is in neither list nor counted"
+    );
+    // Undo puts it back where it was, and Filtered has it again.
+    move_to(made[1], inbox).await;
+    assert_eq!(
+        shown().await,
+        (vec![made[1], made[0]], vec![made[1], made[0]], 2)
+    );
+}

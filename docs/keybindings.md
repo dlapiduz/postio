@@ -76,10 +76,10 @@ command from inside a text field.
 | `f` or `ctrl+shift+f` | Forward | List, conversation, reader, composer |  | `forward` |
 | `e` or `ctrl+shift+a` | Archive | List, conversation, reader | Undoable | `archive` |
 | `E` | Archive thread | List, conversation, reader, digest | Undoable | `archive_thread` |
-| `#` or `Delete` | Delete | List, conversation, reader | Undoable | `delete` |
+| `#` or `Delete` | Delete | List, conversation, reader, Filtered view | Undoable | `delete` |
 | `v` | Move to… | List, conversation, reader | Undoable | `move` |
-| `s` | Flag | List, conversation, reader | Undoable | `flag` |
-| `I` or `U` | Mark read or unread | List, conversation, reader | Undoable | `toggle_read` |
+| `s` | Flag | List, conversation, reader, Filtered view | Undoable | `flag` |
+| `I` or `U` | Mark read or unread | List, conversation, reader, Filtered view | Undoable | `toggle_read` |
 | `b` | Snooze | List, conversation, reader | Undoable | `snooze` |
 | `B` | Unsnooze | List, conversation, reader | Undoable | `unsnooze` |
 | `h` or `ctrl+h` | Remind if no reply… | List, conversation, reader, composer | Undoable | `remind_if_no_reply` |
