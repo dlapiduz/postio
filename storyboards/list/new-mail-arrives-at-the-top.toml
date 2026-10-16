@@ -1,0 +1,19 @@
+# A message that arrives while the list is open appears in it (#1753).
+#
+# The window hears `NewMail` as the engine says it after a sync pass has
+# filed a message. The new conversation joins the list without the person
+# asking, and the keyboard stays in the list.
+apps   = ["focus"]
+source = { kind = "issue", ref = "#1753" }
+proof  = "pinned"
+
+[[step]]
+wait   = { until = { cursor.index = 0 } }
+check  = { keyboard.region = "list", cursor.index = 0 }
+expect = "The inbox is open with the cursor ring on the first row."
+
+[[step]]
+event  = "new_mail"
+settle = { until = { rows.count = { changed = true } } }
+check  = { rows.count = { changed = true }, keyboard.region = "list", view = "list" }
+expect = "A new conversation is in the list: the row count has grown by one, and the keyboard is still in the list."

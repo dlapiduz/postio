@@ -5539,6 +5539,18 @@ impl FocusWindow {
                 serde_json::json!(reading.subtitle()),
             );
         }
+        // What the open message's body says: its words once they are here,
+        // or that it is still on its way.
+        if let Some(reading) = reading.as_ref()
+            && view == View::Reader
+        {
+            let body = if reading.reader().absent().is_some() {
+                "absent".to_owned()
+            } else {
+                reading.body_text().trim().to_owned()
+            };
+            app.insert("focus.reading.body".to_owned(), serde_json::json!(body));
+        }
         if let Some(reading) = reading.as_ref()
             && let Some(item) = reading.more_item_with_focus()
         {
