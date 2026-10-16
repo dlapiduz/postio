@@ -18,6 +18,7 @@
 
 mod account_repair;
 mod account_switches;
+mod agent_access;
 mod aiming;
 mod command_coverage;
 mod compose;

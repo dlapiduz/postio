@@ -1062,6 +1062,15 @@ impl Session {
         blocking(self.message_facts(message))
     }
 
+    /// What agents have done lately, newest first, with the ids the access
+    /// log holds resolved to the rows they name (#1832). Empty when the
+    /// session keeps no log (an in-memory store). Blocking: it reads the log
+    /// and a few rows; call it off the main actor.
+    #[uniffi::method(name = "agentActivity")]
+    pub fn agent_activity_ffi(&self) -> crate::AgentActivityFfi {
+        blocking(self.agent_activity())
+    }
+
     /// The verbs the reading pane offers. See [`Session::reader_actions`].
     #[uniffi::method(name = "readerActions")]
     pub fn reader_actions_ffi(&self) -> Vec<crate::ReaderActionFfi> {
@@ -2233,6 +2242,64 @@ impl Session {
     /// [`conversation_ffi`](Self::conversation_ffi).
     pub fn conversation(&self) -> Option<crate::ConversationFfi> {
         self.conversation.lock().expect("conversation lock").clone()
+    }
+
+    /// The access log beside the store, when this session has one.
+    fn agent_log_path(&self) -> Option<std::path::PathBuf> {
+        self.store_at
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map(|dir| dir.join("mcp-access.log"))
+    }
+
+    /// See [`agent_activity_ffi`](Self::agent_activity_ffi).
+    pub async fn agent_activity(&self) -> crate::AgentActivityFfi {
+        let log = self
+            .agent_log_path()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .unwrap_or_default();
+        self.agent_activity_from(&log, chrono::Utc::now()).await
+    }
+
+    /// The activity `log` records as of `now`. A row that has since been
+    /// deleted is left unnamed rather than failing the page.
+    pub async fn agent_activity_from(
+        &self,
+        log: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> crate::AgentActivityFfi {
+        use postio_model::ids::{AccountId, MailboxId, MessageId};
+        use postio_storage::repository::{AccountRepository, MailboxRepository, MessageRepository};
+        use postio_ui::agent_access as agent;
+
+        let calls = agent::parse_log(log, agent::RECENT);
+        let wanted = agent::wanted(&calls);
+        let mut names = agent::Names::default();
+        if let Some((database, _)) = self.store_and_blobs()
+            && let Ok(connection) = database.connect().await
+        {
+            let accounts = AccountRepository::new(&connection);
+            for id in &wanted.accounts {
+                if let Ok(Some(account)) = accounts.get(AccountId::new(*id)).await {
+                    names.accounts.insert(*id, account.address.address.clone());
+                }
+            }
+            let mailboxes = MailboxRepository::new(&connection);
+            for id in &wanted.mailboxes {
+                if let Ok(Some(mailbox)) = mailboxes.get(MailboxId::new(*id)).await {
+                    names.mailboxes.insert(*id, mailbox.path);
+                }
+            }
+            let messages = MessageRepository::new(&connection);
+            for id in &wanted.messages {
+                if let Ok(Some(message)) = messages.get(MessageId::new(*id)).await
+                    && let Some(subject) = message.subject
+                {
+                    names.messages.insert(*id, subject);
+                }
+            }
+        }
+        crate::agent_access::activity(&names, &calls, now)
     }
 
     /// The row's own facts about one open message: the unsubscribe offer

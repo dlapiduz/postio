@@ -129,6 +129,7 @@ fn the_nav_is_focus_s_filtering_in_and_appearance_out() {
             "Keyboard",
             "Sync & storage",
             "Privacy",
+            "Agents",
             "Config file",
         ],
         "the nav order and names are the shared table's"
