@@ -141,6 +141,95 @@ async fn list_names_a_mailing_list_by_its_list_id_not_by_a_recipient_address() {
     assert_eq!(results.hits[0].message_id, on_list.id);
 }
 
+/// A message from `from` to `to`, with `subject` and one attachment named
+/// `filename`.
+async fn addressed(
+    connection: &Connection,
+    account: &postio_model::Account,
+    mailbox: postio_model::MailboxId,
+    (from, to): (&str, &str),
+    subject: &str,
+    filename: &str,
+    received_at: chrono::DateTime<Utc>,
+) -> Message {
+    let mut message = Message::new(account.id, mailbox, received_at);
+    message.from = vec![EmailAddress::new(None::<String>, from)];
+    message.to = vec![EmailAddress::new(None::<String>, to)];
+    message.subject = Some(subject.to_string());
+    let mut attachment = Attachment::new(message.id, "application/pdf", 10);
+    attachment.filename = Some(filename.to_string());
+    message.attachments = vec![attachment];
+    MessageRepository::new(connection)
+        .create(&mut message)
+        .await
+        .expect("create message");
+    message
+}
+
+/// The messages `text` finds, newest first, checking the count agrees.
+async fn found_by(
+    connection: &Connection,
+    account: postio_model::AccountId,
+    text: &str,
+) -> Vec<postio_model::MessageId> {
+    let query = parse(text, at(12).date_naive());
+    let request = SearchRequest {
+        account: AccountScope::Account(account),
+        query: &query,
+        scope: Scope::AllMail,
+        limit: 10,
+        order: postio_search::ResultOrder::Newest,
+    };
+    let results = search(connection, &request, at(12)).await.expect("search");
+    assert_eq!(results.total_hits, results.hits.len() as u64, "{text}");
+    results.hits.iter().map(|hit| hit.message_id).collect()
+}
+
+#[tokio::test]
+async fn a_field_operator_finds_its_value_in_its_own_field_only() {
+    // #1699: `from:ada@example.com` found mail sent *to* that address,
+    // because the sender shared a word ("example") with it. Each field
+    // operator asks for its value, as a phrase, in its own field.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+
+    let from_ada = addressed(
+        &connection,
+        &account,
+        mailbox,
+        ("ada@example.com", "grace@example.com"),
+        "Report notes",
+        "draft.pdf",
+        at(9),
+    )
+    .await;
+    let to_ada = addressed(
+        &connection,
+        &account,
+        mailbox,
+        ("grace@example.com", "ada@example.com"),
+        "Quarterly figures",
+        "quarterly report.pdf",
+        at(10),
+    )
+    .await;
+    let found = |text: &'static str| found_by(&connection, account.id, text);
+
+    assert_eq!(found("from:ada@example.com").await, vec![from_ada.id]);
+    assert_eq!(found("to:ada@example.com").await, vec![to_ada.id]);
+    assert_eq!(found("from:grace@example.com").await, vec![to_ada.id]);
+    assert_eq!(found("to:grace@example.com").await, vec![from_ada.id]);
+    // The phrase is in the other message's filename, and that message's
+    // subject shares a word with it: still not a subject match.
+    assert_eq!(found("subject:\"quarterly report\"").await, vec![]);
+    assert_eq!(found("subject:report").await, vec![from_ada.id]);
+    assert_eq!(found("filename:report").await, vec![to_ada.id]);
+}
+
 #[tokio::test]
 async fn negated_only_free_text_excludes_without_a_positive_match_expression() {
     let database = test_support::memory().await;
