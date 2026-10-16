@@ -44,6 +44,19 @@ pub enum SessionError {
         /// A sentence for the user, already written by the store layer.
         message: String,
     },
+    /// The store is encrypted under a key the keyring does not hold:
+    /// another installation's, or a keyring entry that was replaced
+    /// (`postio_session::Unreadable::AnotherKey`, #1598).
+    ///
+    /// Its own case for the same reason as [`Self::StoreFromAnotherBuild`] --
+    /// the key does not change between attempts, so the way forward is
+    /// starting over -- and not that case, because what a fresh store keeps
+    /// differs: nothing in this one decrypts, so no account comes across.
+    #[error("{message}")]
+    StoreUnderAnotherKey {
+        /// A sentence for the user, already written by the store layer.
+        message: String,
+    },
     /// The tokio runtime the engine needs could not be started.
     #[error("{message}")]
     RuntimeUnavailable {
@@ -59,9 +72,14 @@ impl SessionError {
         let message = refusal.sentence;
         match refusal.remedy {
             postio_session::Remedy::TryAgain => SessionError::StoreUnavailable { message },
-            postio_session::Remedy::StartOver { .. } => {
-                SessionError::StoreFromAnotherBuild { message }
-            }
+            postio_session::Remedy::StartOver {
+                because: postio_session::Unreadable::AnotherBuild,
+                ..
+            } => SessionError::StoreFromAnotherBuild { message },
+            postio_session::Remedy::StartOver {
+                because: postio_session::Unreadable::AnotherKey,
+                ..
+            } => SessionError::StoreUnderAnotherKey { message },
         }
     }
 
@@ -5263,7 +5281,8 @@ pub struct StartedOverFfi {
 
 /// Set aside the store `options` names and start a fresh one in its place,
 /// carrying its accounts across: the way past
-/// [`SessionError::StoreFromAnotherBuild`] (`postio_session::start_over::start_over_at`).
+/// [`SessionError::StoreFromAnotherBuild`] and
+/// [`SessionError::StoreUnderAnotherKey`] (`postio_session::start_over::start_over_at`).
 ///
 /// The store key comes from `options`' secret store, or the OS keyring: the
 /// one the old store was written under, which stays where it is, so the

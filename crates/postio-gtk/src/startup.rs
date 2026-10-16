@@ -429,10 +429,11 @@ pub fn open(
                     postio_session::Remedy::TryAgain => {
                         window.show_unavailable(&refusal.sentence, retry);
                     }
-                    // Trying again would meet the same file (T215).
-                    postio_session::Remedy::StartOver { .. } => {
+                    // Trying again would meet the same file (T215), or
+                    // the same key (#1598).
+                    postio_session::Remedy::StartOver { because, .. } => {
                         let page = window.downgrade();
-                        window.show_start_over(move || {
+                        window.show_start_over(because, move || {
                             if let Some(window) = page.upgrade() {
                                 start_over(&window, &opener, Rc::new(retry.clone()));
                             }

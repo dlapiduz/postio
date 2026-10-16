@@ -2325,15 +2325,30 @@ impl FocusWindow {
         );
     }
 
-    /// The store was written at a schema no migration carries forward, so
-    /// trying again would meet the same file (T215): say so, say what a
-    /// fresh store keeps and what stays behind before it is chosen, and
+    /// The store can never be read here -- written at a schema no migration
+    /// carries forward (T215), or under a key the keyring does not hold
+    /// (#1598) -- so trying again would meet the same file: say so, say what
+    /// a fresh store keeps and what stays behind before it is chosen, and
     /// offer it. "Start a fresh store" runs `start_over`.
-    pub fn show_start_over(&self, start_over: impl Fn() + 'static) {
+    pub fn show_start_over(
+        &self,
+        because: postio_session::Unreadable,
+        start_over: impl Fn() + 'static,
+    ) {
+        use postio_ui::focus_state as words;
+        let (title, reason) = match because {
+            postio_session::Unreadable::AnotherBuild => {
+                (words::STORE_FROM_ANOTHER_VERSION, words::START_OVER)
+            }
+            postio_session::Unreadable::AnotherKey => (
+                words::STORE_UNDER_ANOTHER_KEY,
+                words::START_OVER_UNDER_ANOTHER_KEY,
+            ),
+        };
         self.show_refusal(
-            postio_ui::focus_state::STORE_FROM_ANOTHER_VERSION,
-            postio_ui::focus_state::START_OVER,
-            postio_ui::focus_state::START_A_FRESH_STORE,
+            title,
+            reason,
+            words::START_A_FRESH_STORE,
             Rc::new(start_over),
         );
     }

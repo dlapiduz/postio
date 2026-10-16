@@ -202,3 +202,82 @@ pub fn a_store_no_migration_reaches_offers_a_fresh_store_that_keeps_the_account(
         session.stop();
     });
 }
+
+/// #1598: a store encrypted under a key the keyring does not hold is not
+/// offered "Try again" either -- the key does not change between attempts.
+/// The page says so, and "Start a fresh store" sets the old one aside, not
+/// deleted, and opens a fresh one under the keyring's key. Nothing in the
+/// old one decrypts, so no account comes across.
+pub fn a_store_under_another_key_offers_a_fresh_store_and_keeps_the_old_one() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let directory = tempfile::tempdir().expect("a scratch directory");
+        let store = directory.path().join("postio.db");
+        {
+            let other = StoreKey::generate();
+            let earlier = postio_storage::Store::open(&store, &other.derive(Purpose::Database))
+                .await
+                .expect("a store under another installation's key");
+            let connection = earlier.connect().await.expect("a connection");
+            postio_storage::test_support::account(&connection).await;
+        }
+
+        let window = FocusWindow::new(None);
+        window.present();
+        let opened: Rc<RefCell<Option<Session>>> = Rc::default();
+        let opener = Opener::at(None, store.clone(), keyring(&StoreKey::generate()));
+        postio_gtk::startup::open(
+            &window,
+            opener.open_on_a_thread(),
+            Rc::new(postio_config::Config::default()),
+            opener,
+            {
+                let opened = Rc::clone(&opened);
+                Rc::new(move |session| {
+                    opened.replace(Some(session));
+                })
+            },
+        );
+        assert!(
+            crate::settle_until(async || window.unavailable_reason().is_some()).await,
+            "a store under another key opened, or the window said nothing"
+        );
+        let said = support::texts(&window);
+        assert!(
+            !said.contains(&"Try again".to_owned()),
+            "trying again meets the same key: {said:?}"
+        );
+        let reason = window.unavailable_reason().expect("the page says why");
+        for promise in ["key", "accounts again", "set aside, not deleted"] {
+            assert!(
+                reason.contains(promise),
+                "the page has to say why, what a fresh store costs and where \
+                 the old one goes before it is chosen; no {promise:?} in {reason:?}"
+            );
+        }
+
+        let fresh = support::button_labelled(&window, "Start a fresh store");
+        support::click(&window, &fresh, 1);
+        assert!(
+            crate::settle_until(async || opened.borrow().is_some()).await,
+            "a fresh store did not open: {:?}",
+            window.unavailable_reason()
+        );
+
+        let set_aside: Vec<_> = std::fs::read_dir(directory.path().join("set-aside"))
+            .expect("the old store was set aside, not deleted")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect();
+        assert_eq!(set_aside.len(), 1, "{set_aside:?}");
+        assert!(
+            set_aside[0].join("postio.db").exists(),
+            "the old database is in {}",
+            set_aside[0].display()
+        );
+        let session = opened.take().expect("the session");
+        session.stop();
+    });
+}

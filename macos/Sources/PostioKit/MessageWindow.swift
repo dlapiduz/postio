@@ -458,7 +458,8 @@ public final class MessageWindowModel {
     nonisolated static func sentence(_ error: SessionError) -> String {
         switch error {
         case let .StoreUnavailable(message), let .KeyringLocked(message),
-             let .StoreFromAnotherBuild(message), let .RuntimeUnavailable(message):
+             let .StoreFromAnotherBuild(message), let .StoreUnderAnotherKey(message),
+             let .RuntimeUnavailable(message):
             return message
         }
     }
