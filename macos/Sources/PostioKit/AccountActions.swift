@@ -22,9 +22,39 @@ public final class AccountActions {
     public private(set) var failed = false
     /// The account a removal is waiting to be confirmed for.
     public private(set) var confirmingRemoval: AccountFfi?
-    /// Whether the last test found no credential at all — the pane's
-    /// *Partial* state, which asks for a password rather than a retry.
-    public private(set) var missingCredential = false
+    /// What the last connection test found wrong with an account's
+    /// credential, and which account that was.
+    ///
+    /// Keyed by account because one model serves every row: a finding that
+    /// followed the selection would tell the next account it has no
+    /// password. Kept across other actions, unlike the outcome, because it
+    /// stays true until a repair says otherwise.
+    private var finding: (account: Int64, trouble: CredentialTrouble)?
+
+    /// What the last test found wrong with `account`'s credential, if it was
+    /// tested and something was.
+    public func trouble(for account: Int64) -> CredentialTrouble? {
+        guard let finding, finding.account == account else { return nil }
+        return finding.trouble
+    }
+
+    /// Record what a connection test of `account` said.
+    func found(_ report: ConnectionReportFfi, for account: Int64) {
+        let trouble: CredentialTrouble? =
+            report.missingCredential ? .missing
+            : report.rejectedCredential ? .rejected
+            : nil
+        if let trouble {
+            finding = (account, trouble)
+        } else if finding?.account == account {
+            finding = nil
+        }
+    }
+
+    /// `account`'s credential was just put right, so stop saying otherwise.
+    public func credentialRepaired(_ account: Int64) {
+        if finding?.account == account { finding = nil }
+    }
 
     /// How far a re-index has got: messages done, and how many there are.
     ///
@@ -70,7 +100,7 @@ public final class AccountActions {
         begin(.testing)
         let id = account.id
         let report = await Task.detached { session.testConnection(id) }.value
-        missingCredential = report.missingCredential
+        found(report, for: id)
         finish(report.message, failed: !report.reachable)
     }
 
@@ -153,7 +183,6 @@ public final class AccountActions {
         running = what
         outcome = nil
         failed = false
-        missingCredential = false
         progress = nil
     }
 

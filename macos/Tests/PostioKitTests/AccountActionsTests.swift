@@ -72,7 +72,57 @@ import Testing
         // The state is a *finding*, not a guess: asking the keyring on every
         // settings open would raise a permission prompt per account.
         let actions = AccountActions()
-        #expect(!actions.missingCredential)
+        #expect(actions.trouble(for: 1) == nil)
+    }
+
+    private func report(
+        reachable: Bool = false,
+        missing: Bool = false,
+        rejected: Bool = false
+    ) -> ConnectionReportFfi {
+        ConnectionReportFfi(
+            reachable: reachable,
+            missingCredential: missing,
+            rejectedCredential: rejected,
+            message: "what the test said"
+        )
+    }
+
+    @Test func aTestThatFoundNoCredentialIsThePartialState() {
+        let actions = AccountActions()
+        actions.found(report(missing: true), for: 1)
+        #expect(actions.trouble(for: 1) == .missing)
+    }
+
+    @Test func aTestTheServerRefusedIsARejectedCredential() {
+        // A rotated app password: the one a retry never fixes, so it has to
+        // become an offer rather than another "Test connection" (#1584).
+        let actions = AccountActions()
+        actions.found(report(rejected: true), for: 1)
+        #expect(actions.trouble(for: 1) == .rejected)
+    }
+
+    @Test func aServerThatDidNotAnswerIsNotACredentialProblem() {
+        // The control: an unreachable host is not cured by a new password,
+        // and offering one sends somebody to replace what was never wrong.
+        let actions = AccountActions()
+        actions.found(report(), for: 1)
+        #expect(actions.trouble(for: 1) == nil)
+    }
+
+    @Test func aFindingIsAboutTheAccountThatWasTested() {
+        // One model serves every row. A finding that followed the selection
+        // would tell the next account it has no password.
+        let actions = AccountActions()
+        actions.found(report(rejected: true), for: 1)
+        #expect(actions.trouble(for: 2) == nil)
+    }
+
+    @Test func aRepairedCredentialStopsBeingReportedAsBroken() {
+        let actions = AccountActions()
+        actions.found(report(missing: true), for: 1)
+        actions.credentialRepaired(1)
+        #expect(actions.trouble(for: 1) == nil)
     }
 
     @Test func renamingWithNoSessionChangesNothingAndSaysNothing() {

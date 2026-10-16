@@ -430,10 +430,7 @@ public struct SettingsPaneView: View {
                     // accept, and sending somebody to a browser to replace an
                     // app password sends them somewhere with no field to type
                     // it in.
-                    if let label = AccountRepair.label(
-                        for: account,
-                        running: repair.running == account.id
-                    ) {
+                    if let offer = repairOffer(account), let label = offer.button {
                         Button(label) {
                             Task { await repair.begin(account, through: session) }
                         }
@@ -444,6 +441,7 @@ public struct SettingsPaneView: View {
                                 ? "Store a new password for this account"
                                 : "Sign in to this account again in your browser"
                         )
+                        .accessibilityHint(offer.reason)
                     }
                 }
                 .padding(.vertical, 10)
@@ -458,6 +456,16 @@ public struct SettingsPaneView: View {
                 accountForm(account)
             }
         }
+    }
+
+    /// What is wrong with `account`'s credential, and what to press.
+    /// See `AccountRepair.offer`.
+    private func repairOffer(_ account: AccountFfi) -> AccountRepair.Offer? {
+        AccountRepair.offer(
+            for: account,
+            found: actions.trouble(for: account.id),
+            running: repair.running == account.id
+        )
     }
 
     /// What selecting an account reveals.
@@ -523,16 +531,13 @@ public struct SettingsPaneView: View {
                 Button("Remove account…") { actions.askToRemove(account) }
             }
             .disabled(actions.isBusy)
-            if actions.missingCredential {
-                // The Partial state: a row that exists with nothing in the
-                // keyring to sign in with. It asks for a password rather
-                // than a retry, which is a different offer from "the server
-                // said no".
-                Label(
-                    "This account has no password in your Keychain yet.",
-                    systemImage: "key.slash"
-                )
-                .font(.callout)
+            if let offer = repairOffer(account) {
+                // What is wrong, beside the account it is about: an expired
+                // grant, a password the server refused, or none in the
+                // Keychain at all (the *Partial* state). The button that
+                // fixes it is on the row above, for all three.
+                Label(offer.reason, systemImage: "key.slash")
+                    .font(.callout)
             }
             if let outcome = actions.outcome {
                 // What happened, where it was asked for. A connection test

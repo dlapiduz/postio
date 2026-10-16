@@ -44,6 +44,14 @@ pub struct ConnectionReport {
     /// password in, or sign in again — than a server that said no, and a
     /// pane that could not tell them apart would offer the wrong one.
     pub missing_credential: bool,
+    /// Whether the server **refused** the credential it was given — a
+    /// rotated app password, or a grant the provider revoked.
+    ///
+    /// The other half of what the pane needs to offer a repair rather than a
+    /// retry: a refused credential never passes a second test, and a pane
+    /// that could only say "unreachable" left the person to guess that the
+    /// password was the problem (#1584).
+    pub rejected_credential: bool,
 }
 
 /// Open a session against the account's own server and close it again.
@@ -66,6 +74,7 @@ pub async fn test_connection(account: &Account, secrets: Arc<dyn SecretStore>) -
                      keyring: {error}. Is the keyring unlocked?"
                 ),
                 missing_credential: true,
+                rejected_credential: false,
             };
         }
     };
@@ -80,6 +89,7 @@ pub async fn test_connection(account: &Account, secrets: Arc<dyn SecretStore>) -
                     "Postio could not start a TLS connection on this machine: {error}"
                 ),
                 missing_credential: false,
+                rejected_credential: false,
             };
         }
     };
@@ -91,12 +101,22 @@ pub async fn test_connection(account: &Account, secrets: Arc<dyn SecretStore>) -
                 account.incoming.host
             ),
             missing_credential: false,
+            rejected_credential: false,
         },
-        Err(error) => ConnectionReport {
-            reachable: false,
-            message: explain(&error),
-            missing_credential: false,
-        },
+        Err(error) => failure(&error),
+    }
+}
+
+/// What a sign-in that failed with `error` reports.
+///
+/// Its own function so the classification can be asserted without a
+/// server: no test in the default suite touches the network.
+pub fn failure(error: &BackendError) -> ConnectionReport {
+    ConnectionReport {
+        reachable: false,
+        message: explain(error),
+        missing_credential: false,
+        rejected_credential: error.is_authentication_failure(),
     }
 }
 

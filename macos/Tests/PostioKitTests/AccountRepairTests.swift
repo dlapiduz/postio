@@ -21,37 +21,84 @@ import Testing
         )
     }
 
-    @Test func ahealthyAccountHasNothingToPress() {
-        #expect(AccountRepair.label(for: account(needsAttention: false), running: false) == nil)
+    private func offer(
+        _ account: AccountFfi,
+        found: CredentialTrouble? = nil,
+        running: Bool = false
+    ) -> AccountRepair.Offer? {
+        AccountRepair.offer(for: account, found: found, running: running)
+    }
+
+    @Test func ahealthyAccountHasNothingToPressAndNothingToSay() {
+        #expect(offer(account(needsAttention: false)) == nil)
     }
 
     @Test func anExpiredGrantIsReconnectedInABrowser() {
         // A password field here would ask for something no provider would
         // accept.
-        #expect(AccountRepair.label(for: account(repair: .browser), running: false) == "Reconnect")
+        let said = offer(account(repair: .browser))
+        #expect(said?.button == "Reconnect")
+        #expect(said?.reason == "This account's sign-in has expired.")
     }
 
-    @Test func arotatedAppPasswordAsksForOneRatherThanOpeningABrowser() {
+    @Test func anExpiredAppPasswordAsksForOneRatherThanOpeningABrowser() {
         // "Reconnect" in front of a password field is a promise about a
         // browser that is not going to open, so the two routes do not share
         // a word.
-        #expect(
-            AccountRepair.label(for: account(repair: .password), running: false) == "New password…"
-        )
+        #expect(offer(account(repair: .password))?.button == "New password…")
     }
 
-    @Test func anAccountWithNothingToSignIntoHasNoButton() {
-        // A local mail store. The row still warns; there is simply nothing
-        // to press, and a dead button is worse than none.
-        #expect(AccountRepair.label(for: account(repair: .nothing), running: false) == nil)
+    @Test func aRotatedPasswordTheServerRefusedIsOfferedARepair() {
+        // The common case, and the one the row used to have no button for:
+        // nothing expires, the server simply says no. Only a test finds it,
+        // and what it found has to turn into something to press (#1584).
+        let said = offer(account(needsAttention: false, repair: .password), found: .rejected)
+        #expect(said?.button == "New password…")
+        #expect(said?.reason == "The server refused this account's password.")
+    }
+
+    @Test func aRevokedGrantTheServerRefusedIsReconnected() {
+        let said = offer(account(needsAttention: false, repair: .browser), found: .rejected)
+        #expect(said?.button == "Reconnect")
+        #expect(said?.reason == "The server refused this account's sign-in.")
+    }
+
+    @Test func thePartialStateIsNoLongerADeadEnd() {
+        // A row with nothing in the Keychain used to get a sentence and no
+        // way forward. It gets the same password route a rotated one does,
+        // without removing the account and adding it again.
+        let said = offer(account(needsAttention: false, repair: .password), found: .missing)
+        #expect(said?.button == "New password…")
+        #expect(said?.reason == "This account has no password in your Keychain yet.")
+    }
+
+    @Test func aPartialOAuthAccountSignsInAgainRatherThanAskingForAPassword() {
+        let said = offer(account(needsAttention: false, repair: .browser), found: .missing)
+        #expect(said?.button == "Reconnect")
+        #expect(said?.reason == "This account has no sign-in in your Keychain yet.")
+    }
+
+    @Test func anAccountWithNothingToSignIntoSaysWhatIsWrongWithNoButton() {
+        // A broker-fed account: Postio holds no client and no credential to
+        // put right. The row says so; a dead button would be worse than none.
+        let said = offer(account(needsAttention: false, repair: .nothing), found: .rejected)
+        #expect(said?.button == nil)
+        #expect(said?.reason == "The server refused this account's credential.")
+    }
+
+    @Test func anExpiryTheBoundaryReportedOutranksAnOlderFinding() {
+        // The boundary's flag is read on every settings open; a test's finding
+        // is from whenever somebody pressed the button.
+        let said = offer(account(repair: .browser), found: .missing)
+        #expect(said?.reason == "This account's sign-in has expired.")
     }
 
     @Test func theButtonSaysWhatItIsDoingWhileItWorks() {
         // A browser sign-in returns when somebody comes back from a tab,
         // which can be a minute. A button that still says "Reconnect" reads
         // as one that did not take the click.
-        #expect(AccountRepair.label(for: account(repair: .browser), running: true) == "Signing in…")
-        #expect(AccountRepair.label(for: account(repair: .password), running: true) == "Saving…")
+        #expect(offer(account(repair: .browser), running: true)?.button == "Signing in…")
+        #expect(offer(account(repair: .password), running: true)?.button == "Saving…")
     }
 
     @Test func askingForAPasswordStartsFromAnEmptyField() {

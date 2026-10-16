@@ -135,6 +135,10 @@ pub struct ConnectionReportFfi {
     /// account rather than a rejected one — the pane's *Partial* state,
     /// which calls for a different offer.
     pub missing_credential: bool,
+    /// Whether the server refused the credential it was given — a rotated
+    /// app password, or a revoked grant. Like `missing_credential`, it calls
+    /// for a repair rather than a retry.
+    pub rejected_credential: bool,
     /// What happened, in words somebody can act on. The wording is
     /// `postio_session::checkup`'s, so both frontends explain a rejected
     /// password the same way — including the part the error cannot know,

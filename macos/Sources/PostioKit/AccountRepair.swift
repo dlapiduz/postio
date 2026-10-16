@@ -14,6 +14,17 @@ import PostioFFI
 ///
 /// What is local is the running, the field, and what the button says while
 /// it works.
+/// What is wrong with an account's credential, when something is.
+public enum CredentialTrouble: Equatable, Sendable {
+    /// An OAuth grant past its expiry — the boundary's `needsAttention`.
+    case expired
+    /// The server refused the credential it was given: a rotated app
+    /// password, or a revoked grant.
+    case rejected
+    /// Nothing in the Keychain to sign in with — the *Partial* state.
+    case missing
+}
+
 @MainActor
 @Observable
 public final class AccountRepair {
@@ -31,24 +42,61 @@ public final class AccountRepair {
 
     public init() {}
 
-    /// What the button beside `account` says.
+    /// What is wrong with an account's credential, and what to press.
+    public struct Offer: Equatable, Sendable {
+        /// What is wrong, in words: a button with no reason beside it is a
+        /// button nobody knows whether to press.
+        public let reason: String
+        /// What the button says, or `nil` when there is nothing this pane
+        /// can put right — the row still says what is wrong.
+        public let button: String?
+    }
+
+    /// What the row offers for `account`, or `nil` when its credential is
+    /// fine as far as anything knows.
     ///
-    /// Named after what it *does*, per route, rather than one word for both:
-    /// "Reconnect" in front of a password field is a promise about a browser
-    /// that is not going to open.
-    public static func label(for account: AccountFfi, running: Bool) -> String? {
-        guard account.needsAttention else { return nil }
+    /// `found` is what the last connection test said about this account
+    /// (`AccountActions.trouble(for:)`); an expiry the boundary reports
+    /// outranks it, because it is read fresh on every settings open.
+    ///
+    /// Every state a person can repair gets the same offer (#1584): an
+    /// expired grant, a password the server refused, and none in the
+    /// Keychain at all — which used to get a sentence and no way forward.
+    /// The button is named after what it *does*, per route: "Reconnect" in
+    /// front of a password field is a promise about a browser that is not
+    /// going to open.
+    public static func offer(
+        for account: AccountFfi,
+        found: CredentialTrouble?,
+        running: Bool
+    ) -> Offer? {
+        guard let trouble = account.needsAttention ? .expired : found else { return nil }
+        let held: String
+        let button: String?
         switch account.repair {
         case .nothing:
-            // A local mail store signs in to nothing, so there is nothing to
-            // press. The row still warns; it simply has no button.
-            return nil
+            // A local mail store, or a token a broker mints: nothing here
+            // to sign in with, so nothing to press.
+            held = "credential"
+            button = nil
         case .password:
-            return running ? "Saving…" : "New password…"
+            held = "password"
+            button = running ? "Saving…" : "New password…"
         case .browser:
-            return running ? "Signing in…" : "Reconnect"
+            held = "sign-in"
+            button = running ? "Signing in…" : "Reconnect"
         }
+        let reason = switch trouble {
+        case .expired: "This account's \(held) has expired."
+        case .rejected: "The server refused this account's \(held)."
+        case .missing: "This account has no \(held) in your Keychain yet."
+        }
+        return Offer(reason: reason, button: button)
     }
+
+    /// Run when a repair has gone through, with the account it was for, so
+    /// whatever was found wrong with it stops being said.
+    public var repaired: ((Int64) -> Void)?
 
     /// Ask for a password for `account`.
     public func ask(_ account: AccountFfi) {
@@ -77,6 +125,7 @@ public final class AccountRepair {
         typed = ""
         asking = complaint == nil ? nil : asking
         finish(complaint ?? "The password was stored. Postio will try again.", failed: complaint != nil)
+        if complaint == nil { repaired?(id) }
     }
 
     /// Sign in again through the system browser, off the main actor.
@@ -90,6 +139,7 @@ public final class AccountRepair {
         begin(id)
         let complaint = await Task.detached { session.reconnectAccount(id) }.value
         finish(complaint ?? "\(account.address) is signed in again.", failed: complaint != nil)
+        if complaint == nil { repaired?(id) }
     }
 
     /// Start whichever repair `account` calls for.
