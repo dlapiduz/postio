@@ -484,9 +484,8 @@ impl DiscoveryTransport for PimalayaTransport {
                         .host_str()
                         .ok_or_else(|| anyhow::anyhow!("HTTP URL `{url}` has no host"))?;
                     let port = url.port_or_known_default().unwrap_or(80);
-                    let stream = reach(host, port, &cancel, DISCOVERY_IO_TIMEOUT).and_then(|()| {
-                        Stream::connect_tcp(host, port, connect_options()).map_err(Into::into)
-                    });
+                    let stream = reach(host, port, &cancel, DISCOVERY_IO_TIMEOUT)
+                        .and_then(|()| Stream::connect_tcp(host, port, connect_options()));
                     report_egress(&egress, host, port, stream.is_ok());
                     Ok(Cancellable::new(stream?, cancel.clone()))
                 }
