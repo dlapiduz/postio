@@ -63,6 +63,15 @@ echo "--- cargo: postio-extract-helper ---"
 # shellcheck disable=SC2086  # deliberate: see CARGO_PROFILE_ARGS above
 cargo build -p postio-session --bin postio-extract-helper $CARGO_PROFILE_ARGS
 
+# The agent's entry point (ADR 0010, #1832): an MCP client launches
+# `postio-mcp` as a subprocess, and with the app open it hands the call to
+# the app over agents/mcp.sock (#1845). `macos-bundle.sh` copies it into
+# Contents/MacOS, where Settings > Agents tells a person to point their
+# client.
+echo "--- cargo: postio-mcp ---"
+# shellcheck disable=SC2086  # deliberate: see CARGO_PROFILE_ARGS above
+cargo build -p postio-mcp --bin postio-mcp $CARGO_PROFILE_ARGS
+
 # The bindings are generated every time rather than tracked, so the generator
 # and the `uniffi` runtime are the same version by construction (#571). They
 # land in two targets because SwiftPM cannot have a module map and Swift
