@@ -341,9 +341,52 @@ pub fn decode_header_text(raw: &[u8]) -> String {
             .map(str::to_string)
     });
     match decoded {
-        Ok(Some(text)) => text,
-        Ok(None) | Err(_) => String::from_utf8_lossy(raw).into_owned(),
+        Ok(Some(text)) => one_line(&text),
+        Ok(None) | Err(_) => one_line(&String::from_utf8_lossy(raw)),
     }
+}
+
+/// A decoded header value as a reader may draw it: one line, every run of
+/// line breaks and control characters folded to a single space.
+///
+/// An encoded word encodes octets, and `=0D=0A` is two of them, so a
+/// decoded subject or display name can carry a line break that no
+/// unfolding removes. Drawn as it arrived, `Invoice attached=0D=0ABcc:
+/// mallory@…` put a forged `Bcc:` line under the subject in the reader
+/// (#1770), and an escape or a NUL is no better in a terminal. Every
+/// frontend sets these values in a label, so they are folded once, here,
+/// for all of them. A run is folded rather than each character so that
+/// `\r\n` and the space beside it read as the one gap they stand for.
+///
+/// What counts: C0 and C1 controls (`char::is_control`: CR, LF, TAB, ESC,
+/// NUL, NEL…) and Unicode's line and paragraph separators, which a label
+/// breaks on just the same. Whitespace that touches such a run joins it;
+/// ordinary spaces elsewhere are left alone.
+pub fn one_line(text: &str) -> String {
+    let breaks = |c: char| c.is_control() || c == '\u{2028}' || c == '\u{2029}';
+    if !text.chars().any(breaks) {
+        return text.to_owned();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut in_run = false;
+    for c in text.chars() {
+        if breaks(c) {
+            // Whitespace written just before the run belongs to it.
+            while out.ends_with(char::is_whitespace) {
+                out.pop();
+            }
+            in_run = true;
+        } else if in_run && c.is_whitespace() {
+            // So does whitespace just after it.
+        } else {
+            if in_run && !out.is_empty() {
+                out.push(' ');
+            }
+            in_run = false;
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// One MIME parameter's value out of a list of undecoded `(name, value)`
@@ -526,9 +569,9 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
 
     message.subject = source
         .subject()
-        .map(str::trim)
-        .filter(|subject| !subject.is_empty())
-        .map(ToOwned::to_owned);
+        .map(one_line)
+        .map(|subject| subject.trim().to_owned())
+        .filter(|subject| !subject.is_empty());
     message.date = source
         .date()
         .filter(|date| date.is_valid())
@@ -916,9 +959,9 @@ fn addresses(value: Option<&MpAddress<'_>>) -> Vec<EmailAddress> {
             }
             let name = address
                 .name()
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .map(ToOwned::to_owned);
+                .map(one_line)
+                .map(|name| name.trim().to_owned())
+                .filter(|name| !name.is_empty());
             Some(EmailAddress::new(name, addr))
         })
         .collect()

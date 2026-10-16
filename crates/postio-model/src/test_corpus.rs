@@ -352,8 +352,10 @@ corpus! {
         "Reuses the Message-ID of plain-text-simple with a different body: deduplication must not key on Message-ID alone.",
     "encoded-word-broken": [EncodedWord, MalformedHeaders] =>
         "Encoded words that are unterminated, invalid base64, an unknown charset, an unknown encoding letter, or over-long.",
+    "encoded-word-control-chars-in-header": [EncodedWord, MalformedHeaders] =>
+        "Encoded words that decode to a forged From: and Date: line, a terminal escape, NUL, BEL and U+2028: a header value that must reach a reader as one line (#1770).",
     "encoded-word-crlf-in-header": [EncodedWord, MalformedHeaders] =>
-        "An encoded word whose decoded text contains CR and LF: a header value that arrives with line breaks inside it, which unfolding cannot remove because the octets were never folding whitespace.",
+        "An encoded word whose decoded text contains CR and LF: line breaks inside a header value that unfolding cannot remove, because the octets were never folding whitespace.",
     "encoded-word-subject-and-names": [EncodedWord, PlainText] =>
         "Correct RFC 2047: adjacent encoded words joined without a space, two charsets in one field, a folded Subject.",
     "header-folding-received-chain": [PlainText] =>

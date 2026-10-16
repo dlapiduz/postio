@@ -389,6 +389,97 @@ fn decode_header_text_agrees_with_a_full_parse_of_the_same_subject() {
 }
 
 // ---------------------------------------------------------------------------
+// Acceptance: a decoded header reaches a reader as one line (#1770). An
+// encoded word encodes octets, `=0D=0A` is two of them, and a subject that
+// kept them drew a forged `Bcc:` line under itself in the reader. Every
+// frontend sets the subject and the names in a label, so the model folds
+// them once, here, rather than each frontend remembering to.
+// ---------------------------------------------------------------------------
+
+/// What would draw as more than one line, or not as text at all: C0 and C1
+/// controls (CR, LF, TAB, ESC, NUL, BEL, NEL…) and Unicode's own line and
+/// paragraph separators.
+fn breaks_the_line(c: char) -> bool {
+    c.is_control() || c == '\u{2028}' || c == '\u{2029}'
+}
+
+fn assert_one_line(what: &str, text: &str) {
+    assert!(
+        !text.chars().any(breaks_the_line),
+        "{what} carries a line break or control character, which draws as \
+         a second line of chrome or not at all: {text:?}"
+    );
+}
+
+#[test]
+fn an_encoded_line_break_in_a_subject_folds_to_one_space() {
+    for parsed in [
+        parse("encoded-word-crlf-in-header"),
+        mime::parse_headers(test_corpus::load("encoded-word-crlf-in-header").bytes()),
+    ] {
+        assert_eq!(
+            parsed.subject.as_deref(),
+            Some("Invoice attached Bcc: mallory@sender.invalid"),
+            "the forged Bcc line has to read as part of the subject it is"
+        );
+        let name = parsed.from[0].name.as_deref().unwrap_or_default();
+        assert_eq!(name, "Mallory X-Injected-By-Name: yes");
+    }
+}
+
+#[test]
+fn control_characters_in_a_decoded_subject_or_name_fold_to_one_space() {
+    for parsed in [
+        parse("encoded-word-control-chars-in-header"),
+        mime::parse_headers(test_corpus::load("encoded-word-control-chars-in-header").bytes()),
+    ] {
+        let subject = parsed.subject.as_deref().expect("a subject");
+        assert_one_line("the subject", subject);
+        assert_eq!(
+            subject,
+            "Payment overdue From: Accounts <accounts@example.com> Date: today [31m urgent [0m end",
+            "each run of breaks and controls is one space, and nothing else moves"
+        );
+        let name = parsed.from[0].name.as_deref().expect("a display name");
+        assert_one_line("the display name", name);
+        assert_eq!(name, "Billing Reply-To: refunds@sender.invalid");
+        assert_eq!(parsed.from[0].address, "billing@sender.invalid");
+    }
+}
+
+#[test]
+fn every_fixture_s_subject_and_names_are_one_line() {
+    for fixture in test_corpus::all() {
+        let parsed = mime::parse(fixture.bytes());
+        if let Some(subject) = parsed.subject.as_deref() {
+            assert_one_line(&format!("{}'s subject", fixture.name()), subject);
+        }
+        for address in parsed.from.iter().chain(&parsed.to).chain(&parsed.cc) {
+            if let Some(name) = address.name.as_deref() {
+                assert_one_line(&format!("a name in {}", fixture.name()), name);
+            }
+        }
+    }
+}
+
+#[test]
+fn an_envelope_subject_folds_the_same_way_a_full_parse_does() {
+    // The list row and the reader's first paint read the IMAP ENVELOPE's
+    // subject, decoded by `decode_header_text`, long before the body is
+    // parsed. Folding only in `parse` would leave the forged line there.
+    let encoded = "=?utf-8?Q?Invoice_attached=0D=0ABcc:_mallory=40sender=2Einvalid?=";
+    assert_eq!(
+        mime::decode_header_text(encoded.as_bytes()),
+        "Invoice attached Bcc: mallory@sender.invalid"
+    );
+    let controls = "=?utf-8?Q?a=1B[1mb=00=07c=E2=80=A9d=C2=85e=09f?=";
+    assert_eq!(
+        mime::decode_header_text(controls.as_bytes()),
+        "a [1mb c d e f"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Acceptance: inline vs. attachment classification
 // ---------------------------------------------------------------------------
 
