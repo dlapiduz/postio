@@ -480,7 +480,7 @@ final class FocusRowCell: NSView {
         super.layout()
         let width = bounds.width
         // The gutter: a checked box when selected, a digest's stack, or
-        // nothing (a marked row's dot is drawn, not an image).
+        // nothing (an unread row's dot is drawn, not an image).
         if let shown, picked || shown.layout == .digest {
             gutterIcon.image = NSImage(
                 systemSymbolName: picked ? "checkmark.square.fill" : "square.stack.3d.up",
@@ -522,8 +522,8 @@ final class FocusRowCell: NSView {
         let middle = firstLine
         let bold = row.bold || row.layout == .digest
 
-        // A marked row's dot, where no box or stack stands.
-        if row.marker != nil, !picked {
+        // An unread row's dot, where no box or stack stands.
+        if row.dot, !picked {
             NSColor.controlAccentColor.setFill()
             NSBezierPath(ovalIn: NSRect(
                 x: CGFloat(FocusRowMetrics.gutterCentre) - 3.5, y: middle - 3.5, width: 7, height: 7
