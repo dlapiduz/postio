@@ -283,6 +283,7 @@ jobs:
         run: |
           for path in \
             files/bin/postio \
+            files/bin/postio-mcp \
             files/share/applications/dev.postio.Postio.desktop \
             files/share/metainfo/dev.postio.Postio.metainfo.xml
           do
