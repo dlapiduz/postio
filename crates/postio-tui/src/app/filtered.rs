@@ -109,7 +109,8 @@ impl App {
                     return Some(Vec::new());
                 };
                 return Some(vec![Effect::Send(
-                    Command::default_for(command).with_target(MessageTarget::Messages(vec![message])),
+                    Command::default_for(command)
+                        .with_target(MessageTarget::Messages(vec![message])),
                 )]);
             }
             "open_message" => return Some(self.open_filtered_row()),
@@ -513,9 +514,9 @@ mod tests {
             let effects = update(&mut app, press(key));
             assert_eq!(
                 effects,
-                vec![Effect::Send(
-                    made.with_target(MessageTarget::Messages(vec![MessageId::new(12)]))
-                )],
+                vec![Effect::Send(made.with_target(MessageTarget::Messages(
+                    vec![MessageId::new(12)]
+                )))],
                 "{key}"
             );
             assert_eq!(app.focus(), Focus::Filtered, "{key} kept Filtered up");

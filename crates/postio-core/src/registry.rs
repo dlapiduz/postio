@@ -900,7 +900,9 @@ static SPECS: &[CommandSpec] = &[
         // read one `U` makes it unread, which are the cases each key is for.
         default_binding: "I",
         alternate_bindings: &["U"],
-        contexts: ctx(MESSAGE_SURFACES).with(Context::Results).with(Context::Filtered),
+        contexts: ctx(MESSAGE_SURFACES)
+            .with(Context::Results)
+            .with(Context::Filtered),
         destructive: false,
         recovery: Recovery::Undo,
         requires: MAIL,

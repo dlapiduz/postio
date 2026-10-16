@@ -405,7 +405,12 @@ fn the_delete_flag_and_read_keys_reach_filtered() {
         ("U", CommandId::ToggleRead),
     ] {
         let chord: Chord = key.parse().expect("a chord");
-        let outcome = focus.press(&chord, focus.key_context(), false, std::time::Instant::now());
+        let outcome = focus.press(
+            &chord,
+            focus.key_context(),
+            false,
+            std::time::Instant::now(),
+        );
         assert_eq!(
             outcome,
             Outcome::Command(command.as_str().to_owned()),
