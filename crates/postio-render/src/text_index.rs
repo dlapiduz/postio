@@ -297,7 +297,19 @@ impl Builder<'_> {
                 for cluster in run.run().visual_clusters() {
                     let first = glyph;
                     glyph += cluster.glyphs().count();
-                    if !share.contains(&first) || glyph == first {
+                    // A ligature is one glyph over several clusters: the
+                    // first holds the glyph, the rest hold none, and Parley
+                    // splits the glyph's advance among them all. A cluster
+                    // with no glyph belongs to the glyph run its ligature's
+                    // glyph is in, and its share of the advance moves the
+                    // pen like any other's -- skipping it put every later
+                    // box on the line left of its glyph (#1783).
+                    let owner = if glyph == first {
+                        first.saturating_sub(1)
+                    } else {
+                        first
+                    };
+                    if !share.contains(&owner) {
                         continue;
                     }
                     let advance = f64::from(cluster.advance()) / k;
