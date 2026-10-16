@@ -942,6 +942,24 @@ fn list_id_from_text_keeps_the_bracketed_part_and_trims_the_rest() {
     assert_eq!(mime::list_id_from_text(""), None);
 }
 
+/// RFC 2919 §3: the grammar is `[phrase] "<" list-id ">"`, and a phrase may be
+/// a quoted string holding anything, `<` included. The IMAP path hands over a
+/// `HEADER.FIELDS` block, so a message with two `List-Id` fields (forbidden
+/// by the same section, and sent anyway) arrives as one value.
+#[test]
+fn list_id_from_text_reads_the_first_bracket_outside_a_quoted_phrase() {
+    assert_eq!(
+        mime::list_id_from_text("\"Dev <team>\" <dev.lists.example.org>"),
+        Some("dev.lists.example.org".to_string()),
+        "a `<` inside the quoted phrase is not the list-id"
+    );
+    assert_eq!(
+        mime::list_id_from_text("<a.example.org>\r\nList-Id: <b.example.org>\r\n"),
+        Some("a.example.org".to_string()),
+        "two fields must not run together into one identifier"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Acceptance: a requested read receipt is detected without sending one (#970)
 // ---------------------------------------------------------------------------
