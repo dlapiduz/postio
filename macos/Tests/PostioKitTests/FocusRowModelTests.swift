@@ -260,6 +260,9 @@ import Testing
         var asked: [UInt32] = []
         init(_ rows: [FocusRowFfi?]) { self.rows = rows }
         var focusRowCount: UInt32 { UInt32(rows.count) }
+        func residentFocusRow(at position: UInt32) -> FocusRowFfi? {
+            Int(position) < rows.count ? rows[Int(position)] : nil
+        }
         func focusRow(at position: UInt32) -> FocusRowFfi? {
             asked.append(position)
             return Int(position) < rows.count ? rows[Int(position)] : nil

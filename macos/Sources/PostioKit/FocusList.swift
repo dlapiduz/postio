@@ -14,6 +14,9 @@ public protocol FocusRowSource: AnyObject {
     /// The row at `position`, or `nil` while its page is on its way
     /// (`FocusPageReady` follows). Synchronous, and no I/O.
     func focusRow(at position: UInt32) -> FocusRowFfi?
+    /// The row at `position` if its page is already here, else `nil`;
+    /// never asks for a page. Synchronous, no I/O.
+    func residentFocusRow(at position: UInt32) -> FocusRowFfi?
 }
 
 /// A label's own colour, as the user gave it.
@@ -365,9 +368,27 @@ public final class FocusListModel {
     /// The list changed over, was re-read, or changed length
     /// (`FocusListChanged`): everything learned is about a list that is
     /// gone.
+    ///
+    /// **A re-read is not a new list.** The rows the table had measured are
+    /// measured again from whatever of them is resident, before anything is
+    /// drawn: a delete re-reads the page in place and tells the table the
+    /// count the moment it lands, and a table that forgot every shape laid
+    /// out once at one-line heights -- scrolling on that, drawing the day
+    /// headings over bare rows -- until `FocusPageReady` set it right. A
+    /// shape whose row is not resident keeps its last answer (the page
+    /// re-reads and replaces it); none is asked for, so nothing is paged.
     public func reset(total: UInt32) {
         count = Int(total)
-        shapes = [:]
+        let known = shapes.keys.sorted()
+        var kept: [Int: Shape] = [:]
+        for index in known where index < count {
+            if let row = source.residentFocusRow(at: UInt32(index)) {
+                kept[index] = Shape(layout: FocusRowModel.layout(of: row), day: row.dayHeading)
+            } else if let stale = shapes[index] {
+                kept[index] = stale
+            }
+        }
+        shapes = kept
         // A re-read keeps the keyboard where it was, inside the list; an
         // empty list has nowhere for it to be.
         focus.listResized(count: count)
