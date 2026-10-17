@@ -66,9 +66,6 @@ public struct ComposeView: View {
         static let labelSize: CGFloat = 13
         static let suggestionWidth: CGFloat = 440
         static let suggestionsShown = 6
-        /// The body's reading column (screen 05): lines no longer than a
-        /// reader's, however wide the window.
-        static let readingWidth: CGFloat = 720
         /// 15 pt at 1.65 (screen 05).
         static let bodySize: CGFloat = 15
         static let bodyLeading: CGFloat = 6
@@ -371,8 +368,16 @@ public struct ComposeView: View {
 
     // -- the body -----------------------------------------------------------
 
-    @ViewBuilder
+    /// The body fills the window up to M1's column (`ComposeColumn`),
+    /// which follows the window as it is resized.
     private var bodyEditor: some View {
+        GeometryReader { window in
+            bodyEditor(column: ComposeColumn.width(window: window.size.width))
+        }
+    }
+
+    @ViewBuilder
+    private func bodyEditor(column: CGFloat) -> some View {
         if model.rich {
             // A document, not a text field (#1271): the format bar's
             // marks have to apply to something, and on both frontends
@@ -381,7 +386,7 @@ public struct ComposeView: View {
             ComposeEditor(session: session, model: model, keyboard: richKeyboard)
                 .disabled(model.isHandedOff)
                 .accessibilityLabel("Message body")
-                .frame(maxWidth: Metrics.readingWidth + 2 * Metrics.inset)
+                .frame(maxWidth: column + 2 * Metrics.inset)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             VStack(alignment: .leading, spacing: 0) {
@@ -395,7 +400,7 @@ public struct ComposeView: View {
                     .accessibilityLabel("Message body")
                 if let fold = model.quoteFold { quoteFold(fold) }
             }
-            .frame(maxWidth: Metrics.readingWidth, alignment: .leading)
+            .frame(maxWidth: column, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, Metrics.inset - 5)
             .padding(.vertical, 14)
