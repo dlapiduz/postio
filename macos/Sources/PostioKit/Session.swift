@@ -988,4 +988,8 @@ extension PostioSession: FocusRowSource {
     public func focusRow(at position: UInt32) -> FocusRowFfi? {
         inner.focusRowAt(position: position)
     }
+
+    public func residentFocusRow(at position: UInt32) -> FocusRowFfi? {
+        inner.focusResidentRowAt(position: position)
+    }
 }

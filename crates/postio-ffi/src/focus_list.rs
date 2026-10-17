@@ -663,6 +663,14 @@ impl FocusDriver {
         list.resident_at(position).map(|held| held.ffi.clone())
     }
 
+    /// The row at `position` if its page is resident, else `None`: never
+    /// asks for the page. For a table that must re-measure rows it already
+    /// drew, without reading pages it was not looking at.
+    pub(crate) fn row_resident(&self, position: u32) -> Option<FocusRowFfi> {
+        let list = self.list.lock().expect("list lock");
+        list.resident_at(position).map(|held| held.ffi.clone())
+    }
+
     pub(crate) fn row_at(self: &Arc<Self>, position: u32) -> Option<FocusRowFfi> {
         let (wanted, stamp) = {
             let mut list = self.list.lock().expect("list lock");
