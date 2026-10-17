@@ -450,12 +450,39 @@ pub fn parameter_value(pairs: &[(String, String)], key: &str) -> Option<String> 
 /// subject.
 pub fn list_id_from_text(raw: &str) -> Option<String> {
     let raw = raw.trim();
-    let id = match (raw.find('<'), raw.rfind('>')) {
-        (Some(start), Some(end)) if end > start => &raw[start + 1..end],
-        _ => raw,
-    };
+    let id = first_angle_bracketed(raw).unwrap_or(raw);
     let id = id.trim();
     (!id.is_empty()).then(|| id.to_owned())
+}
+
+/// The text inside the first `<...>` that is not part of a quoted string.
+///
+/// RFC 2919 §3 lets the phrase before the bracket be a quoted string, which
+/// may hold `<` and `>`; and a value that somehow carries two fields must
+/// yield the first identifier, not everything between the first `<` and the
+/// last `>`.
+fn first_angle_bracketed(raw: &str) -> Option<&str> {
+    let mut quoted = false;
+    let mut escaped = false;
+    let mut start = None;
+    for (index, c) in raw.char_indices() {
+        if quoted {
+            match (escaped, c) {
+                (true, _) => escaped = false,
+                (false, '\\') => escaped = true,
+                (false, '"') => quoted = false,
+                _ => {}
+            }
+            continue;
+        }
+        match (c, start) {
+            ('"', None) => quoted = true,
+            ('<', None) => start = Some(index + 1),
+            ('>', Some(from)) => return Some(&raw[from..index]),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Run `parse` and turn an unwind into an [`Unparseable`].

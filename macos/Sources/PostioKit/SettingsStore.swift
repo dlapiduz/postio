@@ -102,6 +102,28 @@ public final class SettingsStore {
         settingsFilters(text: text)
     }
 
+    /// The accounts an agent may read through `postio-mcp`, or `nil` when the
+    /// file will not parse (the pane disables itself, as the others do).
+    public var agentSharing: [SharedAgentAccountFfi]? {
+        settingsAgentSharing(text: text)
+    }
+
+    /// Stop sharing one account with agents and save (#1832).
+    ///
+    /// Only `[mcp.accounts."<address>"]` is removed, from a fresh read of the
+    /// file. It takes effect on the agent's next call, because the server
+    /// reads `[mcp]` again on every one; a call already running finishes.
+    public func revokeAgent(_ address: String) {
+        reload()
+        write { try settingsPatchRevokeAgent(text: $0, address: address) }
+    }
+
+    /// Stop sharing every account with agents and save.
+    public func revokeAllAgents() {
+        reload()
+        write { try settingsPatchRevokeAllAgents(text: $0) }
+    }
+
     /// The sections under one heading, in nav order.
     public func sections(in group: GroupFfi) -> [SettingsSectionFfi] {
         sections.filter { $0.group == group }

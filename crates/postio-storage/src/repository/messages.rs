@@ -516,6 +516,23 @@ pub enum FlagSource {
     Server,
 }
 
+/// What [`MessageRepository::server_states`] reads of one stored row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredServerState {
+    /// The row.
+    pub id: MessageId,
+    /// Its uid, under the generation it was asked for.
+    pub uid: Uid,
+    /// Its backend-neutral identity.
+    pub remote_id: Option<RemoteId>,
+    /// The modification sequence it was last written at.
+    pub mod_seq: Option<ModSeq>,
+    /// Its flags and keywords, as stored.
+    pub flags: FlagSet,
+    /// The thread it was filed into, or `None` if it never was.
+    pub thread_id: Option<ThreadId>,
+}
+
 /// What one [`MessageRepository::upsert_batch`] did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UpsertReport {
@@ -1525,6 +1542,58 @@ impl<'a> MessageRepository<'a> {
               ORDER BY uid",
             bind![mailbox_id.get(), i64::from(generation.get())],
             |row| Ok(Uid::new(row.col::<i64>(0)? as u32)),
+        )
+        .await
+    }
+
+    /// What the store holds of each of `uids` in `mailbox` under
+    /// `generation`: the part of a row a server can change, and the rest of
+    /// its identity. Uids the store does not hold are left out.
+    ///
+    /// What a full resync compares a fetch against before writing it (#1719).
+    /// A backend with no MODSEQ re-reads every header in the folder on every
+    /// pass, and a message's content under one `(UIDVALIDITY, UID)` never
+    /// changes, so a row whose flags and identity match what was fetched has
+    /// nothing to write. One statement per batch, seeking each uid.
+    pub async fn server_states(
+        &self,
+        mailbox_id: MailboxId,
+        generation: Generation,
+        uids: &[Uid],
+    ) -> Result<Vec<StoredServerState>> {
+        if uids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let list = format!(
+            "[{}]",
+            uids.iter()
+                .map(|uid| uid.get().to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let mut statement = sql::statement(
+            self.connection,
+            "SELECT m.id, m.uid, m.remote_id, m.mod_seq, m.flags, m.thread_id
+               FROM json_each(?3) j
+               CROSS JOIN messages m
+                 ON m.mailbox_id = ?1 AND m.uid_validity = ?2 AND m.uid = j.value",
+        )
+        .await?;
+        sql::mapped(
+            &mut statement,
+            bind![mailbox_id.get(), i64::from(generation.get()), list],
+            |row| {
+                Ok(StoredServerState {
+                    id: MessageId::new(row.col(0)?),
+                    uid: Uid::new(row.col::<i64>(1)? as u32),
+                    remote_id: row.col::<Option<String>>(2)?.map(RemoteId::new),
+                    mod_seq: row
+                        .col::<Option<i64>>(3)?
+                        .map(|seq| ModSeq::new(seq as u64)),
+                    flags: parse_flags(&row.col::<String>(4)?),
+                    thread_id: row.col::<Option<i64>>(5)?.map(ThreadId::new),
+                })
+            },
         )
         .await
     }

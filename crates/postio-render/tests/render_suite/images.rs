@@ -88,6 +88,59 @@ fn an_inline_cid_image_paints_its_own_pixels() {
     );
 }
 
+/// The size of the largest box filled with one colour, other than the
+/// page's own: a placeholder is flat, and the fixture's pictures are noise.
+fn largest_flat_box(raster: &postio_render::Raster) -> (u32, u32) {
+    let pixels = raster.rgba.as_chunks::<4>().0;
+    let mut boxes = std::collections::HashMap::<[u8; 4], (u32, u32, u32, u32, u32)>::new();
+    for (i, p) in pixels.iter().enumerate() {
+        let (x, y) = (i as u32 % raster.width, i as u32 / raster.width);
+        let b = boxes.entry(*p).or_insert((x, y, x, y, 0));
+        *b = (b.0.min(x), b.1.min(y), b.2.max(x), b.3.max(y), b.4 + 1);
+    }
+    boxes
+        .into_values()
+        .map(|(x0, y0, x1, y1, n)| (x1 + 1 - x0, y1 + 1 - y0, n))
+        .filter(|(w, h, n)| w * h == *n && *n > 1 && *w < raster.width)
+        .max_by_key(|(_, _, n)| *n)
+        .map_or((0, 0), |(w, h, _)| (w, h))
+}
+
+/// A `cid:` naming no part of the message drew as nothing at all: a blank
+/// band of the picture's declared size, saying neither that a picture is
+/// there nor that it is not shown (#1764). It draws as a placeholder of
+/// that size, and is counted as one.
+#[test]
+fn a_missing_cid_part_draws_as_a_placeholder_of_its_declared_size() {
+    let (request, _) = request("inline-image-cid");
+    let doc = postio_render::render(&request, fonts());
+    assert_eq!(
+        largest_flat_box(&postio_render::rasterize(&doc)),
+        (60, 20),
+        "the dangling signature's 60 × 20 box"
+    );
+    assert_eq!(doc.counts.images_placeholdered, 1);
+    assert_eq!(
+        doc.counts.resources_unresolved, 1,
+        "still counted as missing"
+    );
+}
+
+/// One that declares no size is still something a person can see.
+#[test]
+fn a_missing_cid_part_with_no_size_draws_as_a_small_placeholder() {
+    let (mut request, _) = request("inline-image-cid");
+    let sized = "width=\"60\" height=\"20\"";
+    assert!(request.document.contains(sized), "the fixture's sized box");
+    request.document = request.document.replacen(sized, "", 1);
+    let doc = postio_render::render(&request, fonts());
+    let (width, height) = largest_flat_box(&postio_render::rasterize(&doc));
+    assert!(
+        (12..=32).contains(&width) && width == height,
+        "a small square, not {width} × {height}"
+    );
+}
+
 /// A relative URL resolves against the renderer's base, to nothing: without
 /// a base Blitz resolved against a `data:` URL and panicked (research R1;
 /// the evaluation's `POSTIO_EVAL_NO_BASE` shows it).

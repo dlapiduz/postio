@@ -174,7 +174,6 @@ impl Req {
             Req::FetchBody(_) => "FetchBody",
             Req::StorageCeiling(_) => "StorageCeiling",
             Req::SaveAccount { .. } => "SaveAccount",
-            Req::SaveOAuthAccount(_) => "SaveOAuthAccount",
             Req::SweepPreview => "SweepPreview",
             Req::RawSource(_) => "RawSource",
             Req::Surfaced => "Surfaced",
@@ -1452,16 +1451,6 @@ impl Client {
             backend,
         };
         self.done(request, "a saved account").await
-    }
-
-    /// Save an account a browser sign-in proved: its tokens to the keyring,
-    /// then the row.
-    pub async fn save_oauth_account(
-        &self,
-        grant: crate::protocol::OAuthGrant,
-    ) -> Result<(), StoreError> {
-        self.done(Req::SaveOAuthAccount(Box::new(grant)), "a saved account")
-            .await
     }
 
     /// How many messages a sweep of the inbox would file away now (spec 007

@@ -29,6 +29,7 @@ mod drain;
 mod filing;
 mod focus_filing;
 mod focus_rules;
+mod full_resync_writes;
 mod initial;
 mod interactive_under_load;
 mod loopback;
