@@ -1490,6 +1490,12 @@ impl FocusController {
         let Some((typed, message)) = self.bar.held.take() else {
             return Vec::new();
         };
+        // The message went because a composer (or another surface) took its
+        // window (M4), not because the reader left: the words are put away,
+        // and a dropdown must never open over it.
+        if self.surfaces.top().is_some() {
+            return Vec::new();
+        }
         let steps = self.open_bar(BarMode::Search, &typed, rows);
         // Applied when the results land.
         self.bar.pending = Pending::Hit(message);
