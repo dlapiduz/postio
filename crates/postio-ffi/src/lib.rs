@@ -36,6 +36,7 @@
 //! scaffolding around it is the part that had to be proven first.
 
 mod account;
+mod agent_access;
 mod compose;
 mod contacts;
 mod conversation;
@@ -74,6 +75,10 @@ mod stack;
 mod unsubscribe;
 
 pub use account::{AccountFfi, ConnectionReportFfi, RepairRouteFfi};
+pub use agent_access::{
+    AgentActivityFfi, AgentCallFfi, AgentWordsFfi, SharedAgentAccountFfi, settings_agent_sharing,
+    settings_agent_words, settings_patch_revoke_agent, settings_patch_revoke_all_agents,
+};
 pub use compose::{
     AttachmentFfi, ComposeError, DraftFfi, DraftKindFfi, DraftLabelFfi, InlineImageFfi, PastedFfi,
     QuoteFoldFfi, composer_title, draft_saved_words, draft_summary, fold_quote, outgoing_shape,

@@ -136,11 +136,13 @@ async fn a_uid_already_known_is_written_again_but_its_correspondents_are_not() {
     .await
     .expect("the first batch commits");
 
-    // A re-enumeration: UID 1 is known going in, so it is refreshed but not
-    // counted as a new sighting. Recording it again would inflate `times_seen`
-    // without a new message ever having arrived.
+    // A re-enumeration after another client read it: UID 1 is known going
+    // in, so it is refreshed but not counted as a new sighting. Recording it
+    // again would inflate `times_seen` without a new message ever having
+    // arrived. (Unchanged, it would not be written at all: #1719.)
     let before = sightings_of(&connection, &account, "ada@example.com").await;
     let mut again = vec![message(&account, &inbox, 1, "Note one")];
+    again[0].flags.insert(postio_model::Flag::Seen);
     let report = commit_batch(
         &connection,
         &inbox,

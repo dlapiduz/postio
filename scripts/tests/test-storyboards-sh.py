@@ -294,7 +294,13 @@ def main() -> int:
         result = run(ctx, "base", STORYBOARDS_CACHE=str(cache))
         lines = log_lines(ctx)
         expect("base", result.returncode == 0, f"exit {result.returncode}: {result.stderr.strip()}")
-        tree = repo / "target" / "storyboard-base" / "tree"
+        # Not under the implementing tree: Cargo merges every ancestor's
+        # .cargo/config.toml, so a nested base repeats the rustflags (#1818).
+        tree = repo.parent / ".storyboard-base" / repo.name
+        expect("base-config", repo not in tree.parents,
+               f"no ancestor of the base tree is the implementing tree: {tree}")
+        expect("base-config", not (repo / "target" / "storyboard-base").exists(),
+               "nothing is nested under the implementing tree's target/")
         head = subprocess.run(["git", "-C", str(tree), "rev-parse", "HEAD"],
                               capture_output=True, text=True).stdout.strip()
         expect("base", head == base_sha, f"the base tree is at the merge-base: {head} vs {base_sha}")

@@ -314,7 +314,7 @@ pub struct FilterFfi {
 /// Filtering is in and Appearance out (specs/009-focus-macos T131).
 #[uniffi::export]
 pub fn settings_sections() -> Vec<SettingsSectionFfi> {
-    Section::ALL
+    let mut sections: Vec<SettingsSectionFfi> = Section::ALL
         .into_iter()
         .filter(|section| section.shown_in(crate::FRONTEND))
         .map(|section| SettingsSectionFfi {
@@ -325,7 +325,25 @@ pub fn settings_sections() -> Vec<SettingsSectionFfi> {
             table: section.table().map(str::to_string),
             stored_in: section.stored_in().to_string(),
         })
-        .collect()
+        .collect();
+    // Agent access (#1832) is not a `postio_ui::settings::Section` yet: that
+    // enum is matched exhaustively by the GTK and terminal panes, which have
+    // not adopted it (left for Linux, #1832). It sits in Application, just
+    // above the raw file, which stays last.
+    let agents = SettingsSectionFfi {
+        key: "mcp".to_owned(),
+        label: postio_ui::agent_access::TITLE.to_owned(),
+        group: GroupFfi::Application,
+        description: postio_ui::agent_access::DESCRIPTION.to_owned(),
+        table: Some("[mcp]".to_owned()),
+        stored_in: postio_ui::agent_access::STORED_IN.to_owned(),
+    };
+    let at = sections
+        .iter()
+        .position(|section| section.key.is_empty())
+        .unwrap_or(sections.len());
+    sections.insert(at, agents);
+    sections
 }
 
 /// The sidebar heading for a group, already upper-cased.

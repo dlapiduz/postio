@@ -90,7 +90,7 @@ pub use focus::{
 pub use keys::{KeyBindings, patch_keys};
 pub use live::{LiveConfig, Reload};
 pub use logging::{LogLevel, LoggingConfig};
-pub use mcp::{McpAccount, McpConfig};
+pub use mcp::{McpAccount, McpConfig, revoke_all_mcp, revoke_mcp_account};
 pub use model::{EndpointRefused, FocusModel, ModelEndpoint, ModelFeature, ModelProblem, Reach};
 pub use reader::{ReaderConfig, ZOOM_STEPS, nearest_zoom, patch_reader, save_zoom};
 pub use storage::StorageConfig;

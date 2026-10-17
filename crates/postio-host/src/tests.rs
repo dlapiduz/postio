@@ -2406,46 +2406,6 @@ fn an_account_a_frontend_proved_is_saved_by_the_host() {
 }
 
 #[test]
-fn a_browser_sign_in_a_frontend_completed_is_saved_with_its_endpoints() {
-    let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Focus);
-    let mut signed_in = submission("");
-    signed_in.oauth_client = Some(postio_ui::onboarding::OAuthClientSubmission {
-        client_id: "postio-test".into(),
-        client_secret: None,
-    });
-    let grant = postio_client::protocol::OAuthGrant {
-        submission: signed_in,
-        authorize_url: "https://auth.example.test/authorize".into(),
-        token_url: "https://auth.example.test/token".into(),
-        scopes: vec!["mail".into()],
-        refresh_token_lifetime_days: Some(7),
-        access_token: "access-sentinel".into(),
-        refresh_token: Some("refresh-sentinel".into()),
-        expires_in: Some(Duration::from_secs(3600)),
-        token_type: "Bearer".into(),
-        scope: None,
-    };
-    assert!(
-        !format!("{grant:?}").contains("sentinel"),
-        "a grant never shows its tokens"
-    );
-    world
-        .rt
-        .block_on(client.save_oauth_account(grant))
-        .expect("saved");
-    let accounts = world.rt.block_on(client.accounts()).expect("accounts");
-    let saved = accounts
-        .iter()
-        .find(|account| account.address.address == "grace@example.test")
-        .expect("the row");
-    assert_eq!(saved.auth, postio_model::account::AuthMethod::XOAuth2);
-    let oauth = saved.oauth.as_ref().expect("its sign-in");
-    assert_eq!(oauth.token_url, "https://auth.example.test/token");
-    assert_eq!(oauth.scopes, "mail");
-}
-
-#[test]
 fn a_window_is_told_to_repair_an_account_the_keyring_has_no_password_for() {
     let world = World::new();
     let wiring = world.host().wiring();

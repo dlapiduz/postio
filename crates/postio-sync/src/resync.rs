@@ -437,6 +437,30 @@ pub async fn resync_mailbox_filing(
             // stamped as synced without ever having been enumerated plans
             // `UpToDate` on every pass and agrees with itself for ever. "Up to
             // date" has to mean "holds what the server says it holds".
+            // `HIGHESTMODSEQ` standing still does not mean nothing left: RFC
+            // 7162 §3.2 makes an expunge raise it only for a server that
+            // supports QRESYNC, so a CONDSTORE-only server can delete a
+            // message and report the value we already hold. More rows than
+            // the server's `EXISTS` is the one thing that cannot be new mail
+            // or a flag, so it is the witness (the same arithmetic
+            // `incremental` uses, asked of the whole mailbox).
+            if let Some(generation) = previous.generation {
+                let messages = MessageRepository::new(connection);
+                if messages.count_in(mailbox.id, generation).await? > selected.exists {
+                    let known = messages.uids_in(mailbox.id, generation).await?;
+                    let vanished =
+                        reconcile_vanished(connection, backend, mailbox, generation, known, cancel)
+                            .await?;
+                    if vanished > 0 {
+                        return Ok(Outcome::Incremental {
+                            changed: 0,
+                            vanished,
+                            arrived: Vec::new(),
+                            filed_away: Vec::new(),
+                        });
+                    }
+                }
+            }
             if still_short_of_exists(connection, mailbox, &previous, selected.exists).await? {
                 return enumerate_the_shortfall(connection, backend, mailbox, cancel, on_progress)
                     .await;
@@ -692,25 +716,15 @@ async fn incremental(
     let mut vanished_count = 0;
     let expected_exists = known_count + newly_arrived;
     if !known_set.is_empty() && selected.exists != expected_exists {
-        let still_present = backend
-            .fetch_headers(&mailbox.path, &known_set, None, cancel)
-            .await?;
-        let present: BTreeSet<Uid> = still_present.iter().map(|message| message.uid).collect();
-        let vanished: Vec<Uid> = known
-            .into_iter()
-            .filter(|uid| !present.contains(uid))
-            .collect();
-
-        let mut ids = Vec::with_capacity(vanished.len());
-        for uid in vanished {
-            if let Some(message) = messages
-                .by_uid(mailbox.id, selected.generation, uid)
-                .await?
-            {
-                ids.push(message.id);
-            }
-        }
-        vanished_count = messages.delete(&ids).await?;
+        vanished_count = reconcile_vanished(
+            connection,
+            backend,
+            mailbox,
+            selected.generation,
+            known,
+            cancel,
+        )
+        .await?;
     }
 
     Ok(Outcome::Incremental {
@@ -719,6 +733,36 @@ async fn incremental(
         arrived,
         filed_away,
     })
+}
+
+/// Asks the server which of `known` it still holds, and deletes the rest
+/// locally. Returns how many rows went.
+async fn reconcile_vanished(
+    connection: &Checkout,
+    backend: &dyn MailBackend,
+    mailbox: &Mailbox,
+    generation: Generation,
+    known: Vec<Uid>,
+    cancel: &CancelToken,
+) -> Result<usize> {
+    let messages = MessageRepository::new(connection);
+    let known_set: UidSet = known.iter().copied().collect();
+    let still_present = backend
+        .fetch_headers(&mailbox.path, &known_set, None, cancel)
+        .await?;
+    let present: BTreeSet<Uid> = still_present.iter().map(|message| message.uid).collect();
+    let vanished: Vec<Uid> = known
+        .into_iter()
+        .filter(|uid| !present.contains(uid))
+        .collect();
+
+    let mut ids = Vec::with_capacity(vanished.len());
+    for uid in vanished {
+        if let Some(message) = messages.by_uid(mailbox.id, generation, uid).await? {
+            ids.push(message.id);
+        }
+    }
+    Ok(messages.delete(&ids).await?)
 }
 
 /// The first UID of the range `UIDNEXT` says exists and the change feed did
