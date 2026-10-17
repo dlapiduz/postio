@@ -100,6 +100,50 @@ public struct MessageBodyView: View {
     }
 }
 
+/// Tells the body when a `<details>` fold in its document opens or closes.
+///
+/// The web view is sized to its document (`MessageBodyView`), measured at
+/// load and at a resize, and a fold opens inside the page with the page's
+/// script off -- so the frame kept the closed height and the opened quote
+/// was clipped away. This is Postio's own script, in the client's content
+/// world: the sender's never runs. `toggle` does not bubble, hence the
+/// capture listener on the document.
+@MainActor
+final class FoldWatcher {
+    static let name = "postioFoldToggled"
+    private let onToggle: () -> Void
+
+    init(onToggle: @escaping () -> Void) { self.onToggle = onToggle }
+
+    /// Before the web view is made: it copies its configuration.
+    func install(in configuration: WKWebViewConfiguration) {
+        let source = """
+            document.addEventListener('toggle', function (event) {
+                if (event.target && event.target.tagName === 'DETAILS') {
+                    window.webkit.messageHandlers.\(Self.name).postMessage(0);
+                }
+            }, true);
+            """
+        configuration.userContentController.addUserScript(
+            WKUserScript(
+                source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true,
+                in: .defaultClient))
+        configuration.userContentController.add(
+            WeakHandler(self), contentWorld: .defaultClient, name: Self.name)
+    }
+
+    /// The controller keeps its handlers for good; this lets the watcher go.
+    private final class WeakHandler: NSObject, WKScriptMessageHandler {
+        weak var target: FoldWatcher?
+        init(_ target: FoldWatcher) { self.target = target }
+        func userContentController(
+            _ controller: WKUserContentController, didReceive message: WKScriptMessage
+        ) {
+            MainActor.assumeIsolated { target?.onToggle() }
+        }
+    }
+}
+
 /// What the body view asks of its document, in the client's content world.
 /// On the main actor, where a web view is, and only there.
 @MainActor
@@ -253,6 +297,7 @@ struct MessageWebView: NSViewRepresentable {
         // Before the view is made: a web view copies its configuration, and
         // a handler set on the copy afterwards is never asked.
         configuration.setURLSchemeHandler(coordinator.font, forURLScheme: ReaderConfiguration.fontScheme)
+        coordinator.folds.install(in: configuration)
         let view = MessageBodySurface(frame: .zero, configuration: configuration)
         view.onWidth = { [weak coordinator, weak view] _ in
             guard let view else { return }
@@ -281,6 +326,8 @@ struct MessageWebView: NSViewRepresentable {
         let font: FontSchemeHandler
         let closed = ClosedSchemeHandler()
         let finder = ReaderFind()
+        lazy var folds = FoldWatcher { [weak self] in self?.foldToggled() }
+        weak var surface: WKWebView?
         let policy: ReaderNavigationPolicy
         private var showing: (message: Int64, html: String)?
         private var rulesInstalled = false
@@ -304,6 +351,7 @@ struct MessageWebView: NSViewRepresentable {
             _ document: FocusReaderDocumentFfi, of message: Int64, sentence: String?,
             in view: WKWebView, onHeight: @escaping (CGFloat) -> Void, onDrawn: @escaping () -> Void
         ) {
+            surface = view
             guard showing?.message != message || showing?.html != document.html else { return }
             showing = (message, document.html)
             fit = nil
@@ -366,6 +414,19 @@ struct MessageWebView: NSViewRepresentable {
                 if let height = try? await MessageBodyMeasure.settledHeight(of: view) {
                     onHeight(BodyHeight.clamped(height * zoom))
                 }
+            }
+        }
+
+        /// A fold opened or closed: the document is taller or shorter, so
+        /// say the new height.
+        func foldToggled() {
+            guard let fit, let view = surface else { return }
+            refit?.cancel()
+            refit = Task { @MainActor [weak view] in
+                guard let view, !Task.isCancelled,
+                    let height = try? await MessageBodyMeasure.contentHeight(of: view)
+                else { return }
+                fit.onHeight(BodyHeight.clamped(height * view.pageZoom))
             }
         }
 
