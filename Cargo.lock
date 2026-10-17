@@ -127,9 +127,9 @@ checksum = "c880a97d28a3681c0267bd29cff89621202715b065127cd445fa0f0fe0aa2880"
 
 [[package]]
 name = "ammonia"
-version = "4.1.7"
+version = "4.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36322ccf536de7b7afd259098615203e4cc5caca1b78482b58334a720c66e40a"
+checksum = "2f6660fb4ff692ef4937b1b4e74ab3d378653d8588389587d91f96a296907ea0"
 dependencies = [
  "cssparser",
  "html5ever 0.39.0",
@@ -1386,7 +1386,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 2.0.119",
+ "syn 3.0.9",
 ]
 
 [[package]]
