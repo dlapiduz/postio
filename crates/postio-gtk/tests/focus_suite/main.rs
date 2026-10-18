@@ -25,6 +25,7 @@ mod a11y;
 mod a11y_sweep;
 mod across_apps;
 mod add_account_running;
+mod archive_frames;
 mod bar;
 mod body_lands;
 mod buttons;
@@ -51,6 +52,7 @@ mod filtered;
 mod first_run;
 mod harness;
 mod has_action;
+mod hit_composer;
 mod hostile_mail;
 mod icon_buttons;
 mod idle_passes;
@@ -237,6 +239,18 @@ const CASES: &[(&str, fn())] = &[
         "visible_window::opening_and_switching_large_folders_asks_a_bounded_number_of_pages",
         visible_window::opening_and_switching_large_folders_asks_a_bounded_number_of_pages
             as fn(),
+    ),
+    (
+        "archive_frames::archiving_the_cursors_row_draws_no_frame_unlike_the_settled_one",
+        archive_frames::archiving_the_cursors_row_draws_no_frame_unlike_the_settled_one as fn(),
+    ),
+    (
+        "hit_composer::replying_from_a_hit_leaves_the_composer_clear_of_the_search_bar",
+        hit_composer::replying_from_a_hit_leaves_the_composer_clear_of_the_search_bar as fn(),
+    ),
+    (
+        "hit_composer::forwarding_from_a_hit_leaves_the_composer_clear_of_the_search_bar",
+        hit_composer::forwarding_from_a_hit_leaves_the_composer_clear_of_the_search_bar as fn(),
     ),
     (
         "body_lands::a_body_that_lands_while_its_message_is_open_is_drawn_in_place",
