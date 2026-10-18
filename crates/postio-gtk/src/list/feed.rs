@@ -17,9 +17,9 @@ use std::rc::Rc;
 use gtk::glib;
 use postio_client::Client;
 use postio_config::paths::Platform;
-use postio_core::Event;
+use postio_core::{CommandId, Event};
 use postio_focus::{Effect, FocusController, Input, Intent, Policy, Request, Ticket};
-use postio_model::ListScope;
+use postio_model::{ListScope, MessageId, ThreadId};
 use postio_widgets::list_model::{PageSource, WindowedModel};
 
 use super::model::FocusList;
@@ -39,6 +39,9 @@ struct Inner {
     focus: RefCell<FocusController>,
     /// Called when a page lands or the list is re-read.
     on_filled: RefCell<Vec<Box<dyn Fn()>>>,
+    /// Called with each intent that is the window's to draw: the cursor,
+    /// the selection, the heading, the strip's counts, the empty page.
+    on_intent: RefCell<Vec<Box<dyn Fn(&Intent)>>>,
 }
 
 /// The `PageSource` the model holds: a handle on the feed, so a request can
@@ -68,6 +71,7 @@ impl Feed {
                     Platform::Freedesktop,
                 ))),
                 on_filled: RefCell::new(Vec::new()),
+                on_intent: RefCell::new(Vec::new()),
             }),
         }
     }
@@ -102,6 +106,92 @@ impl Feed {
     /// Call `handler` each time rows land: a first page, a re-read.
     pub fn connect_filled(&self, handler: impl Fn() + 'static) {
         self.inner.on_filled.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Call `handler` with each intent the window draws: where the cursor
+    /// is, what is selected, the list's heading, the strip's counts, the
+    /// page that stands in for an empty list.
+    pub fn connect_intent(&self, handler: impl Fn(&Intent) + 'static) {
+        self.inner.on_intent.borrow_mut().push(Box::new(handler));
+    }
+
+    /// Run `id` through the controller: the cursor's and the selection's
+    /// commands, `!`, and Back's last rung.
+    pub fn command(&self, id: CommandId) {
+        self.input(Input::Command(id));
+    }
+
+    /// Tell the controller `input`, over the rows as they are held, and do
+    /// what it says.
+    pub fn input(&self, input: Input) {
+        let effects = self
+            .inner
+            .focus
+            .borrow_mut()
+            .handle_on(input, &self.inner.list);
+        Rc::clone(&self.inner).apply(effects);
+    }
+
+    /// A Ctrl-click (`range` false: `x` on that row) or a Shift-click (the
+    /// walk from the anchor to it) on `position`.
+    pub fn pick(&self, position: u32, range: bool) {
+        self.input(Input::Pick { position, range });
+    }
+
+    /// The list has landed or moved: the cursor goes to the first row of
+    /// a place just opened, or back to what `!` kept; the strip's counts
+    /// are asked for again.
+    pub fn landed(&self) {
+        let effects = {
+            let mut focus = self.inner.focus.borrow_mut();
+            let opened = focus.take_opened();
+            focus.landed(&self.inner.list, opened)
+        };
+        Rc::clone(&self.inner).apply(effects);
+    }
+
+    /// The list view put the cursor on `position`, or took it off the list:
+    /// the controller notes where it is and draws nothing.
+    pub fn cursor_is(&self, position: Option<u32>) {
+        self.inner.focus.borrow_mut().cursor_is(position);
+    }
+
+    /// Drop the selection; the cursor stays.
+    pub fn clear_selection(&self) {
+        let effects = self.inner.focus.borrow_mut().clear_selection();
+        Rc::clone(&self.inner).apply(effects);
+    }
+
+    /// The window takes the list to a place of its own: the selection
+    /// goes, `!` is off, the days' headings come back.
+    pub fn leave_list(&self) {
+        let effects = self.inner.focus.borrow_mut().leave_list();
+        Rc::clone(&self.inner).apply(effects);
+    }
+
+    /// The header strip names `name`: what an empty folder says it is.
+    pub fn note_place(&self, name: &str) {
+        self.inner.focus.borrow_mut().note_place(name);
+    }
+
+    /// What is selected: what `e` would archive.
+    pub fn selection(&self) -> postio_core::state::Selection {
+        self.inner.focus.borrow().selection()
+    }
+
+    /// The conversations each selected row stands for.
+    pub fn selection_reach(&self) -> std::collections::HashMap<MessageId, Vec<ThreadId>> {
+        self.inner.focus.borrow().selection_reach().clone()
+    }
+
+    /// Whether `!` has narrowed the list to the rows with a marker.
+    pub fn has_action(&self) -> bool {
+        self.inner.focus.borrow().has_action()
+    }
+
+    /// The strip's counts, as the host last said.
+    pub fn counts(&self) -> Option<postio_client::protocol::FocusCounts> {
+        self.inner.focus.borrow().counts()
     }
 
     /// Show `scope`: count it, then let the list ask for what it draws.
@@ -186,7 +276,11 @@ impl Inner {
                 }
             }
             // Not the feed's: the window draws the rest.
-            _ => {}
+            intent => {
+                for handler in self.on_intent.borrow().iter() {
+                    handler(&intent);
+                }
+            }
         }
     }
 

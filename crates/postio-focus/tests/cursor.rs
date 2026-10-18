@@ -356,3 +356,103 @@ fn a_shift_click_takes_the_range_from_the_anchor_skipping_digests() {
         ]
     );
 }
+
+#[test]
+fn a_cursor_the_frontend_moved_is_where_j_goes_from() {
+    // GTK's list view moves the cursor itself -- a click, a row archived
+    // from under it -- and says so, without asking for it to be drawn.
+    let rows = List::of(6, &[]);
+    let mut focus = focus();
+    let _ = focus.landed(&rows, true);
+    focus.cursor_is(Some(3));
+    assert_eq!(focus.cursor(), Some(3));
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    assert_eq!(cursor_of(&effects), Some(4), "j walks on from where it is");
+    // A shift-click counts from the cursor the frontend left, with no anchor.
+    focus.cursor_is(Some(1));
+    let effects = focus.handle_on(
+        Input::Pick {
+            position: 3,
+            range: true,
+        },
+        &rows,
+    );
+    assert_eq!(
+        selection_of(&effects),
+        Some(Selection::These(vec![
+            MessageId::new(101),
+            MessageId::new(102),
+            MessageId::new(103)
+        ]))
+    );
+    // No cursor at all (an emptied list): j starts at the first row.
+    focus.cursor_is(None);
+    assert_eq!(focus.cursor(), None);
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    assert_eq!(cursor_of(&effects), Some(0));
+}
+
+#[test]
+fn leaving_the_list_drops_the_selection_and_the_filter_and_keeps_the_cursor() {
+    let rows = List::of(4, &[]);
+    let mut focus = focus();
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let _ = focus.landed(&rows, true);
+    let _ = run(&mut focus, CommandId::ToggleHasAction, &rows);
+    assert!(focus.has_action());
+    let _ = run(&mut focus, CommandId::ToggleSelection, &rows);
+
+    let effects = focus.leave_list();
+    assert_eq!(selection_of(&effects), Some(Selection::These(Vec::new())));
+    assert!(
+        shown(&effects).contains(&Intent::SingleHeading(None)),
+        "the days' headings come back"
+    );
+    assert!(!focus.has_action(), "`!` is off in another place");
+    assert!(focus.selection().is_empty());
+
+    // The `!` that was pending is forgotten: the next list opens on row 0.
+    let effects = focus.landed(&rows, true);
+    assert_eq!(cursor_of(&effects), Some(0));
+}
+
+#[test]
+fn clearing_the_selection_leaves_the_cursor_and_the_filter() {
+    let rows = List::of(4, &[]);
+    let mut focus = focus();
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let _ = focus.landed(&rows, true);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let _ = run(&mut focus, CommandId::ToggleSelection, &rows);
+    let effects = focus.clear_selection();
+    assert_eq!(selection_of(&effects), Some(Selection::These(Vec::new())));
+    assert_eq!(cursor_of(&effects), None);
+    assert_eq!(focus.cursor(), Some(1));
+    assert!(
+        focus.clear_selection().is_empty(),
+        "nothing selected, nothing to say"
+    );
+}
+
+#[test]
+fn the_selection_remembers_the_conversations_each_row_stood_for() {
+    // A row scrolled out of the window is still aimed at in full (T161).
+    let rows = List::of(4, &[]);
+    let mut focus = focus();
+    let _ = focus.landed(&rows, true);
+    let _ = run(&mut focus, CommandId::ToggleSelection, &rows);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let _ = run(&mut focus, CommandId::ToggleSelection, &rows);
+    let reach = focus.selection_reach();
+    assert_eq!(reach.len(), 2);
+    assert_eq!(
+        reach.get(&MessageId::new(101)),
+        Some(&vec![ThreadId::new(501)])
+    );
+    let _ = focus.clear_selection();
+    assert!(focus.selection_reach().is_empty());
+}

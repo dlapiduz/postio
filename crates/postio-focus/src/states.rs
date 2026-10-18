@@ -194,8 +194,10 @@ impl FocusController {
         steps
     }
 
-    /// The header strip names `name` now.
-    pub(crate) fn note_place(&mut self, name: &str) {
+    /// The header strip names `name` now: what an empty folder's page is
+    /// about. Said by the controller's own [`Intent::Place`]; a frontend
+    /// that opens a folder itself says it here before it opens it.
+    pub fn note_place(&mut self, name: &str) {
         name.clone_into(&mut self.states.place);
     }
 

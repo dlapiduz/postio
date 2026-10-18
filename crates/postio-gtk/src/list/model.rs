@@ -245,6 +245,27 @@ impl FocusList {
     }
 }
 
+/// The list as the controller asks about it (ADR 0045): the row at a
+/// position once its page is here -- the controller never makes the list
+/// fetch one -- and where a message sits.
+impl postio_focus::Rows for FocusList {
+    fn len(&self) -> u32 {
+        self.n_items()
+    }
+
+    fn facts(&self, position: u32) -> Option<postio_focus::RowFacts> {
+        self.windowed()
+            .window()
+            .resident_at(position)
+            .and_then(RowObject::item)
+            .map(|row| postio_focus::RowFacts::of(&row))
+    }
+
+    fn position_of(&self, message: MessageId) -> Option<u32> {
+        WindowedModel::position_of(self, message)
+    }
+}
+
 impl WindowedModel for FocusList {
     type Row = RowObject;
 

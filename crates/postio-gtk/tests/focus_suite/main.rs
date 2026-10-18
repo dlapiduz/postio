@@ -1360,6 +1360,10 @@ const CASES: &[(&str, fn())] = &[
         has_action::has_action_narrows_to_the_marked_rows_and_back as fn(),
     ),
     (
+        "has_action::going_home_leaves_the_filter_off_and_the_selection_gone",
+        has_action::going_home_leaves_the_filter_off_and_the_selection_gone as fn(),
+    ),
+    (
         "list_contract::the_list_output_stays_libtest_shaped",
         list_contract::the_list_output_stays_libtest_shaped as fn(),
     ),
@@ -1417,6 +1421,10 @@ const CASES: &[(&str, fn())] = &[
         cursor::a_folder_from_the_popover_opens_with_the_cursor_on_its_first_row as fn(),
     ),
     (
+        "cursor::the_list_view_moving_the_cursor_is_where_j_walks_on_from",
+        cursor::the_list_view_moving_the_cursor_is_where_j_walks_on_from as fn(),
+    ),
+    (
         "colours::the_roles_resolve_and_follow_the_system_into_dark",
         colours::the_roles_resolve_and_follow_the_system_into_dark as fn(),
     ),
@@ -1463,6 +1471,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "selection::a_select_all_archives_what_focus_lists_and_never_held_mail",
         selection::a_select_all_archives_what_focus_lists_and_never_held_mail as fn(),
+    ),
+    (
+        "selection::x_after_a_select_all_takes_that_row_out_of_it",
+        selection::x_after_a_select_all_takes_that_row_out_of_it as fn(),
     ),
     (
         "starts_offline::the_inbox_is_listed_from_the_store_with_no_network",

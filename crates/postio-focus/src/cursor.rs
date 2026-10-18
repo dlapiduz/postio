@@ -143,6 +143,13 @@ impl Cursor {
         (steps, self.position != before)
     }
 
+    /// The frontend moved the cursor itself -- its list view took a click,
+    /// a row went from under it -- and says where it is now. Nothing is
+    /// drawn: the cursor is already there.
+    pub(crate) fn moved_to(&mut self, position: Option<u32>) {
+        self.position = position;
+    }
+
     pub(crate) fn set_accounts(&mut self, accounts: Vec<AccountId>) {
         self.accounts = accounts;
     }
