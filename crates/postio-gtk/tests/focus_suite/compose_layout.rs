@@ -552,3 +552,70 @@ pub fn the_dialog_follows_the_message_dialogs_size_rule() {
         );
     });
 }
+
+/// The composer's body and fields are the open message's column at every
+/// window width -- `min(480, dialog - 96)`, the one `focus_dialog` rule the
+/// reader fits too -- and not a width of their own (the Mac composer once
+/// capped its body at 720pt whatever the window, #1896). Measured on the
+/// allocated widgets.
+async fn column_is_the_readers_at(size: Option<(i32, i32)>) {
+    let (window, dialog) = composing(size).await;
+    let content = dialog.child().expect("content");
+    let wide = focus_dialog::dialog_width(window.width());
+    let column = focus_dialog::column_width(wide, postio_body::treatment::Treatment::AppColours);
+    let at = (window.width(), window.height());
+    assert!(
+        crate::settle_until(async || content.width() == wide).await,
+        "{at:?}: the dialog is {}px, not {wide}",
+        content.width()
+    );
+    for class in ["postio-compose-body", "postio-compose-toolbar"] {
+        let widget = shown(&dialog, class);
+        assert!(
+            crate::settle_until(
+                async || (bounds(&widget, &content).width() - column as f32).abs() <= 1.0
+            )
+            .await,
+            "{at:?}: {class} is {}px, the reader's column is {column}px",
+            bounds(&widget, &content).width()
+        );
+    }
+    for row in support::with_class(&dialog, "postio-compose-row")
+        .into_iter()
+        .filter(gtk::Widget::is_mapped)
+    {
+        let width = bounds(&row, &content).width();
+        assert!(
+            (width - column as f32).abs() <= 1.0,
+            "{at:?}: {:?} is {width}px, the reader's column is {column}px",
+            support::texts(&row)
+        );
+    }
+}
+
+pub fn the_composer_column_is_the_readers_at_900() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        column_is_the_readers_at(Some((900, 700))).await;
+    });
+}
+
+pub fn the_composer_column_is_the_readers_at_the_screens_width() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        column_is_the_readers_at(None).await;
+    });
+}
+
+pub fn the_composer_column_is_the_readers_at_1024() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        column_is_the_readers_at(Some((1024, 700))).await;
+    });
+}

@@ -529,3 +529,102 @@ pub fn the_steps_carry_their_keys_inside_and_stay_compact() {
         );
     });
 }
+
+/// The quoted history of a reply, one word per line that only the quote says.
+const QUOTE_WORDS: [&str; 12] = [
+    "zephyr", "quartz", "lantern", "marble", "orchid", "saffron", "tundra", "walnut", "yarrow",
+    "ember", "falcon", "garnet",
+];
+
+/// Opening the fold under a reply shows the quoted history: the body grows
+/// to hold it, the column scrolls further, and the words are drawn. Done
+/// with the keyboard alone -- Tab-able fold line, Return -- as a person
+/// without a pointer would (the Mac's WKWebView body once opened its fold
+/// and kept its old height, #1897).
+pub fn opening_the_quoted_fold_grows_the_body_and_shows_the_quote() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture
+            .file(("Ada Moreno", "ada@example.com"), "Re: Plan", "Agreed.", 10)
+            .await;
+        // Long enough that the opened quote is taller than the dialog, so
+        // the column's extent, not just its page, has to grow.
+        let quoted: String = QUOTE_WORDS
+            .iter()
+            .cycle()
+            .take(60)
+            .map(|word| format!("> {word} {word} {word}\n"))
+            .collect();
+        fixture
+            .write_body(
+                message,
+                &format!("Agreed, thanks.\n\nOn Monday, Ben wrote:\n{quoted}"),
+            )
+            .await;
+        let window = opened(&fixture, 1).await;
+        let reading = window.reading().expect("open");
+        let view = reading.reader().view().clone();
+        let column = scroller_of(&view);
+        let fold_line = support::only(&reading.dialog(), "focus-open-fold-line");
+        assert!(
+            crate::settle_until(async || fold_line.is_mapped()).await,
+            "a reply with quoted history shows no fold line"
+        );
+        let drawn = |word: &str| {
+            view.document()
+                .is_some_and(|document| !document.text.find(word).is_empty())
+        };
+        assert!(!drawn("zephyr"), "the quote is drawn while folded");
+        let before = (
+            view.document().expect("drawn").size.height,
+            view.height(),
+            column.vadjustment().upper(),
+        );
+
+        // Tab to the fold line, as the keyboard gets there, and press Return.
+        fold_line.grab_focus();
+        assert!(
+            fold_line.is_focus(),
+            "the fold line cannot take the keyboard"
+        );
+        // Return on a focused button is its `activate` action; the harness's
+        // key delivery runs key controllers only, so say it directly.
+        assert!(fold_line.activate(), "the fold line is not activatable");
+        assert!(
+            crate::settle_until(async || drawn("zephyr") && drawn("garnet")).await,
+            "Activating the fold line left the quoted words undrawn"
+        );
+        assert!(
+            crate::settle_until(async || view.tiles_settled()).await,
+            "the opened quote was never drawn"
+        );
+        let document = view.document().expect("drawn");
+        assert!(
+            document.size.height > before.0 + 100.0,
+            "the document is {} tall, was {}: the fold opened but nothing grew",
+            document.size.height,
+            before.0
+        );
+        assert!(
+            crate::settle_until(async || f64::from(view.height()) >= document.size.height.floor())
+                .await,
+            "the body widget is {}px in a {}px document: the quote is clipped (was {}px)",
+            view.height(),
+            document.size.height,
+            before.1
+        );
+        assert!(
+            crate::settle_until(async || column.vadjustment().upper() > before.2 + 100.0).await,
+            "the column scrolls {} as before ({}): the quote cannot be reached",
+            column.vadjustment().upper(),
+            before.2
+        );
+        assert!(
+            !fold_line.is_visible(),
+            "the fold line still offers the fold it just opened"
+        );
+    });
+}
