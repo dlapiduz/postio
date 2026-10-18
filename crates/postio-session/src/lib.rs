@@ -577,13 +577,29 @@ pub enum Remedy {
     /// Something that can pass: another Postio holding the store, a locked
     /// keyring, a full disk. Trying again is the way forward.
     TryAgain,
-    /// A store written at a schema this build cannot carry forward. Trying
-    /// again meets the same file; starting the store over
-    /// ([`start_over::start_over_at`] on `store`) is the way forward.
+    /// A store this installation can never read, for the reason `because`
+    /// gives. Trying again meets the same file and the same key; starting
+    /// the store over ([`start_over::start_over_at`] on `store`) is the way
+    /// forward.
     StartOver {
         /// The store to set aside.
         store: std::path::PathBuf,
+        /// Why it can never be read: what the page offering a fresh store
+        /// says, since that decides what a fresh store keeps.
+        because: Unreadable,
     },
+}
+
+/// Why a store can never be opened here, whatever is retried (#1598).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unreadable {
+    /// Written at a schema no migration leads from. It decrypts, so a fresh
+    /// store carries its accounts across.
+    AnotherBuild,
+    /// Encrypted under a key the keyring does not hold: another
+    /// installation's store, or a keyring entry that was replaced. Nothing
+    /// in it can be read, so a fresh store starts without accounts.
+    AnotherKey,
 }
 
 impl Refusal {
@@ -657,9 +673,18 @@ pub async fn open_store_at_reporting(
         // the only thing wrong is which key we offered. It carries its own
         // opening, so nothing goes in front of it: a second one left the
         // screen reading "…its local store. the local store will not open".
+        //
+        // And the key does not change between attempts, so trying again can
+        // never get past it (#1598): the way forward is a fresh store.
         Err(error @ postio_storage::Error::WrongStoreKey) => {
             tracing::error!(path = %path.display(), "the store will not decrypt with this key");
-            return Err(Refusal::try_again(error.to_string()));
+            return Err(Refusal {
+                sentence: error.to_string(),
+                remedy: Remedy::StartOver {
+                    store: path,
+                    because: Unreadable::AnotherKey,
+                },
+            });
         }
         // Another Postio -- the desktop app or the terminal -- has it open.
         // Its own sentence says what to do, so nothing goes in front of it
@@ -674,7 +699,10 @@ pub async fn open_store_at_reporting(
             tracing::error!(path = %path.display(), found, expected, "the store's schema cannot be carried forward");
             return Err(Refusal {
                 sentence: error.to_string(),
-                remedy: Remedy::StartOver { store: path },
+                remedy: Remedy::StartOver {
+                    store: path,
+                    because: Unreadable::AnotherBuild,
+                },
             });
         }
         Err(error) => {

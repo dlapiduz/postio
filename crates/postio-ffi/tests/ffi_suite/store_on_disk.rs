@@ -266,6 +266,45 @@ fn starting_over_a_store_from_another_build_leaves_one_that_opens() {
 }
 
 #[test]
+fn a_store_under_another_key_says_start_over_and_starting_over_opens() {
+    // #1598: the key does not change between attempts, so "Try again" is a
+    // dead end here too. Its own case, because the Mac's page says something
+    // different: nothing in the old store decrypts, so no account comes
+    // across.
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let path = scratch.path().join("postio.db");
+    let stranger = postio_storage::key::StoreKey::from_bytes([0x2a; 32]);
+    drop(
+        postio_session::blocking::now(postio_session::open_store_at(&path, &stranger))
+            .expect("a store under another installation's key"),
+    );
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+
+    match Session::open(SessionOptions::at(&path).with_secrets(secrets.clone())) {
+        Ok(_) => panic!("a store under another key must not yield a session"),
+        Err(SessionError::StoreUnderAnotherKey { message }) => {
+            assert!(!message.is_empty(), "the surface has nothing to show");
+        }
+        Err(other) => panic!("expected StoreUnderAnotherKey, got {other:?}"),
+    }
+
+    let started =
+        postio_ffi::start_over_with(SessionOptions::at(&path).with_secrets(secrets.clone()))
+            .unwrap_or_else(|error| panic!("the store was not started over: {error}"));
+    assert!(
+        std::path::Path::new(&started.set_aside)
+            .join("postio.db")
+            .exists(),
+        "the old store was not set aside where it said: {}",
+        started.set_aside
+    );
+    let session = Session::open(SessionOptions::at(&path).with_secrets(secrets))
+        .unwrap_or_else(|error| panic!("the fresh store did not open: {error}"));
+    assert!(session.is_open());
+    session.shutdown();
+}
+
+#[test]
 fn the_refusal_is_worded_once_for_both_apps() {
     // The page a refused store shows on the Mac (T100) says what GTK's
     // says: the words are `postio_ui::focus_state`'s, and the Mac reads
@@ -276,6 +315,11 @@ fn the_refusal_is_worded_once_for_both_apps() {
     assert_eq!(said.try_again, words::TRY_AGAIN);
     assert_eq!(said.from_another_build, words::STORE_FROM_ANOTHER_VERSION);
     assert_eq!(said.start_over_sentence, words::START_OVER);
+    assert_eq!(said.under_another_key, words::STORE_UNDER_ANOTHER_KEY);
+    assert_eq!(
+        said.start_over_under_another_key_sentence,
+        words::START_OVER_UNDER_ANOTHER_KEY
+    );
     assert_eq!(said.start_over, words::START_A_FRESH_STORE);
     assert_eq!(said.starting_over, words::STARTING_A_FRESH_STORE);
     assert_eq!(

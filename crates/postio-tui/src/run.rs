@@ -48,14 +48,32 @@ pub fn open(
     secrets: Arc<dyn postio_account::secret::SecretStore>,
 ) -> Result<Host, String> {
     let say_so = saying(|line: &str| eprintln!("{line}"));
-    Host::open(config_path, secrets, &say_so).map_err(|refusal| match refusal.remedy {
+    Host::open(config_path, secrets, &say_so).map_err(|refusal| refused(&refusal))
+}
+
+/// What the terminal prints when the store will not open.
+fn refused(refusal: &postio_session::Refusal) -> String {
+    use postio_session::{Remedy, Unreadable};
+    match refusal.remedy {
         // Trying again meets the same file: name the way forward instead.
-        postio_session::Remedy::StartOver { .. } => format!(
+        Remedy::StartOver {
+            because: Unreadable::AnotherBuild,
+            ..
+        } => format!(
             "postio-tui: {refusal}\npostio-tui: `postio-store reset` sets it aside and \
              starts a fresh store, keeping your accounts and config.toml"
         ),
-        postio_session::Remedy::TryAgain => format!("postio-tui: {refusal}"),
-    })
+        // And the same key (#1598). Nothing in it decrypts, so no account
+        // comes across: the fresh store asks for them again.
+        Remedy::StartOver {
+            because: Unreadable::AnotherKey,
+            ..
+        } => format!(
+            "postio-tui: {refusal}\npostio-tui: `postio-store reset` sets it aside, not \
+             deleted, and starts a fresh store; add your accounts again in Postio"
+        ),
+        Remedy::TryAgain => format!("postio-tui: {refusal}"),
+    }
 }
 
 /// Switch Focus mode on in `host`, as `config`'s `[focus]` says (FR-186).
@@ -1524,6 +1542,20 @@ fn draw<W: io::Write>(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_store_under_another_key_is_reset_not_retried() {
+        let said = refused(&postio_session::Refusal {
+            sentence: "The store is another installation\u{2019}s.".to_owned(),
+            remedy: postio_session::Remedy::StartOver {
+                store: "/stores/postio.db".into(),
+                because: postio_session::Unreadable::AnotherKey,
+            },
+        });
+        assert!(said.contains("postio-store reset"), "{said}");
+        assert!(said.contains("add your accounts again"), "{said}");
+        assert!(!said.contains("keeping your accounts"), "{said}");
+    }
 
     /// The writes the terminal is sent, one entry each, kept to read back.
     #[derive(Clone, Default)]
