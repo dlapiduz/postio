@@ -120,6 +120,14 @@ pub struct FilterDecision {
     pub decided_at: DateTime<Utc>,
 }
 
+/// A decision whose message has since gone to the trash is not shown: the
+/// person deleted it from Filtered (C4 forbids deleting automatically, not
+/// deleting), and Undo, moving it back, shows it again. Two lookups by
+/// primary key per decision, never a walk.
+const NOT_IN_TRASH: &str = "NOT EXISTS (SELECT 1 FROM messages m
+                     JOIN mailboxes b ON b.id = m.mailbox_id
+                    WHERE m.id = filter_decisions.message_id AND b.role = 'trash')";
+
 /// Reads and writes [`FilterDecision`]s.
 #[derive(Debug)]
 pub struct FilterDecisionRepository<'a> {
@@ -257,7 +265,8 @@ impl<'a> FilterDecisionRepository<'a> {
                 .map(|reason| {
                     format!(
                         "(SELECT count(*) FROM filter_decisions
-                           WHERE reason = '{}' AND restored_at IS NULL)",
+                           WHERE reason = '{}' AND restored_at IS NULL
+                             AND {NOT_IN_TRASH})",
                         reason.as_str()
                     )
                 })
@@ -297,6 +306,7 @@ impl<'a> FilterDecisionRepository<'a> {
             "SELECT message_id, reason, source, layer, decided_at
                FROM filter_decisions
               WHERE {reason}restored_at IS NULL
+                AND {NOT_IN_TRASH}
               ORDER BY decided_at DESC
               LIMIT ?{limit} OFFSET ?{offset}"
         )

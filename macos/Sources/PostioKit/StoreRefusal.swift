@@ -6,8 +6,9 @@ import PostioFFI
 /// (specs/009-focus-macos T100), and which way forward it offers.
 ///
 /// The remedy is the boundary's, from the case it answers: a store written
-/// by another build is `StoreFromAnotherBuild`, which trying again meets
-/// every time, so the page offers a fresh store (`start_over`); anything
+/// by another build is `StoreFromAnotherBuild`, and one under another key
+/// `StoreUnderAnotherKey`, which trying again meets every time, so the page
+/// offers a fresh store (`start_over`); anything
 /// else -- another Postio has the store open, a locked Keychain (ADR 0014),
 /// no runtime -- may open next time, so it offers to try again. The words
 /// are GTK's refusal page's (`store_refusal_words`), and the sentence for a
@@ -27,13 +28,21 @@ public struct StoreRefusal: Equatable, Sendable {
     public let remedy: Remedy
 
     public init(_ error: Error, words: StoreRefusalWordsFfi) {
-        if case .StoreFromAnotherBuild = error as? SessionError {
+        switch error as? SessionError {
+        case .StoreFromAnotherBuild:
             // GTK's page says what a fresh store keeps and what stays behind
             // in place of the store layer's sentence, which names a schema.
             self.init(
                 heading: words.fromAnotherBuild, sentence: words.startOverSentence,
                 button: words.startOver, remedy: .startOver)
-        } else {
+        case .StoreUnderAnotherKey:
+            // The key does not change between attempts (#1598); nothing in
+            // the store decrypts, so the page promises no accounts.
+            self.init(
+                heading: words.underAnotherKey,
+                sentence: words.startOverUnderAnotherKeySentence,
+                button: words.startOver, remedy: .startOver)
+        default:
             self.init(
                 heading: words.cantOpen, sentence: Self.sentence(of: error),
                 button: words.tryAgain, remedy: .tryAgain)
@@ -52,7 +61,8 @@ public struct StoreRefusal: Equatable, Sendable {
     static func sentence(of error: Error) -> String {
         switch error as? SessionError {
         case let .StoreUnavailable(message), let .KeyringLocked(message),
-             let .StoreFromAnotherBuild(message), let .RuntimeUnavailable(message):
+             let .StoreFromAnotherBuild(message), let .StoreUnderAnotherKey(message),
+             let .RuntimeUnavailable(message):
             return message
         case nil:
             return error.localizedDescription

@@ -24,6 +24,15 @@
       "asset": "postio-tui-{version}-linux-x86_64.tar.zst"
     },
     {
+      "id": "postio-mcp",
+      "kind": "tarball",
+      "package": "postio-mcp",
+      "bin": "postio-mcp",
+      "profile": "release",
+      "readme": "docs/mcp.md",
+      "asset": "postio-mcp-{version}-linux-x86_64.tar.zst"
+    },
+    {
       "id": "postio",
       "kind": "macos-app",
       "app": "Postio.app",

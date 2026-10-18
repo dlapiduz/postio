@@ -1685,6 +1685,15 @@ impl FocusWindow {
             // A toast with an Undo of its own -- a send, queued -- is the
             // last thing said, so Undo takes that back first (#1752).
             CommandId::Undo if self.imp().toast.activate_undo() => {}
+            // In Filtered, the message it has focused, never the list's row
+            // behind it nor its conversation (C4: never automatically).
+            CommandId::Delete | CommandId::ToggleRead | CommandId::Flag
+                if self.key_context() == KeyContext::Filtered =>
+            {
+                if let Some(message) = self.filtered().and_then(|view| view.focused()) {
+                    self.filtered_verb(id, message);
+                }
+            }
             CommandId::Archive
             | CommandId::Delete
             | CommandId::ToggleRead
@@ -1823,6 +1832,22 @@ impl FocusWindow {
             // Not on mail still on its way out (#1749): a notice says why.
             CommandId::Reply | CommandId::ReplyAll
                 if postio_ui::focus_target::refuses_reply(self.aimed_send_state()) =>
+            {
+                self.imp()
+                    .toast
+                    .show_notice(postio_ui::focus_target::NO_REPLY_TO_OUTGOING);
+                self.follow_toast();
+            }
+            // Nor on a draft another client wrote (#1212): the row does not
+            // offer them either.
+            CommandId::Reply | CommandId::ReplyAll | CommandId::Forward
+                if self
+                    .reading()
+                    .filter(|reading| reading.is_open())
+                    .is_some_and(|reading| {
+                        reading.foreign_draft()
+                            && !postio_ui::focus_dialog::received_offers(id, true)
+                    }) =>
             {
                 self.imp()
                     .toast
@@ -2339,15 +2364,30 @@ impl FocusWindow {
         );
     }
 
-    /// The store was written at a schema no migration carries forward, so
-    /// trying again would meet the same file (T215): say so, say what a
-    /// fresh store keeps and what stays behind before it is chosen, and
+    /// The store can never be read here -- written at a schema no migration
+    /// carries forward (T215), or under a key the keyring does not hold
+    /// (#1598) -- so trying again would meet the same file: say so, say what
+    /// a fresh store keeps and what stays behind before it is chosen, and
     /// offer it. "Start a fresh store" runs `start_over`.
-    pub fn show_start_over(&self, start_over: impl Fn() + 'static) {
+    pub fn show_start_over(
+        &self,
+        because: postio_session::Unreadable,
+        start_over: impl Fn() + 'static,
+    ) {
+        use postio_ui::focus_state as words;
+        let (title, reason) = match because {
+            postio_session::Unreadable::AnotherBuild => {
+                (words::STORE_FROM_ANOTHER_VERSION, words::START_OVER)
+            }
+            postio_session::Unreadable::AnotherKey => (
+                words::STORE_UNDER_ANOTHER_KEY,
+                words::START_OVER_UNDER_ANOTHER_KEY,
+            ),
+        };
         self.show_refusal(
-            postio_ui::focus_state::STORE_FROM_ANOTHER_VERSION,
-            postio_ui::focus_state::START_OVER,
-            postio_ui::focus_state::START_A_FRESH_STORE,
+            title,
+            reason,
+            words::START_A_FRESH_STORE,
             Rc::new(start_over),
         );
     }
@@ -3046,6 +3086,12 @@ impl FocusWindow {
             Event::NewMail {
                 mailbox, messages, ..
             } => self.announce(*mailbox, messages.clone()),
+            // The open message's words landed: drawn in place (#1788).
+            Event::BodyLoaded { message, .. } => {
+                if let Some(reading) = self.reading() {
+                    reading.body_landed(*message);
+                }
+            }
             _ => {}
         }
         self.hear_sync(event);
@@ -3783,6 +3829,10 @@ impl FocusWindow {
     }
 
     /// Put `message` back in the inbox, and never filter its sender (FR-116).
+    fn filtered_verb(&self, id: CommandId, message: MessageId) {
+        self.post(Command::default_for(id).with_target(MessageTarget::Messages(vec![message])));
+    }
+
     fn restore_filtered(&self, message: MessageId) {
         self.post(Command::RestoreFiltered {
             target: MessageTarget::Messages(vec![message]),
@@ -5552,6 +5602,18 @@ impl FocusWindow {
                 "focus.reading.position".to_owned(),
                 serde_json::json!(reading.subtitle()),
             );
+        }
+        // What the open message's body says: its words once they are here,
+        // or that it is still on its way.
+        if let Some(reading) = reading.as_ref()
+            && view == View::Reader
+        {
+            let body = if reading.reader().absent().is_some() {
+                "absent".to_owned()
+            } else {
+                reading.body_text().trim().to_owned()
+            };
+            app.insert("focus.reading.body".to_owned(), serde_json::json!(body));
         }
         if let Some(reading) = reading.as_ref()
             && let Some(item) = reading.more_item_with_focus()

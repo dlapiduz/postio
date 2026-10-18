@@ -224,7 +224,7 @@ fn render(args: &[String]) -> Result<String, String> {
         let window = FocusWindow::new(None);
         window.set_default_size(request.size.0, request.size.1);
         window.present();
-        window.show_start_over(|| {});
+        window.show_start_over(postio_session::Unreadable::AnotherBuild, || {});
         let shown = Instant::now();
         settle_until(|| window.is_mapped() && shown.elapsed() > Duration::from_millis(1500));
         let outcome = postio_widgets::capture::png(&window, std::path::Path::new(&request.path))

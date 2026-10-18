@@ -191,8 +191,8 @@ use postio_model::{
 };
 use postio_storage::Store;
 use postio_storage::repository::{
-    ContactRepository, LabelRepository, Marker, MarkerRepository, MarkerSource, MessageRepository,
-    ThreadingRepository,
+    ContactRepository, LabelRepository, MailboxRepository, Marker, MarkerRepository, MarkerSource,
+    MessageRepository, ThreadingRepository,
 };
 
 /// This week's newsletters, held and delivered as screen 01's digest row:
@@ -718,6 +718,135 @@ pub async fn empty_demo() -> (Store, AccountId) {
     synced(&connection, inbox, today()).await;
     drop(connection);
     (database, account.id)
+}
+
+/// The conversation a storyboard's `body_arrived` holds back: the first row
+/// of [`TODAY`], which the window opens with the cursor on.
+const HELD: usize = 0;
+
+/// The message a storyboard's `new_mail` delivers into the inbox.
+const ARRIVAL: Row = Row {
+    name: "Ines Marlow",
+    address: "ines@example.com",
+    subject: "Lunch on Thursday?",
+    preview: "Are you free at noon? The new place by the harbor has a table.",
+    minutes: 0,
+    unread: true,
+    labels: &[],
+    attachment: false,
+    messages: 1,
+    ask: None,
+};
+
+fn text_of(error: impl std::fmt::Display) -> String {
+    error.to_string()
+}
+
+/// The held conversation's only message.
+async fn held_message(
+    connection: &postio_storage::Connection,
+    account: AccountId,
+) -> Result<MessageId, String> {
+    let rfc = RfcMessageId::new(format!("<demo.{HELD}.0@example.test>"));
+    MessageRepository::new(connection)
+        .ids_by_rfc_message_id(account, &rfc)
+        .await
+        .map_err(text_of)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "the seed has no message to hold a body back from".to_owned())
+}
+
+/// Takes the held message's body away, leaving its headers: the state a
+/// message is in before its body is fetched. Done before the window opens.
+pub async fn hold_back_body(store: &Store, account: AccountId) -> Result<(), String> {
+    let connection = store.connect().await.map_err(text_of)?;
+    let id = held_message(&connection, account).await?;
+    MessageRepository::new(&connection)
+        .set_body(
+            id,
+            &postio_storage::repository::StoredBody {
+                text: None,
+                html: None,
+                headers: None,
+                headers_truncated: false,
+                encoding_problems: false,
+            },
+            postio_model::BodyState::HeadersOnly,
+        )
+        .await
+        .map_err(text_of)?;
+    Ok(())
+}
+
+/// Stores the held message's body, as a fetch landing it would; the message
+/// whose `BodyLoaded` the caller then says.
+pub async fn deliver_held_body(store: &Store, account: AccountId) -> Result<MessageId, String> {
+    let connection = store.connect().await.map_err(text_of)?;
+    let id = held_message(&connection, account).await?;
+    MessageRepository::new(&connection)
+        .set_body(
+            id,
+            &postio_storage::repository::StoredBody {
+                text: Some(format!("{}\n", TODAY[HELD].preview)),
+                html: None,
+                headers: None,
+                headers_truncated: false,
+                encoding_problems: false,
+            },
+            postio_model::BodyState::Full,
+        )
+        .await
+        .map_err(text_of)?;
+    Ok(id)
+}
+
+/// Files one new message at the top of the inbox, threaded and counted as
+/// sync would leave it; the mailbox and message the caller then announces.
+pub async fn deliver_new_mail(
+    store: &Store,
+    account: AccountId,
+) -> Result<(MailboxId, MessageId), String> {
+    let connection = store.connect().await.map_err(text_of)?;
+    let inbox = MailboxRepository::new(&connection)
+        .by_role(account, MailboxRole::Inbox)
+        .await
+        .map_err(text_of)?
+        .ok_or("the account has no inbox")?
+        .id;
+    let mut message = message(account, inbox, &ARRIVAL, today(), true);
+    message.rfc_message_id = Some(RfcMessageId::new("<demo.arrival@example.test>"));
+    MessageRepository::new(&connection)
+        .create(&mut message)
+        .await
+        .map_err(text_of)?;
+    ContactRepository::new(&connection)
+        .record_message(&message)
+        .await
+        .map_err(text_of)?;
+    ThreadingRepository::new(&connection, account)
+        .thread(&message)
+        .await
+        .map_err(text_of)?;
+    MessageRepository::new(&connection)
+        .set_body(
+            message.id,
+            &postio_storage::repository::StoredBody {
+                text: Some(format!("{}\n", ARRIVAL.preview)),
+                html: None,
+                headers: None,
+                headers_truncated: false,
+                encoding_problems: false,
+            },
+            postio_model::BodyState::Full,
+        )
+        .await
+        .map_err(text_of)?;
+    MailboxRepository::new(&connection)
+        .recount(inbox)
+        .await
+        .map_err(text_of)?;
+    Ok((inbox, message.id))
 }
 
 /// The row screen 04 opens: the to-do about the API draft, by its place in

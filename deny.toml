@@ -28,7 +28,13 @@ version = 2
 # Vulnerabilities are always denied under version 2; these are the knobs left.
 unmaintained = "workspace"
 yanked = "deny"
-ignore = []
+ignore = [
+    # zvariant is unmaintained (merged into zbus 6), not vulnerable. It
+    # arrives only through oo7 0.6 (the Secret Service keyring client in
+    # postio-account), whose newest release is a beta that still pins it.
+    # No fix to take; revisit when oo7 0.7 is stable.
+    { id = "RUSTSEC-2026-0370", reason = "unmaintained notice for zvariant via oo7; no patched release, no vulnerability" },
+]
 
 [licenses]
 version = 2

@@ -518,8 +518,19 @@ fn config_path(name: &str) -> PathBuf {
 /// Seeds a store, starts the host over it and adopts a Focus window, the way
 /// the application starts. The returned window is presented and waited on
 /// until its first rows are drawn.
-async fn acting(seed: Seed, size: (i32, i32), name: &str) -> Result<Started, String> {
+///
+/// `hold_body` takes one seeded body away before the window opens, for a
+/// storyboard whose `body_arrived` step brings it back.
+async fn acting(
+    seed: Seed,
+    size: (i32, i32),
+    name: &str,
+    hold_body: bool,
+) -> Result<Started, String> {
     let (database, account) = super::seeded(seed).await;
+    if hold_body {
+        super::hold_back_body(&database, account).await?;
+    }
     let started = super::start(
         database,
         account,
@@ -578,6 +589,23 @@ fn pump_until(max: Duration, mut done: impl FnMut() -> bool) -> bool {
     }
     heartbeat.remove();
     reached
+}
+
+/// Runs a store write to its end on the demo's runtime, off this thread, while
+/// the main loop keeps turning, and returns what it answered.
+fn off_thread<T: Send + 'static>(
+    work: impl std::future::Future<Output = Result<T, String>> + Send + 'static,
+) -> Result<T, String> {
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = send.send(super::on_runtime(work));
+    });
+    let mut answer = None;
+    pump_until(Duration::from_secs(10), || {
+        answer = receive.try_recv().ok();
+        answer.is_some()
+    });
+    answer.unwrap_or_else(|| Err("the store did not answer in time".to_owned()))
 }
 
 /// Turns the main loop for `duration`, so timers and frames happen.
@@ -812,11 +840,26 @@ fn deliver_input(
                     total: 81_744,
                     footprint: None,
                 }),
-                other => {
-                    return Err(format!(
-                        "event {} is not supported by Focus's runner yet",
-                        event_name(*other)
-                    ));
+                // Written to the store the host reads and then said on the
+                // hub, as a sync pass does: the window hears what the app
+                // would.
+                EnvEvent::NewMail => {
+                    let store = acting.store.clone();
+                    let (mailbox, message) =
+                        off_thread(async move { super::deliver_new_mail(&store, account).await })
+                            .map_err(|error| format!("new mail could not be filed: {error}"))?;
+                    acting.sink.emit(Event::NewMail {
+                        account,
+                        mailbox,
+                        messages: vec![message],
+                    })
+                }
+                EnvEvent::BodyArrived => {
+                    let store = acting.store.clone();
+                    let message =
+                        off_thread(async move { super::deliver_held_body(&store, account).await })
+                            .map_err(|error| format!("the body could not be stored: {error}"))?;
+                    acting.sink.emit(Event::BodyLoaded { account, message })
                 }
             };
             if !emitted {
@@ -1042,7 +1085,11 @@ pub async fn run(board: &Storyboard, options: &Options) -> Run {
         .ignored_axes
         .extend(options.ignored_axes.iter().cloned());
 
-    let started = match acting(base, size, &board.name).await {
+    let hold_body = board
+        .steps
+        .iter()
+        .any(|step| step.input == Input::Event(EnvEvent::BodyArrived));
+    let started = match acting(base, size, &board.name, hold_body).await {
         Ok(started) => started,
         Err(message) => {
             played.status = Status::Error { message };
@@ -1379,7 +1426,9 @@ async fn fresh(setup: &[&str]) -> Option<Started> {
     );
     hold_still();
     let (size, _) = apply_variant(&BTreeMap::new());
-    let started = acting(Seed::Small, size, "every-command").await.ok()?;
+    let started = acting(Seed::Small, size, "every-command", false)
+        .await
+        .ok()?;
     deliver::drain();
     for command in setup {
         let _ = deliver_input(

@@ -1086,6 +1086,38 @@ fn a_hit_opens_walks_the_results_and_closing_it_reopens_the_bar_on_it() {
 }
 
 #[test]
+fn replying_from_a_hit_does_not_bring_the_bar_back_over_the_composer() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = bar_open(&mut focus, CommandId::Search, &rows);
+    let effects = typed(&mut focus, "tide", &rows);
+    let effects = found(
+        &mut focus,
+        &effects,
+        vec![hit(1, "Tide tables"), hit(2, "Tide again")],
+    );
+    let second = line(&view(&effects), "Tide again").clone();
+    let _ = focus.handle_on(Input::BarRun(second.token), &rows);
+    // On the Mac the composer replaces the message's window (M4): the
+    // message "closes", but the words are not coming back under a composer.
+    let effects = run(&mut focus, CommandId::ReplyAll, &rows);
+    let intents = shown(&effects);
+    assert!(
+        intents
+            .iter()
+            .any(|intent| matches!(intent, Intent::Composer { .. })),
+        "{intents:?}"
+    );
+    assert!(
+        !intents
+            .iter()
+            .any(|intent| matches!(intent, Intent::OpenBar { .. })),
+        "the dropdown must not open over the composer: {intents:?}"
+    );
+    assert_eq!(focus.key_context(), KeyContext::Composer);
+}
+
+#[test]
 fn return_on_the_search_row_goes_to_the_first_hit() {
     let rows = List::of(1);
     let mut focus = mac();

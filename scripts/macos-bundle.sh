@@ -69,6 +69,19 @@ if [ ! -x "$HELPER" ]; then
 fi
 cp "$HELPER" "$APP/Contents/MacOS/postio-extract-helper"
 
+# The agent entry point (ADR 0010, #1832; the app answers on its socket,
+# #1845). An MCP client runs this file as a subprocess, so it has to be at a
+# path a person can paste into the client's config:
+# Postio.app/Contents/MacOS/postio-mcp. Fatal when missing, like the helper:
+# an app whose Settings offers agent access and ships no entry point lies.
+MCP="${CARGO_TARGET_DIR:-target}/$CONFIG/postio-mcp"
+if [ ! -x "$MCP" ]; then
+    echo "no postio-mcp at $MCP." >&2
+    echo "Run scripts/macos-build.sh${CONFIG:+ ${CONFIG/debug/}} first." >&2
+    exit 1
+fi
+cp "$MCP" "$APP/Contents/MacOS/postio-mcp"
+
 # The icon, rendered from the SVG the GTK frontend already ships rather than
 # from a set of PNGs checked in beside it -- the rule the design tokens follow,
 # for the same reason: a copy is correct on the day it is made.
@@ -121,6 +134,13 @@ fi
 codesign --force --sign "$IDENTITY" \
     --identifier dev.postio.Postio.extract-helper \
     "$APP/Contents/MacOS/postio-extract-helper"
+# postio-mcp reads the Keychain when it opens the store itself (no app
+# open), so it is signed with the same identity: a stable one is what lets
+# "Always Allow" cover it. Its own identifier keeps it a separate code
+# identity from the app, as the helper's is.
+codesign --force --sign "$IDENTITY" \
+    --identifier dev.postio.Postio.mcp \
+    "$APP/Contents/MacOS/postio-mcp"
 codesign --force --sign "$IDENTITY" \
     --entitlements macos/Resources/PostioReleaseLocal.entitlements \
     "$APP"

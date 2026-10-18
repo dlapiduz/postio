@@ -42,6 +42,18 @@ answer as one that does not exist.
 The server reads this section again on every call. To revoke access, delete
 the lines. The agent's next call is refused, and nothing needs to restart.
 
+## Where the binary is
+
+| Install | Path |
+|---|---|
+| Mac app | `/Applications/Postio.app/Contents/MacOS/postio-mcp` |
+| Desktop Flatpak | `flatpak run --command=postio-mcp dev.postio.Postio` |
+| Terminal Flatpak | `flatpak run --command=postio-mcp dev.postio.PostioTui` |
+| Tarball | `postio-mcp` in the `postio-mcp-<version>-linux-x86_64.tar.zst` from the release page |
+
+In the examples below, `/path/to/postio-mcp` is the first column that fits.
+For a Flatpak, the command is `flatpak` and the rest is its arguments.
+
 ## Registering it
 
 **Claude Code:**

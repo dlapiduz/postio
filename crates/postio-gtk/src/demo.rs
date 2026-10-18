@@ -58,6 +58,8 @@ pub struct Started {
     pub sink: postio_core::bridge::EventSink,
     /// The account the store was seeded with.
     pub account: AccountId,
+    /// The store the host reads: what a tool writes to, as sync would.
+    pub store: Store,
     /// The blob directory the host reads, kept until the demo ends.
     _blobs: tempfile::TempDir,
 }
@@ -95,6 +97,7 @@ pub fn start(
         &postio_storage::test_support::blob_keys(),
     )
     .map_err(|error| format!("no blob store: {error}"))?;
+    let store = database.clone();
     let sink = std::rc::Rc::new(std::cell::RefCell::new(None));
     let host = postio_host::Host::start(database, blobs, {
         let sink = std::rc::Rc::clone(&sink);
@@ -114,6 +117,7 @@ pub fn start(
         session,
         sink,
         account,
+        store,
         _blobs: blobs_dir,
     })
 }

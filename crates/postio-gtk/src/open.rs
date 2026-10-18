@@ -87,6 +87,9 @@ pub struct OpenMessage {
     send_bar: Rc<ActionBar>,
     /// That state, from the row the message was opened from.
     send_state: Cell<Option<postio_model::DraftState>>,
+    /// The message on screen is a draft another client wrote: the received
+    /// row stands without the verbs that answer a correspondent (#1212).
+    foreign_draft: Cell<bool>,
     thread_chip: gtk::Box,
     subject: gtk::Label,
     labels: gtk::Box,
@@ -460,6 +463,7 @@ impl OpenMessage {
             toolbar,
             send_bar,
             send_state: Cell::new(None),
+            foreign_draft: Cell::new(false),
             thread_chip,
             subject,
             labels,
@@ -1187,6 +1191,7 @@ impl OpenMessage {
         preparing.store(true, Ordering::Relaxed);
         // The inline-image source reads this same cell.
         self.shown.set(Some(message));
+        self.set_foreign_draft(false);
         self.revealed.set(None);
         self.body.replace(None);
         self.show_marker_card(message);
@@ -1206,6 +1211,18 @@ impl OpenMessage {
         self.load(message, generation);
     }
 
+    /// `BodyLoaded` (#1788): `message`'s words are on this machine now. If
+    /// it is the one on screen and was drawn without them, read it again
+    /// and draw it in place: the same generation, nothing cleared first and
+    /// the view left where it is, so "Downloading this message" goes
+    /// straight to the body. Only the open message is read, never the list.
+    pub fn body_landed(&self, message: MessageId) {
+        if !self.is_open() || self.shown.get() != Some(message) || self.body.borrow().is_some() {
+            return;
+        }
+        self.load(message, self.generation.get());
+    }
+
     /// Draw the action row for a message whose draft is in `state`: the
     /// received verbs for mail on its way nowhere, and otherwise the verbs
     /// that settle that state (T239; `focus_dialog::send_verbs`).
@@ -1221,6 +1238,25 @@ impl OpenMessage {
                     .set_visible(verbs.is_some_and(|verbs| verbs.contains(&action.command)));
             }
         }
+    }
+
+    /// Draw the received row for a message that is, or is not, a draft
+    /// another client wrote: Reply, Reply all and Forward answer a
+    /// correspondent a draft does not have (`focus_dialog::received_offers`).
+    fn set_foreign_draft(&self, foreign: bool) {
+        self.foreign_draft.set(foreign);
+        for action in toolbar() {
+            if let Some(button) = self.toolbar.button(action.command) {
+                button
+                    .widget()
+                    .set_visible(focus_dialog::received_offers(action.command, foreign));
+            }
+        }
+    }
+
+    /// Whether the message on screen is a draft another client wrote.
+    pub fn foreign_draft(&self) -> bool {
+        self.foreign_draft.get()
     }
 
     /// The send state of the draft on screen, when it is one (T239).
@@ -1429,6 +1465,7 @@ impl OpenMessage {
         let line_said = Rc::clone(&self.line_said);
         let subtitle = self.subtitle.clone();
         let preparing = Arc::clone(&self.preparing.borrow());
+        let page = self.this.borrow().clone();
         shown_parts.borrow_mut().clear();
         inline.borrow_mut().clear();
         glib::spawn_future_local(async move {
@@ -1559,6 +1596,9 @@ impl OpenMessage {
                 Body::Empty => reader.show_absent(postio_ui::reader::document::Absent::Empty),
                 Body::ForeignDraft => {
                     reader.show_absent(postio_ui::reader::document::Absent::ForeignDraft);
+                    if let Some(page) = page.upgrade() {
+                        page.set_foreign_draft(true);
+                    }
                 }
             }
         });

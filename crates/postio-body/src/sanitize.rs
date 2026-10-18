@@ -1952,6 +1952,29 @@ mod tests {
     }
 
     #[test]
+    fn an_uppercase_url_in_a_style_is_held_back_too() {
+        // RUSTSEC-2026-0373: ammonia matched a quoted `url("")` case-
+        // sensitively, so `URL("https://...")` skipped its filtering. Postio
+        // does not rely on that filtering; this is the advisory's payload.
+        for style in [
+            r#"background:URL("https://evil.example/ping");color:red"#,
+            r#"background:UrL('https://evil.example/ping');color:red"#,
+            r#"background-image:URL(https://evil.example/ping);color:red"#,
+        ] {
+            let out = sanitize_body(
+                &format!(r#"<div style='{style}'>ok</div>"#),
+                RemoteImages::Blocked,
+            );
+            assert!(
+                !out.html.contains("evil.example"),
+                "a style reached the network: {}",
+                out.html
+            );
+            assert!(out.html.contains("ok"), "{}", out.html);
+        }
+    }
+
+    #[test]
     fn every_refused_property_states_a_reason() {
         // FR-019b: a property may be refused for containment or for privacy,
         // and for nothing else. "Dropped because it was easier" is what this

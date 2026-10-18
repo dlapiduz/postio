@@ -331,3 +331,62 @@ async fn a_store_under_another_key_is_refused_in_one_sentence() {
         "two openings were stacked, leaving a sentence that starts lowercase: {said:?}"
     );
 }
+
+/// A store under another key is offered a fresh start, never "Try again"
+/// (#1598): the key does not change between attempts, so every retry meets
+/// the same refusal. Starting over sets the old store aside -- not deleted
+/// -- and leaves one that opens under this installation's key.
+#[tokio::test]
+async fn a_store_under_another_key_is_started_over_not_retried() {
+    let directory = tempfile::tempdir().expect("a directory");
+    let path = directory.path().join("postio.db");
+    let written = postio_storage::key::StoreKey::from_bytes([0x2a; 32]);
+    drop(
+        postio_session::open_store_at(&path, &written)
+            .await
+            .expect("a fresh store opens"),
+    );
+
+    let ours = postio_storage::key::StoreKey::from_bytes([0x17; 32]);
+    let Err(refusal) = postio_session::open_store_at_reporting(&path, &ours, &|_| {}).await else {
+        panic!("a store must not open under another key");
+    };
+    assert_eq!(
+        refusal.remedy,
+        postio_session::Remedy::StartOver {
+            store: path.clone(),
+            because: postio_session::Unreadable::AnotherKey,
+        },
+        "retrying meets the same key every time: {refusal:?}"
+    );
+
+    let started = postio_session::start_over::start_over_at(&path, &ours)
+        .await
+        .expect("a store under another key can be started over");
+    assert!(
+        started.set_aside.join("postio.db").exists(),
+        "the old store is set aside, not deleted: {}",
+        started.set_aside.display()
+    );
+    assert_eq!(
+        started.accounts, 0,
+        "nothing comes across from a store this key cannot read"
+    );
+    postio_session::open_store_at(&path, &ours)
+        .await
+        .expect("the fresh store opens under this installation's key");
+}
+
+/// A locked keyring is the one refusal retrying gets past: the person
+/// unlocks it. It is never offered a fresh store (#1598).
+#[test]
+fn a_locked_keyring_is_only_ever_tried_again() {
+    let locked = SecretError::Locked {
+        keyring: "login".to_owned(),
+        account: STORE_KEY_ENTRY.to_owned(),
+    };
+    assert_eq!(
+        postio_session::key_refusal(&locked).remedy,
+        postio_session::Remedy::TryAgain
+    );
+}

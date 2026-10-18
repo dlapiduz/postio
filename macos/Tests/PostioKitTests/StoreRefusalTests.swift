@@ -36,6 +36,19 @@ private let startedOver = StartedOverFfi(setAside: "/stores/set-aside/when", acc
         #expect(refusal.button == words.startOver)
     }
 
+    @Test func aStoreUnderAnotherKeyOffersAFreshStoreInGTKsWords() {
+        // #1598: the key does not change between attempts, so trying again
+        // can never get past it; and nothing in it decrypts, so the page
+        // promises no accounts.
+        let refusal = StoreRefusal(
+            SessionError.StoreUnderAnotherKey(message: "Another installation's store."),
+            words: words)
+        #expect(refusal.remedy == .startOver)
+        #expect(refusal.heading == words.underAnotherKey)
+        #expect(refusal.sentence == words.startOverUnderAnotherKeySentence)
+        #expect(refusal.button == words.startOver)
+    }
+
     @Test func aStoreThatMayOpenNextTimeOffersToTryAgainAndSaysWhy() {
         let refusal = StoreRefusal(
             SessionError.StoreUnavailable(message: "Another Postio has this store open."), words: words)

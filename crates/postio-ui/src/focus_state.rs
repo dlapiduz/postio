@@ -624,6 +624,19 @@ pub const START_OVER: &str = "This version of Postio can\u{2019}t read the store
      server. Snoozes, reminders, Focus\u{2019}s filing history, and drafts or changes \
      not yet sent stay in the old store, which is set aside, not deleted.";
 
+/// The page's heading when the store is encrypted under a key this
+/// installation does not hold (`postio_session::Unreadable::AnotherKey`).
+pub const STORE_UNDER_ANOTHER_KEY: &str = "Your mail store is locked with another key";
+
+/// What that page says before "Start a fresh store" is chosen. Nothing in
+/// the old store can be read, so unlike [`START_OVER`] it promises no
+/// accounts: the fresh store asks for them, as a first run does.
+pub const START_OVER_UNDER_ANOTHER_KEY: &str = "This store was encrypted with a key \
+     this installation doesn\u{2019}t have \u{2014} another installation\u{2019}s, or one \
+     the keyring replaced \u{2014} so trying again won\u{2019}t help. A fresh store asks \
+     for your accounts again and syncs your mail again from the server. The old store, \
+     with its snoozes, reminders, and unsent drafts, is set aside, not deleted.";
+
 /// Its button: set the store aside and start a fresh one.
 pub const START_A_FRESH_STORE: &str = "Start a fresh store";
 
@@ -645,6 +658,14 @@ mod tests {
             "Started a fresh store. The old one is in /stores/set-aside/when"
         );
         assert!(START_OVER.contains("set aside, not deleted"));
+    }
+
+    #[test]
+    fn a_store_under_another_key_promises_no_accounts() {
+        // Nothing in it decrypts, so nothing comes across (#1598).
+        assert!(START_OVER_UNDER_ANOTHER_KEY.contains("set aside, not deleted"));
+        assert!(START_OVER_UNDER_ANOTHER_KEY.contains("won\u{2019}t help"));
+        assert!(!START_OVER_UNDER_ANOTHER_KEY.contains("keeps your accounts"));
     }
 
     use chrono::{FixedOffset, TimeZone, Utc};

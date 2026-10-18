@@ -18,6 +18,8 @@ use postio_gtk::app::{APP_ID, ICON_NAME};
 const BINARY: &str = "postio";
 /// The extraction helper, installed beside it (spec 010 D28).
 const HELPER: &str = "postio-extract-helper";
+/// The agent's entry point (ADR 0010, #1832), installed beside them.
+const MCP: &str = "postio-mcp";
 
 /// The Flatpak the desktop app ships in, named after the id.
 const MANIFEST: &str = "flatpak/dev.postio.Postio.json";
@@ -247,9 +249,9 @@ fn the_desktop_entry_passes_the_freedesktop_validator() {
 /// The desktop Flatpak builds Focus as `postio`, runs it, and installs its
 /// entry and metainfo. The only other thing it builds is the extraction
 /// helper, which the attachment indexer looks for beside its own executable
-/// (spec 010 D28).
+/// (spec 010 D28), and `postio-mcp`, which an MCP client launches (#1832).
 #[test]
-fn the_desktop_flatpak_builds_and_installs_postio_and_its_helper_only() {
+fn the_desktop_flatpak_builds_and_installs_postio_its_helper_and_the_agent_entry_only() {
     let manifest = read(MANIFEST);
     assert!(
         manifest.contains(&format!("\"command\": \"{BINARY}\"")),
@@ -264,6 +266,7 @@ fn the_desktop_flatpak_builds_and_installs_postio_and_its_helper_only() {
     let built = [
         format!("--package postio-gtk --bin {BINARY}"),
         format!("--package postio-session --bin {HELPER}"),
+        format!("--package postio-mcp --bin {MCP}"),
     ];
     assert!(
         builds.len() == built.len()
@@ -272,7 +275,7 @@ fn the_desktop_flatpak_builds_and_installs_postio_and_its_helper_only() {
                 .all(|one| builds.iter().any(|line| line.contains(one.as_str()))),
         "the manifest should build {built:?} and nothing else, got {builds:#?}"
     );
-    for name in [BINARY, HELPER] {
+    for name in [BINARY, HELPER, MCP] {
         let binary = format!("target/release/{name} /app/bin/{name}\"");
         assert!(
             commands.iter().any(|line| line.contains(&binary)),
@@ -285,8 +288,8 @@ fn the_desktop_flatpak_builds_and_installs_postio_and_its_helper_only() {
         .collect();
     assert_eq!(
         installed_binaries.len(),
-        2,
-        "the manifest installs a binary besides {BINARY} and {HELPER}: \
+        3,
+        "the manifest installs a binary besides {BINARY}, {HELPER} and {MCP}: \
          {installed_binaries:#?}"
     );
 
@@ -403,6 +406,7 @@ fn the_release_checks_the_bundle_carries_postio() {
     );
     for installed in [
         format!("files/bin/{BINARY}"),
+        format!("files/bin/{MCP}"),
         format!("files/share/applications/{APP_ID}.desktop"),
         format!("files/share/metainfo/{APP_ID}.metainfo.xml"),
     ] {

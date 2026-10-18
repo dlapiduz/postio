@@ -222,7 +222,8 @@ uniffi::setup_scaffolding!();
 
 /// Set aside the store at `store_path` (or the usual path) and start a fresh
 /// one there, carrying its accounts across: what "Start over" does when
-/// [`Session::open_at`] answers [`SessionError::StoreFromAnotherBuild`]
+/// [`Session::open_at`] answers [`SessionError::StoreFromAnotherBuild`] or
+/// [`SessionError::StoreUnderAnotherKey`]
 /// (specs/009-focus-macos T098). The store key is the keyring's. Blocks, as
 /// opening a session does: call it off the main actor, then open again.
 #[uniffi::export]
@@ -246,6 +247,10 @@ pub struct StoreRefusalWordsFfi {
     pub from_another_build: String,
     /// What that page says: why, what a fresh store keeps, what stays.
     pub start_over_sentence: String,
+    /// The heading for [`SessionError::StoreUnderAnotherKey`].
+    pub under_another_key: String,
+    /// What that page says: why, what a fresh store costs, what stays.
+    pub start_over_under_another_key_sentence: String,
     /// Its button, which runs [`start_over`].
     pub start_over: String,
     /// The button while [`start_over`] runs.
@@ -261,6 +266,8 @@ pub fn store_refusal_words() -> StoreRefusalWordsFfi {
         try_again: words::TRY_AGAIN.to_owned(),
         from_another_build: words::STORE_FROM_ANOTHER_VERSION.to_owned(),
         start_over_sentence: words::START_OVER.to_owned(),
+        under_another_key: words::STORE_UNDER_ANOTHER_KEY.to_owned(),
+        start_over_under_another_key_sentence: words::START_OVER_UNDER_ANOTHER_KEY.to_owned(),
         start_over: words::START_A_FRESH_STORE.to_owned(),
         starting_over: words::STARTING_A_FRESH_STORE.to_owned(),
     }
