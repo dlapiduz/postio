@@ -90,6 +90,43 @@ fn text_paragraph(text: &str) -> Document {
     document
 }
 
+/// Wait for a formatting command to change the document, and fail within
+/// seconds, naming the command and the selection it ran on, if it never does.
+///
+/// A command applied to a selection that has collapsed toggles the typing
+/// style at a caret instead of wrapping anything: nothing changes, nothing
+/// is reported, and nothing will ever arrive. The general deadline is 120 s
+/// scaled by patience for waits on WebKit loading; a wait on this has no
+/// slow case worth that long (#1859).
+fn lands(editor: &Editor, command: &str, landed: impl Fn() -> bool) {
+    let limit = postio_test_support::scaled(Duration::from_secs(10));
+    let start = std::time::Instant::now();
+    loop {
+        crate::support_compose::settle();
+        if landed() {
+            return;
+        }
+        if let Some(reason) = postio_widgets::composer::web_process::take_death() {
+            panic!("a WebKit web process died ({reason}) while waiting for {command}");
+        }
+        if start.elapsed() >= limit {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let selection = eval_str(
+        editor.widget(),
+        "(() => { const s = window.getSelection(); \
+           return 'collapsed=' + s.isCollapsed + ' ranges=' + s.rangeCount \
+             + ' selected_chars=' + String(s).length; })()",
+    );
+    panic!(
+        "{command} produced no document change within {limit:?}; the selection \
+         at that point was: {selection} (a collapsed selection means the \
+         command toggled a typing style instead of formatting text, #1859)"
+    );
+}
+
 pub fn every_formatting_command_lands_as_canonical_structure() {
     if adw::init().is_err() || gdk::Display::default().is_none() {
         eprintln!("skipping: no display (run under the headless runner to exercise this)");
@@ -110,7 +147,7 @@ pub fn every_formatting_command_lands_as_canonical_structure() {
     );
     select(editor.widget(), 5, 9);
     editor.format(Format::Bold);
-    settle("bold to land as Strong", || {
+    lands(&editor, "bold to land as Strong", || {
         matches!(
             editor.document().blocks.first(),
             Some(Block::Paragraph(inlines))
@@ -122,7 +159,7 @@ pub fn every_formatting_command_lands_as_canonical_structure() {
     load_synced(&editor, text_paragraph("lean on this"), "lean on this");
     select(editor.widget(), 0, 4);
     editor.format(Format::Italic);
-    settle("italic to land as Emphasis", || {
+    lands(&editor, "italic to land as Emphasis", || {
         matches!(
             editor.document().blocks.first(),
             Some(Block::Paragraph(inlines))
@@ -134,7 +171,7 @@ pub fn every_formatting_command_lands_as_canonical_structure() {
     load_synced(&editor, text_paragraph("item one"), "item one");
     select(editor.widget(), 0, 0);
     editor.format(Format::BulletList);
-    settle("a bulleted list", || {
+    lands(&editor, "a bulleted list", || {
         matches!(
             editor.document().blocks.first(),
             Some(Block::List { ordered: false, .. })
@@ -143,7 +180,7 @@ pub fn every_formatting_command_lands_as_canonical_structure() {
     load_synced(&editor, text_paragraph("first"), "first");
     select(editor.widget(), 0, 0);
     editor.format(Format::NumberedList);
-    settle("a numbered list", || {
+    lands(&editor, "a numbered list", || {
         matches!(
             editor.document().blocks.first(),
             Some(Block::List { ordered: true, .. })
@@ -154,11 +191,11 @@ pub fn every_formatting_command_lands_as_canonical_structure() {
     load_synced(&editor, text_paragraph("as you said"), "as you said");
     select(editor.widget(), 0, 0);
     editor.format(Format::QuoteBlock);
-    settle("a quote block", || {
+    lands(&editor, "a quote block", || {
         matches!(editor.document().blocks.first(), Some(Block::Quote(_)))
     });
     editor.format(Format::QuoteBlock);
-    settle("the quote toggled back to a paragraph", || {
+    lands(&editor, "the quote toggled back to a paragraph", || {
         matches!(editor.document().blocks.first(), Some(Block::Paragraph(_)))
     });
 
@@ -170,7 +207,7 @@ pub fn every_formatting_command_lands_as_canonical_structure() {
     );
     select(editor.widget(), 5, 9);
     assert!(editor.create_link("https://example.com/doc"));
-    settle("the link to land", || {
+    lands(&editor, "the link to land", || {
         matches!(
             editor.document().blocks.first(),
             Some(Block::Paragraph(inlines)) if inlines.iter().any(|inline| matches!(
