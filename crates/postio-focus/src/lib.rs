@@ -69,7 +69,7 @@ pub use results::{
 };
 pub use states::{AccountsRead, BannerButton, BannerView};
 pub use surfaces::{Host, ReaderVerb, SurfaceKind};
-pub use verbs::{Everything, ToastKind};
+pub use verbs::{Aimed, Everything, ToastKind};
 
 /// What differs between platforms, as policy rather than as a fork
 /// (ADR 0045 rule 4).
@@ -317,6 +317,16 @@ pub enum Input {
     },
     /// A timer the controller set ([`Effect::Timer`]) has run out.
     Timer(u64),
+    /// A verb a menu or picker chose, for the controller to aim as a key
+    /// would: at the selection, else the cursor's row, remembering what an
+    /// archive or delete takes out for the undo.
+    Verb(Command),
+    /// A command to send as it is, aimed at nothing in the list: the open
+    /// message's, a picker's own, an answer to an invitation.
+    Post(Command),
+    /// Archive the digest with this delivery from the frontend's own
+    /// window for it: one undo, and the undo brings its row back.
+    ArchiveDigest(postio_model::DeliveryId),
 }
 
 /// What the frontend does next.
@@ -1370,6 +1380,19 @@ impl FocusController {
                 self.cursor.set_accounts(accounts);
                 Vec::new()
             }
+            Input::Verb(command) => {
+                let total = self.feed.total();
+                let steps = self.verbs.send(command, &mut self.cursor, rows, total);
+                self.effects(steps)
+            }
+            Input::Post(command) => {
+                let steps = self.verbs.post(command);
+                self.effects(steps)
+            }
+            Input::ArchiveDigest(delivery) => {
+                let steps = self.verbs.archive_digest(delivery);
+                self.effects(steps)
+            }
             Input::AtTop(at_top) => {
                 self.verbs.set_at_top(at_top);
                 Vec::new()
@@ -1721,12 +1744,47 @@ impl FocusController {
         if let Some(steps) = self.going(id, rows) {
             return steps;
         }
+        // Archive on a digest's row archives its delivery, whatever else is
+        // selected: a message verb has nothing to aim at there.
+        if id == CommandId::Archive
+            && let Some(delivery) = self.digest_at_cursor(rows)
+        {
+            return self.verbs.archive_digest(delivery);
+        }
         let has_action = self.counts.map(|counts| counts.has_action);
         let total = self.feed.total();
         self.cursor
             .command(id, rows, self.feed.scope(), total, has_action)
             .or_else(|| self.verbs.command(id, &mut self.cursor, rows, total))
             .unwrap_or_default()
+    }
+
+    /// The delivery of the digest the cursor is on, when it is on one.
+    fn digest_at_cursor(&self, rows: &dyn Rows) -> Option<postio_model::DeliveryId> {
+        let row = self.cursor.row(rows).filter(|row| row.digest)?;
+        let position = self.cursor.position()?;
+        match rows.row(position) {
+            Some(FocusRow::Digest(digest)) => Some(digest.delivery),
+            _ => self.feed.digest(row.id).map(|digest| digest.delivery),
+        }
+    }
+
+    /// Where a verb would go now: the selection when there is one, the
+    /// cursor's row otherwise.
+    pub fn aim(&self, rows: &dyn Rows) -> Aimed {
+        verbs::Verbs::aimed(&self.cursor, rows)
+    }
+
+    /// Whether an undo is waiting for the rows it brings back to be in the
+    /// list.
+    pub fn restoring(&self) -> bool {
+        self.verbs.restoring()
+    }
+
+    /// Whether a landing put the cursor on a row an undo brought back, since
+    /// this was last asked: true once per undo.
+    pub fn take_restored(&mut self) -> bool {
+        self.verbs.take_restored()
     }
 
     /// Open the row at `position`: a message to read, a draft to write, a

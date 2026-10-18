@@ -10,7 +10,7 @@
 
 use postio_core::state::Selection;
 use postio_core::{Command, CommandId, Event, MessageTarget};
-use postio_model::{AccountId, MessageId};
+use postio_model::{AccountId, DeliveryId, MessageId};
 use postio_ui::focus_target::{Aim, AimRow, Dispatch};
 
 use crate::cursor::{Cursor, RowFacts, Rows};
@@ -31,6 +31,16 @@ pub struct Everything {
     pub except: Vec<MessageId>,
     /// The search whose every match is selected, instead of the inbox.
     pub query: Option<postio_search::ParsedQuery>,
+}
+
+/// Where a verb would go: each of `aims`, or -- with `everything` -- a
+/// whole-view selection the host resolves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Aimed {
+    /// Where it goes, in the order to send it.
+    pub aims: Vec<MessageTarget>,
+    /// A whole-view selection, instead of `aims`.
+    pub everything: Option<Everything>,
 }
 
 /// How a toast is drawn.
@@ -95,6 +105,9 @@ pub(crate) struct Verbs {
     /// Rows the last archives and deletes took out.
     removed: Vec<MessageId>,
     restoring: Option<Restoring>,
+    /// Whether the last landing put the cursor on a row an undo brought
+    /// back, and nobody has asked since.
+    restored: bool,
     /// Whether the last command was an answer to an invitation.
     answering: bool,
     /// Whether the list stands at its top (a fact the frontend reports).
@@ -104,6 +117,17 @@ pub(crate) struct Verbs {
 impl Verbs {
     pub(crate) fn set_at_top(&mut self, at_top: bool) {
         self.at_top = at_top;
+    }
+
+    /// Whether an undo is waiting for its rows to be in the list.
+    pub(crate) fn restoring(&self) -> bool {
+        self.restoring.is_some()
+    }
+
+    /// Whether the cursor was put on a row an undo brought back since this
+    /// was last asked.
+    pub(crate) fn take_restored(&mut self) -> bool {
+        std::mem::take(&mut self.restored)
     }
 
     /// A command the verbs answer for the open message alone -- not the
@@ -153,11 +177,10 @@ impl Verbs {
                     return Some(Vec::new());
                 };
                 let message = Some(row.id);
-                self.answering = true;
-                vec![Step::Ask(Request::Post(match id {
+                self.post(match id {
                     CommandId::DeclineInvite => Command::DeclineInvite { message },
                     _ => Command::AcceptInvite { message },
-                }))]
+                })
             }
             CommandId::DismissMarker => self.send(
                 Command::DismissMarker {
@@ -170,7 +193,7 @@ impl Verbs {
             ),
             _ => match postio_ui::focus_target::dispatch(id)? {
                 Dispatch::OnMail(command) => self.send(command, cursor, rows, total),
-                Dispatch::Plain(command) => vec![Step::Ask(Request::Post(command))],
+                Dispatch::Plain(command) => self.post(command),
             },
         };
         Some(steps)
@@ -178,7 +201,7 @@ impl Verbs {
 
     /// Send `command`, aimed as the selection or the cursor says, and let
     /// the selection go: what it named has been acted on.
-    fn send(
+    pub(crate) fn send(
         &mut self,
         command: Command,
         cursor: &mut Cursor,
@@ -186,24 +209,11 @@ impl Verbs {
         total: u32,
     ) -> Vec<Step> {
         let selection = cursor.selection();
-        let at = cursor.row(rows).map(|row| AimRow {
-            id: row.id,
-            threads: row.threads,
-            digest: row.digest,
-        });
-        let (aims, everything) =
-            match postio_ui::focus_target::aim_by(&selection, cursor.reach(), at.as_ref()) {
-                Aim::Everything { except } => (
-                    Vec::new(),
-                    Some(Everything {
-                        accounts: cursor.accounts().to_vec(),
-                        except,
-                        query: None,
-                    }),
-                ),
-                Aim::Targets(aims) if aims.is_empty() => return Vec::new(),
-                Aim::Targets(aims) => (aims, None),
-            };
+        let at = Self::row_aimed_at(cursor, rows);
+        let Aimed { aims, everything } = Self::aimed(cursor, rows);
+        if everything.is_none() && aims.is_empty() {
+            return Vec::new();
+        }
         let mut steps = Vec::new();
         if matches!(command, Command::Archive { .. } | Command::Delete { .. }) {
             self.note_removed(&selection, at.as_ref());
@@ -218,6 +228,61 @@ impl Verbs {
         steps
     }
 
+    /// The cursor's row as a verb aims at it.
+    fn row_aimed_at(cursor: &Cursor, rows: &dyn Rows) -> Option<AimRow> {
+        cursor.row(rows).map(|row| AimRow {
+            id: row.id,
+            threads: row.threads,
+            digest: row.digest,
+        })
+    }
+
+    /// Where a verb goes: the selection when there is one, the cursor's row
+    /// otherwise. A row folded from several accounts is every copy
+    /// (`MessageTarget::Threads`, T161); a message in no conversation is
+    /// itself. A whole-view selection is a predicate the host resolves over
+    /// the inboxes, never a list of what happens to be on screen.
+    pub(crate) fn aimed(cursor: &Cursor, rows: &dyn Rows) -> Aimed {
+        let at = Self::row_aimed_at(cursor, rows);
+        match postio_ui::focus_target::aim_by(&cursor.selection(), cursor.reach(), at.as_ref()) {
+            Aim::Everything { except } => Aimed {
+                aims: Vec::new(),
+                everything: Some(Everything {
+                    accounts: cursor.accounts().to_vec(),
+                    except,
+                    query: None,
+                }),
+            },
+            Aim::Targets(aims) => Aimed {
+                aims,
+                everything: None,
+            },
+        }
+    }
+
+    /// Send `command` as it is: a verb that aims at nothing. An answer to
+    /// an invitation is remembered, so its toast stays as long as its
+    /// reply can be taken back.
+    pub(crate) fn post(&mut self, command: Command) -> Vec<Step> {
+        if matches!(
+            command,
+            Command::AcceptInvite { .. } | Command::DeclineInvite { .. }
+        ) {
+            self.answering = true;
+        }
+        vec![Step::Ask(Request::Post(command))]
+    }
+
+    /// Archive a whole delivery: one undo (FR-125). Its row goes with it,
+    /// and comes back with the undo.
+    pub(crate) fn archive_digest(&mut self, delivery: DeliveryId) -> Vec<Step> {
+        self.remember(vec![MessageId::new(-delivery.get())]);
+        vec![Step::Ask(Request::Post(Command::ArchiveDigest {
+            delivery,
+            archived: true,
+        }))]
+    }
+
     /// Remember the rows an archive or delete is about to take out: what
     /// the cursor goes back to when the undo brings them back.
     fn note_removed(&mut self, selection: &Selection, cursor: Option<&AimRow>) {
@@ -228,6 +293,10 @@ impl Verbs {
             // Everything selected is a predicate, with no rows to name.
             Selection::Everything { .. } => Vec::new(),
         };
+        self.remember(rows);
+    }
+
+    fn remember(&mut self, rows: Vec<MessageId>) {
         self.removed.extend(rows);
         let excess = self.removed.len().saturating_sub(REMEMBERED);
         self.removed.drain(..excess);
@@ -312,6 +381,7 @@ impl Verbs {
             .min();
         match found {
             Some(position) => {
+                self.restored = true;
                 let mut steps = cursor.place(position, rows);
                 if restoring.at_top {
                     steps.push(Step::Show(Intent::ListToTop));

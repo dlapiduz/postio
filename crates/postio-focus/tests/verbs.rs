@@ -13,7 +13,8 @@ use postio_core::{Command, CommandId, Event, MessageTarget};
 use postio_focus::{
     Effect, FocusController, Input, Intent, Policy, Request, RowFacts, Rows, ToastKind,
 };
-use postio_model::{AccountId, MessageId, ThreadId};
+use postio_model::{AccountId, DeliveryId, MessageId, ThreadId};
+use postio_ui::focus_list::{Digest, FocusRow};
 
 struct List {
     rows: Vec<RowFacts>,
@@ -27,8 +28,8 @@ impl List {
                 .iter()
                 .map(|&id| RowFacts {
                     id: MessageId::new(id),
-                    digest: id == 0,
-                    threads: if id == 0 {
+                    digest: id <= 0,
+                    threads: if id <= 0 {
                         Vec::new()
                     } else {
                         vec![ThreadId::new(1000 + id)]
@@ -52,6 +53,22 @@ impl Rows for List {
             .iter()
             .position(|row| row.id == message)
             .map(|at| at as u32)
+    }
+    /// A digest row, as the frontend's list holds one: its id is minus
+    /// its delivery.
+    fn row(&self, position: u32) -> Option<FocusRow> {
+        let row = self.rows.get(position as usize)?;
+        row.digest.then(|| {
+            FocusRow::Digest(Digest {
+                delivery: DeliveryId::new(-row.id.get()),
+                rule: "Newsletters".to_owned(),
+                cadence: None,
+                count: 3,
+                senders: Vec::new(),
+                summary_line: None,
+                at: chrono::Utc::now(),
+            })
+        })
     }
 }
 
@@ -173,7 +190,8 @@ fn archiving_the_cursors_selected_row_hands_the_cursor_to_the_survivor_below() {
 fn a_digest_row_alone_gives_a_mail_verb_nothing_to_aim_at() {
     let rows = List::of(&[0, 2]);
     let mut focus = focus_on(&rows);
-    assert!(asks(&run(&mut focus, CommandId::Archive, &rows)).is_empty());
+    // Archive on a digest's row is its own verb (below); Delete is not.
+    assert!(asks(&run(&mut focus, CommandId::Delete, &rows)).is_empty());
 }
 
 #[test]
@@ -295,4 +313,144 @@ fn the_controller_says_which_commands_are_its_own() {
     for id in [CommandId::Settings, CommandId::Send] {
         assert!(!focus.answers(id), "{id} is a surface's, not the list's");
     }
+}
+
+#[test]
+fn archiving_on_a_digest_row_archives_its_delivery() {
+    let rows = List::of(&[1, -40, 3]);
+    let mut focus = focus_on(&rows);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let effects = run(&mut focus, CommandId::Archive, &rows);
+    assert_eq!(
+        asks(&effects),
+        vec![Request::Post(Command::ArchiveDigest {
+            delivery: DeliveryId::new(40),
+            archived: true
+        })]
+    );
+}
+
+#[test]
+fn undoing_a_digest_archive_puts_the_cursor_back_on_its_row() {
+    let before = List::of(&[1, -40, 3, 4]);
+    let mut focus = focus_on(&before);
+    let _ = run(&mut focus, CommandId::NextMessage, &before);
+    let _ = run(&mut focus, CommandId::Archive, &before);
+    let after = List::of(&[1, 3, 4]);
+    let _ = focus.landed(&after, false);
+    let _ = run(&mut focus, CommandId::LastMessage, &after);
+    let _ = focus.handle(Input::Event(Event::UndoPerformed {
+        description: "Archived a digest".into(),
+    }));
+    assert_eq!(cursor_of(&focus.landed(&before, false)), Some(1));
+}
+
+#[test]
+fn posting_is_sending_as_it_is_and_an_answer_keeps_its_toast_long() {
+    let rows = List::of(&[7]);
+    let mut focus = focus_on(&rows);
+    let accept = Command::AcceptInvite {
+        message: Some(MessageId::new(7)),
+    };
+    let effects = focus.handle_on(Input::Post(accept.clone()), &rows);
+    assert_eq!(asks(&effects), vec![Request::Post(accept)]);
+    let effects = focus.handle(Input::Event(Event::ActionCompleted {
+        description: "Accepted".into(),
+        undoable: true,
+    }));
+    assert!(matches!(
+        shown(&effects).as_slice(),
+        [Intent::Toast {
+            kind: ToastKind::Completed {
+                seconds: Some(_),
+                ..
+            },
+            ..
+        }]
+    ));
+    // Any other post leaves the toast as long as the usual.
+    let _ = focus.handle_on(Input::Post(Command::Refresh), &rows);
+    let effects = focus.handle(Input::Event(Event::ActionCompleted {
+        description: "Refreshed".into(),
+        undoable: false,
+    }));
+    assert!(matches!(
+        shown(&effects).as_slice(),
+        [Intent::Toast {
+            kind: ToastKind::Completed { seconds: None, .. },
+            ..
+        }]
+    ));
+}
+
+#[test]
+fn a_verb_a_picker_hands_over_is_aimed_like_a_key_s() {
+    let rows = List::of(&[1, 2, 3]);
+    let mut focus = focus_on(&rows);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let command = Command::Snooze {
+        target: MessageTarget::Selection,
+        until: None,
+    };
+    let effects = focus.handle_on(Input::Verb(command.clone()), &rows);
+    assert_eq!(
+        asks(&effects),
+        vec![Request::Send {
+            command,
+            aims: vec![MessageTarget::Threads(vec![ThreadId::new(1002)])],
+            everything: None,
+        }]
+    );
+}
+
+#[test]
+fn an_archive_a_picker_hands_over_is_remembered_for_the_undo() {
+    let before = List::of(&[1, 2, 3]);
+    let mut focus = focus_on(&before);
+    let _ = run(&mut focus, CommandId::NextMessage, &before);
+    let _ = focus.handle_on(
+        Input::Verb(Command::default_for(CommandId::Archive)),
+        &before,
+    );
+    let after = List::of(&[1, 3]);
+    let _ = focus.landed(&after, false);
+    let _ = focus.handle(Input::Event(Event::UndoPerformed {
+        description: "Archived 1 message".into(),
+    }));
+    assert!(focus.restoring(), "an undo is waiting for its rows");
+    assert_eq!(cursor_of(&focus.landed(&before, false)), Some(1));
+    assert!(!focus.restoring());
+    assert!(focus.take_restored(), "the landing placed an undo's cursor");
+    assert!(!focus.take_restored(), "once");
+}
+
+#[test]
+fn an_undo_that_finds_the_list_at_its_top_scrolls_back_to_it() {
+    let before = List::of(&[1, 2, 3]);
+    let mut focus = focus_on(&before);
+    let _ = run(&mut focus, CommandId::Archive, &before);
+    let after = List::of(&[2, 3]);
+    let _ = focus.landed(&after, false);
+    let _ = focus.handle(Input::AtTop(true));
+    let _ = focus.handle(Input::Event(Event::UndoPerformed {
+        description: "Archived 1 message".into(),
+    }));
+    let effects = focus.landed(&before, false);
+    assert!(shown(&effects).contains(&Intent::ListToTop));
+}
+
+#[test]
+fn the_controller_says_where_a_verb_would_go() {
+    let rows = List::of(&[1, 2, 3]);
+    let mut focus = focus_on(&rows);
+    let aimed = focus.aim(&rows);
+    assert_eq!(
+        aimed.aims,
+        vec![MessageTarget::Threads(vec![ThreadId::new(1001)])]
+    );
+    assert_eq!(aimed.everything, None);
+    let _ = run(&mut focus, CommandId::SelectAll, &rows);
+    let aimed = focus.aim(&rows);
+    assert!(aimed.aims.is_empty());
+    assert!(aimed.everything.is_some());
 }
