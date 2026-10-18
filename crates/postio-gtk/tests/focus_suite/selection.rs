@@ -212,3 +212,40 @@ pub fn the_bulk_bar_has_a_delete_button_that_deletes_the_selection() {
         );
     });
 }
+
+/// `x` on a row of a select-all takes that row out of the predicate: the
+/// selection stays "everything", less one, and the bar counts from the
+/// list's total.
+pub fn x_after_a_select_all_takes_that_row_out_of_it() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (window, _client) = fixture.five().await;
+        let bar = only(&window, "focus-bulk-bar");
+        support::keys(&window, &["X"]);
+        assert!(window.selection().is_everything());
+        assert!(
+            texts(&bar).iter().any(|text| text == "5 selected"),
+            "{:?}",
+            texts(&bar)
+        );
+        support::keys(&window, &["j", "x"]);
+        assert!(
+            window.selection().is_everything(),
+            "still a predicate over the view"
+        );
+        assert!(
+            texts(&bar).iter().any(|text| text == "4 selected"),
+            "the row taken out is not counted: {:?}",
+            texts(&bar)
+        );
+        support::keys(&window, &["x"]);
+        assert!(
+            texts(&bar).iter().any(|text| text == "5 selected"),
+            "x again puts it back: {:?}",
+            texts(&bar)
+        );
+    });
+}

@@ -669,3 +669,47 @@ pub fn a_message_opened_away_from_the_inbox_opens_in_the_dialog() {
         assert!(!dialog_up(&window));
     });
 }
+
+/// `!` narrows the list under a message open beside it. When the message
+/// the cursor was on is not marked, the cursor lands on the narrowed list's
+/// first row, and the pane follows the cursor there as it does for `j`
+/// (T232). Same on main before the controller drove the cursor.
+pub fn a_filter_landing_under_an_open_pane_shows_the_cursors_row_there() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let filed = fixture.file_five().await;
+        // Second and Fourth ask something; First does not.
+        fixture.ask(filed[1], "Can you look at this?").await;
+        fixture.ask(filed[3], "Could you sign it by Friday?").await;
+        let (window, _client) = fixture.open_five().await;
+        read_in_pane(&window);
+        pane_laid_out(&window).await;
+        support::deliver(&window, "Return");
+        assert!(
+            crate::settle_until(async || pane_title(&window).as_deref() == Some("First")).await,
+            "Return did not open First in the pane: {:?}",
+            window.reading_pane().map(|pane| support::texts(&pane))
+        );
+
+        support::keys(&window, &["exclam"]);
+        assert!(
+            crate::settle_until(async || support::subjects(&window) == ["Second", "Fourth"]).await,
+            "only the marked rows remain: {:?}",
+            support::subjects(&window)
+        );
+        crate::settle();
+        assert_eq!(cursor(&window), 0, "the cursor is on the first marked row");
+        assert_eq!(
+            support::subjects(&window).first().map(String::as_str),
+            Some("Second")
+        );
+        assert!(
+            crate::settle_until(async || pane_title(&window).as_deref() == Some("Second")).await,
+            "the pane did not follow the cursor to Second: {:?}",
+            pane_title(&window)
+        );
+    });
+}

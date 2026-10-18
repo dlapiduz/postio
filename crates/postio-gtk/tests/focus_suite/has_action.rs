@@ -83,3 +83,54 @@ pub fn has_action_narrows_to_the_marked_rows_and_back() {
         );
     });
 }
+
+/// Going to another place takes `!` with it: the narrowed list is the
+/// inbox's, and a selection made in it names rows that are not there.
+pub fn going_home_leaves_the_filter_off_and_the_selection_gone() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let filed = fixture.file_five().await;
+        fixture.ask(filed[1], "Can you look at this?").await;
+        fixture.ask(filed[3], "Could you sign it by Friday?").await;
+        let (window, _client) = fixture.open_five().await;
+        assert!(
+            crate::settle_until(async || {
+                texts(&only(&window, "focus-has-action"))
+                    .iter()
+                    .any(|said| said == "Has action \u{b7} 2")
+            })
+            .await,
+            "the toggle carries the count"
+        );
+
+        support::keys(&window, &["exclam"]);
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "only the marked rows remain: {:?}",
+            support::subjects(&window)
+        );
+        support::keys(&window, &["x"]);
+        assert!(!window.selection().is_empty(), "a marked row is selected");
+
+        support::keys(&window, &["g", "i"]);
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 5).await,
+            "g i shows the whole inbox: {:?}",
+            support::subjects(&window)
+        );
+        assert!(
+            window.selection().is_empty(),
+            "the selection did not follow the list to the inbox"
+        );
+        // `!` is off: pressing it narrows again rather than widening.
+        support::keys(&window, &["exclam"]);
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "! after g i narrows again, so it was off: {:?}",
+            support::subjects(&window)
+        );
+    });
+}

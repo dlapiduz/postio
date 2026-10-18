@@ -1920,9 +1920,43 @@ impl FocusController {
         self.cursor.selection()
     }
 
+    /// The conversations each selected row stands for, kept from when it
+    /// was selected: a row scrolled out of the window is still aimed at in
+    /// full (spec 007 T161). Empty with nothing selected.
+    pub fn selection_reach(
+        &self,
+    ) -> &std::collections::HashMap<MessageId, Vec<postio_model::ThreadId>> {
+        self.cursor.reach()
+    }
+
     /// Whether the list is narrowed to the rows with a marker (`!`).
     pub fn has_action(&self) -> bool {
         self.cursor.has_action()
+    }
+
+    /// The frontend's own list view put the cursor on `position` -- a click,
+    /// a row archived from under it -- or took it off the list (`None`).
+    /// The controller notes where it is, so the next `j` walks on from
+    /// there, and draws nothing: the cursor is already in place.
+    pub fn cursor_is(&mut self, position: Option<u32>) {
+        self.cursor.moved_to(position);
+    }
+
+    /// Drop the selection, as Back's last rung does; the cursor and `!`
+    /// stay. For a frontend whose own action ends a selection (a picker
+    /// closed, a row's menu for a row outside it).
+    pub fn clear_selection(&mut self) -> Vec<Effect> {
+        let steps = self.cursor.clear(self.feed.total());
+        self.effects(steps)
+    }
+
+    /// The frontend takes the list to a place it opens itself: the
+    /// selection goes, `!` is off, a heading a day comes back. The caller
+    /// opens the place and names it ([`Self::note_place`]).
+    pub fn leave_list(&mut self) -> Vec<Effect> {
+        let mut steps = self.cursor.leave(self.feed.total());
+        steps.push(feed::Step::Show(Intent::SingleHeading(None)));
+        self.effects(steps)
     }
 
     /// The bindings in force: what every keycap the controller spells

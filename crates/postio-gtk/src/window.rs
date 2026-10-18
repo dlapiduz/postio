@@ -20,7 +20,7 @@ use postio_model::ids::{AccountId, MessageId, ThreadId};
 use postio_model::{FocusScope, ListScope};
 use postio_ui::keymap::{KeyContext, Outcome, Resolver};
 use postio_ui::list_state::{OPENING_THRESHOLD, Waiting, describe_wait};
-use postio_ui::selection::{Reach, SelectionState};
+use postio_ui::selection::SelectionState;
 
 use crate::bulk::Bulk;
 use crate::chrome::Chrome;
@@ -138,11 +138,14 @@ mod imp {
         /// Keys to commands, for Focus's commands alone (`crate::keys`).
         pub resolver: RefCell<Option<Resolver>>,
         /// What `e` would archive: not the cursor, which is GTK's
-        /// selection model on the list (constitution II).
+        /// selection model on the list (constitution II). A mirror of the
+        /// controller's selection, written only when its `Selection` intent
+        /// is applied (ADR 0045).
         pub picked: SelectionState,
         /// The conversations each picked row reaches: its own and the
         /// copies folded into it (T161), kept from when it was picked, so a
-        /// row scrolled out of the window is still aimed at in full.
+        /// row scrolled out of the window is still aimed at in full. The
+        /// controller's, mirrored with `picked`.
         pub reach: RefCell<HashMap<MessageId, Vec<ThreadId>>>,
         pub bulk: RefCell<Option<Rc<Bulk>>>,
         /// The host's view of this window's aim: a whole-view selection is
@@ -150,13 +153,6 @@ mod imp {
         pub state: RefCell<Option<SharedState>>,
         /// The enabled accounts, the aggregate a whole-view selection spans.
         pub accounts: RefCell<Vec<AccountId>>,
-        /// Whether `!` has narrowed the list to the rows with a marker.
-        pub has_action: Cell<bool>,
-        /// The strip's counts, as the host last said.
-        pub counts: Cell<Option<postio_client::protocol::FocusCounts>>,
-        /// A message to put the cursor back on once the list it is changing
-        /// to has landed: `!` keeps the cursor on the same message.
-        pub keep: Cell<Option<MessageId>>,
         /// Set while the window itself puts the cursor on a list's first
         /// row: that opens nothing, even with the reading pane beside.
         pub placing_cursor: Cell<bool>,
@@ -320,9 +316,6 @@ mod imp {
                 bulk: RefCell::default(),
                 state: RefCell::default(),
                 accounts: RefCell::default(),
-                has_action: Cell::default(),
-                counts: Cell::default(),
-                keep: Cell::default(),
                 placing_cursor: Cell::default(),
                 trackers: RefCell::default(),
                 tracked: RefCell::default(),
@@ -748,6 +741,9 @@ impl FocusWindow {
         }
         if let Some(pane) = imp.pane.borrow().as_ref() {
             pane.set_keymap(keymap.clone());
+            // The empty page's keycaps read the same keymap.
+            pane.feed()
+                .input(postio_focus::Input::Keymap(keymap.clone()));
         }
         if let Some(bulk) = imp.bulk.borrow().as_ref() {
             bulk.set_keymap(&keymap);
@@ -1180,11 +1176,11 @@ impl FocusWindow {
             Ok(CommandId::NextMessage) if reading.step_found(1) => {}
             Ok(CommandId::PrevMessage) if reading.step_found(-1) => {}
             Ok(CommandId::NextMessage) => {
-                self.move_cursor(1);
+                self.cursor_command(CommandId::NextMessage);
                 self.open_message();
             }
             Ok(CommandId::PrevMessage) => {
-                self.move_cursor(-1);
+                self.cursor_command(CommandId::PrevMessage);
                 self.open_message();
             }
             Ok(CommandId::ViewSource) => self.view_source(),
@@ -1310,7 +1306,7 @@ impl FocusWindow {
                     if at != gtk::INVALID_LIST_POSITION && at != place {
                         return glib::ControlFlow::Break;
                     }
-                    window.cursor_to(Some(place));
+                    window.point_cursor(place);
                     window.open_message();
                 }
             }
@@ -1397,6 +1393,12 @@ impl FocusWindow {
                 .imp()
                 .accounts
                 .replace(enabled.iter().map(|account| account.id).collect());
+            // What a select-all reaches.
+            if let Some(pane) = window.pane() {
+                pane.feed().input(postio_focus::Input::Accounts(
+                    enabled.iter().map(|account| account.id).collect(),
+                ));
+            }
             // A new message is written from the first account.
             if let Some(account) = enabled.first() {
                 window.mount_compose(&client, account.id);
@@ -1607,31 +1609,18 @@ impl FocusWindow {
             }
         }
         match id {
-            CommandId::NextMessage => self.move_cursor(1),
-            CommandId::PrevMessage => self.move_cursor(-1),
-            CommandId::FirstMessage => self.cursor_to(Some(0)),
-            CommandId::LastMessage => {
-                let last = self.list_len().checked_sub(1);
-                self.cursor_to(last);
-            }
-            CommandId::ToggleSelection => {
-                if let Some(row) = self
-                    .cursor_row()
-                    .filter(|row| !matches!(row, FocusRow::Digest(_)))
-                {
-                    self.imp()
-                        .reach
-                        .borrow_mut()
-                        .insert(row.id(), row.threads());
-                    self.imp().picked.toggle(row.id());
-                }
-            }
-            CommandId::ExtendSelectionDown => self.extend(1),
-            CommandId::ExtendSelectionUp => self.extend(-1),
-            CommandId::SelectAll => self.imp().picked.select_all(Reach {
-                accounts: self.imp().accounts.borrow().clone(),
-                omitted: Vec::new(),
-            }),
+            // The cursor's and the selection's, and `!`: the controller's
+            // rules (`postio_focus`, ADR 0045); the intents it answers with
+            // are drawn by `show_intent`.
+            CommandId::NextMessage
+            | CommandId::PrevMessage
+            | CommandId::FirstMessage
+            | CommandId::LastMessage
+            | CommandId::ToggleSelection
+            | CommandId::ExtendSelectionDown
+            | CommandId::ExtendSelectionUp
+            | CommandId::SelectAll
+            | CommandId::ToggleHasAction => self.cursor_command(id),
             CommandId::Back => {
                 if let Some(places) = self.places().filter(|places| places.is_open()) {
                     places.close();
@@ -1640,7 +1629,7 @@ impl FocusWindow {
                 } else if self.filtered().is_some() {
                     self.leave_filtered();
                 } else {
-                    self.clear_selection();
+                    self.cursor_command(CommandId::Back);
                 }
             }
             CommandId::SavedSearch1
@@ -1701,7 +1690,6 @@ impl FocusWindow {
             | CommandId::Unsnooze
             | CommandId::Undo
             | CommandId::Refresh => self.dispatch(id),
-            CommandId::ToggleHasAction => self.toggle_has_action(),
             CommandId::Quit => self.close(),
             CommandId::UpdateCredential => self.update_credential(),
             CommandId::CheatSheet => self.show_key_map(),
@@ -1902,13 +1890,6 @@ impl FocusWindow {
         std::mem::take(&mut *self.imp().unanswered.borrow_mut())
     }
 
-    /// How many rows the list has.
-    fn list_len(&self) -> u32 {
-        self.pane()
-            .map(|pane| pane.feed().list().n_items())
-            .unwrap_or(0)
-    }
-
     /// Give the keyboard to the list: the one place it rests when nothing
     /// else is being typed into. At launch, after the bar closes, after a
     /// place is chosen and after an overlay goes, the window's real focus is
@@ -1962,8 +1943,26 @@ impl FocusWindow {
             && self.places().is_none_or(|places| !places.is_open())
     }
 
-    /// Put the cursor on `position`, or on nothing, and bring it into view.
-    fn cursor_to(&self, position: Option<u32>) {
+    /// Put the cursor on `position`: the controller says whether that is a
+    /// row, and answers with the `Cursor` intent that [`Self::show_cursor`]
+    /// draws.
+    fn point_cursor(&self, position: u32) {
+        if let Some(pane) = self.pane() {
+            pane.feed().input(postio_focus::Input::Point(position));
+        }
+    }
+
+    /// Run a command the controller decides -- the cursor's, the
+    /// selection's, `!` -- and draw what it says.
+    fn cursor_command(&self, id: CommandId) {
+        if let Some(pane) = self.pane() {
+            pane.feed().command(id);
+        }
+    }
+
+    /// Draw the cursor on `position` and bring it into view. Where the
+    /// cursor goes is the controller's; this is the list view's half.
+    fn show_cursor(&self, position: u32, to_top: bool) {
         let Some(pane) = self.pane() else {
             return;
         };
@@ -1972,115 +1971,66 @@ impl FocusWindow {
         let on_a_row = gtk::prelude::GtkWindowExt::focus(self).is_some_and(|focus| {
             focus != *pane.view().upcast_ref::<gtk::Widget>() && focus.is_ancestor(pane.view())
         });
-        match position {
-            Some(position) if position < pane.feed().list().n_items() => {
-                pane.cursor().set_selected(position);
-                if on_a_row {
-                    // The list view's own focus lands on its first row, so
-                    // the keyboard follows the cursor to its row instead.
-                    pane.focus_cursor();
-                } else {
-                    pane.view()
-                        .scroll_to(position, gtk::ListScrollFlags::NONE, None);
+        if position >= pane.feed().list().n_items() {
+            return;
+        }
+        pane.cursor().set_selected(position);
+        if on_a_row {
+            // The list view's own focus lands on its first row, so
+            // the keyboard follows the cursor to its row instead.
+            pane.focus_cursor();
+        } else {
+            pane.view()
+                .scroll_to(position, gtk::ListScrollFlags::NONE, None);
+        }
+        if to_top {
+            pane.to_top();
+        }
+    }
+
+    /// Draw what the controller says about the list: where the cursor is,
+    /// what is selected, the heading, the strip's counts, the page that
+    /// stands in for an empty list (ADR 0045).
+    fn show_intent(&self, intent: &postio_focus::Intent) {
+        use postio_focus::Intent;
+        match intent {
+            Intent::Cursor { position, to_top } => self.show_cursor(*position, *to_top),
+            Intent::Selection { selection, summary } => {
+                self.show_selection(selection, summary.as_deref());
+            }
+            Intent::SingleHeading(heading) => {
+                if let Some(pane) = self.pane() {
+                    pane.feed().list().set_single_heading(heading.clone());
                 }
-                if position == 0 {
+            }
+            Intent::ListToTop => {
+                if let Some(pane) = self.pane() {
                     pane.to_top();
                 }
             }
+            Intent::Counts(_) => self.show_counts(),
+            Intent::Empty(page) => self.show_empty(page.as_ref()),
             _ => {}
         }
     }
 
-    /// Move the cursor `by` rows, and nothing else: nothing opens, nothing
-    /// is marked read, the selection stays as it was (FR-016).
-    fn move_cursor(&self, by: i32) {
+    /// A Ctrl-click (`Toggle`: `x` on that row) or Shift-click (`Range`: the
+    /// `Shift`+`j`/`k` walk from the anchor to that row): the controller's.
+    fn pick(&self, row: &FocusRow, pick: crate::list::row::Pick) {
+        use crate::list::row::Pick;
         let Some(pane) = self.pane() else {
             return;
         };
-        let len = pane.feed().list().n_items();
-        if len == 0 {
-            return;
-        }
-        let at = pane.cursor().selected();
-        let next = if at == gtk::INVALID_LIST_POSITION {
-            0
-        } else {
-            (i64::from(at) + i64::from(by)).clamp(0, i64::from(len) - 1) as u32
-        };
-        self.cursor_to(Some(next));
-    }
-
-    /// `J`/`K`: take the cursor's row into the selection and the next one
-    /// with it, moving the cursor onto it. A digest row is walked over, not
-    /// taken in: no bulk verb reaches it, and `x` refuses it the same way.
-    fn extend(&self, by: i32) {
-        self.take_cursor_row();
-        self.move_cursor(by);
-        self.take_cursor_row();
-    }
-
-    /// Add the cursor's row to the selection, unless it is a digest's.
-    fn take_cursor_row(&self) {
-        if let Some(row) = self
-            .cursor_row()
-            .filter(|row| !matches!(row, FocusRow::Digest(_)))
-        {
-            self.imp()
-                .reach
-                .borrow_mut()
-                .insert(row.id(), row.threads());
-            self.imp().picked.extend_to(row.id());
-        }
-    }
-
-    /// A Ctrl-click (`Toggle`: `x` on that row) or Shift-click (`Range`: the
-    /// `Shift`+`j`/`k` walk from the anchor to that row), through the same
-    /// commands the keys run.
-    fn pick(&self, row: &FocusRow, pick: crate::list::row::Pick) {
-        use crate::list::row::Pick;
-        let Some(target) = self
-            .pane()
-            .and_then(|pane| pane.feed().list().position_of(row.id()))
-        else {
-            return;
-        };
-        match pick {
-            Pick::Toggle => {
-                self.cursor_to(Some(target));
-                self.act(CommandId::ToggleSelection);
-            }
-            Pick::Range => {
-                // From the anchor (the cursor, with none yet) to the row.
-                let from = self
-                    .imp()
-                    .picked
-                    .anchor()
-                    .and_then(|anchor| {
-                        self.pane()
-                            .and_then(|pane| pane.feed().list().position_of(anchor))
-                    })
-                    .or_else(|| self.pane().map(|pane| pane.cursor().selected()))
-                    .filter(|from| *from != gtk::INVALID_LIST_POSITION)
-                    .unwrap_or(target);
-                self.cursor_to(Some(from));
-                let (step, command) = if target >= from {
-                    (1, CommandId::ExtendSelectionDown)
-                } else {
-                    (-1, CommandId::ExtendSelectionUp)
-                };
-                let mut at = from;
-                while at != target {
-                    self.act(command);
-                    at = (i64::from(at) + step) as u32;
-                }
-            }
+        if let Some(target) = pane.feed().list().position_of(row.id()) {
+            pane.feed().pick(target, pick == Pick::Range);
         }
     }
 
     /// Drop the selection; the cursor stays where it is.
     pub fn clear_selection(&self) {
-        self.imp().picked.clear();
-        self.imp().reach.borrow_mut().clear();
+        if let Some(pane) = self.pane() {
+            pane.feed().clear_selection();
+        }
     }
 
     /// What is selected now: what `e` would archive.
@@ -2200,7 +2150,7 @@ impl FocusWindow {
                 .map(|row| row.id())
         });
         if let Some(offset) = postio_ui::selection::survivor_below(rows, &gone) {
-            self.cursor_to(Some(at + offset as u32));
+            self.point_cursor(at + offset as u32);
         }
     }
 
@@ -2255,7 +2205,7 @@ impl FocusWindow {
         match found {
             Some(position) => {
                 imp.restoring.replace(None);
-                self.cursor_to(Some(position));
+                self.point_cursor(position);
                 if restoring.at_top {
                     pane.to_top();
                 }
@@ -2499,6 +2449,15 @@ impl FocusWindow {
             self,
             move || window.list_landed()
         ));
+        feed.connect_intent(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |intent| window.show_intent(intent)
+        ));
+        feed.input(postio_focus::Input::Keymap(self.keymap()));
+        feed.input(postio_focus::Input::Config(
+            imp.focus_config.borrow().clone(),
+        ));
         let pane = ListPane::new(feed.clone(), self.keymap(), imp.picked.clone());
         // A row's drawn action does what its key does, for that row.
         pane.connect_row_action(glib::clone!(
@@ -2513,7 +2472,7 @@ impl FocusWindow {
                         .pane()
                         .and_then(|pane| pane.feed().list().position_of(row.id()))
                     {
-                        window.cursor_to(Some(position));
+                        window.point_cursor(position);
                     }
                     window.act(command);
                 }
@@ -2532,7 +2491,7 @@ impl FocusWindow {
             #[weak(rename_to = window)]
             self,
             move |_, position| {
-                window.cursor_to(Some(position));
+                window.point_cursor(position);
                 window.act(CommandId::OpenMessage);
             }
         ));
@@ -2542,7 +2501,17 @@ impl FocusWindow {
         pane.cursor().connect_selected_notify(glib::clone!(
             #[weak(rename_to = window)]
             self,
-            move |_| window.follow_cursor()
+            move |cursor| {
+                // The list view moves the cursor on its own -- a click, a
+                // row archived from under it -- and the controller walks on
+                // from wherever it is.
+                if let Some(pane) = window.pane() {
+                    let at = cursor.selected();
+                    pane.feed()
+                        .cursor_is((at != gtk::INVALID_LIST_POSITION).then_some(at));
+                }
+                window.follow_cursor();
+            }
         ));
         // A row pulled out of the window offers its message as a file (T245).
         self.connect_drag_out(&pane);
@@ -2612,11 +2581,6 @@ impl FocusWindow {
         // want the window's width, not the list's.
         imp.inbox.append(bulk.widget());
         imp.bulk.replace(Some(Rc::clone(&bulk)));
-        imp.picked.connect_changed(glib::clone!(
-            #[weak(rename_to = window)]
-            self,
-            move |_| window.selection_moved()
-        ));
         // The accounts a whole-view selection spans.
         self.refresh_accounts(client.clone());
         pane.set_capture(imp.focus_config.borrow().vault.is_some());
@@ -2648,108 +2612,44 @@ impl FocusWindow {
         });
     }
 
-    /// The selection changed: the bar says so, and the rows redraw their
-    /// boxes.
-    fn selection_moved(&self) {
+    /// The selection changed: the mirror takes it, the bar says so, and the
+    /// rows redraw their boxes.
+    fn show_selection(&self, selection: &Selection, summary: Option<&str>) {
         let imp = self.imp();
-        let total = imp.pane.borrow().as_ref().map(|pane| pane.feed().total());
-        let summary = postio_ui::selection::summary(&imp.picked.selection(), total, &[]);
+        imp.picked.set(selection.clone());
+        if let Some(pane) = imp.pane.borrow().as_ref() {
+            imp.reach.replace(pane.feed().selection_reach());
+        }
         if let Some(bulk) = imp.bulk.borrow().as_ref() {
-            bulk.set_summary(summary.as_deref());
+            bulk.set_summary(summary);
         }
         if let Some(pane) = imp.pane.borrow().as_ref() {
             pane.redraw_rows();
         }
     }
 
-    /// `!`: narrow the list to the rows with a marker, or back (FR-017).
-    /// The selection goes, since what it named may not be shown; the cursor
-    /// stays on the same message when that message is still shown.
-    fn toggle_has_action(&self) {
-        let imp = self.imp();
-        // It narrows the inbox: a place has no marked rows of its own to
-        // narrow to, and the toggle is not offered there.
-        if imp.place.borrow().is_some() {
-            return;
-        }
+    /// The list has landed or moved: the controller puts the cursor on its
+    /// first row, or back where `!` left it, and asks the host for the
+    /// strip's counts again.
+    fn list_landed(&self) {
         let Some(pane) = self.pane() else {
             return;
         };
-        let on = !imp.has_action.get();
-        imp.has_action.set(on);
-        imp.keep.set(self.cursor_row().map(|row| row.id()));
-        self.clear_selection();
-        pane.feed().list().set_single_heading(on.then(|| {
-            postio_ui::focus_row::has_action_label(imp.counts.get().map(|counts| counts.has_action))
-        }));
-        pane.feed().open(ListScope::Focus(if on {
-            FocusScope::HasAction
-        } else {
-            FocusScope::Inbox
-        }));
-        self.show_counts();
-    }
-
-    /// The list has landed or moved: put the cursor back where `!` left
-    /// it, and ask the host for the strip's counts again.
-    fn list_landed(&self) {
-        let imp = self.imp();
-        let opened = self.pane().is_some_and(|pane| pane.feed().take_opened());
-        if let (Some(message), Some(pane)) = (imp.keep.get(), self.pane())
-            && pane.feed().has_landed()
-        {
-            imp.keep.set(None);
-            let list = pane.feed().list().clone();
-            match list.position_of(message) {
-                Some(position) => self.cursor_to(Some(position)),
-                None if list.n_items() > 0 => self.cursor_to(Some(0)),
-                None => {}
-            }
-        } else if opened {
-            self.cursor_to_first();
-        }
+        // Placing the cursor is not reading: it opens nothing, even with
+        // the reading pane beside.
+        self.placing(|| pane.feed().landed());
         self.place_restored();
         // A place counts what the list now holds.
         self.show_counts();
-        self.update_counts();
     }
 
-    /// Put the cursor on the list's first row, as every list opens: it shows
-    /// where the keyboard is, and `j` goes on to the second. Opening nothing
-    /// and marking nothing read -- placing the cursor is not reading.
-    fn cursor_to_first(&self) {
-        let Some(pane) = self.pane() else {
-            return;
-        };
-        if pane.feed().list().n_items() == 0 {
-            return;
-        }
+    /// Run `place`, which puts the cursor somewhere, without the reading
+    /// pane following it.
+    fn placing(&self, place: impl FnOnce()) {
         let imp = self.imp();
-        imp.placing_cursor.set(true);
-        pane.cursor().set_selected(0);
-        imp.placing_cursor.set(false);
-        pane.to_top();
-    }
-
-    /// Ask the host for the strip's counts, and show them when they come.
-    fn update_counts(&self) {
-        let Some(client) = self.imp().client.borrow().clone() else {
-            return;
-        };
-        let window = self.downgrade();
-        glib::spawn_future_local(async move {
-            // POSTIO-GLIB-SAFE: the client's transport answers through a
-            // oneshot.
-            match client.focus_counts().await {
-                Ok(counts) => {
-                    if let Some(window) = window.upgrade() {
-                        window.imp().counts.set(Some(counts));
-                        window.show_counts();
-                    }
-                }
-                Err(error) => tracing::warn!(%error, "Focus could not count its inbox: {error}"),
-            }
-        });
+        let before = imp.placing_cursor.replace(true);
+        place();
+        imp.placing_cursor.set(before);
     }
 
     /// Answer the invitation `row` carries, as `id` says: through the host,
@@ -2869,41 +2769,39 @@ impl FocusWindow {
             _ => (ListScope::Focus(FocusScope::Flagged), "Flagged"),
         };
         self.imp().at_inbox.set(false);
-        self.imp().has_action.set(false);
         self.imp().place.replace(Some(match role {
             postio_model::MailboxRole::Snoozed => postio_ui::focus_state::EmptyPlace::Snoozed,
             _ => postio_ui::focus_state::EmptyPlace::Flagged,
         }));
-        self.clear_selection();
-        pane.feed().list().set_single_heading(None);
+        pane.feed().leave_list();
         pane.feed().open(scope);
         chrome.set_place(name);
         self.show_counts();
         self.focus_list_soon();
     }
 
-    /// Say the counts the host last gave: the strip's, the toggle's, and
-    /// how many of how many the filter is showing.
+    /// Say the counts the host last gave, which the controller keeps: the
+    /// strip's, the toggle's, and how many of how many the filter is
+    /// showing. A place that is not the inbox counts what it lists.
     fn show_counts(&self) {
         let imp = self.imp();
         let Some(chrome) = imp.chrome.borrow().clone() else {
             return;
         };
+        let feed = self.pane().map(|pane| pane.feed().clone());
         chrome.set_digest_rules(imp.focus_config.borrow().digests.len());
-        // A place that is not the inbox counts what it lists. The host's
-        // counts are the inbox's, and beside "Flagged" they described a
-        // place the person had left.
+        // The host's counts are the inbox's, and beside "Flagged" they
+        // described a place the person had left.
         if imp.place.borrow().is_some() {
-            let listed = self
-                .pane()
-                .filter(|pane| pane.feed().has_landed())
-                .map(|pane| pane.feed().total());
+            let listed = feed
+                .as_ref()
+                .filter(|feed| feed.has_landed())
+                .map(|feed| feed.total());
             chrome.set_place_counts(listed);
             chrome.set_filtered_today(None);
-            self.show_empty_or_list();
             return;
         }
-        let counts = imp.counts.get();
+        let counts = feed.as_ref().and_then(Feed::counts);
         if let Some(counts) = counts {
             chrome.set_counts(counts.conversations, counts.unread);
             // Filtering off files nothing new, and says nothing about it;
@@ -2924,7 +2822,7 @@ impl FocusWindow {
         }
         let has_action = counts.map(|counts| counts.has_action);
         let label = postio_ui::focus_row::has_action_label(has_action);
-        let on = imp.has_action.get();
+        let on = feed.as_ref().is_some_and(Feed::has_action);
         let showing = match (on, counts) {
             (true, Some(counts)) => Some(postio_ui::focus_row::showing(
                 counts.has_action,
@@ -2934,60 +2832,24 @@ impl FocusWindow {
             _ => None,
         };
         chrome.set_has_action(on, &label, showing.as_deref());
-        self.show_empty_or_list();
         if on
-            && let Some(pane) = self.pane()
-            && pane.feed().list().single_heading().as_deref() != Some(label.as_str())
+            && let Some(feed) = feed
+            && feed.list().single_heading().as_deref() != Some(label.as_str())
         {
-            pane.feed().list().set_single_heading(Some(label));
+            feed.list().set_single_heading(Some(label));
         }
     }
 
-    /// The empty inbox when there is nothing in it, the list otherwise
-    /// (screen 16). Only the inbox: the has-action filter showing nothing
-    /// is the list's own business.
-    fn show_empty_or_list(&self) {
+    /// The page the controller puts in the list's place -- an empty inbox,
+    /// an empty place (screen 16) -- or the list again with `None`.
+    fn show_empty(&self, page: Option<&postio_ui::focus_state::EmptyInbox>) {
         let imp = self.imp();
         let Some(stack) = imp.list_or_empty.borrow().clone() else {
             return;
         };
-        // A place with nothing in it says why, once its first page has
-        // landed: a list still waiting for it is loading, not empty.
-        let empty_place = imp.place.borrow().clone().filter(|_| {
-            self.pane()
-                .is_some_and(|pane| pane.feed().has_landed() && pane.feed().total() == 0)
-        });
-        let empty = match imp.counts.get() {
-            Some(counts)
-                if counts.conversations == 0
-                    && !imp.has_action.get()
-                    && imp.at_inbox.get()
-                    && imp.place.borrow().is_none() =>
-            {
-                Some(counts)
-            }
-            _ => None,
-        };
-        match (empty, imp.empty.borrow().as_ref()) {
-            _ if empty_place.is_some() && imp.empty.borrow().is_some() => {
-                if let (Some(place), Some(page)) = (empty_place, imp.empty.borrow().as_ref()) {
-                    page.show(&postio_ui::focus_state::empty_place(&place, &self.keymap()));
-                }
-                stack.set_visible_child_name(EMPTY);
-            }
-            (Some(counts), Some(page)) => {
-                // "Empty" is only said once a pass has finished (T220).
-                let statuses = imp.trackers.borrow().statuses(&imp.tracked.borrow());
-                let saying = postio_ui::focus_state::inbox_saying(&statuses, imp.last_synced.get());
-                page.show(
-                    &postio_ui::focus_state::empty_inbox(
-                        &imp.focus_config.borrow(),
-                        counts.filtered_today,
-                        &self.keymap(),
-                        &postio_ui::clock::now(),
-                    )
-                    .saying(&saying, &self.keymap(), &chrono::Local),
-                );
+        match (page, imp.empty.borrow().as_ref()) {
+            (Some(page), Some(widget)) => {
+                widget.show(page);
                 stack.set_visible_child_name(EMPTY);
             }
             _ => stack.set_visible_child_name(LIST),
@@ -3005,8 +2867,8 @@ impl FocusWindow {
     pub(crate) fn filtered_today(&self) -> Option<u32> {
         let imp = self.imp();
         let filtering = imp.focus_config.borrow().filtering;
-        imp.counts
-            .get()
+        self.pane()
+            .and_then(|pane| pane.feed().counts())
             .filter(|_| filtering)
             .map(|counts| counts.filtered_today)
     }
@@ -3018,6 +2880,7 @@ impl FocusWindow {
         }
         let capture = focus.vault.is_some();
         let beside = focus.reading == postio_config::Reading::Pane;
+        let for_controller = focus.clone();
         self.imp().focus_config.replace(focus);
         if let Some(menu) =
             self.lookup_action(crate::chrome::READING_PANE_ACTION.trim_start_matches("win."))
@@ -3025,7 +2888,12 @@ impl FocusWindow {
             menu.change_state(&beside.to_variant());
         }
         self.show_capture(capture);
-        self.show_empty_or_list();
+        // The empty inbox names the digests, and offers Filtered while Focus
+        // files mail away.
+        if let Some(pane) = self.pane() {
+            pane.feed()
+                .input(postio_focus::Input::Config(for_controller));
+        }
         self.show_counts();
         self.place_reading();
     }
@@ -3809,7 +3677,8 @@ impl FocusWindow {
     /// Back from Filtered to the inbox, as it was.
     fn leave_filtered(&self) {
         self.imp().pages.set_visible_child_name(INBOX);
-        self.cursor_to_first();
+        // The list opens on its first row, as every list does.
+        self.placing(|| self.cursor_command(CommandId::FirstMessage));
         self.focus_list();
     }
 
@@ -3894,8 +3763,6 @@ impl FocusWindow {
         if let Some(chrome) = imp.chrome.borrow().as_ref() {
             chrome.set_sync(&label.text, label.icon);
         }
-        // What an inbox with no rows says follows the same news.
-        self.show_empty_or_list();
     }
 
     /// The banner under the strip, while one shows: what it says, its
@@ -4726,18 +4593,17 @@ impl FocusWindow {
             Destination::Mailbox(mailbox) => {
                 let inbox = self.is_focus_inbox(mailbox);
                 self.imp().at_inbox.set(inbox);
-                self.clear_selection();
                 if inbox {
                     self.go_to_inbox();
                     return;
                 }
-                self.imp().has_action.set(false);
                 self.imp()
                     .place
                     .replace(Some(postio_ui::focus_state::EmptyPlace::Folder(
                         name.to_owned(),
                     )));
-                pane.feed().list().set_single_heading(None);
+                pane.feed().leave_list();
+                pane.feed().note_place(name);
                 pane.feed().open(ListScope::Mailbox(mailbox));
                 chrome.set_place(name);
                 self.show_counts();
@@ -4758,12 +4624,10 @@ impl FocusWindow {
             // A view over Drafts, listed as Snoozed is (T239).
             Destination::Outbox(account) => {
                 self.imp().at_inbox.set(false);
-                self.imp().has_action.set(false);
                 self.imp()
                     .place
                     .replace(Some(postio_ui::focus_state::EmptyPlace::Outbox));
-                self.clear_selection();
-                pane.feed().list().set_single_heading(None);
+                pane.feed().leave_list();
                 pane.feed().open(ListScope::Outbox(account));
                 chrome.set_place(name);
                 self.show_counts();
@@ -4778,10 +4642,8 @@ impl FocusWindow {
             return;
         };
         self.imp().at_inbox.set(true);
-        self.imp().has_action.set(false);
         self.imp().place.replace(None);
-        self.clear_selection();
-        pane.feed().list().set_single_heading(None);
+        pane.feed().leave_list();
         pane.feed().open(ListScope::Focus(FocusScope::Inbox));
         chrome.set_place("Inbox");
         self.show_counts();
@@ -4922,7 +4784,7 @@ impl FocusWindow {
         if let Some(picker) = self.open_picker() {
             picker.close();
         }
-        self.cursor_to(Some(position));
+        self.point_cursor(position);
         let Some(row) = self.cursor_row() else {
             return;
         };

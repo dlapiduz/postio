@@ -177,3 +177,33 @@ pub fn a_folder_from_the_popover_opens_with_the_cursor_on_its_first_row() {
         );
     });
 }
+
+/// GTK's list view moves the cursor on its own -- a click on a row, a row
+/// archived from under it -- and the controller walks on from wherever it
+/// is, not from where it last put it itself.
+pub fn the_list_view_moving_the_cursor_is_where_j_walks_on_from() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (window, _client) = fixture.five().await;
+        let pane = window.pane().expect("the inbox");
+        assert!(
+            crate::settle_until(async || pane.cursor().selected() == 0).await,
+            "the list opens with the cursor on the first row"
+        );
+
+        pane.cursor().set_selected(2);
+        support::keys(&window, &["j"]);
+        assert_eq!(
+            pane.cursor().selected(),
+            3,
+            "j walks on from the row the list view chose"
+        );
+        pane.cursor().set_selected(1);
+        support::keys(&window, &["k"]);
+        assert_eq!(pane.cursor().selected(), 0, "and k back from it");
+        assert!(window.selection().is_empty(), "moving selected nothing");
+    });
+}

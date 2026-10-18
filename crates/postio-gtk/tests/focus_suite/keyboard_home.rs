@@ -83,3 +83,38 @@ pub fn the_keyboard_follows_the_cursor_row() {
         assert!(in_the_list(&window), "{}", said(&window));
     });
 }
+
+/// A list that opens puts the cursor on its first row, and the keyboard
+/// goes with it when it was on a row: Space or Return then acts on the row
+/// the ring is drawn on, not on a row the list used to hold.
+pub fn a_list_that_opens_takes_the_keyboard_from_a_row_to_the_first() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = support::three_in_the_inbox().await;
+        let pane = window.pane().expect("the inbox");
+        support::keys(&window, &["j", "j"]);
+        pane.focus_cursor();
+        crate::settle();
+        assert_eq!(pane.cursor().selected(), 2);
+
+        support::keys(&window, &["g", "i"]);
+        assert!(
+            crate::settle_until(async || pane.cursor().selected() == 0).await,
+            "g i left the cursor on {}",
+            pane.cursor().selected()
+        );
+        crate::settle();
+        let first = pane.rows_on_screen().into_iter().next().expect("a row");
+        let focus = gtk::prelude::GtkWindowExt::focus(&window).expect("a focus");
+        let item = first
+            .ancestor(gtk::glib::Type::from_name("GtkListItemWidget").expect("GTK's list item"))
+            .expect("the row sits in a list item");
+        assert!(
+            focus == item || focus.is_ancestor(&item),
+            "the keyboard stayed on a row the cursor left: {}",
+            support::focus_path(&window)
+        );
+    });
+}
