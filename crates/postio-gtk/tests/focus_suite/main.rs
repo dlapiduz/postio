@@ -1393,6 +1393,10 @@ const CASES: &[(&str, fn())] = &[
         keyboard_home::the_keyboard_follows_the_cursor_row as fn(),
     ),
     (
+        "keyboard_home::a_list_that_opens_takes_the_keyboard_from_a_row_to_the_first",
+        keyboard_home::a_list_that_opens_takes_the_keyboard_from_a_row_to_the_first as fn(),
+    ),
+    (
         "place_strip::flagged_counts_what_is_flagged_not_the_inbox",
         place_strip::flagged_counts_what_is_flagged_not_the_inbox as fn(),
     ),
@@ -1423,6 +1427,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "cursor::the_list_view_moving_the_cursor_is_where_j_walks_on_from",
         cursor::the_list_view_moving_the_cursor_is_where_j_walks_on_from as fn(),
+    ),
+    (
+        "reading_pane::a_filter_landing_under_an_open_pane_shows_the_cursors_row_there",
+        reading_pane::a_filter_landing_under_an_open_pane_shows_the_cursors_row_there as fn(),
     ),
     (
         "colours::the_roles_resolve_and_follow_the_system_into_dark",
