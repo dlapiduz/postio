@@ -24,6 +24,9 @@ use postio_widgets::list_model::{PageSource, WindowedModel};
 
 use super::model::FocusList;
 
+/// The conversations each selected row stands for.
+pub type SelectionReach = std::collections::HashMap<MessageId, Vec<ThreadId>>;
+
 /// The list, and where its pages come from.
 #[derive(Clone)]
 pub struct Feed {
@@ -180,7 +183,7 @@ impl Feed {
     }
 
     /// The conversations each selected row stands for.
-    pub fn selection_reach(&self) -> std::collections::HashMap<MessageId, Vec<ThreadId>> {
+    pub fn selection_reach(&self) -> SelectionReach {
         self.inner.focus.borrow().selection_reach().clone()
     }
 
