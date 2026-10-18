@@ -445,6 +445,9 @@ struct State {
     /// server may (RFC 4315 §3: UIDNOTSTICKY, or no `SELECT` right on the
     /// destination). See [`MockBackend::omit_uid_mappings`].
     omit_uid_mappings: bool,
+    /// Whether `EXPUNGE` leaves `HIGHESTMODSEQ` alone. See
+    /// [`MockBackend::expunge_keeps_mod_seq`].
+    expunge_keeps_mod_seq: bool,
 }
 
 /// One served fetch, in [`MockBackend::fetch_order`].
@@ -651,6 +654,18 @@ impl MockBackend {
     /// Reading that silence as "the message was gone" is #903.
     pub fn omit_uid_mappings(&self) {
         self.state().omit_uid_mappings = true;
+    }
+
+    /// Makes an `EXPUNGE` leave the mailbox's `HIGHESTMODSEQ` where it was, as
+    /// a server with `CONDSTORE` but not `QRESYNC` may.
+    ///
+    /// RFC 7162 §3.2 makes the increment on expunge a `MUST` for a server
+    /// that supports QRESYNC and says nothing of the kind for one that
+    /// supports only CONDSTORE (§3.2.1 even describes a client seeing the
+    /// value rise "only due to messages having been expunged", which a
+    /// CONDSTORE-only server is not obliged to do).
+    pub fn expunge_keeps_mod_seq(&self) {
+        self.state().expunge_keeps_mod_seq = true;
     }
 
     /// Makes [`MailBackend::create_mailbox`] refuse with `reason`, as a server
@@ -1002,6 +1017,7 @@ impl MockBackendBuilder {
                 refuse_uid_listing: false,
                 truncate_uid_listing: None,
                 omit_uid_mappings: false,
+                expunge_keeps_mod_seq: false,
                 latency: Duration::ZERO,
                 calls: 0,
                 refuse_creates: None,
@@ -1297,6 +1313,7 @@ impl MailBackend for MockBackend {
 
         let expunged = {
             let mut state = self.state();
+            let keeps_mod_seq = state.expunge_keeps_mod_seq;
             let index = self.locate(&state, mailbox, "EXPUNGE")?;
             let folder = &mut state.mailboxes[index];
             let validity = folder.uid_validity;
@@ -1319,7 +1336,9 @@ impl MailBackend for MockBackend {
             folder
                 .messages
                 .retain(|message| !expunged.contains(&Uid::new(message.uid)));
-            folder.bump_mod_seq();
+            if !keeps_mod_seq {
+                folder.bump_mod_seq();
+            }
 
             for uid in &expunged {
                 let event = MailboxEvent::Vanished { uids: vec![*uid] };

@@ -26,6 +26,7 @@ mod a11y_sweep;
 mod across_apps;
 mod add_account_running;
 mod bar;
+mod body_lands;
 mod buttons;
 mod capture;
 mod chrome;
@@ -236,6 +237,10 @@ const CASES: &[(&str, fn())] = &[
         "visible_window::opening_and_switching_large_folders_asks_a_bounded_number_of_pages",
         visible_window::opening_and_switching_large_folders_asks_a_bounded_number_of_pages
             as fn(),
+    ),
+    (
+        "body_lands::a_body_that_lands_while_its_message_is_open_is_drawn_in_place",
+        body_lands::a_body_that_lands_while_its_message_is_open_is_drawn_in_place as fn(),
     ),
     (
         "list_reload::a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone",
@@ -1151,6 +1156,11 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "store_unavailable::a_store_under_another_key_offers_a_fresh_store_and_keeps_the_old_one",
+        store_unavailable::a_store_under_another_key_offers_a_fresh_store_and_keeps_the_old_one
+            as fn(),
+    ),
+    (
         "one_keymap::a_registered_command_reaches_the_key_map_with_its_key",
         one_keymap::a_registered_command_reaches_the_key_map_with_its_key as fn(),
     ),
@@ -1383,6 +1393,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "marked_rows::a_selected_marked_row_shows_its_check_not_its_dot",
         marked_rows::a_selected_marked_row_shows_its_check_not_its_dot as fn(),
+    ),
+    (
+        "marked_rows::the_dot_is_unread_mail_not_a_marker",
+        marked_rows::the_dot_is_unread_mail_not_a_marker as fn(),
     ),
     (
         "rows::a_row_shows_the_subject_and_first_line_exactly_as_they_arrived",

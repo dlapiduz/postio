@@ -1,0 +1,24 @@
+# A message opened before its body is here fills in when the body lands
+# (#1753).
+#
+# The first row's body is held back: only its headers are on this machine.
+# Opening it says the body is on its way; when the body lands the same open
+# message shows its words, with no key pressed.
+apps   = ["focus"]
+source = { kind = "issue", ref = "#1753" }
+proof  = "pinned"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "open_message"
+settle  = { until = { view = "reader", app.focus.reading.body = "absent" } }
+check   = { view = "reader", keyboard.region = "reader", app.focus.reading.body = "absent" }
+expect  = "The message is open and says its body has not arrived yet."
+
+[[step]]
+event  = "body_arrived"
+settle = { until = { app.focus.reading.body = "Friday 10:00\u201310:45, Room 3B. Agenda: navigation, empty states, the export flow." } }
+check  = { view = "reader", keyboard.region = "reader", app.focus.reading.body = "Friday 10:00\u201310:45, Room 3B. Agenda: navigation, empty states, the export flow." }
+expect = "The same open message now shows its words in place of the notice; nothing was pressed and the keyboard is still on the message."

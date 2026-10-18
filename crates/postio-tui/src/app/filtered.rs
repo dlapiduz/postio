@@ -99,6 +99,20 @@ impl App {
                 })]);
             }
             // The filtered message opens in the frame, aimed at itself.
+            // The focused message, never the inbox row behind Filtered nor
+            // the message's conversation (C4: never automatically).
+            "delete" | "flag" | "toggle_read" => {
+                let Some(message) = view.focused().map(|item| item.row.id) else {
+                    return Some(Vec::new());
+                };
+                let Ok(command) = id.parse::<postio_core::CommandId>() else {
+                    return Some(Vec::new());
+                };
+                return Some(vec![Effect::Send(
+                    Command::default_for(command)
+                        .with_target(MessageTarget::Messages(vec![message])),
+                )]);
+            }
             "open_message" => return Some(self.open_filtered_row()),
             "back" | "go_to_inbox" => return Some(self.leave_filtered()),
             "sweep_inbox" => return Some(self.ask_sweep()),
@@ -288,7 +302,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyModifiers};
-    use postio_core::{Command, MessageTarget};
+    use postio_core::{Command, CommandId, MessageTarget};
     use postio_model::MessageId;
     use postio_ui::focus_list::FocusRow;
 
@@ -486,6 +500,27 @@ mod tests {
         );
         let drawn = screen(120, 30, &app);
         assert!(drawn.contains("✓ Restored 1 message · Undo z"), "{drawn}");
+    }
+
+    #[test]
+    fn delete_flag_and_read_act_on_the_focused_row_not_the_inbox_behind() {
+        for (key, made) in [
+            ('#', Command::default_for(CommandId::Delete)),
+            ('s', Command::default_for(CommandId::Flag)),
+            ('U', Command::default_for(CommandId::ToggleRead)),
+        ] {
+            let mut app = open_filtered((120, 30));
+            update(&mut app, press('j'));
+            let effects = update(&mut app, press(key));
+            assert_eq!(
+                effects,
+                vec![Effect::Send(made.with_target(MessageTarget::Messages(
+                    vec![MessageId::new(12)]
+                )))],
+                "{key}"
+            );
+            assert_eq!(app.focus(), Focus::Filtered, "{key} kept Filtered up");
+        }
     }
 
     #[test]

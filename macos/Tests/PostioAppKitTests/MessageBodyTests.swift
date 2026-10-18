@@ -111,6 +111,44 @@ struct MessageBodyTests {
         #expect((height ?? 0) >= 40 && (height ?? .infinity) < 100, "measured \(String(describing: height))")
     }
 
+    @Test func openingAFoldIsToldToTheBodySoItCanGrow() async throws {
+        // The body's web view is sized to its document, measured at load and
+        // at a resize. A `<details>` opens inside the page with the script
+        // off, so without a word of it the frame kept the closed height and
+        // the quote opened into a clip: the caret turned and nothing drew.
+        final class Told { var count = 0 }
+        let told = Told()
+        let watcher = FoldWatcher { told.count += 1 }
+        let configuration = try await ReaderConfiguration.focus(
+            cidHandler: ClosedSchemeHandler(),
+            fontHandler: FontSchemeHandler { _ in nil },
+            baseHandler: ClosedSchemeHandler())
+        watcher.install(in: configuration)
+        let view = WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 560, height: 400), configuration: configuration)
+        let policy = ReaderNavigationPolicy(openExternally: { _ in })
+        final class Done { var yes = false }
+        let done = Done()
+        policy.didFinish = { _ in done.yes = true }
+        view.navigationDelegate = policy
+        defer { withExtendedLifetime(policy) {} }
+        view.loadHTMLString(
+            "<html><body style='margin:0'><div class='postio-body'><details>"
+                + "<summary style='height:20px'>6 quoted lines</summary>"
+                + "<blockquote style='margin:0;height:120px'>quoted</blockquote></details></div></body></html>",
+            baseURL: nil)
+        for _ in 0..<150 where !done.yes { try await Task.sleep(for: .milliseconds(20)) }
+        try #require(done.yes)
+        let closed = try #require(try await MessageBodyMeasure.contentHeight(of: view))
+        // What a click on the summary does.
+        _ = try await view.evaluateJavaScript(
+            "document.querySelector('details').open = true", in: nil, contentWorld: .defaultClient)
+        for _ in 0..<150 where told.count == 0 { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(told.count >= 1, "the body was never told a fold opened")
+        let opened = try #require(try await MessageBodyMeasure.contentHeight(of: view))
+        #expect(opened >= closed + 100, "closed \(closed), opened \(opened)")
+    }
+
     @Test func aWideNewsletterIsZoomedToItsColumnAndNoFurtherThanTheFloor() {
         // SPEC section 3 at 1024: a 640 layout in a 576 column is 0.9.
         #expect(PaperFit.zoom(column: 576, measured: 640, floor: 0.85) == 0.9)

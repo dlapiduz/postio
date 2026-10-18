@@ -991,6 +991,61 @@ fn saving_a_new_attachment_fetches_from_its_own_account() {
     }
 }
 
+#[test]
+fn a_posted_fetch_carried_brings_a_forwards_parts_without_a_send() {
+    // #1690: opening a forward asks for the parts it carries, so they are
+    // local before the person presses send. Nothing is sent here.
+    use postio_account::backend::{BodyStructure, MockBackend, MockMailbox, MockMessage, PartNode};
+
+    let payload = "%PDF carried";
+    let text = "See attached.";
+    let raw = format!(
+        "Message-ID: <report@example.com>\r\nFrom: ada@example.com\r\n\
+         Subject: Report\r\nContent-Type: multipart/mixed; boundary=parts\r\n\r\n\
+         --parts\r\nContent-Type: text/plain\r\n\r\n{text}\r\n\
+         --parts\r\nContent-Type: application/pdf\r\n\
+         Content-Disposition: attachment; filename=report.pdf\r\n\
+         Content-Transfer-Encoding: 7bit\r\n\r\n{payload}\r\n--parts--\r\n"
+    );
+    let mock = MockBackend::builder()
+        .mailbox(
+            MockMailbox::new("INBOX").message(
+                MockMessage::new(raw.into_bytes())
+                    .with_structure(BodyStructure::from_parts(
+                        "multipart/mixed",
+                        [
+                            PartNode::new("1", "text/plain", text.len() as u64)
+                                .with_encoding("7bit"),
+                            PartNode::new("2", "application/pdf", payload.len() as u64)
+                                .with_encoding("7bit")
+                                .with_filename("report.pdf"),
+                        ],
+                    ))
+                    .with_part("1", text.as_bytes())
+                    .with_part("2", payload.as_bytes()),
+            ),
+        )
+        .build();
+    let world = syncing_world(mock);
+    let (client, _) = world.frontend(ClientKind::Focus);
+    world.host().start_syncing();
+    let message = eventually(&world, || row_titled(&world, &client, "Report"));
+    let blob_of = || {
+        world
+            .rt
+            .block_on(client.parts(message))
+            .ok()
+            .and_then(|parts| parts.into_iter().next())
+            .and_then(|part| part.blob_id)
+    };
+    assert!(blob_of().is_none(), "new mail has no downloaded payload");
+
+    client.fetch_carried(message, vec!["2".to_owned()]);
+
+    eventually(&world, blob_of);
+    assert_eq!(client.counts().of("FetchCarried"), 1);
+}
+
 /// A draft to `account`, saying `words`.
 fn a_draft(account: postio_model::AccountId, words: &str) -> postio_model::Draft {
     let mut draft = postio_model::Draft::new(account);
@@ -2403,46 +2458,6 @@ fn an_account_a_frontend_proved_is_saved_by_the_host() {
         .find(|account| account.address.address == "grace@example.test")
         .expect("the row");
     assert_eq!(saved.incoming.host, "mail.example.test");
-}
-
-#[test]
-fn a_browser_sign_in_a_frontend_completed_is_saved_with_its_endpoints() {
-    let world = World::new();
-    let (client, _) = world.frontend(ClientKind::Focus);
-    let mut signed_in = submission("");
-    signed_in.oauth_client = Some(postio_ui::onboarding::OAuthClientSubmission {
-        client_id: "postio-test".into(),
-        client_secret: None,
-    });
-    let grant = postio_client::protocol::OAuthGrant {
-        submission: signed_in,
-        authorize_url: "https://auth.example.test/authorize".into(),
-        token_url: "https://auth.example.test/token".into(),
-        scopes: vec!["mail".into()],
-        refresh_token_lifetime_days: Some(7),
-        access_token: "access-sentinel".into(),
-        refresh_token: Some("refresh-sentinel".into()),
-        expires_in: Some(Duration::from_secs(3600)),
-        token_type: "Bearer".into(),
-        scope: None,
-    };
-    assert!(
-        !format!("{grant:?}").contains("sentinel"),
-        "a grant never shows its tokens"
-    );
-    world
-        .rt
-        .block_on(client.save_oauth_account(grant))
-        .expect("saved");
-    let accounts = world.rt.block_on(client.accounts()).expect("accounts");
-    let saved = accounts
-        .iter()
-        .find(|account| account.address.address == "grace@example.test")
-        .expect("the row");
-    assert_eq!(saved.auth, postio_model::account::AuthMethod::XOAuth2);
-    let oauth = saved.oauth.as_ref().expect("its sign-in");
-    assert_eq!(oauth.token_url, "https://auth.example.test/token");
-    assert_eq!(oauth.scopes, "mail");
 }
 
 #[test]

@@ -94,6 +94,13 @@ impl Session {
         self.focus_driver().row_at(position)
     }
 
+    /// The row at `position` if its page is already resident, else `None`.
+    /// Reads nothing and asks for nothing: the table re-measures the rows
+    /// it knew when the list changes length, without paging.
+    pub fn focus_resident_row_at(&self, position: u32) -> Option<crate::FocusRowFfi> {
+        self.focus_driver().row_resident(position)
+    }
+
     /// The pointer put the cursor on `position`: a plain click on a row.
     /// The controller says where the cursor went, as `FocusCursor`.
     pub fn focus_point(&self, position: u32) {

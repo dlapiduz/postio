@@ -315,16 +315,24 @@ key_command() {
 # The branch's storyboards, played against the base's code (research R8):
 # that is what makes "changed" mean behaviour changed, and a storyboard
 # written for a defect this branch fixes is red here -- its proof. The base
-# tree is a detached worktree inside this tree's target/, so it belongs to
-# whoever owns this tree; its build output is a reflink copy of this tree's,
-# never a path into it (#1101). Runs are cached by base commit, and a
+# tree is a detached worktree beside this one, named after it, so it belongs
+# to whoever owns this tree; its build output is a reflink copy of this
+# tree's, never a path into it (#1101). It is not nested under this tree:
+# Cargo merges the `.cargo/config.toml` of every ancestor directory, and a
+# nested base repeated every rustflag and went cold (#1818). Runs are cached by base commit, and a
 # storyboard is played again only when its file changed.
 base_command() {
     local based sha tree cache bin file name hash marker files=()
     based=$(cat "$(git rev-parse --git-dir)/postio-base" 2>/dev/null || echo main)
     sha=$(git merge-base HEAD "origin/$based" 2>/dev/null) \
         || { echo "storyboards.sh: no merge-base with origin/$based -- fetch first" >&2; exit 2; }
-    tree="$ROOT/target/storyboard-base/tree"
+    tree="${STORYBOARD_BASE_DIR:-$(dirname "$ROOT")/.storyboard-base}/$(basename "$ROOT")"
+    # The old home, under this tree's target/: retire it, or Cargo would
+    # still find two configs there.
+    if [ -d "$ROOT/target/storyboard-base/tree" ]; then
+        git worktree remove --force "$ROOT/target/storyboard-base/tree" 2>/dev/null \
+            || rm -rf "$ROOT/target/storyboard-base/tree"
+    fi
     if [ -d "$tree" ]; then
         git -C "$tree" checkout -q --detach "$sha" || exit 2
     else

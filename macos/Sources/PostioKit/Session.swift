@@ -476,6 +476,15 @@ public final class PostioSession {
         inner.alwaysShowImagesFor(message: message)
     }
 
+    /// What agents have done lately, newest first, with the log's ids
+    /// resolved to the rows they name (#1832).
+    ///
+    /// **`nonisolated`**: it reads the access log and a few rows. Call it
+    /// from a task and publish the answer.
+    public nonisolated func agentActivity() -> AgentActivityFfi {
+        inner.agentActivity()
+    }
+
     /// Every activation this store holds, newest first — the Privacy pane's
     /// list. An action nobody can see afterwards is one nobody can audit.
     public func unsubscribeActivations() -> [UnsubscribeActivationFfi] {
@@ -978,5 +987,9 @@ extension PostioSession: FocusRowSource {
     /// Synchronous and no I/O: what the table asks for every visible row.
     public func focusRow(at position: UInt32) -> FocusRowFfi? {
         inner.focusRowAt(position: position)
+    }
+
+    public func residentFocusRow(at position: UInt32) -> FocusRowFfi? {
+        inner.focusResidentRowAt(position: position)
     }
 }

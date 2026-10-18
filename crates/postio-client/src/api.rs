@@ -172,9 +172,9 @@ impl Req {
             Req::Filtered { .. } => "Filtered",
             Req::NoteMove(_) => "NoteMove",
             Req::FetchBody(_) => "FetchBody",
+            Req::FetchCarried { .. } => "FetchCarried",
             Req::StorageCeiling(_) => "StorageCeiling",
             Req::SaveAccount { .. } => "SaveAccount",
-            Req::SaveOAuthAccount(_) => "SaveOAuthAccount",
             Req::SweepPreview => "SweepPreview",
             Req::RawSource(_) => "RawSource",
             Req::Surfaced => "Surfaced",
@@ -237,6 +237,17 @@ impl Client {
     pub fn fetch_body(&self, message: MessageId) {
         self.counts.record("FetchBody");
         self.transport.post(Req::FetchBody(message));
+    }
+
+    /// A forward of `message` was opened: ask for the `parts` it carries now,
+    /// rather than when the send drains (#1690). Posted. Call it for a
+    /// forward only; [`postio_ui::compose::carried_sections`] names the parts.
+    pub fn fetch_carried(&self, message: MessageId, parts: Vec<String>) {
+        if parts.is_empty() {
+            return;
+        }
+        self.counts.record("FetchCarried");
+        self.transport.post(Req::FetchCarried { message, parts });
     }
 
     /// `[storage] max_bytes` changed: the host brings the blobs under it.
@@ -1452,16 +1463,6 @@ impl Client {
             backend,
         };
         self.done(request, "a saved account").await
-    }
-
-    /// Save an account a browser sign-in proved: its tokens to the keyring,
-    /// then the row.
-    pub async fn save_oauth_account(
-        &self,
-        grant: crate::protocol::OAuthGrant,
-    ) -> Result<(), StoreError> {
-        self.done(Req::SaveOAuthAccount(Box::new(grant)), "a saved account")
-            .await
     }
 
     /// How many messages a sweep of the inbox would file away now (spec 007

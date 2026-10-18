@@ -46,6 +46,10 @@ struct FocusListScrollTests {
             return Self.row(Int64(position), marked: position % 9 == 0)
         }
 
+        func residentFocusRow(at position: UInt32) -> FocusRowFfi? {
+            landed.contains(position / pageSize) ? Self.row(Int64(position), marked: position % 9 == 0) : nil
+        }
+
         private static func row(_ id: Int64, marked: Bool) -> FocusRowFfi {
             FocusRowFfi(
                 kind: .conversation, id: id, thread: id, threads: [id], sender: "Ada Moreno",

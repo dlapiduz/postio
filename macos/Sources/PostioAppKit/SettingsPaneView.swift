@@ -68,6 +68,9 @@ public struct SettingsPaneView: View {
     /// Every unsubscribe Postio has recorded, newest first. Read when the
     /// Privacy pane appears, like the grants above it.
     @State private var activations: [UnsubscribeActivationFfi] = []
+    /// What agents have done lately, read when the Agents pane appears and
+    /// after a revoke. `nil` until the first read lands.
+    @State private var agentActivity: AgentActivityFfi?
     /// The new filter being typed, if one is.
     @State private var newFilterKey = ""
     @State private var newFilterQuery = ""
@@ -225,6 +228,7 @@ public struct SettingsPaneView: View {
         case "keys": return "keyboard"
         case "sync": return "arrow.triangle.2.circlepath"
         case "privacy": return "lock.shield"
+        case "mcp": return "terminal"
         default: return "doc.plaintext"
         }
     }
@@ -256,6 +260,7 @@ public struct SettingsPaneView: View {
         case "sync": syncing
         case "keys": keyboard
         case "privacy": privacy
+        case "mcp": agents
         case "saved_searches": filters
         case "": configFile
         default: unbuilt
@@ -882,6 +887,106 @@ public struct SettingsPaneView: View {
         "Run JavaScript or reach the network in the reading pane",
         "Fetch anything speculatively, or send any telemetry",
     ]
+
+    // -- Agents (#1832) -----------------------------------------------------
+
+    /// Which accounts an AI agent may read through `postio-mcp`, what it has
+    /// done, and the way to take it back.
+    ///
+    /// Every word is `postio_ui::agent_access`'s, and every edit goes through
+    /// the boundary's patchers: this draws, and decides nothing. Revoking
+    /// removes the account's `[mcp]` table and nothing else, so it bites on
+    /// the agent's next call; the note beside the buttons says a call already
+    /// running finishes, so a revoke is not read as a promise about it.
+    @ViewBuilder private var agents: some View {
+        let words = settingsAgentWords()
+        ScrollView {
+            VStack(alignment: .leading, spacing: PostioTokens.space6) {
+                if let rows = store.agentSharing {
+                    field(words.sharedHeading.uppercased()) {
+                        if rows.isEmpty {
+                            Text(words.nothingShared)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(rows, id: \.address) { row in
+                                    HStack(alignment: .firstTextBaseline) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(row.address)
+                                            Text("\(row.folders) \u{00B7} \(row.abilities)")
+                                                .font(.footnote)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer(minLength: PostioTokens.space4)
+                                        Button(words.revokeOne) {
+                                            store.revokeAgent(row.address)
+                                            refreshAgentActivity()
+                                        }
+                                        .buttonStyle(.link)
+                                        .accessibilityLabel("\(words.revokeOne) \(row.address)")
+                                    }
+                                    .padding(.vertical, 4)
+                                    if row.address != rows.last?.address { Divider() }
+                                }
+                            }
+                            HStack {
+                                Text(words.revokeNote)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                                Spacer(minLength: PostioTokens.space4)
+                                Button(words.revokeAll) { store.revokeAllAgents() }
+                                    .buttonStyle(.link)
+                            }
+                        }
+                    }
+                    if let entry = AgentEntryPoint.path(executable: Bundle.main.executableURL) {
+                        Divider()
+                        field(words.entryHeading.uppercased()) {
+                            Text(entry)
+                                .font(.system(.callout, design: .monospaced))
+                                .textSelection(.enabled)
+                        }
+                    }
+                    Divider()
+                    field(words.activityHeading.uppercased()) {
+                        if let activity = agentActivity {
+                            Text(activity.summary)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(Array(activity.calls.enumerated()), id: \.offset) { _, call in
+                                    HStack(alignment: .firstTextBaseline) {
+                                        Text(call.line)
+                                            .foregroundStyle(call.refused ? .secondary : .primary)
+                                        Spacer(minLength: PostioTokens.space4)
+                                        Text(call.when)
+                                            .font(.system(.footnote, design: .monospaced))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .padding(.vertical, 4)
+                                    .accessibilityElement(children: .combine)
+                                    Divider()
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    unreadable
+                }
+            }
+        }
+        .onAppear { refreshAgentActivity() }
+    }
+
+    /// Read the access log off the main actor and publish the answer.
+    private func refreshAgentActivity() {
+        guard let session else { return }
+        Task {
+            let activity = await Task.detached { session.agentActivity() }.value
+            agentActivity = activity
+        }
+    }
 
     // -- Keyboard (#1156) ---------------------------------------------------
 

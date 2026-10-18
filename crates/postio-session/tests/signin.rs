@@ -136,6 +136,7 @@ async fn the_account_is_written_with_its_client_and_the_token_goes_to_the_keyrin
         signed_in(),
         &["https://provider.example/mail".to_owned()],
         Some(90),
+        "",
     )
     .await
     .expect("the sign-in persists");
@@ -190,6 +191,7 @@ async fn signing_in_twice_leaves_one_account() {
             signed_in(),
             &scopes,
             None,
+            "",
         )
         .await
         .expect("both attempts answer");
@@ -224,6 +226,7 @@ async fn a_keyring_that_will_not_take_the_token_writes_no_account_row() {
         signed_in(),
         &[],
         None,
+        "",
     )
     .await
     .expect_err("a locked keyring refuses");
@@ -266,6 +269,7 @@ async fn signing_in_again_replaces_the_token_rather_than_throwing_it_away() {
         signed_in(),
         &scopes,
         None,
+        "",
     )
     .await
     .expect("the first sign-in");
@@ -283,6 +287,7 @@ async fn signing_in_again_replaces_the_token_rather_than_throwing_it_away() {
         again,
         &scopes,
         None,
+        "",
     )
     .await
     .expect("the repair");
@@ -300,4 +305,112 @@ async fn signing_in_again_replaces_the_token_rather_than_throwing_it_away() {
         "a-second-refresh-token",
         "the person approved a new grant and Postio kept the dead one"
     );
+}
+
+// -- what signing in over an existing row keeps and changes -----------------
+
+#[tokio::test]
+async fn a_chosen_name_is_the_accounts_name_and_its_identitys() {
+    // The person typed a name on the sheet; it is what the sidebar and the
+    // From header show, ahead of the provider's own name.
+    let database = test_support::temp().await;
+    provision_oauth(
+        &database,
+        Arc::new(MemorySecretStore::new()),
+        &settings(),
+        &client(),
+        signed_in(),
+        &[],
+        None,
+        "  Mara Example ",
+    )
+    .await
+    .expect("persists");
+
+    let connection = database.connect().await.expect("a connection");
+    let stored = AccountRepository::new(&connection)
+        .list()
+        .await
+        .expect("a list")
+        .into_iter()
+        .next()
+        .expect("one account");
+    assert_eq!(stored.display_name, "Mara Example");
+    assert_eq!(
+        stored.identities[0].address.name.as_deref(),
+        Some("Mara Example")
+    );
+}
+
+#[tokio::test]
+async fn signing_in_over_an_existing_row_repairs_it_and_keeps_its_identities() {
+    // The repair screen is reachable for an account that exists: the servers
+    // may have changed, the account may have been disabled, and it may have
+    // been a password account. Signing in again must leave the row naming
+    // the grant the person just approved, not the one they replaced.
+    let database = test_support::temp().await;
+    let keyring = MemorySecretStore::new();
+    provision_oauth(
+        &database,
+        Arc::new(keyring.reopen()),
+        &settings(),
+        &client(),
+        signed_in(),
+        &[],
+        None,
+        "",
+    )
+    .await
+    .expect("first");
+    {
+        let connection = database.connect().await.expect("a connection");
+        let repository = AccountRepository::new(&connection);
+        let mut row = repository.list().await.unwrap().remove(0);
+        row.enabled = false;
+        row.auth = postio_model::account::AuthMethod::Password;
+        row.oauth = None;
+        repository.update(&mut row).await.unwrap();
+    }
+
+    let mut moved = settings();
+    moved.imap = ServerSettings::new("imap2.example.com", 993, Encryption::Tls);
+    let newer = OAuthClient {
+        client_id: "a-newer-client".to_owned(),
+        client_secret: None,
+    };
+    let outcome = provision_oauth(
+        &database,
+        Arc::new(keyring.reopen()),
+        &moved,
+        &newer,
+        signed_in(),
+        &["scope-b".to_owned()],
+        Some(30),
+        "",
+    )
+    .await
+    .expect("repair");
+    assert!(matches!(outcome, Provisioned::AlreadyProvisioned(_)));
+
+    let connection = database.connect().await.expect("a connection");
+    let rows = AccountRepository::new(&connection).list().await.unwrap();
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert!(row.enabled, "a repair re-enables the account");
+    assert_eq!(row.incoming.host, "imap2.example.com");
+    assert_eq!(row.auth, postio_model::account::AuthMethod::XOAuth2);
+    let oauth = row.oauth.as_ref().expect("the new grant is recorded");
+    assert_eq!(oauth.client_id, "a-newer-client");
+    assert_eq!(oauth.scopes, "scope-b");
+    assert_eq!(oauth.refresh_token_lifetime_days, Some(30));
+    assert_eq!(row.identities.len(), 1);
+}
+
+#[test]
+fn the_proof_presents_the_token_as_xoauth2_not_as_a_password() {
+    // A bearer token sent as a PLAIN password is refused by every provider
+    // this path exists for.
+    let proof = postio_session::signin::verification_settings(&settings());
+    assert_eq!(proof.auth, postio_model::account::AuthMethod::XOAuth2);
+    assert_eq!(proof.host, "imap.example.com");
 }

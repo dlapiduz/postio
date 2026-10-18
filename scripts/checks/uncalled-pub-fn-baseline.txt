@@ -66,7 +66,6 @@ open_composer                     # crates/postio-core/src/state.rs:620
 open_flagged                      # crates/postio-core/src/state.rs:522
 preset_for                        # crates/postio-account/src/imap/settings.rs:74
 record_seen                       # crates/postio-model/src/contact.rs:95
-recount                           # crates/postio-storage/src/repository/mailboxes.rs:276
 recount_account                   # crates/postio-storage/src/repository/mailboxes.rs:303
 recovers_on_its_own               # crates/postio-sync/src/connect.rs:209
 refresh_capabilities              # crates/postio-account/src/imap/mod.rs:300

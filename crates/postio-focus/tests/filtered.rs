@@ -5,7 +5,7 @@
 //! here so the Mac's view behaves the same: `g f` shows it with its seven
 //! reason tabs and their counts, a number key narrows it to one reason, `R`
 //! restores the focused message and stops filtering its sender, and nothing
-//! in it is ever deleted (C4) -- no key here sends a deletion.
+//! in it is deleted but by Delete (C4: never automatically).
 
 use chrono::{TimeZone, Utc};
 use postio_client::protocol::FilteredRow;
@@ -200,7 +200,7 @@ fn a_number_key_narrows_filtered_to_its_reason() {
 }
 
 #[test]
-fn r_restores_the_focused_message_and_nothing_is_ever_deleted() {
+fn r_restores_the_focused_message() {
     let mut focus = mac();
     let _ = opened(
         &mut focus,
@@ -219,25 +219,68 @@ fn r_restores_the_focused_message_and_nothing_is_ever_deleted() {
             restored: true,
         })]
     );
-    // C4: whatever the keys of the view, none of them deletes.
-    for command in postio_ui::filtered::TAB_COMMANDS.into_iter().chain([
+}
+
+/// What a key sends while Filtered is up, as commands.
+fn sent(focus: &mut FocusController, command: CommandId) -> Vec<(Command, Vec<MessageTarget>)> {
+    asks(&run(focus, command))
+        .into_iter()
+        .filter_map(|(_, request)| match request {
+            Request::Send { command, aims, .. } => Some((command, aims)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn delete_flag_and_read_act_on_the_focused_filtered_message_alone() {
+    // C4 is "never deleted automatically": Delete is the person's own.
+    for (key, made) in [
+        (CommandId::Delete, Command::default_for(CommandId::Delete)),
+        (CommandId::Flag, Command::default_for(CommandId::Flag)),
+        (
+            CommandId::ToggleRead,
+            Command::default_for(CommandId::ToggleRead),
+        ),
+    ] {
+        let mut focus = mac();
+        let _ = opened(
+            &mut focus,
+            vec![filed(7, "notification", 5), filed(8, "spam", 9)],
+        );
+        let _ = run(&mut focus, CommandId::NextMessage);
+        assert_eq!(
+            sent(&mut focus, key),
+            vec![(made, vec![MessageTarget::Messages(vec![MessageId::new(8)])])],
+            "{key:?}: the filtered message, not its conversation or the list's row"
+        );
+    }
+}
+
+#[test]
+fn only_delete_deletes_in_filtered_and_archive_does_nothing() {
+    let others = postio_ui::filtered::TAB_COMMANDS.into_iter().chain([
         CommandId::RestoreFiltered,
-        CommandId::Delete,
-        CommandId::Archive,
         CommandId::NextMessage,
         CommandId::PrevMessage,
-    ]) {
+        CommandId::OpenMessage,
+    ]);
+    for command in others {
         let mut focus = mac();
         let _ = opened(&mut focus, vec![filed(7, "notification", 5)]);
         for (_, request) in asks(&run(&mut focus, command)) {
-            if let Request::Post(command) | Request::Send { command, .. } = &request {
+            if let Request::Post(made) | Request::Send { command: made, .. } = &request {
                 assert!(
-                    !matches!(command, Command::Delete { .. }),
+                    !matches!(made, Command::Delete { .. }),
                     "{command:?} deleted from Filtered"
                 );
             }
         }
     }
+    // Filtered mail is archived already.
+    let mut focus = mac();
+    let _ = opened(&mut focus, vec![filed(7, "notification", 5)]);
+    assert_eq!(sent(&mut focus, CommandId::Archive), vec![]);
 }
 
 #[test]
@@ -349,4 +392,29 @@ fn a_page_for_a_tab_since_left_is_not_drawn() {
         &List,
     );
     assert!(view(&effects).is_none(), "{effects:?}");
+}
+
+#[test]
+fn the_delete_flag_and_read_keys_reach_filtered() {
+    use postio_ui::keymap::{Chord, Outcome};
+    let mut focus = mac();
+    let _ = opened(&mut focus, vec![filed(7, "notification", 5)]);
+    for (key, command) in [
+        ("#", CommandId::Delete),
+        ("s", CommandId::Flag),
+        ("U", CommandId::ToggleRead),
+    ] {
+        let chord: Chord = key.parse().expect("a chord");
+        let outcome = focus.press(
+            &chord,
+            focus.key_context(),
+            false,
+            std::time::Instant::now(),
+        );
+        assert_eq!(
+            outcome,
+            Outcome::Command(command.as_str().to_owned()),
+            "{key} in Filtered"
+        );
+    }
 }

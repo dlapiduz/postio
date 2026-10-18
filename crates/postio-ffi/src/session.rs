@@ -44,6 +44,19 @@ pub enum SessionError {
         /// A sentence for the user, already written by the store layer.
         message: String,
     },
+    /// The store is encrypted under a key the keyring does not hold:
+    /// another installation's, or a keyring entry that was replaced
+    /// (`postio_session::Unreadable::AnotherKey`, #1598).
+    ///
+    /// Its own case for the same reason as [`Self::StoreFromAnotherBuild`] --
+    /// the key does not change between attempts, so the way forward is
+    /// starting over -- and not that case, because what a fresh store keeps
+    /// differs: nothing in this one decrypts, so no account comes across.
+    #[error("{message}")]
+    StoreUnderAnotherKey {
+        /// A sentence for the user, already written by the store layer.
+        message: String,
+    },
     /// The tokio runtime the engine needs could not be started.
     #[error("{message}")]
     RuntimeUnavailable {
@@ -59,9 +72,14 @@ impl SessionError {
         let message = refusal.sentence;
         match refusal.remedy {
             postio_session::Remedy::TryAgain => SessionError::StoreUnavailable { message },
-            postio_session::Remedy::StartOver { .. } => {
-                SessionError::StoreFromAnotherBuild { message }
-            }
+            postio_session::Remedy::StartOver {
+                because: postio_session::Unreadable::AnotherBuild,
+                ..
+            } => SessionError::StoreFromAnotherBuild { message },
+            postio_session::Remedy::StartOver {
+                because: postio_session::Unreadable::AnotherKey,
+                ..
+            } => SessionError::StoreUnderAnotherKey { message },
         }
     }
 
@@ -1067,6 +1085,15 @@ impl Session {
     #[uniffi::method(name = "messageFacts")]
     pub fn message_facts_ffi(&self, message: i64) -> crate::MessageFactsFfi {
         blocking(self.message_facts(message))
+    }
+
+    /// What agents have done lately, newest first, with the ids the access
+    /// log holds resolved to the rows they name (#1832). Empty when the
+    /// session keeps no log (an in-memory store). Blocking: it reads the log
+    /// and a few rows; call it off the main actor.
+    #[uniffi::method(name = "agentActivity")]
+    pub fn agent_activity_ffi(&self) -> crate::AgentActivityFfi {
+        blocking(self.agent_activity())
     }
 
     /// The verbs the reading pane offers. See [`Session::reader_actions`].
@@ -2244,6 +2271,64 @@ impl Session {
         self.conversation.lock().expect("conversation lock").clone()
     }
 
+    /// The access log beside the store, when this session has one.
+    fn agent_log_path(&self) -> Option<std::path::PathBuf> {
+        self.store_at
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map(|dir| dir.join("mcp-access.log"))
+    }
+
+    /// See [`agent_activity_ffi`](Self::agent_activity_ffi).
+    pub async fn agent_activity(&self) -> crate::AgentActivityFfi {
+        let log = self
+            .agent_log_path()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .unwrap_or_default();
+        self.agent_activity_from(&log, chrono::Utc::now()).await
+    }
+
+    /// The activity `log` records as of `now`. A row that has since been
+    /// deleted is left unnamed rather than failing the page.
+    pub async fn agent_activity_from(
+        &self,
+        log: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> crate::AgentActivityFfi {
+        use postio_model::ids::{AccountId, MailboxId, MessageId};
+        use postio_storage::repository::{AccountRepository, MailboxRepository, MessageRepository};
+        use postio_ui::agent_access as agent;
+
+        let calls = agent::parse_log(log, agent::RECENT);
+        let wanted = agent::wanted(&calls);
+        let mut names = agent::Names::default();
+        if let Some((database, _)) = self.store_and_blobs()
+            && let Ok(connection) = database.connect().await
+        {
+            let accounts = AccountRepository::new(&connection);
+            for id in &wanted.accounts {
+                if let Ok(Some(account)) = accounts.get(AccountId::new(*id)).await {
+                    names.accounts.insert(*id, account.address.address.clone());
+                }
+            }
+            let mailboxes = MailboxRepository::new(&connection);
+            for id in &wanted.mailboxes {
+                if let Ok(Some(mailbox)) = mailboxes.get(MailboxId::new(*id)).await {
+                    names.mailboxes.insert(*id, mailbox.path);
+                }
+            }
+            let messages = MessageRepository::new(&connection);
+            for id in &wanted.messages {
+                if let Ok(Some(message)) = messages.get(MessageId::new(*id)).await
+                    && let Some(subject) = message.subject
+                {
+                    names.messages.insert(*id, subject);
+                }
+            }
+        }
+        crate::agent_access::activity(&names, &calls, now)
+    }
+
     /// The row's own facts about one open message: the unsubscribe offer
     /// and the recipients. One connection, one row read, one `send_state`
     /// read — **no body load**: the two facts that need the body (the
@@ -2951,7 +3036,7 @@ impl Session {
             )
             .await?;
             signin::provision_oauth(
-                &database, secrets, &settings, &client, signed_in, &scopes, None,
+                &database, secrets, &settings, &client, signed_in, &scopes, None, "",
             )
             .await
             .map_err(signin::SignInError::Failed)
@@ -5196,7 +5281,8 @@ pub struct StartedOverFfi {
 
 /// Set aside the store `options` names and start a fresh one in its place,
 /// carrying its accounts across: the way past
-/// [`SessionError::StoreFromAnotherBuild`] (`postio_session::start_over::start_over_at`).
+/// [`SessionError::StoreFromAnotherBuild`] and
+/// [`SessionError::StoreUnderAnotherKey`] (`postio_session::start_over::start_over_at`).
 ///
 /// The store key comes from `options`' secret store, or the OS keyring: the
 /// one the old store was written under, which stays where it is, so the

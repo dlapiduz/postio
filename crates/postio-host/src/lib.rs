@@ -1293,11 +1293,6 @@ impl Inner {
                 .await
                 .map_err(postio_model::listing::StoreError::new),
             ),
-            Req::SaveOAuthAccount(grant) => done(
-                onboarding::save_oauth(&self.wiring.database, self.wiring.secrets.clone(), *grant)
-                    .await
-                    .map_err(postio_model::listing::StoreError::new),
-            ),
             Req::InlineImage { bytes, mime_type } => {
                 let blobs = self.wiring.blobs.clone();
                 let stored = tokio::task::spawn_blocking(move || {
@@ -1414,6 +1409,10 @@ impl Inner {
             }
             Req::FetchBody(message) => {
                 self.fetch_body(message).await;
+                Resp::Done
+            }
+            Req::FetchCarried { message, parts } => {
+                self.fetch_carried(message, parts).await;
                 Resp::Done
             }
             Req::StorageCeiling(max_bytes) => {
@@ -1605,6 +1604,26 @@ impl Inner {
         });
     }
 
+    /// Queues the sections a freshly opened forward carries, through the
+    /// interactive lane, as the reader's chip does (#1690).
+    async fn fetch_carried(&self, message: postio_model::MessageId, parts: Vec<String>) {
+        let Some(engine) = self.engine_for_message(message).await else {
+            return;
+        };
+        self.runtime().spawn(async move {
+            match engine.request_payloads(message, parts).await {
+                Ok(queued) => tracing::debug!(
+                    message = message.get(),
+                    queued,
+                    "asked the engine for a forward's parts"
+                ),
+                Err(error) => {
+                    tracing::warn!(message = message.get(), %error, "cannot fetch a forward's parts");
+                }
+            }
+        });
+    }
+
     async fn export_messages(
         &self,
         messages: &[(postio_model::MessageId, std::path::PathBuf)],
@@ -1686,7 +1705,7 @@ impl Inner {
     }
 
     /// Begin the desktop's browser sign-in for `submission`
-    /// (`postio_session::onboarding::run_sign_in`) and answer where it waits
+    /// (`postio_session::signin`) and answer where it waits
     /// for the person: the consent URL, in full.
     ///
     /// **Nothing is opened here.** The host's opener only reports the URL;
@@ -1734,29 +1753,49 @@ impl Inner {
         let saved_scopes = scopes.clone();
         self.runtime().spawn(async move {
             let scopes = saved_scopes;
-            let settings = postio_session::onboarding::connection_settings(&submission);
-            let signed_in = postio_session::onboarding::run_sign_in(
-                &settings, &client, &offer, &opener, &cancel,
-            )
-            .await;
-            let outcome = match signed_in {
-                Ok((endpoints, tokens)) => {
-                    postio_session::onboarding::persist_oauth(
-                        &wiring.database,
-                        wiring.secrets.clone(),
-                        &submission,
-                        &endpoints,
-                        &scopes,
-                        refresh,
-                        tokens,
-                    )
-                    .await
-                }
-                Err(postio_session::onboarding::SignInError::Cancelled) => {
-                    Err("The sign-in was cancelled.".to_owned())
-                }
-                Err(postio_session::onboarding::SignInError::Failed(reason)) => Err(reason),
+            use postio_session::signin;
+            let settings = postio_session::onboarding::account_settings(&submission, &offer);
+            let own_client = signin::OAuthClient {
+                client_id: client.client_id.clone(),
+                client_secret: client.client_secret.clone(),
             };
+            let outcome = async {
+                let endpoints = signin::endpoints_for(
+                    offer.authorize.as_deref(),
+                    offer.token.as_deref(),
+                    offer.issuer.as_deref(),
+                    &cancel,
+                )
+                .await?;
+                let signed_in = signin::sign_in(
+                    &settings,
+                    &own_client,
+                    &endpoints,
+                    &scopes,
+                    &opener,
+                    &cancel,
+                    &|_| {},
+                )
+                .await?;
+                signin::provision_oauth(
+                    &wiring.database,
+                    wiring.secrets.clone(),
+                    &settings,
+                    &own_client,
+                    signed_in,
+                    &scopes,
+                    refresh,
+                    &submission.name,
+                )
+                .await
+                .map_err(signin::SignInError::Failed)
+            }
+            .await
+            .map(|_| ())
+            .map_err(|error| match error {
+                signin::SignInError::Cancelled => "The sign-in was cancelled.".to_owned(),
+                signin::SignInError::Failed(reason) => reason,
+            });
             if outcome.is_ok() && then == postio_client::protocol::AfterSave::Sync {
                 start_engine_for(&wiring, &engines, &submission.address).await;
             }
@@ -2196,7 +2235,6 @@ pub mod export;
 mod focus;
 pub mod maintenance;
 pub mod notify;
-pub mod onboarding;
 pub mod parts;
 pub mod reading;
 pub mod search;

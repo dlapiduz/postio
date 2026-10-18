@@ -274,12 +274,79 @@ ever grows a home this is the second thing to report through it.
 
 ## RFC 3501 / RFC 9051 — IMAP, and the extensions in use
 
-**Not yet reviewed.** [#681](https://github.com/dlapiduz/postio/issues/681).
+**Reviewed:** 2026-10-16, against `postio-account`'s `imap` module
+(`selection`, `mutate`, `fetch`, `dispatch`, `skip_counter`) and
+`postio-sync`'s `resync`, with the RFC 6851, 7162 and 2919 text read rather
+than recalled. RFC 4315 (UIDPLUS) is its own section below. This closes
+[#681](https://github.com/dlapiduz/postio/issues/681).
 
-Covers `io-imap`'s behaviour and Postio's own assumptions where they diverge
-from spec, beyond what ADR 0001's spike already found for iCloud specifically.
-The extensions already relied on: RFC 4315 UIDPLUS, RFC 7162
-CONDSTORE/QRESYNC, RFC 6851 MOVE.
+Postio never sends `ENABLE` and never issues `SELECT (QRESYNC …)`:
+`Dispatch::extensions_to_enable` and `resync_strategy`
+(`dispatch.rs:144`, `:197`) are policy with no caller in production code.
+What it uses is `SELECT (CONDSTORE)` and `UID FETCH … (CHANGEDSINCE n)`
+(`selection.rs:251`, `resync.rs:572`), and it finds deletions by counting
+rather than from `VANISHED` — ADR 0001 found `io-imap` drops it. Every QRESYNC
+row below is therefore about what the *absence* of QRESYNC costs.
+
+Backed by loopback tests in `crates/postio-account/tests/` against an
+in-process server, and by `MockBackend` in `crates/postio-sync/tests/sync_suite/resync.rs`.
+
+### RFC 3501 / 9051 — base protocol
+
+| § | What it says | Verdict |
+|---|---|---|
+| **2.3.1.1** `UIDVALIDITY` | A changed value invalidates every cached UID | **Compliant, with a named exception.** A change is acted on only after the server says it twice (`selection.rs:369`), because a live server contradicted itself from one `SELECT` to the next (#1538). The cost is one extra `SELECT` on the path that was about to discard a mailbox. A real renumber still wipes and rebuilds (`resync.rs:492`); `uidvalidity.rs` and `a_uid_validity_change_wipes_and_rebuilds_the_mailbox` assert both halves. |
+| **6.3.1** `SELECT` response | `UIDVALIDITY` `MUST` be present | **Compliant.** An omission is asked again, then refused as permanent — or transient when `io-imap` dropped the line (`selection.rs:297-350`; `a_select_that_omits_uidvalidity_is_asked_again`, `a_uidvalidity_lost_in_transit_is_transient`). |
+| **6.3.1 / 6.3.2** `SELECT` vs `EXAMINE` | `EXAMINE` is read-only and cannot serve a write | **Compliant.** A cached selection is reused only if it is read-write (`selection.rs:232`), so a write never rides an `EXAMINE`. |
+| **6.4.5** `FETCH` and `\Seen` | Fetching `BODY[…]` sets `\Seen`; `BODY.PEEK` does not | **Compliant.** Every body, header and section fetch is `BODY.PEEK` (`body.rs:292,415`, `fetch.rs:290`); reading in the background never marks mail read. |
+| **7.4.2** Unsolicited `FETCH` | A server may report a flag change on any message at any time | **Compliant.** An entry with neither `INTERNALDATE` nor `ENVELOPE` is passed over, not treated as a malformed answer (`fetch.rs:368`; `an_unsolicited_flag_update_inside_the_reply_is_not_a_message_that_lost_its_date`). |
+| **7.4.2** Undecodable untagged line | (not a client rule) `io-imap` drops a line it cannot decode and completes `Ok` | **Compliant, with a named exception.** Counted around every `CHANGEDSINCE` fetch and `SELECT`; a nonzero count refuses the answer and rebuilds (`skip_counter.rs`; `a_line_io_imap_could_not_decode_forces_a_full_resync_not_a_silent_success`). |
+| **2.3.2** `\Recent` | Only the server sets it | **Was a latent gap, fixed here.** Nothing in the tree asked for it, but `wire_flags` would have put a `\Recent` on a `STORE` or `APPEND` (`mutate.rs:397`); it is now dropped, asserted by `recent_is_never_put_on_the_wire`. |
+| **6.3.11** `APPEND` literal | A synchronising literal waits for `+` | **Compliant.** `non_sync: false` (`mutate.rs:227`): the server may refuse a message before all of it is sent, and `LITERAL+` is not assumed. |
+| **6.4.8 / 9051 §6.4.9** `n:*` | A range ending in `*` always includes the highest UID, even if it is below `n` | **Compliant, with a named exception.** The arrivals fetch `floor:*` (`resync.rs:575-580`, `unaccounted_arrivals`) can therefore return one message already held; it is upserted again and counted as "changed". Costs a spare row, never a wrong one. Not fixed because the extra row cannot alter local state. |
+| **6.4.3 / 6.4.8** Silent `UID` misses | A `UID` command naming a UID that is gone succeeds and does nothing | **Compliant.** `COPY`/`STORE`/`UID EXPUNGE` on a vanished UID are no-ops, which is the right outcome for a message another client already moved or deleted. |
+
+### RFC 7162 — CONDSTORE / QRESYNC
+
+| § | What it says | Verdict |
+|---|---|---|
+| **3.1.2.1** `HIGHESTMODSEQ` | A client `MUST` cache it after a sync and delete it when the mailbox cannot supply one | **Compliant.** It is recorded only after a pass succeeds, never before (`resync.rs:386`; the error arms return without calling `observe`), dropped on a `UIDVALIDITY` change (`sync.rs:120`), and a missing value plans a full pass (`FullResyncReason::NoModSeq`, `sync.rs:97`). |
+| **3.1.2.2** `NOMODSEQ` | A mailbox that cannot keep mod-sequences reports none; the client must not use `CHANGEDSINCE` | **Compliant.** The absence of `HIGHESTMODSEQ` on `SELECT` is the signal, and `ResyncPlan::Full(NoModSeq)` re-reads the folder in place (`a_modseq_less_backend_resyncs_in_place_without_discarding_rows`). The `NOMODSEQ` code itself is never parsed; its meaning arrives as the missing value. |
+| **3.1.2** Mod-sequences never decrease | A smaller `HIGHESTMODSEQ` than the one held means the store was rebuilt | **Compliant.** `ModSeqWentBackwards` plans a full pass (`sync.rs:106`). |
+| **3.1.4.1** `CHANGEDSINCE` | Strictly greater than; implies the `MODSEQ` item; enables CONDSTORE | **Compliant.** Postio sends `SELECT (CONDSTORE)` first anyway (`selection.rs:293`) and the mock honours strictly-greater (`a_changedsince_fetch_returns_only_what_moved`). |
+| **3.1.2.1** New messages | A new message's mod-sequence exceeds the previous `HIGHESTMODSEQ` | **Compliant, with a belt and braces.** A server that breaks this would lose new mail silently, so `UIDNEXT` is a second witness (`resync.rs:775`; `a_message_the_change_feed_never_mentions_still_arrives`). |
+| **3.2** Expunge raises `HIGHESTMODSEQ` | Required of a server **that supports QRESYNC**; stated for no one else | **Was a gap, fixed here.** On a CONDSTORE-only server a message deleted by another client leaves the value unchanged, so the pass planned `UpToDate` and the message stayed in the list indefinitely. The `UpToDate` arm now compares local rows to `EXISTS` and reconciles when there are more (`resync.rs:430-460`). Asserted by `a_deletion_that_leaves_highestmodseq_alone_still_reflects_locally`, which uses the new `MockBackend::expunge_keeps_mod_seq`. |
+| **3.2 / 5** `VANISHED (EARLIER)` and `SELECT (QRESYNC …)` | A QRESYNC client learns deletions from the server | **Not used, by design.** Deletions are found by the arithmetic in `resync.rs`'s module docs: exact, and costs one extra fetch only when the count disagrees. The price is that a mailbox whose count disagrees re-fetches every known UID. |
+| **3.1.3** Conditional `STORE` | `UNCHANGEDSINCE` makes a flag write lose to a newer change | **Compliant, with a named exception.** Last writer wins (`mutate.rs:53`): `io-imap` cannot send the modifier (ADR 0001), and a flag lost to a race comes back on the next resync. |
+| **3.2.3 / 3.2.5** `ENABLE QRESYNC` | Enabling changes `EXPUNGE` into `VANISHED` and adds `MODSEQ` to `FETCH` | **Compliant.** Never enabled, so no response shape differs from what the parser expects; asserted by `enable_is_not_sent_to_a_server_that_does_not_advertise_it` for the gate in case it is ever wired. |
+| **Advertised but answered incompletely** | (not an RFC rule) | **Compliant.** A `CHANGEDSINCE` that lost a line is refused (`skip_counter.rs`) and the mailbox is re-enumerated without wiping it (`resync.rs:492`). |
+
+### RFC 6851 — MOVE, and the fallback
+
+| § | What it says | Verdict |
+|---|---|---|
+| **3.1** `UID MOVE` | Atomic on the server | **Compliant.** Used whenever `MOVE` is advertised (`mutate.rs:104`; `moving_uses_move_where_the_server_has_it`). A tagged `NO` surfaces as an error to the caller; §3.3 obliges the server to leave each message in at least one of the two mailboxes. |
+| **3.3 / 4.3** `COPYUID` and `EXPUNGE`/`VANISHED` order | `COPYUID` arrives untagged, before the expunge responses | **Compliant.** `io-imap` collects the code from either position, and `mapping_from` pairs it positionally (`mutate.rs:339`). An absent code is [#903](https://github.com/dlapiduz/postio/issues/903), above. |
+| **4.4** `MOVE` with QRESYNC | A QRESYNC client must handle both `VANISHED` and `EXPUNGE` | **Compliant.** QRESYNC is never enabled. |
+| *fallback* `COPY` then `STORE \Deleted` then `UID EXPUNGE` | (not in 6851: this is the RFC 3501 spelling of a move) | **Compliant, with a named exception.** The copy comes first and a failure stops before anything is flagged (`mutate.rs:112`; `moving_without_move_copies_then_deletes`). `UID EXPUNGE` names only the moved UIDs, so another client's `\Deleted` mail is not taken. Without UIDPLUS the source is left flagged, not expunged — the named exception in the UIDPLUS section. A failure between copy and flag leaves the message in both mailboxes, which §3.3 forbids a server from doing but a client-side sequence cannot avoid; the cost is a duplicate, not a loss. |
+
+### RFC 2047 and RFC 2919 as they arrive over IMAP
+
+| § | What it says | Verdict |
+|---|---|---|
+| **RFC 2047 §5** Encoded words in `ENVELOPE` | `ENVELOPE` hands over header text undecoded | **Compliant.** Subject and display names go through `decode_header_text`; `mailbox` and `host` do not, since an encoded word cannot appear there (`fetch.rs:463,504-530`; `mime.rs` tests `decode_header_text_agrees_with_a_full_parse_of_the_same_subject`). A decoded line break is folded to a space (#1770). |
+| **RFC 2919 §3** Grammar | `[phrase] "<" list-id ">"`; the phrase may be a quoted string | **Was a gap, fixed here.** The parser took everything between the first `<` and the last `>`, so a `<` inside a quoted phrase, or a second `List-Id` in the same `HEADER.FIELDS` block, produced a garbage identifier. It now takes the first bracket outside a quoted string (`mime.rs`, `first_angle_bracketed`; `list_id_from_text_reads_the_first_bracket_outside_a_quoted_phrase`). |
+| **RFC 2919 §3** Phrase optional; brackets | A value with no brackets is not a valid `List-Id` | **Compliant, with a named exception.** A bare value is kept as the identifier (`list_id_from_text_keeps_the_bracketed_part_and_trims_the_rest`) because some senders omit the brackets and the list is still recognisable. |
+| **RFC 2919 §6** Comparison | Case-insensitive; ignores everything outside the brackets | **Compliant for what compares.** Search is a case-insensitive full-text match on the stored identifier (`postio-index` `list:`), and the phrase is discarded at parse time. The identifier is stored as sent, and the unsubscribe record keys on the stored text, so `News.Example` and `news.example` are two lists to it; a list that changes its capitalisation between messages is vanishingly rare, and nothing in the tree compares two identifiers for equality. |
+| **RFC 2919 §3** One field | "No more than one of each field" | **Not Postio's to enforce.** A violating message is read from its first field. |
+
+### What was not reviewed
+
+Literal handling inside `io-imap` itself (the `{n}` parse and the continuation
+exchange) is the dependency's; Postio's own surface is the `APPEND` choice
+above and the body streamer's handling of a literal that stops short
+(`body.rs:256`). The Gmail, JMAP and Maildir backends speak none of this and
+are outside the section.
 
 ## RFC 5321 — SMTP
 
@@ -362,9 +429,8 @@ the point of having both is that neither can drift alone.
 ## RFC 4315 — UIDPLUS
 
 **Reviewed:** 2026-09-02, against `postio-account`'s `dispatch` and `mutate`, and
-`postio-sync`'s `drain`. This is the first slice of #681; **CONDSTORE/QRESYNC
-(7162), MOVE (6851), List-Id (2919) and the base protocol (3501/9051) are not
-reviewed yet** and no verdict below should be read as covering them.
+`postio-sync`'s `drain`. This is the first slice of #681; the other IMAP
+RFCs are in the section above.
 
 ### Verdicts
 

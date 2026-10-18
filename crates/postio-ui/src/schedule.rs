@@ -16,7 +16,7 @@
 //! "Later today" in the snooze picker and the schedule-send picker alike,
 //! and "Tomorrow evening" once today's has passed ([`evening`]).
 
-use chrono::{DateTime, Datelike, Days, Duration, Local, Months, NaiveDate, TimeZone, Weekday};
+use chrono::{DateTime, Datelike, Days, Duration, Months, NaiveDate, NaiveTime, TimeZone, Weekday};
 use postio_config::Due;
 use postio_search::date::resolve_local;
 
@@ -25,17 +25,21 @@ use postio_search::date::resolve_local;
 /// before 6pm must not offer "this evening" for an instant already gone.
 const MIN_SCHEDULE_LEAD: Duration = Duration::minutes(5);
 
-/// `day` at the given wall-clock hour and minute, in `day`'s own local zone.
+/// The wall-clock `hour`:`minute` on the calendar day `days` after `now`'s,
+/// in `now`'s own zone.
 ///
-/// A DST transition can make a wall-clock time ambiguous or nonexistent;
-/// falling back to `day` itself rather than panicking keeps a schedule-send
-/// picker from crashing the composer on the two days a year this can happen,
-/// at the cost of an odd-looking preset on exactly those days.
-fn at_local_time(day: DateTime<Local>, hour: u32, minute: u32) -> DateTime<Local> {
-    day.date_naive()
-        .and_hms_opt(hour, minute, 0)
-        .and_then(|naive| naive.and_local_timezone(Local).single())
-        .unwrap_or(day)
+/// Days are stepped on the calendar, never as 24-hour spans, as [`next_due`]
+/// steps them: across a change of the clocks a day is 23 or 25 hours, and
+/// `now + 24h` near midnight is the wrong date (#1700). The time is
+/// resolved by [`resolve_local`], `parse_when`'s own rule for a wall-clock
+/// time the clocks skip or repeat.
+fn at_day<Tz: TimeZone>(now: &DateTime<Tz>, days: i64, hour: u32, minute: u32) -> DateTime<Tz> {
+    let day = now
+        .date_naive()
+        .checked_add_signed(Duration::days(days))
+        .unwrap_or_else(|| now.date_naive());
+    let naive = day.and_time(NaiveTime::from_hms_opt(hour, minute, 0).unwrap_or_default());
+    resolve_local(&now.timezone(), naive, now).unwrap_or_else(|| now.clone())
 }
 
 /// The fixed times the schedule-send picker offers, computed
@@ -46,12 +50,12 @@ fn at_local_time(day: DateTime<Local>, hour: u32, minute: u32) -> DateTime<Local
 /// is behind `now`.
 /// "Monday morning" always means a Monday strictly after today: opening the
 /// picker on a Monday offers next week's, not the one already underway.
-pub fn schedule_presets(now: DateTime<Local>) -> [(&'static str, DateTime<Local>); 4] {
+pub fn schedule_presets<Tz: TimeZone>(now: DateTime<Tz>) -> [(&'static str, DateTime<Tz>); 4] {
     [
-        ("In 1 hour", now + Duration::hours(1)),
-        evening(now),
-        ("Tomorrow morning", tomorrow_morning(now)),
-        ("Monday morning", monday_morning(now)),
+        ("In 1 hour", now.clone() + Duration::hours(1)),
+        evening(&now),
+        ("Tomorrow morning", tomorrow_morning(&now)),
+        ("Monday morning", monday_morning(&now)),
     ]
 }
 
@@ -60,12 +64,12 @@ pub fn schedule_presets(now: DateTime<Local>) -> [(&'static str, DateTime<Local>
 /// Snoozed mail leaves the inbox and comes back at the chosen time. The
 /// first is the schedule-send picker's evening, in its words ([`evening`]);
 /// "Next week" is this weekday a week on, in the morning.
-pub fn snooze_presets(now: DateTime<Local>) -> [(&'static str, DateTime<Local>); 4] {
+pub fn snooze_presets<Tz: TimeZone>(now: DateTime<Tz>) -> [(&'static str, DateTime<Tz>); 4] {
     [
-        evening(now),
-        ("Tomorrow morning", tomorrow_morning(now)),
-        ("Monday morning", monday_morning(now)),
-        ("Next week", at_local_time(now + Duration::days(7), 8, 0)),
+        evening(&now),
+        ("Tomorrow morning", tomorrow_morning(&now)),
+        ("Monday morning", monday_morning(&now)),
+        ("Next week", at_day(&now, 7, 8, 0)),
     ]
 }
 
@@ -75,15 +79,15 @@ pub fn snooze_presets(now: DateTime<Local>) -> [(&'static str, DateTime<Local>);
 /// working days" counts Monday to Friday after today, so on a Saturday it
 /// means Tuesday. "End of the week" is the next Friday morning still ahead
 /// of `now`: this Friday's until 9am on Friday, then next Friday's.
-pub fn remind_presets(now: DateTime<Local>) -> [(&'static str, DateTime<Local>); 4] {
+pub fn remind_presets<Tz: TimeZone>(now: DateTime<Tz>) -> [(&'static str, DateTime<Tz>); 4] {
     [
-        ("Tomorrow", at_local_time(now + Duration::days(1), 9, 0)),
+        ("Tomorrow", at_day(&now, 1, 9, 0)),
         (
             "In 2 working days",
-            at_local_time(working_days_after(now, 2), 9, 0),
+            at_day(&now, working_days_after(&now, 2), 9, 0),
         ),
-        ("End of the week", end_of_the_week(now)),
-        ("In a week", at_local_time(now + Duration::days(7), 9, 0)),
+        ("End of the week", end_of_the_week(&now)),
+        ("In a week", at_day(&now, 7, 9, 0)),
     ]
 }
 
@@ -95,7 +99,7 @@ pub fn remind_presets(now: DateTime<Local>) -> [(&'static str, DateTime<Local>);
 /// spec's own (screen 11, US5 scenario 1), and the schedule-send picker had
 /// the other; the words were chosen to match the design, and the roll, so
 /// that neither picker names today for a time that is tomorrow.
-fn evening(now: DateTime<Local>) -> (&'static str, DateTime<Local>) {
+fn evening<Tz: TimeZone>(now: &DateTime<Tz>) -> (&'static str, DateTime<Tz>) {
     let at = this_evening(now);
     if at.date_naive() == now.date_naive() {
         ("Later today", at)
@@ -105,52 +109,55 @@ fn evening(now: DateTime<Local>) -> (&'static str, DateTime<Local>) {
 }
 
 /// 6pm today, or tomorrow's once today's is behind `now`.
-fn this_evening(now: DateTime<Local>) -> DateTime<Local> {
-    let evening = at_local_time(now, 18, 0);
-    if evening < now + MIN_SCHEDULE_LEAD {
-        at_local_time(now + Duration::days(1), 18, 0)
+fn this_evening<Tz: TimeZone>(now: &DateTime<Tz>) -> DateTime<Tz> {
+    let evening = at_day(now, 0, 18, 0);
+    if evening < now.clone() + MIN_SCHEDULE_LEAD {
+        at_day(now, 1, 18, 0)
     } else {
         evening
     }
 }
 
 /// 8am tomorrow.
-fn tomorrow_morning(now: DateTime<Local>) -> DateTime<Local> {
-    at_local_time(now + Duration::days(1), 8, 0)
+fn tomorrow_morning<Tz: TimeZone>(now: &DateTime<Tz>) -> DateTime<Tz> {
+    at_day(now, 1, 8, 0)
 }
 
 /// 8am on the first Monday strictly after today: on a Monday, next week's.
-fn monday_morning(now: DateTime<Local>) -> DateTime<Local> {
-    let days_from_monday = now.weekday().num_days_from_monday() as i64;
+fn monday_morning<Tz: TimeZone>(now: &DateTime<Tz>) -> DateTime<Tz> {
+    let days_from_monday = i64::from(now.weekday().num_days_from_monday());
     let days_until_monday = if days_from_monday == 0 {
         7
     } else {
         7 - days_from_monday
     };
-    at_local_time(now + Duration::days(days_until_monday), 8, 0)
+    at_day(now, days_until_monday, 8, 0)
 }
 
-/// `now`, moved on by `count` working days: Monday to Friday, counting from
-/// the day after today.
-fn working_days_after(now: DateTime<Local>, count: u32) -> DateTime<Local> {
-    let mut day = now;
+/// How many calendar days on from `now`'s is the day `count` working days
+/// later: Monday to Friday, counting from the day after today.
+fn working_days_after<Tz: TimeZone>(now: &DateTime<Tz>, count: u32) -> i64 {
+    let mut weekday = now.weekday();
+    let mut days = 0;
     let mut left = count;
     while left > 0 {
-        day += Duration::days(1);
-        if !matches!(day.weekday(), Weekday::Sat | Weekday::Sun) {
+        weekday = weekday.succ();
+        days += 1;
+        if !matches!(weekday, Weekday::Sat | Weekday::Sun) {
             left -= 1;
         }
     }
-    day
+    days
 }
 
 /// 9am on the first Friday still ahead of `now`.
-fn end_of_the_week(now: DateTime<Local>) -> DateTime<Local> {
-    let days_to_friday =
-        (Weekday::Fri.num_days_from_monday() + 7 - now.weekday().num_days_from_monday()) % 7;
-    let friday = at_local_time(now + Duration::days(i64::from(days_to_friday)), 9, 0);
-    if friday < now + MIN_SCHEDULE_LEAD {
-        at_local_time(now + Duration::days(i64::from(days_to_friday) + 7), 9, 0)
+fn end_of_the_week<Tz: TimeZone>(now: &DateTime<Tz>) -> DateTime<Tz> {
+    let days_to_friday = i64::from(
+        (Weekday::Fri.num_days_from_monday() + 7 - now.weekday().num_days_from_monday()) % 7,
+    );
+    let friday = at_day(now, days_to_friday, 9, 0);
+    if friday < now.clone() + MIN_SCHEDULE_LEAD {
+        at_day(now, days_to_friday + 7, 9, 0)
     } else {
         friday
     }
@@ -224,7 +231,7 @@ fn next_day(due: &Due, day: NaiveDate) -> Option<NaiveDate> {
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
+    use chrono::{Local, TimeZone};
 
     use super::*;
 
@@ -369,7 +376,7 @@ mod digest_due_tests {
     };
     use postio_config::Due;
 
-    use super::next_due;
+    use super::{next_due, remind_presets, schedule_presets, snooze_presets};
 
     /// Central European time for 2026: CET (+01:00) until 29 March 01:00
     /// UTC, CEST (+02:00) until 25 October 01:00 UTC, then CET again. 02:30
@@ -542,5 +549,150 @@ mod digest_due_tests {
             next_due(&third, &at(2026, 12, 20, 9, 0)),
             Some(at(2027, 1, 3, 9, 0))
         );
+    }
+    /// Every preset's wall-clock time, as `(label, date, hour)` read off the
+    /// zone's own calendar: what a person sees in the picker.
+    fn seen(presets: &[(&'static str, DateTime<Cet2026>)]) -> Vec<(&'static str, String)> {
+        presets
+            .iter()
+            .map(|(label, when)| {
+                (
+                    *label,
+                    when.naive_local().format("%a %d %b %H:%M").to_string(),
+                )
+            })
+            .collect()
+    }
+
+    fn expect(rows: &[(&'static str, &str)]) -> Vec<(&'static str, String)> {
+        rows.iter()
+            .map(|(label, when)| (*label, (*when).to_owned()))
+            .collect()
+    }
+
+    /// The presets step calendar days, never 24-hour spans (#1700): a day is
+    /// 23 hours long on 29 March and 25 on 25 October, and `now + 1 day`
+    /// near midnight lands on the wrong date, with the preset at 08:00 of it.
+    ///
+    /// Each row is a `now` and what each of the three tables offers then.
+    #[test]
+    fn presets_land_on_the_next_calendar_day_across_a_change_of_the_clocks() {
+        type Offered<'a> = Vec<(&'a str, &'a str)>;
+        let rows: [(DateTime<Cet2026>, [Offered; 3]); 4] = [
+            // Saturday 28 March 23:30: the clocks go forward at 02:00.
+            (
+                at(2026, 3, 28, 23, 30),
+                [
+                    vec![
+                        ("Tomorrow evening", "Sun 29 Mar 18:00"),
+                        ("Tomorrow morning", "Sun 29 Mar 08:00"),
+                        ("Monday morning", "Mon 30 Mar 08:00"),
+                    ],
+                    vec![
+                        ("Tomorrow evening", "Sun 29 Mar 18:00"),
+                        ("Tomorrow morning", "Sun 29 Mar 08:00"),
+                        ("Monday morning", "Mon 30 Mar 08:00"),
+                        ("Next week", "Sat 04 Apr 08:00"),
+                    ],
+                    vec![
+                        ("Tomorrow", "Sun 29 Mar 09:00"),
+                        ("In 2 working days", "Tue 31 Mar 09:00"),
+                        ("End of the week", "Fri 03 Apr 09:00"),
+                        ("In a week", "Sat 04 Apr 09:00"),
+                    ],
+                ],
+            ),
+            // Sunday 25 October 00:30: the clocks go back at 03:00, so the
+            // day is 25 hours and 24 hours on is still the same date.
+            (
+                at(2026, 10, 25, 0, 30),
+                [
+                    vec![
+                        ("Later today", "Sun 25 Oct 18:00"),
+                        ("Tomorrow morning", "Mon 26 Oct 08:00"),
+                        ("Monday morning", "Mon 26 Oct 08:00"),
+                    ],
+                    vec![
+                        ("Later today", "Sun 25 Oct 18:00"),
+                        ("Tomorrow morning", "Mon 26 Oct 08:00"),
+                        ("Monday morning", "Mon 26 Oct 08:00"),
+                        ("Next week", "Sun 01 Nov 08:00"),
+                    ],
+                    vec![
+                        ("Tomorrow", "Mon 26 Oct 09:00"),
+                        ("In 2 working days", "Tue 27 Oct 09:00"),
+                        ("End of the week", "Fri 30 Oct 09:00"),
+                        ("In a week", "Sun 01 Nov 09:00"),
+                    ],
+                ],
+            ),
+            // Saturday 24 October 23:30, the night before.
+            (
+                at(2026, 10, 24, 23, 30),
+                [
+                    vec![
+                        ("Tomorrow evening", "Sun 25 Oct 18:00"),
+                        ("Tomorrow morning", "Sun 25 Oct 08:00"),
+                        ("Monday morning", "Mon 26 Oct 08:00"),
+                    ],
+                    vec![
+                        ("Tomorrow evening", "Sun 25 Oct 18:00"),
+                        ("Tomorrow morning", "Sun 25 Oct 08:00"),
+                        ("Monday morning", "Mon 26 Oct 08:00"),
+                        ("Next week", "Sat 31 Oct 08:00"),
+                    ],
+                    vec![
+                        ("Tomorrow", "Sun 25 Oct 09:00"),
+                        ("In 2 working days", "Tue 27 Oct 09:00"),
+                        ("End of the week", "Fri 30 Oct 09:00"),
+                        ("In a week", "Sat 31 Oct 09:00"),
+                    ],
+                ],
+            ),
+            // Thursday 26 March 23:30: the week the clocks change in, a
+            // Monday-to-Friday count that crosses it.
+            (
+                at(2026, 3, 26, 23, 30),
+                [
+                    vec![
+                        ("Tomorrow evening", "Fri 27 Mar 18:00"),
+                        ("Tomorrow morning", "Fri 27 Mar 08:00"),
+                        ("Monday morning", "Mon 30 Mar 08:00"),
+                    ],
+                    vec![
+                        ("Tomorrow evening", "Fri 27 Mar 18:00"),
+                        ("Tomorrow morning", "Fri 27 Mar 08:00"),
+                        ("Monday morning", "Mon 30 Mar 08:00"),
+                        ("Next week", "Thu 02 Apr 08:00"),
+                    ],
+                    vec![
+                        ("Tomorrow", "Fri 27 Mar 09:00"),
+                        ("In 2 working days", "Mon 30 Mar 09:00"),
+                        ("End of the week", "Fri 27 Mar 09:00"),
+                        ("In a week", "Thu 02 Apr 09:00"),
+                    ],
+                ],
+            ),
+        ];
+        for (now, [schedule, snooze, remind]) in rows {
+            // "In 1 hour" is an hour on the clock, whatever the date.
+            let sending = schedule_presets(now);
+            assert_eq!(sending[0].1, now + Duration::hours(1), "from {now}");
+            assert_eq!(
+                seen(&sending[1..]),
+                expect(&schedule),
+                "schedule-send from {now}"
+            );
+            assert_eq!(
+                seen(&snooze_presets(now)),
+                expect(&snooze),
+                "snooze from {now}"
+            );
+            assert_eq!(
+                seen(&remind_presets(now)),
+                expect(&remind),
+                "remind from {now}"
+            );
+        }
     }
 }

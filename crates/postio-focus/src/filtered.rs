@@ -9,8 +9,10 @@
 //! list ([`SurfaceKind::Filtered`]) that the controller puts on the stack at
 //! `g f` and takes off at Back or `g i`.
 //!
-//! Nothing in it is deleted (C4): `R` restores, a tab narrows, the sweep
-//! asks first and moves mail *into* Filtered.
+//! Nothing in it is deleted automatically (C4): `R` restores, a tab
+//! narrows, the sweep asks first and moves mail *into* Filtered. Delete,
+//! Flag and read act on the focused message alone, as the person asked; a
+//! deleted one leaves the view because the store no longer lists it.
 
 use postio_client::protocol::FilteredRow;
 use postio_core::{Command, CommandId, MessageTarget};
@@ -204,6 +206,25 @@ impl FocusController {
                 None => Vec::new(),
             },
             CommandId::SweepInbox => vec![Step::Ask(Request::SweepPreview)],
+            // The message, not its conversation: Filtered lists messages,
+            // and the rest of the conversation may be in the inbox.
+            CommandId::Delete | CommandId::Flag | CommandId::ToggleRead => {
+                let row = self
+                    .filtered
+                    .as_ref()
+                    .zip(focused)
+                    .and_then(|(filtered, at)| filtered.facts(at));
+                match row {
+                    Some(row) => {
+                        let row = RowFacts {
+                            threads: Vec::new(),
+                            ..row
+                        };
+                        self.verbs.command_on(id, &row).unwrap_or_default()
+                    }
+                    None => Vec::new(),
+                }
+            }
             CommandId::Back | CommandId::GoToInbox => self.leave_filtered(rows),
             CommandId::GoToFiltered => Vec::new(),
             // Another place: Filtered goes, and the list goes there.
@@ -230,6 +251,7 @@ impl FocusController {
             | CommandId::SavedSearch4
             | CommandId::GoToFolders => return None,
             // A verb meant for the list behind: nobody can see its rows.
+            // Archive among them: Filtered mail is archived already.
             _ => Vec::new(),
         };
         Some(steps)

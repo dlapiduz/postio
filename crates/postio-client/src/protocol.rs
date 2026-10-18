@@ -533,6 +533,16 @@ pub enum Req {
     /// Fetch this message's body ahead of the backfill: a person opened it.
     /// Posted; the body arrives as `BodyLoaded`.
     FetchBody(MessageId),
+    /// A forward of `message` was opened: fetch these sections of it ahead
+    /// of the send, so the attachments it carries are local by then (#1690).
+    /// Posted. Sent only for a forward -- a reply carries nothing, and
+    /// nothing leaves the machine that the person did not ask for.
+    FetchCarried {
+        /// The message being forwarded.
+        message: MessageId,
+        /// MIME section paths of the parts the forward carries.
+        parts: Vec<String>,
+    },
     /// `[storage] max_bytes` changed: bring the blob store under it.
     StorageCeiling(Option<u64>),
     /// Save an account whose credentials a frontend already proved: the
@@ -544,10 +554,6 @@ pub enum Req {
         /// Which backend the proof signed in with.
         backend: postio_model::account::Backend,
     },
-    /// Save an account a frontend's browser sign-in already proved: its
-    /// tokens to the keyring, then the row
-    /// (`postio_session::onboarding::persist_oauth`).
-    SaveOAuthAccount(Box<OAuthGrant>),
     /// Store pasted image bytes as an inline part.
     InlineImage {
         /// The image.
@@ -1029,43 +1035,6 @@ impl PartialEq for Stop {
 }
 
 impl Eq for Stop {}
-
-/// A browser sign-in a frontend completed and proved, to be saved.
-///
-/// The tokens cross to the store's owner, which writes them to the keyring
-/// and nowhere else; `Debug` never shows them.
-#[derive(Clone, PartialEq, Eq)]
-pub struct OAuthGrant {
-    /// What the form held.
-    pub submission: postio_ui::onboarding::Submission,
-    /// Where consent was asked.
-    pub authorize_url: String,
-    /// Where tokens are minted.
-    pub token_url: String,
-    /// The scopes granted.
-    pub scopes: Vec<String>,
-    /// How long the provider keeps a refresh token alive, when it says.
-    pub refresh_token_lifetime_days: Option<u32>,
-    /// The access token.
-    pub access_token: String,
-    /// The refresh token, when one was issued.
-    pub refresh_token: Option<String>,
-    /// How long the access token lives, from when it was issued.
-    pub expires_in: Option<std::time::Duration>,
-    /// The token type the server named.
-    pub token_type: String,
-    /// The scope the server said it granted.
-    pub scope: Option<String>,
-}
-
-impl std::fmt::Debug for OAuthGrant {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OAuthGrant")
-            .field("submission", &self.submission)
-            .field("scopes", &self.scopes)
-            .finish_non_exhaustive()
-    }
-}
 
 /// A search, as a frontend's search bar asks it.
 #[derive(Debug, Clone, PartialEq, Eq)]

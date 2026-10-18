@@ -397,6 +397,8 @@ fn sequence_set_for(uids: &UidSet) -> BackendResult<SequenceSet> {
 fn wire_flags(flags: &FlagSet) -> BackendResult<Vec<WireFlag<'static>>> {
     flags
         .iter()
+        // `\Recent` is the server's alone to set (RFC 3501 §2.3.2).
+        .filter(|flag| !flag.is_transient())
         .map(|flag| {
             let spelling = flag.as_str().to_owned();
             WireFlag::try_from(spelling.as_str())
@@ -432,6 +434,18 @@ mod tests {
 
     fn item(items: Vec<MessageDataItem<'static>>) -> Option<FlagUpdate> {
         update_from(UidValidity::new(1), items, true)
+    }
+
+    /// RFC 3501 §2.3.2: `\Recent` is the server's to set; a client that names
+    /// it in `STORE` or `APPEND` is refused with `BAD`.
+    #[test]
+    fn recent_is_never_put_on_the_wire() {
+        let flags = FlagSet::from_iter([Flag::Seen, Flag::Recent]);
+
+        let wire = wire_flags(&flags).expect("flags");
+
+        let spelled: Vec<String> = wire.iter().map(ToString::to_string).collect();
+        assert_eq!(spelled, ["\\Seen"]);
     }
 
     fn seq(value: u32) -> NonZeroU32 {
