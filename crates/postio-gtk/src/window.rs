@@ -1671,6 +1671,15 @@ impl FocusWindow {
             // A toast with an Undo of its own -- a send, queued -- is the
             // last thing said, so Undo takes that back first (#1752).
             CommandId::Undo if self.imp().toast.activate_undo() => {}
+            // In Filtered, the message it has focused, never the list's row
+            // behind it nor its conversation (C4: never automatically).
+            CommandId::Delete | CommandId::ToggleRead | CommandId::Flag
+                if self.key_context() == KeyContext::Filtered =>
+            {
+                if let Some(message) = self.filtered().and_then(|view| view.focused()) {
+                    self.filtered_verb(id, message);
+                }
+            }
             CommandId::Archive
             | CommandId::Delete
             | CommandId::ToggleRead
@@ -3769,6 +3778,10 @@ impl FocusWindow {
     }
 
     /// Put `message` back in the inbox, and never filter its sender (FR-116).
+    fn filtered_verb(&self, id: CommandId, message: MessageId) {
+        self.post(Command::default_for(id).with_target(MessageTarget::Messages(vec![message])));
+    }
+
     fn restore_filtered(&self, message: MessageId) {
         self.post(Command::RestoreFiltered {
             target: MessageTarget::Messages(vec![message]),
