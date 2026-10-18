@@ -12,6 +12,9 @@ pattern, and whatever that kind needs:
     flatpak    app_id, manifest     the manifest's `app-id` must equal app_id
     tarball    package, bin,        a workspace package, one of its binaries,
                profile, readme      a cargo profile, the README shipped beside it
+               also (optional)      more binaries shipped beside it, each
+                                    {package, bin, profile}: the terminal
+                                    app's extraction helper (#1824)
     macos-app  app                  the bundle `scripts/macos-bundle.sh` makes
 
 Asset names follow `<id>-{version}-<os>-<arch>.<ext>`, so a release page lists
@@ -125,6 +128,14 @@ def problems_with(root: Path, rows: list[dict]) -> list[str]:
                 problems.append(f"{where}: {row['package']} has no binary {row['bin']}")
             if row["profile"] not in profiles:
                 problems.append(f"{where}: the workspace defines no profile {row['profile']}")
+            for extra in row.get("also", []):
+                owner = package_dir(root, extra.get("package", ""))
+                if owner is None:
+                    problems.append(f"{where}: also: no workspace package named {extra.get('package')}")
+                elif extra.get("bin") not in binaries(*owner):
+                    problems.append(f"{where}: also: {extra['package']} has no binary {extra.get('bin')}")
+                if extra.get("profile") not in profiles:
+                    problems.append(f"{where}: also: the workspace defines no profile {extra.get('profile')}")
             if not (root / row["readme"]).is_file():
                 problems.append(f"{where}: readme {row['readme']} does not exist")
         elif kind == "macos-app":

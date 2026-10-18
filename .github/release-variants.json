@@ -21,6 +21,13 @@
       "bin": "postio-tui",
       "profile": "release-tui",
       "readme": "docs/book/src/terminal.md",
+      "also": [
+        {
+          "package": "postio-session",
+          "bin": "postio-extract-helper",
+          "profile": "release"
+        }
+      ],
       "asset": "postio-tui-{version}-linux-x86_64.tar.zst"
     },
     {
