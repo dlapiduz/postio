@@ -180,6 +180,8 @@ The store is Turso (ADR 0038). Its planner and defaults are not SQLite's, and mo
 
 **`issue-land.sh` rebases the tree it is running from, and bash reads a script by byte offset as it goes.** When editing it, keep the re-run logic inside the `if [ "$BEHIND" -gt 0 ]` block and before any push.
 
+**The attachment text helper is a separate binary, found beside the app.** `cargo run -p postio-gtk` does not build it, so PDFs are recorded `skipped` until `cargo build -p postio-session --bin postio-extract-helper` (same profile as the app); `scripts/run-isolated.sh` builds both. It must build under a profile that unwinds (`release`, never `release-tui`): it recovers from a page that panics with `catch_unwind`, which `panic = "abort"` turns into a lost file. A tarball row's `also` list in `.github/release-variants.json` ships it.
+
 **A coredump names a worktree, and that worktree's code may never have landed.** Check `git log` before treating it as evidence about `main`. Run any load generator under `timeout`.
 
 **`check-crate-boundaries.py` checks only the crates in its `RULES` table.** A new crate has no boundary rules until someone writes one.

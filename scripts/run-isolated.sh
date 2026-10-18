@@ -171,7 +171,11 @@ fi
     fi
     # --- end --install-desktop ---------------------------------------------
     echo "building Postio (first run compiles GTK deps; later runs are incremental)…"
-    cargo build --release -p postio-gtk --bin postio
+    # The attachment text helper is found beside the executable, and cargo
+    # builds a package's own binaries only: without it every PDF is recorded
+    # `skipped` and search finds nothing inside one (#1824).
+    cargo build --release -p postio-gtk --bin postio \
+        -p postio-session --bin postio-extract-helper
     echo "running — Ctrl-C to stop"
     exec "$TARGET/release/postio"
 }
