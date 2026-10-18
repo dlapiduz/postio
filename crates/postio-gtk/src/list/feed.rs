@@ -27,6 +27,9 @@ use super::model::FocusList;
 /// The conversations each selected row stands for.
 pub type SelectionReach = std::collections::HashMap<MessageId, Vec<ThreadId>>;
 
+/// What the window does with an intent it draws.
+type IntentHandler = Box<dyn Fn(&Intent)>;
+
 /// The list, and where its pages come from.
 #[derive(Clone)]
 pub struct Feed {
@@ -44,7 +47,7 @@ struct Inner {
     on_filled: RefCell<Vec<Box<dyn Fn()>>>,
     /// Called with each intent that is the window's to draw: the cursor,
     /// the selection, the heading, the strip's counts, the empty page.
-    on_intent: RefCell<Vec<Box<dyn Fn(&Intent)>>>,
+    on_intent: RefCell<Vec<IntentHandler>>,
 }
 
 /// The `PageSource` the model holds: a handle on the feed, so a request can
