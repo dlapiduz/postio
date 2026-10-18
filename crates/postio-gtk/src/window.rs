@@ -6,7 +6,6 @@
 //! ([`postio_ui::list_state::OPENING_THRESHOLD`]).
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -16,7 +15,7 @@ use gtk::{gdk, glib};
 use postio_client::Client;
 use postio_core::state::{Selection, ViewScope};
 use postio_core::{Command, CommandId, Keymap, MessageTarget, SharedState};
-use postio_model::ids::{AccountId, MessageId, ThreadId};
+use postio_model::ids::{AccountId, MessageId};
 use postio_model::{FocusScope, ListScope};
 use postio_ui::keymap::{KeyContext, Outcome, Resolver};
 use postio_ui::list_state::{OPENING_THRESHOLD, Waiting, describe_wait};
@@ -87,17 +86,6 @@ const LIST: &str = "list";
 const KEY_MAP: &str = "focus-key-map";
 const EMPTY: &str = "empty";
 
-/// What an undo put back into the list, until the cursor is on it.
-#[derive(Debug, Clone)]
-pub struct Restoring {
-    /// The rows that were taken out: the one that comes back is among them.
-    rows: Vec<MessageId>,
-    /// Whether the list stood at its top, first heading showing.
-    at_top: bool,
-    /// How many times the list has landed without showing it yet.
-    waited: u8,
-}
-
 mod imp {
     use super::*;
 
@@ -142,11 +130,6 @@ mod imp {
         /// controller's selection, written only when its `Selection` intent
         /// is applied (ADR 0045).
         pub picked: SelectionState,
-        /// The conversations each picked row reaches: its own and the
-        /// copies folded into it (T161), kept from when it was picked, so a
-        /// row scrolled out of the window is still aimed at in full. The
-        /// controller's, mirrored with `picked`.
-        pub reach: RefCell<HashMap<MessageId, Vec<ThreadId>>>,
         pub bulk: RefCell<Option<Rc<Bulk>>>,
         /// The host's view of this window's aim: a whole-view selection is
         /// a predicate the host resolves, and it reads it from here.
@@ -203,12 +186,6 @@ mod imp {
         /// The place the list shows when it is not the inbox: what its
         /// strip counts and what it says when it has nothing in it.
         pub place: RefCell<Option<postio_ui::focus_state::EmptyPlace>>,
-        /// The rows an archive or delete took out of the list, kept for the
-        /// undo that brings them back.
-        pub removed: RefCell<Vec<MessageId>>,
-        /// What an undo brought back, until the list shows it and the cursor
-        /// is on it: the rows, and whether the list was at its top.
-        pub restoring: RefCell<Option<Restoring>>,
         /// The last key press `handle_key` was given, by its event time and
         /// key: so a press the window's controller and a dialog's both see
         /// is handled once (`keys_under_dialogs`).
@@ -256,9 +233,6 @@ mod imp {
         pub moves: RefCell<Option<Rc<crate::move_picker::MovePicker>>>,
         /// The composer, in its dialog (US3), once an account is known.
         pub compose: RefCell<Option<Rc<crate::compose::Compose>>>,
-        /// Whether this window's last command answered an invitation: its
-        /// toast lasts the answer's window (FR-102), not an ordinary one's.
-        pub answering: Cell<bool>,
         /// Whether the composer's editing surface should start as soon as
         /// the composer is mounted: asked for before an account was known.
         pub warm: Cell<bool>,
@@ -312,7 +286,6 @@ mod imp {
                 keymap: RefCell::new(Keymap::defaults().clone()),
                 resolver: RefCell::default(),
                 picked: SelectionState::new(),
-                reach: RefCell::default(),
                 bulk: RefCell::default(),
                 state: RefCell::default(),
                 accounts: RefCell::default(),
@@ -338,8 +311,6 @@ mod imp {
                 places: RefCell::default(),
                 at_inbox: Cell::new(true),
                 place: RefCell::default(),
-                removed: RefCell::default(),
-                restoring: RefCell::default(),
                 last_key: Cell::new(None),
                 dialogs: RefCell::default(),
                 snooze: RefCell::default(),
@@ -353,7 +324,6 @@ mod imp {
                 pending_mailto: RefCell::default(),
                 compose: RefCell::default(),
                 warm: Cell::default(),
-                answering: Cell::default(),
                 filtered: RefCell::default(),
                 digest_window: RefCell::default(),
                 rule_dialog: RefCell::default(),
@@ -1662,11 +1632,6 @@ impl FocusWindow {
                     bar.open_commands();
                 }
             }
-            CommandId::Archive if self.digest_at_cursor().is_some() => {
-                if let Some(digest) = self.digest_at_cursor() {
-                    self.archive_digest(digest.delivery);
-                }
-            }
             // The host's own verbs: `postio_ui::focus_target::dispatch` says
             // which are aimed at mail and which are not. Undo is the last
             // action this window took, whatever it was and however long ago
@@ -1689,7 +1654,7 @@ impl FocusWindow {
             | CommandId::Flag
             | CommandId::Unsnooze
             | CommandId::Undo
-            | CommandId::Refresh => self.dispatch(id),
+            | CommandId::Refresh => self.cursor_command(id),
             CommandId::Quit => self.close(),
             CommandId::UpdateCredential => self.update_credential(),
             CommandId::CheatSheet => self.show_key_map(),
@@ -2010,8 +1975,38 @@ impl FocusWindow {
             }
             Intent::Counts(_) => self.show_counts(),
             Intent::Empty(page) => self.show_empty(page.as_ref()),
+            Intent::Toast { text, kind } => self.show_toast(text, kind),
             _ => {}
         }
+    }
+
+    /// Say what the host said about a verb, in the toast. How long it
+    /// stays, and whether it offers Undo, are the controller's.
+    fn show_toast(&self, text: &str, kind: &postio_focus::ToastKind) {
+        use postio_focus::ToastKind;
+        let toast = &self.imp().toast;
+        match kind {
+            ToastKind::Completed {
+                undoable,
+                seconds: Some(seconds),
+            } => {
+                self.teach_undo_key();
+                toast.show_action_completed_for(text, *undoable, *seconds);
+            }
+            ToastKind::Completed {
+                undoable,
+                seconds: None,
+            } => {
+                self.teach_undo_key();
+                toast.show_action_completed(text, *undoable);
+            }
+            ToastKind::Undone => toast.show_undo_performed(text),
+            ToastKind::Notice => toast.show_notice(text),
+            // What is missing and its one remedy: the surfaces that offer
+            // one draw their own until slice 10.
+            ToastKind::Offer { .. } => return,
+        }
+        self.follow_toast();
     }
 
     /// A Ctrl-click (`Toggle`: `x` on that row) or Shift-click (`Range`: the
@@ -2035,7 +2030,10 @@ impl FocusWindow {
 
     /// What is selected now: what `e` would archive.
     pub fn selection(&self) -> Selection {
-        self.imp().picked.selection()
+        self.pane().map_or_else(
+            || Selection::These(Vec::new()),
+            |pane| pane.feed().selection(),
+        )
     }
 
     /// The row the cursor is on, once its page has landed.
@@ -2052,206 +2050,52 @@ impl FocusWindow {
             .and_then(|row| row.item())
     }
 
-    /// Where a verb goes: the selection when there is one, the cursor's row
-    /// otherwise. A row folded from several accounts is every copy
-    /// (`MessageTarget::Threads`, T161); a message in no conversation is
-    /// itself. A whole-view selection is a predicate the host resolves over
-    /// the inboxes, never a list of what happens to be on screen.
+    /// Where a verb goes, for the label picker, which sends its own: the
+    /// controller's aim (`postio_focus::Verbs`), with a whole-view
+    /// selection put into the host's state as the host resolves it.
     fn aims(&self) -> Vec<MessageTarget> {
-        let imp = self.imp();
-        let cursor = self.cursor_row();
-        let aim = postio_ui::focus_target::aim(
-            &imp.picked.selection(),
-            &imp.reach.borrow(),
-            cursor.as_ref(),
-        );
-        match aim {
-            postio_ui::focus_target::Aim::Everything { except } => {
-                if let Some(state) = imp.state.borrow().as_ref() {
-                    let accounts = imp.accounts.borrow().clone();
-                    let (sink, _) = postio_core::bridge::event_channel();
-                    state.update(&sink, |app| {
-                        let mut events = app.open_view(ViewScope::Focus { accounts });
-                        events.extend(app.select_all());
-                        events
-                    });
-                    state.update(&sink, |app| {
-                        let mut events = Vec::new();
-                        for message in &except {
-                            events.extend(app.toggle_selection(*message));
-                        }
-                        events
-                    });
+        let Some(pane) = self.pane() else {
+            return Vec::new();
+        };
+        let aimed = pane.feed().aim();
+        let Some(everything) = aimed.everything else {
+            return aimed.aims;
+        };
+        if let Some(state) = self.imp().state.borrow().as_ref() {
+            let (sink, _) = postio_core::bridge::event_channel();
+            state.update(&sink, |app| {
+                let mut events = app.open_view(ViewScope::Focus {
+                    accounts: everything.accounts.clone(),
+                });
+                events.extend(app.select_all());
+                events
+            });
+            state.update(&sink, |app| {
+                let mut events = Vec::new();
+                for message in &everything.except {
+                    events.extend(app.toggle_selection(*message));
                 }
-                vec![MessageTarget::Selection]
-            }
-            postio_ui::focus_target::Aim::Targets(targets) => targets,
+                events
+            });
         }
-    }
-
-    /// Send the host command `id` means, as `postio_ui::focus_target` says:
-    /// aimed at mail, or as it is.
-    fn dispatch(&self, id: CommandId) {
-        use postio_ui::focus_target::Dispatch;
-        match postio_ui::focus_target::dispatch(id) {
-            Some(Dispatch::OnMail(command)) => self.send(command),
-            Some(Dispatch::Plain(command)) => self.post(command),
-            None => {}
-        }
+        vec![MessageTarget::Selection]
     }
 
     /// Send `command` to the host as it is: a verb that aims at nothing.
+    /// The controller sends it (`Input::Post`).
     fn post(&self, command: Command) {
-        let Some(client) = self.imp().client.borrow().clone() else {
-            return;
-        };
-        glib::spawn_future_local(async move {
-            // POSTIO-GLIB-SAFE: as `send`'s.
-            if let Err(error) = client.send(command).await {
-                tracing::warn!(%error, "Focus could not send a command: {error}");
-            }
-        });
-    }
-
-    /// Remember the rows an archive or delete is about to take out: what
-    /// the cursor goes back to when the undo brings them back.
-    fn note_removed(&self) {
-        let rows = match self.selection() {
-            Selection::These(ids) if !ids.is_empty() => ids,
-            // Nothing selected: the cursor's row is what the verb takes.
-            // (Everything selected is a predicate, with no rows to name.)
-            Selection::These(_) => self.cursor_row().map(|row| row.id()).into_iter().collect(),
-            Selection::Everything { .. } => Vec::new(),
-        };
-        self.remember_removed(rows);
-    }
-
-    /// An archive or delete of selected rows is about to take the cursor's
-    /// row with them: stand the cursor on the first row below it that stays.
-    /// The list slides it up as the rows above go, so it lands on the row
-    /// that followed, not on the slot the old row held (a slot skips a row
-    /// when others above the cursor go too).
-    fn cursor_past_removed(&self) {
-        let Selection::These(gone) = self.selection() else {
-            return;
-        };
-        let Some(pane) = self.pane() else {
-            return;
-        };
-        let at = pane.cursor().selected();
-        if gone.is_empty() || at == gtk::INVALID_LIST_POSITION {
-            return;
-        }
-        let list = pane.feed().list().clone();
-        let rows = (at..list.n_items()).map(|place| {
-            list.item(place)
-                .and_downcast::<RowObject>()
-                .and_then(|row| row.item())
-                .map(|row| row.id())
-        });
-        if let Some(offset) = postio_ui::selection::survivor_below(rows, &gone) {
-            self.point_cursor(at + offset as u32);
+        if let Some(pane) = self.pane() {
+            pane.feed().input(postio_focus::Input::Post(command));
         }
     }
 
-    /// Keep `rows` as taken out of the list, for the undo that returns them.
-    fn remember_removed(&self, rows: Vec<MessageId>) {
-        let mut removed = self.imp().removed.borrow_mut();
-        removed.extend(rows);
-        // Only the last unit can be undone with any confidence about where
-        // it was; the rest of the history is not the cursor's business.
-        let excess = removed.len().saturating_sub(64);
-        removed.drain(..excess);
-    }
-
-    /// An undo has run: the rows it brings back will be in the list once it
-    /// is read again, and the cursor goes to the first of them.
-    fn restore_cursor(&self) {
-        let imp = self.imp();
-        let rows = std::mem::take(&mut *imp.removed.borrow_mut());
-        if rows.is_empty() {
-            return;
-        }
-        let at_top = self
-            .pane()
-            .is_some_and(|pane| pane.widget().vadjustment().value() <= 0.0);
-        imp.restoring.replace(Some(Restoring {
-            rows,
-            at_top,
-            waited: 0,
-        }));
-    }
-
-    /// The list has landed: put the cursor on the row an undo brought back,
-    /// once it is in the list, and keep the list where it stood.
-    ///
-    /// GTK keeps the row it anchors on in place when a row appears above
-    /// it, which scrolls the list by one row and hides its first heading.
-    /// Nothing was scrolled by the person, so the list goes back to its top.
-    fn place_restored(&self) {
-        let imp = self.imp();
-        let Some(mut restoring) = imp.restoring.borrow().clone() else {
-            return;
-        };
-        let Some(pane) = self.pane() else {
-            return;
-        };
-        let list = pane.feed().list().clone();
-        let found = restoring
-            .rows
-            .iter()
-            .filter_map(|row| list.position_of(*row))
-            .min();
-        match found {
-            Some(position) => {
-                imp.restoring.replace(None);
-                self.point_cursor(position);
-                if restoring.at_top {
-                    pane.to_top();
-                }
-                // With a message open, the undo takes it back to the
-                // conversation it brought back -- the one the cursor is on
-                // now -- so the dialog and the list never point at two.
-                if self
-                    .reading()
-                    .is_some_and(|reading| reading.is_open() && !reading.in_pane())
-                {
-                    self.open_message();
-                }
-            }
-            None => {
-                restoring.waited += 1;
-                // The first landings after an undo may be older reads.
-                imp.restoring
-                    .replace((restoring.waited < 4).then_some(restoring));
-            }
-        }
-    }
-
-    /// Send `command` to the host, aimed as [`Self::aims`] says, and let
-    /// the selection go: what it named has been acted on.
+    /// Send `command` to the host, aimed as the controller says -- the
+    /// selection when there is one, the cursor's row otherwise -- and let
+    /// the selection go (`Input::Verb`).
     fn send(&self, command: Command) {
-        let aims = self.aims();
-        if aims.is_empty() {
-            return;
+        if let Some(pane) = self.pane() {
+            pane.feed().input(postio_focus::Input::Verb(command));
         }
-        let Some(client) = self.imp().client.borrow().clone() else {
-            return;
-        };
-        if matches!(command, Command::Archive { .. } | Command::Delete { .. }) {
-            self.note_removed();
-            self.cursor_past_removed();
-        }
-        self.clear_selection();
-        glib::spawn_future_local(async move {
-            for aim in aims {
-                // POSTIO-GLIB-SAFE: the client's in-process transport hands
-                // the command over and answers through a oneshot.
-                if let Err(error) = client.send(command.clone().with_target(aim)).await {
-                    tracing::warn!(%error, "Focus could not send a command: {error}");
-                }
-            }
-        });
     }
 
     /// Say what the store is being waited on for -- once the wait has
@@ -2617,9 +2461,6 @@ impl FocusWindow {
     fn show_selection(&self, selection: &Selection, summary: Option<&str>) {
         let imp = self.imp();
         imp.picked.set(selection.clone());
-        if let Some(pane) = imp.pane.borrow().as_ref() {
-            imp.reach.replace(pane.feed().selection_reach());
-        }
         if let Some(bulk) = imp.bulk.borrow().as_ref() {
             bulk.set_summary(summary);
         }
@@ -2636,9 +2477,16 @@ impl FocusWindow {
             return;
         };
         // Placing the cursor is not reading: it opens nothing, even with
-        // the reading pane beside.
-        self.placing(|| pane.feed().landed());
-        self.place_restored();
+        // the reading pane beside -- unless an undo is putting it on the
+        // row it brought back, which the pane follows as it follows a click.
+        if pane.feed().restoring() {
+            pane.feed().landed();
+        } else {
+            self.placing(|| pane.feed().landed());
+        }
+        if pane.feed().take_restored() {
+            self.reopen_restored();
+        }
         // A place counts what the list now holds.
         self.show_counts();
     }
@@ -2652,16 +2500,26 @@ impl FocusWindow {
         imp.placing_cursor.set(before);
     }
 
-    /// Answer the invitation `row` carries, as `id` says: through the host,
+    /// Answer the invitation on `message`, as `id` says: through the host,
     /// which queues the reply for the answer's window (FR-102).
     fn answer(&self, message: MessageId, id: CommandId) {
         let message = Some(message);
-        let command = match id {
+        self.post(match id {
             CommandId::DeclineInvite => Command::DeclineInvite { message },
             _ => Command::AcceptInvite { message },
-        };
-        self.imp().answering.set(true);
-        self.post(command);
+        });
+    }
+
+    /// With a message open over the list, an undo takes it back to the
+    /// conversation it brought back -- the one the cursor is on now -- so the
+    /// dialog and the list never point at two.
+    fn reopen_restored(&self) {
+        if self
+            .reading()
+            .is_some_and(|reading| reading.is_open() && !reading.in_pane())
+        {
+            self.open_message();
+        }
     }
 
     /// The one message a reply or an answer is about: the message open over
@@ -2918,39 +2776,6 @@ impl FocusWindow {
     fn hear(&self, event: &postio_core::Event) {
         use postio_core::Event;
         match event {
-            // What this window's own commands say about themselves: only the
-            // client that sent a command hears these (postio-host).
-            Event::ActionCompleted {
-                description,
-                undoable,
-            } => {
-                self.teach_undo_key();
-                // An answer's Undo works while its reply waits, so its toast
-                // stays exactly that long (FR-102).
-                if self.imp().answering.replace(false) {
-                    let window = postio_session::actions::RSVP_WINDOW.as_secs();
-                    self.imp().toast.show_action_completed_for(
-                        description,
-                        *undoable,
-                        u32::try_from(window).unwrap_or(u32::MAX),
-                    );
-                } else {
-                    self.imp()
-                        .toast
-                        .show_action_completed(description, *undoable);
-                }
-                self.follow_toast();
-            }
-            Event::UndoPerformed { description } => {
-                self.imp().toast.show_undo_performed(description);
-                self.follow_toast();
-                self.restore_cursor();
-            }
-            Event::CommandRejected { reason, .. } => {
-                self.imp().answering.set(false);
-                self.imp().toast.show_notice(reason);
-                self.follow_toast();
-            }
             Event::NewMail {
                 mailbox, messages, ..
             } => self.announce(*mailbox, messages.clone()),
@@ -2966,7 +2791,17 @@ impl FocusWindow {
         if let Some(settings) = self.imp().settings.borrow().as_ref() {
             settings.hear(event);
         }
+        // What this window's own commands say about themselves -- a verb
+        // done, an undo, a refusal -- is the controller's to turn into toasts
+        // and into the cursor's way back to a restored row; only the client
+        // that sent a command hears these (postio-host).
         if let Some(pane) = self.imp().pane.borrow().as_ref() {
+            if matches!(event, Event::UndoPerformed { .. }) {
+                // Where the list stood when the undo ran: it goes back there.
+                pane.feed().input(postio_focus::Input::AtTop(
+                    pane.widget().vadjustment().value() <= 0.0,
+                ));
+            }
             pane.feed().handle(event);
         }
         // What is filtered moves with a restore, its undo, and mail filed
@@ -3065,10 +2900,7 @@ impl FocusWindow {
             });
             return;
         }
-        self.send(Command::DismissMarker {
-            target: MessageTarget::Selection,
-            dismissed: true,
-        });
+        self.cursor_command(CommandId::DismissMarker);
     }
 
     /// The digest the cursor is on, when it is on one.
@@ -3079,14 +2911,13 @@ impl FocusWindow {
         }
     }
 
-    /// Archive a whole delivery: one undo (FR-125).
+    /// Archive a whole delivery: one undo (FR-125). Its row goes with it
+    /// and comes back with the undo; the controller keeps both.
     fn archive_digest(&self, delivery: postio_model::DeliveryId) {
-        // Its row goes with it, and comes back with the undo.
-        self.remember_removed(vec![MessageId::new(-delivery.get())]);
-        self.post(Command::ArchiveDigest {
-            delivery,
-            archived: true,
-        });
+        if let Some(pane) = self.pane() {
+            pane.feed()
+                .input(postio_focus::Input::ArchiveDigest(delivery));
+        }
     }
 
     /// Open `digest`'s window over the inbox (T137): its plain list.
@@ -4791,7 +4622,7 @@ impl FocusWindow {
         let Some(conversation) = row.as_conversation() else {
             return;
         };
-        let selection = imp.picked.selection();
+        let selection = self.selection();
         let inside = match &selection {
             Selection::These(picked) => picked.contains(&row.id()),
             Selection::Everything { except } => !except.contains(&row.id()),
