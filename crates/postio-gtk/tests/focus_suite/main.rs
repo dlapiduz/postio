@@ -327,6 +327,18 @@ const CASES: &[(&str, fn())] = &[
         compose_layout::the_close_is_the_shared_x as fn(),
     ),
     (
+        "compose_layout::the_composer_column_is_the_readers_at_900",
+        compose_layout::the_composer_column_is_the_readers_at_900 as fn(),
+    ),
+    (
+        "compose_layout::the_composer_column_is_the_readers_at_the_screens_width",
+        compose_layout::the_composer_column_is_the_readers_at_the_screens_width as fn(),
+    ),
+    (
+        "compose_layout::the_composer_column_is_the_readers_at_1024",
+        compose_layout::the_composer_column_is_the_readers_at_1024 as fn(),
+    ),
+    (
         "compose_layout::the_dialog_follows_the_message_dialogs_size_rule",
         compose_layout::the_dialog_follows_the_message_dialogs_size_rule as fn(),
     ),
@@ -836,6 +848,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "open_reading::the_open_message_is_one_scrolling_column",
         open_reading::the_open_message_is_one_scrolling_column as fn(),
+    ),
+    (
+        "open_reading::opening_the_quoted_fold_grows_the_body_and_shows_the_quote",
+        open_reading::opening_the_quoted_fold_grows_the_body_and_shows_the_quote as fn(),
     ),
     (
         "open_reading::the_column_draws_only_the_window_of_a_long_body",
