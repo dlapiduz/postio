@@ -1824,6 +1824,22 @@ impl FocusWindow {
                     .show_notice(postio_ui::focus_target::NO_REPLY_TO_OUTGOING);
                 self.follow_toast();
             }
+            // Nor on a draft another client wrote (#1212): the row does not
+            // offer them either.
+            CommandId::Reply | CommandId::ReplyAll | CommandId::Forward
+                if self
+                    .reading()
+                    .filter(|reading| reading.is_open())
+                    .is_some_and(|reading| {
+                        reading.foreign_draft()
+                            && !postio_ui::focus_dialog::received_offers(id, true)
+                    }) =>
+            {
+                self.imp()
+                    .toast
+                    .show_notice(postio_ui::focus_target::NO_REPLY_TO_OUTGOING);
+                self.follow_toast();
+            }
             CommandId::Reply | CommandId::ReplyAll | CommandId::Forward => {
                 if let Some(compose) = self.compose() {
                     compose.dispatch(id);

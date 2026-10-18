@@ -253,6 +253,19 @@ pub fn send_verbs(state: Option<postio_model::DraftState>) -> Option<&'static [C
     })
 }
 
+/// Whether the received row (`OPEN_TOOLBAR`) offers `command` for a message
+/// that is, or is not, a draft written in another client (#1212). Such a
+/// draft has no correspondent to answer, and Postio cannot edit it, so Reply,
+/// Reply all and Forward are not offered; Archive, Delete and the rest of
+/// the row are.
+pub fn received_offers(command: CommandId, foreign_draft: bool) -> bool {
+    !(foreign_draft
+        && matches!(
+            command,
+            CommandId::Reply | CommandId::ReplyAll | CommandId::Forward
+        ))
+}
+
 /// The vertical rhythm, in pixels (an 8px grid around a 24px body line).
 /// A block that is absent takes the gap above it with it; the next gap
 /// stays as listed.
@@ -675,6 +688,29 @@ mod tests {
             "Result 2 of 8 \u{b7} home@example.net"
         );
         assert_eq!(with_account("Result 2 of 8", None), "Result 2 of 8");
+    }
+
+    #[test]
+    fn a_draft_from_another_client_is_offered_no_reply_or_forward() {
+        for verb in OPEN_TOOLBAR {
+            let answers = matches!(
+                verb.command,
+                CommandId::Reply | CommandId::ReplyAll | CommandId::Forward
+            );
+            assert_eq!(
+                received_offers(verb.command, true),
+                !answers,
+                "{:?} on a foreign draft",
+                verb.command
+            );
+            assert!(
+                received_offers(verb.command, false),
+                "{:?} on received mail",
+                verb.command
+            );
+        }
+        assert!(received_offers(CommandId::Delete, true));
+        assert!(received_offers(CommandId::Archive, true));
     }
 
     #[test]
