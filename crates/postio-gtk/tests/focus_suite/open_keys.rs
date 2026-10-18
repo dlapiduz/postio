@@ -191,3 +191,29 @@ pub fn a_toast_raised_under_the_open_message_is_drawn_over_it() {
         );
     });
 }
+
+/// `d` in the open message digests its sender, as it does beside the list
+/// (#1754): the dialog used to drop every key `reading_key` had no arm for.
+pub fn d_in_the_open_message_opens_the_digest_rule() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        three(&fixture).await;
+        let window = opened(&fixture).await;
+        support::deliver(&window, "d");
+        assert!(
+            crate::settle_until(async || window.rule_dialog().is_some()).await,
+            "d in the open message opened nothing"
+        );
+        let dialog = window.rule_dialog().expect("the rule dialog");
+        let said = dialog.texts();
+        for wanted in ["Digest this sender", "ada@example.com"] {
+            assert!(
+                said.iter().any(|text| text == wanted),
+                "no {wanted:?} in {said:?}"
+            );
+        }
+    });
+}

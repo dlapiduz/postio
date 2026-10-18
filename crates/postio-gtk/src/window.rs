@@ -905,7 +905,21 @@ impl FocusWindow {
                 if self.scroll_reading(key, state) {
                     return glib::Propagation::Stop;
                 }
-                return self.reading_key(outcome);
+                // What `reading_key` has no arm for goes to the window as it
+                // does beside the list, so a command bound in the open
+                // message is never dropped for want of a case here.
+                let reached = self.reading_key(outcome.clone());
+                if reached == glib::Propagation::Proceed
+                    && let Outcome::Command(id) = &outcome
+                    && let Ok(command) = id.parse::<CommandId>()
+                    // `Return` on the message already open is the message's
+                    // own (it scrolls), not the list's open.
+                    && command != CommandId::OpenMessage
+                {
+                    self.act(command);
+                    return glib::Propagation::Stop;
+                }
+                return reached;
             }
             if dialog.widget_name() == crate::digest::DIALOG_NAME {
                 return self.digest_key(outcome);
