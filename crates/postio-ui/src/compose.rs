@@ -617,6 +617,17 @@ pub fn saved_at(at: chrono::DateTime<chrono::Utc>) -> String {
     )
 }
 
+/// The MIME sections a forward carries whose bytes are not on this machine:
+/// the parts to ask for when the forward opens (#1690). A part with no
+/// `part_id` is a file the composer is still writing, not a carried one.
+pub fn carried_sections(attachments: &[postio_model::Attachment]) -> Vec<String> {
+    attachments
+        .iter()
+        .filter(|attachment| attachment.blob_id.is_none())
+        .filter_map(|attachment| attachment.part_id.clone())
+        .collect()
+}
+
 /// What the reminder verb says: "Remind", as the message dialog's action
 /// row names the same command, and the day once one is chosen ("Remind ·
 /// Tue 29 Sep"), in the person's own time zone. The whole of it -- "if no
@@ -819,6 +830,27 @@ mod frame_tests {
     fn the_header_names_a_composition_as_the_screens_do() {
         assert_eq!(title(DraftKind::New), "New message");
         assert_eq!(title(DraftKind::ReplyAll), "Reply to all");
+    }
+
+    #[test]
+    fn a_forward_asks_only_for_the_carried_parts_it_does_not_have() {
+        use postio_model::{Attachment, MessageId};
+        let part = |id: Option<&str>, local: bool| {
+            let mut attachment = Attachment::new(MessageId::UNASSIGNED, "application/pdf", 9);
+            attachment.part_id = id.map(str::to_owned);
+            if local {
+                attachment.blob_id = Some(postio_model::ids::BlobId::new("0".repeat(64)));
+            }
+            attachment
+        };
+        let attachments = [
+            part(Some("2"), false),
+            part(Some("3"), true),
+            part(None, false),
+            part(Some("4"), false),
+        ];
+        assert_eq!(carried_sections(&attachments), vec!["2", "4"]);
+        assert!(carried_sections(&[]).is_empty());
     }
 
     #[test]
