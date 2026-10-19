@@ -50,6 +50,7 @@ mod empty;
 mod every_command;
 mod filtered;
 mod first_run;
+mod gmail_keys;
 mod harness;
 mod has_action;
 mod hit_composer;
@@ -127,6 +128,14 @@ mod window_teardown;
 /// appears in `--list`, exactly as an ignored libtest case does. Say in a
 /// comment beside the name which issue or task takes it back.
 const IGNORED: &[&str] = &[
+    // Eleven Gmail-keymap presses that do nothing yet (`NOT_YET` in the case
+    // names each and why): the open message's `g g`, `G`, `u` and `Left`,
+    // the capture sheet's `T` and `N`, and the list's `A`, `M` and `g c`.
+    // The code they need is spec 009's key routing (`reading_key` and `act`
+    // in window.rs, the capture sheet's keys). Fix lands with spec 009; each
+    // key leaves `NOT_YET` as it goes green, and this name leaves this list
+    // when the table is empty.
+    "gmail_keys::keys_that_do_nothing_yet",
     // Needs a working document portal on the session bus, which a CI machine
     // does not have; run by name where there is one.
     "drag_out::a_dragged_message_survives_the_portal",
@@ -1628,6 +1637,83 @@ const CASES: &[(&str, fn())] = &[
     (
         "capture::n_on_an_open_message_opens_the_note_sheet",
         capture::n_on_an_open_message_opens_the_note_sheet as fn(),
+    ),
+    ("gmail_keys::list_walks", gmail_keys::list_walks as fn()),
+    ("gmail_keys::list_verbs", gmail_keys::list_verbs as fn()),
+    ("gmail_keys::list_writes", gmail_keys::list_writes as fn()),
+    ("gmail_keys::list_opens", gmail_keys::list_opens as fn()),
+    ("gmail_keys::list_goes", gmail_keys::list_goes as fn()),
+    ("gmail_keys::reader_walks", gmail_keys::reader_walks as fn()),
+    ("gmail_keys::reader_verbs", gmail_keys::reader_verbs as fn()),
+    (
+        "gmail_keys::reader_writes",
+        gmail_keys::reader_writes as fn(),
+    ),
+    ("gmail_keys::reader_opens", gmail_keys::reader_opens as fn()),
+    ("gmail_keys::reader_goes", gmail_keys::reader_goes as fn()),
+    ("gmail_keys::pane_walks", gmail_keys::pane_walks as fn()),
+    ("gmail_keys::pane_verbs", gmail_keys::pane_verbs as fn()),
+    ("gmail_keys::pane_writes", gmail_keys::pane_writes as fn()),
+    ("gmail_keys::pane_opens", gmail_keys::pane_opens as fn()),
+    ("gmail_keys::pane_goes", gmail_keys::pane_goes as fn()),
+    ("gmail_keys::digest_walks", gmail_keys::digest_walks as fn()),
+    ("gmail_keys::digest_verbs", gmail_keys::digest_verbs as fn()),
+    ("gmail_keys::digest_opens", gmail_keys::digest_opens as fn()),
+    ("gmail_keys::digest_goes", gmail_keys::digest_goes as fn()),
+    (
+        "gmail_keys::filtered_walks",
+        gmail_keys::filtered_walks as fn(),
+    ),
+    (
+        "gmail_keys::filtered_verbs",
+        gmail_keys::filtered_verbs as fn(),
+    ),
+    (
+        "gmail_keys::filtered_goes",
+        gmail_keys::filtered_goes as fn(),
+    ),
+    (
+        "gmail_keys::capture_opens",
+        gmail_keys::capture_opens as fn(),
+    ),
+    ("gmail_keys::menu_walks", gmail_keys::menu_walks as fn()),
+    ("gmail_keys::menu_verbs", gmail_keys::menu_verbs as fn()),
+    ("gmail_keys::menu_writes", gmail_keys::menu_writes as fn()),
+    (
+        "gmail_keys::every_gmail_command_is_probed_or_excused",
+        gmail_keys::every_gmail_command_is_probed_or_excused as fn(),
+    ),
+    (
+        "gmail_keys::the_controls_teach_the_gmail_keys_and_no_old_ones",
+        gmail_keys::the_controls_teach_the_gmail_keys_and_no_old_ones as fn(),
+    ),
+    (
+        "gmail_keys::the_attachment_and_unsubscribe_controls_teach_their_keys",
+        gmail_keys::the_attachment_and_unsubscribe_controls_teach_their_keys as fn(),
+    ),
+    (
+        "gmail_keys::the_key_map_shows_the_gmail_keys_and_no_old_ones",
+        gmail_keys::the_key_map_shows_the_gmail_keys_and_no_old_ones as fn(),
+    ),
+    (
+        "gmail_keys::the_palette_shows_the_gmail_keys_and_no_old_ones",
+        gmail_keys::the_palette_shows_the_gmail_keys_and_no_old_ones as fn(),
+    ),
+    (
+        "gmail_keys::settings_keyboard_lists_the_gmail_keys",
+        gmail_keys::settings_keyboard_lists_the_gmail_keys as fn(),
+    ),
+    (
+        "gmail_keys::gmail_letters_type_in_the_composer_and_in_the_search_bar",
+        gmail_keys::gmail_letters_type_in_the_composer_and_in_the_search_bar as fn(),
+    ),
+    (
+        "gmail_keys::z_takes_back_a_removed_account_in_settings",
+        gmail_keys::z_takes_back_a_removed_account_in_settings as fn(),
+    ),
+    (
+        "gmail_keys::keys_that_do_nothing_yet",
+        gmail_keys::keys_that_do_nothing_yet as fn(),
     ),
 ];
 
