@@ -2136,11 +2136,13 @@ mod tests {
     /// "Nothing is a dead end": a state the user can act on names the key.
     #[test]
     fn the_states_worth_retrying_name_the_retry_key() {
-        // `R` is the registry's own alternate binding for `Refresh`, and the
-        // canvas' retry key for the list's empty and error plates. The
-        // reading pane must not invent a second one.
-        assert!(absent_html(Absent::Offline).contains('R'));
-        assert!(absent_html(Absent::Missing).contains('R'));
+        // Refresh's own key, from the registry: also the canvas' retry key
+        // for the list's empty and error plates. The reading pane must not
+        // invent a second one.
+        let key = postio_core::registry::get(postio_core::CommandId::Refresh).default_binding;
+        let named = format!("<kbd>{key}</kbd>");
+        assert!(absent_html(Absent::Offline).contains(&named));
+        assert!(absent_html(Absent::Missing).contains(&named));
     }
 
     /// A message that genuinely has no body is finished, not pending. Telling
