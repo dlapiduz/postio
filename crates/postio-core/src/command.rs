@@ -38,15 +38,38 @@ use postio_model::{
 pub const RSVP_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-macro_rules! command_ids {
-    ($( $(#[$doc:meta])* $variant:ident => $id:literal ),+ $(,)?) => {
+/// Declares every command once, and generates what used to be written out
+/// four times: the [`CommandId`] list, the [`Command`] enum, the arm of
+/// [`Command::id`] and the arm of [`Command::default_for`].
+///
+/// Each entry is one verb: its docs, its payload (each field with the value
+/// a keystroke implies, which is what `default_for` builds), and its stable
+/// string id. The entries after the `;` are invocations of a verb that
+/// another id already names -- who asked differs, the verb does not -- so
+/// they carry the id they answer and have no default of their own.
+macro_rules! commands {
+    (
+        $(
+            $(#[$meta:meta])*
+            $variant:ident
+            $({ $( $(#[$fmeta:meta])* $field:ident : $ty:ty = $default:expr ),* $(,)? })?
+            => $id:literal
+        ),+ $(,)?
+        ;
+        $(
+            $(#[$ameta:meta])*
+            $alias:ident
+            { $( $(#[$afmeta:meta])* $afield:ident : $aty:ty ),* $(,)? }
+            => $target:ident
+        ),* $(,)?
+    ) => {
         /// The stable identifier of a command.
         ///
         /// Serializes as its string id, so a `[keys]` entry, a palette row and a
         /// log line all spell a command the same way.
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub enum CommandId {
-            $( $(#[$doc])* $variant, )+
+            $( $(#[$meta])* $variant, )+
         }
 
         impl CommandId {
@@ -61,122 +84,316 @@ macro_rules! command_ids {
                 }
             }
         }
+
+        /// One invocation of a command.
+        ///
+        /// Payload fields that a keystroke cannot supply are `Option`al: `None` means
+        /// "ask the user" — [`Command::Move`] with no mailbox opens the mailbox picker,
+        /// [`Command::Search`] with no query focuses the search field.
+        #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+        pub enum Command {
+            $(
+                $(#[$meta])*
+                $variant $({ $( $(#[$fmeta])* $field: $ty ),* })?,
+            )+
+            $(
+                $(#[$ameta])*
+                $alias { $( $(#[$afmeta])* $afield: $aty ),* },
+            )*
+        }
+
+        impl Command {
+            /// The registry id this invocation belongs to.
+            pub fn id(&self) -> CommandId {
+                match self {
+                    $( Command::$variant { .. } => CommandId::$variant, )+
+                    $( Command::$alias { .. } => CommandId::$target, )*
+                }
+            }
+
+            /// The invocation a keystroke or a palette row implies: it targets the
+            /// current selection and leaves every choice for app state to resolve.
+            ///
+            /// This is what makes one registry able to feed both the keymap and the
+            /// palette — neither has to know a command's payload shape.
+            pub fn default_for(id: CommandId) -> Command {
+                match id {
+                    $( CommandId::$variant => Command::$variant $({ $( $field: $default ),* })?, )+
+                }
+            }
+        }
     };
 }
 
-command_ids! {
-    /// Move the selection to the next message.
+commands! {
+    // -- Navigation ------------------------------------------------------
+    /// Select the next message.
     NextMessage => "next_message",
-    /// Move the selection to the previous message.
+    /// Select the previous message.
     PrevMessage => "prev_message",
-    /// Jump to the first message in the list.
+    /// Select the first message.
     FirstMessage => "first_message",
-    /// Jump to the last message in the list.
+    /// Select the last message.
     LastMessage => "last_message",
-    /// Open the focused message in the reading pane.
-    OpenMessage => "open_message",
-    /// Add the focused message to the selection, or take it out again.
-    ToggleSelection => "toggle_selection",
+    /// Open a message, or the focused one when `message` is `None`.
+    OpenMessage {
+        /// The message to open; `None` means the focused row.
+        message: Option<MessageId> = None,
+    } => "open_message",
+    /// Add a message to the selection, or take it out again.
+    ToggleSelection {
+        /// The message to toggle; `None` means the focused row.
+        message: Option<MessageId> = None,
+    } => "toggle_selection",
     /// Extend the selection to the next message down.
     ExtendSelectionDown => "extend_selection_down",
     /// Extend the selection to the previous message up.
     ExtendSelectionUp => "extend_selection_up",
     /// Select every message the list is showing.
+    ///
+    /// Never resolved into a list of ids on the way through — see
+    /// [`crate::state::Selection`] for why that matters.
     SelectAll => "select_all",
-    /// Step back to the previous view without leaving the keyboard.
+    /// Return to the previous view.
     PrevView => "prev_view",
     /// Leave the current overlay, search or composer.
     Back => "back",
-    /// Switch a search's results between ranked and date order.
+    /// Switch a search's results between ranked and date order (#499).
     ToggleResultOrder => "toggle_result_order",
-    /// Move to the next message inside the open conversation.
+    /// Walk down the open conversation's stack (#1007).
+    ///
+    /// No payload: `j`/`k` move between *threads* in the list, and these
+    /// move between messages inside the one that is open. Two axes, two
+    /// pairs of keys, and which one you are on is a fact about where the
+    /// keyboard is rather than about what you pressed.
     NextInConversation => "next_in_conversation",
-    /// Move to the previous message inside the open conversation.
+    /// Walk up the open conversation's stack (#1007).
     PrevInConversation => "prev_in_conversation",
-    /// Fold or unfold the focused message of the open conversation.
+    /// Fold or unfold the conversation's focused message (#1007).
+    ///
+    /// The only way to *collapse* the focused message: landing on one
+    /// expands it, so a collapsed-and-focused message is a state only this
+    /// reaches.
     ToggleFold => "toggle_fold",
-    /// Draw the message on screen as its sender wrote it, not reduced.
+    /// Leave reader view for the sender's own markup (#1009).
+    ///
+    /// No payload: it always means the message on screen. Reader view is a
+    /// per-message state, so there is nothing else it could mean.
     ViewOriginal => "view_original",
-    /// Draw the message on screen reduced, or as sent again (spec 006 FR-031).
+    /// Draw the message on screen in reader view, or back as its sender
+    /// built it (spec 006 FR-031).
+    ///
+    /// No payload, like [`Command::ViewOriginal`]: it always means the
+    /// message on screen. Every message opens as sent, so this is the only
+    /// way into reader view.
     ToggleReaderView => "toggle_reader_view",
-    /// Darken the focused paper message, or show it as sent again (spec 006 FR-013a).
+    /// Darken the focused paper message, or show it as sent again (spec 006 FR-013a). No payload: it means the message on screen.
     DarkenMessage => "darken_message",
-    /// Draw the message on screen in the app's colours, or as sent on paper
-    /// (specs/007-postio-focus T213).
+    /// Switch the message on screen between app colours and the original on
+    /// paper (specs/007-postio-focus T213). No payload: it means the message
+    /// on screen, and is the message's alone -- "Always for this sender" is
+    /// the reader's to store, beside the other per-sender settings.
     SwitchTreatment => "switch_treatment",
-    /// Find text in the message on screen (spec 006 FR-018).
+    /// Find text in the message on screen (spec 006 FR-018). No payload: it means the message on screen.
     FindInMessage => "find_in_message",
-    /// Go to the next match of the open find (spec 006 FR-018).
+    /// Go to the next match of the open find (spec 006 FR-018). No payload: it means the message on screen.
     FindNext => "find_next",
-    /// Go to the previous match of the open find (spec 006 FR-018).
+    /// Go to the previous match of the open find (spec 006 FR-018). No payload: it means the message on screen.
     FindPrevious => "find_previous",
-    /// Draw messages one step larger (spec 006 FR-021).
+    /// Draw messages one step larger (spec 006 FR-021). No payload: it means the message on screen.
     ZoomIn => "zoom_in",
-    /// Draw messages one step smaller (spec 006 FR-021).
+    /// Draw messages one step smaller (spec 006 FR-021). No payload: it means the message on screen.
     ZoomOut => "zoom_out",
-    /// Draw messages at their actual size (spec 006 FR-021).
+    /// Draw messages at their actual size (spec 006 FR-021). No payload: it means the message on screen.
     ZoomReset => "zoom_reset",
-    /// Open every collapsed message in the conversation.
+    /// Expand every collapsed message in the open conversation (#1004).
+    ///
+    /// No payload: it means the conversation on screen, which is the only
+    /// one there is.
     ExpandAll => "expand_all",
+
+    // -- Message actions -------------------------------------------------
     /// Reply to the sender.
-    Reply => "reply",
-    /// Reply to everyone on the message.
-    ReplyAll => "reply_all",
-    /// Forward the message.
-    Forward => "forward",
-    /// Archive the selection.
-    Archive => "archive",
-    /// Archive every message in the thread.
-    ArchiveThread => "archive_thread",
-    /// Move the selection to the trash.
-    Delete => "delete",
-    /// Move the selection to another mailbox.
-    Move => "move",
-    /// Toggle the flagged state of the selection.
-    Flag => "flag",
-    /// Mark the selection read, or unread again.
-    ToggleRead => "toggle_read",
-    /// Hide the selection from every ordinary list for a while.
-    Snooze => "snooze",
+    Reply {
+        /// The message to reply to; `None` means the focused message.
+        message: Option<MessageId> = None,
+    } => "reply",
+    /// Reply to everyone.
+    ReplyAll {
+        /// The message to reply to; `None` means the focused message.
+        message: Option<MessageId> = None,
+    } => "reply_all",
+    /// Forward a message.
+    Forward {
+        /// The message to forward; `None` means the focused message.
+        message: Option<MessageId> = None,
+    } => "forward",
+    /// Archive messages.
+    Archive {
+        /// What to archive.
+        target: MessageTarget = MessageTarget::Selection,
+    } => "archive",
+    /// Archive a whole thread.
+    ArchiveThread {
+        /// The thread to archive; `None` means the focused message's thread.
+        thread: Option<ThreadId> = None,
+    } => "archive_thread",
+    /// Move messages to the trash.
+    Delete {
+        /// What to delete.
+        target: MessageTarget = MessageTarget::Selection,
+    } => "delete",
+    /// Move messages to another mailbox.
+    Move {
+        /// What to move.
+        target: MessageTarget = MessageTarget::Selection,
+        /// The destination; `None` opens the mailbox picker.
+        to: Option<MailboxId> = None,
+    } => "move",
+    /// Set or toggle the flagged state.
+    Flag {
+        /// What to flag.
+        target: MessageTarget = MessageTarget::Selection,
+        /// The state to set; `None` toggles.
+        flagged: Option<bool> = None,
+    } => "flag",
+    /// Set or toggle the unread state.
+    ToggleRead {
+        /// What to mark.
+        target: MessageTarget = MessageTarget::Selection,
+        /// The state to set; `None` toggles.
+        unread: Option<bool> = None,
+    } => "toggle_read",
+    /// Hide the selection from every ordinary list until a time.
+    ///
+    /// The time is the picker's (specs/007-postio-focus research R6): one of
+    /// the shared presets, or a date typed and read by `parse_when`. `None`
+    /// is what a keystroke with no picker behind it sends -- the classic
+    /// app's `s` -- and the handler's own default answers it, as it always
+    /// has.
+    Snooze {
+        /// What to snooze.
+        target: MessageTarget = MessageTarget::Selection,
+        /// When it comes back; `None` for the handler's default.
+        until: Option<DateTime<Utc>> = None,
+    } => "snooze",
     /// Cancel a snooze immediately.
-    Unsnooze => "unsnooze",
-    /// Bring the conversation back if nobody has replied by a time.
-    RemindIfNoReply => "remind_if_no_reply",
-    /// Attach a label to the selection.
-    AddLabel => "add_label",
-    /// Accept the invitation this message carries.
-    AcceptInvite => "accept_invite",
-    /// Decline the invitation this message carries.
-    DeclineInvite => "decline_invite",
-    /// Make a digest rule for this sender, or edit the digest's own.
-    DigestRule => "digest_rule",
-    /// Stop gathering this sender's mail into a digest.
-    StopDigestingSender => "stop_digesting_sender",
-    /// Show the message as it arrived: the raw RFC 822 text.
-    ViewSource => "view_source",
-    /// Choose one of the message's links or parts, and open it.
-    OpenAttachmentOrLink => "open_attachment_or_link",
-    /// Take a wrong marker off the message, and remember that it was wrong.
-    DismissMarker => "dismiss_marker",
-    /// Show the open message's verbs that do not fit its action row.
+    Unsnooze {
+        /// What to unsnooze.
+        target: MessageTarget = MessageTarget::Selection,
+    } => "unsnooze",
+    /// Bring the conversation back if nobody has replied by a time, or stop
+    /// waiting for a reply.
+    ///
+    /// The time is the remind picker's, one of the shared presets or a typed
+    /// date (specs/007-postio-focus research R6). `None` clears the
+    /// conversation's reminder: it is the value rather than a toggle, so
+    /// undo can dispatch the inverse, as [`Command::AddLabel`]'s `on` does.
+    /// Focus opens the picker on the key; nothing sends a keystroke's
+    /// `None` meaning "ask".
+    RemindIfNoReply {
+        /// Which conversations: each targeted message's.
+        target: MessageTarget = MessageTarget::Selection,
+        /// When to bring it back; `None` clears the reminder.
+        at: Option<DateTime<Utc>> = None,
+    } => "remind_if_no_reply",
+    /// Attach a label, or take one off.
+    AddLabel {
+        /// What to label.
+        target: MessageTarget = MessageTarget::Selection,
+        /// The label; `None` opens the label picker.
+        label: Option<LabelId> = None,
+        /// On, off, or `None` to toggle.
+        ///
+        /// [`Command::Flag`]'s shape, and for its reason: `u` takes an action
+        /// back by *dispatching its inverse*, so removing a label has to be
+        /// something a `Command` can say. One registered verb that can do
+        /// both beats a second entry in the registry that has no binding, no
+        /// menu item and no way for a person to reach it -- which is what
+        /// `AddLabel` itself was before #766 removed it (#780).
+        on: Option<bool> = None,
+    } => "add_label",
+    /// Accept the invitation a message carries, and send the reply.
+    ///
+    /// Undone within a window rather than from the undo stack, the way a send
+    /// is: the reply is on its way once the window closes (research R9).
+    AcceptInvite {
+        /// The invitation; `None` means the focused message.
+        message: Option<MessageId> = None,
+    } => "accept_invite",
+    /// Decline the invitation a message carries, and send the reply.
+    DeclineInvite {
+        /// The invitation; `None` means the focused message.
+        message: Option<MessageId> = None,
+    } => "decline_invite",
+    /// Open the digest-rule dialog: a new rule for the target's sender, or,
+    /// in a digest, the digest's own rule and cadence.
+    DigestRule {
+        /// Whose sender the rule is for.
+        target: MessageTarget = MessageTarget::Selection,
+    } => "digest_rule",
+    /// Stop gathering a sender's mail into a digest, or start again.
+    ///
+    /// A direction rather than a toggle, so undo can dispatch the inverse.
+    StopDigestingSender {
+        /// Whose sender.
+        target: MessageTarget = MessageTarget::Selection,
+        /// `true` stops the digest; `false` is undo's way back.
+        stopped: bool = true,
+        /// Undo's memory, `None` from a keystroke: the rule as it stood
+        /// before the sender was taken out of it, so taking that back puts
+        /// the rule back exactly -- a rule left holding nobody is removed,
+        /// and undo has to be able to write it again.
+        kept: Option<KeptRule> = None,
+    } => "stop_digesting_sender",
+    /// Show the message as it arrived: its raw RFC 822 text (research R2).
+    ViewSource {
+        /// The message; `None` means the one on screen.
+        message: Option<MessageId> = None,
+    } => "view_source",
+    /// Choose one of a message's links or parts, and open it.
+    OpenAttachmentOrLink {
+        /// The message; `None` means the one on screen.
+        message: Option<MessageId> = None,
+    } => "open_attachment_or_link",
+    /// Take a wrong marker off a message, or bring it back (spec 007
+    /// FR-108). A dismissal is a correction: it never returns on that
+    /// message, and dismissing one kind from one sender again and again
+    /// stops that kind for the sender.
+    DismissMarker {
+        /// Whose markers.
+        target: MessageTarget = MessageTarget::Selection,
+        /// `true` dismisses; `false` is undo's way back.
+        dismissed: bool = true,
+    } => "dismiss_marker",
+    /// Show the verbs a narrow message dialog folds out of its action row:
+    /// Label, Move and Delete (spec 007 T206).
     MoreActions => "more_actions",
-    /// Open messages beside the list, or over it.
+    /// Open messages in a pane beside the list, or in the dialog over it
+    /// (spec 007 T232): `[focus] reading`.
     ToggleReadingPane => "toggle_reading_pane",
-    /// Focus the search field.
-    Search => "search",
-    /// Save the current search as a pinned folder in the sidebar.
+
+    // -- Search ----------------------------------------------------------
+    /// Search, or focus the search field when `query` is `None`.
+    Search {
+        /// The query to run; `None` focuses the empty search field.
+        query: Option<String> = None,
+    } => "search",
+    /// Save the query the search box currently holds as a pinned folder.
+    ///
+    /// No payload: the box being open is what says which query, the same
+    /// way `EditConfig` needs no path because there is only one file.
     SaveSearch => "save_search",
     /// Leave a search's chips for the plain words it was typed as.
     BackToWords => "back_to_words",
-    /// Open the search bar's words as a results view (the Mac's dropdown
-    /// "Show all N results").
+    /// Open the words in the search bar as a results view.
     ShowAllResults => "show_all_results",
-    /// Forget the recent search the dropdown has highlighted.
+    /// Forget the highlighted recent search.
     ForgetRecent => "forget_recent",
-    /// The dropdown: exclude the focused person, label or folder.
+    /// Exclude the dropdown's focused person, label or folder: its chip,
+    /// negated (spec 010 US7).
     ExcludeSuggestion => "exclude_suggestion",
-    /// Back through the search history: the results to the inbox, or the
-    /// results before.
+    /// Back through the search history.
     HistoryBack => "history_back",
     /// Forward through the search history.
     HistoryForward => "history_forward",
@@ -186,17 +403,19 @@ command_ids! {
     ResultsFiles => "results_files",
     /// The results' People tab.
     ResultsPeople => "results_people",
-    /// The timeline's range, a month earlier.
+    /// Step the timeline's range a month earlier (`after:` and `before:`
+    /// both).
     StepRangeBack => "step_range_back",
-    /// The timeline's range, a month later.
+    /// Step the timeline's range a month later.
     StepRangeForward => "step_range_forward",
-    /// Look inside the focused result without opening it, or stop looking.
+    /// Open Quick Look on the focused result, or close it (spec 010 US4).
     QuickLook => "quick_look",
-    /// Quick Look's next match in its conversation.
+    /// Ring Quick Look's next match card.
     NextMatch => "next_match",
-    /// Quick Look's previous match in its conversation.
+    /// Ring Quick Look's previous match card.
     PrevMatch => "prev_match",
-    /// A search that found nothing: run its first looser search.
+    /// Run the first looser search a search that found nothing offers
+    /// (spec 010 US6).
     PickRelaxation1 => "pick_relaxation_1",
     /// Run the second looser search.
     PickRelaxation2 => "pick_relaxation_2",
@@ -206,33 +425,99 @@ command_ids! {
     PickRelaxation4 => "pick_relaxation_4",
     /// Save the file under the ring on the results' Files tab.
     SaveFile => "save_file",
-    /// Start a new message.
-    Compose => "compose",
-    /// Send what is in the composer.
+
+    // -- Compose ---------------------------------------------------------
+    /// Start a new message, optionally from an existing draft.
+    Compose {
+        /// A draft to resume; `None` starts an empty one.
+        draft: Option<DraftId> = None,
+    } => "compose",
+    /// Send the composer's message.
     Send => "send",
-    /// Open the picker for sending later instead of now.
+    /// Open the picker for sending the composer's message later.
+    ///
+    /// No payload, the same way `AttachFile { path: None }` opens a chooser
+    /// rather than naming a file: choosing a time is a widget interaction
+    /// inside the composer, not something the keymap or the palette can
+    /// resolve on the command's behalf.
     ScheduleSend => "schedule_send",
-    /// Save the composer's contents as a draft.
+    /// Save the composer's message as a draft.
     SaveDraft => "save_draft",
-    /// Throw away the draft in the composer.
+    /// Throw away the composer's draft.
     DiscardDraft => "discard_draft",
-    /// Settle an unconfirmed send by hand: it did arrive.
-    MarkSent => "mark_sent",
-    /// Put a send that stopped back on the queue.
-    RetrySend => "retry_send",
+    /// Settle a draft whose send could not be confirmed: it did arrive
+    /// (ADR 0021 Decision 3, #674).
+    ///
+    /// `None` means the draft in view. A user who has checked with the
+    /// recipient and learnt the message got there otherwise has only two
+    /// exits -- discard, which throws the message away, or send again, which
+    /// duplicates it -- and an `Unconfirmed` draft with no honest way out is
+    /// a dead end.
+    MarkSent {
+        /// Which draft, or the one in view.
+        draft: Option<DraftId> = None,
+    } => "mark_sent",
+    /// Put a send back on the queue after it stopped.
+    ///
+    /// The way out of `Failed` and `Unconfirmed` that is not "throw it away".
+    /// Until now the only retry was to open the draft and press Send again,
+    /// which works -- `queue_send` is what the composer calls, and it is what
+    /// this calls -- but is not something the Outbox could offer, because a
+    /// message on its way has no composer open.
+    ///
+    /// `None` means the draft in view.
+    RetrySend {
+        /// Which draft, or the one in view.
+        draft: Option<DraftId> = None,
+    } => "retry_send",
     /// Take a queued send back off the queue, leaving the draft editable.
-    CancelSend => "cancel_send",
+    ///
+    /// Refused once the submission has started: ADR 0021 keeps exactly-once
+    /// by never cancelling something that may already be in flight, and
+    /// `DraftRepository::cancel_send` reports which of those happened.
+    ///
+    /// `None` means the draft in view.
+    CancelSend {
+        /// Which draft, or the one in view.
+        draft: Option<DraftId> = None,
+    } => "cancel_send",
     /// Attach a file to the draft.
-    AttachFile => "attach_file",
-    /// Move the composition between the reading pane and a window of its own.
+    AttachFile {
+        /// The file; `None` opens the file chooser.
+        path: Option<PathBuf> = None,
+    } => "attach_file",
+    /// Move the composition between the reading pane and its own window.
+    ///
+    /// A toggle, and one composition either way: detaching moves the draft
+    /// rather than forking it, so there is never a second composer to keep in
+    /// step. Purely a view concern -- nothing downstream of the frontend can
+    /// tell which container the draft is being typed into.
     DetachComposer => "detach_composer",
     /// Raise the draft's Cc and Bcc rows, or put them away again.
+    ///
+    /// A toggle with an asymmetric half. Raising always works; putting away
+    /// only works while both fields are empty, because a hidden row that still
+    /// held addresses would keep those recipients on the draft and still send
+    /// to them, under a sender who could no longer see them. When it will not
+    /// put them away it moves the keyboard to `Cc` instead, so the refusal is
+    /// visible rather than silent.
     CopyFields => "copy_fields",
-    /// Put a picture in the body, where it is written rather than beside it.
+    /// Put a picture in the body, at the caret.
+    ///
+    /// The third of the three outcomes FR-049 asks the composer to keep
+    /// distinct — a link on text, an image *inside* the body, a file attached
+    /// alongside — and the only one that had no command. Pasting and dropping
+    /// reached it, which meant it was absent from the palette and the `?`
+    /// sheet and unreachable by anyone who does neither.
     InsertImage => "insert_image",
-    /// Hand the body to the person's own editor, and take it back.
+    /// Hand the body to the person's own editor (`$EDITOR`) and take back
+    /// what it saved (docs/archive/specs/005-tui-frontend FR-022). Where the body is not
+    /// text an editor can open -- the desktop's rich editor -- the frontend
+    /// says so.
     EditExternally => "edit_externally",
-    /// Show the message as it will be received, or go back to writing it.
+    /// Show the draft as it will arrive, beside or instead of the text being
+    /// written (docs/archive/specs/005-tui-frontend FR-021). The desktop's composer shows
+    /// formatting as it is written, so it has nothing to preview.
     TogglePreview => "toggle_preview",
     /// Make the selection bold, or un-bold it.
     Bold => "bold",
@@ -246,6 +531,8 @@ command_ids! {
     InsertLink => "insert_link",
     /// Turn the current block into a quote, or back.
     QuoteBlock => "quote_block",
+
+    // -- View and application --------------------------------------------
     /// Undo the last undoable action.
     Undo => "undo",
     /// Open the command palette.
@@ -255,20 +542,41 @@ command_ids! {
     /// Show the settings panel.
     Settings => "settings",
     /// Add another account to this installation.
+    ///
+    /// The entry point ADR 0012 Q1 asked for: a registered command rather
+    /// than a button, so the palette and the cheat sheet carry it without
+    /// either of them learning that accounts exist.
     AddAccount => "add_account",
     /// Open `config.toml` in the user's editor.
     EditConfig => "edit_config",
     /// Quit Postio.
+    ///
+    /// The desktop app always had its window's close button for this and
+    /// never needed a command; a terminal has no close button, and a command
+    /// that is not in the registry does not exist (Principle II), so it is
+    /// one here and the desktop gains a key for it too.
     Quit => "quit",
     /// Load this message's remote images, this once.
+    ///
+    /// The reading pane's banner had this as a button and nothing else; a
+    /// command that is not in the registry does not exist (Principle II), and
+    /// a terminal has no banner to click.
     ShowImages => "show_images",
     /// Always load remote images from this message's sender.
     AlwaysShowImages => "always_show_images",
-    /// Leave the mailing list this message came from.
+    /// Leave the mailing list this message came from, by its one-click
+    /// `List-Unsubscribe` -- only ever on this deliberate act.
     Unsubscribe => "unsubscribe",
-    /// Go to the folders: the folder list, or a popover of them.
+    /// Go to the folders: the classic app puts the keyboard in its folder
+    /// list, and Focus opens its folders popover.
     GoToFolders => "go_to_folders",
-    /// Go to the inbox.
+    /// Go to a mailbox by the role it wears, rather than by its name.
+    ///
+    /// One variant each rather than `GoTo(MailboxRole)`, because [`Command::id`]
+    /// is total: a `GoTo(MailboxRole::Junk)` would be a value with no command
+    /// id, and the type would then permit something the registry cannot
+    /// answer. Four roles have a sequence; the rest are reached through the
+    /// box, which is what `#` is for.
     GoToInbox => "go_to_inbox",
     /// Go to the drafts.
     GoToDrafts => "go_to_drafts",
@@ -290,39 +598,80 @@ command_ids! {
     GoToFiltered => "go_to_filtered",
     /// Go to the digest rules.
     GoToDigestRules => "go_to_digest_rules",
-    /// Run the first pinned saved search.
+    /// Run the first pinned `[saved_searches]` entry.
+    ///
+    /// One variant for each of the four, for the reason the destinations
+    /// above are: [`Command::id`] is total, and `SavedSearch(9)` would be a
+    /// value with no command id.
     SavedSearch1 => "saved_search_1",
-    /// Run the second pinned saved search.
+    /// Run the second pinned `[saved_searches]` entry.
     SavedSearch2 => "saved_search_2",
-    /// Run the third pinned saved search.
+    /// Run the third pinned `[saved_searches]` entry.
     SavedSearch3 => "saved_search_3",
-    /// Run the fourth pinned saved search.
+    /// Run the fourth pinned `[saved_searches]` entry.
     SavedSearch4 => "saved_search_4",
     /// Show only the mail that asks something of you, or everything again.
     ToggleHasAction => "toggle_has_action",
     /// Enable or disable the focused account.
+    ///
+    /// No payload, like `Archive`'s selection and for the same reason:
+    /// these are only ever offered while `Context::Accounts` is active, which
+    /// means an account row has focus, which means the target is that row --
+    /// exactly as `Archive`'s target is the current selection (ADR 0005 Q6c).
     ToggleAccountEnabled => "toggle_account_enabled",
     /// Remove the focused account.
     RemoveAccount => "remove_account",
     /// Update the focused account's stored credential.
     UpdateCredential => "update_credential",
     /// Rebuild the focused account's local search index.
+    ///
+    /// No payload, the same reason as the two above: the target is the row
+    /// with focus. Local mail only -- nothing here reaches the network; see
+    /// `postio_session::reindex_account`'s own doc for why (#981).
     RebuildAccountIndex => "rebuild_account_index",
-    /// Make the focused account the one new messages come from.
+    /// Make the focused account the default (#960).
+    ///
+    /// No payload, the same reason as the three above: the target is the row
+    /// with focus. It settles exactly one question — which account a new
+    /// message comes from when the message itself does not say — and in
+    /// particular not a reply's from address, which
+    /// [`postio_model::reply`] decides from the message being replied to.
     SetDefaultAccount => "set_default_account",
-    /// Point one of an account's roles at one of its folders.
-    MapMailboxRole => "map_mailbox_role",
+    /// Point one of an account's roles at one of its folders (ADR 0035).
+    ///
+    /// The one verb whose `None` does not always mean "ask": `account` and
+    /// `role` follow the rule at the top of this enum -- a keystroke cannot
+    /// supply them, so `None` asks -- but `path: None` is a value in its own
+    /// right, **back to automatic**, because "stop choosing" is exactly what
+    /// a person picking the first entry of the pane's dropdown means, and a
+    /// second command for it would be a key in the reference for nothing.
+    MapMailboxRole {
+        /// Whose map; `None` means the focused account row.
+        account: Option<AccountId> = None,
+        /// Which role is being pointed somewhere; `None` asks.
+        role: Option<MailboxRole> = None,
+        /// The folder's server path, or `None` for automatic.
+        path: Option<String> = None,
+    } => "map_mailbox_role",
     /// Move to the next account scope: unified, then each account in turn.
+    ///
+    /// Cycling rather than `SetScope(id)` because a keystroke has no argument
+    /// to carry one, and because the sidebar's own rows are the surface for
+    /// naming a scope directly — the same split clicking a folder already
+    /// has with walking to one.
     NextScope => "next_scope",
-    /// Ask the sync engine to check for new mail now.
+    /// Check for new mail now.
     Refresh => "refresh",
-    /// Scroll the reading pane down by about a screenful, without moving
-    /// the keyboard off the message list.
+
+    // -- Reader --------------------------------------------------------
+    /// Scroll the reading pane down by about a screenful.
     ScrollReaderDown => "scroll_reader_down",
-    /// Scroll the reading pane up by about a screenful, without moving the
-    /// keyboard off the message list.
+    /// Scroll the reading pane up by about a screenful.
     ScrollReaderUp => "scroll_reader_up",
-    /// Choose a picker's first option.
+
+    // -- Pickers, digests and Filtered (specs/007-postio-focus) ------------
+    /// Choose a picker's first option. One variant per option, like the
+    /// saved searches.
     PickerChoose1 => "picker_choose_1",
     /// Choose a picker's second option.
     PickerChoose2 => "picker_choose_2",
@@ -343,7 +692,12 @@ command_ids! {
     /// Switch a digest between its summary and its messages.
     ToggleDigestSummary => "toggle_digest_summary",
     /// Put a filtered message back in the inbox, and never filter its sender.
-    RestoreFiltered => "restore_filtered",
+    RestoreFiltered {
+        /// What to restore.
+        target: MessageTarget = MessageTarget::Selection,
+        /// `true` restores; `false` is undo's way back.
+        restored: bool = true,
+    } => "restore_filtered",
     /// Show Filtered's first reason tab.
     FilteredTab1 => "filtered_tab_1",
     /// Show Filtered's second reason tab.
@@ -358,11 +712,19 @@ command_ids! {
     FilteredTab6 => "filtered_tab_6",
     /// Show Filtered's seventh reason tab.
     FilteredTab7 => "filtered_tab_7",
-    /// File away what is already in the inbox by Focus's filtering rules.
+    /// File away what is already in the inbox, by the rules that file
+    /// arrivals away (spec 007 FR-118): the deliberate command that applies
+    /// filtering to mail filed before it was turned on. The frontend shows
+    /// what would move first (`Client::sweep_preview`).
     SweepInbox => "sweep_inbox",
-    /// Capture a task from this message into the Obsidian vault.
+
+    // -- Obsidian capture (specs/007-postio-focus milestone 3) -------------
+    /// Open the capture sheet for a task from the message (spec 007 US15),
+    /// or switch the open sheet to a task. Frontend-only: the sheet writes
+    /// through `Client::capture_task`.
     CaptureTask => "capture_task",
-    /// Capture a note from this message into the Obsidian vault.
+    /// Open the capture sheet for a note from the message, or switch the
+    /// open sheet to a note.
     CaptureNote => "capture_note",
     /// Choose another project for the capture.
     CaptureChangeProject => "capture_change_project",
@@ -370,10 +732,69 @@ command_ids! {
     CaptureUseSubject => "capture_use_subject",
     /// Write the capture into the vault.
     CaptureWrite => "capture_write",
-    /// "Digest mail like this" (spec 007 US14, T155): a rule dialog
-    /// pre-filled from a message, its candidate queries checked by the
-    /// user's local model.
-    DigestLikeThis => "digest_like_this",
+    /// "Digest mail like this" (spec 007 US14, T155): open the rule dialog
+    /// pre-filled from `message`, its candidate queries checked by the
+    /// user's local model (`Client::digest_like_this`). Present only when
+    /// `[focus.model]` has `like_this` on (FR-171); a UI-only command, with
+    /// no store write of its own.
+    DigestLikeThis {
+        /// The message to check other mail against, resolved by app state
+        /// the way [`Command::OpenMessage`]'s is.
+        message: Option<MessageId> = None,
+    } => "digest_like_this",
+    ;
+    /// Mark one message read because the cursor rested on it long enough to
+    /// have been read — not because anyone asked.
+    ///
+    /// # Why this is a variant rather than a command of its own
+    ///
+    /// It is the *same verb*: [`id`](Command::id) answers
+    /// [`CommandId::ToggleRead`], so it routes to the same handler, appears in
+    /// the registry once, and does not invent a second spelling of "mark
+    /// read" for the palette and the cheat sheet to disagree about. What
+    /// differs is only who asked — and that changes exactly one thing, which
+    /// is that it is not recorded on the undo stack. A registry command would
+    /// also have had to carry a key binding it would never be reached by;
+    /// `tests/command_registry.rs` requires one of every entry.
+    ///
+    /// # Why it is not undoable
+    ///
+    /// Undo takes back what *you* did. Reading a mailbox produces one of
+    /// these per message rested on, so recording them would bury the archive
+    /// you actually want back under a drift of marks you never asked for, and
+    /// undo would stop meaning anything predictable. The reversal is `r`
+    /// (mark read or unread), which is bound, in the palette and on the cheat
+    /// sheet. See #71.
+    MarkReadOnDwell {
+        /// The message the cursor rested on.
+        message: MessageId,
+    } => ToggleRead,
+    /// Archive a whole digest, or bring it back (spec 007 FR-125): `⇧A` in
+    /// the digest window. Every message it holds is archived, and its row
+    /// leaves the inbox.
+    ///
+    /// The same verb as `A` everywhere else -- "archive everything this row
+    /// stands for" -- so [`Command::id`] answers
+    /// [`CommandId::ArchiveThread`], as [`Command::MarkReadOnDwell`] answers
+    /// `ToggleRead`'s: one row in the registry, one key.
+    ArchiveDigest {
+        /// Which delivery.
+        delivery: postio_model::DeliveryId,
+        /// `true` archives it; `false` is undo's way back.
+        archived: bool,
+    } => ArchiveThread,
+    /// Undo's way back from a sweep: the messages return to their inboxes,
+    /// and the decisions that filed them away go with the sweep that made
+    /// them.
+    ///
+    /// The same verb, the other direction, as [`Command::MarkReadOnDwell`]
+    /// is [`CommandId::ToggleRead`]'s other provenance: [`Command::id`]
+    /// answers [`CommandId::SweepInbox`], so it routes to the same handler
+    /// and needs no key or registry row of its own.
+    UnsweepInbox {
+        /// What the sweep moved.
+        target: MessageTarget,
+    } => SweepInbox,
 }
 
 impl fmt::Display for CommandId {
@@ -498,683 +919,6 @@ pub struct KeptRule {
     pub toml: String,
 }
 
-/// One invocation of a command.
-///
-/// Payload fields that a keystroke cannot supply are `Option`al: `None` means
-/// "ask the user" — [`Command::Move`] with no mailbox opens the mailbox picker,
-/// [`Command::Search`] with no query focuses the search field.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Command {
-    // -- Navigation ------------------------------------------------------
-    /// Select the next message.
-    NextMessage,
-    /// Select the previous message.
-    PrevMessage,
-    /// Select the first message.
-    FirstMessage,
-    /// Select the last message.
-    LastMessage,
-    /// Open a message, or the focused one when `message` is `None`.
-    OpenMessage {
-        /// The message to open; `None` means the focused row.
-        message: Option<MessageId>,
-    },
-    /// Add a message to the selection, or take it out again.
-    ToggleSelection {
-        /// The message to toggle; `None` means the focused row.
-        message: Option<MessageId>,
-    },
-    /// Extend the selection to the next message down.
-    ExtendSelectionDown,
-    /// Extend the selection to the previous message up.
-    ExtendSelectionUp,
-    /// Select every message the list is showing.
-    ///
-    /// Never resolved into a list of ids on the way through — see
-    /// [`crate::state::Selection`] for why that matters.
-    SelectAll,
-    /// Return to the previous view.
-    PrevView,
-    /// Leave the current overlay, search or composer.
-    Back,
-    /// Switch a search's results between ranked and date order (#499).
-    ToggleResultOrder,
-    /// Walk down the open conversation's stack (#1007).
-    ///
-    /// No payload: `j`/`k` move between *threads* in the list, and these
-    /// move between messages inside the one that is open. Two axes, two
-    /// pairs of keys, and which one you are on is a fact about where the
-    /// keyboard is rather than about what you pressed.
-    NextInConversation,
-    /// Walk up the open conversation's stack (#1007).
-    PrevInConversation,
-    /// Fold or unfold the conversation's focused message (#1007).
-    ///
-    /// The only way to *collapse* the focused message: landing on one
-    /// expands it, so a collapsed-and-focused message is a state only this
-    /// reaches.
-    ToggleFold,
-    /// Leave reader view for the sender's own markup (#1009).
-    ///
-    /// No payload: it always means the message on screen. Reader view is a
-    /// per-message state, so there is nothing else it could mean.
-    ViewOriginal,
-    /// Draw the message on screen in reader view, or back as its sender
-    /// built it (spec 006 FR-031).
-    ///
-    /// No payload, like [`Command::ViewOriginal`]: it always means the
-    /// message on screen. Every message opens as sent, so this is the only
-    /// way into reader view.
-    ToggleReaderView,
-    /// Darken the focused paper message, or show it as sent again (spec 006 FR-013a). No payload: it means the message on screen.
-    DarkenMessage,
-    /// Switch the message on screen between app colours and the original on
-    /// paper (specs/007-postio-focus T213). No payload: it means the message
-    /// on screen, and is the message's alone -- "Always for this sender" is
-    /// the reader's to store, beside the other per-sender settings.
-    SwitchTreatment,
-    /// Find text in the message on screen (spec 006 FR-018). No payload: it means the message on screen.
-    FindInMessage,
-    /// Go to the next match of the open find (spec 006 FR-018). No payload: it means the message on screen.
-    FindNext,
-    /// Go to the previous match of the open find (spec 006 FR-018). No payload: it means the message on screen.
-    FindPrevious,
-    /// Draw messages one step larger (spec 006 FR-021). No payload: it means the message on screen.
-    ZoomIn,
-    /// Draw messages one step smaller (spec 006 FR-021). No payload: it means the message on screen.
-    ZoomOut,
-    /// Draw messages at their actual size (spec 006 FR-021). No payload: it means the message on screen.
-    ZoomReset,
-    /// Expand every collapsed message in the open conversation (#1004).
-    ///
-    /// No payload: it means the conversation on screen, which is the only
-    /// one there is.
-    ExpandAll,
-
-    // -- Message actions -------------------------------------------------
-    /// Reply to the sender.
-    Reply {
-        /// The message to reply to; `None` means the focused message.
-        message: Option<MessageId>,
-    },
-    /// Reply to everyone.
-    ReplyAll {
-        /// The message to reply to; `None` means the focused message.
-        message: Option<MessageId>,
-    },
-    /// Forward a message.
-    Forward {
-        /// The message to forward; `None` means the focused message.
-        message: Option<MessageId>,
-    },
-    /// Archive messages.
-    Archive {
-        /// What to archive.
-        target: MessageTarget,
-    },
-    /// Archive a whole thread.
-    ArchiveThread {
-        /// The thread to archive; `None` means the focused message's thread.
-        thread: Option<ThreadId>,
-    },
-    /// Move messages to the trash.
-    Delete {
-        /// What to delete.
-        target: MessageTarget,
-    },
-    /// Move messages to another mailbox.
-    Move {
-        /// What to move.
-        target: MessageTarget,
-        /// The destination; `None` opens the mailbox picker.
-        to: Option<MailboxId>,
-    },
-    /// Set or toggle the flagged state.
-    Flag {
-        /// What to flag.
-        target: MessageTarget,
-        /// The state to set; `None` toggles.
-        flagged: Option<bool>,
-    },
-    /// Set or toggle the unread state.
-    ToggleRead {
-        /// What to mark.
-        target: MessageTarget,
-        /// The state to set; `None` toggles.
-        unread: Option<bool>,
-    },
-    /// Hide the selection from every ordinary list until a time.
-    ///
-    /// The time is the picker's (specs/007-postio-focus research R6): one of
-    /// the shared presets, or a date typed and read by `parse_when`. `None`
-    /// is what a keystroke with no picker behind it sends -- the classic
-    /// app's `s` -- and the handler's own default answers it, as it always
-    /// has.
-    Snooze {
-        /// What to snooze.
-        target: MessageTarget,
-        /// When it comes back; `None` for the handler's default.
-        until: Option<DateTime<Utc>>,
-    },
-    /// Cancel a snooze immediately.
-    Unsnooze {
-        /// What to unsnooze.
-        target: MessageTarget,
-    },
-    /// Bring the conversation back if nobody has replied by a time, or stop
-    /// waiting for a reply.
-    ///
-    /// The time is the remind picker's, one of the shared presets or a typed
-    /// date (specs/007-postio-focus research R6). `None` clears the
-    /// conversation's reminder: it is the value rather than a toggle, so
-    /// undo can dispatch the inverse, as [`Command::AddLabel`]'s `on` does.
-    /// Focus opens the picker on the key; nothing sends a keystroke's
-    /// `None` meaning "ask".
-    RemindIfNoReply {
-        /// Which conversations: each targeted message's.
-        target: MessageTarget,
-        /// When to bring it back; `None` clears the reminder.
-        at: Option<DateTime<Utc>>,
-    },
-    /// Mark one message read because the cursor rested on it long enough to
-    /// have been read — not because anyone asked.
-    ///
-    /// # Why this is a variant rather than a command of its own
-    ///
-    /// It is the *same verb*: [`id`](Command::id) answers
-    /// [`CommandId::ToggleRead`], so it routes to the same handler, appears in
-    /// the registry once, and does not invent a second spelling of "mark
-    /// read" for the palette and the cheat sheet to disagree about. What
-    /// differs is only who asked — and that changes exactly one thing, which
-    /// is that it is not recorded on the undo stack. A registry command would
-    /// also have had to carry a key binding it would never be reached by;
-    /// `tests/command_registry.rs` requires one of every entry.
-    ///
-    /// # Why it is not undoable
-    ///
-    /// Undo takes back what *you* did. Reading a mailbox produces one of
-    /// these per message rested on, so recording them would bury the archive
-    /// you actually want back under a drift of marks you never asked for, and
-    /// undo would stop meaning anything predictable. The reversal is `r`
-    /// (mark read or unread), which is bound, in the palette and on the cheat
-    /// sheet. See #71.
-    MarkReadOnDwell {
-        /// The message the cursor rested on.
-        message: MessageId,
-    },
-    /// Attach a label, or take one off.
-    AddLabel {
-        /// What to label.
-        target: MessageTarget,
-        /// The label; `None` opens the label picker.
-        label: Option<LabelId>,
-        /// On, off, or `None` to toggle.
-        ///
-        /// [`Command::Flag`]'s shape, and for its reason: `u` takes an action
-        /// back by *dispatching its inverse*, so removing a label has to be
-        /// something a `Command` can say. One registered verb that can do
-        /// both beats a second entry in the registry that has no binding, no
-        /// menu item and no way for a person to reach it -- which is what
-        /// `AddLabel` itself was before #766 removed it (#780).
-        on: Option<bool>,
-    },
-    /// Accept the invitation a message carries, and send the reply.
-    ///
-    /// Undone within a window rather than from the undo stack, the way a send
-    /// is: the reply is on its way once the window closes (research R9).
-    AcceptInvite {
-        /// The invitation; `None` means the focused message.
-        message: Option<MessageId>,
-    },
-    /// Decline the invitation a message carries, and send the reply.
-    DeclineInvite {
-        /// The invitation; `None` means the focused message.
-        message: Option<MessageId>,
-    },
-    /// Open the digest-rule dialog: a new rule for the target's sender, or,
-    /// in a digest, the digest's own rule and cadence.
-    DigestRule {
-        /// Whose sender the rule is for.
-        target: MessageTarget,
-    },
-    /// Stop gathering a sender's mail into a digest, or start again.
-    ///
-    /// A direction rather than a toggle, so undo can dispatch the inverse.
-    StopDigestingSender {
-        /// Whose sender.
-        target: MessageTarget,
-        /// `true` stops the digest; `false` is undo's way back.
-        stopped: bool,
-        /// Undo's memory, `None` from a keystroke: the rule as it stood
-        /// before the sender was taken out of it, so taking that back puts
-        /// the rule back exactly -- a rule left holding nobody is removed,
-        /// and undo has to be able to write it again.
-        kept: Option<KeptRule>,
-    },
-    /// Archive a whole digest, or bring it back (spec 007 FR-125): `⇧A` in
-    /// the digest window. Every message it holds is archived, and its row
-    /// leaves the inbox.
-    ///
-    /// The same verb as `A` everywhere else -- "archive everything this row
-    /// stands for" -- so [`Command::id`] answers
-    /// [`CommandId::ArchiveThread`], as [`Command::MarkReadOnDwell`] answers
-    /// `ToggleRead`'s: one row in the registry, one key.
-    ArchiveDigest {
-        /// Which delivery.
-        delivery: postio_model::DeliveryId,
-        /// `true` archives it; `false` is undo's way back.
-        archived: bool,
-    },
-    /// Show the message as it arrived: its raw RFC 822 text (research R2).
-    ViewSource {
-        /// The message; `None` means the one on screen.
-        message: Option<MessageId>,
-    },
-    /// Choose one of a message's links or parts, and open it.
-    OpenAttachmentOrLink {
-        /// The message; `None` means the one on screen.
-        message: Option<MessageId>,
-    },
-    /// Take a wrong marker off a message, or bring it back (spec 007
-    /// FR-108). A dismissal is a correction: it never returns on that
-    /// message, and dismissing one kind from one sender again and again
-    /// stops that kind for the sender.
-    DismissMarker {
-        /// Whose markers.
-        target: MessageTarget,
-        /// `true` dismisses; `false` is undo's way back.
-        dismissed: bool,
-    },
-    /// Show the verbs a narrow message dialog folds out of its action row:
-    /// Label, Move and Delete (spec 007 T206).
-    MoreActions,
-    /// Open messages in a pane beside the list, or in the dialog over it
-    /// (spec 007 T232): `[focus] reading`.
-    ToggleReadingPane,
-
-    // -- Search ----------------------------------------------------------
-    /// Search, or focus the search field when `query` is `None`.
-    Search {
-        /// The query to run; `None` focuses the empty search field.
-        query: Option<String>,
-    },
-    /// Save the query the search box currently holds as a pinned folder.
-    ///
-    /// No payload: the box being open is what says which query, the same
-    /// way `EditConfig` needs no path because there is only one file.
-    SaveSearch,
-    /// Leave a search's chips for the plain words it was typed as.
-    BackToWords,
-    /// Open the words in the search bar as a results view.
-    ShowAllResults,
-    /// Forget the highlighted recent search.
-    ForgetRecent,
-    /// Exclude the dropdown's focused person, label or folder: its chip,
-    /// negated (spec 010 US7).
-    ExcludeSuggestion,
-    /// Back through the search history.
-    HistoryBack,
-    /// Forward through the search history.
-    HistoryForward,
-    /// The results' Conversations tab.
-    ResultsConversations,
-    /// The results' Files tab.
-    ResultsFiles,
-    /// The results' People tab.
-    ResultsPeople,
-    /// Step the timeline's range a month earlier (`after:` and `before:`
-    /// both).
-    StepRangeBack,
-    /// Step the timeline's range a month later.
-    StepRangeForward,
-    /// Open Quick Look on the focused result, or close it (spec 010 US4).
-    QuickLook,
-    /// Ring Quick Look's next match card.
-    NextMatch,
-    /// Ring Quick Look's previous match card.
-    PrevMatch,
-    /// Run the first looser search a search that found nothing offers
-    /// (spec 010 US6).
-    PickRelaxation1,
-    /// Run the second looser search.
-    PickRelaxation2,
-    /// Run the third looser search.
-    PickRelaxation3,
-    /// Run the fourth looser search.
-    PickRelaxation4,
-    /// Save the file under the ring on the results' Files tab.
-    SaveFile,
-
-    // -- Compose ---------------------------------------------------------
-    /// Start a new message, optionally from an existing draft.
-    Compose {
-        /// A draft to resume; `None` starts an empty one.
-        draft: Option<DraftId>,
-    },
-    /// Send the composer's message.
-    Send,
-    /// Open the picker for sending the composer's message later.
-    ///
-    /// No payload, the same way `AttachFile { path: None }` opens a chooser
-    /// rather than naming a file: choosing a time is a widget interaction
-    /// inside the composer, not something the keymap or the palette can
-    /// resolve on the command's behalf.
-    ScheduleSend,
-    /// Save the composer's message as a draft.
-    SaveDraft,
-    /// Throw away the composer's draft.
-    DiscardDraft,
-    /// Settle a draft whose send could not be confirmed: it did arrive
-    /// (ADR 0021 Decision 3, #674).
-    ///
-    /// `None` means the draft in view. A user who has checked with the
-    /// recipient and learnt the message got there otherwise has only two
-    /// exits -- discard, which throws the message away, or send again, which
-    /// duplicates it -- and an `Unconfirmed` draft with no honest way out is
-    /// a dead end.
-    MarkSent {
-        /// Which draft, or the one in view.
-        draft: Option<DraftId>,
-    },
-    /// Put a send back on the queue after it stopped.
-    ///
-    /// The way out of `Failed` and `Unconfirmed` that is not "throw it away".
-    /// Until now the only retry was to open the draft and press Send again,
-    /// which works -- `queue_send` is what the composer calls, and it is what
-    /// this calls -- but is not something the Outbox could offer, because a
-    /// message on its way has no composer open.
-    ///
-    /// `None` means the draft in view.
-    RetrySend {
-        /// Which draft, or the one in view.
-        draft: Option<DraftId>,
-    },
-    /// Take a queued send back off the queue, leaving the draft editable.
-    ///
-    /// Refused once the submission has started: ADR 0021 keeps exactly-once
-    /// by never cancelling something that may already be in flight, and
-    /// `DraftRepository::cancel_send` reports which of those happened.
-    ///
-    /// `None` means the draft in view.
-    CancelSend {
-        /// Which draft, or the one in view.
-        draft: Option<DraftId>,
-    },
-    /// Attach a file to the draft.
-    AttachFile {
-        /// The file; `None` opens the file chooser.
-        path: Option<PathBuf>,
-    },
-    /// Move the composition between the reading pane and its own window.
-    ///
-    /// A toggle, and one composition either way: detaching moves the draft
-    /// rather than forking it, so there is never a second composer to keep in
-    /// step. Purely a view concern -- nothing downstream of the frontend can
-    /// tell which container the draft is being typed into.
-    DetachComposer,
-    /// Raise the draft's Cc and Bcc rows, or put them away again.
-    ///
-    /// A toggle with an asymmetric half. Raising always works; putting away
-    /// only works while both fields are empty, because a hidden row that still
-    /// held addresses would keep those recipients on the draft and still send
-    /// to them, under a sender who could no longer see them. When it will not
-    /// put them away it moves the keyboard to `Cc` instead, so the refusal is
-    /// visible rather than silent.
-    CopyFields,
-    /// Put a picture in the body, at the caret.
-    ///
-    /// The third of the three outcomes FR-049 asks the composer to keep
-    /// distinct — a link on text, an image *inside* the body, a file attached
-    /// alongside — and the only one that had no command. Pasting and dropping
-    /// reached it, which meant it was absent from the palette and the `?`
-    /// sheet and unreachable by anyone who does neither.
-    InsertImage,
-    /// Hand the body to the person's own editor (`$EDITOR`) and take back
-    /// what it saved (docs/archive/specs/005-tui-frontend FR-022). Where the body is not
-    /// text an editor can open -- the desktop's rich editor -- the frontend
-    /// says so.
-    EditExternally,
-    /// Show the draft as it will arrive, beside or instead of the text being
-    /// written (docs/archive/specs/005-tui-frontend FR-021). The desktop's composer shows
-    /// formatting as it is written, so it has nothing to preview.
-    TogglePreview,
-    /// Make the selection bold, or un-bold it.
-    Bold,
-    /// Make the selection italic, or straighten it.
-    Italic,
-    /// Turn the current block into a bulleted list, or back.
-    BulletList,
-    /// Turn the current block into a numbered list, or back.
-    NumberedList,
-    /// Turn a link on the selection, asking for the address.
-    InsertLink,
-    /// Turn the current block into a quote, or back.
-    QuoteBlock,
-
-    // -- View and application --------------------------------------------
-    /// Undo the last undoable action.
-    Undo,
-    /// Open the command palette.
-    CommandPalette,
-    /// Show the keyboard cheat sheet.
-    CheatSheet,
-    /// Show the settings panel.
-    Settings,
-    /// Add another account to this installation.
-    ///
-    /// The entry point ADR 0012 Q1 asked for: a registered command rather
-    /// than a button, so the palette and the cheat sheet carry it without
-    /// either of them learning that accounts exist.
-    AddAccount,
-    /// Open `config.toml` in the user's editor.
-    EditConfig,
-    /// Quit Postio.
-    ///
-    /// The desktop app always had its window's close button for this and
-    /// never needed a command; a terminal has no close button, and a command
-    /// that is not in the registry does not exist (Principle II), so it is
-    /// one here and the desktop gains a key for it too.
-    Quit,
-    /// Load this message's remote images, this once.
-    ///
-    /// The reading pane's banner had this as a button and nothing else; a
-    /// command that is not in the registry does not exist (Principle II), and
-    /// a terminal has no banner to click.
-    ShowImages,
-    /// Always load remote images from this message's sender.
-    AlwaysShowImages,
-    /// Leave the mailing list this message came from, by its one-click
-    /// `List-Unsubscribe` -- only ever on this deliberate act.
-    Unsubscribe,
-    /// Go to the folders: the classic app puts the keyboard in its folder
-    /// list, and Focus opens its folders popover.
-    GoToFolders,
-    /// Go to a mailbox by the role it wears, rather than by its name.
-    ///
-    /// One variant each rather than `GoTo(MailboxRole)`, because [`Self::id`]
-    /// is total: a `GoTo(MailboxRole::Junk)` would be a value with no command
-    /// id, and the type would then permit something the registry cannot
-    /// answer. Four roles have a sequence; the rest are reached through the
-    /// box, which is what `#` is for.
-    GoToInbox,
-    /// Go to the drafts.
-    GoToDrafts,
-    /// Go to the sent mail.
-    GoToSent,
-    /// Go to the flagged mail.
-    GoToFlagged,
-    /// Go to the archive.
-    GoToArchive,
-    /// Go to the snoozed mail.
-    GoToSnoozed,
-    /// Go to the outbox: the sends under way.
-    GoToOutbox,
-    /// Go to the junk.
-    GoToJunk,
-    /// Go to the trash.
-    GoToTrash,
-    /// Go to what was filtered out of the inbox.
-    GoToFiltered,
-    /// Go to the digest rules.
-    GoToDigestRules,
-    /// Run the first pinned `[saved_searches]` entry.
-    ///
-    /// One variant for each of the four, for the reason the destinations
-    /// above are: [`Self::id`] is total, and `SavedSearch(9)` would be a
-    /// value with no command id.
-    SavedSearch1,
-    /// Run the second pinned `[saved_searches]` entry.
-    SavedSearch2,
-    /// Run the third pinned `[saved_searches]` entry.
-    SavedSearch3,
-    /// Run the fourth pinned `[saved_searches]` entry.
-    SavedSearch4,
-    /// Show only the mail that asks something of you, or everything again.
-    ToggleHasAction,
-    /// Enable or disable the focused account.
-    ///
-    /// No payload, like `Archive`'s selection and for the same reason:
-    /// these are only ever offered while `Context::Accounts` is active, which
-    /// means an account row has focus, which means the target is that row --
-    /// exactly as `Archive`'s target is the current selection (ADR 0005 Q6c).
-    ToggleAccountEnabled,
-    /// Remove the focused account.
-    RemoveAccount,
-    /// Update the focused account's stored credential.
-    UpdateCredential,
-    /// Rebuild the focused account's local search index.
-    ///
-    /// No payload, the same reason as the two above: the target is the row
-    /// with focus. Local mail only -- nothing here reaches the network; see
-    /// `postio_session::reindex_account`'s own doc for why (#981).
-    RebuildAccountIndex,
-    /// Make the focused account the default (#960).
-    ///
-    /// No payload, the same reason as the three above: the target is the row
-    /// with focus. It settles exactly one question — which account a new
-    /// message comes from when the message itself does not say — and in
-    /// particular not a reply's from address, which
-    /// [`postio_model::reply`] decides from the message being replied to.
-    SetDefaultAccount,
-    /// Point one of an account's roles at one of its folders (ADR 0035).
-    ///
-    /// The one verb whose `None` does not always mean "ask": `account` and
-    /// `role` follow the rule at the top of this enum -- a keystroke cannot
-    /// supply them, so `None` asks -- but `path: None` is a value in its own
-    /// right, **back to automatic**, because "stop choosing" is exactly what
-    /// a person picking the first entry of the pane's dropdown means, and a
-    /// second command for it would be a key in the reference for nothing.
-    MapMailboxRole {
-        /// Whose map; `None` means the focused account row.
-        account: Option<AccountId>,
-        /// Which role is being pointed somewhere; `None` asks.
-        role: Option<MailboxRole>,
-        /// The folder's server path, or `None` for automatic.
-        path: Option<String>,
-    },
-    /// Move to the next account scope: unified, then each account in turn.
-    ///
-    /// Cycling rather than `SetScope(id)` because a keystroke has no argument
-    /// to carry one, and because the sidebar's own rows are the surface for
-    /// naming a scope directly — the same split clicking a folder already
-    /// has with walking to one.
-    NextScope,
-    /// Check for new mail now.
-    Refresh,
-
-    // -- Reader --------------------------------------------------------
-    /// Scroll the reading pane down by about a screenful.
-    ScrollReaderDown,
-    /// Scroll the reading pane up by about a screenful.
-    ScrollReaderUp,
-
-    // -- Pickers, digests and Filtered (specs/007-postio-focus) ------------
-    /// Choose a picker's first option. One variant per option, like the
-    /// saved searches.
-    PickerChoose1,
-    /// Choose a picker's second option.
-    PickerChoose2,
-    /// Choose a picker's third option.
-    PickerChoose3,
-    /// Choose a picker's fourth option.
-    PickerChoose4,
-    /// Type a date into a picker instead of choosing one.
-    PickerTypeDate,
-    /// Turn the option under a picker's cursor on or off.
-    PickerToggle,
-    /// Confirm a picker's choice.
-    PickerConfirm,
-    /// Go to the digest summary's next reference.
-    NextReference,
-    /// Go to the digest summary's previous reference.
-    PrevReference,
-    /// Switch a digest between its summary and its messages.
-    ToggleDigestSummary,
-    /// Put a filtered message back in the inbox, and never filter its sender.
-    RestoreFiltered {
-        /// What to restore.
-        target: MessageTarget,
-        /// `true` restores; `false` is undo's way back.
-        restored: bool,
-    },
-    /// Show Filtered's first reason tab.
-    FilteredTab1,
-    /// Show Filtered's second reason tab.
-    FilteredTab2,
-    /// Show Filtered's third reason tab.
-    FilteredTab3,
-    /// Show Filtered's fourth reason tab.
-    FilteredTab4,
-    /// Show Filtered's fifth reason tab.
-    FilteredTab5,
-    /// Show Filtered's sixth reason tab.
-    FilteredTab6,
-    /// Show Filtered's seventh reason tab.
-    FilteredTab7,
-    /// File away what is already in the inbox, by the rules that file
-    /// arrivals away (spec 007 FR-118): the deliberate command that applies
-    /// filtering to mail filed before it was turned on. The frontend shows
-    /// what would move first (`Client::sweep_preview`).
-    SweepInbox,
-
-    // -- Obsidian capture (specs/007-postio-focus milestone 3) -------------
-    /// Open the capture sheet for a task from the message (spec 007 US15),
-    /// or switch the open sheet to a task. Frontend-only: the sheet writes
-    /// through `Client::capture_task`.
-    CaptureTask,
-    /// Open the capture sheet for a note from the message, or switch the
-    /// open sheet to a note.
-    CaptureNote,
-    /// Choose another project for the capture.
-    CaptureChangeProject,
-    /// Use the message's subject as the capture's text.
-    CaptureUseSubject,
-    /// Write the capture into the vault.
-    CaptureWrite,
-    /// Undo's way back from a sweep: the messages return to their inboxes,
-    /// and the decisions that filed them away go with the sweep that made
-    /// them.
-    ///
-    /// The same verb, the other direction, as [`Command::MarkReadOnDwell`]
-    /// is [`CommandId::ToggleRead`]'s other provenance: [`Command::id`]
-    /// answers [`CommandId::SweepInbox`], so it routes to the same handler
-    /// and needs no key or registry row of its own.
-    UnsweepInbox {
-        /// What the sweep moved.
-        target: MessageTarget,
-    },
-    /// "Digest mail like this" (spec 007 US14, T155): open the rule dialog
-    /// pre-filled from `message`, its candidate queries checked by the
-    /// user's local model (`Client::digest_like_this`). Present only when
-    /// `[focus.model]` has `like_this` on (FR-171); a UI-only command, with
-    /// no store write of its own.
-    DigestLikeThis {
-        /// The message to check other mail against, resolved by app state
-        /// the way [`Command::OpenMessage`]'s is.
-        message: Option<MessageId>,
-    },
-}
-
 impl Command {
     /// What this invocation is aimed at, when it acts on messages at all.
     ///
@@ -1239,369 +983,6 @@ impl Command {
                 Command::DismissMarker { target, dismissed }
             }
             other => other,
-        }
-    }
-
-    /// The registry id this invocation belongs to.
-    pub fn id(&self) -> CommandId {
-        match self {
-            Command::NextMessage => CommandId::NextMessage,
-            Command::PrevMessage => CommandId::PrevMessage,
-            Command::FirstMessage => CommandId::FirstMessage,
-            Command::LastMessage => CommandId::LastMessage,
-            Command::OpenMessage { .. } => CommandId::OpenMessage,
-            Command::ToggleSelection { .. } => CommandId::ToggleSelection,
-            Command::ExtendSelectionDown => CommandId::ExtendSelectionDown,
-            Command::ExtendSelectionUp => CommandId::ExtendSelectionUp,
-            Command::SelectAll => CommandId::SelectAll,
-            Command::PrevView => CommandId::PrevView,
-            Command::Back => CommandId::Back,
-            Command::ToggleResultOrder => CommandId::ToggleResultOrder,
-            Command::NextInConversation => CommandId::NextInConversation,
-            Command::PrevInConversation => CommandId::PrevInConversation,
-            Command::ToggleFold => CommandId::ToggleFold,
-            Command::ViewOriginal => CommandId::ViewOriginal,
-            Command::ToggleReaderView => CommandId::ToggleReaderView,
-            Command::DarkenMessage => CommandId::DarkenMessage,
-            Command::SwitchTreatment => CommandId::SwitchTreatment,
-            Command::FindInMessage => CommandId::FindInMessage,
-            Command::FindNext => CommandId::FindNext,
-            Command::FindPrevious => CommandId::FindPrevious,
-            Command::ZoomIn => CommandId::ZoomIn,
-            Command::ZoomOut => CommandId::ZoomOut,
-            Command::ZoomReset => CommandId::ZoomReset,
-            Command::ExpandAll => CommandId::ExpandAll,
-            Command::Reply { .. } => CommandId::Reply,
-            Command::ReplyAll { .. } => CommandId::ReplyAll,
-            Command::Forward { .. } => CommandId::Forward,
-            Command::Archive { .. } => CommandId::Archive,
-            Command::ArchiveThread { .. } | Command::ArchiveDigest { .. } => {
-                CommandId::ArchiveThread
-            }
-            Command::Delete { .. } => CommandId::Delete,
-            Command::Move { .. } => CommandId::Move,
-            Command::Flag { .. } => CommandId::Flag,
-            // The same verb, invoked by the app rather than by the user — see
-            // `MarkReadOnDwell`'s own docs.
-            Command::ToggleRead { .. } | Command::MarkReadOnDwell { .. } => CommandId::ToggleRead,
-            Command::Snooze { .. } => CommandId::Snooze,
-            Command::Unsnooze { .. } => CommandId::Unsnooze,
-            Command::RemindIfNoReply { .. } => CommandId::RemindIfNoReply,
-            Command::AddLabel { .. } => CommandId::AddLabel,
-            Command::AcceptInvite { .. } => CommandId::AcceptInvite,
-            Command::DeclineInvite { .. } => CommandId::DeclineInvite,
-            Command::DigestRule { .. } => CommandId::DigestRule,
-            Command::StopDigestingSender { .. } => CommandId::StopDigestingSender,
-            Command::ViewSource { .. } => CommandId::ViewSource,
-            Command::OpenAttachmentOrLink { .. } => CommandId::OpenAttachmentOrLink,
-            Command::DismissMarker { .. } => CommandId::DismissMarker,
-            Command::MoreActions => CommandId::MoreActions,
-            Command::ToggleReadingPane => CommandId::ToggleReadingPane,
-            Command::Search { .. } => CommandId::Search,
-            Command::SaveSearch => CommandId::SaveSearch,
-            Command::BackToWords => CommandId::BackToWords,
-            Command::ShowAllResults => CommandId::ShowAllResults,
-            Command::ForgetRecent => CommandId::ForgetRecent,
-            Command::ExcludeSuggestion => CommandId::ExcludeSuggestion,
-            Command::HistoryBack => CommandId::HistoryBack,
-            Command::HistoryForward => CommandId::HistoryForward,
-            Command::ResultsConversations => CommandId::ResultsConversations,
-            Command::ResultsFiles => CommandId::ResultsFiles,
-            Command::ResultsPeople => CommandId::ResultsPeople,
-            Command::StepRangeBack => CommandId::StepRangeBack,
-            Command::StepRangeForward => CommandId::StepRangeForward,
-            Command::QuickLook => CommandId::QuickLook,
-            Command::NextMatch => CommandId::NextMatch,
-            Command::PrevMatch => CommandId::PrevMatch,
-            Command::PickRelaxation1 => CommandId::PickRelaxation1,
-            Command::PickRelaxation2 => CommandId::PickRelaxation2,
-            Command::PickRelaxation3 => CommandId::PickRelaxation3,
-            Command::PickRelaxation4 => CommandId::PickRelaxation4,
-            Command::SaveFile => CommandId::SaveFile,
-            Command::Compose { .. } => CommandId::Compose,
-            Command::Send => CommandId::Send,
-            Command::ScheduleSend => CommandId::ScheduleSend,
-            Command::SaveDraft => CommandId::SaveDraft,
-            Command::DiscardDraft => CommandId::DiscardDraft,
-            Command::MarkSent { .. } => CommandId::MarkSent,
-            Command::RetrySend { .. } => CommandId::RetrySend,
-            Command::CancelSend { .. } => CommandId::CancelSend,
-            Command::AttachFile { .. } => CommandId::AttachFile,
-            Command::DetachComposer => CommandId::DetachComposer,
-            Command::CopyFields => CommandId::CopyFields,
-            Command::InsertImage => CommandId::InsertImage,
-            Command::EditExternally => CommandId::EditExternally,
-            Command::TogglePreview => CommandId::TogglePreview,
-            Command::Bold => CommandId::Bold,
-            Command::Italic => CommandId::Italic,
-            Command::BulletList => CommandId::BulletList,
-            Command::NumberedList => CommandId::NumberedList,
-            Command::InsertLink => CommandId::InsertLink,
-            Command::QuoteBlock => CommandId::QuoteBlock,
-            Command::Undo => CommandId::Undo,
-            Command::CommandPalette => CommandId::CommandPalette,
-            Command::CheatSheet => CommandId::CheatSheet,
-            Command::Settings => CommandId::Settings,
-            Command::AddAccount => CommandId::AddAccount,
-            Command::EditConfig => CommandId::EditConfig,
-            Command::Quit => CommandId::Quit,
-            Command::ShowImages => CommandId::ShowImages,
-            Command::AlwaysShowImages => CommandId::AlwaysShowImages,
-            Command::Unsubscribe => CommandId::Unsubscribe,
-            Command::GoToFolders => CommandId::GoToFolders,
-            Command::GoToInbox => CommandId::GoToInbox,
-            Command::GoToDrafts => CommandId::GoToDrafts,
-            Command::GoToSent => CommandId::GoToSent,
-            Command::GoToFlagged => CommandId::GoToFlagged,
-            Command::GoToArchive => CommandId::GoToArchive,
-            Command::GoToSnoozed => CommandId::GoToSnoozed,
-            Command::GoToOutbox => CommandId::GoToOutbox,
-            Command::GoToJunk => CommandId::GoToJunk,
-            Command::GoToTrash => CommandId::GoToTrash,
-            Command::GoToFiltered => CommandId::GoToFiltered,
-            Command::GoToDigestRules => CommandId::GoToDigestRules,
-            Command::SavedSearch1 => CommandId::SavedSearch1,
-            Command::SavedSearch2 => CommandId::SavedSearch2,
-            Command::SavedSearch3 => CommandId::SavedSearch3,
-            Command::SavedSearch4 => CommandId::SavedSearch4,
-            Command::ToggleHasAction => CommandId::ToggleHasAction,
-            Command::ToggleAccountEnabled => CommandId::ToggleAccountEnabled,
-            Command::RemoveAccount => CommandId::RemoveAccount,
-            Command::UpdateCredential => CommandId::UpdateCredential,
-            Command::RebuildAccountIndex => CommandId::RebuildAccountIndex,
-            Command::SetDefaultAccount => CommandId::SetDefaultAccount,
-            Command::MapMailboxRole { .. } => CommandId::MapMailboxRole,
-            Command::NextScope => CommandId::NextScope,
-            Command::Refresh => CommandId::Refresh,
-            Command::ScrollReaderDown => CommandId::ScrollReaderDown,
-            Command::ScrollReaderUp => CommandId::ScrollReaderUp,
-            Command::PickerChoose1 => CommandId::PickerChoose1,
-            Command::PickerChoose2 => CommandId::PickerChoose2,
-            Command::PickerChoose3 => CommandId::PickerChoose3,
-            Command::PickerChoose4 => CommandId::PickerChoose4,
-            Command::PickerTypeDate => CommandId::PickerTypeDate,
-            Command::PickerToggle => CommandId::PickerToggle,
-            Command::PickerConfirm => CommandId::PickerConfirm,
-            Command::NextReference => CommandId::NextReference,
-            Command::PrevReference => CommandId::PrevReference,
-            Command::ToggleDigestSummary => CommandId::ToggleDigestSummary,
-            Command::RestoreFiltered { .. } => CommandId::RestoreFiltered,
-            Command::FilteredTab1 => CommandId::FilteredTab1,
-            Command::FilteredTab2 => CommandId::FilteredTab2,
-            Command::FilteredTab3 => CommandId::FilteredTab3,
-            Command::FilteredTab4 => CommandId::FilteredTab4,
-            Command::FilteredTab5 => CommandId::FilteredTab5,
-            Command::FilteredTab6 => CommandId::FilteredTab6,
-            Command::FilteredTab7 => CommandId::FilteredTab7,
-            Command::SweepInbox | Command::UnsweepInbox { .. } => CommandId::SweepInbox,
-            Command::CaptureTask => CommandId::CaptureTask,
-            Command::CaptureNote => CommandId::CaptureNote,
-            Command::CaptureChangeProject => CommandId::CaptureChangeProject,
-            Command::CaptureUseSubject => CommandId::CaptureUseSubject,
-            Command::CaptureWrite => CommandId::CaptureWrite,
-            Command::DigestLikeThis { .. } => CommandId::DigestLikeThis,
-        }
-    }
-
-    /// The invocation a keystroke or a palette row implies: it targets the
-    /// current selection and leaves every choice for app state to resolve.
-    ///
-    /// This is what makes one registry able to feed both the keymap and the
-    /// palette — neither has to know a command's payload shape.
-    pub fn default_for(id: CommandId) -> Command {
-        match id {
-            CommandId::NextMessage => Command::NextMessage,
-            CommandId::PrevMessage => Command::PrevMessage,
-            CommandId::FirstMessage => Command::FirstMessage,
-            CommandId::LastMessage => Command::LastMessage,
-            CommandId::OpenMessage => Command::OpenMessage { message: None },
-            CommandId::ToggleSelection => Command::ToggleSelection { message: None },
-            CommandId::ExtendSelectionDown => Command::ExtendSelectionDown,
-            CommandId::ExtendSelectionUp => Command::ExtendSelectionUp,
-            CommandId::SelectAll => Command::SelectAll,
-            CommandId::PrevView => Command::PrevView,
-            CommandId::Back => Command::Back,
-            CommandId::ToggleResultOrder => Command::ToggleResultOrder,
-            CommandId::NextInConversation => Command::NextInConversation,
-            CommandId::PrevInConversation => Command::PrevInConversation,
-            CommandId::ToggleFold => Command::ToggleFold,
-            CommandId::ViewOriginal => Command::ViewOriginal,
-            CommandId::ToggleReaderView => Command::ToggleReaderView,
-            CommandId::DarkenMessage => Command::DarkenMessage,
-            CommandId::SwitchTreatment => Command::SwitchTreatment,
-            CommandId::FindInMessage => Command::FindInMessage,
-            CommandId::FindNext => Command::FindNext,
-            CommandId::FindPrevious => Command::FindPrevious,
-            CommandId::ZoomIn => Command::ZoomIn,
-            CommandId::ZoomOut => Command::ZoomOut,
-            CommandId::ZoomReset => Command::ZoomReset,
-            CommandId::ExpandAll => Command::ExpandAll,
-            CommandId::Reply => Command::Reply { message: None },
-            CommandId::ReplyAll => Command::ReplyAll { message: None },
-            CommandId::Forward => Command::Forward { message: None },
-            CommandId::Archive => Command::Archive {
-                target: MessageTarget::Selection,
-            },
-            CommandId::ArchiveThread => Command::ArchiveThread { thread: None },
-            CommandId::Delete => Command::Delete {
-                target: MessageTarget::Selection,
-            },
-            CommandId::Move => Command::Move {
-                target: MessageTarget::Selection,
-                to: None,
-            },
-            CommandId::Flag => Command::Flag {
-                target: MessageTarget::Selection,
-                flagged: None,
-            },
-            CommandId::ToggleRead => Command::ToggleRead {
-                target: MessageTarget::Selection,
-                unread: None,
-            },
-            CommandId::Snooze => Command::Snooze {
-                target: MessageTarget::Selection,
-                until: None,
-            },
-            CommandId::Unsnooze => Command::Unsnooze {
-                target: MessageTarget::Selection,
-            },
-            CommandId::RemindIfNoReply => Command::RemindIfNoReply {
-                target: MessageTarget::Selection,
-                at: None,
-            },
-            CommandId::AddLabel => Command::AddLabel {
-                target: MessageTarget::Selection,
-                label: None,
-                on: None,
-            },
-            CommandId::AcceptInvite => Command::AcceptInvite { message: None },
-            CommandId::DeclineInvite => Command::DeclineInvite { message: None },
-            CommandId::DigestRule => Command::DigestRule {
-                target: MessageTarget::Selection,
-            },
-            CommandId::StopDigestingSender => Command::StopDigestingSender {
-                target: MessageTarget::Selection,
-                stopped: true,
-                kept: None,
-            },
-            CommandId::ViewSource => Command::ViewSource { message: None },
-            CommandId::OpenAttachmentOrLink => Command::OpenAttachmentOrLink { message: None },
-            CommandId::DismissMarker => Command::DismissMarker {
-                target: MessageTarget::Selection,
-                dismissed: true,
-            },
-            CommandId::MoreActions => Command::MoreActions,
-            CommandId::ToggleReadingPane => Command::ToggleReadingPane,
-            CommandId::Search => Command::Search { query: None },
-            CommandId::SaveSearch => Command::SaveSearch,
-            CommandId::BackToWords => Command::BackToWords,
-            CommandId::ShowAllResults => Command::ShowAllResults,
-            CommandId::ForgetRecent => Command::ForgetRecent,
-            CommandId::ExcludeSuggestion => Command::ExcludeSuggestion,
-            CommandId::HistoryBack => Command::HistoryBack,
-            CommandId::HistoryForward => Command::HistoryForward,
-            CommandId::ResultsConversations => Command::ResultsConversations,
-            CommandId::ResultsFiles => Command::ResultsFiles,
-            CommandId::ResultsPeople => Command::ResultsPeople,
-            CommandId::StepRangeBack => Command::StepRangeBack,
-            CommandId::StepRangeForward => Command::StepRangeForward,
-            CommandId::QuickLook => Command::QuickLook,
-            CommandId::NextMatch => Command::NextMatch,
-            CommandId::PrevMatch => Command::PrevMatch,
-            CommandId::PickRelaxation1 => Command::PickRelaxation1,
-            CommandId::PickRelaxation2 => Command::PickRelaxation2,
-            CommandId::PickRelaxation3 => Command::PickRelaxation3,
-            CommandId::PickRelaxation4 => Command::PickRelaxation4,
-            CommandId::SaveFile => Command::SaveFile,
-            CommandId::Compose => Command::Compose { draft: None },
-            CommandId::Send => Command::Send,
-            CommandId::ScheduleSend => Command::ScheduleSend,
-            CommandId::SaveDraft => Command::SaveDraft,
-            CommandId::DiscardDraft => Command::DiscardDraft,
-            CommandId::MarkSent => Command::MarkSent { draft: None },
-            CommandId::RetrySend => Command::RetrySend { draft: None },
-            CommandId::CancelSend => Command::CancelSend { draft: None },
-            CommandId::AttachFile => Command::AttachFile { path: None },
-            CommandId::DetachComposer => Command::DetachComposer,
-            CommandId::CopyFields => Command::CopyFields,
-            CommandId::InsertImage => Command::InsertImage,
-            CommandId::EditExternally => Command::EditExternally,
-            CommandId::TogglePreview => Command::TogglePreview,
-            CommandId::Bold => Command::Bold,
-            CommandId::Italic => Command::Italic,
-            CommandId::BulletList => Command::BulletList,
-            CommandId::NumberedList => Command::NumberedList,
-            CommandId::InsertLink => Command::InsertLink,
-            CommandId::QuoteBlock => Command::QuoteBlock,
-            CommandId::Undo => Command::Undo,
-            CommandId::CommandPalette => Command::CommandPalette,
-            CommandId::CheatSheet => Command::CheatSheet,
-            CommandId::Settings => Command::Settings,
-            CommandId::AddAccount => Command::AddAccount,
-            CommandId::EditConfig => Command::EditConfig,
-            CommandId::Quit => Command::Quit,
-            CommandId::ShowImages => Command::ShowImages,
-            CommandId::AlwaysShowImages => Command::AlwaysShowImages,
-            CommandId::Unsubscribe => Command::Unsubscribe,
-            CommandId::GoToFolders => Command::GoToFolders,
-            CommandId::GoToInbox => Command::GoToInbox,
-            CommandId::GoToDrafts => Command::GoToDrafts,
-            CommandId::GoToSent => Command::GoToSent,
-            CommandId::GoToFlagged => Command::GoToFlagged,
-            CommandId::GoToArchive => Command::GoToArchive,
-            CommandId::GoToSnoozed => Command::GoToSnoozed,
-            CommandId::GoToOutbox => Command::GoToOutbox,
-            CommandId::GoToJunk => Command::GoToJunk,
-            CommandId::GoToTrash => Command::GoToTrash,
-            CommandId::GoToFiltered => Command::GoToFiltered,
-            CommandId::GoToDigestRules => Command::GoToDigestRules,
-            CommandId::SavedSearch1 => Command::SavedSearch1,
-            CommandId::SavedSearch2 => Command::SavedSearch2,
-            CommandId::SavedSearch3 => Command::SavedSearch3,
-            CommandId::SavedSearch4 => Command::SavedSearch4,
-            CommandId::ToggleHasAction => Command::ToggleHasAction,
-            CommandId::ToggleAccountEnabled => Command::ToggleAccountEnabled,
-            CommandId::RemoveAccount => Command::RemoveAccount,
-            CommandId::UpdateCredential => Command::UpdateCredential,
-            CommandId::RebuildAccountIndex => Command::RebuildAccountIndex,
-            CommandId::SetDefaultAccount => Command::SetDefaultAccount,
-            CommandId::MapMailboxRole => Command::MapMailboxRole {
-                account: None,
-                role: None,
-                path: None,
-            },
-            CommandId::NextScope => Command::NextScope,
-            CommandId::Refresh => Command::Refresh,
-            CommandId::ScrollReaderDown => Command::ScrollReaderDown,
-            CommandId::ScrollReaderUp => Command::ScrollReaderUp,
-            CommandId::PickerChoose1 => Command::PickerChoose1,
-            CommandId::PickerChoose2 => Command::PickerChoose2,
-            CommandId::PickerChoose3 => Command::PickerChoose3,
-            CommandId::PickerChoose4 => Command::PickerChoose4,
-            CommandId::PickerTypeDate => Command::PickerTypeDate,
-            CommandId::PickerToggle => Command::PickerToggle,
-            CommandId::PickerConfirm => Command::PickerConfirm,
-            CommandId::NextReference => Command::NextReference,
-            CommandId::PrevReference => Command::PrevReference,
-            CommandId::ToggleDigestSummary => Command::ToggleDigestSummary,
-            CommandId::RestoreFiltered => Command::RestoreFiltered {
-                target: MessageTarget::Selection,
-                restored: true,
-            },
-            CommandId::FilteredTab1 => Command::FilteredTab1,
-            CommandId::FilteredTab2 => Command::FilteredTab2,
-            CommandId::FilteredTab3 => Command::FilteredTab3,
-            CommandId::FilteredTab4 => Command::FilteredTab4,
-            CommandId::FilteredTab5 => Command::FilteredTab5,
-            CommandId::FilteredTab6 => Command::FilteredTab6,
-            CommandId::FilteredTab7 => Command::FilteredTab7,
-            CommandId::SweepInbox => Command::SweepInbox,
-            CommandId::CaptureTask => Command::CaptureTask,
-            CommandId::CaptureNote => Command::CaptureNote,
-            CommandId::CaptureChangeProject => Command::CaptureChangeProject,
-            CommandId::CaptureUseSubject => Command::CaptureUseSubject,
-            CommandId::CaptureWrite => Command::CaptureWrite,
-            CommandId::DigestLikeThis => Command::DigestLikeThis { message: None },
         }
     }
 
