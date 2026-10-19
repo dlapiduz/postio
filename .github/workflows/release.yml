@@ -359,15 +359,33 @@ jobs:
           BIN: ${{ matrix.variant.bin }}
         run: cargo build --profile "$PROFILE" -p "$PACKAGE" --bin "$BIN"
 
+      # Binaries shipped beside it (`also` in the variants file): the
+      # terminal app's extraction helper, found beside the executable. Each
+      # builds under its own profile -- the helper under `release`, which
+      # unwinds, where `release-tui` aborts (#1824).
+      - name: Build what ships beside it
+        env:
+          ALSO: ${{ toJSON(matrix.variant.also) }}
+        run: |
+          jq -r '(. // [])[] | "\(.profile) \(.package) \(.bin)"' <<<"$ALSO" |
+            while read -r profile package bin; do
+              cargo build --profile "$profile" -p "$package" --bin "$bin"
+            done
+
       - name: Package
         env:
           PROFILE: ${{ matrix.variant.profile }}
           BIN: ${{ matrix.variant.bin }}
           README: ${{ matrix.variant.readme }}
+          ALSO: ${{ toJSON(matrix.variant.also) }}
         run: |
           DIR="${ASSET%.tar.zst}"
           mkdir -p "$DIR"
           install -m755 "target/${PROFILE}/${BIN}" "$DIR/"
+          jq -r '(. // [])[] | "\(.profile) \(.bin)"' <<<"$ALSO" |
+            while read -r profile bin; do
+              install -m755 "target/${profile}/${bin}" "$DIR/"
+            done
           cp "$README" "$DIR/README.md"
           tar --zstd -cf "$ASSET" "$DIR"
           ls -lh "$ASSET"
@@ -600,10 +618,16 @@ jobs:
 
       - name: Is the terminal binary under half the desktop one?
         run: |
-          cargo build --release -p postio-gtk --bin postio
+          cargo build --release -p postio-gtk --bin postio \
+            -p postio-session --bin postio-extract-helper
           tar --zstd -xf "assets/postio-tui-${VERSION}-linux-x86_64.tar.zst"
+          # Each side counts the extraction helper it ships beside the app
+          # (#1824): the tarball's, and the desktop one's, both built under
+          # `release`.
           scripts/measure-package-size.sh binaries \
-            "postio-tui-${VERSION}-linux-x86_64/postio-tui" -- target/release/postio
+            "postio-tui-${VERSION}-linux-x86_64/postio-tui" \
+            "postio-tui-${VERSION}-linux-x86_64/postio-extract-helper" \
+            -- target/release/postio target/release/postio-extract-helper
 
       - name: Install both Flatpaks and their runtimes
         run: |

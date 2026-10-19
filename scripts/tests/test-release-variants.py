@@ -53,6 +53,13 @@ TARBALL = {
     "bin": "postio-tui",
     "profile": "release-tui",
     "readme": "docs/terminal.md",
+    "also": [
+        {
+            "package": "postio-session",
+            "bin": "postio-extract-helper",
+            "profile": "release",
+        }
+    ],
     "asset": "postio-tui-{version}-linux-x86_64.tar.zst",
 }
 MACOS = {
@@ -88,6 +95,10 @@ def world(base: Path, variants: list[dict]) -> Path:
         '[package]\nname = "postio-tui"\n\n[[bin]]\nname = "postio-tui"\npath = "src/main.rs"\n',
         encoding="utf-8",
     )
+    session = root / "crates" / "postio-session"
+    (session / "src" / "bin").mkdir(parents=True)
+    (session / "Cargo.toml").write_text("[package]\nname = \"postio-session\"\n", encoding="utf-8")
+    (session / "src" / "bin" / "postio-extract-helper.rs").write_text("fn main() {}\n", encoding="utf-8")
     (root / "Cargo.toml").write_text(
         '[workspace]\nmembers = ["crates/*"]\n\n[profile.release-tui]\ninherits = "release"\n',
         encoding="utf-8",
@@ -197,6 +208,16 @@ def main() -> int:
             "release-nope",
         ),
         (
+            "a tarball whose extra binary its package does not have",
+            [dict(TARBALL, also=[dict(TARBALL["also"][0], bin="postio-ghost")])],
+            "postio-ghost",
+        ),
+        (
+            "a tarball whose extra binary names a profile nothing defines",
+            [dict(TARBALL, also=[dict(TARBALL["also"][0], profile="release-ghost")])],
+            "release-ghost",
+        ),
+        (
             "two rows that would upload the same asset",
             [FLATPAK, dict(TUI_FLATPAK, asset=FLATPAK["asset"])],
             FLATPAK["asset"],
@@ -224,6 +245,23 @@ def main() -> int:
             out = r.stdout + r.stderr
             case(f"refuses {label}", r.returncode != 0, f"passed:\n{out}")
             case(f"...and names {named!r}", named in out, out)
+
+    # The real file: the terminal tarball carries the extraction helper
+    # (#1824), built under a profile that unwinds so one bad page fails the
+    # page, not the file.
+    real = json.loads((HERE.parent / ".github" / "release-variants.json").read_text(encoding="utf-8"))
+    tui = [r for r in real["variants"] if r.get("kind") == "tarball" and r.get("id") == "postio-tui"]
+    helpers = [a for r in tui for a in r.get("also", [])]
+    case(
+        "the real terminal tarball ships postio-extract-helper",
+        any(a["bin"] == "postio-extract-helper" for a in helpers),
+        f"got {helpers!r}",
+    )
+    case(
+        "...built under a profile that unwinds",
+        all(a["profile"] == "release" for a in helpers if a["bin"] == "postio-extract-helper") and bool(helpers),
+        f"got {helpers!r}",
+    )
 
     for failure in FAILURES:
         print(f"FAIL  {failure}")

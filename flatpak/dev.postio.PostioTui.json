@@ -36,9 +36,9 @@
             "build-commands": [
                 "cargo --offline build --ignore-rust-version --profile release-tui --package postio-tui --bin postio-tui",
                 "install -Dm755 target/release-tui/postio-tui /app/bin/postio-tui",
-                "cargo --offline build --ignore-rust-version --profile release-tui --package postio-session --bin postio-extract-helper",
-                "install -Dm755 target/release-tui/postio-extract-helper /app/bin/postio-extract-helper",
                 "cargo --offline build --ignore-rust-version --release --package postio-mcp --bin postio-mcp",
+                "cargo --offline build --ignore-rust-version --release --package postio-session --bin postio-extract-helper",
+                "install -Dm755 target/release/postio-extract-helper /app/bin/postio-extract-helper",
                 "install -Dm755 target/release/postio-mcp /app/bin/postio-mcp"
             ],
             "sources": [
