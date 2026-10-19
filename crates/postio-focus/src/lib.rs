@@ -68,7 +68,7 @@ pub use results::{
     TermEdit, file_copies,
 };
 pub use states::{AccountsRead, BannerButton, BannerView};
-pub use surfaces::{Host, ReaderVerb, SurfaceKind};
+pub use surfaces::{Host, ReaderVerb, Route, SurfaceKind};
 pub use verbs::{Aimed, Everything, ToastKind};
 
 /// What differs between platforms, as policy rather than as a fork
@@ -1682,6 +1682,17 @@ impl FocusController {
     /// Whether any surface the frontend reported is over the list.
     pub fn has_surface(&self) -> bool {
         self.surfaces.top().is_some()
+    }
+
+    /// The surface on top of the stack, when one is.
+    pub fn top_surface(&self) -> Option<SurfaceKind> {
+        self.surfaces.top()
+    }
+
+    /// Who runs `id` with the surfaces now over the list: the table a
+    /// frontend that keeps some surfaces' widgets itself reads.
+    pub fn route(&self, id: CommandId) -> Route {
+        self.surfaces.route(id)
     }
 
     /// The key context in force: the top surface's, or the list's.

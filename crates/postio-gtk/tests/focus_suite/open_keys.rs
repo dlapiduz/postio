@@ -217,3 +217,127 @@ pub fn d_in_the_open_message_opens_the_digest_rule() {
         }
     });
 }
+
+/// A window over three messages with a vault configured, the cursor on the
+/// first.
+async fn with_a_vault(
+    fixture: &Fixture,
+    vault: &tempfile::TempDir,
+) -> postio_gtk::window::FocusWindow {
+    let config = postio_config::Config::from_toml_str(&format!(
+        "[focus.vault]\npath = \"{}\"\n",
+        vault.path().display()
+    ))
+    .expect("a config with a vault");
+    let window = postio_gtk::window::FocusWindow::new(None);
+    gtk::prelude::GtkWindowExt::present(&window);
+    support::keep(postio_gtk::startup::adopt(&window, fixture.host(), &config));
+    assert!(
+        crate::settle_until(async || support::subjects(&window).len() == 3).await,
+        "the inbox never reached the screen"
+    );
+    window
+}
+
+/// As [`with_a_vault`], with the first message open.
+async fn opened_with_a_vault(
+    fixture: &Fixture,
+    vault: &tempfile::TempDir,
+) -> postio_gtk::window::FocusWindow {
+    let window = with_a_vault(fixture, vault).await;
+    support::deliver(&window, "Return");
+    let reading = window.reading().expect("Return opened the message");
+    assert!(
+        crate::settle_until(async || reading.is_open()).await,
+        "the message never opened"
+    );
+    window
+}
+
+/// `T` and `N` in the open message open the capture sheet for it, as a
+/// task and as a note, as they do beside the list (#1754, T056).
+pub fn t_in_the_open_message_opens_capture() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let vault = tempfile::tempdir().expect("a vault folder");
+        let fixture = Fixture::empty().await;
+        three(&fixture).await;
+        let window = opened_with_a_vault(&fixture, &vault).await;
+
+        support::deliver(&window, "T");
+        assert!(
+            crate::settle_until(async || window.capture().is_some_and(|sheet| sheet.is_shown()))
+                .await,
+            "T in the open message opened no capture sheet"
+        );
+        let sheet = window.capture().expect("the capture sheet");
+        let said = sheet.texts();
+        assert!(
+            said.iter().any(|text| text == "Add task"),
+            "the sheet is not a task: {said:?}"
+        );
+        // Escape puts the sheet away and leaves the message open.
+        support::deliver(&window, "Escape");
+        assert!(
+            crate::settle_until(async || !sheet.is_open()).await,
+            "Escape did not close the sheet"
+        );
+        assert!(
+            window.reading().is_some_and(|reading| reading.is_open()),
+            "closing the sheet closed the message under it"
+        );
+
+        support::deliver(&window, "N");
+        assert!(
+            crate::settle_until(async || sheet.is_shown()).await,
+            "N in the open message opened no capture sheet"
+        );
+        let said = sheet.texts();
+        assert!(
+            said.iter().any(|text| text == "Add note"),
+            "the sheet is not a note: {said:?}"
+        );
+    });
+}
+
+/// The capture sheet closed, the list's keys are the keyboard's again: a
+/// sheet put away must not leave the window in the sheet's key context.
+pub fn the_list_keys_work_again_once_the_capture_sheet_is_closed() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let vault = tempfile::tempdir().expect("a vault folder");
+        let fixture = Fixture::empty().await;
+        three(&fixture).await;
+        let window = with_a_vault(&fixture, &vault).await;
+        let pane = window.pane().expect("the list");
+        assert!(
+            crate::settle_until(async || pane.cursor().selected() == 0).await,
+            "the cursor never reached the first row"
+        );
+
+        support::deliver(&window, "T");
+        assert!(
+            crate::settle_until(async || window.capture().is_some_and(|sheet| sheet.is_shown()))
+                .await,
+            "T opened no capture sheet"
+        );
+        let sheet = window.capture().expect("the capture sheet");
+        support::deliver(&window, "Escape");
+        assert!(
+            crate::settle_until(async || !sheet.is_open()).await,
+            "Escape did not close the sheet"
+        );
+
+        support::deliver(&window, "j");
+        assert!(
+            crate::settle_until(async || pane.cursor().selected() == 1).await,
+            "j did not move the cursor after the sheet closed: on {}, context {:?}",
+            pane.cursor().selected(),
+            window.key_context()
+        );
+    });
+}
