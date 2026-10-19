@@ -87,10 +87,7 @@ pub use self::pool::{
     ConnectionPool, DEFAULT_ACQUIRE_TIMEOUT, DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_CONNECTIONS,
     PoolConfig, PoolStats, PooledSession, Priority,
 };
-pub use self::pool::{
-    DEFAULT_COMMAND_TIMEOUT, DEFAULT_SELECTION_MAX_AGE, DEFAULT_WATCH_POLL_INTERVAL,
-    DEFAULT_WATCH_REFRESH,
-};
+pub use self::pool::{DEFAULT_COMMAND_TIMEOUT, DEFAULT_SELECTION_MAX_AGE};
 pub use self::selection::{select, status};
 pub use self::settings::{ConnectionSettings, DEFAULT_CONNECT_TIMEOUT, IMAP_PORT, IMAPS_PORT};
 pub use self::skip_counter::{

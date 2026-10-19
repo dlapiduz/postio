@@ -821,6 +821,57 @@ mod tests {
         );
     }
 
+    fn status() -> MailboxStatus {
+        MailboxStatus {
+            path: "INBOX".to_owned(),
+            generation: postio_model::Generation::new(1),
+            uid_next: Uid::new(3),
+            exists: 2,
+            unseen: None,
+            highest_mod_seq: None,
+            permanent_flags: postio_model::FlagSet::default(),
+            can_create_keywords: false,
+            read_only: false,
+        }
+    }
+
+    #[test]
+    fn the_default_policy_is_what_governs_the_wire() {
+        // The watch policy has one home, and this pins what it does by
+        // default: the numbers the engine actually runs on, which `postio-
+        // account` once repeated with different values (30 s and 10 min)
+        // that nothing ever read.
+        let policy = WatchPolicy::default();
+        assert_eq!(policy.idle_refresh, Duration::from_secs(9 * 60));
+        assert_eq!(policy.poll_interval, Duration::from_secs(300));
+
+        // A server with IDLE is idled for the refresh, in one round.
+        let mut watcher = Watcher::new(policy, &idling());
+        let inbox = MailboxId::new(1);
+        let now = DateTime::<Utc>::MIN_UTC;
+        watcher.watch(inbox, "INBOX", Attention::Push);
+        watcher.observed(inbox, &status(), now);
+        let Watch::Idle { timeout, .. } = watcher.next_push(now) else {
+            panic!("a verified mailbox on an IDLE server is idled at");
+        };
+        assert_eq!(timeout, Duration::from_secs(9 * 60));
+
+        // One without is polled with STATUS, every poll interval.
+        let mut watcher = Watcher::new(policy, &capabilities(&["IMAP4rev1"]));
+        watcher.watch(inbox, "INBOX", Attention::Push);
+        assert!(matches!(watcher.next_push(now), Watch::Poll { .. }));
+        watcher.observed(inbox, &status(), now);
+        let almost = now + TimeDelta::seconds(299);
+        assert!(
+            matches!(watcher.next_push(almost), Watch::Wait { .. }),
+            "not yet: the interval is five minutes"
+        );
+        assert!(matches!(
+            watcher.next_push(now + TimeDelta::seconds(300)),
+            Watch::Poll { .. }
+        ));
+    }
+
     #[test]
     fn a_watcher_with_nothing_registered_asks_for_nothing() {
         let mut watcher = Watcher::new(WatchPolicy::default(), &idling());
