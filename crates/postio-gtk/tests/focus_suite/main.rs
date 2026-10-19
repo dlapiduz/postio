@@ -860,6 +860,14 @@ const CASES: &[(&str, fn())] = &[
         open_keys::d_in_the_open_message_opens_the_digest_rule as fn(),
     ),
     (
+        "open_keys::t_in_the_open_message_opens_capture",
+        open_keys::t_in_the_open_message_opens_capture as fn(),
+    ),
+    (
+        "open_keys::the_list_keys_work_again_once_the_capture_sheet_is_closed",
+        open_keys::the_list_keys_work_again_once_the_capture_sheet_is_closed as fn(),
+    ),
+    (
         "open_message::a_draft_from_another_client_offers_no_reply",
         open_message::a_draft_from_another_client_offers_no_reply as fn(),
     ),
