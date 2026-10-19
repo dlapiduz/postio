@@ -262,6 +262,10 @@ pub enum Input {
     /// `[focus]` as it stands: the digests an empty inbox names, and
     /// whether Focus files mail away.
     Config(postio_config::FocusConfig),
+    /// The message the frontend's open-message surface shows now, or `None`
+    /// when it shows none. A message opened from a search hit, or from a
+    /// digest, is on no cursor row, and a verb in it is about it alone.
+    Shown(Option<MessageId>),
     /// A click on Filtered's row at this index: the keyboard goes to it.
     FilteredPoint(u32),
     /// Filtered was scrolled to its end: read its next page, when there
@@ -1236,6 +1240,8 @@ pub struct FocusController {
     /// The draft the toast showing can take back: a queued send's own Undo,
     /// which Undo runs before the stack's, until a newer toast replaces it.
     toast_undo: Option<postio_model::DraftId>,
+    /// What the frontend says its open message shows (`Input::Shown`).
+    shown: Option<MessageId>,
     /// The strip's counts, as the host last said.
     counts: Option<FocusCounts>,
     states: states::States,
@@ -1270,6 +1276,7 @@ impl FocusController {
             bar: bar::Bar::new(policy.platform, policy.caps.results_view),
             pickers: pickers::Pickers::default(),
             toast_undo: None,
+            shown: None,
             counts: None,
             states: states::States::default(),
             keys: keys::Keys::default(),
@@ -1359,7 +1366,14 @@ impl FocusController {
                 self.forget_closed();
                 self.effects(steps)
             }
+            Input::Shown(message) => {
+                self.shown = message;
+                Vec::new()
+            }
             Input::SurfaceClosed(kind) => {
+                if kind == SurfaceKind::Message {
+                    self.shown = None;
+                }
                 if kind == SurfaceKind::Bar {
                     self.bar.close();
                 }
@@ -1708,6 +1722,29 @@ impl FocusController {
         self.surfaces.reading()
     }
 
+    /// The open message, when the frontend shows one that is not the
+    /// cursor's row.
+    fn shown_apart(&self, rows: &dyn Rows) -> Option<MessageId> {
+        let shown = self.shown?;
+        (self.surfaces.top() == Some(SurfaceKind::Message)
+            && self.cursor.row(rows).map(|row| row.id) != Some(shown))
+        .then_some(shown)
+    }
+
+    /// What a verb needs to know of `shown`: its row's facts when the list
+    /// holds it, else the message alone.
+    fn shown_facts(&self, shown: MessageId, rows: &dyn Rows) -> RowFacts {
+        rows.position_of(shown)
+            .and_then(|at| rows.facts(at))
+            .or_else(|| self.elsewhere_facts(shown))
+            .unwrap_or(RowFacts {
+                id: shown,
+                digest: false,
+                threads: Vec::new(),
+                writes: false,
+            })
+    }
+
     /// A command on the list, by the cursor's and the verbs' rules.
     fn list_command(&mut self, id: CommandId, rows: &dyn Rows) -> Vec<Effect> {
         let steps = self.list_steps(id, rows);
@@ -1741,6 +1778,17 @@ impl FocusController {
             }
             CommandId::DigestRule => return self.new_rule(rows),
             _ => {}
+        }
+        // A message open that is on no cursor row -- a search hit, a digest's
+        // email -- is what a verb is about, not the row the cursor was left
+        // on.
+        if let Some(shown) = self.shown_apart(rows) {
+            if pickers::opens_picker(id) {
+                return self.picker_on_message(id, shown, rows).unwrap_or_default();
+            }
+            if let Some(steps) = self.verbs.command_on(id, &self.shown_facts(shown, rows)) {
+                return steps;
+            }
         }
         if let Some(steps) = self.picker_on_list(id, rows) {
             return steps;

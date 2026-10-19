@@ -54,6 +54,7 @@ mod gmail_keys;
 mod harness;
 mod has_action;
 mod hit_composer;
+mod hit_verbs;
 mod hostile_mail;
 mod icon_buttons;
 mod idle_passes;
@@ -260,6 +261,18 @@ const CASES: &[(&str, fn())] = &[
     (
         "hit_composer::forwarding_from_a_hit_leaves_the_composer_clear_of_the_search_bar",
         hit_composer::forwarding_from_a_hit_leaves_the_composer_clear_of_the_search_bar as fn(),
+    ),
+    (
+        "hit_verbs::e_in_a_message_opened_from_a_hit_archives_that_message",
+        hit_verbs::e_in_a_message_opened_from_a_hit_archives_that_message as fn(),
+    ),
+    (
+        "hit_verbs::hash_in_a_message_opened_from_a_hit_deletes_that_message",
+        hit_verbs::hash_in_a_message_opened_from_a_hit_deletes_that_message as fn(),
+    ),
+    (
+        "hit_verbs::s_in_a_message_opened_from_a_hit_flags_that_message",
+        hit_verbs::s_in_a_message_opened_from_a_hit_flags_that_message as fn(),
     ),
     (
         "body_lands::a_body_that_lands_while_its_message_is_open_is_drawn_in_place",
