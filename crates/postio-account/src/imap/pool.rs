@@ -436,13 +436,30 @@ impl ConnectionPool {
         priority: Priority,
         operation: impl AsyncFnOnce(&mut ImapSession) -> BackendResult<T>,
     ) -> BackendResult<T> {
-        let mut connection = self.acquire(priority).await?;
+        let connection = self.acquire(priority).await?;
+        Self::run_on(connection, operation).await
+    }
+
+    /// Runs `operation` on `connection`, and decides afterwards whether the
+    /// connection may be parked.
+    ///
+    /// The connection is condemned *before* the operation starts and
+    /// reprieved only by a result that proves the exchange finished: a
+    /// success, or a failure that is not transient (a `NO`, which the server
+    /// answered in full). If the caller drops this future instead -- a job
+    /// superseded, a view closed, an outer timeout -- the operation stops
+    /// wherever it was, possibly with half a response unread or the session
+    /// inside `IDLE`, and the connection must not go back to the pool for
+    /// the next caller to find that out.
+    async fn run_on<T>(
+        mut connection: PooledSession<'_>,
+        operation: impl AsyncFnOnce(&mut ImapSession) -> BackendResult<T>,
+    ) -> BackendResult<T> {
+        connection.discard();
         let result = operation(&mut connection).await;
-        if let Err(error) = result.as_ref()
-            && error.is_transient()
-        {
-            Self::discarding(error);
-            connection.discard();
+        match result.as_ref() {
+            Err(error) if error.is_transient() => Self::discarding(error),
+            _ => connection.discard = false,
         }
         result
     }
@@ -476,17 +493,10 @@ impl ConnectionPool {
         &self,
         operation: impl AsyncFnOnce(&mut ImapSession) -> BackendResult<T>,
     ) -> BackendResult<T> {
-        let mut connection = self
+        let connection = self
             .acquire_lane(LaneKind::Watch, Priority::Interactive)
             .await?;
-        let result = operation(&mut connection).await;
-        if let Err(error) = result.as_ref()
-            && error.is_transient()
-        {
-            Self::discarding(error);
-            connection.discard();
-        }
-        result
+        Self::run_on(connection, operation).await
     }
 
     /// Checks out a connection, opening one if the pool has room.

@@ -14,8 +14,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use postio_transport::DeflateCodec;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+/// What a connection's server end can be: a socket, or one half of an
+/// in-memory pipe.
+pub(super) trait Io: AsyncRead + AsyncWrite + Unpin + Send + std::fmt::Debug {}
+
+impl<T: AsyncRead + AsyncWrite + Unpin + Send + std::fmt::Debug> Io for T {}
 
 /// What crossed the wire, summed over every connection.
 ///
@@ -45,7 +50,7 @@ const TRICKLE_PIECES: usize = 8;
 /// One connection's socket, with the leftovers of the last read.
 #[derive(Debug)]
 pub(super) struct Conn {
-    stream: TcpStream,
+    stream: Box<dyn Io>,
     buffer: Vec<u8>,
     /// When set, responses go out in pieces with this long between them —
     /// a server that is slow rather than stuck.
@@ -102,9 +107,9 @@ impl Command {
 }
 
 impl Conn {
-    pub(super) fn new(stream: TcpStream, stats: Arc<WireStats>) -> Self {
+    pub(super) fn new(stream: impl Io + 'static, stats: Arc<WireStats>) -> Self {
         Self {
-            stream,
+            stream: Box::new(stream),
             buffer: Vec::new(),
             trickle: None,
             codec: None,
@@ -225,7 +230,14 @@ impl Conn {
 
     /// Reads a whole command, answering the continuation request each
     /// synchronizing literal asks for.
-    pub(super) async fn read_command(&mut self) -> io::Result<Option<Command>> {
+    ///
+    /// `deaf` is asked when a literal is announced: if it says yes, the `+`
+    /// goes out and nothing is read again, so the peer's writes back up until
+    /// it cannot write at all.
+    pub(super) async fn read_command(
+        &mut self,
+        deaf: impl Fn() -> bool,
+    ) -> io::Result<Option<Command>> {
         let mut text = String::new();
         let mut literals: Vec<Vec<u8>> = Vec::new();
 
@@ -243,6 +255,12 @@ impl Conn {
                     text.push(MARK);
                     if synchronizing {
                         self.write_line("+ ready for the literal").await?;
+                    }
+                    if deaf() {
+                        // Never read another byte: not a close, which the
+                        // client would see, but a peer whose receive window
+                        // stays shut.
+                        std::future::pending::<()>().await;
                     }
                     let Some(bytes) = self.read_exact(len).await? else {
                         return Ok(None);

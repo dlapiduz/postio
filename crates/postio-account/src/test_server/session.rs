@@ -63,7 +63,12 @@ impl Session {
         };
         self.conn.write_line(&greeting).await?;
 
-        while let Some(command) = self.conn.read_command().await? {
+        loop {
+            let shared = Arc::clone(&self.shared);
+            let deaf = move || shared.lock().has(Quirk::DeafToLiterals);
+            let Some(command) = self.conn.read_command(deaf).await? else {
+                break;
+            };
             self.shared.lock().log.push(command.raw.clone());
 
             let fault = self.shared.lock().take_fault(&command.name);
@@ -71,6 +76,22 @@ impl Session {
             match fault {
                 Some(Fault::DropConnection { .. }) => return self.tear(&command).await,
                 Some(Fault::Stall { .. }) => return self.stall().await,
+                Some(Fault::StallMidLiteral { .. }) => {
+                    self.tear(&command).await?;
+                    return self.stall().await;
+                }
+                Some(Fault::IgnoreDone) => {
+                    self.conn.write_line("+ idling").await?;
+                    while let Some(line) = self.conn.read_line().await? {
+                        if String::from_utf8_lossy(&line)
+                            .trim()
+                            .eq_ignore_ascii_case("DONE")
+                        {
+                            break;
+                        }
+                    }
+                    return self.stall().await;
+                }
                 Some(Fault::Trickle { gap, .. }) => self.conn.set_trickle(Some(gap)),
                 Some(Fault::Reject { reason, .. }) => {
                     self.conn

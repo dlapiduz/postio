@@ -244,7 +244,9 @@ impl ImapSession {
                 }
                 ImapCoroutineState::Yielded(ImapSessionOpenYield::WantsWrite(bytes)) => {
                     let stream = stream.as_mut().ok_or_else(no_stream)?;
-                    stream.write_all(&bytes).await?;
+                    stream
+                        .write_within(&bytes, settings.connect_timeout, "the IMAP handshake")
+                        .await?;
                 }
             }
         };
@@ -414,7 +416,21 @@ impl ImapClientAsync for ImapSession {
                         resume = Some(&buffer[..read]);
                     }
                     ImapCoroutineState::Yielded(ImapYield::WantsWrite(bytes)) => {
-                        self.stream.write_all(&bytes).await.map_err(as_io)?;
+                        let timeout = self.command_timeout;
+                        if let Err(error) =
+                            self.stream.write_within(&bytes, timeout, "a command").await
+                        {
+                            // As for a read: the deadline is carried back
+                            // out through `io-imap` and recovered by
+                            // `command_error`.
+                            if matches!(error, TransportError::TimedOut { .. }) {
+                                let error: BackendError = error.into();
+                                let carried = std::io::Error::other(error.to_string());
+                                self.timed_out = Some(error);
+                                return Err(ImapClientError::Io(carried));
+                            }
+                            return Err(as_io(error));
+                        }
                     }
                 }
             }

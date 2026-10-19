@@ -163,7 +163,8 @@ async fn round_of_idle(
             ImapCoroutineState::Complete(Ok(())) => return Ok(events),
             ImapCoroutineState::Complete(Err(error)) => return Err(map_idle_error(error)),
             ImapCoroutineState::Yielded(ImapIdleYield::WantsWrite(bytes)) => {
-                session.stream.write_all(&bytes).await?;
+                let timeout = session.command_timeout();
+                session.stream.write_within(&bytes, timeout, "IDLE").await?;
             }
             ImapCoroutineState::Yielded(ImapIdleYield::Event(event)) => {
                 events.extend(translate(event));

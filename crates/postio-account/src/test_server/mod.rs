@@ -48,6 +48,8 @@
 //! observe.
 
 mod mime;
+#[cfg(feature = "imap")]
+mod pipe;
 mod session;
 mod state;
 mod wire;
@@ -65,6 +67,9 @@ use tokio::task::JoinHandle;
 
 use self::state::{Mailbox, ServerState};
 use self::wire::{Conn, WireStats};
+
+#[cfg(feature = "imap")]
+pub use self::pipe::InMemoryConnector;
 
 /// The account the server accepts, unless a builder says otherwise.
 const DEFAULT_ACCOUNT: &str = "someone@example.com";
@@ -179,6 +184,14 @@ pub enum Quirk {
     /// refused: a mailbox whose generation is unknowable cannot be addressed
     /// by UID, so no number of retries makes it usable.
     UidValidityAlwaysOmitted,
+
+    /// Stop reading the moment a command announces a literal.
+    ///
+    /// The `+` goes out and then nothing is read again, so a client writing
+    /// a large `APPEND` fills every buffer between us and blocks in its
+    /// write -- the case a read deadline cannot see, because the client is
+    /// not reading at all.
+    DeafToLiterals,
 }
 
 /// Something the server does once, to the next command that matches.
@@ -211,6 +224,21 @@ pub enum Fault {
         /// How long between pieces of the response.
         gap: Duration,
     },
+    /// Start a `FETCH` response, send part of the body literal it promised,
+    /// and go silent.
+    ///
+    /// Not the same as [`Stall`](Self::Stall): the client has been told how
+    /// many octets are coming, has read some of them, and is waiting for the
+    /// rest with a half-built response in its parser.
+    StallMidLiteral {
+        /// The command name to fire on, e.g. `"FETCH"`.
+        during: String,
+    },
+    /// Let an `IDLE` start, read the client's `DONE`, and never answer it.
+    ///
+    /// The tagged completion the client is waiting for does not come, and the
+    /// connection stays open and silent.
+    IgnoreDone,
     /// Answer `NO`.
     Reject {
         /// The command name to fire on.
@@ -223,8 +251,10 @@ pub enum Fault {
 impl Fault {
     fn matches(&self, command: &str) -> bool {
         let during = match self {
+            Self::IgnoreDone => return command.eq_ignore_ascii_case("IDLE"),
             Self::DropConnection { during }
             | Self::Stall { during }
+            | Self::StallMidLiteral { during }
             | Self::Trickle { during, .. }
             | Self::Reject { during, .. } => during,
         };
@@ -593,6 +623,17 @@ impl TestServer {
             postio_model::TransportSecurity::None,
             self.account.clone(),
         )
+    }
+
+    /// A connector that reaches this server through memory rather than a
+    /// socket.
+    ///
+    /// Use it when a test needs the paused clock (`start_paused`) or a
+    /// connection that fills up: `capacity` is how many bytes the pipe holds
+    /// before a write blocks.
+    #[cfg(feature = "imap")]
+    pub fn connector(&self, capacity: usize) -> InMemoryConnector {
+        InMemoryConnector::new(Arc::clone(&self.shared), capacity)
     }
 
     /// Arms a fault. The next matching command fires it, once.
