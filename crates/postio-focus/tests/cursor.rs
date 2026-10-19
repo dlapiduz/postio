@@ -100,6 +100,33 @@ fn a_list_that_lands_opens_on_its_first_row() {
 }
 
 #[test]
+fn a_cursor_the_person_moved_before_the_list_landed_stays_put() {
+    // `g i` again, and `j j` on the rows still showing: the list that lands
+    // a beat later is the one the person is already walking, not a new one
+    // whose first row they have yet to see.
+    let rows = List::of(5, &[]);
+    let mut focus = focus();
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let _ = focus.landed(&rows, true);
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let effects = focus.landed(&rows, true);
+    assert_eq!(cursor_of(&effects), Some(2), "{effects:?}");
+    assert_eq!(focus.cursor(), Some(2));
+    // The next place opened is a new list: its first row.
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let effects = focus.landed(&rows, true);
+    assert_eq!(cursor_of(&effects), Some(0));
+}
+
+#[test]
 fn j_and_k_move_the_cursor_and_nothing_else() {
     let rows = List::of(3, &[]);
     let mut focus = focus();

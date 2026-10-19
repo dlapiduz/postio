@@ -1455,6 +1455,10 @@ const CASES: &[(&str, fn())] = &[
         cursor::a_folder_from_the_popover_opens_with_the_cursor_on_its_first_row as fn(),
     ),
     (
+        "cursor::keys_before_a_reopened_list_lands_are_not_walked_back",
+        cursor::keys_before_a_reopened_list_lands_are_not_walked_back as fn(),
+    ),
+    (
         "cursor::the_list_view_moving_the_cursor_is_where_j_walks_on_from",
         cursor::the_list_view_moving_the_cursor_is_where_j_walks_on_from as fn(),
     ),
