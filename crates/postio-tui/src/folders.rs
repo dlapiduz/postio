@@ -190,8 +190,14 @@ impl Folders {
     /// The go-to command a name is, when it is one with a key of its own.
     fn direct(id: &str) -> Option<CommandId> {
         let command: CommandId = id.parse().ok()?;
-        rules::direct_commands()
-            .contains(&command)
-            .then_some(command)
+        // The mailboxes' own keys, and the other places the `g` keys go:
+        // Filtered (`g f`), the digest rules (`g r`) and the scope cycle
+        // (`g c`) are as reachable from here as `g i` is.
+        (rules::direct_commands().contains(&command)
+            || matches!(
+                command,
+                CommandId::GoToFiltered | CommandId::GoToDigestRules | CommandId::NextScope
+            ))
+        .then_some(command)
     }
 }
