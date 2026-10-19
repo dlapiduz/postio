@@ -865,8 +865,11 @@ slices); contact-based rules, notifications or scoring.
 
 ## Questions for the maintainer
 
-Each is only yours to decide. The spec is written to the recommendation so
-nothing blocks.
+**Resolved 2026-10-19.** The maintainer approved the spec to build ("go
+ahead and build it") after asking why editing has no Save button and
+hearing the trade-off against an Edit/Done mode. Every question below takes
+its recommended option (A), and K6's per-field editing stands. The record
+of the options is kept here for whoever revisits them.
 
 **Q1. Is there, or should there be, a design reference for Contacts?** The
 `Design/` pack has none; every layout here is by analogy.
