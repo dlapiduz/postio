@@ -242,6 +242,8 @@ mod imp {
         pub capture: RefCell<Option<Rc<crate::capture::CaptureSheet>>>,
         /// The surfaces the controller was last told are over the list.
         pub surfaces: RefCell<Vec<postio_focus::SurfaceKind>>,
+        /// The message the controller was last told the dialog shows.
+        pub told_shown: Cell<Option<MessageId>>,
         /// The add-account form's dialog, while it is open (T171, T172):
         /// Focus's first run, and what `c` and `CommandId::AddAccount` offer
         /// while there is no account to write from.
@@ -337,6 +339,7 @@ mod imp {
                 notification_sink: RefCell::default(),
                 capture: RefCell::default(),
                 surfaces: RefCell::default(),
+                told_shown: Cell::default(),
                 adding_account: RefCell::default(),
                 start_syncing: RefCell::default(),
                 settings: RefCell::default(),
@@ -996,6 +999,15 @@ impl FocusWindow {
         for kind in now.iter().filter(|kind| !before.contains(kind)) {
             pane.feed().input(postio_focus::Input::SurfaceOpened(*kind));
         }
+        // A hit or a digest's email is on no cursor row: the controller is
+        // told which message the dialog shows, so a verb aims at it.
+        let shown = self
+            .reading()
+            .filter(|reading| reading.is_open())
+            .and_then(|reading| reading.shown());
+        if self.imp().told_shown.replace(shown) != shown {
+            pane.feed().input(postio_focus::Input::Shown(shown));
+        }
     }
 
     /// The surface on top of the list, by the controller's stack.
@@ -1326,9 +1338,17 @@ impl FocusWindow {
                     .pane()
                     .zip(self.cursor_row())
                     .map(|(pane, row)| (pane.cursor().selected(), row.id()));
+                // A message on no cursor row -- a search hit -- leaves
+                // alone: there is no row to step past, so the dialog closes
+                // on the results it came from.
+                let apart = reading
+                    .shown()
+                    .filter(|shown| gone.is_none_or(|(_, row)| row != *shown));
                 self.act(id);
-                if let Some((index, message)) = gone {
-                    self.step_past(index, message);
+                match (apart, gone) {
+                    (Some(_), _) => reading.close(),
+                    (None, Some((index, message))) => self.step_past(index, message),
+                    (None, None) => {}
                 }
             }
             // The action row's other verbs act on the message on screen:
