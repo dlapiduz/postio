@@ -2360,6 +2360,34 @@ pub fn gmail_letters_type_in_the_composer_and_in_the_search_bar() {
 }
 
 // ---------------------------------------------------------------------------
+// Words built elsewhere
+// ---------------------------------------------------------------------------
+
+/// The reader's pane for a message whose body is not here names the key that
+/// checks for new mail; it must be one the registry gives Refresh.
+pub fn the_reader_names_the_key_that_checks_for_new_mail() {
+    use postio_ui::reader::document::{Absent, absent_html};
+    let bound = bindings_of(CommandId::Refresh);
+    let mut checked = 0;
+    for state in [Absent::Offline, Absent::Missing] {
+        let html = absent_html(state);
+        let Some(named) = html
+            .split("<kbd>")
+            .nth(1)
+            .and_then(|rest| rest.split("</kbd>").next())
+        else {
+            panic!("{state:?} names no key: {html}");
+        };
+        assert!(
+            bound.iter().any(|key| key == named),
+            "{state:?} says to press {named}; Refresh answers to {bound:?}"
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 2);
+}
+
+// ---------------------------------------------------------------------------
 // Settings' account list
 // ---------------------------------------------------------------------------
 

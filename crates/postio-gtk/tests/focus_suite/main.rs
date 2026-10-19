@@ -1708,6 +1708,10 @@ const CASES: &[(&str, fn())] = &[
         gmail_keys::gmail_letters_type_in_the_composer_and_in_the_search_bar as fn(),
     ),
     (
+        "gmail_keys::the_reader_names_the_key_that_checks_for_new_mail",
+        gmail_keys::the_reader_names_the_key_that_checks_for_new_mail as fn(),
+    ),
+    (
         "gmail_keys::z_takes_back_a_removed_account_in_settings",
         gmail_keys::z_takes_back_a_removed_account_in_settings as fn(),
     ),

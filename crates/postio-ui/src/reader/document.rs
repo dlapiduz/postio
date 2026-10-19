@@ -64,10 +64,17 @@ pub enum Absent {
 /// not say the same thing" and "the retryable ones name the retry key",
 /// neither of which needs a web view to have painted anything.
 pub fn absent_html(state: Absent) -> String {
-    // `R` is the registry's alternate binding for `Refresh`, and already the
-    // canvas' retry key for the list's empty and error plates. One retry key
-    // for the whole application, not one per surface.
-    const RETRY: &str = "Press <kbd>R</kbd> to check for new mail now.";
+    // Refresh's own key, from the registry: it is also the retry for the
+    // list's empty and error plates, one retry key for the whole application
+    // and not one per surface. (`R` was its second key until the one keymap
+    // gave it to restoring from Filtered, and this line went on saying it.)
+    let retry = format!(
+        "Press <kbd>{}</kbd> to check for new mail now.",
+        crate::hints::short(
+            postio_core::registry::get(postio_core::CommandId::Refresh).default_binding
+        )
+    );
+    let retry = retry.as_str();
     let (heading, detail) = match state {
         Absent::Partial => (
             "Downloading this message",
@@ -79,14 +86,14 @@ pub fn absent_html(state: Absent) -> String {
             "Not downloaded yet",
             format!(
                 "Postio is offline, so this message's body is not on this \
-                 machine. It will arrive when the connection returns. {RETRY}"
+                 machine. It will arrive when the connection returns. {retry}"
             ),
         ),
         Absent::Missing => (
             "This message's body is missing",
             format!(
                 "The message is in the local store but its body is not, so \
-                 there is nothing here to show. {RETRY}"
+                 there is nothing here to show. {retry}"
             ),
         ),
         Absent::Empty => (
@@ -2651,9 +2658,9 @@ mod tests {
         }
         // The retryable ones name the retry key; the others must not
         // promise a retry they cannot deliver.
-        assert!(absent_html(Absent::Offline).contains("<kbd>R</kbd>"));
-        assert!(absent_html(Absent::Missing).contains("<kbd>R</kbd>"));
-        assert!(!absent_html(Absent::ForeignDraft).contains("<kbd>R</kbd>"));
+        assert!(absent_html(Absent::Offline).contains("<kbd>F5</kbd>"));
+        assert!(absent_html(Absent::Missing).contains("<kbd>F5</kbd>"));
+        assert!(!absent_html(Absent::ForeignDraft).contains("<kbd>"));
     }
 
     #[test]
