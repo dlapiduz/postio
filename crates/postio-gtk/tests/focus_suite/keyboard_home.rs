@@ -105,14 +105,18 @@ pub fn a_list_that_opens_takes_the_keyboard_from_a_row_to_the_first() {
             "g i left the cursor on {}",
             pane.cursor().selected()
         );
-        crate::settle();
-        let first = pane.rows_on_screen().into_iter().next().expect("a row");
-        let focus = gtk::prelude::GtkWindowExt::focus(&window).expect("a focus");
-        let item = first
-            .ancestor(gtk::glib::Type::from_name("GtkListItemWidget").expect("GTK's list item"))
-            .expect("the row sits in a list item");
+        // The list view rebuilds its rows on the next layout, and the
+        // row that held the keyboard goes with the old ones: for a turn or
+        // more the window has no focus at all, then scroll_to(FOCUS) puts it
+        // on the new first row. Wait for that, not for one turn of the loop.
+        let on_the_first_row = || {
+            let first = pane.rows_on_screen().into_iter().next()?;
+            let item = first.ancestor(gtk::glib::Type::from_name("GtkListItemWidget")?)?;
+            let focus = gtk::prelude::GtkWindowExt::focus(&window)?;
+            Some(focus == item || focus.is_ancestor(&item))
+        };
         assert!(
-            focus == item || focus.is_ancestor(&item),
+            crate::settle_until(async || on_the_first_row() == Some(true)).await,
             "the keyboard stayed on a row the cursor left: {}",
             support::focus_path(&window)
         );
