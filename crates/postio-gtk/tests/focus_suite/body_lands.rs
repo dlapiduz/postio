@@ -41,6 +41,16 @@ pub fn a_body_that_lands_while_its_message_is_open_is_drawn_in_place() {
             "the plate never drew, so this proves nothing: {:?}",
             reading.body_text()
         );
+        // The dialog hands the keyboard to its content when it maps, a
+        // turn or more after the plate draws; a baseline read before that
+        // is "nothing", and the move into the dialog would pass for the body
+        // landing moving it.
+        assert!(
+            crate::settle_until(async || gtk::prelude::GtkWindowExt::focus(&window).is_some())
+                .await,
+            "the message opened and the keyboard never went into it"
+        );
+        crate::settle();
         let cursor = window.cursor_row().map(|row| row.id());
         let focus = support::focus_path(&window);
 
