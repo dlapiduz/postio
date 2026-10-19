@@ -138,6 +138,21 @@ impl Feed {
         Rc::clone(&self.inner).apply(effects);
     }
 
+    /// The surface on top of the list, by the controller's stack.
+    pub fn top_surface(&self) -> Option<postio_focus::SurfaceKind> {
+        self.inner.focus.borrow().top_surface()
+    }
+
+    /// Who runs `id` with the surfaces now over the list.
+    pub fn route(&self, id: CommandId) -> postio_focus::Route {
+        self.inner.focus.borrow().route(id)
+    }
+
+    /// The key context in force: the top surface's, or the list's.
+    pub fn key_context(&self) -> postio_ui::keymap::KeyContext {
+        self.inner.focus.borrow().key_context()
+    }
+
     /// A Ctrl-click (`range` false: `x` on that row) or a Shift-click (the
     /// walk from the anchor to it) on `position`.
     pub fn pick(&self, position: u32, range: bool) {

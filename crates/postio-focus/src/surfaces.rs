@@ -95,6 +95,25 @@ impl SurfaceKind {
     }
 }
 
+/// Who runs a command while the surface on top is up, for a frontend that
+/// keeps the widgets of some surfaces itself (GTK, until it adopts the
+/// composer, the bar and the digest and capture windows). The Mac holds
+/// those in the controller and asks [`crate::FocusController::answers`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Route {
+    /// The controller's: say [`crate::Input::Command`] and draw what comes
+    /// back.
+    Controller,
+    /// The surface's own widgets run it; the frontend knows how.
+    Surface(SurfaceKind),
+    /// Nobody's rule: the widget under the keyboard takes the key, and the
+    /// list behind does not.
+    Toolkit,
+    /// The list's table, as with nothing over it.
+    List,
+}
+
 /// Where a message is shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -223,6 +242,42 @@ impl Surfaces {
         }
     }
 
+    /// Who runs `id` with this stack: the table over the surfaces.
+    pub(crate) fn route(&self, id: CommandId) -> Route {
+        let Some(top) = self.top() else {
+            return Route::List;
+        };
+        match top {
+            SurfaceKind::Message => {
+                if id == CommandId::Back || reader_verb(id).is_some() {
+                    Route::Controller
+                } else {
+                    Route::List
+                }
+            }
+            SurfaceKind::KeyMap | SurfaceKind::Dialog => {
+                if matches!(id, CommandId::Back | CommandId::CheatSheet) {
+                    Route::Controller
+                } else {
+                    Route::Toolkit
+                }
+            }
+            SurfaceKind::Settings => {
+                if matches!(id, CommandId::Back | CommandId::Settings) {
+                    Route::Controller
+                } else {
+                    Route::Surface(top)
+                }
+            }
+            SurfaceKind::Digest
+            | SurfaceKind::Capture
+            | SurfaceKind::Composer
+            | SurfaceKind::Picker
+            | SurfaceKind::RowMenu => Route::Surface(top),
+            SurfaceKind::Bar | SurfaceKind::Filtered => Route::List,
+        }
+    }
+
     /// A surface opened. With `stacking` off, a secondary window replaces
     /// the one open.
     pub(crate) fn opened(&mut self, kind: SurfaceKind, stacking: bool) -> Vec<Step> {
@@ -303,6 +358,8 @@ impl Surfaces {
                 matches!(id, CommandId::Back | CommandId::CheatSheet)
             }
             SurfaceKind::Message => false,
+            // Settings toggles on its own key, as it opens on it.
+            SurfaceKind::Settings => matches!(id, CommandId::Back | CommandId::Settings),
             kind => id == CommandId::Back && kind.back_closes(),
         };
         if !closes {

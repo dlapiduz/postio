@@ -24,6 +24,7 @@ use postio_ui::selection::SelectionState;
 use crate::bulk::Bulk;
 use crate::chrome::Chrome;
 use crate::list::{Feed, FocusRow, ListPane, RowObject};
+use postio_focus::{Route, SurfaceKind};
 use postio_widgets::list_model::WindowedModel;
 use postio_widgets::widgets::pickers::{Picker, When, WhenPicker};
 
@@ -239,6 +240,8 @@ mod imp {
         /// The capture sheet (US15), built the first time `T` or `N` opens
         /// it.
         pub capture: RefCell<Option<Rc<crate::capture::CaptureSheet>>>,
+        /// The surfaces the controller was last told are over the list.
+        pub surfaces: RefCell<Vec<postio_focus::SurfaceKind>>,
         /// The add-account form's dialog, while it is open (T171, T172):
         /// Focus's first run, and what `c` and `CommandId::AddAccount` offer
         /// while there is no account to write from.
@@ -333,6 +336,7 @@ mod imp {
                 notifier: RefCell::default(),
                 notification_sink: RefCell::default(),
                 capture: RefCell::default(),
+                surfaces: RefCell::default(),
                 adding_account: RefCell::default(),
                 start_syncing: RefCell::default(),
                 settings: RefCell::default(),
@@ -834,20 +838,26 @@ impl FocusWindow {
         }
         let typing = self.is_typing();
         let outcome = {
+            let context = self.key_context();
             let mut resolver = self.imp().resolver.borrow_mut();
             let Some(resolver) = resolver.as_mut() else {
                 return glib::Propagation::Proceed;
             };
-            resolver.press(
-                &chord,
-                self.key_context(),
-                typing,
-                std::time::Instant::now(),
-            )
+            resolver.press(&chord, context, typing, std::time::Instant::now())
         };
+        let command = match &outcome {
+            Outcome::Command(id) => id.parse::<CommandId>().ok(),
+            _ => None,
+        };
+        // The surfaces over the list are the controller's table
+        // (`postio_focus::Route`): what it says is its own, it runs; what
+        // it gives the toolkit, the widget under the keyboard takes.
+        let top = self.top_surface();
         // The composer's dialog has the keyboard for the composer's own
         // commands: Send, Esc keeping the draft, and the rest (US3).
-        if let Some(compose) = self.compose().filter(|compose| compose.is_showing()) {
+        if top == Some(SurfaceKind::Composer)
+            && let Some(compose) = self.compose()
+        {
             return match outcome {
                 Outcome::Command(id) => match id.parse::<CommandId>() {
                     Ok(id) => {
@@ -860,24 +870,32 @@ impl FocusWindow {
                 Outcome::Unhandled => glib::Propagation::Proceed,
             };
         }
-        // A dialog over the window has the keyboard: only the keys that
-        // close it are the window's, and the rest go on to the dialog
-        // rather than moving the list underneath.
-        if let Some(dialog) = self.visible_dialog() {
-            if dialog.widget_name() == crate::open::DIALOG_NAME {
-                // The arrows and the paging keys read the message: they are
-                // the dialog's own, though the list's `Down` and `Up` are
-                // the same chords, and the list is not what is being read.
-                if self.scroll_reading(key, state) {
+        // The arrows and the paging keys read the message: they are the
+        // message's own, though the list's `Down` and `Up` are the same
+        // chords, and the list is not what is being read.
+        if top == Some(SurfaceKind::Message) && self.scroll_reading(key, state) {
+            return glib::Propagation::Stop;
+        }
+        if let Some(command) = command {
+            match self.route(command) {
+                Route::Controller => {
+                    self.run_in_controller(command);
                     return glib::Propagation::Stop;
                 }
+                Route::Toolkit => return glib::Propagation::Proceed,
+                Route::Surface(_) | Route::List => {}
+                _ => {}
+            }
+        }
+        match top {
+            // A message open over the list, in its dialog or beside it.
+            Some(SurfaceKind::Message) if self.visible_dialog().is_some() => {
                 // What `reading_key` has no arm for goes to the window as it
                 // does beside the list, so a command bound in the open
                 // message is never dropped for want of a case here.
                 let reached = self.reading_key(outcome.clone());
                 if reached == glib::Propagation::Proceed
-                    && let Outcome::Command(id) = &outcome
-                    && let Ok(command) = id.parse::<CommandId>()
+                    && let Some(command) = command
                     // `Return` on the message already open is the message's
                     // own (it scrolls), not the list's open.
                     && command != CommandId::OpenMessage
@@ -887,42 +905,27 @@ impl FocusWindow {
                 }
                 return reached;
             }
-            if dialog.widget_name() == crate::digest::DIALOG_NAME {
-                return self.digest_key(outcome);
-            }
-            if dialog.widget_name() == crate::capture::DIALOG_NAME {
-                return self.capture_key(outcome);
-            }
-            if dialog.widget_name() == crate::settings::DIALOG_NAME {
-                return self.settings_key(outcome);
-            }
-            return match outcome {
-                Outcome::Command(id)
-                    if matches!(
-                        id.parse::<CommandId>(),
-                        Ok(CommandId::CheatSheet | CommandId::Back)
-                    ) =>
+            // A message open beside the list has the open message's keys, as
+            // the dialog does; the list keeps the rest, `/` and `x` among them
+            // (T232).
+            Some(SurfaceKind::Message) => {
+                if let Some(command) = command
+                    && self.reading_key(outcome.clone()) == glib::Propagation::Proceed
                 {
-                    dialog.close();
-                    glib::Propagation::Stop
+                    self.act(command);
                 }
-                _ => glib::Propagation::Proceed,
-            };
-        }
-        // A message open beside the list has the open message's keys, as
-        // the dialog does; the list keeps the rest, `/` and `x` among them
-        // (T232).
-        if self.reading_beside() {
-            if self.scroll_reading(key, state) {
                 return glib::Propagation::Stop;
             }
-            if let Outcome::Command(id) = &outcome
-                && let Ok(command) = id.parse::<CommandId>()
-                && self.reading_key(outcome.clone()) == glib::Propagation::Proceed
-            {
-                self.act(command);
+            Some(SurfaceKind::Digest) => return self.digest_key(outcome),
+            Some(SurfaceKind::Capture) => return self.capture_key(outcome),
+            Some(SurfaceKind::Settings) => return self.settings_key(outcome),
+            // A dialog over the window has the keyboard: only the keys that
+            // close it are the window's, and the rest go on to the dialog
+            // rather than moving the list underneath.
+            Some(SurfaceKind::KeyMap | SurfaceKind::Dialog) => {
+                return glib::Propagation::Proceed;
             }
-            return glib::Propagation::Stop;
+            _ => {}
         }
         match outcome {
             Outcome::Command(id) => match id.parse::<CommandId>() {
@@ -941,6 +944,145 @@ impl FocusWindow {
                 tracing::debug!(chord = %chord, typing, "key resolved to nothing");
                 glib::Propagation::Proceed
             }
+        }
+    }
+
+    /// The surfaces over the list as the window holds them now, bottom
+    /// first: Filtered and the bar, a message beside the list, then the
+    /// composer or the dialog on top. Only the top dialog is known, so a
+    /// dialog under it is told again when it is the top.
+    fn surfaces_now(&self) -> Vec<SurfaceKind> {
+        let mut now = Vec::new();
+        if self.filtered().is_some() {
+            now.push(SurfaceKind::Filtered);
+        }
+        if self.bar().is_some_and(|bar| bar.is_open()) {
+            now.push(SurfaceKind::Bar);
+        }
+        if self.reading_beside() {
+            now.push(SurfaceKind::Message);
+        }
+        if self.compose().is_some_and(|compose| compose.is_showing()) {
+            now.push(SurfaceKind::Composer);
+        } else if let Some(dialog) = self.visible_dialog() {
+            let name = dialog.widget_name();
+            now.push(if name == crate::open::DIALOG_NAME {
+                SurfaceKind::Message
+            } else if name == crate::digest::DIALOG_NAME {
+                SurfaceKind::Digest
+            } else if name == crate::capture::DIALOG_NAME {
+                SurfaceKind::Capture
+            } else if name == crate::settings::DIALOG_NAME {
+                SurfaceKind::Settings
+            } else if name == KEY_MAP {
+                SurfaceKind::KeyMap
+            } else {
+                SurfaceKind::Dialog
+            });
+        }
+        now
+    }
+
+    /// Tell the controller what opened and closed since it was last told.
+    fn sync_surfaces(&self) {
+        let Some(pane) = self.pane() else {
+            return;
+        };
+        let now = self.surfaces_now();
+        let before = self.imp().surfaces.replace(now.clone());
+        for kind in before.iter().rev().filter(|kind| !now.contains(kind)) {
+            pane.feed().input(postio_focus::Input::SurfaceClosed(*kind));
+        }
+        for kind in now.iter().filter(|kind| !before.contains(kind)) {
+            pane.feed().input(postio_focus::Input::SurfaceOpened(*kind));
+        }
+    }
+
+    /// The surface on top of the list, by the controller's stack.
+    fn top_surface(&self) -> Option<SurfaceKind> {
+        self.sync_surfaces();
+        self.pane().and_then(|pane| pane.feed().top_surface())
+    }
+
+    /// Who runs `command` with what is over the list now.
+    fn route(&self, command: CommandId) -> Route {
+        self.pane()
+            .map_or(Route::List, |pane| pane.feed().route(command))
+    }
+
+    /// Run a command the controller owns, and draw what it says. The open
+    /// message's More menu and find are said first: Back closes them before
+    /// it closes the message.
+    fn run_in_controller(&self, command: CommandId) {
+        let Some(pane) = self.pane() else {
+            return;
+        };
+        if self.top_surface() == Some(SurfaceKind::Message)
+            && let Some(reading) = self.reading()
+        {
+            pane.feed().input(postio_focus::Input::ReaderState {
+                more_open: reading.more_open(),
+                finding: reading.reader().finding(),
+            });
+        }
+        pane.feed().command(command);
+    }
+
+    /// Close `kind`, as the controller says. It has taken the key map, a
+    /// dialog and the open message off its stack itself; the rest are told
+    /// it by `sync_surfaces` once they are gone.
+    fn close_surface(&self, kind: SurfaceKind) {
+        match kind {
+            SurfaceKind::Message => {
+                if let Some(reading) = self.reading() {
+                    reading.close();
+                }
+            }
+            SurfaceKind::KeyMap | SurfaceKind::Dialog => {
+                if let Some(dialog) = self.visible_dialog() {
+                    dialog.close();
+                }
+            }
+            SurfaceKind::Settings => {
+                if let Some(settings) = self.settings() {
+                    settings.close();
+                }
+            }
+            SurfaceKind::Capture => {
+                if let Some(sheet) = self.capture() {
+                    sheet.close();
+                }
+            }
+            SurfaceKind::Bar => {
+                if let Some(bar) = self.bar() {
+                    bar.close();
+                }
+            }
+            SurfaceKind::Filtered => self.leave_filtered(),
+            _ => {}
+        }
+    }
+
+    /// The open message does what the controller says.
+    fn show_reader_verb(&self, verb: postio_focus::ReaderVerb) {
+        use postio_focus::ReaderVerb;
+        let Some(reading) = self.reading() else {
+            return;
+        };
+        match verb {
+            ReaderVerb::CloseMore => reading.close_more(),
+            ReaderVerb::CloseFind => reading.reader().close_find(),
+            ReaderVerb::FindInMessage => reading.reader().find_in_message(),
+            ReaderVerb::FindNext => reading.reader().find_step(true),
+            ReaderVerb::FindPrevious => reading.reader().find_step(false),
+            // App colours or the original, for this message (T213).
+            ReaderVerb::SwitchTreatment => {
+                reading.reader().switch_treatment();
+            }
+            ReaderVerb::ViewSource => self.view_source(),
+            ReaderVerb::ShowMore => reading.show_more(),
+            ReaderVerb::StepThread(by) => reading.step_thread(by as isize),
+            _ => {}
         }
     }
 
@@ -989,33 +1131,18 @@ impl FocusWindow {
             || self.composer_body_has_keyboard()
     }
 
-    /// Which surface owns the keyboard: the open message, or the list.
+    /// Which surface owns the keyboard: the controller's answer from the
+    /// surface on top of the list. Settings' account list is the one
+    /// context only this window can see (T258).
     pub fn key_context(&self) -> KeyContext {
-        if self.compose().is_some_and(|compose| compose.is_showing()) {
-            return KeyContext::Composer;
+        self.sync_surfaces();
+        let context = self
+            .pane()
+            .map_or(KeyContext::List, |pane| pane.feed().key_context());
+        if context != KeyContext::Composer && self.settings_on_an_account() {
+            return KeyContext::Accounts;
         }
-        if self.settings_on_an_account() {
-            // Settings' account list, the keyboard on a row (T258).
-            KeyContext::Accounts
-        } else if self
-            .visible_dialog()
-            .is_some_and(|dialog| dialog.widget_name() == crate::open::DIALOG_NAME)
-            || (self.visible_dialog().is_none() && self.reading_beside())
-        {
-            KeyContext::Reader
-        } else if self.capture().is_some() {
-            KeyContext::Capture
-        } else if self.digest().is_some() {
-            KeyContext::Digest
-        } else if self.bar().is_some_and(|bar| bar.is_open()) {
-            // The bar is `Context::Search`: `Ctrl+S` saves what it holds,
-            // `Ctrl+Backspace` goes back to the words (T086).
-            KeyContext::Search
-        } else if self.filtered().is_some() {
-            KeyContext::Filtered
-        } else {
-            KeyContext::List
-        }
+        context
     }
 
     /// A key while the capture sheet is up: its own commands, and `Esc`.
@@ -1128,20 +1255,9 @@ impl FocusWindow {
             return glib::Propagation::Proceed;
         };
         match id.parse::<CommandId>() {
-            // Escape closes More's menu first, as it does any popover: the
-            // keyboard goes back to More and the message stays open.
-            Ok(CommandId::Back) if reading.more_open() => reading.close_more(),
-            // Escape closes find first, the message only after (T203).
-            Ok(CommandId::Back) if reading.reader().finding() => reading.reader().close_find(),
-            Ok(CommandId::Back) => reading.close(),
-            Ok(CommandId::FindInMessage) => reading.reader().find_in_message(),
-            // App colours or the original, for this message (T213).
-            Ok(CommandId::SwitchTreatment) => {
-                reading.reader().switch_treatment();
-            }
-            Ok(CommandId::FindNext) => reading.reader().find_step(true),
-            Ok(CommandId::FindPrevious) => reading.reader().find_step(false),
-            // A message found by search walks the results it came from; one
+            // Back, find, More, the treatment, the source and the thread's
+            // steps are the controller's (`Route::Controller`). A message
+            // found by search walks the results it came from; one
             // opened from the list walks the list.
             Ok(CommandId::NextMessage) if reading.step_found(1) => {}
             Ok(CommandId::PrevMessage) if reading.step_found(-1) => {}
@@ -1153,8 +1269,7 @@ impl FocusWindow {
                 self.cursor_command(CommandId::PrevMessage);
                 self.open_message();
             }
-            Ok(CommandId::ViewSource) => self.view_source(),
-            // The size of the message on screen, in the dialog and beside
+
             // the list (T242), and the banner's buttons (T247).
             Ok(
                 id @ (CommandId::ZoomIn
@@ -1165,7 +1280,6 @@ impl FocusWindow {
                 | CommandId::Unsubscribe),
             ) => self.act(id),
             Ok(CommandId::DismissMarker) => self.dismiss_marker(),
-            Ok(CommandId::MoreActions) => reading.show_more(),
             // The open message moves between the dialog and the pane (T232).
             Ok(CommandId::ToggleReadingPane) => self.toggle_reading_pane(),
             // Edit: `Return` on a draft on its way or stopped, already open,
@@ -1228,8 +1342,6 @@ impl FocusWindow {
                 | CommandId::CaptureNote
                 | CommandId::Undo),
             ) => self.act(id),
-            Ok(CommandId::PrevInConversation) => reading.step_thread(-1),
-            Ok(CommandId::NextInConversation) => reading.step_thread(1),
             _ => return glib::Propagation::Proceed,
         }
         glib::Propagation::Stop
@@ -1920,6 +2032,7 @@ impl FocusWindow {
     /// Run a command the controller decides -- the cursor's, the
     /// selection's, `!` -- and draw what it says.
     fn cursor_command(&self, id: CommandId) {
+        self.sync_surfaces();
         if let Some(pane) = self.pane() {
             pane.feed().command(id);
         }
@@ -1976,6 +2089,8 @@ impl FocusWindow {
             Intent::Counts(_) => self.show_counts(),
             Intent::Empty(page) => self.show_empty(page.as_ref()),
             Intent::Toast { text, kind } => self.show_toast(text, kind),
+            Intent::Reader(verb) => self.show_reader_verb(*verb),
+            Intent::CloseSurface(kind) => self.close_surface(*kind),
             _ => {}
         }
     }

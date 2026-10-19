@@ -480,8 +480,8 @@ impl crate::window::FocusWindow {
         }
     }
 
-    /// A key while Settings is up: Escape and `mod+comma` close it, `mod+e`
-    /// opens the file, and everything else is its controls' -- typing in a
+    /// A key while Settings is up (Escape and `mod+comma` close it: the
+    /// controller's): `mod+e` opens the file, and everything else is its controls' -- typing in a
     /// field types.
     pub(crate) fn settings_key(&self, outcome: postio_ui::keymap::Outcome) -> glib::Propagation {
         use postio_core::CommandId;
@@ -489,12 +489,6 @@ impl crate::window::FocusWindow {
             return glib::Propagation::Proceed;
         };
         match id.parse::<CommandId>() {
-            Ok(CommandId::Back | CommandId::Settings) => {
-                if let Some(settings) = self.settings() {
-                    settings.close();
-                }
-                glib::Propagation::Stop
-            }
             Ok(CommandId::EditConfig) => {
                 self.edit_config();
                 glib::Propagation::Stop
