@@ -190,6 +190,23 @@ impl Feed {
         self.inner.focus.borrow().selection_reach().clone()
     }
 
+    /// Where a verb would go now: the selection when there is one, the
+    /// cursor's row otherwise.
+    pub fn aim(&self) -> postio_focus::Aimed {
+        self.inner.focus.borrow().aim(&self.inner.list)
+    }
+
+    /// Whether an undo is waiting for the rows it brings back to land.
+    pub fn restoring(&self) -> bool {
+        self.inner.focus.borrow().restoring()
+    }
+
+    /// Whether the last landing put the cursor on a row an undo brought
+    /// back: true once per undo.
+    pub fn take_restored(&self) -> bool {
+        self.inner.focus.borrow_mut().take_restored()
+    }
+
     /// Whether `!` has narrowed the list to the rows with a marker.
     pub fn has_action(&self) -> bool {
         self.inner.focus.borrow().has_action()

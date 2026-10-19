@@ -396,10 +396,7 @@ impl FocusController {
             CommandId::GoToInbox => self.close_digest(),
             CommandId::ArchiveThread => {
                 let delivery = window.delivery;
-                let mut steps = vec![Step::Ask(Request::Post(Command::ArchiveDigest {
-                    delivery,
-                    archived: true,
-                }))];
+                let mut steps = self.verbs.archive_digest(delivery);
                 steps.extend(self.close_digest());
                 steps
             }

@@ -304,6 +304,24 @@ fn return_opens_the_references_email_in_the_digest_and_esc_returns_to_it() {
 }
 
 #[test]
+fn undoing_the_window_s_archive_puts_the_cursor_back_on_the_digests_row() {
+    let mut focus = mac();
+    let _ = open(&mut focus, config(true));
+    let _ = run(&mut focus, CommandId::ArchiveThread);
+    // The window closed; the cursor moves off the row that is going.
+    let _ = run(&mut focus, CommandId::NextMessage);
+    let _ = focus.handle(Input::Event(postio_core::Event::UndoPerformed {
+        description: "Archived a digest".into(),
+    }));
+    let back = shown(&focus.landed(&List, false));
+    assert!(
+        back.iter()
+            .any(|intent| matches!(intent, Intent::Cursor { position: 0, .. })),
+        "{back:?}"
+    );
+}
+
+#[test]
 fn shift_a_archives_the_whole_delivery() {
     let mut focus = mac();
     let _ = open(&mut focus, config(true));

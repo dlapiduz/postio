@@ -157,6 +157,59 @@ pub fn enter_opens_a_digest_and_shift_a_archives_all_of_it() {
     });
 }
 
+/// `e` on the digest's row, from the list, archives all of it as the window's
+/// `⇧A` does -- a message verb has nothing to aim at on a digest, but the
+/// row's own verb does -- and one `Ctrl+Z` brings the row back under the
+/// cursor.
+pub fn e_on_a_digests_row_archives_its_delivery_and_undo_brings_the_cursor_back() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = delivered().await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 4).await,
+            "the inbox and its digest never reached the screen: {:?}",
+            support::subjects(&window)
+        );
+        support::keys(&window, &["j"]);
+        assert!(
+            matches!(
+                window.cursor_row(),
+                Some(postio_gtk::list::FocusRow::Digest(_))
+            ),
+            "j did not land on the digest's row"
+        );
+        support::press(&window, "e", gdk::ModifierType::empty());
+        assert!(
+            crate::settle_until(async || {
+                support::subjects(&window) == ["Staffing plan", "Harbor draft", "Atlas budget"]
+            })
+            .await,
+            "e on the digest's row left it in the inbox: {:?}",
+            support::subjects(&window)
+        );
+        // The cursor moves off where the digest was, so the undo has to
+        // put it back rather than find it there.
+        support::keys(&window, &["j", "j"]);
+        support::press(&window, "z", gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || {
+                support::subjects(&window).len() == 4
+                    && matches!(
+                        window.cursor_row(),
+                        Some(postio_gtk::list::FocusRow::Digest(_))
+                    )
+            })
+            .await,
+            "one Ctrl+Z did not bring the digest back under the cursor: {:?} on {:?}",
+            support::subjects(&window),
+            window.cursor_row().map(|row| row.id())
+        );
+    });
+}
+
 /// US10 scenario 5: `D` on a message in the digest asks first, and once
 /// confirmed its sender stops being digested -- out of `config.toml`.
 pub fn d_stops_digesting_the_sender_once_confirmed() {

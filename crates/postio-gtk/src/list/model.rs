@@ -264,6 +264,13 @@ impl postio_focus::Rows for FocusList {
     fn position_of(&self, message: MessageId) -> Option<u32> {
         WindowedModel::position_of(self, message)
     }
+
+    fn row(&self, position: u32) -> Option<postio_ui::focus_list::FocusRow> {
+        self.windowed()
+            .window()
+            .resident_at(position)
+            .and_then(RowObject::item)
+    }
 }
 
 impl WindowedModel for FocusList {
