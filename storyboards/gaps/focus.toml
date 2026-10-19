@@ -49,7 +49,7 @@ reason  = "the cursor is already on the first row"
 [[gap]]
 command = "next_scope"
 context = "list"
-reason  = "bound, and act() has no arm for it; scope cycling is Classic's search"
+reason  = "the starting seed has one account, so Focus's inbox is the only scope to cycle to"
 [[gap]]
 command = "open_attachment_or_link"
 context = "list"
@@ -61,7 +61,7 @@ reason  = "the cursor is on the first row, so there is nothing above it"
 [[gap]]
 command = "prev_view"
 context = "list"
-reason  = "bound, and act() has no arm for it; view cycling is Classic's"
+reason  = "nothing is open to go back from in the list; the open message closes on it"
 [[gap]]
 command = "scroll_reader_down"
 context = "list"
@@ -128,12 +128,6 @@ reason  = "CANDIDATE: the same unreachable keyboard (storyboards/list/digest-win
 command = "prev_reference"
 context = "digest"
 reason  = "CANDIDATE: the same unreachable keyboard (storyboards/list/digest-window-keeps-the-keyboard)"
-
-# -- reader: the first message open in its dialog (an invitation, wide window)
-[[gap]]
-command = "prev_message"
-context = "reader"
-reason  = "the first row is open, so there is nothing before it"
 
 # -- composer: the composer's dialog over the inbox, empty
 [[gap]]

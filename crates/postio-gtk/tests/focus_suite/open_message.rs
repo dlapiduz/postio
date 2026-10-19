@@ -599,3 +599,44 @@ pub fn a_draft_from_another_client_offers_no_reply() {
         );
     });
 }
+
+/// Spec 009 slice 6: a verb in the open message is for that message, never
+/// for the rows selected behind it (the Mac's rule, which the controller
+/// owns). Row 1 is selected, row 3 is opened, and `e` archives row 3; the
+/// dialog goes on to the one that took its place and the selection stays.
+pub fn archive_in_the_dialog_archives_the_message_not_the_selection() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let (_fixture, window) = five_with_bodies().await;
+        support::keys(&window, &["x", "j", "j"]);
+        let selected = window.selection();
+        assert_eq!(
+            support::subjects(&window).len(),
+            5,
+            "five rows before the archive"
+        );
+        enter(&window);
+        let reading = window.reading().expect("open");
+        assert_eq!(reading.title(), "Subject 3");
+
+        support::keys(&window, &["e"]);
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 4).await,
+            "the archive never reached the list: {:?}",
+            support::subjects(&window)
+        );
+        assert_eq!(
+            support::subjects(&window),
+            ["Subject 1", "Subject 2", "Subject 4", "Subject 5"],
+            "the message on screen went, not the selected row"
+        );
+        assert!(
+            crate::settle_until(async || reading.title() == "Subject 4").await,
+            "the dialog should go on to the next: {:?}",
+            reading.title()
+        );
+        assert_eq!(window.selection(), selected, "the selection was spent");
+    });
+}

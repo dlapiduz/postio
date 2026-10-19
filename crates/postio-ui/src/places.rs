@@ -8,7 +8,7 @@
 //! straight to it.
 
 use postio_core::{ActionId, CommandId};
-use postio_model::{Label, Mailbox, MailboxRole};
+use postio_model::{Label, Mailbox, MailboxId, MailboxRole};
 
 use crate::finder::{Destination, Place, PlaceKind};
 
@@ -288,6 +288,34 @@ pub fn place_name(mailbox: &Mailbox) -> String {
     }
 }
 
+/// A list `g c` can cycle to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// Focus's own inbox: every account's, filtered as Focus files it.
+    Focus,
+    /// One account's inbox, as the server has it.
+    Inbox(MailboxId),
+}
+
+/// The scope after `here` for `g c` (`next_scope`): Focus's inbox, then each
+/// account's inbox in turn, then round again. With one account's inbox
+/// there is only the one list, and it is Focus's. `here` is `None` when the
+/// list shows something else (a folder, Flagged): the cycle starts over.
+pub fn next_scope(inboxes: &[MailboxId], here: Option<Scope>) -> Scope {
+    if inboxes.len() < 2 {
+        return Scope::Focus;
+    }
+    match here {
+        Some(Scope::Inbox(current)) => inboxes
+            .iter()
+            .position(|inbox| *inbox == current)
+            .and_then(|at| inboxes.get(at + 1))
+            .map_or(Scope::Focus, |next| Scope::Inbox(*next)),
+        Some(Scope::Focus) => Scope::Inbox(inboxes[0]),
+        None => Scope::Focus,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use postio_model::ids::{AccountId, LabelId, MailboxId};
@@ -418,5 +446,46 @@ mod tests {
         let entry = filtered_entry(4);
         assert_eq!(entry.command, Some(CommandId::GoToFiltered));
         assert_eq!(entry.go, Some(CommandId::GoToFiltered));
+    }
+
+    #[test]
+    fn next_scope_walks_each_inbox_then_back_to_focus() {
+        let inboxes = [MailboxId::new(1), MailboxId::new(9)];
+        let mut here = Some(Scope::Focus);
+        let mut walked = Vec::new();
+        for _ in 0..4 {
+            let next = next_scope(&inboxes, here);
+            walked.push(next);
+            here = Some(next);
+        }
+        assert_eq!(
+            walked,
+            [
+                Scope::Inbox(MailboxId::new(1)),
+                Scope::Inbox(MailboxId::new(9)),
+                Scope::Focus,
+                Scope::Inbox(MailboxId::new(1)),
+            ]
+        );
+    }
+
+    #[test]
+    fn next_scope_from_somewhere_else_starts_over_at_focus() {
+        let inboxes = [MailboxId::new(1), MailboxId::new(9)];
+        assert_eq!(next_scope(&inboxes, None), Scope::Focus);
+        assert_eq!(
+            next_scope(&inboxes, Some(Scope::Inbox(MailboxId::new(77)))),
+            Scope::Focus,
+            "an inbox that is not one of the accounts' is somewhere else"
+        );
+    }
+
+    #[test]
+    fn next_scope_with_one_account_is_only_focus() {
+        assert_eq!(next_scope(&[], Some(Scope::Focus)), Scope::Focus);
+        assert_eq!(
+            next_scope(&[MailboxId::new(1)], Some(Scope::Focus)),
+            Scope::Focus
+        );
     }
 }

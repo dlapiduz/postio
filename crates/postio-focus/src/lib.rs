@@ -159,6 +159,12 @@ pub enum Input {
         /// Find is up.
         finding: bool,
     },
+    /// The cursor is on another row than the open message shows: the
+    /// message follows it. A click beside the reading pane, an undo that
+    /// brought a conversation back, a key the frontend moved the list with
+    /// under a message it opened itself (a hit, a digest's email). Nothing
+    /// happens with no message open, or when it shows the cursor's row.
+    Follow,
     /// The bar's words, as they are now.
     Typed {
         /// The field's text.
@@ -1415,6 +1421,10 @@ impl FocusController {
                 let steps = self.cursor.point(position, rows);
                 self.effects(steps)
             }
+            Input::Follow => {
+                let steps = self.follow_cursor(rows);
+                self.effects(steps)
+            }
             Input::Pick { position, range } => {
                 let total = self.feed.total();
                 let steps = self.cursor.pick(position, range, rows, total);
@@ -1627,6 +1637,10 @@ impl FocusController {
                 let steps = self.draft_saved(composition, saved);
                 self.effects(steps)
             }
+            Input::Timer(token) if surfaces::is_reader_timer(token) => {
+                self.surfaces.timed_out(token);
+                Vec::new()
+            }
             Input::Timer(token) => {
                 let steps = self.timer(token);
                 self.effects(steps)
@@ -1745,6 +1759,19 @@ impl FocusController {
             })
     }
 
+    /// Whether `id` sends the message it is about out of the list being
+    /// read: Archive and Delete, and Unsnooze from the Snoozed list.
+    fn leaves_the_list(&self, id: CommandId) -> bool {
+        match id {
+            CommandId::Archive | CommandId::Delete => true,
+            CommandId::Unsnooze => self
+                .feed
+                .scope()
+                .is_some_and(|scope| scope == ListScope::Focus(postio_model::FocusScope::Snoozed)),
+            _ => false,
+        }
+    }
+
     /// A command on the list, by the cursor's and the verbs' rules.
     fn list_command(&mut self, id: CommandId, rows: &dyn Rows) -> Vec<Effect> {
         let steps = self.list_steps(id, rows);
@@ -1786,7 +1813,16 @@ impl FocusController {
             if pickers::opens_picker(id) {
                 return self.picker_on_message(id, shown, rows).unwrap_or_default();
             }
-            if let Some(steps) = self.verbs.command_on(id, &self.shown_facts(shown, rows)) {
+            if let Some(mut steps) = self.verbs.command_on(id, &self.shown_facts(shown, rows)) {
+                // No row of the cursor's is going to leave for a step past
+                // to wait on: the message goes with the verb.
+                if self.leaves_the_list(id) {
+                    self.surfaces.dismiss(SurfaceKind::Message);
+                    steps.push(feed::Step::Show(Intent::CloseSurface(SurfaceKind::Message)));
+                    if !self.has_surface() {
+                        steps.push(feed::Step::Show(Intent::KeyboardHome));
+                    }
+                }
                 return steps;
             }
         }
@@ -1934,6 +1970,27 @@ impl FocusController {
                 }
                 Some(steps)
             }
+            // `g g` and `G` go to the first and the last, and the message
+            // shows that one, as `j` shows the next.
+            CommandId::FirstMessage | CommandId::LastMessage => {
+                let has_action = self.counts.map(|counts| counts.has_action);
+                let total = self.feed.total();
+                let mut steps = self
+                    .cursor
+                    .command(id, rows, self.feed.scope(), total, has_action)
+                    .unwrap_or_default();
+                if let Some(at) = self.cursor.position()
+                    && rows.facts(at).is_some_and(|row| row.id != reading)
+                {
+                    steps.extend(self.open_at(at, rows));
+                }
+                Some(steps)
+            }
+            // `-` takes the marker off the message on screen alone.
+            CommandId::DismissMarker => Some(self.verbs.post(Command::DismissMarker {
+                target: MessageTarget::Messages(vec![reading]),
+                dismissed: true,
+            })),
             // `Return` on the message on screen: Edit, on a draft on its
             // way or stopped; else it is open already.
             CommandId::OpenMessage => Some(self.edit_open_draft(rows).unwrap_or_default()),
@@ -1943,15 +2000,45 @@ impl FocusController {
                 let row = position
                     .and_then(|at| rows.facts(at))
                     .or_else(|| self.hit_facts(reading))?;
-                let steps = self.verbs.command_on(id, &row)?;
-                if matches!(id, CommandId::Archive | CommandId::Delete)
+                let mut steps = self.verbs.command_on(id, &row)?;
+                // The message goes away, and the one that takes its place
+                // shows once the list lets it go (T190); so does waking one
+                // from the Snoozed list it is leaving (T238).
+                if self.leaves_the_list(id)
                     && let Some(at) = position
                 {
-                    self.surfaces.step_past(at, row.id);
+                    steps.push(self.surfaces.step_past(at, row.id));
                 }
                 Some(steps)
             }
         }
+    }
+
+    /// The cursor is on a row the open message does not show: show it, or,
+    /// for a draft or a digest, which are not read in place, put the message
+    /// away.
+    fn follow_cursor(&mut self, rows: &dyn Rows) -> Vec<feed::Step> {
+        if self.surfaces.top() != Some(SurfaceKind::Message) {
+            return Vec::new();
+        }
+        let Some(at) = self.cursor.position() else {
+            return Vec::new();
+        };
+        let Some(row) = rows.facts(at) else {
+            return Vec::new();
+        };
+        if self.surfaces.reading() == Some(row.id) {
+            return Vec::new();
+        }
+        if row.digest || row.writes {
+            self.surfaces.dismiss(SurfaceKind::Message);
+            let mut steps = vec![feed::Step::Show(Intent::CloseSurface(SurfaceKind::Message))];
+            if !self.has_surface() {
+                steps.push(feed::Step::Show(Intent::KeyboardHome));
+            }
+            return steps;
+        }
+        self.open_at(at, rows)
     }
 
     /// Whether `id` is one of the controller's own commands: the cursor's,

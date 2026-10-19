@@ -129,14 +129,6 @@ mod window_teardown;
 /// appears in `--list`, exactly as an ignored libtest case does. Say in a
 /// comment beside the name which issue or task takes it back.
 const IGNORED: &[&str] = &[
-    // Eleven Gmail-keymap presses that do nothing yet (`NOT_YET` in the case
-    // names each and why): the open message's `g g`, `G`, `u` and `Left`,
-    // the capture sheet's `T` and `N`, and the list's `A`, `M` and `g c`.
-    // The code they need is spec 009's key routing (`reading_key` and `act`
-    // in window.rs, the capture sheet's keys). Fix lands with spec 009; each
-    // key leaves `NOT_YET` as it goes green, and this name leaves this list
-    // when the table is empty.
-    "gmail_keys::keys_that_do_nothing_yet",
     // Needs a working document portal on the session bus, which a CI machine
     // does not have; run by name where there is one.
     "drag_out::a_dragged_message_survives_the_portal",
@@ -888,6 +880,10 @@ const CASES: &[(&str, fn())] = &[
     (
         "open_keys::the_list_keys_work_again_once_the_capture_sheet_is_closed",
         open_keys::the_list_keys_work_again_once_the_capture_sheet_is_closed as fn(),
+    ),
+    (
+        "open_message::archive_in_the_dialog_archives_the_message_not_the_selection",
+        open_message::archive_in_the_dialog_archives_the_message_not_the_selection as fn(),
     ),
     (
         "open_message::a_draft_from_another_client_offers_no_reply",
@@ -1727,10 +1723,6 @@ const CASES: &[(&str, fn())] = &[
     (
         "gmail_keys::z_takes_back_a_removed_account_in_settings",
         gmail_keys::z_takes_back_a_removed_account_in_settings as fn(),
-    ),
-    (
-        "gmail_keys::keys_that_do_nothing_yet",
-        gmail_keys::keys_that_do_nothing_yet as fn(),
     ),
 ];
 

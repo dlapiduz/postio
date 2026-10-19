@@ -1216,106 +1216,39 @@ const EXCUSED: &[(Surface, CommandId, &str, &str)] = &[
         "u",
         "nothing is open to go back from in the list",
     ),
-];
-
-/// Why a key does nothing yet. The code each needs is spec 009's key
-/// routing -- `reading_key` and `act` in `window.rs`, the capture sheet's
-/// keys, and `postio-focus`' surfaces -- which its slices own, so these are
-/// reported for them rather than fixed from a test.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Defect {
-    /// `reading_key` has no arm for `g g` and `G`: the list's cursor moves
-    /// and the message open over it stays the one it was.
-    OpenMessageFirstAndLast,
-    /// Nothing answers `prev_view` in the open message: `u` and `Left` do
-    /// not go back to the list.
-    OpenMessageGoesBack,
-    /// The capture sheet's keyboard is in its text field, where `T` and `N`
-    /// type; the toggles its two buttons show cannot be pressed.
-    CaptureToggles,
-    /// `act` has no arm for the command from the list: the key is taken and
-    /// nothing happens.
-    ListHasNoArm,
-}
-
-/// The keys that do nothing, and what each is waiting for. Every one is
-/// pressed by `keys_that_do_nothing_yet`, which is held out of the default
-/// run (`IGNORED` in main.rs); a key that starts working leaves this list
-/// and is pressed by the regular cases from then on.
-const NOT_YET: &[(Surface, CommandId, &str, Defect)] = &[
-    (
-        Surface::Reader,
-        CommandId::FirstMessage,
-        "g g",
-        Defect::OpenMessageFirstAndLast,
-    ),
-    (
-        Surface::Reader,
-        CommandId::LastMessage,
-        "G",
-        Defect::OpenMessageFirstAndLast,
-    ),
-    (
-        Surface::Reader,
-        CommandId::PrevView,
-        "u",
-        Defect::OpenMessageGoesBack,
-    ),
-    (
-        Surface::Reader,
-        CommandId::PrevView,
-        "Left",
-        Defect::OpenMessageGoesBack,
-    ),
-    (
-        Surface::Pane,
-        CommandId::PrevView,
-        "u",
-        Defect::OpenMessageGoesBack,
-    ),
-    (
-        Surface::Pane,
-        CommandId::PrevView,
-        "Left",
-        Defect::OpenMessageGoesBack,
-    ),
-    (
-        Surface::Capture,
-        CommandId::CaptureTask,
-        "T",
-        Defect::CaptureToggles,
-    ),
-    (
-        Surface::Capture,
-        CommandId::CaptureNote,
-        "N",
-        Defect::CaptureToggles,
-    ),
     (
         Surface::List,
         CommandId::OpenAttachmentOrLink,
         "A",
-        Defect::ListHasNoArm,
+        "it offers the attachments and links of the message open, and a list row is \
+         not one: the controller has no rule for it on a row, and the terminal \
+         offers choices only for an open message (the open message presses it)",
     ),
     (
         Surface::List,
         CommandId::Unsubscribe,
         "M",
-        Defect::ListHasNoArm,
+        "it leaves the list of the message open, and a list row is not one: the Mac \
+         asks for the message window, and the terminal for an open message (the open \
+         message presses it)",
     ),
     (
-        Surface::List,
-        CommandId::NextScope,
-        "g c",
-        Defect::ListHasNoArm,
+        Surface::Capture,
+        CommandId::CaptureTask,
+        "T",
+        "the sheet's keyboard is in its text field, where a capital types; the \
+         terminal makes the same choice, and the Task toggle is the button the \
+         controller's `capture_task` answers",
+    ),
+    (
+        Surface::Capture,
+        CommandId::CaptureNote,
+        "N",
+        "the sheet's keyboard is in its text field, where a capital types; the \
+         terminal makes the same choice, and the Note toggle is the button the \
+         controller's `capture_note` answers",
     ),
 ];
-
-fn handed(surface: Surface, command: CommandId, binding: &str) -> bool {
-    NOT_YET
-        .iter()
-        .any(|(s, c, b, _)| *s == surface && *c == command && *b == binding)
-}
 
 fn excused(surface: Surface, command: CommandId, binding: &str) -> bool {
     EXCUSED
@@ -1411,7 +1344,7 @@ impl Group {
 }
 
 /// Every (command, binding, probe) that `surface` offers in `group`.
-fn presses(surface: Surface, group: Group, handed_ones: bool) -> Vec<(CommandId, String, Probe)> {
+fn presses(surface: Surface, group: Group) -> Vec<(CommandId, String, Probe)> {
     let mut all = Vec::new();
     for command in GMAIL.iter().filter(|command| Group::of(**command) == group) {
         let spec = registry::all()
@@ -1421,9 +1354,7 @@ fn presses(surface: Surface, group: Group, handed_ones: bool) -> Vec<(CommandId,
             continue;
         }
         for binding in bindings_of(*command) {
-            if excused(surface, *command, &binding)
-                || handed(surface, *command, &binding) != handed_ones
-            {
+            if excused(surface, *command, &binding) {
                 continue;
             }
             let mut probe = probe(*command, surface).expect("the same probe");
@@ -1442,10 +1373,10 @@ fn presses(surface: Surface, group: Group, handed_ones: bool) -> Vec<(CommandId,
 
 /// Press every binding of every Gmail command in `group` that `surface`
 /// offers, and answer what did not do what it should.
-async fn press_all(surface: Surface, group: Group, handed_ones: bool) -> Vec<Red> {
+async fn press_all(surface: Surface, group: Group) -> Vec<Red> {
     let mut reds = Vec::new();
     let mut pressed = 0;
-    let all = presses(surface, group, handed_ones);
+    let all = presses(surface, group);
     for flavor in [
         Flavor::Plain,
         Flavor::Attachment,
@@ -1619,7 +1550,7 @@ macro_rules! cases {
                     if !support::display() {
                         return;
                     }
-                    let reds = press_all(Surface::$surface, Group::$group, false).await;
+                    let reds = press_all(Surface::$surface, Group::$group).await;
                     assert!(reds.is_empty(), "red:{}", report(&reds));
                 });
             }
@@ -1656,30 +1587,6 @@ cases! {
     menu_writes: Menu, Writes;
 }
 
-/// The keys in [`NOT_YET`], pressed: each must do its command. Held out of
-/// the default run (`IGNORED` in main.rs) until the code they need has
-/// landed; run it by name to see what is still red.
-pub fn keys_that_do_nothing_yet() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let mut reds = Vec::new();
-        for surface in Surface::ALL {
-            for group in [
-                Group::Walk,
-                Group::Verbs,
-                Group::Writes,
-                Group::Opens,
-                Group::Go,
-            ] {
-                reds.extend(press_all(surface, group, true).await);
-            }
-        }
-        assert!(reds.is_empty(), "red:{}", report(&reds));
-    });
-}
-
 /// Every Gmail command is pressed somewhere, or says why not. The registry
 /// is the source of the contexts, so a command that gains one is caught
 /// here, not left unpressed.
@@ -1707,16 +1614,6 @@ pub fn every_gmail_command_is_probed_or_excused() {
         assert!(
             bindings_of(*command).iter().any(|b| b == binding),
             "{why}: {command:?} no longer has {binding}; take the excuse out ({surface:?})"
-        );
-    }
-    for (surface, command, binding, defect) in NOT_YET {
-        assert!(
-            bindings_of(*command).iter().any(|b| b == binding),
-            "{command:?} no longer has {binding}; take {defect:?} out ({surface:?})"
-        );
-        assert!(
-            probe(*command, *surface).is_ok(),
-            "{command:?} has no probe on {surface:?}, so {defect:?} presses nothing"
         );
     }
     // Every Gmail key the contract names is bound to the command it names.

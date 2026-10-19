@@ -438,3 +438,249 @@ fn back_closes_a_dialog_and_the_key_map_closes_on_its_own_key() {
         ]
     );
 }
+
+// ---------------------------------------------------------------------------
+// Slice 6 (T058, T059): the reader, as GTK adopts it.
+// ---------------------------------------------------------------------------
+
+/// The timer an effect list sets, when it sets one.
+fn timer_of(effects: &[Effect]) -> Option<u64> {
+    effects.iter().find_map(|effect| match effect {
+        Effect::Timer { token, .. } => Some(*token),
+        _ => None,
+    })
+}
+
+#[test]
+fn stepping_past_waits_for_the_list_and_gives_up_on_its_timer() {
+    // An archive sets one timer to give up on. Landings that still hold the
+    // row (the archive has not reached the store) are only waited out: the
+    // step is the list letting the row go, not a count of re-reads.
+    let rows = List::of(3, &[]);
+    let mut focus = linux();
+    let _ = reading(&mut focus, &rows);
+    let effects = run(&mut focus, CommandId::Archive, &rows);
+    assert!(timer_of(&effects).is_some(), "the give-up is a timer");
+    for _ in 0..8 {
+        assert_eq!(opened(&focus.landed(&rows, false)), None);
+    }
+    let effects = focus.landed(&rows.without(100), false);
+    assert_eq!(
+        opened(&effects),
+        Some(MessageId::new(101)),
+        "many landings later the row went, and the next one shows"
+    );
+}
+
+#[test]
+fn a_step_past_that_timed_out_leaves_the_message_where_it_was() {
+    let rows = List::of(3, &[]);
+    let mut focus = linux();
+    let _ = reading(&mut focus, &rows);
+    let token = timer_of(&run(&mut focus, CommandId::Archive, &rows)).expect("a give-up timer");
+    let _ = focus.handle_on(Input::Timer(token), &rows);
+    let effects = focus.landed(&rows.without(100), false);
+    assert_eq!(opened(&effects), None, "the archive never landed in time");
+    assert_eq!(focus.key_context(), KeyContext::Reader, "still reading");
+}
+
+#[test]
+fn a_timer_that_is_not_the_step_pasts_does_nothing() {
+    let rows = List::of(3, &[]);
+    let mut focus = linux();
+    let _ = reading(&mut focus, &rows);
+    let token = timer_of(&run(&mut focus, CommandId::Archive, &rows)).expect("a timer");
+    let _ = focus.handle_on(Input::Timer(token + 1), &rows);
+    let effects = focus.landed(&rows.without(100), false);
+    assert_eq!(opened(&effects), Some(MessageId::new(101)));
+}
+
+#[test]
+fn opening_another_message_cancels_the_step_past() {
+    // A key is never lost: `j` pressed while the archive settles shows the
+    // next message, and the step does not drag the reader back.
+    let rows = List::of(4, &[]);
+    let mut focus = linux();
+    let _ = reading(&mut focus, &rows);
+    let _ = run(&mut focus, CommandId::Archive, &rows);
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    assert_eq!(opened(&effects), Some(MessageId::new(101)));
+    let effects = focus.landed(&rows.without(100), false);
+    assert_eq!(opened(&effects), None, "the reader moved on by itself");
+}
+
+#[test]
+fn u_in_the_message_goes_back_to_the_list() {
+    // Gmail's `u` (and `Left`): the message closes and the list is back,
+    // even with the More menu or find up -- unlike Esc, it is not a rung.
+    for platform in [mac(), linux()] {
+        let rows = List::of(3, &[]);
+        let mut focus = platform;
+        let _ = reading(&mut focus, &rows);
+        assert!(focus.answers(CommandId::PrevView));
+        assert_eq!(
+            focus.route(CommandId::PrevView),
+            postio_focus::Route::Controller
+        );
+        let _ = focus.handle_on(
+            Input::ReaderState {
+                more_open: true,
+                finding: true,
+            },
+            &rows,
+        );
+        let effects = run(&mut focus, CommandId::PrevView, &rows);
+        assert!(
+            shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Message)),
+            "{:?}",
+            shown(&effects)
+        );
+        assert_eq!(focus.key_context(), KeyContext::List);
+    }
+}
+
+#[test]
+fn u_on_the_list_is_not_the_controllers() {
+    let rows = List::of(3, &[]);
+    let mut focus = linux();
+    let _ = focus.landed(&rows, true);
+    assert!(shown(&run(&mut focus, CommandId::PrevView, &rows)).is_empty());
+}
+
+#[test]
+fn first_and_last_in_the_message_show_the_first_and_last_message() {
+    let rows = List::of(5, &[]);
+    let mut focus = linux();
+    let _ = reading(&mut focus, &rows);
+    let effects = run(&mut focus, CommandId::LastMessage, &rows);
+    assert_eq!(opened(&effects), Some(MessageId::new(104)));
+    assert!(
+        shown(&effects).contains(&Intent::Cursor {
+            position: 4,
+            to_top: false
+        }),
+        "the list's cursor goes with it"
+    );
+    assert_eq!(
+        opened(&run(&mut focus, CommandId::LastMessage, &rows)),
+        None,
+        "already on the last one"
+    );
+    let effects = run(&mut focus, CommandId::FirstMessage, &rows);
+    assert_eq!(opened(&effects), Some(MessageId::new(100)));
+    assert_eq!(focus.key_context(), KeyContext::Reader, "still reading");
+}
+
+#[test]
+fn the_cursor_moving_under_an_open_message_shows_its_row() {
+    // Beside the list, a click moves the cursor and the pane follows.
+    let rows = List::of(4, &[2]);
+    let mut focus = linux();
+    let _ = reading(&mut focus, &rows);
+    let _ = focus.handle_on(Input::Point(1), &rows);
+    let effects = focus.handle_on(Input::Follow, &rows);
+    assert_eq!(opened(&effects), Some(MessageId::new(101)));
+    // Already showing: nothing to read again.
+    assert!(shown(&focus.handle_on(Input::Follow, &rows)).is_empty());
+    // A draft is written, not read: passing over one closes the pane's
+    // message and opens no composer.
+    let _ = focus.handle_on(Input::Point(2), &rows);
+    let effects = focus.handle_on(Input::Follow, &rows);
+    assert!(
+        shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Message)),
+        "{:?}",
+        shown(&effects)
+    );
+    assert!(
+        !shown(&effects)
+            .iter()
+            .any(|intent| matches!(intent, Intent::Composer { .. }))
+    );
+}
+
+#[test]
+fn the_cursor_moving_with_nothing_open_reads_nothing() {
+    let rows = List::of(3, &[]);
+    let mut focus = linux();
+    let _ = focus.landed(&rows, true);
+    let _ = focus.handle_on(Input::Point(1), &rows);
+    assert!(shown(&focus.handle_on(Input::Follow, &rows)).is_empty());
+    assert_eq!(focus.reading(), None);
+}
+
+#[test]
+fn a_message_the_frontend_showed_itself_follows_the_cursor_too() {
+    // A hit or a digest's email is no list row: the controller was told the
+    // surface, not the message. `j` past the end of what it walks moves the
+    // list, and the follow shows the cursor's row.
+    let rows = List::of(3, &[]);
+    let mut focus = linux();
+    let _ = focus.landed(&rows, true);
+    let _ = focus.handle_on(Input::SurfaceOpened(SurfaceKind::Message), &rows);
+    assert_eq!(focus.reading(), None);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let effects = focus.handle_on(Input::Follow, &rows);
+    assert_eq!(opened(&effects), Some(MessageId::new(101)));
+    assert_eq!(focus.reading(), Some(MessageId::new(101)));
+}
+
+#[test]
+fn archive_and_delete_in_a_message_shown_apart_close_it_not_step_past() {
+    // A hit or a digest reference is on no row that will leave: the message
+    // surface closes with the verb, and no step-past timer waits on a row
+    // that never goes. A hit the list holds, but the cursor is not on, is
+    // the same.
+    for (command, message) in [
+        (CommandId::Archive, 999),
+        (CommandId::Delete, 999),
+        (CommandId::Archive, 101),
+        (CommandId::Delete, 101),
+    ] {
+        let rows = List::of(3, &[]);
+        let mut focus = linux();
+        let _ = focus.landed(&rows, true);
+        let _ = focus.handle_on(Input::SurfaceOpened(SurfaceKind::Message), &rows);
+        let _ = focus.handle_on(Input::Shown(Some(MessageId::new(message))), &rows);
+        let effects = run(&mut focus, command, &rows);
+        assert!(
+            asked(&effects).iter().any(|request| matches!(
+                request,
+                Request::Send {
+                    command: Command::Archive { .. } | Command::Delete { .. },
+                    ..
+                }
+            )),
+            "{command:?} on {message} is sent"
+        );
+        assert!(
+            shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Message)),
+            "{command:?} on {message} closes the message"
+        );
+        assert_eq!(timer_of(&effects), None, "no step-past to wait on");
+    }
+}
+
+#[test]
+fn dismissing_the_marker_in_the_message_is_for_the_message() {
+    let rows = List::of(3, &[]);
+    let mut focus = linux();
+    let _ = focus.landed(&rows, true);
+    let _ = run(&mut focus, CommandId::ToggleSelection, &rows);
+    let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    let _ = run(&mut focus, CommandId::OpenMessage, &rows);
+    let effects = run(&mut focus, CommandId::DismissMarker, &rows);
+    let posted: Vec<_> = asked(&effects)
+        .into_iter()
+        .filter_map(|request| match request {
+            Request::Post(Command::DismissMarker { target, dismissed }) => {
+                Some((target, dismissed))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        posted,
+        vec![(MessageTarget::Messages(vec![MessageId::new(101)]), true)],
+        "the open message, not the selected first row"
+    );
+}
