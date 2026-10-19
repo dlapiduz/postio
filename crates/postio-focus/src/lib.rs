@@ -1759,6 +1759,19 @@ impl FocusController {
             })
     }
 
+    /// Whether `id` sends the message it is about out of the list being
+    /// read: Archive and Delete, and Unsnooze from the Snoozed list.
+    fn leaves_the_list(&self, id: CommandId) -> bool {
+        match id {
+            CommandId::Archive | CommandId::Delete => true,
+            CommandId::Unsnooze => self
+                .feed
+                .scope()
+                .is_some_and(|scope| scope == ListScope::Focus(postio_model::FocusScope::Snoozed)),
+            _ => false,
+        }
+    }
+
     /// A command on the list, by the cursor's and the verbs' rules.
     fn list_command(&mut self, id: CommandId, rows: &dyn Rows) -> Vec<Effect> {
         let steps = self.list_steps(id, rows);
@@ -1800,7 +1813,16 @@ impl FocusController {
             if pickers::opens_picker(id) {
                 return self.picker_on_message(id, shown, rows).unwrap_or_default();
             }
-            if let Some(steps) = self.verbs.command_on(id, &self.shown_facts(shown, rows)) {
+            if let Some(mut steps) = self.verbs.command_on(id, &self.shown_facts(shown, rows)) {
+                // No row of the cursor's is going to leave for a step past
+                // to wait on: the message goes with the verb.
+                if self.leaves_the_list(id) {
+                    self.surfaces.dismiss(SurfaceKind::Message);
+                    steps.push(feed::Step::Show(Intent::CloseSurface(SurfaceKind::Message)));
+                    if !self.has_surface() {
+                        steps.push(feed::Step::Show(Intent::KeyboardHome));
+                    }
+                }
                 return steps;
             }
         }
@@ -1982,14 +2004,9 @@ impl FocusController {
                 // The message goes away, and the one that takes its place
                 // shows once the list lets it go (T190); so does waking one
                 // from the Snoozed list it is leaving (T238).
-                let leaves = match id {
-                    CommandId::Archive | CommandId::Delete => true,
-                    CommandId::Unsnooze => self.feed.scope().is_some_and(|scope| {
-                        scope == ListScope::Focus(postio_model::FocusScope::Snoozed)
-                    }),
-                    _ => false,
-                };
-                if leaves && let Some(at) = position {
+                if self.leaves_the_list(id)
+                    && let Some(at) = position
+                {
                     steps.push(self.surfaces.step_past(at, row.id));
                 }
                 Some(steps)

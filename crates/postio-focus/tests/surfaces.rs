@@ -625,6 +625,42 @@ fn a_message_the_frontend_showed_itself_follows_the_cursor_too() {
 }
 
 #[test]
+fn archive_and_delete_in_a_message_shown_apart_close_it_not_step_past() {
+    // A hit or a digest reference is on no row that will leave: the message
+    // surface closes with the verb, and no step-past timer waits on a row
+    // that never goes. A hit the list holds, but the cursor is not on, is
+    // the same.
+    for (command, message) in [
+        (CommandId::Archive, 999),
+        (CommandId::Delete, 999),
+        (CommandId::Archive, 101),
+        (CommandId::Delete, 101),
+    ] {
+        let rows = List::of(3, &[]);
+        let mut focus = linux();
+        let _ = focus.landed(&rows, true);
+        let _ = focus.handle_on(Input::SurfaceOpened(SurfaceKind::Message), &rows);
+        let _ = focus.handle_on(Input::Shown(Some(MessageId::new(message))), &rows);
+        let effects = run(&mut focus, command, &rows);
+        assert!(
+            asked(&effects).iter().any(|request| matches!(
+                request,
+                Request::Send {
+                    command: Command::Archive { .. } | Command::Delete { .. },
+                    ..
+                }
+            )),
+            "{command:?} on {message} is sent"
+        );
+        assert!(
+            shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Message)),
+            "{command:?} on {message} closes the message"
+        );
+        assert_eq!(timer_of(&effects), None, "no step-past to wait on");
+    }
+}
+
+#[test]
 fn dismissing_the_marker_in_the_message_is_for_the_message() {
     let rows = List::of(3, &[]);
     let mut focus = linux();
