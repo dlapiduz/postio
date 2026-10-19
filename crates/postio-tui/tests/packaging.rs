@@ -50,3 +50,24 @@ fn each_package_installs_its_own_app_and_no_daemon() {
         );
     }
 }
+
+/// The helper reads strangers' PDFs and recovers from a page that panics
+/// (`catch_unwind` per page), which `release-tui`'s `panic = "abort"` would
+/// turn into a lost file. So the terminal package builds it under `release`,
+/// which unwinds, and ships it beside the app (#1824).
+#[test]
+fn the_terminal_package_ships_an_unwinding_extraction_helper() {
+    let manifest = manifest("dev.postio.PostioTui.json");
+    let build = manifest
+        .lines()
+        .find(|line| line.contains("--bin postio-extract-helper"))
+        .expect("the terminal manifest never builds postio-extract-helper");
+    assert!(
+        build.contains("--release") && !build.contains("release-tui"),
+        "the helper must build under an unwinding profile: {build}"
+    );
+    assert!(
+        manifest.contains("target/release/postio-extract-helper /app/bin/postio-extract-helper"),
+        "the terminal manifest never installs /app/bin/postio-extract-helper"
+    );
+}
