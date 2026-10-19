@@ -209,6 +209,8 @@ struct World {
     window: Window,
     /// What a digest holds, newest first.
     held: Vec<MessageId>,
+    /// The conversation of the thread flavor, oldest first.
+    thread: Vec<MessageId>,
     /// The mailboxes the verbs move to.
     archive: Option<MailboxId>,
     trash: Option<MailboxId>,
@@ -239,6 +241,7 @@ impl World {
             _ => Fixture::empty().await,
         };
         let mut first = 0;
+        let mut thread = Vec::new();
         match flavor {
             Flavor::Attachment => {
                 let id = fixture
@@ -283,7 +286,7 @@ impl World {
                 first = 1;
             }
             Flavor::Thread => {
-                fixture.thread_of("Plans", 3, 5).await;
+                thread = fixture.thread_of("Plans", 3, 5).await;
                 first = 1;
             }
             Flavor::Filtered => {
@@ -383,6 +386,7 @@ impl World {
             fixture,
             window,
             held,
+            thread,
             archive,
             trash,
             _vault: vault,
@@ -425,16 +429,34 @@ impl World {
             window.place_name() == "Inbox"
                 && window.rules().is_none()
                 && window.filtered().is_none()
+                && window.pane().is_some_and(|pane| pane.feed().has_landed())
         })
         .await;
         window.focus_list();
         window.act(CommandId::FirstMessage);
-        crate::settle();
-        // The cursor controller hears of the list view's own move a beat
-        // after the move: a key pressed in the same millisecond can find it
-        // still on the row it left. A person's keys are further apart.
-        crate::settle_for(std::time::Duration::from_millis(150)).await;
+        crate::settle_until(async || window.observe().cursor.index == Some(0)).await;
         window.take_unanswered();
+    }
+
+    /// Wait until the open message is drawn with its own words. The reader
+    /// shows a plate while it reads a message and keeps drawing the one
+    /// before until the new snapshot arrives, so what is on screen right
+    /// after a step is not yet what the step went to.
+    async fn drawn(&self) -> bool {
+        let window = &self.window;
+        crate::settle_until(async || {
+            let Some(reading) = window.reading().filter(|reading| reading.is_open()) else {
+                return false;
+            };
+            let Some(at) = reading
+                .shown()
+                .and_then(|shown| self.thread.iter().position(|id| *id == shown))
+            else {
+                return false;
+            };
+            reading.body_text() == format!("Message {}", at + 1)
+        })
+        .await
     }
 
     /// The message the cursor is on.
@@ -1483,9 +1505,16 @@ async fn press_one(
         // The conversation's other messages arrive a moment after the first.
         let known = crate::settle_until(async || reading.thread_known() == 3).await;
         assert!(known, "the thread's messages were never read");
+        assert!(world.drawn().await, "the open message was never drawn");
     }
     if let Some(step) = probe.once_up {
         step(window);
+        if probe.flavor == Flavor::Thread {
+            assert!(
+                world.drawn().await,
+                "the message the step went to was never drawn"
+            );
+        }
     }
     window.take_unanswered();
     let before = Snap::take(world, watch).await;

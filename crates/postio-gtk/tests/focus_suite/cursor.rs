@@ -207,3 +207,44 @@ pub fn the_list_view_moving_the_cursor_is_where_j_walks_on_from() {
         assert!(window.selection().is_empty(), "moving selected nothing");
     });
 }
+
+/// `g i` and then `j j`, faster than the store answers: the rows on screen
+/// are the ones the keys walked, and the list that lands a beat later leaves
+/// the cursor on the row it reached rather than walking it back to the top.
+pub fn keys_before_a_reopened_list_lands_are_not_walked_back() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (window, _client) = fixture.five().await;
+        let pane = window.pane().expect("the inbox");
+        assert!(
+            crate::settle_until(async || {
+                pane.feed().has_landed() && pane.cursor().selected() == 0
+            })
+            .await,
+            "the inbox never opened on its first row"
+        );
+
+        window.act(postio_core::CommandId::GoToInbox);
+        assert!(
+            !pane.feed().has_landed(),
+            "the reopened inbox landed before a key could be pressed"
+        );
+        support::keys(&window, &["j", "j"]);
+        assert_eq!(pane.cursor().selected(), 2, "j walks the rows on screen");
+
+        // The positive control: the page did land, after the keys.
+        assert!(
+            crate::settle_until(async || pane.feed().has_landed()).await,
+            "the reopened inbox never landed"
+        );
+        crate::settle();
+        assert_eq!(
+            pane.cursor().selected(),
+            2,
+            "the list landing walked the cursor back to the top"
+        );
+    });
+}

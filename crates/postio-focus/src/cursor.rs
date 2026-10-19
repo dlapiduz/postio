@@ -103,6 +103,10 @@ pub(crate) struct Cursor {
     has_action: bool,
     /// The accounts Focus's inbox is made of: what "everything" reaches.
     accounts: Vec<AccountId>,
+    /// Whether a command moved the cursor since the place in view was
+    /// opened: the rows still showing are the ones it walked, and the first
+    /// page landing a beat later must not walk it back to the top.
+    moved: bool,
 }
 
 impl Cursor {
@@ -150,6 +154,12 @@ impl Cursor {
         self.position = position;
     }
 
+    /// A place is being opened: the cursor goes to its first row when it
+    /// lands, unless a command moves the cursor before then.
+    pub(crate) fn opening(&mut self) {
+        self.moved = false;
+    }
+
     pub(crate) fn set_accounts(&mut self, accounts: Vec<AccountId>) {
         self.accounts = accounts;
     }
@@ -165,7 +175,13 @@ impl Cursor {
             };
         }
         if opened && !rows.is_empty() {
-            return self.to(Some(0), rows);
+            // A cursor the person moved while the page was on its way is
+            // theirs: drawn again where they left it, over the new rows.
+            let at = match self.position {
+                Some(at) if self.moved => at.min(rows.len() - 1),
+                _ => 0,
+            };
+            return self.to(Some(at), rows);
         }
         Vec::new()
     }
@@ -353,6 +369,7 @@ impl Cursor {
         match position {
             Some(position) if position < rows.len() => {
                 self.position = Some(position);
+                self.moved = true;
                 vec![Step::Show(Intent::Cursor {
                     position,
                     to_top: position == 0,

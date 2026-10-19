@@ -2176,6 +2176,7 @@ impl FocusController {
 
     /// Show `scope` in the list: counted first, then the list changes over.
     pub fn open(&mut self, scope: ListScope) -> Vec<Effect> {
+        self.cursor.opening();
         let request = self.feed.open(scope);
         vec![Effect::Ask(self.ticket(), request)]
     }
@@ -2240,6 +2241,7 @@ impl FocusController {
                 }
                 feed::Step::Ask(request) => Effect::Ask(self.ticket(), request),
                 feed::Step::Open(scope) => {
+                    self.cursor.opening();
                     let request = self.feed.open(scope);
                     Effect::Ask(self.ticket(), request)
                 }
