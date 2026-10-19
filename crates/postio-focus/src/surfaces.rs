@@ -171,13 +171,24 @@ struct Stepping {
     index: u32,
     /// The message removed.
     message: MessageId,
-    /// Landings waited so far.
-    waited: u8,
+    /// The timer that gives up on it.
+    token: u64,
 }
 
-/// Landings to wait for a removed row to leave before giving up: a failed
-/// archive leaves the row, and the message stays open on it.
-const STEP_PATIENCE: u8 = 4;
+/// How long a removed row is waited for before the step gives up: a failed
+/// archive leaves the row, and the message stays open on it. What the step
+/// waits for is the list letting the row go; this is only the end of the
+/// wait, set once, never a poll.
+pub(crate) const STEP_GIVE_UP: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The bit that marks a timer as the open message's, so its tokens never
+/// meet the composer's autosave, which counts up from one.
+const READER_TIMER: u64 = 1 << 63;
+
+/// Whether `token` is a timer the open message set.
+pub(crate) fn is_reader_timer(token: u64) -> bool {
+    token & READER_TIMER != 0
+}
 
 /// The surfaces open over the list, bottom first.
 #[derive(Debug, Default)]
@@ -190,6 +201,8 @@ pub(crate) struct Surfaces {
     /// The message on screen, when one is.
     reading: Option<MessageId>,
     stepping: Option<Stepping>,
+    /// Step-past timers handed out so far: a token is never reused.
+    timers: u64,
     /// Which list the open message came from.
     origin: Origin,
 }
@@ -227,7 +240,8 @@ impl Surfaces {
         let top = self.top()?;
         match top {
             SurfaceKind::Message => {
-                (id == CommandId::Back || reader_verb(id).is_some()).then_some(true)
+                (id == CommandId::Back || id == CommandId::PrevView || reader_verb(id).is_some())
+                    .then_some(true)
             }
             // They take the keyboard: every key but Quit is theirs, and
             // only their close keys do anything.
@@ -249,7 +263,8 @@ impl Surfaces {
         };
         match top {
             SurfaceKind::Message => {
-                if id == CommandId::Back || reader_verb(id).is_some() {
+                if matches!(id, CommandId::Back | CommandId::PrevView) || reader_verb(id).is_some()
+                {
                     Route::Controller
                 } else {
                     Route::List
@@ -394,6 +409,10 @@ impl Surfaces {
         let mut steps = self.opened(SurfaceKind::Message, stacking);
         self.reading = Some(row.id);
         self.origin = Origin::List;
+        // Another message shown by anyone -- a key pressed while an archive
+        // settled -- is where the reader is now: a step past the old one
+        // does not drag it back.
+        self.stepping = None;
         steps.push(Step::Show(Intent::OpenMessage {
             message: row.id,
             index,
@@ -405,6 +424,16 @@ impl Surfaces {
 
     /// The open message's own key, or `None` when it is not one of its.
     pub(crate) fn reader_key(&mut self, id: CommandId) -> Option<Vec<Step>> {
+        // Gmail's `u` goes back to the list from wherever the message is:
+        // it closes the message, with no rung for More or find first.
+        if id == CommandId::PrevView {
+            self.remove(SurfaceKind::Message);
+            let mut steps = vec![Step::Show(Intent::CloseSurface(SurfaceKind::Message))];
+            if self.stack.is_empty() {
+                steps.push(Step::Show(Intent::KeyboardHome));
+            }
+            return Some(steps);
+        }
         if id == CommandId::Back {
             let step = if self.more_open {
                 Step::Show(Intent::Reader(ReaderVerb::CloseMore))
@@ -426,13 +455,33 @@ impl Surfaces {
     }
 
     /// The open message's row is being removed: once the list lets it go,
-    /// show what took its place.
-    pub(crate) fn step_past(&mut self, index: u32, message: MessageId) {
+    /// show what took its place. The timer it returns gives up on the wait
+    /// ([`Self::timed_out`]).
+    pub(crate) fn step_past(&mut self, index: u32, message: MessageId) -> Step {
+        self.timers += 1;
+        let token = READER_TIMER | self.timers;
         self.stepping = Some(Stepping {
             index,
             message,
-            waited: 0,
+            token,
         });
+        Step::Timer {
+            token,
+            after: STEP_GIVE_UP,
+        }
+    }
+
+    /// A timer of the open message's ran out: the step past it was waiting
+    /// on, when it is still the one waiting, gives up and the message stays
+    /// as it is.
+    pub(crate) fn timed_out(&mut self, token: u64) {
+        if self
+            .stepping
+            .as_ref()
+            .is_some_and(|step| step.token == token)
+        {
+            self.stepping = None;
+        }
     }
 
     /// The list landed. Where a removed message's row has gone, the row now
@@ -440,12 +489,11 @@ impl Surfaces {
     /// open; with nothing left, the message closes. What the cursor does is
     /// the caller's: it is handed the position.
     pub(crate) fn landed(&mut self, rows: &dyn Rows) -> Option<Landing> {
-        let mut stepping = self.stepping.take()?;
+        let stepping = self.stepping.take()?;
+        // The row is still there: the archive has not reached the list, and
+        // the next landing is waited for -- until the timer gives up.
         if rows.position_of(stepping.message).is_some() {
-            stepping.waited += 1;
-            if stepping.waited < STEP_PATIENCE {
-                self.stepping = Some(stepping);
-            }
+            self.stepping = Some(stepping);
             return None;
         }
         if rows.is_empty() {

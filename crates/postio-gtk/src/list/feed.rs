@@ -138,6 +138,11 @@ impl Feed {
         Rc::clone(&self.inner).apply(effects);
     }
 
+    /// The message the open message surface shows, while it is on top.
+    pub fn reading(&self) -> Option<MessageId> {
+        self.inner.focus.borrow().reading()
+    }
+
     /// The surface on top of the list, by the controller's stack.
     pub fn top_surface(&self) -> Option<postio_focus::SurfaceKind> {
         self.inner.focus.borrow().top_surface()
@@ -277,7 +282,19 @@ impl Inner {
             match effect {
                 Effect::Show(intent) => Rc::clone(&self).show(intent),
                 Effect::Ask(ticket, request) => Rc::clone(&self).ask(ticket, request),
-                // The feed sets no timers.
+                Effect::Timer { token, after } => {
+                    let inner = Rc::downgrade(&self);
+                    glib::timeout_add_local_once(after, move || {
+                        let Some(inner) = inner.upgrade() else {
+                            return;
+                        };
+                        let effects = inner
+                            .focus
+                            .borrow_mut()
+                            .handle_on(Input::Timer(token), &inner.list);
+                        inner.apply(effects);
+                    });
+                }
                 _ => {}
             }
         }
