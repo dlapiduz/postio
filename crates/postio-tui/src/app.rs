@@ -3483,8 +3483,19 @@ impl App {
             // One message is shown at a time, so there is none to fold to
             // its header.
             "toggle_fold" => {
-                return self
-                    .say("The open message shows one message; [ and ] step through the thread");
+                // The keys are whatever the keymap has them on, Gmail's
+                // `n` and `p` by default.
+                let key = |command| {
+                    self.keys
+                        .key_for(KeyContext::Reader, command)
+                        .unwrap_or_else(|| command.to_owned())
+                };
+                let sentence = format!(
+                    "The open message shows one message; {} and {} step through the thread",
+                    key("next_in_conversation"),
+                    key("prev_in_conversation")
+                );
+                return self.say(&sentence);
             }
             // The invitation on the open message, or on the cursor's row:
             // the host queues the reply for its window (FR-102).
@@ -3542,6 +3553,9 @@ impl App {
             "saved_search_2" => return self.pinned_search(1),
             "saved_search_3" => return self.pinned_search(2),
             "saved_search_4" => return self.pinned_search(3),
+            // Gmail's `u`, back to the list: from an open message that is
+            // closing it, as `Escape` does, not the view before this one.
+            "prev_view" if self.focus == Focus::Reader => return self.back_from_message(),
             "prev_view" => {
                 let Some(scope) = self.history.pop() else {
                     return self.say("There is no earlier view");
