@@ -332,6 +332,10 @@ corpus! {
         "Ordinary mail with two attachments, one of them a PDF with Content-Description and disposition parameters.",
     "attachment-rfc2231-filename": [MultipartMixed, Attachment, EncodedWord] =>
         "Three spellings of a non-ASCII filename: RFC 2231 continuations, charset'language form, and encoded-word abuse.",
+    "auth-results-forged-lower": [PlainText, Hostile] =>
+        "The receiving server's failing Authentication-Results above a passing one the sender wrote: only the topmost counts.",
+    "auth-results-verified": [PlainText] =>
+        "A receiving server's Authentication-Results with DKIM, SPF and DMARC all passing: nothing to warn about.",
     "bounce-delivery-status": [DeliveryStatus, MultipartMixed, PlainText] =>
         "A Postfix bounce: multipart/report with message/delivery-status and the original message embedded as message/rfc822.",
     "broken-references": [BrokenReferences, Threading, PlainText] =>
@@ -348,6 +352,8 @@ corpus! {
         "Valid UTF-8 stressing the renderer: ZWJ emoji, RTL Arabic and Hebrew, combining marks, astral-plane glyphs.",
     "charset-windows-1252-mislabeled": [NonUtf8Charset, PlainText] =>
         "windows-1252 bytes in the C1 range labelled iso-8859-1 — the mislabelling every real client silently forgives.",
+    "display-name-impersonation": [PlainText, Hostile] =>
+        "A passing message whose display name is a different address (billing@bank.example) than the one it came from.",
     "duplicate-message-id": [Threading, PlainText] =>
         "Reuses the Message-ID of plain-text-simple with a different body: deduplication must not key on Message-ID alone.",
     "encoded-word-broken": [EncodedWord, MalformedHeaders] =>

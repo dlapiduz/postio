@@ -1,0 +1,17 @@
+Authentication-Results: mx.example.net;
+ dkim=pass header.d=example.org header.s=2026 header.b=Zm9yZ2Vk;
+ spf=pass (example.net: domain of ada@example.org designates 192.0.2.10 as permitted sender) smtp.mailfrom=ada@example.org;
+ dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=example.org
+Received: from mail.example.org (mail.example.org [192.0.2.10])
+ by mx.example.net with ESMTPS id a1b2c3
+ for <grace@example.net>; Tue, 01 Sep 2026 09:30:00 +0000
+From: Ada Example <ada@example.org>
+To: Grace Example <grace@example.net>
+Subject: Notes from Tuesday
+Date: Tue, 01 Sep 2026 09:29:41 +0000
+Message-ID: <auth-verified-01@example.org>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+The server vouched for this one: DKIM, SPF and DMARC all pass for
+example.org, so the reader shows nothing about it at all.

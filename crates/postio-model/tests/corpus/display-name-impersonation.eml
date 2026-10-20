@@ -1,0 +1,17 @@
+Authentication-Results: mx.example.net;
+ dkim=none;
+ spf=pass smtp.mailfrom=billing-desk@other.example.com;
+ dmarc=pass header.from=other.example.com
+Received: from mail.other.example.com (mail.other.example.com [203.0.113.5])
+ by mx.example.net with ESMTPS id 778899
+ for <grace@example.net>; Tue, 01 Sep 2026 11:00:00 +0000
+From: "billing@bank.example" <billing-desk@other.example.com>
+To: Grace Example <grace@example.net>
+Subject: Your statement is ready
+Date: Tue, 01 Sep 2026 10:58:10 +0000
+Message-ID: <impersonation-01@other.example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+The message authenticates, but as other.example.com. The display name
+names bank.example, an address the message did not come from.

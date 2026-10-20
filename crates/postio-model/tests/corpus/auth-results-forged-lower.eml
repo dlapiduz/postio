@@ -1,0 +1,22 @@
+Authentication-Results: mx.example.net;
+ dkim=fail (bad signature) header.d=example.org header.s=2026;
+ spf=fail (example.net: domain of ada@example.org does not designate 198.51.100.7 as permitted sender) smtp.mailfrom=ada@example.org;
+ dmarc=fail (p=REJECT sp=REJECT dis=NONE) header.from=example.org
+Received: from relay.example.com (relay.example.com [198.51.100.7])
+ by mx.example.net with ESMTP id d4e5f6
+ for <grace@example.net>; Tue, 01 Sep 2026 10:00:00 +0000
+Authentication-Results: mx.example.net;
+ dkim=pass header.d=example.org header.s=2026;
+ spf=pass smtp.mailfrom=ada@example.org;
+ dmarc=pass header.from=example.org
+From: Ada Example <ada@example.org>
+To: Grace Example <grace@example.net>
+Subject: Please confirm the transfer
+Date: Tue, 01 Sep 2026 09:59:30 +0000
+Message-ID: <auth-forged-01@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+The sender wrote a passing Authentication-Results header of their own and
+the receiving server put its real one, a failure, above it. Only the
+topmost header from the receiving server counts.
