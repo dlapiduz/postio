@@ -186,6 +186,8 @@ The store is Turso (ADR 0038). Its planner and defaults are not SQLite's, and mo
 
 **A coredump names a worktree, and that worktree's code may never have landed.** Check `git log` before treating it as evidence about `main`. Run any load generator under `timeout`.
 
+**On a machine other sessions also land from, kill only the process you started.** Every detached landing is a process running `issue-land.sh`, so `pkill -f issue-land.sh` ends every session's landing on that host. Stop your own by the pid in `$(git rev-parse --git-dir)/postio-land.pid`. A landing killed this way opens no PR and reports nothing, so the session that started it learns only when it looks (#1928).
+
 **`check-crate-boundaries.py` checks only the crates in its `RULES` table.** A new crate has no boundary rules until someone writes one.
 
 ## Logging, privacy and hostile input
