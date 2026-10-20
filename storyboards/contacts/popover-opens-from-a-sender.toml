@@ -1,0 +1,28 @@
+# `i` on a row shows who the sender is (specs/011-focus-contacts S6,
+# handoff screen 04): a popover 400 wide hangs from the sender's name with
+# the avatar, name, address and role, three tiles (messages, from you,
+# last), up to two things open between you, the arrival control and the
+# actions All mail ↩, Write c and Open card ⌘I. Escape puts it away and the
+# keyboard is on the list again, on the same row.
+#
+# The controller's half is postio-focus tests/contact_popover.rs; the words
+# are postio-ui's contact_popover; what the host answers is postio-host's
+# contact_glance.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/011-focus-contacts S6" }
+seed   = "small"
+design = "04-popover-known-sender"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { keyboard.region = "list", overlay.kind = "none" }
+
+[[step]]
+id      = "popover"
+command = "contact_popover"
+expect  = "A popover hangs from the sender's name on the cursor's row, with its arrow: the avatar and the name in bold, the address in the monospaced face under it, and the role under that. Three tiles follow (messages, from you, last), then up to two lines of what is open between you, Waiting on you in the accent and Waiting on them in grey. Under a rule, “Mail from <first name> arrives in” and a segmented control with Inbox chosen. Along the foot, All mail ↩ filled, Write c, and Open card ⌘I dimmed."
+
+[[step]]
+command = "back"
+check   = { keyboard.region = "list", overlay.kind = "none", cursor.index = 0 }
+expect  = "The popover is gone, the keyboard is on the list, and the cursor is on the row it was."
