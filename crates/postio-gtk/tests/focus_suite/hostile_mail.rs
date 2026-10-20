@@ -61,8 +61,12 @@ pub fn each_hostile_message_opens_and_the_app_keeps_answering() {
         }
         drop(connection);
         let (window, _client) = fixture.open().await;
+        // The list is windowed: the rows on screen are the ones that fit the
+        // viewport, not every stored message, and the corpus outgrew one
+        // screen. Wait for a screenful; moving the cursor scrolls to the rest.
+        let on_first_screen = fixtures.len().min(10);
         assert!(
-            crate::settle_until(async || support::subjects(&window).len() == fixtures.len()).await,
+            crate::settle_until(async || support::subjects(&window).len() >= on_first_screen).await,
             "the hostile mail never reached the list: {:?}",
             support::subjects(&window)
         );
