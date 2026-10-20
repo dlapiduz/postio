@@ -1002,14 +1002,7 @@ pub fn a_persons_pin_is_listed_by_name_and_taken_back_in_settings() {
                 .await
                 .expect("a read")
         };
-        let mut cleared = false;
-        for _ in 0..200 {
-            if kept().await.arrival.is_none() {
-                cleared = true;
-                break;
-            }
-            crate::settle_until(async || false).await;
-        }
+        let cleared = crate::settle_until(async || kept().await.arrival.is_none()).await;
         assert!(cleared, "Filter again did not clear the person's pin");
         assert!(
             crate::settle_until(async || !said().iter().any(|text| text == "Filter again")).await,
