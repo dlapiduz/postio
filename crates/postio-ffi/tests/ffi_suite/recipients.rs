@@ -51,7 +51,7 @@ async fn directory() -> (std::sync::Arc<Session>, i64) {
         .await
         .expect("deleted");
         for statement in [
-            "INSERT INTO addresses (address, address_normalized)
+            "INSERT OR IGNORE INTO addresses (address, address_normalized)
              VALUES ('adams@example.org', 'adams@example.org')",
             "INSERT INTO correspondents (address_id, sent_count, last_sent_at)
              SELECT id, 3, NULL FROM addresses

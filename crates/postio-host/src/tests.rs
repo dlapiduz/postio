@@ -4407,7 +4407,7 @@ fn an_address_written_to_is_offered_before_one_only_seen() {
             }
         }
         for statement in [
-            "INSERT INTO addresses (address, address_normalized)
+            "INSERT OR IGNORE INTO addresses (address, address_normalized)
              VALUES ('quill.wrote@example.net', 'quill.wrote@example.net')",
             "INSERT INTO correspondents (address_id, sent_count, last_sent_at)
              SELECT id, 42, NULL FROM addresses

@@ -66,6 +66,8 @@ pub enum UiContext {
     /// The Mac's search results, the main window's other mode (spec 010
     /// D17).
     Results,
+    /// The Contacts surface's list and card.
+    Contacts,
 }
 
 impl From<postio_core::Context> for UiContext {
@@ -87,6 +89,7 @@ impl From<postio_core::Context> for UiContext {
             Context::Filtered => UiContext::Filtered,
             Context::Capture => UiContext::Capture,
             Context::Results => UiContext::Results,
+            Context::Contacts => UiContext::Contacts,
         }
     }
 }
@@ -117,6 +120,7 @@ impl From<UiContext> for postio_core::Context {
             UiContext::Filtered => Context::Filtered,
             UiContext::Capture => Context::Capture,
             UiContext::Results => Context::Results,
+            UiContext::Contacts => Context::Contacts,
         }
     }
 }

@@ -353,8 +353,8 @@ fn contexts_round_trip_through_strings() {
     // this is only the deliberate-act tripwire. Postio Focus's picker, digest
     // and Filtered view (spec 007) make thirteen, and its capture sheet
     // (milestone 3) fourteen, and the Mac's search results (spec 010 D17)
-    // fifteen.
-    assert_eq!(Context::ALL.len(), 15);
+    // fifteen, and Contacts (specs/005-contacts) sixteen.
+    assert_eq!(Context::ALL.len(), 16);
 }
 
 #[test]

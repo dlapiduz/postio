@@ -419,6 +419,10 @@ const GO_SURFACES: &[Context] = &[
     Context::Sidebar,
 ];
 
+/// Contacts, alone. Its commands act on a person, a group or a suggestion,
+/// none of which any other surface has.
+const CONTACTS: &[Context] = &[Context::Contacts];
+
 /// The registry itself. Ordered like [`CommandId::ALL`]; the cheat sheet reads
 /// it top to bottom.
 static SPECS: &[CommandSpec] = &[
@@ -501,7 +505,9 @@ static SPECS: &[CommandSpec] = &[
         // here than a mnemonic nobody has.
         default_binding: "x",
         alternate_bindings: &[],
-        contexts: ctx(LIST_SURFACES).with(Context::Results),
+        contexts: ctx(LIST_SURFACES)
+            .with(Context::Results)
+            .with(Context::Contacts),
         destructive: false,
         // Changing what an action *would* hit changes no durable state, so
         // there is nothing to undo and nothing to confirm.
@@ -516,8 +522,9 @@ static SPECS: &[CommandSpec] = &[
         // `LIST_SURFACES` minus the conversation: there is no row selection
         // to extend while the keyboard is inside the pane, which walks one
         // thread's messages on `n` and `p` (#1007). `shift+Down` still
-        // reaches this everywhere it ever did.
-        contexts: ctx(SELECTION_SURFACES),
+        // reaches this everywhere it ever did. Contacts too: a run of people
+        // is selected the way a run of messages is (specs/005-contacts).
+        contexts: ctx(SELECTION_SURFACES).with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -528,7 +535,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "K",
         alternate_bindings: &["shift+Up"],
         // See `ExtendSelectionDown`.
-        contexts: ctx(SELECTION_SURFACES),
+        contexts: ctx(SELECTION_SURFACES).with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -541,7 +548,9 @@ static SPECS: &[CommandSpec] = &[
         // `x`, the key that selects one row.
         default_binding: "* a",
         alternate_bindings: &["mod+a", "X"],
-        contexts: ctx(LIST_SURFACES).with(Context::Results),
+        contexts: ctx(LIST_SURFACES)
+            .with(Context::Results)
+            .with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -1638,10 +1647,16 @@ static SPECS: &[CommandSpec] = &[
         // global stack is untouched (ADR 0005 Q6c). And Focus's digest and
         // Filtered: archiving a whole digest and a restore from Filtered are
         // each one undoable action (FR-125, contracts/keymap.md).
+        //
+        // Plus Contacts: every edit there -- a merge, a detach, a delete -- is
+        // `Recovery::Undo` on the global stack, and a `z` that did nothing on
+        // the surface that made the edit would be the declaration nothing
+        // backs (specs/005-contacts FR-025).
         contexts: ctx(MESSAGE_SURFACES)
             .with(Context::Accounts)
             .with(Context::Digest)
-            .with(Context::Filtered),
+            .with(Context::Filtered)
+            .with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -2461,6 +2476,69 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: FOCUS_MAIL,
     },
+    // -- Contacts (specs/005-contacts, contracts/commands.md) -------------
+    CommandSpec {
+        id: CommandId::OpenContacts,
+        title: "Contacts",
+        // Beside `g i`, `g d`, `g s`: a destination. On the Mac only until
+        // Linux adopts the surface, because Linux's `next_scope` is `g c`
+        // today and moves to `g n` when it does (plan 011 section 9); the
+        // Mac has no `next_scope`, so the key is free there. On the
+        // destinations' surfaces and not `ContextSet::ANY`, for the reason
+        // `GO_SURFACES` gives -- `g` is a letter in the composer.
+        default_binding: "g c",
+        alternate_bindings: &[],
+        contexts: ctx(GO_SURFACES),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactShowMail,
+        title: "Show mail",
+        // All the mail with this person (maintainer, 2026-10-19).
+        default_binding: "Return",
+        alternate_bindings: &["o"],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactCompose,
+        title: "Write to",
+        // `c` is compose everywhere else; here it composes to the person.
+        default_binding: "c",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsFilter,
+        title: "Filter contacts",
+        default_binding: "/",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsToggleEveryone,
+        title: "Everyone from mail",
+        // `v` for view: the list's views are a family (`v d` shows the
+        // deleted), and a prefix keeps them together in the sheet.
+        // Provisional: the Contacts design's planning pass settles views.
+        default_binding: "v e",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        // Which people are shown is view state, not data.
+        recovery: Recovery::None,
+        requires: MAIL,
+    },
 ];
 
 /// Every command, in cheat-sheet order.
@@ -2858,6 +2936,14 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             | (ActionId::Builtin(C::PickRelaxation3), Platform::Freedesktop)
             | (ActionId::Builtin(C::PickRelaxation4), Platform::Freedesktop)
             | (ActionId::Builtin(C::SaveFile), Platform::Freedesktop)
+            // Contacts is the Mac's until Linux adopts the surface
+            // (specs/005-contacts; plan 011 section 11), and its `g c`
+            // is Linux's `next_scope`.
+            | (ActionId::Builtin(C::OpenContacts), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactShowMail), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactCompose), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactsFilter), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactsToggleEveryone), Platform::Freedesktop)
     )
 }
 
@@ -2932,9 +3018,9 @@ mod tests {
         CommandId::NextScope,
     ];
 
-    /// What only the Mac's search dropdown and results view draw, until
-    /// Linux adopts them (spec 010 D23, D25).
-    const NOT_ON_LINUX_YET: [CommandId; 18] = [
+    /// What only the Mac draws, until Linux adopts it: the search dropdown
+    /// and results view (spec 010 D23, D25) and Contacts (specs/005).
+    const NOT_ON_LINUX_YET: [CommandId; 23] = [
         CommandId::ShowAllResults,
         CommandId::ForgetRecent,
         CommandId::ExcludeSuggestion,
@@ -2953,6 +3039,11 @@ mod tests {
         CommandId::PickRelaxation3,
         CommandId::PickRelaxation4,
         CommandId::SaveFile,
+        CommandId::OpenContacts,
+        CommandId::ContactShowMail,
+        CommandId::ContactCompose,
+        CommandId::ContactsFilter,
+        CommandId::ContactsToggleEveryone,
     ];
 
     #[test]

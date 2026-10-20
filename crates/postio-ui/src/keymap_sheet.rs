@@ -187,6 +187,7 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::GoToOutbox
         | C::GoToJunk
         | C::GoToTrash
+        | C::OpenContacts
         | C::GoToFlagged
         | C::SavedSearch1
         | C::SavedSearch2
@@ -250,6 +251,13 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::CaptureWrite => Some(G::Obsidian),
 
         // ── Not in the key map ──────────────────────────────────────────
+        // Contacts has a surface of its own, still to be drawn (specs/005
+        // and 011): its key map group arrives with it. `OpenContacts`, a
+        // destination, is in Go and find above.
+        C::ContactShowMail
+        | C::ContactCompose
+        | C::ContactsFilter
+        | C::ContactsToggleEveryone => None,
         // The composer's own keys, which the compose dialog teaches on its
         // buttons and its footer.
         C::Send

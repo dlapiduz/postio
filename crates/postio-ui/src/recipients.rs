@@ -343,6 +343,7 @@ mod tests {
     #[test]
     fn a_person_is_offered_once_per_address_under_one_name() {
         let mut ada = person("Ada Lovelace", &["ada@work.example", "ada@home.example"]);
+        ada.name = Some("Ada Lovelace".to_owned());
         ada.seen_name = Some("A. King".to_owned());
         let rows = [Correspondent::from(ada)];
         let offered = suggest(&[], &rows, "ada@home", 8);

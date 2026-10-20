@@ -102,6 +102,16 @@ pub enum Context {
     /// rather than typing a letter, and not `List`'s, so `mod+1` picks a tab
     /// there and nothing in the inbox.
     Results,
+    /// The Contacts surface's list and card, once the keyboard is in them
+    /// (specs/005-contacts).
+    ///
+    /// Scoped to the list and the card rather than the whole surface, the way
+    /// `Accounts` and `Keys` are: it also holds a filter field and an editor,
+    /// and a bare-letter binding must not fire while someone types a name
+    /// there. One context for every kind of row it shows -- person, address,
+    /// group, suggestion -- and a command acts on the focused row's kind;
+    /// sub-contexts per kind would split one surface into four headings.
+    Contacts,
 }
 
 impl Context {
@@ -127,6 +137,8 @@ impl Context {
         // The Mac's search results (spec 010), at the end for the same
         // reason.
         Context::Results,
+        // Contacts (specs/005-contacts), at the end for the same reason.
+        Context::Contacts,
     ];
 
     /// The stable serialized name, matching the `Deserialize` spelling.
@@ -147,6 +159,7 @@ impl Context {
             Context::Filtered => "filtered",
             Context::Capture => "capture",
             Context::Results => "results",
+            Context::Contacts => "contacts",
         }
     }
 

@@ -751,6 +751,19 @@ commands! {
         /// the way [`Command::OpenMessage`]'s is.
         message: Option<MessageId> = None,
     } => "digest_like_this",
+
+    // -- Contacts (specs/005-contacts) -----------------------------------
+    /// Open Contacts.
+    OpenContacts => "open_contacts",
+    /// Show the focused person's mail: a `with:` search over every address
+    /// they own.
+    ContactShowMail => "contact_show_mail",
+    /// Open a draft to the focused person's preferred address.
+    ContactCompose => "contact_compose",
+    /// Move the keyboard to the Contacts filter.
+    ContactsFilter => "contacts_filter",
+    /// Show everyone from mail, or only the people the user made or wrote to.
+    ContactsToggleEveryone => "contacts_toggle_everyone",
     ;
     /// Mark one message read because the cursor rested on it long enough to
     /// have been read — not because anyone asked.

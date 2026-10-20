@@ -135,6 +135,9 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         // `alt+1` looks for them where the other places are.
         C::SavedSearch1 | C::SavedSearch2 | C::SavedSearch3 | C::SavedSearch4 => Some(M::Go),
         C::NextScope => Some(M::Go),
+        // Contacts is a destination like the inbox. Its own commands act on a
+        // focused row, and a global menu cannot say which person.
+        C::OpenContacts => Some(M::Go),
         C::NextInConversation | C::PrevInConversation => Some(M::Go),
         C::Back | C::PrevView => Some(M::Go),
 
@@ -243,6 +246,10 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::PickRelaxation3
         | C::PickRelaxation4
         | C::SaveFile
+        | C::ContactShowMail
+        | C::ContactCompose
+        | C::ContactsFilter
+        | C::ContactsToggleEveryone
         | C::GoToFiltered
         | C::GoToDigestRules
         | C::ToggleHasAction

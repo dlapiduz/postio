@@ -41,7 +41,7 @@ fn where_available(contexts: ContextSet) -> String {
         // This file documents Linux, which has no results view until it
         // adopts it (spec 010 D17, D25): the list's verbs reach a result
         // on the Mac, and say nothing new here.
-        .filter(|context| *context != Context::Results)
+        .filter(|context| *context != Context::Results && *context != Context::Contacts)
         .map(|context| match context {
             Context::List => "list",
             Context::Conversation => "conversation",
@@ -58,6 +58,7 @@ fn where_available(contexts: ContextSet) -> String {
             Context::Filtered => "Filtered view",
             Context::Capture => "capture sheet",
             Context::Results => "search results",
+            Context::Contacts => "contacts",
         })
         .collect();
     let mut sentence = names.join(", ");
