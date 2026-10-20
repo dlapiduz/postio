@@ -113,7 +113,7 @@ pub fn impersonation(from: &[EmailAddress]) -> Option<String> {
             if !local.is_empty() && is_host(host) && !token.eq_ignore_ascii_case(&actual) {
                 return Some(token.to_owned());
             }
-        } else if is_host(token) && !related(token, &actual_domain) {
+        } else if is_host(token) && has_public_suffix(token) && !related(token, &actual_domain) {
             return Some(token.to_owned());
         }
     }
@@ -247,6 +247,12 @@ fn related(value: &str, domain: &str) -> bool {
     host == domain || host.ends_with(&format!(".{domain}")) || domain.ends_with(&format!(".{host}"))
 }
 
+/// The name ends in a suffix on the public suffix list, so `bank.com` is a
+/// domain and `Node.js` is not.
+fn has_public_suffix(host: &str) -> bool {
+    psl::suffix(host.to_ascii_lowercase().as_bytes()).is_some_and(|suffix| suffix.is_known())
+}
+
 /// A plausible hostname: dotted labels, a letters-only last one of two or
 /// more characters. Deliberately plain: `Dr.`, `J.R.` and `v2.1` are not.
 fn is_host(text: &str) -> bool {
@@ -376,8 +382,8 @@ mod tests {
     #[test]
     fn a_name_that_is_a_domain_other_than_the_senders_is_a_hit() {
         assert_eq!(
-            impersonation(&named("bank.example Support", "x@other.example")),
-            Some("bank.example".into())
+            impersonation(&named("bank.com Support", "x@other.example")),
+            Some("bank.com".into())
         );
     }
 
@@ -391,6 +397,7 @@ mod tests {
             ("example.org Billing", "billing@mail.example.org"),
             ("mail.example.org", "billing@example.org"),
             ("v2.1 release", "ada@example.org"),
+            ("Node.js Weekly", "news@example.org"),
         ] {
             assert_eq!(impersonation(&named(name, address)), None, "{name}");
         }

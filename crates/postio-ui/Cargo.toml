@@ -27,6 +27,7 @@ serde = { workspace = true }
 # `Observation.app` carries app-specific values of any shape.
 serde_json = { workspace = true }
 postio-workspace-hack.workspace = true
+psl = "2.1.243"
 
 [dev-dependencies]
 tempfile = { workspace = true }
