@@ -46,6 +46,10 @@ smtp_port = 587
 smtp_security = "start-tls"
 requires_app_password = true
 password_help_url = "https://appleid.apple.com/account/manage"
+# Reports CONDSTORE changes incompletely and never pushes a flag change to an
+# IDLE session, so a flag set on another device can be missed for good. Every
+# flag is read now and then instead of only what CHANGEDSINCE lists (#1915).
+condstore_reliable = false
 auth = ["app-password"]
 # iCloud advertises no RFC 6154 SPECIAL-USE, so a role is guessed from the
 # name, and the alphabet decides ties -- which is wrong for two of these and
@@ -124,6 +128,8 @@ imap_security = "tls"
 smtp_host = "smtp.office365.com"
 smtp_port = 587
 smtp_security = "start-tls"
+# Exchange under-reports CONDSTORE changes; see the iCloud row (#1915).
+condstore_reliable = false
 # Basic auth is retired tenant by tenant across Microsoft 365; oauth2 is the
 # only method this row offers rather than a fallback nobody can rely on.
 auth = ["oauth2"]

@@ -70,6 +70,17 @@ pub struct ProviderRow {
     pub requires_app_password: bool,
     #[serde(default)]
     pub password_help_url: Option<String>,
+    /// Whether this provider's `CHANGEDSINCE` answer can be believed. `true`
+    /// unless a row says otherwise.
+    ///
+    /// iCloud and Exchange are known to under-report CONDSTORE changes: a
+    /// flag set on another device may never appear in the answer, and the
+    /// `HIGHESTMODSEQ` moves on regardless. A row that sets this to `false`
+    /// has every flag in a folder read now and then to catch what the feed
+    /// missed (`postio_model::SweepPolicy`). Data, because which provider
+    /// misbehaves is a fact about the provider, not a branch.
+    #[serde(default = "default_condstore_reliable")]
+    pub condstore_reliable: bool,
     /// Preference order among the ways this provider can be authenticated.
     /// `"app-password"` and `"oauth2"` are the two tokens understood today.
     pub auth: Vec<String>,
@@ -95,6 +106,10 @@ pub struct ProviderRow {
     /// way iCloud's did (#501, #943).
     #[serde(default)]
     pub mailboxes: BTreeMap<String, String>,
+}
+
+fn default_condstore_reliable() -> bool {
+    true
 }
 
 /// Every row that predates #545, and most rows after it.
@@ -320,6 +335,7 @@ mod tests {
             smtp_security: Security::Tls,
             requires_app_password: false,
             password_help_url: None,
+            condstore_reliable: true,
             auth: auth.iter().map(|s| s.to_string()).collect(),
             oauth: None,
             backend: default_backend(),

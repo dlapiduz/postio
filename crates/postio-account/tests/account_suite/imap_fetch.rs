@@ -8,7 +8,7 @@ use postio_account::backend::UidSet;
 use postio_account::cancel::CancelToken;
 use postio_account::imap::{
     ConnectionPool, ConnectionSettings, IMAPS_PORT, ImapScript, PoolConfig, Priority,
-    RustlsConnector, ScriptedConnector, fetch_headers, fetch_headers_for_filing,
+    RustlsConnector, ScriptedConnector, fetch_flags, fetch_headers, fetch_headers_for_filing,
 };
 use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStore};
 use postio_model::promoted::{PRECEDENCE_BULK, PromotedHeaders};
@@ -593,4 +593,56 @@ async fn a_first_sync_s_fetch_asks_for_none_of_them_and_knows_nothing() {
         "a first sync pays for none of the three: {commands:?}"
     );
     assert_eq!(messages[0].promoted, None, "not asked, not known");
+}
+
+// --- a flags-only listing (#1915) --------------------------------------------
+
+#[tokio::test]
+async fn a_flag_sweep_asks_for_uids_and_flags_and_nothing_else() {
+    let connector = ScriptedConnector::new(
+        ImapScript::extensions_hidden_until_login()
+            .on("SELECT", select_reply().as_str())
+            .on(
+                "FETCH",
+                "* 1 FETCH (UID 101 FLAGS (\\Seen))\n\
+                 * 2 FETCH (UID 102 FLAGS (\\Flagged \\Answered $Work))\n\
+                 * 3 FETCH (UID 103 FLAGS ())\n\
+                 {tag} OK FETCH completed",
+            ),
+    );
+    let pool = pool_over(connector.clone()).await;
+
+    let listed = fetch_flags(&pool, "INBOX", Priority::Interactive, &CancelToken::new())
+        .await
+        .expect("the listing")
+        .expect("IMAP can list flags alone");
+
+    let uids: Vec<u32> = listed.iter().map(|(uid, _)| uid.get()).collect();
+    assert_eq!(uids, vec![101, 102, 103]);
+    assert!(listed[0].1.is_seen());
+    assert!(listed[1].1.is_flagged() && listed[1].1.is_answered());
+    assert_eq!(listed[1].1.len(), 3, "the keyword comes through too");
+    assert!(listed[2].1.is_empty());
+
+    let commands = connector.log().commands();
+    let fetches: Vec<&String> = commands
+        .iter()
+        .filter(|command| command.contains("FETCH"))
+        .collect();
+    assert_eq!(fetches.len(), 1, "one request: {commands:?}");
+    let wire = fetches[0].to_ascii_uppercase();
+    assert!(wire.contains("1:*"), "the whole folder: {wire}");
+    for heavy in [
+        "ENVELOPE",
+        "BODYSTRUCTURE",
+        "BODY",
+        "RFC822",
+        "INTERNALDATE",
+        "CHANGEDSINCE",
+    ] {
+        assert!(
+            !wire.contains(heavy),
+            "a sweep carries a UID and a flag list per message, not {heavy}: {wire}"
+        );
+    }
 }

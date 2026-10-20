@@ -45,6 +45,12 @@ pub struct SyncState {
     pub last_full_sync_at: Option<DateTime<Utc>>,
     /// When the mailbox was last looked at on the server, complete or not.
     pub last_seen_at: Option<DateTime<Utc>>,
+    /// Resync passes since this mailbox's flags were last read in full.
+    ///
+    /// What [`SweepPolicy::decide`](crate::SweepPolicy::decide) is given as
+    /// `passes_since_sweep`. A pass that read every flag, and a full
+    /// enumeration, which does, set it to 0; any other pass adds one.
+    pub passes_since_flag_sweep: u32,
 }
 
 impl SyncState {
@@ -58,6 +64,7 @@ impl SyncState {
             highest_mod_seq: None,
             last_full_sync_at: None,
             last_seen_at: None,
+            passes_since_flag_sweep: 0,
         }
     }
 
@@ -120,6 +127,7 @@ impl SyncState {
             self.highest_mod_seq = None;
             self.uid_next = None;
             self.last_full_sync_at = None;
+            self.passes_since_flag_sweep = 0;
         }
         self.generation = Some(status.generation);
         if let Some(uid_next) = status.uid_next {
@@ -132,9 +140,27 @@ impl SyncState {
     }
 
     /// Records that a full synchronization completed at `at`.
+    ///
+    /// An enumeration reads every message's flags, so it counts as a sweep.
     pub fn complete_full_sync(&mut self, at: DateTime<Utc>) {
         self.last_full_sync_at = Some(at);
         self.last_seen_at = Some(at);
+        self.passes_since_flag_sweep = 0;
+    }
+
+    /// Records that an incremental pass finished, and whether it read every
+    /// flag in the mailbox.
+    ///
+    /// Called *after* the flags were reconciled and after
+    /// [`observe`](Self::observe) took the server's `HIGHESTMODSEQ`, so a pass
+    /// that failed part-way counts as nothing and is decided again from the
+    /// same place.
+    pub fn record_flag_pass(&mut self, swept: bool) {
+        self.passes_since_flag_sweep = if swept {
+            0
+        } else {
+            self.passes_since_flag_sweep.saturating_add(1)
+        };
     }
 }
 
@@ -350,6 +376,31 @@ mod tests {
         assert_eq!(state.highest_mod_seq, Some(ModSeq::new(90_300)));
         assert!(state.has_synced(), "a completed sync is still completed");
         assert_eq!(state.last_full_sync_at, Some(at(9)), "not a full sync");
+    }
+
+    #[test]
+    fn passes_are_counted_until_a_sweep_resets_them() {
+        let mut state = synced();
+        state.record_flag_pass(false);
+        state.record_flag_pass(false);
+        assert_eq!(state.passes_since_flag_sweep, 2);
+        state.record_flag_pass(true);
+        assert_eq!(state.passes_since_flag_sweep, 0);
+    }
+
+    #[test]
+    fn a_full_sync_and_a_new_generation_both_restart_the_count() {
+        let mut state = synced();
+        state.record_flag_pass(false);
+        state.complete_full_sync(at(10));
+        assert_eq!(
+            state.passes_since_flag_sweep, 0,
+            "enumerating read the flags"
+        );
+
+        state.record_flag_pass(false);
+        state.observe(&MailboxStatus::new(Generation::new(1_800_000_000)), at(11));
+        assert_eq!(state.passes_since_flag_sweep, 0, "a new UID space");
     }
 
     #[test]

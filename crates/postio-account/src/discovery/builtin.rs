@@ -133,6 +133,17 @@ impl Preset {
         self.row.smtp_port
     }
 
+    /// How far this provider's `CHANGEDSINCE` answer can be believed.
+    ///
+    /// `Unreliable` for a row with `condstore_reliable = false`.
+    pub fn change_feed(&self) -> postio_model::ChangeFeed {
+        if self.row.condstore_reliable {
+            postio_model::ChangeFeed::Reliable
+        } else {
+            postio_model::ChangeFeed::Unreliable
+        }
+    }
+
     /// Whether only an application-specific password will work.
     pub fn requires_app_password(&self) -> bool {
         self.row.requires_app_password
@@ -367,6 +378,27 @@ pub fn lookup(email: &str, _local_part: &str, domain: &str) -> Option<AccountSet
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Which providers the sync engine does not take at their word about what
+    /// changed is a column of the preset table (#1915), not a branch.
+    #[test]
+    fn the_providers_known_to_under_report_condstore_say_so_in_their_row() {
+        use postio_model::ChangeFeed;
+
+        let feed = |host: &str| {
+            preset_for_imap_host(host)
+                .expect("a shipped provider")
+                .change_feed()
+        };
+
+        assert_eq!(feed("imap.mail.me.com"), ChangeFeed::Unreliable);
+        assert_eq!(feed("outlook.office365.com"), ChangeFeed::Unreliable);
+        assert_eq!(
+            feed("imap.gmail.com"),
+            ChangeFeed::Reliable,
+            "a row that says nothing is believed"
+        );
+    }
 
     /// Addresses are built rather than written out, so no literal address in a
     /// provider's real domain ever appears in the source. See CLAUDE.md,

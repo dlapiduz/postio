@@ -282,6 +282,16 @@ SELECT a.id,
 ",
         ),
     },
+    // #1915: how many resync passes have run since a mailbox's flags were
+    // last read in full, so a server whose change feed cannot be believed is
+    // swept every Nth pass. A store gains it at zero.
+    Migration {
+        from: stamp(0xd154_aa70),
+        to: stamp(0x069c_72b3),
+        statements: "
+ALTER TABLE sync_state ADD COLUMN passes_since_flag_sweep INTEGER NOT NULL DEFAULT 0;
+",
+    },
 ];
 
 /// The steps that carry a store stamped `found` to [`FINGERPRINT`], in the
@@ -1075,7 +1085,11 @@ CREATE TABLE sync_state (
     -- Highest MODSEQ seen, for QRESYNC incremental resync.
     highest_mod_seq    INTEGER,
     last_full_sync_at  INTEGER,
-    last_seen_at       INTEGER
+    last_seen_at       INTEGER,
+    -- Resync passes since this mailbox's flags were last read in full (#1915):
+    -- what decides when a server whose change feed cannot be believed is next
+    -- swept. Counted by the sync engine; reset by a sweep or an enumeration.
+    passes_since_flag_sweep INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE thread_links (

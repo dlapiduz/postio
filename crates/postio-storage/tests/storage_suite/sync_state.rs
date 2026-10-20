@@ -62,6 +62,30 @@ async fn sync_state_round_trips_through_the_database() {
 }
 
 #[tokio::test]
+async fn the_passes_since_a_flag_sweep_are_counted_in_the_store() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_, inbox) = test_support::account_with_inbox(&connection).await;
+    let states = SyncStateRepository::new(&connection);
+
+    states.record_flag_pass(inbox, false).await.expect("count");
+    let counted = states.record_flag_pass(inbox, false).await.expect("count");
+    assert_eq!(counted.passes_since_flag_sweep, 2);
+    assert_eq!(
+        states
+            .require(inbox)
+            .await
+            .expect("read")
+            .passes_since_flag_sweep,
+        2,
+        "the count is the store's, not the returned copy's"
+    );
+
+    let swept = states.record_flag_pass(inbox, true).await.expect("sweep");
+    assert_eq!(swept.passes_since_flag_sweep, 0);
+}
+
+#[tokio::test]
 async fn a_freshly_created_mailbox_has_never_synced() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");

@@ -256,6 +256,84 @@ async fn fetch_batch_inner(
     Ok(messages)
 }
 
+/// Every message's flags in `mailbox`: `UID FETCH 1:* (UID FLAGS)`, and
+/// nothing else on the wire. See
+/// [`MailBackend::fetch_flags`](crate::backend::MailBackend::fetch_flags).
+///
+/// Bracketed by the [`skip_counter`] like the `CHANGEDSINCE` fetch, for the
+/// same reason: `io-imap` completes the command `Ok` after dropping an
+/// untagged line it could not decode, and a sweep whose answer silently lost
+/// a message's flags is the very fault the sweep exists to find. The failure
+/// is [`BackendError::ResyncIntegrityLost`], which sends the caller to a full
+/// re-enumeration rather than trusting a short list.
+///
+/// The mailbox is selected without `(CONDSTORE)`: nothing here asks about
+/// modification sequences, and a plain `FETCH` is legal on any selection.
+pub async fn fetch_flags(
+    pool: &ConnectionPool,
+    mailbox: &str,
+    priority: Priority,
+    cancel: &CancelToken,
+) -> BackendResult<Option<Vec<(Uid, FlagSet)>>> {
+    if cancel.is_cancelled() {
+        return Err(BackendError::Cancelled);
+    }
+    let mailbox = mailbox.to_owned();
+
+    pool.execute(priority, async |session| {
+        session.ensure_selected(&mailbox, false).await?;
+        if cancel.is_cancelled() {
+            return Err(BackendError::Cancelled);
+        }
+
+        let sequence_set = sequence_set_for(&UidSet::all())?;
+        skip_counter::install();
+        let (raw, skipped) = skip_counter::measuring(session.fetch(
+            sequence_set,
+            MacroOrMessageDataItemNames::MessageDataItemNames(vec![
+                MessageDataItemName::Uid,
+                MessageDataItemName::Flags,
+            ]),
+            ImapMessageFetchOptions {
+                uid: true,
+                modifiers: Vec::new(),
+            },
+        ))
+        .await;
+        let raw = raw.map_err(|error| session.command_error("FETCH", error))?;
+        if skipped > 0 {
+            return Err(BackendError::ResyncIntegrityLost {
+                mailbox: mailbox.clone(),
+                skipped,
+            });
+        }
+
+        Ok(Some(
+            raw.into_values()
+                .filter_map(|items| flags_of(items.into_iter()))
+                .collect(),
+        ))
+    })
+    .await
+}
+
+/// The UID and flags one `FETCH` entry carries, or `None` for an entry with
+/// no UID (which says nothing about any message we can name).
+fn flags_of(items: impl Iterator<Item = MessageDataItem<'static>>) -> Option<(Uid, FlagSet)> {
+    let mut uid = None;
+    let mut flags = FlagSet::new();
+    for item in items {
+        match item {
+            MessageDataItem::Uid(value) => uid = Some(Uid::new(value.get())),
+            MessageDataItem::Flags(list) => {
+                flags = list.into_iter().map(flag_from_wire).collect();
+            }
+            _ => {}
+        }
+    }
+    uid.map(|uid| (uid, flags))
+}
+
 /// Whether a `UID SEARCH ALL` answer is too short to be an answer.
 ///
 /// Its own function so the rule can be stated and tested without a server:
