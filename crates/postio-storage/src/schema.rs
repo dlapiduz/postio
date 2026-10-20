@@ -610,7 +610,7 @@ CREATE INDEX idx_contacts_kind_pending ON contacts (state, kind_source, kind_ver
     // and the sender treatments into it once, on its first run after this.
     Migration {
         from: stamp(0xaed8_856a),
-        to: FINGERPRINT,
+        to: stamp(0x7c07_02d9),
         statements: r#"
 CREATE TABLE contact_settings (
     contact_id         INTEGER PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
@@ -625,6 +625,78 @@ CREATE TABLE contact_settings (
     remind_days        INTEGER,
     archive_after_days INTEGER
 );
+"#,
+    },
+    // `feature/focus-contacts`: the stats a card reads (specs/011-focus-contacts
+    // S5): a read count on the sighting, a per-month count and a ring of the
+    // newest fifty messages per address, and the Contacts tabs' counts. New
+    // tables, empty; the counts are filled from the people the store holds.
+    // What is already stored is not walked here -- the history fold writes it
+    // for the mail that predates contacts, and recording writes it from now.
+    Migration {
+        from: stamp(0x7c07_02d9),
+        to: FINGERPRINT,
+        statements: r#"
+ALTER TABLE contact_sightings ADD COLUMN seen_count INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE address_months (
+    address_id  INTEGER NOT NULL REFERENCES addresses(id) ON DELETE CASCADE,
+    month       INTEGER NOT NULL,
+    n           INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (address_id, month)
+);
+CREATE TABLE address_recent (
+    address_id  INTEGER NOT NULL REFERENCES addresses(id) ON DELETE CASCADE,
+    message_id  INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    at          INTEGER NOT NULL,
+    direction   TEXT    NOT NULL CHECK (direction IN ('in', 'out')),
+    PRIMARY KEY (address_id, message_id)
+);
+CREATE INDEX idx_address_recent_newest ON address_recent (address_id, at DESC, message_id DESC);
+CREATE TABLE contact_counts (
+    kind   TEXT    PRIMARY KEY,
+    total  INTEGER NOT NULL DEFAULT 0,
+    saved  INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO contact_counts (kind, total, saved)
+SELECT kind, count(*), sum(CASE WHEN saved_at IS NOT NULL THEN 1 ELSE 0 END)
+  FROM contacts WHERE state = 'live' GROUP BY kind;
+CREATE TRIGGER trg_contact_counts_ai AFTER INSERT ON contacts WHEN new.state = 'live'
+BEGIN
+    INSERT INTO contact_counts (kind, total, saved)
+    VALUES (new.kind, 1, CASE WHEN new.saved_at IS NOT NULL THEN 1 ELSE 0 END)
+    ON CONFLICT (kind) DO UPDATE SET total = total + 1, saved = saved + excluded.saved;
+END;
+
+CREATE TRIGGER trg_contact_counts_au AFTER UPDATE OF state, kind, saved_at ON contacts
+WHEN old.state <> new.state OR old.kind <> new.kind
+  OR (old.saved_at IS NULL) <> (new.saved_at IS NULL)
+BEGIN
+    UPDATE contact_counts
+       SET total = total - 1,
+           saved = saved - CASE WHEN old.saved_at IS NOT NULL THEN 1 ELSE 0 END
+     WHERE kind = old.kind AND old.state = 'live';
+    INSERT INTO contact_counts (kind, total, saved)
+    SELECT new.kind, 1, CASE WHEN new.saved_at IS NOT NULL THEN 1 ELSE 0 END WHERE new.state = 'live'
+    ON CONFLICT (kind) DO UPDATE SET total = total + 1, saved = saved + excluded.saved;
+END;
+
+CREATE TRIGGER trg_contact_counts_ad AFTER DELETE ON contacts WHEN old.state = 'live'
+BEGIN
+    UPDATE contact_counts
+       SET total = total - 1,
+           saved = saved - CASE WHEN old.saved_at IS NOT NULL THEN 1 ELSE 0 END
+     WHERE kind = old.kind;
+END;
+
+CREATE TRIGGER trg_sightings_seen_au AFTER UPDATE OF seen ON messages
+WHEN (old.seen <> 0) <> (new.seen <> 0)
+BEGIN
+    UPDATE contact_sightings
+       SET seen_count = max(seen_count + CASE WHEN new.seen <> 0 THEN 1 ELSE -1 END, 0)
+     WHERE account_id = new.account_id
+       AND address_id IN (SELECT address_id FROM recipients
+                           WHERE message_id = new.id AND kind = 'from');
+END;
 "#,
     },
 ];
@@ -740,6 +812,29 @@ CREATE TABLE addresses (
     bounced_at          INTEGER
 );
 
+CREATE TABLE address_months (
+    -- How many messages an address appeared on in each month, for a card's
+    -- twelve-month strip (specs/011-focus-contacts S5). Per address, never
+    -- per contact, so a merge or a split rewrites nothing; the month is
+    -- `year * 12 + month - 1`. Kept beside the sighting.
+    address_id  INTEGER NOT NULL REFERENCES addresses(id) ON DELETE CASCADE,
+    month       INTEGER NOT NULL,
+    n           INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (address_id, month)
+);
+
+CREATE TABLE address_recent (
+    -- The newest fifty messages an address appeared on, so what is open
+    -- between the user and a person is read over a bounded set of ids rather
+    -- than over their mail (specs/011-focus-contacts S5). `direction` is
+    -- `out` for a message the user sent to the address, else `in`.
+    address_id  INTEGER NOT NULL REFERENCES addresses(id) ON DELETE CASCADE,
+    message_id  INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    at          INTEGER NOT NULL,
+    direction   TEXT    NOT NULL CHECK (direction IN ('in', 'out')),
+    PRIMARY KEY (address_id, message_id)
+);
+
 CREATE TABLE attachments (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id        INTEGER REFERENCES messages(id) ON DELETE CASCADE,
@@ -805,6 +900,15 @@ CREATE TABLE contact_group_members (
     PRIMARY KEY (group_id, contact_id)
 );
 
+CREATE TABLE contact_counts (
+    -- How many live people of each kind there are, and how many of them are
+    -- saved: the Contacts tabs' counts and the footer, kept by triggers on
+    -- `contacts` (ADR 0040) so a count is a read of a handful of rows.
+    kind   TEXT    PRIMARY KEY,
+    total  INTEGER NOT NULL DEFAULT 0,
+    saved  INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE contact_groups (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     -- Shared across accounts, as people are. Unique ignoring case, so
@@ -853,6 +957,9 @@ CREATE TABLE contact_sightings (
     -- Messages from one of this account's own addresses with this address
     -- in To, Cc or Bcc (R3).
     times_written  INTEGER NOT NULL DEFAULT 0,
+    -- Messages from the address that have been read, kept in step by a
+    -- trigger on `messages.seen` (specs/011-focus-contacts S5).
+    seen_count     INTEGER NOT NULL DEFAULT 0,
     -- The only key. An index on `account_id` alone was tried and the planner
     -- chose it over this one for the per-message sighting lookup, walking an
     -- account's every sighting per correspondent
@@ -1637,6 +1744,8 @@ CREATE INDEX idx_attachments_filename ON attachments (filename);
 
 CREATE INDEX idx_attachments_message ON attachments (message_id, position);
 
+CREATE INDEX idx_address_recent_newest ON address_recent (address_id, at DESC, message_id DESC);
+
 CREATE INDEX idx_addresses_contact ON addresses (contact_id);
 
 CREATE UNIQUE INDEX idx_contact_groups_name ON contact_groups (name COLLATE NOCASE);
@@ -1959,7 +2068,45 @@ BEGIN
            snoozed_count = snoozed_count + (NEW.deleted_locally = 0 AND
                NEW.snoozed_until IS NOT NULL AND NEW.snoozed_until > (strftime('%s','now') * 1000))
      WHERE id = NEW.mailbox_id;
-END;;"#,
+END;;
+CREATE TRIGGER trg_contact_counts_ai AFTER INSERT ON contacts WHEN new.state = 'live'
+BEGIN
+    INSERT INTO contact_counts (kind, total, saved)
+    VALUES (new.kind, 1, CASE WHEN new.saved_at IS NOT NULL THEN 1 ELSE 0 END)
+    ON CONFLICT (kind) DO UPDATE SET total = total + 1, saved = saved + excluded.saved;
+END;
+
+CREATE TRIGGER trg_contact_counts_au AFTER UPDATE OF state, kind, saved_at ON contacts
+WHEN old.state <> new.state OR old.kind <> new.kind
+  OR (old.saved_at IS NULL) <> (new.saved_at IS NULL)
+BEGIN
+    UPDATE contact_counts
+       SET total = total - 1,
+           saved = saved - CASE WHEN old.saved_at IS NOT NULL THEN 1 ELSE 0 END
+     WHERE kind = old.kind AND old.state = 'live';
+    INSERT INTO contact_counts (kind, total, saved)
+    SELECT new.kind, 1, CASE WHEN new.saved_at IS NOT NULL THEN 1 ELSE 0 END WHERE new.state = 'live'
+    ON CONFLICT (kind) DO UPDATE SET total = total + 1, saved = saved + excluded.saved;
+END;
+
+CREATE TRIGGER trg_contact_counts_ad AFTER DELETE ON contacts WHEN old.state = 'live'
+BEGIN
+    UPDATE contact_counts
+       SET total = total - 1,
+           saved = saved - CASE WHEN old.saved_at IS NOT NULL THEN 1 ELSE 0 END
+     WHERE kind = old.kind;
+END;
+
+CREATE TRIGGER trg_sightings_seen_au AFTER UPDATE OF seen ON messages
+WHEN (old.seen <> 0) <> (new.seen <> 0)
+BEGIN
+    UPDATE contact_sightings
+       SET seen_count = max(seen_count + CASE WHEN new.seen <> 0 THEN 1 ELSE -1 END, 0)
+     WHERE account_id = new.account_id
+       AND address_id IN (SELECT address_id FROM recipients
+                           WHERE message_id = new.id AND kind = 'from');
+END;
+"#,
     include_str!("schema/content-locations.sql"),
     include_str!("schema/content-projection.sql"),
     include_str!("schema/walk-columns.sql"),

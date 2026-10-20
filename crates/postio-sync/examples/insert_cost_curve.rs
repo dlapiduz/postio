@@ -18,6 +18,12 @@
 //! cargo run -p postio-sync --release --example insert_cost_curve
 //! ```
 //!
+//! A third axis is the contacts a sync records beside each message
+//! (`ContactRepository::record_message`: the sighting, the person, the month
+//! and the recent ring), because specs/011-focus-contacts S5 adds writes
+//! there and the fts column is the ceiling nothing may approach. The
+//! environment's `CURVE_CEILING` shortens a run.
+//!
 //! Fixtures only: this writes, so it must never be pointed at real mail.
 
 use std::collections::BTreeSet;
@@ -31,8 +37,16 @@ use postio_sync::commit_batch;
 /// real pass uses, which `commit_batch` then cuts into write units itself.
 const BATCH: usize = 200;
 
-/// Stop a run once the store holds this many messages.
+/// Stop a run once the store holds this many messages, unless
+/// `CURVE_CEILING` says fewer.
 const CEILING: usize = 30_000;
+
+fn ceiling() -> usize {
+    std::env::var("CURVE_CEILING")
+        .ok()
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(CEILING)
+}
 
 /// Report every this many rows.
 const REPORT_EVERY: usize = 1_000;
@@ -60,13 +74,18 @@ fn synthetic(account: &Account, mailbox: &Mailbox, uid: u32) -> Message {
     message
 }
 
-async fn run(with_search_index: bool) {
+async fn run(with_search_index: bool, with_contacts: bool) {
     println!(
-        "\n== {} ==",
+        "\n== {}{} ==",
         if with_search_index {
             "with the search_documents fts index (the app's reality)"
         } else {
             "without it (the bisect)"
+        },
+        if with_contacts {
+            ", recording contacts"
+        } else {
+            ""
         }
     );
     println!("{:>8}  {:>10}  {:>10}", "rows", "ms/row", "file");
@@ -86,7 +105,8 @@ async fn run(with_search_index: bool) {
     let mut chunk_started = Instant::now();
     let mut over_budget_reports = 0u32;
 
-    while written < CEILING {
+    let own = [account.address.clone()];
+    while written < ceiling() {
         let mut batch: Vec<Message> = (0..BATCH)
             .map(|_| {
                 let message = synthetic(&account, &mailbox, uid);
@@ -103,6 +123,15 @@ async fn run(with_search_index: bool) {
         )
         .await
         .expect("the batch commits");
+        if with_contacts {
+            let contacts = postio_storage::repository::ContactRepository::new(&connection);
+            for message in &batch {
+                contacts
+                    .record_message(message, &own)
+                    .await
+                    .expect("the contacts are recorded");
+            }
+        }
         written += BATCH;
 
         if written.is_multiple_of(REPORT_EVERY) {
@@ -128,8 +157,9 @@ async fn run(with_search_index: bool) {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
-    run(true).await;
-    run(false).await;
+    run(true, false).await;
+    run(true, true).await;
+    run(false, false).await;
 }
 
 fn bytes(n: u64) -> String {

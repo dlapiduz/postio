@@ -90,8 +90,9 @@ pub use address::EmailAddress;
 pub use attachment::{Attachment, Disposition};
 pub use contact::{
     AddressMove, Contact, ContactAddress, ContactDetail, ContactKind, ContactListRow,
-    ContactSource, ContactState, ContactView, JoinReceipt, JoinSuggestion, KindSignals, KindSource,
-    PersonEdit, PersonFields, ShowAs, SuggestionReason,
+    ContactSource, ContactState, ContactStats, ContactView, JoinReceipt, JoinSuggestion,
+    KindSignals, KindSource, PersonEdit, PersonFields, RECENT, RecentMessage, ShowAs,
+    SuggestionReason, month_key,
 };
 pub use contact_group::ContactGroup;
 pub use contact_settings::{ContactArrival, ContactSettings, DigestSetting, StoppedMarker};

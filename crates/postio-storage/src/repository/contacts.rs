@@ -83,6 +83,19 @@ const ADDRESS_COLUMNS: &str = "a.id, a.address,
 struct Seen<'m> {
     address: &'m EmailAddress,
     written: bool,
+    /// Whether the address is among the message's senders: only mail from an
+    /// address counts as opened or not.
+    sender: bool,
+}
+
+/// What recording one message knows beyond one address on it.
+struct Recording<'m> {
+    account: i64,
+    at: i64,
+    own: &'m [String],
+    /// The message's id, or 0 for one never stored (which has no ring entry).
+    message: i64,
+    read: bool,
 }
 
 impl<'a> ContactRepository<'a> {
@@ -137,12 +150,21 @@ impl<'a> ContactRepository<'a> {
             seen.push(Seen {
                 address,
                 written: written.contains(&normalized),
+                sender: message.from.iter().any(|from| from.same_address(address)),
             });
         }
 
+        let recording = Recording {
+            account,
+            at,
+            own: &own_normalized,
+            message: message.id.get(),
+            read: message.flags.contains(&postio_model::Flag::Seen),
+        };
+        let recording = &recording;
         sql::in_scope(self.connection, |transaction| async move {
             for one in &seen {
-                record_in(&transaction, account, one, at, &own_normalized).await?;
+                record_in(&transaction, recording, one).await?;
             }
             Ok(seen.len())
         })
@@ -384,6 +406,122 @@ impl<'a> ContactRepository<'a> {
             }
         })
         .await
+    }
+
+    /// What the mail says about `person`, summed over their addresses: the
+    /// tiles, the strip of months since `since_month` (a
+    /// [`postio_model::month_key`]), and the newest messages. Four reads at
+    /// most, by key over the person's addresses, so what it costs follows
+    /// their addresses and never their mail.
+    pub async fn stats(
+        &self,
+        person: ContactId,
+        since_month: i64,
+    ) -> Result<postio_model::ContactStats> {
+        let owned: Vec<i64> = sql::all(
+            self.connection,
+            &Self::explain_stats(1)[0],
+            [person.get()],
+            |row| row.col(0),
+        )
+        .await?;
+        if owned.is_empty() {
+            return Ok(postio_model::ContactStats::default());
+        }
+        let queries = Self::explain_stats(owned.len());
+        let ids =
+            || -> Vec<turso::Value> { owned.iter().map(|id| turso::Value::Integer(*id)).collect() };
+
+        let (messages, from_you, opened, last): (i64, i64, i64, Option<i64>) =
+            sql::one(self.connection, &queries[1], ids(), |row| {
+                Ok((row.col(0)?, row.col(1)?, row.col(2)?, row.col(3)?))
+            })
+            .await?;
+
+        let mut bound = ids();
+        bound.push(turso::Value::Integer(since_month));
+        let months: Vec<(i64, u32)> =
+            sql::all_unbounded(self.connection, &queries[2], bound, |row| {
+                Ok((
+                    row.col(0)?,
+                    u32::try_from(row.col::<i64>(1)?.max(0)).unwrap_or(u32::MAX),
+                ))
+            })
+            .await?;
+
+        let recent: Vec<postio_model::RecentMessage> =
+            sql::all_unbounded(self.connection, &queries[3], ids(), |row| {
+                Ok(postio_model::RecentMessage {
+                    message: postio_model::MessageId::new(row.col(0)?),
+                    at: from_millis(row.col(1)?),
+                    outgoing: row.col::<String>(2)? == "out",
+                })
+            })
+            .await?;
+
+        let count = |n: i64| u32::try_from(n.max(0)).unwrap_or(u32::MAX);
+        Ok(postio_model::ContactStats {
+            messages: count(messages),
+            from_you: count(from_you),
+            opened: count(opened),
+            last: last.map(from_millis),
+            months,
+            recent,
+        })
+    }
+
+    /// The SQL [`Self::stats`] runs, in order, for a person with `addresses`
+    /// addresses: their ids, the sightings summed, the months (the last
+    /// placeholder is the first month wanted) and the ring.
+    pub fn explain_stats(addresses: usize) -> [String; 4] {
+        let ids = (1..=addresses.max(1))
+            .map(|n| format!("?{n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let since = addresses.max(1) + 1;
+        [
+            "SELECT id FROM addresses WHERE contact_id = ?1 ORDER BY id LIMIT 1000".to_owned(),
+            format!(
+                "SELECT coalesce(sum(times_seen), 0), coalesce(sum(times_written), 0),
+                        coalesce(sum(seen_count), 0), max(last_seen_at)
+                   FROM contact_sightings WHERE address_id IN ({ids})"
+            ),
+            format!(
+                "SELECT month, sum(n) FROM address_months
+                  WHERE address_id IN ({ids}) AND month >= ?{since}
+                  GROUP BY month ORDER BY month"
+            ),
+            format!(
+                "SELECT message_id, at, direction FROM address_recent
+                  WHERE address_id IN ({ids})
+                  ORDER BY at DESC, message_id DESC LIMIT {}",
+                postio_model::RECENT
+            ),
+        ]
+    }
+
+    /// How many live people of each kind there are and how many of those are
+    /// saved: the Contacts tabs' counts, read from a handful of rows the
+    /// triggers keep.
+    pub async fn kind_counts(&self) -> Result<Vec<(ContactKind, u32, u32)>> {
+        let rows: Vec<(String, i64, i64)> = sql::all_unbounded(
+            self.connection,
+            "SELECT kind, total, saved FROM contact_counts WHERE total > 0 ORDER BY kind",
+            (),
+            |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?)),
+        )
+        .await?;
+        let count = |n: i64| u32::try_from(n.max(0)).unwrap_or(u32::MAX);
+        rows.into_iter()
+            .map(|(kind, total, saved)| {
+                ContactKind::from_name(&kind)
+                    .map(|kind| (kind, count(total), count(saved)))
+                    .ok_or(Error::UnknownEnum {
+                        column: "contact_counts.kind",
+                        value: kind,
+                    })
+            })
+            .collect()
     }
 
     /// One batch of the catch-up: up to `limit` addresses with mail and no
@@ -2164,13 +2302,10 @@ async fn promote(connection: &Connection, person: ContactId) -> Result<()> {
 /// aggregates. A first sighting creates the person — two more — and a new
 /// display name adds its words to the filter index. Every statement is a
 /// literal so it is compiled once per connection (#728).
-async fn record_in(
-    connection: &Connection,
-    account: i64,
-    seen: &Seen<'_>,
-    at: i64,
-    own: &[String],
-) -> Result<()> {
+async fn record_in(connection: &Connection, now: &Recording<'_>, seen: &Seen<'_>) -> Result<()> {
+    let Recording {
+        account, at, own, ..
+    } = *now;
     type Found = (
         i64,
         Option<i64>,
@@ -2221,19 +2356,29 @@ async fn record_in(
     sql::execute(
         connection,
         "INSERT INTO contact_sightings
-             (address_id, account_id, times_seen, last_seen_at, last_name, times_written)
-         VALUES (?1, ?2, 1, ?3, ?4, ?5)
+             (address_id, account_id, times_seen, last_seen_at, last_name, times_written,
+              seen_count)
+         VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6)
          ON CONFLICT (address_id, account_id) DO UPDATE SET
              times_seen = times_seen + 1,
+             seen_count = seen_count + excluded.seen_count,
              last_name = CASE WHEN excluded.last_seen_at >= coalesce(last_seen_at, 0)
                               THEN coalesce(excluded.last_name, last_name)
                               ELSE last_name END,
              last_seen_at = max(coalesce(last_seen_at, excluded.last_seen_at),
                                 excluded.last_seen_at),
              times_written = times_written + excluded.times_written",
-        bind![address_id, account, at, header_name, written],
+        bind![
+            address_id,
+            account,
+            at,
+            header_name,
+            written,
+            i64::from(seen.sender && now.read)
+        ],
     )
     .await?;
+    note_month_and_ring(connection, address_id, now, seen).await?;
 
     match owner {
         None => {
@@ -2426,7 +2571,7 @@ async fn fold_sightings(
             .map(|one| turso::Value::Text(one.clone())),
     );
     parameters.push(turso::Value::Integer(through));
-    type Sighting = (i64, i64, i64, i64, Option<String>);
+    type Sighting = (i64, i64, i64, i64, Option<String>, i64);
     let sightings: Vec<Sighting> = sql::all_unbounded(
         connection,
         &format!(
@@ -2441,12 +2586,13 @@ async fn fold_sightings(
                       WHERE r2.address_id = ?1 AND m2.account_id = m.account_id
                         AND m2.id <= ?{through_at}
                         AND r2.name IS NOT NULL AND trim(r2.name) <> ''
-                      ORDER BY coalesce(m2.date, m2.received_at) DESC LIMIT 1)
+                      ORDER BY coalesce(m2.date, m2.received_at) DESC LIMIT 1),
+                    count(DISTINCT CASE WHEN r.kind = 'from' AND m.seen <> 0 THEN m.id END)
                FROM recipients r JOIN messages m ON m.id = r.message_id
               WHERE r.address_id = ?1 AND m.id <= ?{through_at}
               GROUP BY m.account_id"
         ),
-        parameters,
+        parameters.clone(),
         |row| {
             Ok((
                 row.col(0)?,
@@ -2454,17 +2600,21 @@ async fn fold_sightings(
                 row.col(2)?,
                 row.col(3)?,
                 row.col(4)?,
+                row.col(5)?,
             ))
         },
     )
     .await?;
-    for (account, seen, last, written, name) in sightings {
+    for (account, seen, last, written, name, opened) in sightings {
         sql::execute(
             connection,
             "INSERT INTO contact_sightings
-                 (address_id, account_id, times_seen, last_seen_at, last_name, times_written)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 (address_id, account_id, times_seen, last_seen_at, last_name, times_written,
+                  seen_count)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8)
              ON CONFLICT (address_id, account_id) DO UPDATE SET
+                 seen_count = CASE WHEN ?7 = 1 THEN seen_count + excluded.seen_count
+                                   ELSE excluded.seen_count END,
                  times_seen = CASE WHEN ?7 = 1 THEN times_seen + excluded.times_seen
                                    ELSE excluded.times_seen END,
                  last_seen_at = max(coalesce(last_seen_at, excluded.last_seen_at),
@@ -2473,11 +2623,69 @@ async fn fold_sightings(
                                       excluded.last_name),
                  times_written = CASE WHEN ?7 = 1 THEN times_written + excluded.times_written
                                       ELSE excluded.times_written END",
-            bind![address, account, seen, last, name, written, i64::from(add)],
+            bind![
+                address,
+                account,
+                seen,
+                last,
+                name,
+                written,
+                i64::from(add),
+                opened
+            ],
         )
         .await?;
     }
-    Ok(())
+    fold_months_and_ring(connection, address, &mine, &parameters, through_at, add).await
+}
+
+/// The months and the ring of the mail stored before contacts began,
+/// written the way recording would have.
+async fn fold_months_and_ring(
+    connection: &Connection,
+    address: i64,
+    mine: &str,
+    parameters: &[turso::Value],
+    through_at: usize,
+    add: bool,
+) -> Result<()> {
+    let when = "coalesce(m.date, m.received_at)";
+    sql::execute(
+        connection,
+        &format!(
+            "INSERT INTO address_months (address_id, month, n)
+             SELECT ?1,
+                    CAST(strftime('%Y', {when} / 1000, 'unixepoch') AS INTEGER) * 12
+                      + CAST(strftime('%m', {when} / 1000, 'unixepoch') AS INTEGER) - 1 AS month,
+                    count(DISTINCT m.id)
+               FROM recipients r JOIN messages m ON m.id = r.message_id
+              WHERE r.address_id = ?1 AND m.id <= ?{through_at}
+              GROUP BY month
+             ON CONFLICT (address_id, month) DO UPDATE SET n = {n}",
+            n = if add { "n + excluded.n" } else { "excluded.n" }
+        ),
+        parameters.to_vec(),
+    )
+    .await?;
+    sql::execute(
+        connection,
+        &format!(
+            "INSERT OR IGNORE INTO address_recent (address_id, message_id, at, direction)
+             SELECT ?1, m.id, {when},
+                    CASE WHEN max(r.kind IN ('to', 'cc', 'bcc') AND EXISTS (
+                            SELECT 1 FROM recipients f JOIN addresses fa ON fa.id = f.address_id
+                             WHERE f.message_id = m.id AND f.kind = 'from' AND {mine}))
+                         THEN 'out' ELSE 'in' END
+               FROM recipients r JOIN messages m ON m.id = r.message_id
+              WHERE r.address_id = ?1 AND m.id <= ?{through_at}
+              GROUP BY m.id
+              ORDER BY {when} DESC, m.id DESC LIMIT {limit}",
+            limit = postio_model::RECENT
+        ),
+        parameters.to_vec(),
+    )
+    .await?;
+    trim_ring(connection, address).await
 }
 
 /// What `person` decided (see `contact_settings`), the default for no row.
@@ -2499,6 +2707,54 @@ async fn write_settings(
     super::ContactSettingsRepository::new(connection)
         .put(ContactId::new(person), settings)
         .await
+}
+
+/// Writes one sighting's month and ring entry: the strip and the newest
+/// fifty a card reads. A message never stored has no ring entry.
+async fn note_month_and_ring(
+    connection: &Connection,
+    address: i64,
+    now: &Recording<'_>,
+    seen: &Seen<'_>,
+) -> Result<()> {
+    let month = postio_model::month_key(from_millis(now.at));
+    sql::execute(
+        connection,
+        "INSERT INTO address_months (address_id, month, n) VALUES (?1, ?2, 1)
+         ON CONFLICT (address_id, month) DO UPDATE SET n = n + 1",
+        bind![address, month],
+    )
+    .await?;
+    if now.message == 0 {
+        return Ok(());
+    }
+    sql::execute(
+        connection,
+        "INSERT OR IGNORE INTO address_recent (address_id, message_id, at, direction)
+         VALUES (?1, ?2, ?3, ?4)",
+        bind![
+            address,
+            now.message,
+            now.at,
+            if seen.written { "out" } else { "in" }
+        ],
+    )
+    .await?;
+    trim_ring(connection, address).await
+}
+
+/// Keeps an address's ring to its newest [`postio_model::RECENT`].
+async fn trim_ring(connection: &Connection, address: i64) -> Result<()> {
+    sql::execute(
+        connection,
+        "DELETE FROM address_recent
+          WHERE address_id = ?1 AND message_id IN (
+              SELECT message_id FROM address_recent WHERE address_id = ?1
+               ORDER BY at DESC, message_id DESC LIMIT -1 OFFSET ?2)",
+        bind![address, postio_model::RECENT as i64],
+    )
+    .await?;
+    Ok(())
 }
 
 /// The newest message id the store held when contacts began, or 0 for a

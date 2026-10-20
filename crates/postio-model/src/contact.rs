@@ -244,6 +244,49 @@ pub struct KindSignals {
     pub people_at_domain: u32,
 }
 
+/// The key of the month `at` falls in: `year * 12 + month - 1`, what
+/// `address_months` is keyed by (specs/011-focus-contacts S5).
+pub fn month_key(at: DateTime<Utc>) -> i64 {
+    use chrono::Datelike as _;
+    i64::from(at.year()) * 12 + i64::from(at.month0())
+}
+
+/// A message in an address's ring of the newest fifty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentMessage {
+    /// The message.
+    pub message: crate::MessageId,
+    /// When it was sent or received.
+    pub at: DateTime<Utc>,
+    /// Whether the user sent it to the person.
+    pub outgoing: bool,
+}
+
+/// What the mail says about a person, summed over their addresses: the tiles
+/// of a card, its twelve-month strip and what is recent between them and the
+/// user (specs/011-focus-contacts S5). Read from maintained tables, so what
+/// it costs follows the number of addresses and never the amount of mail.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ContactStats {
+    /// Messages any of their addresses appeared on.
+    pub messages: u32,
+    /// Messages the user sent to any of them.
+    pub from_you: u32,
+    /// Messages from them that have been read.
+    pub opened: u32,
+    /// The newest message.
+    pub last: Option<DateTime<Utc>>,
+    /// `(month key, messages)` for the months asked, oldest first, with no
+    /// entry for a month with no mail.
+    pub months: Vec<(i64, u32)>,
+    /// The newest messages across their addresses, newest first, at most
+    /// [`RECENT`].
+    pub recent: Vec<RecentMessage>,
+}
+
+/// How many recent messages an address keeps, and a person's stats show.
+pub const RECENT: usize = 50;
+
 /// One address a person owns, with what the mail says about it.
 ///
 /// The counts are summed across the accounts the address was seen through;
