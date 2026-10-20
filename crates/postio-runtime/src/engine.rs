@@ -839,15 +839,16 @@ impl Engine {
 /// on the wire — the same bound the backfill below this loop already accepts.
 const BODIES_BETWEEN_WAVES: usize = 8;
 
-/// How many bodies a wave keeps on the wire beside its lanes.
+/// How many bodies of one batch a wave writes at once beside its lanes.
 ///
-/// A batch this size is claimed whenever none is in flight -- when a pass
-/// finishes, when one commits a batch of headers, and when the previous
-/// batch of bodies lands -- so bodies flow for the length of the wave rather
-/// than only between waves. They are fetched concurrently and settled as one,
-/// which is what [`BODY_WINDOW`] is for the between-wave pump; the number is
-/// larger here because nothing waits on the batch: the lanes keep being
-/// polled while it is out, and a job still cancels the wave around it.
+/// A batch ([`postio_sync::backfill::Backfill::next_batch`]) is claimed
+/// whenever fewer than [`BATCHES_BESIDE_A_WAVE`] are out -- when a pass
+/// finishes, when one commits a batch of headers, and when a batch of bodies
+/// lands -- so bodies flow for the length of the wave rather than only between
+/// waves. Its sections and header blocks cross the wire as a set; this many of
+/// its bodies are then written concurrently and settled as one, which is what
+/// [`BODY_WINDOW`] is for the between-wave pump. The lanes keep being polled
+/// while it is out, and a job cancels the wave around it.
 ///
 /// What this replaces is worse than slow: the pass-completion handler used to
 /// drain the *whole* backfill queue in place, with every other lane frozen
@@ -856,6 +857,13 @@ const BODIES_BETWEEN_WAVES: usize = 8;
 /// to sync behind it. A handler is also the wrong place to take the write
 /// gate, since a frozen lane may be holding it.
 const BODIES_BESIDE_A_WAVE: usize = 8;
+
+/// How many batches a wave keeps out beside its lanes (#1941).
+///
+/// Two: one writing while the next is on the wire, which is the whole of the
+/// pipeline. Memory holds two batches' sections at most, and a batch that has
+/// not started when a job arrives goes back to the queue.
+const BATCHES_BESIDE_A_WAVE: usize = 2;
 
 /// How long the body backfill may hold the loop before it goes back to look
 /// for new mail.
@@ -1081,7 +1089,7 @@ fn run(
                         {
                             break;
                         }
-                        if !pump_body(&parts, &store, &mut state, &inbox).await {
+                        if !pump_body(&parts, &store, &mut state, &inbox, slice_ends, 1).await {
                             break;
                         }
                         fetched += 1;
@@ -1115,8 +1123,9 @@ fn run(
                     && state.supervisor.link().is_online()
                     && !state.backfill.is_idle()
                     && !has_queued_work(&parts, &store).await
-                    && pump_body(&parts, &store, &mut state, &inbox).await
-                {}
+                    && pump_body(&parts, &store, &mut state, &inbox, slice_ends, usize::MAX).await
+                {
+                }
 
                 // Then queue the next batch, and fetch that too. `seed` takes
                 // the newest `seed_batch` messages still missing a body, and
@@ -1142,7 +1151,8 @@ fn run(
                         && state.supervisor.link().is_online()
                         && !state.backfill.is_idle()
                         && !has_queued_work(&parts, &store).await
-                        && pump_body(&parts, &store, &mut state, &inbox).await
+                        && pump_body(&parts, &store, &mut state, &inbox, slice_ends, usize::MAX)
+                            .await
                     {}
                 }
 
@@ -2142,10 +2152,13 @@ impl Committed<'_> {
     }
 }
 
-/// Fetch queued bodies, up to [`BODY_WINDOW`] of them at once.
+/// Fetch queued bodies a batch at a time, up to [`BODY_WINDOW`] of a batch's
+/// writes at once.
 ///
 /// Returns whether it did anything, so the caller can keep going until the
-/// queue is empty.
+/// queue is empty. Runs up to `batches` batches, or until `until`, or until
+/// something outranks it (#1941: the next batch is fetched while this one is
+/// written).
 ///
 /// # Why more than one (#1551)
 ///
@@ -2180,38 +2193,187 @@ async fn pump_body(
     store: &Store,
     state: &mut State,
     inbox: &async_channel::Receiver<Job>,
+    until: Instant,
+    batches: usize,
 ) -> bool {
-    let mut claims = Vec::new();
-    while claims.len() < BODY_WINDOW {
-        let Some(claim) = state.backfill.next_body() else {
-            break;
-        };
-        claims.push(claim);
-    }
-    let Some(first) = claims.first() else {
+    let first = state.backfill.next_batch();
+    let Some(head) = first.first() else {
         return false;
     };
     // Every claim carries a clone of the backfill's one token, so this
-    // cancels all of them — which is what shutdown wants, and why the claims
+    // cancels all of them -- which is what shutdown wants, and why the claims
     // do not need tokens of their own.
-    let cancel = first.cancel.clone();
-    state.busy.set(match claims.as_slice() {
-        [only] => format!("the body backfill (message {})", only.request.message),
-        many => format!("the body backfill ({} messages)", many.len()),
-    });
+    let cancel = head.cancel.clone();
 
     // Read before the fetches start, so nothing below borrows `state` while
     // they are in flight. ADR 0017's inline rule, from the same policy the
     // queue is scheduled under (#751).
     let inline_cap = state.backfill.policy().max_inline_bytes;
 
-    // One command for as many of these as share a section path (#1551). The
-    // window is small, so this is at most a couple of round trips saved per
-    // call -- but the same batch runs on every call for the length of a
-    // backfill, which is where tens of thousands of waits go.
-    //
-    // Best-effort by construction: whatever it does not bring back,
-    // `fetch_body` fetches the way it always did.
+    // One batch is written while the next is on the wire (#1941): the fetch of
+    // N+1 is a future polled beside N's writes, so a run of batches costs the
+    // longer of the two rather than their sum. Never more than one batch
+    // ahead, so memory holds two batches' sections at most, and the
+    // look-ahead is only claimed while every guard the callers' loops apply
+    // still holds -- a job, a queued operation, going offline and the end of
+    // the slice all stop it, and a claim taken for a batch that then does not
+    // start goes back to the queue it came from.
+    let mut ready = prefetch_batch(parts, store, first).await;
+    let mut done = 0;
+    loop {
+        done += 1;
+        let (claims, prefetched) = ready;
+        let ahead_claims = if done < batches
+            && Instant::now() < until
+            && nothing_asked(inbox)
+            && state.supervisor.link().is_online()
+            && !has_queued_work(parts, store).await
+        {
+            state.backfill.next_batch()
+        } else {
+            Vec::new()
+        };
+        let mut ahead = (!ahead_claims.is_empty())
+            .then(|| Box::pin(prefetch_batch(parts, store, ahead_claims)));
+        let mut arrived = None;
+
+        state.busy.set(match claims.as_slice() {
+            [only] => format!("the body backfill (message {})", only.request.message),
+            many => format!("the body backfill ({} messages)", many.len()),
+        });
+        let mut waiting: std::collections::VecDeque<_> = claims.into();
+        let mut running = FuturesUnordered::new();
+
+        // Shutdown must not wait for the wire: when the channel closes
+        // mid-fetch, fire the token so every fetch unwinds cooperatively
+        // instead of running to the command timeout, which is twelve times the
+        // shutdown grace (#759). Nothing is lost -- what a cancelled fetch
+        // leaves unfetched stays `body_state <> 'full'`, and the next seed
+        // derives the queue from that -- but the ones already in flight are
+        // still drained, so no claim is left outstanding for ever.
+        let mut cancelled = false;
+        loop {
+            // The window, refilled from the batch. A job that arrives while
+            // the batch is out is answered after at most the bodies already
+            // on the wire: what has not started goes back.
+            if !nothing_asked(inbox) {
+                for claim in waiting.drain(..) {
+                    state.backfill.release(claim);
+                }
+            }
+            while running.len() < BODY_WINDOW {
+                let Some(claim) = waiting.pop_front() else {
+                    break;
+                };
+                running.push(fetch_one_body(
+                    parts,
+                    store,
+                    inline_cap,
+                    prefetched.clone(),
+                    claim,
+                ));
+            }
+            if running.is_empty() {
+                break;
+            }
+            let settled = tokio::select! {
+                biased;
+                next = running.next() => next,
+                landed = async { ahead.as_mut().expect("guarded").await },
+                    if ahead.is_some() => {
+                    arrived = Some(landed);
+                    ahead = None;
+                    continue;
+                }
+                () = wait_for_close(inbox), if !cancelled => {
+                    cancel.cancel();
+                    cancelled = true;
+                    continue;
+                }
+            };
+            let Some((message, result)) = settled else {
+                break;
+            };
+            // A slot just freed. If the user has opened something since this call
+            // began, start it now rather than making it wait for the rest of the
+            // window -- that would be a longer wait than the serial loop gave,
+            // which is the one thing this change must not cost. Only interactive
+            // work: topping up with background would make the call unbounded, and
+            // the outer loop's own checks are what let a queued job interleave.
+            if !cancelled && let Some(next) = state.backfill.next_interactive_body() {
+                // No prefetch for a top-up: it arrived after the batch and is one
+                // message, which is not a batch.
+                running.push(fetch_one_body(parts, store, inline_cap, None, next));
+            }
+            let outcome = result.unwrap_or_else(|error| {
+                if let SyncError::Backend(backend) = &error {
+                    let moved = state.supervisor.observe(backend, Utc::now());
+                    announce_link(parts, state, moved);
+                }
+                Outcome::Failed {
+                    reason: error.to_string(),
+                }
+            });
+
+            // The reading pane is waiting on exactly this for whatever the user
+            // just opened, so it is worth saying the moment the bytes are local.
+            if matches!(outcome, Outcome::Stored { .. }) {
+                parts.events.emit(Event::BodyLoaded {
+                    account: parts.account,
+                    message,
+                });
+            }
+            // The open message reads again: a refusal changes its plate (#1918).
+            if matches!(outcome, Outcome::Failed { .. }) {
+                parts.events.emit(Event::BodyFailed {
+                    account: parts.account,
+                    message,
+                });
+            }
+            state.backfill.finished(message, outcome);
+            announce_backfill(parts, state, std::time::Instant::now()).await;
+        }
+
+        // The next batch: already here, still on the wire, or never claimed.
+        let next = match (arrived, ahead) {
+            (Some(landed), _) => Some(landed),
+            (None, Some(pending)) => Some(pending.await),
+            (None, None) => None,
+        };
+        let Some(next) = next else {
+            break;
+        };
+        if cancelled || !nothing_asked(inbox) {
+            for claim in next.0 {
+                state.backfill.release(claim);
+            }
+            break;
+        }
+        ready = next;
+    }
+    true
+}
+
+/// A batch of claims and the sections fetched ahead for them.
+type Batch = (
+    Vec<postio_sync::backfill::Claim>,
+    Option<Rc<RefCell<postio_sync::backfill::Prefetched>>>,
+);
+
+/// The wire half of a batch: the text sections and header blocks of every
+/// claim in it, a command each for as many as share a section path (#1551).
+///
+/// Best-effort by construction: whatever it does not bring back,
+/// `fetch_body` fetches the way it always did.
+async fn prefetch_batch(
+    parts: &EngineParts,
+    store: &Store,
+    claims: Vec<postio_sync::backfill::Claim>,
+) -> Batch {
+    let Some(first) = claims.first() else {
+        return (claims, None);
+    };
+    let cancel = first.cancel.clone();
     let requests: Vec<_> = claims.iter().map(|claim| claim.request.clone()).collect();
     let prefetched = match store.connect_background().await {
         Ok(connection) => {
@@ -2238,83 +2400,7 @@ async fn pump_body(
             None
         }
     };
-
-    let mut running = FuturesUnordered::new();
-    for claim in claims {
-        running.push(fetch_one_body(
-            parts,
-            store,
-            inline_cap,
-            prefetched.clone(),
-            claim,
-        ));
-    }
-
-    // Shutdown must not wait for the wire: when the channel closes mid-fetch,
-    // fire the token so every fetch unwinds cooperatively instead of running
-    // to the command timeout, which is twelve times the shutdown grace
-    // (#759). Nothing is lost -- what a cancelled fetch leaves unfetched
-    // stays `body_state <> 'full'`, and the next seed derives the queue from
-    // that -- but the ones already in flight are still drained, so no claim
-    // is left outstanding for ever.
-    let mut cancelled = false;
-    loop {
-        let settled = if cancelled {
-            running.next().await
-        } else {
-            tokio::select! {
-                biased;
-                next = running.next() => next,
-                () = wait_for_close(inbox) => {
-                    cancel.cancel();
-                    cancelled = true;
-                    continue;
-                }
-            }
-        };
-        let Some((message, result)) = settled else {
-            break;
-        };
-        // A slot just freed. If the user has opened something since this call
-        // began, start it now rather than making it wait for the rest of the
-        // window -- that would be a longer wait than the serial loop gave,
-        // which is the one thing this change must not cost. Only interactive
-        // work: topping up with background would make the call unbounded, and
-        // the outer loop's own checks are what let a queued job interleave.
-        if !cancelled && let Some(next) = state.backfill.next_interactive_body() {
-            // No prefetch for a top-up: it arrived after the batch and is one
-            // message, which is not a batch.
-            running.push(fetch_one_body(parts, store, inline_cap, None, next));
-        }
-        let outcome = result.unwrap_or_else(|error| {
-            if let SyncError::Backend(backend) = &error {
-                let moved = state.supervisor.observe(backend, Utc::now());
-                announce_link(parts, state, moved);
-            }
-            Outcome::Failed {
-                reason: error.to_string(),
-            }
-        });
-
-        // The reading pane is waiting on exactly this for whatever the user
-        // just opened, so it is worth saying the moment the bytes are local.
-        if matches!(outcome, Outcome::Stored { .. }) {
-            parts.events.emit(Event::BodyLoaded {
-                account: parts.account,
-                message,
-            });
-        }
-        // The open message reads again: a refusal changes its plate (#1918).
-        if matches!(outcome, Outcome::Failed { .. }) {
-            parts.events.emit(Event::BodyFailed {
-                account: parts.account,
-                message,
-            });
-        }
-        state.backfill.finished(message, outcome);
-        announce_backfill(parts, state, std::time::Instant::now()).await;
-    }
-    true
+    (claims, prefetched)
 }
 
 /// How many bodies may be on the wire at once. See [`pump_body`].
@@ -3006,7 +3092,7 @@ async fn sync_wave(
     let mut drains = FuturesUnordered::new();
     let make_drain = || run_drain(parts, store);
     let make_bodies = |claims: Vec<postio_sync::backfill::Claim>, inline_cap: Option<u64>| async move {
-        fetch_bodies(parts, store, inline_cap, claims).await
+        fetch_bodies(parts, store, inline_cap, claims, inbox).await
     };
     let make_look = |step: Watch| -> Option<futures_util::future::LocalBoxFuture<'_, Look>> {
         match step {
@@ -3145,8 +3231,8 @@ async fn sync_wave(
                 // asks whether INBOX's page of bodies is on the wire: a page
                 // claimed after it would read as "not progressing" and
                 // release the other folders onto the INBOX it just finished.
-                if !asked_to_stop
-                    && bodies.is_empty()
+                while !asked_to_stop
+                    && bodies.len() < BATCHES_BESIDE_A_WAVE
                     && let Some(claims) = claim_bodies_for_the_wave(parts, store, state, inbox, &active).await
                 {
                     let inline_cap = state.backfill.policy().max_inline_bytes;
@@ -3182,15 +3268,15 @@ async fn sync_wave(
             // A batch of bodies came back. Settle it the way `pump_body`
             // would have, and send the next one out: this is what makes the
             // flow continuous rather than one batch per tick.
-            Some(results) = bodies.next(), if !bodies.is_empty() => {
-                settle_bodies(parts, state, results).await;
+            Some(fetched) = bodies.next(), if !bodies.is_empty() => {
+                settle_bodies(parts, state, fetched).await;
                 // An arrival whose text just landed has its attachments
                 // queued behind it; they go now too.
                 if !asked_to_stop {
                     act_on!(Asked::FetchNow);
                 }
-                if !asked_to_stop
-                    && bodies.is_empty()
+                while !asked_to_stop
+                    && bodies.len() < BATCHES_BESIDE_A_WAVE
                     && let Some(claims) = claim_bodies_for_the_wave(parts, store, state, inbox, &active).await
                 {
                     let inline_cap = state.backfill.policy().max_inline_bytes;
@@ -3292,7 +3378,7 @@ async fn sync_wave(
             // [`claim_bodies_for_the_wave`] for why a wave cannot leave either until
             // it is over.
             _ = yield_point.notified(), if !asked_to_stop => {
-                if bodies.is_empty()
+                while bodies.len() < BATCHES_BESIDE_A_WAVE
                     && let Some(claims) = claim_bodies_for_the_wave(parts, store, state, inbox, &active).await
                 {
                     let inline_cap = state.backfill.policy().max_inline_bytes;
@@ -3383,13 +3469,7 @@ async fn claim_bodies_for_the_wave(
     {
         return None;
     }
-    let mut claims = Vec::new();
-    while claims.len() < BODIES_BESIDE_A_WAVE {
-        let Some(claim) = state.backfill.next_body() else {
-            break;
-        };
-        claims.push(claim);
-    }
+    let claims = state.backfill.next_batch();
     (!claims.is_empty()).then_some(claims)
 }
 
@@ -3472,59 +3552,54 @@ async fn fetch_bodies(
     store: &Store,
     inline_cap: Option<u64>,
     claims: Vec<postio_sync::backfill::Claim>,
-) -> Vec<(MessageId, Result<Outcome, SyncError>)> {
-    let Some(first) = claims.first() else {
-        return Vec::new();
-    };
-    let cancel = first.cancel.clone();
-    let requests: Vec<_> = claims.iter().map(|claim| claim.request.clone()).collect();
-    let prefetched = match store.connect_background().await {
-        Ok(connection) => {
-            // Background only if every claim in the batch is: one the user
-            // or an arrival is waiting on lifts the whole command.
-            let quiet = claims
-                .iter()
-                .all(|claim| claim.priority == backfill::Priority::Background)
-                .then(|| background_backend(parts));
-            let cache = backfill::prefetch_text_sections(
-                &connection,
-                quiet.as_deref().unwrap_or(parts.backend.as_ref()),
-                &requests,
-                &cancel,
-            )
-            .await;
-            Some(Rc::new(RefCell::new(cache)))
-        }
-        Err(error) => {
-            tracing::debug!(%error, "no connection to prefetch with");
-            None
-        }
-    };
+    inbox: &async_channel::Receiver<Job>,
+) -> Fetched {
+    let mut fetched = Fetched::default();
+    if claims.is_empty() {
+        return fetched;
+    }
+    let (claims, prefetched) = prefetch_batch(parts, store, claims).await;
+    let mut waiting: std::collections::VecDeque<_> = claims.into();
     let mut running = FuturesUnordered::new();
-    for claim in claims {
-        running.push(fetch_one_body(
-            parts,
-            store,
-            inline_cap,
-            prefetched.clone(),
-            claim,
-        ));
+    loop {
+        // A job that arrives while the batch is out waits for the bodies on
+        // the wire and no more: what has not started goes back to the queue.
+        while running.len() < BODIES_BESIDE_A_WAVE && nothing_asked(inbox) {
+            let Some(claim) = waiting.pop_front() else {
+                break;
+            };
+            running.push(fetch_one_body(
+                parts,
+                store,
+                inline_cap,
+                prefetched.clone(),
+                claim,
+            ));
+        }
+        let Some(settled) = running.next().await else {
+            break;
+        };
+        fetched.results.push(settled);
     }
-    let mut results = Vec::new();
-    while let Some(settled) = running.next().await {
-        results.push(settled);
-    }
-    results
+    fetched.unstarted = waiting.into();
+    fetched
+}
+
+/// What [`fetch_bodies`] brought back: the settled bodies, and the claims it
+/// stopped short of because a job was waiting.
+#[derive(Default)]
+struct Fetched {
+    results: Vec<(MessageId, Result<Outcome, SyncError>)>,
+    unstarted: Vec<postio_sync::backfill::Claim>,
 }
 
 /// What [`pump_body`] does with each fetched body, for a batch fetched
 /// beside a wave.
-async fn settle_bodies(
-    parts: &EngineParts,
-    state: &mut State,
-    results: Vec<(MessageId, Result<Outcome, SyncError>)>,
-) {
-    for (message, result) in results {
+async fn settle_bodies(parts: &EngineParts, state: &mut State, fetched: Fetched) {
+    for claim in fetched.unstarted {
+        state.backfill.release(claim);
+    }
+    for (message, result) in fetched.results {
         let outcome = result.unwrap_or_else(|error| {
             if let SyncError::Backend(backend) = &error {
                 let moved = state.supervisor.observe(backend, Utc::now());

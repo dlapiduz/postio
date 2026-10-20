@@ -924,6 +924,53 @@ impl MockBackend {
         self.state.lock().expect("mock backend mutex")
     }
 
+    /// Serves one part to a sink; the work of a `FETCH` once its wait is paid.
+    async fn serve_part(
+        &self,
+        mailbox: &str,
+        id: &RemoteId,
+        part: &BodyPart,
+        sink: &mut dyn BodySink,
+        cancel: &CancelToken,
+    ) -> BackendResult<FetchedBody> {
+        if cancel.is_cancelled() {
+            return Err(BackendError::Cancelled);
+        }
+
+        let (bytes, chunk_size) = {
+            let mut state = self.state();
+            let seq = state.calls;
+            state.body_fetches.push((seq, mailbox.to_owned()));
+            let state = state;
+            let index = self.locate(&state, mailbox, "FETCH BODY")?;
+            let folder = &state.mailboxes[index];
+            let uid = identity::wire_uid(mailbox, folder.uid_validity, id)?;
+            let message = folder
+                .find(uid.get())
+                .ok_or_else(|| BackendError::NoSuchMessage {
+                    mailbox: mailbox.to_owned(),
+                    uid: uid.get(),
+                })?;
+            (section(message, part)?, state.chunk_size)
+        };
+
+        let mut written = 0u64;
+        for chunk in bytes.chunks(chunk_size) {
+            if cancel.is_cancelled() {
+                return Err(BackendError::Cancelled);
+            }
+            sink.chunk(chunk).await?;
+            written += chunk.len() as u64;
+        }
+        sink.finish().await?;
+
+        Ok(FetchedBody {
+            remote_id: id.clone(),
+            part: part.clone(),
+            bytes_written: written,
+        })
+    }
+
     /// Counts the call, waits out the configured latency, and fires any fault
     /// scheduled for it.
     async fn enter(&self, context: &str) -> BackendResult<()> {
@@ -1277,13 +1324,15 @@ impl MailBackend for MockBackend {
                 .section_batches
                 .push((section.clone(), ids.len()));
         }
-        // Answered the way the trait's default does — the mock is a `Vec` and
-        // has no set primitive to be faster with. What it can report is the
-        // shape of the question.
+        // One command, one wait, as on the wire: a `UID FETCH` of a set is a
+        // single round trip however many messages it names, and a mock that
+        // charged latency per message would make a batch look no cheaper than
+        // a walk. Faults and latency are paid once, up front.
+        self.enter("FETCH BODY").await?;
         let mut answered = Vec::with_capacity(ids.len());
         for id in ids {
             let mut sink = crate::backend::sink::VecSink::new();
-            match self.fetch_part(mailbox, id, part, &mut sink, cancel).await {
+            match self.serve_part(mailbox, id, part, &mut sink, cancel).await {
                 Ok(_) if sink.is_finished() => answered.push((id.clone(), sink.into_inner())),
                 Ok(_) => continue,
                 Err(BackendError::NoSuchMessage { .. }) => continue,
@@ -1302,42 +1351,7 @@ impl MailBackend for MockBackend {
         cancel: &CancelToken,
     ) -> BackendResult<FetchedBody> {
         self.enter("FETCH BODY").await?;
-        if cancel.is_cancelled() {
-            return Err(BackendError::Cancelled);
-        }
-
-        let (bytes, chunk_size) = {
-            let mut state = self.state();
-            let seq = state.calls;
-            state.body_fetches.push((seq, mailbox.to_owned()));
-            let state = state;
-            let index = self.locate(&state, mailbox, "FETCH BODY")?;
-            let folder = &state.mailboxes[index];
-            let uid = identity::wire_uid(mailbox, folder.uid_validity, id)?;
-            let message = folder
-                .find(uid.get())
-                .ok_or_else(|| BackendError::NoSuchMessage {
-                    mailbox: mailbox.to_owned(),
-                    uid: uid.get(),
-                })?;
-            (section(message, part)?, state.chunk_size)
-        };
-
-        let mut written = 0u64;
-        for chunk in bytes.chunks(chunk_size) {
-            if cancel.is_cancelled() {
-                return Err(BackendError::Cancelled);
-            }
-            sink.chunk(chunk).await?;
-            written += chunk.len() as u64;
-        }
-        sink.finish().await?;
-
-        Ok(FetchedBody {
-            remote_id: id.clone(),
-            part: part.clone(),
-            bytes_written: written,
-        })
+        self.serve_part(mailbox, id, part, sink, cancel).await
     }
 
     async fn store_flags(

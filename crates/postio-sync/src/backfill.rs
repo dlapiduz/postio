@@ -239,12 +239,21 @@ pub enum Priority {
 #[derive(Debug, Default)]
 pub struct Prefetched {
     sections: HashMap<(postio_model::RemoteId, String), Vec<u8>>,
+    /// `BODY[HEADER]` for the same messages, fetched as a set too: every
+    /// text fetch stores the header block, and one command per message for it
+    /// was most of the round trips a batch of sections had saved.
+    headers: HashMap<postio_model::RemoteId, Vec<u8>>,
 }
 
 impl Prefetched {
     /// The bytes of `section` for `id`, if the batch fetched them.
     fn take(&mut self, id: &postio_model::RemoteId, section: &str) -> Option<Vec<u8>> {
         self.sections.remove(&(id.clone(), section.to_owned()))
+    }
+
+    /// The header block fetched for `id`, if the batch fetched it.
+    fn take_headers(&mut self, id: &postio_model::RemoteId) -> Option<Vec<u8>> {
+        self.headers.remove(id)
     }
 
     /// Everything fetched for `id`, moved out into a cache of its own.
@@ -266,17 +275,20 @@ impl Prefetched {
                 split.sections.insert(key, bytes);
             }
         }
+        if let Some(bytes) = self.headers.remove(id) {
+            split.headers.insert(id.clone(), bytes);
+        }
         split
     }
 
-    /// How many sections it holds. Test support and logging.
+    /// How many text sections it holds. Test support and logging.
     pub fn len(&self) -> usize {
         self.sections.len()
     }
 
     /// Whether it holds nothing.
     pub fn is_empty(&self) -> bool {
-        self.sections.is_empty()
+        self.sections.is_empty() && self.headers.is_empty()
     }
 }
 
@@ -295,6 +307,14 @@ const PREFETCH_BUDGET: u64 = 8 * 1024 * 1024;
 /// uids is already most of the win, and ten thousand would be a request no
 /// server thanks you for.
 const PREFETCH_BATCH: usize = 50;
+
+/// How many bodies one batch holds at most. See [`Backfill::next_batch`].
+pub const BATCH_LEN: usize = PREFETCH_BATCH;
+
+/// How many bytes of text one batch holds before it is full, give or take the
+/// one message that crossed the line. Half of [`PREFETCH_BUDGET`], so the
+/// batch being written and the one being fetched together stay inside it.
+pub const BATCH_BYTES: u64 = PREFETCH_BUDGET / 2;
 
 /// Fetch the text sections of `requests` in as few commands as their section
 /// paths allow.
@@ -327,6 +347,7 @@ pub async fn prefetch_text_sections(
     let mut groups: HashMap<(String, String), Vec<postio_model::RemoteId>> = HashMap::new();
     let mut contents = HashSet::new();
     let mut budget = PREFETCH_BUDGET;
+    let mut named = HashSet::new();
     for request in requests {
         if !matches!(request.want, Want::Text) {
             continue;
@@ -357,6 +378,7 @@ pub async fn prefetch_text_sections(
         }
         if wanted {
             budget = budget.saturating_sub(request.text_size);
+            named.insert(request.remote_id.clone());
         }
     }
 
@@ -375,6 +397,33 @@ pub async fn prefetch_text_sections(
             // that failed must not fail the bodies it was trying to help.
             Err(error) => {
                 tracing::debug!(%path, %section, %error, "a batched section fetch failed");
+            }
+        }
+    }
+
+    // The header blocks of the same messages, one command per mailbox. Without
+    // this the text fetch asks for each message's block on its own, which is
+    // one round trip per message however well the sections batched.
+    let mut by_path: HashMap<&str, Vec<postio_model::RemoteId>> = HashMap::new();
+    for request in requests {
+        if named.remove(&request.remote_id) {
+            by_path
+                .entry(request.path.as_str())
+                .or_default()
+                .push(request.remote_id.clone());
+        }
+    }
+    for (path, ids) in by_path {
+        if cancel.is_cancelled() || ids.len() < 2 {
+            continue;
+        }
+        match backend
+            .fetch_sections(path, &ids, &BodyPart::Headers, cancel)
+            .await
+        {
+            Ok(answered) => prefetched.headers.extend(answered),
+            Err(error) => {
+                tracing::debug!(%path, %error, "a batched header fetch failed");
             }
         }
     }
@@ -955,6 +1004,74 @@ impl Backfill {
         }
         let request = self.take_fresh()?;
         Some(self.claim(request, Priority::Fresh))
+    }
+
+    /// The next batch of bodies to put on the wire together (#1941).
+    ///
+    /// **A batch is one kind of work.** If anything is waiting on the
+    /// interactive or fresh lanes, the batch is exactly that and no
+    /// background body rides along: the batch's prefetch is one command, and
+    /// a message the user opened must not wait behind forty-nine they did not.
+    /// Otherwise it is background bodies, in queue order, until it holds
+    /// [`BATCH_LEN`] of them or their [`BodyRequest::fetched_bytes`] reach
+    /// [`BATCH_BYTES`] -- and always at least one, so a message larger than the
+    /// whole budget still goes, alone.
+    ///
+    /// Empty when there is nothing to do right now, for the reasons
+    /// [`next_body`](Self::next_body) gives.
+    pub fn next_batch(&mut self) -> Vec<Claim> {
+        let mut batch = Vec::new();
+        while batch.len() < BATCH_LEN
+            && let Some(claim) = self.next_interactive_body()
+        {
+            batch.push(claim);
+        }
+        if !batch.is_empty() || self.cancelled || !self.background_runs() {
+            return batch;
+        }
+        let mut bytes = 0u64;
+        while batch.len() < BATCH_LEN && bytes < BATCH_BYTES {
+            let Some(request) = self.take_background() else {
+                break;
+            };
+            bytes = bytes.saturating_add(request.fetched_bytes());
+            batch.push(self.claim(request, Priority::Background));
+        }
+        batch
+    }
+
+    /// Hands a claim back unfetched, to the front of the line it came from.
+    ///
+    /// For a claim taken ahead of need that the engine then decided not to
+    /// start -- a job arrived, the slice ended -- so that "outstanding" keeps
+    /// meaning "on the wire or about to be". Interactive claims return to the
+    /// interactive lane, everything else to the backlog.
+    pub fn release(&mut self, claim: Claim) {
+        let message = claim.request.message;
+        if self.lanes.get(&message) != Some(&Lane::InFlight) {
+            return;
+        }
+        self.progress.in_flight = self.progress.in_flight.saturating_sub(1);
+        self.progress.pending += 1;
+        if self.cancelled {
+            self.lanes.remove(&message);
+            self.progress.pending = self.progress.pending.saturating_sub(1);
+            return;
+        }
+        match claim.priority {
+            Priority::Background => {
+                self.lanes.insert(message, Lane::Background);
+                self.background.push(Entry(claim.request));
+            }
+            Priority::Interactive => {
+                self.lanes.insert(message, Lane::Interactive);
+                self.interactive.push_front(claim.request);
+            }
+            Priority::Fresh => {
+                self.lanes.insert(message, Lane::Fresh);
+                self.fresh.push_front(claim.request);
+            }
+        }
     }
 
     /// Records what became of a claim.
@@ -1975,7 +2092,13 @@ async fn fetch_text_parts(
     // ADR 0025 Q4 refuses a header fetch at *header-sync* time, which charges
     // every user's sync forever. This is body-fetch time, where the round trip
     // is already being paid for.
-    let block = fetch_header_block(backend, request, cancel).await;
+    let block = match prefetched
+        .as_mut()
+        .and_then(|cache| cache.take_headers(&request.remote_id))
+    {
+        Some(bytes) => postio_model::headers::block_of(&bytes),
+        None => fetch_header_block(backend, request, cancel).await,
+    };
     let stored = StoredBody {
         text: stored_text(body.text.as_deref()),
         html: stored_text(body.html.as_deref()),
