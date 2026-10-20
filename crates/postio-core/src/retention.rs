@@ -1,10 +1,10 @@
 //! How long Junk and Trash keep mail before it is emptied (#1932).
 //!
 //! The rule is a function, not a setting read in three places: which folder
-//! kinds are ever emptied, from when an age counts, and the one promise that
-//! holds whatever the number is -- a Flagged message is never purged. The
-//! store finds candidates by the cutoff this gives it; [`AutoEmpty::purges`]
-//! is the same rule for one message, so a test can hold the query to it.
+//! kinds are ever emptied, and from when an age counts. The store finds
+//! candidates older than the cutoff this gives it. The one promise that holds
+//! whatever the number is -- a Flagged message is never purged -- is the
+//! query's (`ExpiryRepository::expired_in`), held there by its own test.
 
 use chrono::{DateTime, Duration, Utc};
 use postio_model::MailboxRole;
@@ -44,21 +44,6 @@ impl AutoEmpty {
         let days = self.days_for(role)?;
         Some(now - Duration::days(i64::from(days)))
     }
-
-    /// Whether one message is purged: in an emptied folder, older than its
-    /// days, and not Flagged.
-    pub fn purges(
-        self,
-        role: MailboxRole,
-        received_at: DateTime<Utc>,
-        flagged: bool,
-        now: DateTime<Utc>,
-    ) -> bool {
-        !flagged
-            && self
-                .cutoff(role, now)
-                .is_some_and(|cutoff| received_at < cutoff)
-    }
 }
 
 #[cfg(test)]
@@ -75,7 +60,7 @@ mod tests {
         let off = AutoEmpty::default();
         assert!(!off.is_on());
         for role in [MailboxRole::Junk, MailboxRole::Trash] {
-            assert!(!off.purges(role, day(1), false, day(30)));
+            assert_eq!(off.cutoff(role, day(30)), None, "{role:?}");
         }
         let on = AutoEmpty {
             junk_days: 7,
@@ -86,41 +71,32 @@ mod tests {
             MailboxRole::Archive,
             MailboxRole::Sent,
             MailboxRole::Drafts,
+            MailboxRole::Flagged,
             MailboxRole::Regular,
         ] {
-            assert!(!on.purges(role, day(1), false, day(30)), "{role:?}");
+            assert_eq!(on.cutoff(role, day(30)), None, "{role:?} is never emptied");
         }
     }
 
     #[test]
-    fn each_folder_keeps_its_own_days_and_the_boundary_is_exclusive() {
+    fn each_folder_keeps_its_own_days() {
         let policy = AutoEmpty {
             junk_days: 7,
             trash_days: 30,
         };
         let now = day(31);
-        assert!(
-            policy.purges(MailboxRole::Junk, day(23), false, now),
-            "8 days old"
+        assert_eq!(policy.cutoff(MailboxRole::Junk, now), Some(day(24)));
+        assert_eq!(
+            policy.cutoff(MailboxRole::Trash, now),
+            Some(now - Duration::days(30))
         );
-        assert!(
-            !policy.purges(MailboxRole::Junk, day(24), false, now),
-            "exactly 7 days is kept"
-        );
-        assert!(
-            !policy.purges(MailboxRole::Trash, day(23), false, now),
-            "trash keeps 30"
-        );
-        assert!(policy.purges(MailboxRole::Trash, day(1) - Duration::days(1), false, now));
-    }
-
-    #[test]
-    fn flagged_mail_is_never_purged() {
-        let policy = AutoEmpty {
+        assert_eq!(policy.days_for(MailboxRole::Junk), Some(7));
+        assert!(policy.is_on());
+        let junk_only = AutoEmpty {
             junk_days: 1,
-            trash_days: 1,
+            trash_days: 0,
         };
-        assert!(!policy.purges(MailboxRole::Trash, day(1), true, day(31)));
-        assert!(policy.purges(MailboxRole::Trash, day(1), false, day(31)));
+        assert_eq!(junk_only.days_for(MailboxRole::Trash), None);
+        assert!(junk_only.is_on());
     }
 }
