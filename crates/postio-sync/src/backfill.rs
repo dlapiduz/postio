@@ -1026,16 +1026,16 @@ impl Backfill {
         {
             batch.push(claim);
         }
-        if !batch.is_empty() || self.cancelled || !self.background_runs() {
+        if !batch.is_empty() {
             return batch;
         }
         let mut bytes = 0u64;
         while batch.len() < BATCH_LEN && bytes < BATCH_BYTES {
-            let Some(request) = self.take_background() else {
+            let Some(claim) = self.next_body() else {
                 break;
             };
-            bytes = bytes.saturating_add(request.fetched_bytes());
-            batch.push(self.claim(request, Priority::Background));
+            bytes = bytes.saturating_add(claim.request.fetched_bytes());
+            batch.push(claim);
         }
         batch
     }
