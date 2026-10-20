@@ -12,8 +12,7 @@ use chrono::{TimeZone, Utc};
 use postio_model::{Account, ContactId, EmailAddress, MailboxId, Message, MessageId, Thread};
 use postio_storage::Connection;
 use postio_storage::repository::{
-    ContactRepository, ListQuery, ListScope, MessageRepository, ThreadListQuery,
-    ThreadRepository,
+    ContactRepository, ListQuery, ListScope, MessageRepository, ThreadListQuery, ThreadRepository,
 };
 use postio_storage::test_support;
 
@@ -23,8 +22,7 @@ async fn from(
     inbox: MailboxId,
     thread: postio_model::ids::ThreadId,
     subject: &str,
-    name: &str,
-    email: &str,
+    (name, email): (&str, &str),
     day: u32,
 ) -> MessageId {
     let at = Utc.with_ymd_and_hms(2026, 3, day, 12, 0, 0).unwrap();
@@ -66,8 +64,26 @@ async fn mail() -> Mail {
         .create(&mut titled(&account, "Engines"))
         .await
         .expect("a thread");
-    from(&connection, &account, inbox, thread, "Engines", "A. L.", "ada@work.example", 1).await;
-    from(&connection, &account, inbox, thread, "Engines", "ada", "ada@home.example", 2).await;
+    from(
+        &connection,
+        &account,
+        inbox,
+        thread,
+        "Engines",
+        ("A. L.", "ada@work.example"),
+        1,
+    )
+    .await;
+    from(
+        &connection,
+        &account,
+        inbox,
+        thread,
+        "Engines",
+        ("ada", "ada@home.example"),
+        2,
+    )
+    .await;
     let stranger = ThreadRepository::new(&connection)
         .create(&mut titled(&account, "Urgent"))
         .await
@@ -78,8 +94,7 @@ async fn mail() -> Mail {
         inbox,
         stranger,
         "Urgent",
-        "Ada Lovelace",
-        "not-ada@example.net",
+        ("Ada Lovelace", "not-ada@example.net"),
         3,
     )
     .await;
@@ -128,12 +143,15 @@ async fn the_list_shows_the_users_name_for_every_one_of_their_addresses() {
     assert_eq!(
         list_names(&mail).await,
         [
-            ("ada@home.example".into(), Some("Countess of Lovelace".into())),
-            ("ada@work.example".into(), Some("Countess of Lovelace".into())),
             (
-                "not-ada@example.net".into(),
-                Some("Ada Lovelace".into()),
+                "ada@home.example".into(),
+                Some("Countess of Lovelace".into())
             ),
+            (
+                "ada@work.example".into(),
+                Some("Countess of Lovelace".into())
+            ),
+            ("not-ada@example.net".into(), Some("Ada Lovelace".into()),),
         ],
         "both of ada's addresses carry the name the user gave her; the \
          stranger claiming her name keeps his header, and nothing else"
@@ -193,7 +211,11 @@ async fn the_reader_can_ask_for_the_users_names_by_address() {
         .await
         .expect("page")
         .into_iter()
-        .find(|row| row.from.as_ref().is_some_and(|f| f.address == "ada@work.example"))
+        .find(|row| {
+            row.from
+                .as_ref()
+                .is_some_and(|f| f.address == "ada@work.example")
+        })
         .expect("ada's work mail");
     let message = MessageRepository::new(&mail.connection)
         .get(stored.id)

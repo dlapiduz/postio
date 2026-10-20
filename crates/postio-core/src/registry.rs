@@ -2477,6 +2477,9 @@ static SPECS: &[CommandSpec] = &[
         requires: FOCUS_MAIL,
     },
     // -- Contacts (specs/005-contacts, contracts/commands.md) -------------
+    // Focus's, drawn (`FOCUS_GRAPHICAL_MAIL`): the terminal, which is Focus in
+    // character cells, has no Contacts surface, and plan 011 does not give it
+    // one.
     CommandSpec {
         id: CommandId::OpenContacts,
         title: "Contacts",
@@ -2491,7 +2494,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(GO_SURFACES),
         destructive: false,
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: FOCUS_GRAPHICAL_MAIL,
     },
     CommandSpec {
         id: CommandId::ContactShowMail,
@@ -2502,7 +2505,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(CONTACTS),
         destructive: false,
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: FOCUS_GRAPHICAL_MAIL,
     },
     CommandSpec {
         id: CommandId::ContactCompose,
@@ -2513,7 +2516,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(CONTACTS),
         destructive: false,
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: FOCUS_GRAPHICAL_MAIL,
     },
     CommandSpec {
         id: CommandId::ContactsFilter,
@@ -2523,7 +2526,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(CONTACTS),
         destructive: false,
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: FOCUS_GRAPHICAL_MAIL,
     },
     CommandSpec {
         id: CommandId::ContactsToggleEveryone,
@@ -2537,7 +2540,7 @@ static SPECS: &[CommandSpec] = &[
         destructive: false,
         // Which people are shown is view state, not data.
         recovery: Recovery::None,
-        requires: MAIL,
+        requires: FOCUS_GRAPHICAL_MAIL,
     },
     CommandSpec {
         id: CommandId::ContactJoin,
@@ -2550,7 +2553,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(CONTACTS),
         destructive: false,
         recovery: Recovery::Undo,
-        requires: MAIL,
+        requires: FOCUS_GRAPHICAL_MAIL,
     },
     CommandSpec {
         id: CommandId::ContactAddAddress,
@@ -2560,7 +2563,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(CONTACTS),
         destructive: false,
         recovery: Recovery::Undo,
-        requires: MAIL,
+        requires: FOCUS_GRAPHICAL_MAIL,
     },
     CommandSpec {
         id: CommandId::ContactDetachAddress,
@@ -2570,7 +2573,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(CONTACTS),
         destructive: false,
         recovery: Recovery::Undo,
-        requires: MAIL,
+        requires: FOCUS_GRAPHICAL_MAIL,
     },
     CommandSpec {
         id: CommandId::ContactSetPreferred,
@@ -2583,7 +2586,7 @@ static SPECS: &[CommandSpec] = &[
         contexts: ctx(CONTACTS),
         destructive: false,
         recovery: Recovery::Undo,
-        requires: MAIL,
+        requires: FOCUS_GRAPHICAL_MAIL,
     },
 ];
 

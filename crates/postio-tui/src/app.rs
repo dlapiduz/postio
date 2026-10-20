@@ -4333,6 +4333,20 @@ impl App {
                     .filter_map(|page| self.fetch_of(generation, page))
                     .collect()
             }
+            // A person was named: every resident row may read differently
+            // and none moved, so the pages held are read again where they are.
+            postio_ui::paging::Plan::Repaint => {
+                let generation = self.list.generation();
+                let pages = self.list.resident_pages();
+                let pending: Vec<u32> = pages
+                    .into_iter()
+                    .filter(|page| self.list.note_pending(*page))
+                    .collect();
+                pending
+                    .into_iter()
+                    .filter_map(|page| self.fetch_of(generation, page))
+                    .collect()
+            }
             postio_ui::paging::Plan::Reload => self
                 .scope
                 .map(|scope| vec![Effect::Recount(scope)])
