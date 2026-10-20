@@ -450,7 +450,7 @@ pub fn a_treatment_chosen_for_one_address_reaches_the_persons_other_address() {
             "the other address's mail never drew"
         );
         assert!(
-            crate::settle_until(async || drawn_as(&reader, "paper")).await,
+            crate::settle_until(async || drawn_as(reader, "paper")).await,
             "the other address opens on paper by the rule"
         );
         support::keys(&window, &["k"]);
@@ -463,7 +463,7 @@ pub fn a_treatment_chosen_for_one_address_reaches_the_persons_other_address() {
             "the first address's mail never drew again"
         );
         assert!(
-            crate::settle_until(async || drawn_as(&reader, "paper")).await,
+            crate::settle_until(async || drawn_as(reader, "paper")).await,
             "and so does the first"
         );
         assert!(
@@ -471,7 +471,7 @@ pub fn a_treatment_chosen_for_one_address_reaches_the_persons_other_address() {
             "an HTML body can be switched"
         );
         assert!(
-            crate::settle_until(async || drawn_as(&reader, "app")).await,
+            crate::settle_until(async || drawn_as(reader, "app")).await,
             "O did not switch to app colours"
         );
         line.press_always();
@@ -493,7 +493,7 @@ pub fn a_treatment_chosen_for_one_address_reaches_the_persons_other_address() {
             "the other address's mail never drew"
         );
         assert!(
-            crate::settle_until(async || drawn_as(&reader, "app")).await,
+            crate::settle_until(async || drawn_as(reader, "app")).await,
             "the person's other address did not open in the person's choice"
         );
     });
