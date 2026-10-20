@@ -414,7 +414,7 @@ fn caps_on_the_toast(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
     support::descendants(&host)
         .iter()
         .filter(|widget| widget.type_().name() == "AdwToastWidget")
-        .flat_map(|toast| support::descendants(toast))
+        .flat_map(support::descendants)
         .filter(|widget| widget.has_css_class("postio-keyhint") && widget.is_mapped())
         .filter_map(|widget| {
             widget
