@@ -436,6 +436,25 @@ pub fn a_treatment_chosen_for_one_address_reaches_the_persons_other_address() {
             crate::settle_until(async || reader.treatment() == Treatment::Paper).await,
             "a newsletter opens on paper by the rule"
         );
+        // The person's other address opens on paper too, until a choice is made.
+        support::keys(&window, &["j"]);
+        assert!(
+            crate::settle_until(async || reading.title() == "Issue 51").await,
+            "j did not step to the other address's mail"
+        );
+        assert!(
+            crate::settle_until(async || reader.treatment() == Treatment::Paper).await,
+            "the other address opens on paper by the rule"
+        );
+        support::keys(&window, &["k"]);
+        assert!(
+            crate::settle_until(async || reading.title() == "Issue 50").await,
+            "k did not step back"
+        );
+        assert!(
+            crate::settle_until(async || reader.treatment() == Treatment::Paper).await,
+            "and so does the first"
+        );
         assert!(reader.switch_treatment(), "an HTML body can be switched");
         assert!(
             crate::settle_until(async || reader.treatment() == Treatment::AppColours).await,
