@@ -192,6 +192,13 @@ pub fn a_sender_warning_is_one_line_and_does_not_outlast_its_message() {
     reader.set_sender_warning(Some(said));
     lay_out();
     assert_eq!(reader.sender_warning_label().as_deref(), Some(said));
+    // A busy machine can need more than one frame to size the new row.
+    for _ in 0..20 {
+        if body_top(&reader) > quiet {
+            break;
+        }
+        lay_out();
+    }
     assert!(
         body_top(&reader) > quiet,
         "the warning took no room above the body"

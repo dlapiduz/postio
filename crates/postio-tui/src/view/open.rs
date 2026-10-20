@@ -1277,7 +1277,10 @@ mod tests {
             .position(|line| line.contains("Cc"))
             .expect("the Cc line");
         assert!(at > cc, "under the recipients, not above them:\n{drawn}");
-        assert!(drawn.contains("Uploaded v3"), "the body is still here:\n{drawn}");
+        assert!(
+            drawn.contains("Uploaded v3"),
+            "the body is still here:\n{drawn}"
+        );
 
         // Narrow: it wraps rather than being cut off mid-sentence.
         let narrow = screen(60, 36, &opened_warning((60, 36), Some(said)));
