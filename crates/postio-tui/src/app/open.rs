@@ -31,8 +31,6 @@ pub enum MenuAction {
     Link(String),
     /// Open a part of the message.
     Part(MessageId, AttachmentId),
-    /// Send a command aimed at exactly these messages, as its key would.
-    Send(postio_core::Command),
 }
 
 /// One row of a menu.
@@ -608,49 +606,59 @@ impl App {
         vec![Effect::Redraw]
     }
 
-    /// After an unsubscribe: offer to archive or delete the mail the list
-    /// left behind, over the message, as one command each (#1931). Nothing
-    /// to offer, or no message open to offer it over, says nothing.
-    pub(super) fn offer_sweep(
+    /// After an unsubscribe: the status line says so and, when the list left
+    /// mail behind, offers the one action `[focus] after_unsubscribe` names
+    /// (#1952). A notice, not a menu: it takes no keys, so ignoring it, or
+    /// `Esc`, keeps everything. The button is one command on exactly the
+    /// found messages, so one undo.
+    pub(super) fn confirm_unsubscribed(
         &mut self,
-        found: &postio_client::protocol::ListMailFound,
+        name: &str,
+        found: Option<postio_client::protocol::ListMailFound>,
     ) -> Vec<Effect> {
-        use postio_core::{Command, CommandId, MessageTarget};
-        use postio_ui::unsubscribe::{SWEEP_ARCHIVE, SWEEP_DELETE, SweepScope, sweep_offer};
-        if self.reading.is_none() {
-            return Vec::new();
-        }
-        let scope = SweepScope::ListId(found.name.clone());
-        let Some(title) = sweep_offer(&scope, found.ids.len(), found.more) else {
-            return Vec::new();
-        };
-        let count = found.ids.len();
-        let target = || MessageTarget::Messages(found.ids.clone());
-        let item = |verb: &str, id: CommandId, command: Command| MenuItem {
-            words: postio_ui::unsubscribe::sweep_button(verb, count, found.more),
-            detail: self.hint(id).unwrap_or_default(),
-            action: MenuAction::Send(command),
-        };
-        let items = vec![
-            item(
-                SWEEP_ARCHIVE,
-                CommandId::Archive,
-                Command::Archive { target: target() },
-            ),
-            item(
-                SWEEP_DELETE,
-                CommandId::Delete,
-                Command::Delete { target: target() },
-            ),
-        ];
-        // The offer holds the keyboard, as any menu over the message does.
-        self.focus = Focus::Reader;
-        self.open.menu = Some(Menu {
-            title,
-            items,
-            at: 0,
+        use postio_core::{Command, MessageTarget};
+        use postio_ui::unsubscribe::{SweepScope, sweep_notice};
+        let action = self.features.after_unsubscribe;
+        let notice = found.as_ref().and_then(|found| {
+            sweep_notice(
+                &SweepScope::ListId(name.to_owned()),
+                found.ids.len(),
+                found.more,
+                action,
+            )
         });
-        vec![Effect::Redraw]
+        let (Some(notice), Some(found)) = (notice, found) else {
+            return self.say(&postio_ui::focus_target::unsubscribed(name));
+        };
+        let target = MessageTarget::Messages(found.ids);
+        let command = match notice.action {
+            postio_config::AfterUnsubscribe::Archive => Command::Archive { target },
+            postio_config::AfterUnsubscribe::Delete => Command::Delete { target },
+        };
+        let effects = self.say(&notice.text);
+        self.notice_offer = Some((notice.button, command));
+        effects
+    }
+
+    /// The notice a list that left `ids` behind makes, for the drawing tests.
+    #[cfg(test)]
+    pub(crate) fn confirm_unsubscribed_for_test(&mut self, name: &str, ids: &[i64]) {
+        self.confirm_unsubscribed(
+            name,
+            Some(postio_client::protocol::ListMailFound {
+                name: name.to_owned(),
+                ids: ids.iter().copied().map(MessageId::new).collect(),
+                more: false,
+            }),
+        );
+    }
+
+    /// A click on the notice's button: its command, once.
+    pub(super) fn take_up_offer(&mut self) -> Vec<Effect> {
+        match self.notice_offer.take() {
+            Some((_, command)) => vec![Effect::Send(command), Effect::Redraw],
+            None => Vec::new(),
+        }
     }
 
     /// `.`: the verbs the action row folded away, as a menu. Nothing when
@@ -704,11 +712,9 @@ impl App {
                     return Vec::new();
                 };
                 let chosen = self.open.menu.as_ref().and_then(|menu| {
-                    menu.items.iter().position(|item| match &item.action {
-                        MenuAction::Command(own) => *own == id,
-                        MenuAction::Send(command) => command.id().as_str() == id,
-                        _ => false,
-                    })
+                    menu.items.iter().position(
+                        |item| matches!(item.action, MenuAction::Command(own) if own == id),
+                    )
                 });
                 return match chosen {
                     Some(at) => self.choose(at),
@@ -736,7 +742,6 @@ impl App {
                 effects.push(Effect::OpenLink(target));
                 effects
             }
-            MenuAction::Send(command) => vec![Effect::Send(command), Effect::Redraw],
             MenuAction::Part(message, attachment) => vec![
                 Effect::SavePart {
                     message,

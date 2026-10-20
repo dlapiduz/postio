@@ -285,10 +285,34 @@ impl Toast {
         key: Option<String>,
         on_click: impl Fn() + 'static,
     ) {
-        let (sentence, button_label) = (sentence.to_owned(), button_label.to_owned());
-        let on_click = Rc::new(on_click);
         // A warning, as `show_notice`'s: a gesture that could not run. The
         // button fixes what was missing; it is no undo.
+        self.show_button(Tone::Warning, sentence, button_label, key, on_click);
+    }
+
+    /// A sentence that makes an offer, with one button that takes it up
+    /// (#1952): news, not a warning, and non-blocking -- ignoring it, or
+    /// whatever else the person does next, leaves everything as it is, and
+    /// the next toast replaces it. The button runs `on_click`; it is no undo.
+    pub fn show_offer(
+        &self,
+        sentence: &str,
+        button_label: &str,
+        on_click: impl Fn() + 'static,
+    ) {
+        self.show_button(Tone::Info, sentence, button_label, None, on_click);
+    }
+
+    fn show_button(
+        &self,
+        tone: Tone,
+        sentence: &str,
+        button_label: &str,
+        key: Option<String>,
+        on_click: impl Fn() + 'static,
+    ) {
+        let (sentence, button_label) = (sentence.to_owned(), button_label.to_owned());
+        let on_click = Rc::new(on_click);
         self.push(
             Rc::new(move || {
                 let toast = adw::Toast::builder()
@@ -302,7 +326,7 @@ impl Toast {
                 });
                 toast
             }),
-            Tone::Warning,
+            tone,
             false,
             key,
         );

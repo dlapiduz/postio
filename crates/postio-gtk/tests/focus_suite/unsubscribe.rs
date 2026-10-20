@@ -117,22 +117,29 @@ pub fn the_open_message_s_unsubscribe_notice_logs_it_and_the_privacy_section_lis
             "no List-Id on this message, so the sender's domain is the list"
         );
 
-        decline_the_offer(&window).await;
+        ignore_the_offer(&window).await;
         support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
         crate::settle();
         privacy_lists_an_activation(&window).await;
     });
 }
 
-/// The offer to clear what the list sent opens once the unsubscribe lands
-/// (#1931); these cases are about the log, so they answer it with Esc.
-async fn decline_the_offer(window: &postio_gtk::window::FocusWindow) {
+/// The offer to clear what the list sent is a toast with one button, not a
+/// dialog (#1952); these cases are about the log, so they ignore it.
+async fn ignore_the_offer(window: &postio_gtk::window::FocusWindow) {
     assert!(
-        crate::settle_until(async || window.sweep_offer().is_some()).await,
-        "the offer to clear the list never came"
+        crate::settle_until(async || {
+            window
+                .toast()
+                .and_then(|toast| toast.button_label())
+                .is_some_and(|label| label.starts_with("Archive"))
+        })
+        .await,
+        "the offer to clear the list never came as a toast: {:?}",
+        window.toast_showing()
     );
-    support::press(window, "Escape", gtk::gdk::ModifierType::empty());
-    assert!(crate::settle_until(async || window.sweep_offer().is_none()).await);
+    window.dismiss_toast();
+    crate::settle();
 }
 
 /// Open Settings' Privacy section: it lists the activation.
@@ -186,15 +193,24 @@ pub fn u_in_a_digest_logs_the_activation_and_the_privacy_section_lists_it() {
             "no List-Id on this message, so the sender's domain is the list"
         );
         assert!(
-            crate::settle_until(
-                async || window.toast_showing().as_deref() == Some("Unsubscribed from ledger.test")
-            )
+            crate::settle_until(async || {
+                window
+                    .toast_showing()
+                    .is_some_and(|said| said.starts_with("Unsubscribed from "))
+            })
             .await,
             "the window did not say what it left: {:?}",
             window.toast_showing()
         );
+        assert!(
+            window
+                .toast_showing()
+                .is_some_and(|said| !said.starts_with("Unsubscribed from ledger.test")),
+            "the confirmation names the sender's address, not the domain the log keeps: {:?}",
+            window.toast_showing()
+        );
 
-        decline_the_offer(&window).await;
+        ignore_the_offer(&window).await;
         support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
         crate::settle();
         privacy_lists_an_activation(&window).await;
@@ -237,10 +253,43 @@ pub fn personal_mail_has_no_unsubscribe_band_but_u_still_works() {
     });
 }
 
-/// After `M` the window offers to clear what the sender left (#1931): the
-/// dialog counts it, `#` deletes the lot as one command and says so, and Esc on the
-/// same offer keeps everything.
-pub fn leaving_a_list_offers_to_delete_what_it_sent_and_esc_keeps_it() {
+/// What the toast offers for the newsletter filed twice: the confirmation
+/// naming the sender's exact address, the count, and one button.
+async fn the_offer_is_up(window: &postio_gtk::window::FocusWindow, button: &str) {
+    assert!(
+        crate::settle_until(async || {
+            window
+                .toast()
+                .and_then(|toast| toast.button_label())
+                .is_some_and(|label| label == button)
+        })
+        .await,
+        "`M` offered no `{button}` toast (toast: {:?})",
+        window.toast_showing()
+    );
+    let said = window.toast_showing().expect("the toast's words");
+    assert!(
+        said.starts_with("Unsubscribed from weekly@news.example.org"),
+        "the confirmation names the sender's address, not the domain: {said}"
+    );
+    assert!(said.contains("2 messages"), "it counts them: {said}");
+}
+
+async fn inbox_is_empty(fixture: &Fixture) -> bool {
+    let connection = fixture.database.connect().await.expect("a connection");
+    MessageRepository::new(&connection)
+        .page(&postio_storage::repository::ListQuery::mailbox(
+            fixture.inbox,
+        ))
+        .await
+        .expect("a page")
+        .is_empty()
+}
+
+/// After `M` the window offers to clear what the sender left (#1952): one
+/// toast, one button, never a dialog. Ignoring it or pressing Esc keeps
+/// everything; the button archives the lot as one undoable command.
+pub fn leaving_a_list_offers_one_action_on_a_toast_and_ignoring_it_keeps_the_mail() {
     crate::gtk_case(async {
         if !support::display() {
             return;
@@ -254,46 +303,72 @@ pub fn leaving_a_list_offers_to_delete_what_it_sent_and_esc_keeps_it() {
         assert!(crate::settle_until(async || reading.is_open()).await);
 
         support::keys(&window, &["M"]);
-        assert!(
-            crate::settle_until(async || window.sweep_offer().is_some()).await,
-            "`M` left the list and offered nothing about its mail"
-        );
-        let dialog = window.sweep_offer().expect("the offer");
-        let said = gtk::prelude::ObjectExt::property::<String>(&dialog, "body");
-        assert!(said.contains("2 messages"), "it counts them: {said}");
+        the_offer_is_up(&window, "Archive 2").await;
 
-        // Esc declines: nothing is deleted, and no deletion is announced.
+        // Esc declines: nothing is archived, and nothing is announced.
         support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
         crate::settle();
-        assert!(window.sweep_offer().is_none(), "Esc closes the offer");
+        window.dismiss_toast();
+        crate::settle();
+        assert!(!inbox_is_empty(&fixture).await, "declining archived them");
         assert_ne!(
             window.toast_showing().as_deref(),
-            Some("Deleted 2 messages"),
-            "declining deleted them"
+            Some("Archived 2 messages"),
+            "declining archived them"
         );
 
+        // Again, and take it up: the button does it as one command.
+        support::keys(&window, &["Return"]);
+        let reading = window.reading().expect("Return opened the message");
+        assert!(crate::settle_until(async || reading.is_open()).await);
         support::keys(&window, &["M"]);
-        assert!(crate::settle_until(async || window.sweep_offer().is_some()).await);
-        let dialog = window.sweep_offer().expect("the offer again");
-        // The verb's own key answers it, as the label beside the button says.
-        let _ = dialog;
-        support::press(&window, "numbersign", gtk::gdk::ModifierType::SHIFT_MASK);
-        let deleted = crate::settle_until(async || {
-            let connection = fixture.database.connect().await.expect("a connection");
-            MessageRepository::new(&connection)
-                .page(&postio_storage::repository::ListQuery::mailbox(
-                    fixture.inbox,
-                ))
-                .await
-                .expect("a page")
-                .is_empty()
-        })
-        .await;
+        the_offer_is_up(&window, "Archive 2").await;
+        let archive = support::button_labelled(&window, "Archive 2");
+        support::click(&window, &archive, 1);
         assert!(
-            deleted,
-            "# deleted nothing (toast {:?}, offer up: {})",
-            window.toast_showing(),
-            window.sweep_offer().is_some()
+            crate::settle_until(async || inbox_is_empty(&fixture).await).await,
+            "the button archived nothing (toast {:?})",
+            window.toast_showing()
+        );
+        assert!(
+            crate::settle_until(async || {
+                window
+                    .toast_showing()
+                    .is_some_and(|said| said.starts_with("Archived 2 messages"))
+            })
+            .await,
+            "the archive did not say it was one undoable command: {:?}",
+            window.toast_showing()
+        );
+    });
+}
+
+/// `[focus] after_unsubscribe = "delete"` makes the one action Delete.
+pub fn the_setting_makes_the_one_action_delete() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        file_the_newsletter(&fixture).await;
+        file_the_newsletter(&fixture).await;
+        let (window, _client) = fixture.open().await;
+        window.set_focus_config(postio_config::FocusConfig {
+            after_unsubscribe: postio_config::AfterUnsubscribe::Delete,
+            ..postio_config::FocusConfig::default()
+        });
+        support::keys(&window, &["j", "Return"]);
+        let reading = window.reading().expect("Return opened the message");
+        assert!(crate::settle_until(async || reading.is_open()).await);
+
+        support::keys(&window, &["M"]);
+        the_offer_is_up(&window, "Delete 2").await;
+        let delete = support::button_labelled(&window, "Delete 2");
+        support::click(&window, &delete, 1);
+        assert!(
+            crate::settle_until(async || inbox_is_empty(&fixture).await).await,
+            "the button deleted nothing (toast {:?})",
+            window.toast_showing()
         );
         assert!(
             crate::settle_until(async || {
@@ -302,7 +377,7 @@ pub fn leaving_a_list_offers_to_delete_what_it_sent_and_esc_keeps_it() {
                     .is_some_and(|said| said.starts_with("Deleted 2 messages"))
             })
             .await,
-            "the deletion did not say it was one undoable command: {:?}",
+            "{:?}",
             window.toast_showing()
         );
     });

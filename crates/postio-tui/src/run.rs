@@ -902,7 +902,7 @@ fn perform(
                     let _ = inputs.send(Input::Unsubscribed { message, answer }).await;
                 });
             }
-            Effect::ReadListMail(message) => {
+            Effect::ReadListMail { message, name } => {
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
@@ -910,7 +910,13 @@ fn perform(
                         .list_mail(message)
                         .await
                         .map_err(|error| error.message().to_owned());
-                    let _ = inputs.send(Input::ListMail { message, found }).await;
+                    let _ = inputs
+                        .send(Input::ListMail {
+                            message,
+                            name,
+                            found,
+                        })
+                        .await;
                 });
             }
             Effect::ReadParts(message) => {
