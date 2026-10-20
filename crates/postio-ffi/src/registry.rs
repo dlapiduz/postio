@@ -313,6 +313,9 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         // one deliberate act, from the keyboard and the palette (#1706).
         C::AlwaysShowImages,
         C::Unsubscribe,
+        // The unsubscribe banner's one offer (#1953): its button, from the
+        // keyboard and the palette, and only while the banner offers it.
+        C::ClearListMail,
         // The picker is a surface, and the four times it offers come from
         // the boundary so both frontends mean the same thing by them.
         C::ScheduleSend,

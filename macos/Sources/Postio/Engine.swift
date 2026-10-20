@@ -1784,6 +1784,10 @@ final class Engine {
             // deliberate act, recorded by the boundary (#1585). The
             // controller has no message window of its own to do it in.
             messageWindow?.unsubscribe()
+        case Intercepted.clearListMail where keyWindow.current == .message && messageWindow?.displayed != nil:
+            // The banner's one offer, by key (#1953): the verb the setting
+            // names, on exactly the mail the offer counted.
+            messageWindow?.takeUpOffer()
         case Intercepted.back where placesPopover?.isShown == true:
             // The folders popover is not a surface the controller keeps:
             // Escape closes it here, and the keyboard goes home.

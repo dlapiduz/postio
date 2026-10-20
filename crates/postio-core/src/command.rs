@@ -567,6 +567,15 @@ commands! {
     /// Leave the mailing list this message came from, by its one-click
     /// `List-Unsubscribe` -- only ever on this deliberate act.
     Unsubscribe => "unsubscribe",
+    /// Take up the offer the unsubscribe notice is making: archive or delete
+    /// (`[focus] after_unsubscribe`) the mail the list already sent, as one
+    /// undoable bulk command on exactly the messages the notice counted.
+    ///
+    /// The notice's own button, as a command (#1953): a notice's action is
+    /// reached from the keyboard the way `i a` reaches the blocked-images
+    /// notice's. The frontend holds the pending offer, so the id carries no
+    /// payload; with no offer on screen it says so and does nothing.
+    ClearListMail => "clear_list_mail",
     /// Go to the folders: the classic app puts the keyboard in its folder
     /// list, and Focus opens its folders popover.
     GoToFolders => "go_to_folders",

@@ -3490,6 +3490,14 @@ impl App {
             "expand_all" => self.toggle_folds(),
             "show_images" => return self.allow_images(false),
             "always_show_images" => return self.allow_images(true),
+            // The notice's own button, from the keyboard (#1953): the offer
+            // on the status line if there is one, else a sentence saying so.
+            "clear_list_mail" => {
+                if self.notice_offer.is_some() {
+                    return self.take_up_offer();
+                }
+                return self.say(postio_ui::unsubscribe::NO_OFFER);
+            }
             "unsubscribe" => {
                 let reading = self.reading.as_ref();
                 return reading
@@ -7880,6 +7888,31 @@ pub(crate) mod tests {
         assert!(
             effects.contains(&Effect::Send(postio_core::Command::Archive {
                 target: postio_core::MessageTarget::Messages(ids),
+            })),
+            "{effects:?}"
+        );
+        assert_eq!(app.notice_offer(), None, "taken up, the offer goes");
+    }
+
+    #[test]
+    fn the_offer_is_taken_up_by_its_key_and_the_key_is_shown() {
+        let mut app = app((160, 40));
+        // Nothing on offer: the key says so rather than doing nothing.
+        let effects = update(&mut app, key(KeyCode::Char('C'), KeyModifiers::SHIFT));
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::Send(_))),
+            "{effects:?}"
+        );
+        assert_eq!(app.notice(), Some(postio_ui::unsubscribe::NO_OFFER));
+
+        offered_list_mail(&mut app, &[5, 6]);
+        let effects = update(&mut app, key(KeyCode::Char('C'), KeyModifiers::SHIFT));
+        assert!(
+            effects.contains(&Effect::Send(postio_core::Command::Archive {
+                target: postio_core::MessageTarget::Messages(vec![
+                    MessageId::new(5),
+                    MessageId::new(6)
+                ]),
             })),
             "{effects:?}"
         );

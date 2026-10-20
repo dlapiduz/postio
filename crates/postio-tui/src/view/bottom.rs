@@ -80,6 +80,12 @@ pub fn toast(app: &App, theme: &Theme) -> Option<Toast> {
         spans.push(Span::styled(" · ", theme.style(Role::Dim)));
         let from: usize = spans.iter().map(|span| span.content.width()).sum();
         spans.push(Span::styled(label.to_owned(), theme.style(Role::Accent)));
+        if let Some(key) = app.hint(CommandId::ClearListMail) {
+            spans.push(Span::styled(
+                format!(" {}", cap(&key)),
+                theme.style(Role::Dim),
+            ));
+        }
         let to: usize = spans.iter().map(|span| span.content.width()).sum();
         offer = Some(from..to);
     }
@@ -544,7 +550,7 @@ mod tests {
         let drawn = screen(120, 24, &app);
         let line = bottom(&drawn);
         assert!(
-            line.contains("Unsubscribed from news.example.com") && line.contains("Archive 2"),
+            line.contains("Unsubscribed from news.example.com") && line.contains("Archive 2 C"),
             "{drawn}"
         );
         let x = u16::try_from(line[..line.find("Archive 2").unwrap()].chars().count()).unwrap();

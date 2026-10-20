@@ -152,6 +152,7 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::RemindIfNoReply
         | C::AddLabel
         | C::Unsubscribe
+        | C::ClearListMail
         | C::Undo
         | C::MarkSent
         | C::RetrySend

@@ -417,6 +417,29 @@ struct MessageWindowModelTests {
         #expect(source.cleared.isEmpty, "offered, not done")
     }
 
+    @Test func theOffersKeyTakesUpTheOneConfiguredAction() async throws {
+        // #1953: `clear_list_mail` is the banner button's command, with the
+        // verb the setting picked; with no offer up it does nothing.
+        let source = Source()
+        source.leftBehind = ListMailOfferFfi(
+            summary: "s", count: 2, button: "Delete 2", delete: true)
+        let (model, _) = Self.model(source)
+        model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
+        await model.settled()
+        model.takeUpOffer()
+        #expect(source.cleared.isEmpty, "no offer on screen, nothing to take")
+
+        model.unsubscribe()
+        try await Self.until {
+            if case .clearing = model.unsubscribeState(of: 7) { return true }
+            return false
+        }
+        model.takeUpOffer()
+        try await Self.until { !source.cleared.isEmpty }
+        #expect(source.cleared.map(\.0) == [7] && source.cleared.map(\.1) == [true])
+        #expect(model.unsubscribeState(of: 7) == .left, "taken, so the banner goes")
+    }
+
     @Test func dismissingTheOfferSendsNothing() async throws {
         let source = Source()
         source.leftBehind = ListMailOfferFfi(

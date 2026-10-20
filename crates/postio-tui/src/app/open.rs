@@ -608,7 +608,7 @@ impl App {
 
     /// After an unsubscribe: the status line says so and, when the list left
     /// mail behind, offers the one action `[focus] after_unsubscribe` names
-    /// (#1952). A notice, not a menu: it takes no keys, so ignoring it, or
+    /// (#1952). A notice, not a menu: it takes the keyboard no more than a toast does, so ignoring it, or
     /// `Esc`, keeps everything. The button is one command on exactly the
     /// found messages, so one undo.
     pub(super) fn confirm_unsubscribed(

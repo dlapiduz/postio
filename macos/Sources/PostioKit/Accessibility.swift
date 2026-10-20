@@ -68,6 +68,10 @@ public enum Intercepted {
     /// The reader's `X`: the unsubscribe banner's button, from the keyboard
     /// and the palette, and only where the banner is.
     public static let unsubscribe = "unsubscribe"
+    /// The banner's one offer, once `unsubscribe` has left mail behind: its
+    /// button from the keyboard and the palette (#1953), and only while the
+    /// banner offers it.
+    public static let clearListMail = "clear_list_mail"
     /// The reader's `i a`: the blocked-images notice's "Always allow", for
     /// the sender the notice names, and only where the notice is.
     public static let alwaysShowImages = "always_show_images"
@@ -96,6 +100,6 @@ public enum Intercepted {
         addAccount, editConfig, toggleAccountEnabled, removeAccount,
         updateCredential, rebuildAccountIndex, setDefaultAccount,
         showImages,
-        quit, unsubscribe, alwaysShowImages,
+        quit, unsubscribe, clearListMail, alwaysShowImages,
     ] + composeVerbs
 }

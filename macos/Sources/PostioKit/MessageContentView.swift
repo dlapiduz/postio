@@ -270,7 +270,9 @@ public struct MessageContentView<BodyView: View>: View {
         case let .card(card):
             MessageActionCard(card: card, run: run)
         case let .unsubscribe(offer, state):
-            UnsubscribeBanner(offer: offer, state: state, leave: leave, clear: clear)
+            UnsubscribeBanner(
+                offer: offer, state: state, leave: leave, clear: clear,
+                clearCap: KeyCapSpelling.cap(binding("clear_list_mail")))
         case let .renderMode(mode):
             MessageRenderModeLine(
                 line: RenderModeLine(mode, binding: binding), run: run, always: alwaysForSender)

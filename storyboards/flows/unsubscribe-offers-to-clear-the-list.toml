@@ -9,13 +9,14 @@
 # everything. Its first sentence is the confirmation, and it names the exact
 # sender address, never the domain.
 #
-# Red on the base: there `M` opens a blocking dialog (Clear what ... sent?)
-# with three answers, so the "offer" step's overlay is a dialog and no
-# notice appears behind it.
+# The offer is also reachable from the keyboard (#1953): `C`
+# (`clear_list_mail`, rebindable, Undo) takes up the toast's one button, and
+# the button shows the key. Red on the base: there `C` is bound to nothing
+# and the offer is pointer-only, so the "accept" step archives nothing.
 #
 # The small seed's senders repeat, and a message with no List-Id is swept by
 # its exact sender address, so the cursor's row always has mail to clear.
-source = { kind = "issue", ref = "#1952" }
+source = { kind = "issue", ref = "#1953" }
 proof  = "base"
 apps   = ["focus"]
 
@@ -56,10 +57,10 @@ id      = "ignore"
 command = "unsubscribe"
 settle  = { until = { notice.tone = "info" } }
 check   = { overlay.kind = "none", keyboard.region = "reader" }
-expect  = "The same toast, asked for again."
+expect  = "The same toast, asked for again. Its button shows the key that takes it up, \"C\"."
 
 [[step]]
-id      = "verb"
-command = "archive"
-check   = { overlay.kind = "none", notice.undo = true, notice.text = "Archived 1 message", rows.count = 60 }
-expect  = "The verb's own key still means what it always means: it archives only the open message, never everything the list sent, and the toast says it can be undone."
+id     = "accept"
+key    = "C"
+check  = { overlay.kind = "none", notice.undo = true, notice.text = "Archived 2 messages" }
+expect = "C, the key the toast's button shows, takes up the offer without the pointer: both messages from that sender are archived as one command, and the new toast says it can be undone. The verb keys (e, #) were never the way in: they still mean the open message."

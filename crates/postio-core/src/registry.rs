@@ -1757,6 +1757,21 @@ static SPECS: &[CommandSpec] = &[
         requires: MAIL,
     },
     CommandSpec {
+        id: CommandId::ClearListMail,
+        title: "Clear what the list sent",
+        // `C` for clear, the shifted neighbour of nothing: `c` composes, and
+        // a shifted letter is how this app spells a deliberate act. It takes
+        // up the unsubscribe notice's one button, so it is only ever pressed
+        // after `M` and a look at the count (#1953).
+        default_binding: "C",
+        alternate_bindings: &[],
+        contexts: ctx(MESSAGE_SURFACES).with(Context::Digest),
+        destructive: false,
+        // One bulk archive or delete, which is one undo.
+        recovery: Recovery::Undo,
+        requires: MAIL,
+    },
+    CommandSpec {
         id: CommandId::GoToFolders,
         title: "Go to folders",
         // Gmail's `g l`, go to label (docs/PRODUCT.md §8): Focus opens its
