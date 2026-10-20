@@ -462,9 +462,8 @@ pub fn a_treatment_chosen_for_one_address_reaches_the_persons_other_address() {
             crate::settle_until(async || !reader.test_document().contains("SECOND-MARK")).await,
             "the first address's mail never drew again"
         );
-        assert_eq!(
-            reader.treatment(),
-            Treatment::Paper,
+        assert!(
+            crate::settle_until(async || drawn_as(&reader, "paper")).await,
             "and so does the first"
         );
         assert!(reader.switch_treatment(), "an HTML body can be switched");
