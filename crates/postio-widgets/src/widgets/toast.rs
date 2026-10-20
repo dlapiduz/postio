@@ -42,6 +42,9 @@ pub const TOAST_TIMEOUT: u32 = 8;
 /// What makes a toast again, the same each time it is called.
 type Remake = Rc<dyn Fn() -> adw::Toast>;
 
+/// The offer behind a toast: the toast, and what its button runs.
+type PendingOffer = Rc<RefCell<Option<(adw::Toast, Rc<dyn Fn()>)>>>;
+
 /// The undo toast, and the overlay it appears over.
 ///
 /// Not a widget of its own: [`Toast::overlay`] is what a window puts its
@@ -65,7 +68,7 @@ pub struct Toast {
     /// button's action, held so its key reaches it as well as the pointer.
     /// Gone with its toast -- dismissed, replaced or timed out -- so the key
     /// never takes up an offer nobody can see.
-    pending_offer: Rc<RefCell<Option<(adw::Toast, Rc<dyn Fn()>)>>>,
+    pending_offer: PendingOffer,
     /// How the toast now showing reads, and whether it offers undo,
     /// recorded when it was shown rather than read back off its button
     /// (specs/008-storyboards research R6). Cleared when that toast is
