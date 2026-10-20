@@ -466,9 +466,12 @@ pub fn a_treatment_chosen_for_one_address_reaches_the_persons_other_address() {
             crate::settle_until(async || drawn_as(&reader, "paper")).await,
             "and so does the first"
         );
-        assert!(reader.switch_treatment(), "an HTML body can be switched");
         assert!(
-            crate::settle_until(async || reader.treatment() == Treatment::AppColours).await,
+            crate::settle_until(async || reader.switch_treatment()).await,
+            "an HTML body can be switched"
+        );
+        assert!(
+            crate::settle_until(async || drawn_as(&reader, "app")).await,
             "O did not switch to app colours"
         );
         line.press_always();
