@@ -149,6 +149,7 @@ async fn wired() -> Vec<CommandId> {
     let builder = postio_session::refresh::wire(
         builder,
         postio_session::refresh::EngineSlot::default(),
+        database,
         state,
     );
     builder.build().wired().collect()

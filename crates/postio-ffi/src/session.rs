@@ -4855,7 +4855,7 @@ impl Session {
             .lock()
             .expect("wiring lock")
             .as_ref()
-            .and_then(|wiring| wiring.engine.get().cloned())
+            .and_then(|wiring| wiring.engine.first())
     }
 
     /// Every folder of every enabled account, for the sidebar.
@@ -4995,7 +4995,7 @@ impl Session {
             .lock()
             .expect("wiring lock")
             .as_ref()
-            .is_some_and(|wiring| wiring.engine.get().is_some())
+            .is_some_and(|wiring| !wiring.engine.is_empty())
     }
 
     /// Start syncing every configured account, and answer how many started.
@@ -5081,7 +5081,7 @@ impl Session {
             // The slot is what `Refresh` reads, and it is pressed long after
             // the bus was built. An engine that ran but never reached it
             // would sync happily and leave the refresh command inert.
-            wiring.engine.fill(engine.clone());
+            wiring.engine.fill(account, engine.clone());
             postio_runtime::retain(engine.clone());
             self.engines
                 .lock()
@@ -5120,7 +5120,9 @@ impl Session {
             network: postio_runtime::NetworkSource::Ignored,
         };
         if let Ok(engine) = postio_runtime::Engine::spawn(parts) {
-            wiring.engine.fill(engine.clone());
+            wiring
+                .engine
+                .fill(postio_model::ids::AccountId::new(1), engine.clone());
             // Account 1, matching the `parts.account` above: the engines list
             // is keyed by account now, so that `start_syncing` can tell an
             // account that is already running from one that has just been
