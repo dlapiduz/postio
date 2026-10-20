@@ -2257,6 +2257,7 @@ impl Transport for Local {
 }
 
 pub mod compose;
+pub mod contacts;
 pub mod export;
 mod focus;
 pub mod maintenance;

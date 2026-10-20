@@ -80,6 +80,9 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     (CommandId::ContactsToggleEveryone, "specs/011-focus-contacts"),
     (CommandId::ContactsToggleDeleted, "specs/011-focus-contacts"),
     (CommandId::ContactsSuggestions, "specs/011-focus-contacts"),
+    // The file panels, which the Mac presents and so intercepts (plan 011).
+    (CommandId::ContactsImport, "specs/011-focus-contacts"),
+    (CommandId::ContactsExport, "specs/011-focus-contacts"),
 ];
 
 /// Whether Focus's controller answers `id` on the Mac: on the list with

@@ -5057,6 +5057,7 @@ dependencies = [
  "postio-test-support",
  "postio-ui",
  "postio-vault",
+ "postio-vcard",
  "postio-workspace-hack",
  "serde-xml-rs",
  "serde_json",

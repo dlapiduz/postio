@@ -1536,6 +1536,61 @@ impl ContactRepository<'_> {
         .await
     }
 
+    /// Every group with a member among `rows`, as export writes it: a `UID`
+    /// -- given now and kept, as for people -- its name, its stored card,
+    /// and the `UID`s of the members being exported with it. A group whose
+    /// members are all left out of this export is left out too.
+    pub async fn export_groups(&self, rows: &[ExportRow]) -> Result<Vec<GroupExport>> {
+        let by_person: BTreeMap<ContactId, String> = rows
+            .iter()
+            .map(|row| (row.person.id, row.uid.clone()))
+            .collect();
+        sql::in_scope(self.connection, |transaction| async move {
+            let groups = super::ContactGroupRepository::new(&transaction);
+            let mut out = Vec::new();
+            for group in groups.list().await? {
+                let members: Vec<String> = groups
+                    .members(group.id)
+                    .await?
+                    .iter()
+                    .filter_map(|person| by_person.get(&person.id).cloned())
+                    .collect();
+                if members.is_empty() {
+                    continue;
+                }
+                let vcard: Option<String> = sql::first(
+                    &transaction,
+                    "SELECT vcard FROM contact_groups WHERE id = ?1",
+                    [group.id.get()],
+                    |row| row.col(0),
+                )
+                .await?
+                .flatten();
+                let uid = match group.uid.clone() {
+                    Some(uid) => uid,
+                    None => {
+                        let uid = new_uid();
+                        sql::execute(
+                            &transaction,
+                            "UPDATE contact_groups SET uid = ?2 WHERE id = ?1",
+                            bind![group.id.get(), uid.clone()],
+                        )
+                        .await?;
+                        uid
+                    }
+                };
+                out.push(GroupExport {
+                    uid,
+                    name: group.name,
+                    members,
+                    vcard,
+                });
+            }
+            Ok(out)
+        })
+        .await
+    }
+
     /// Who owns `address`, or `None` for nobody.
     pub async fn owner_of_address(&self, address: AddressId) -> Result<Option<ContactId>> {
         Ok(owner_of(self.connection, address)
@@ -1624,6 +1679,19 @@ pub struct ExportRow {
     /// Their vCard `UID`.
     pub uid: String,
     /// The card they were imported from, if they were.
+    pub vcard: Option<String>,
+}
+
+/// One group as export writes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupExport {
+    /// Its vCard `UID`.
+    pub uid: String,
+    /// Its name.
+    pub name: String,
+    /// The `UID`s of its members in this export.
+    pub members: Vec<String>,
+    /// The card it was imported from, if it was.
     pub vcard: Option<String>,
 }
 

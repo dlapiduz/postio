@@ -851,6 +851,11 @@ commands! {
         /// Who; empty means the marked people, or the one under the cursor.
         people: Vec<ContactId> = Vec::new(),
     } => "contact_group_remove",
+    /// Import people from a vCard file (FR-050); the surface asks which.
+    ContactsImport => "contacts_import",
+    /// Export people to a vCard file (FR-050): the marked people, or what the
+    /// list shows; the surface asks where.
+    ContactsExport => "contacts_export",
     ;
     /// Mark one message read because the cursor rested on it long enough to
     /// have been read — not because anyone asked.

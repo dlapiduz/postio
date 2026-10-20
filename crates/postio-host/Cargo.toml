@@ -42,6 +42,9 @@ postio-ui.workspace = true
 # The Obsidian vault Focus captures into (spec 007 US15): read and appended
 # to on this computer, answering the client's capture requests.
 postio-vault.workspace = true
+# vCard files in and out of the address book (specs/005-contacts): a pure
+# translation, linked here because the host is what reads and writes the store.
+postio-vcard.workspace = true
 # A digest's summary, kept with its delivery as JSON (spec 007 T154).
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }

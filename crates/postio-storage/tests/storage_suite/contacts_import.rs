@@ -231,3 +231,44 @@ async fn export_names_everyone_the_same_way_twice_and_never_a_deleted_person() {
     let again = contacts.export_people(&[ada]).await.expect("export");
     assert_eq!(again[0].uid, first[0].uid, "the UID given is kept");
 }
+
+#[tokio::test]
+async fn a_group_goes_out_with_the_members_that_do() {
+    let (_db, connection, _account, _inbox) = setup().await;
+    let contacts = ContactRepository::new(&connection);
+    let groups = ContactGroupRepository::new(&connection);
+    let ada = contacts
+        .create(
+            Some("Ada"),
+            &[EmailAddress::new(None::<String>, "ada@work.example")],
+        )
+        .await
+        .expect("ada");
+    let grace = contacts
+        .create(
+            Some("Grace"),
+            &[EmailAddress::new(None::<String>, "grace@example.org")],
+        )
+        .await
+        .expect("grace");
+    let mut family = postio_model::ContactGroup::new("Family", Utc::now());
+    let family = groups.create(&mut family).await.expect("family");
+    groups
+        .add_members(family, &[ada, grace])
+        .await
+        .expect("members");
+    let mut empty = postio_model::ContactGroup::new("Nobody here", Utc::now());
+    groups.create(&mut empty).await.expect("empty");
+
+    let rows = contacts.export_people(&[ada]).await.expect("people");
+    let out = contacts.export_groups(&rows).await.expect("groups");
+    assert_eq!(out.len(), 1, "a group none of whose members go stays home");
+    assert_eq!(out[0].name, "Family");
+    assert_eq!(
+        out[0].members,
+        [rows[0].uid.clone()],
+        "only the members exported"
+    );
+    let again = contacts.export_groups(&rows).await.expect("groups");
+    assert_eq!(again[0].uid, out[0].uid, "the group's UID is kept too");
+}

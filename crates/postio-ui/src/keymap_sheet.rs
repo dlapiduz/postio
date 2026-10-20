@@ -272,7 +272,9 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::ContactGroupNew
         | C::ContactGroupRename
         | C::ContactGroupAdd
-        | C::ContactGroupRemove => None,
+        | C::ContactGroupRemove
+        | C::ContactsImport
+        | C::ContactsExport => None,
         // The composer's own keys, which the compose dialog teaches on its
         // buttons and its footer.
         C::Send

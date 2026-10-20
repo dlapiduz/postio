@@ -2714,6 +2714,30 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
     },
+    CommandSpec {
+        id: CommandId::ContactsImport,
+        title: "Import vCard",
+        // Provisional, as 005 had it: `v` is the list's family of views and
+        // the Contacts design's planning pass settles the rest.
+        default_binding: "v i",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        // Import only adds, and its summary says what it merged; there is no
+        // unit to take back (maintainer, 2026-10-19: not undoable for now).
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsExport,
+        title: "Export vCard",
+        default_binding: "v x",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
 ];
 
 /// Every command, in cheat-sheet order.
@@ -3134,6 +3158,8 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             | (ActionId::Builtin(C::ContactGroupRename), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactGroupAdd), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactGroupRemove), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactsImport), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactsExport), Platform::Freedesktop)
     )
 }
 
@@ -3210,7 +3236,7 @@ mod tests {
 
     /// What only the Mac draws, until Linux adopts it: the search dropdown
     /// and results view (spec 010 D23, D25) and Contacts (specs/005).
-    const NOT_ON_LINUX_YET: [CommandId; 38] = [
+    const NOT_ON_LINUX_YET: [CommandId; 40] = [
         CommandId::ShowAllResults,
         CommandId::ForgetRecent,
         CommandId::ExcludeSuggestion,
@@ -3249,6 +3275,8 @@ mod tests {
         CommandId::ContactGroupRename,
         CommandId::ContactGroupAdd,
         CommandId::ContactGroupRemove,
+        CommandId::ContactsImport,
+        CommandId::ContactsExport,
     ];
 
     #[test]

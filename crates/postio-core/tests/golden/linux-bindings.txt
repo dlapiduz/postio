@@ -170,3 +170,5 @@ contact_group_new
 contact_group_rename	
 contact_group_add	
 contact_group_remove	
+contacts_import	
+contacts_export	

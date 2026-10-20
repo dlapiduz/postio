@@ -265,6 +265,8 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::ContactGroupRename
         | C::ContactGroupAdd
         | C::ContactGroupRemove
+        | C::ContactsImport
+        | C::ContactsExport
         | C::GoToFiltered
         | C::GoToDigestRules
         | C::ToggleHasAction
