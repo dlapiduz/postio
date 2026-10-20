@@ -337,6 +337,89 @@ impl<'a> ContactRepository<'a> {
         .await
     }
 
+    /// The person who owns `address`, made now from the mail if nobody does
+    /// yet (specs/011-focus-contacts plan 4.2).
+    ///
+    /// Mail that was stored before contacts existed has addresses and no
+    /// people; this is what `i` or a card on such a sender runs, so nothing
+    /// waits on the catch-up. What the person's sightings say is folded in
+    /// SQL, one row per account, so the cost does not follow the number of
+    /// messages. The user's own addresses are refused.
+    pub async fn ensure_for_address(&self, address: AddressId) -> Result<ContactId> {
+        sql::in_scope(self.connection, |transaction| async move {
+            match adopt(&transaction, address.get()).await? {
+                Some(person) => Ok(ContactId::new(person)),
+                None => Err(Error::ForbiddenTransition {
+                    what: "contact",
+                    reason: "that address is one of yours".into(),
+                }),
+            }
+        })
+        .await
+    }
+
+    /// One batch of the catch-up: up to `limit` addresses with mail and no
+    /// person, newest first and strictly below `before`, each made a person
+    /// in one transaction.
+    ///
+    /// The walk is one read whatever the store holds, so a pass with nothing
+    /// to do costs that one read. `last` is where the next batch starts;
+    /// `done` says this one reached the end. Safe to run beside live sync:
+    /// an address that already has a person is not in the walk.
+    pub async fn catch_up_batch(&self, before: Option<AddressId>, limit: u32) -> Result<CatchUp> {
+        let before = before.map_or(i64::MAX, AddressId::get);
+        sql::in_scope(self.connection, |transaction| async move {
+            let walk: Vec<i64> = sql::all(
+                &transaction,
+                Self::explain_unowned(),
+                bind![before, i64::from(limit)],
+                |row| row.col(0),
+            )
+            .await?;
+            let mut made = 0;
+            for address in &walk {
+                if adopt(&transaction, *address).await?.is_some() {
+                    made += 1;
+                }
+            }
+            Ok(CatchUp {
+                made,
+                last: walk.last().copied().map(AddressId::new),
+                done: walk.len() < limit as usize,
+            })
+        })
+        .await
+    }
+
+    /// How many addresses with mail still wait for a person: the "m" of
+    /// "Building contacts, n of m".
+    pub async fn unowned_count(&self) -> Result<u64> {
+        let count = sql::scalar(
+            self.connection,
+            "SELECT count(*) FROM addresses a
+              WHERE a.contact_id IS NULL
+                AND a.address_normalized NOT IN (SELECT lower(address) FROM accounts)
+                AND a.address_normalized NOT IN (SELECT lower(address) FROM identities)
+                AND EXISTS (SELECT 1 FROM recipients r
+                             WHERE r.address_id = a.id AND r.message_id IS NOT NULL)",
+            (),
+        )
+        .await?;
+        Ok(count.max(0) as u64)
+    }
+
+    /// The SQL [`Self::catch_up_batch`] walks.
+    pub fn explain_unowned() -> &'static str {
+        "SELECT a.id FROM addresses a
+          WHERE a.contact_id IS NULL AND a.id < ?1
+            AND a.address_normalized NOT IN (SELECT lower(address) FROM accounts)
+            AND a.address_normalized NOT IN (SELECT lower(address) FROM identities)
+            AND EXISTS (SELECT 1 FROM recipients r
+                         WHERE r.address_id = a.id AND r.message_id IS NOT NULL)
+          ORDER BY a.id DESC
+          LIMIT ?2"
+    }
+
     /// Fills in each person's addresses, preferred first. One statement
     /// whatever the number of people.
     pub(super) async fn with_addresses(&self, mut people: Vec<Contact>) -> Result<Vec<Contact>> {
@@ -2052,6 +2135,110 @@ async fn record_in(connection: &Connection, account: i64, seen: &Seen<'_>, at: i
         }
     }
     Ok(())
+}
+
+/// What one batch of the catch-up did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CatchUp {
+    /// People made.
+    pub made: usize,
+    /// The lowest address this batch reached: pass it as `before` for the
+    /// next. `None` when the walk found nothing.
+    pub last: Option<AddressId>,
+    /// Whether the walk ran out before the batch filled.
+    pub done: bool,
+}
+
+/// The person owning `address`, made from its stored mail if there is none;
+/// `None` for the user's own address.
+async fn adopt(connection: &Connection, address: i64) -> Result<Option<i64>> {
+    type Found = (Option<i64>, String, i64);
+    let found: Option<Found> = sql::first(
+        connection,
+        "SELECT contact_id, address, (SELECT count(*) FROM accounts WHERE lower(address) = a.address_normalized)
+                 + (SELECT count(*) FROM identities WHERE lower(address) = a.address_normalized)
+           FROM addresses a WHERE id = ?1",
+        [address],
+        |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?)),
+    )
+    .await?;
+    let Some((owner, _text, own)) = found else {
+        return Err(Error::NotFound {
+            entity: "address",
+            id: address,
+        });
+    };
+    if let Some(owner) = owner {
+        return Ok(Some(owner));
+    }
+    if own > 0 {
+        return Ok(None);
+    }
+
+    // What the stored mail says, folded per account in one statement: how
+    // many messages, the newest, how many the user sent to this address, and
+    // the newest name a header gave it.
+    type Sighting = (i64, i64, i64, i64, Option<String>);
+    let sightings: Vec<Sighting> = sql::all_unbounded(
+        connection,
+        "SELECT m.account_id,
+                count(DISTINCT m.id),
+                max(coalesce(m.date, m.received_at)),
+                count(DISTINCT CASE WHEN r.kind IN ('to', 'cc', 'bcc') AND EXISTS (
+                        SELECT 1 FROM recipients f JOIN addresses fa ON fa.id = f.address_id
+                         WHERE f.message_id = m.id AND f.kind = 'from'
+                           AND (fa.address_normalized IN (SELECT lower(address) FROM accounts)
+                             OR fa.address_normalized IN (SELECT lower(address) FROM identities)))
+                    THEN m.id END),
+                (SELECT r2.name FROM recipients r2 JOIN messages m2 ON m2.id = r2.message_id
+                  WHERE r2.address_id = ?1 AND m2.account_id = m.account_id
+                    AND r2.name IS NOT NULL AND trim(r2.name) <> ''
+                  ORDER BY coalesce(m2.date, m2.received_at) DESC LIMIT 1)
+           FROM recipients r JOIN messages m ON m.id = r.message_id
+          WHERE r.address_id = ?1
+          GROUP BY m.account_id",
+        [address],
+        |row| {
+            Ok((
+                row.col(0)?,
+                row.col(1)?,
+                row.col(2)?,
+                row.col(3)?,
+                row.col(4)?,
+            ))
+        },
+    )
+    .await?;
+
+    let now = to_millis(Utc::now());
+    sql::execute(
+        connection,
+        "INSERT INTO contacts (source, state, preferred_address, sort_key, name_key,
+                               created_at, updated_at)
+         VALUES ('mail', 'live', ?1, '', '', ?2, ?2)",
+        bind![address, now],
+    )
+    .await?;
+    let person = connection.last_insert_rowid();
+    sql::execute(
+        connection,
+        "UPDATE addresses SET contact_id = ?2 WHERE id = ?1",
+        bind![address, person],
+    )
+    .await?;
+    for (account, seen, last, written, name) in sightings {
+        sql::execute(
+            connection,
+            "INSERT INTO contact_sightings
+                 (address_id, account_id, times_seen, last_seen_at, last_name, times_written)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (address_id, account_id) DO NOTHING",
+            bind![address, account, seen, last, name, written],
+        )
+        .await?;
+    }
+    refresh(connection, person).await?;
+    Ok(Some(person))
 }
 
 /// An address's row id and, if someone owns it, the owner's id and state.

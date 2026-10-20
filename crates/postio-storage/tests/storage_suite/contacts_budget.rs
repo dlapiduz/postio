@@ -116,7 +116,8 @@ async fn recording_a_known_correspondent_costs_one_read() {
 /// prefix. Copied, like `contact_rank_index.rs` copies its twin, because the
 /// SQL the planner sees is the thing being asked about.
 const COMPLETE: &str = "SELECT id, name, organization, note, source, state, \
-     preferred_address, seen_name, times_seen, last_seen_at, written FROM contacts \
+     preferred_address, seen_name, times_seen, last_seen_at, written, kind, kind_source, \
+     saved_at, given_name, family_name, show_as, title FROM contacts \
      WHERE state = 'live' \
        AND id IN (SELECT contact_id FROM contact_terms WHERE term >= ?1 AND term < ?2) \
      ORDER BY CASE WHEN source = 'mail' THEN 1 ELSE 0 END, \
