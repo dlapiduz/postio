@@ -81,6 +81,7 @@ The macOS app's appearance. The desktop app and the terminal read none of these:
 |---|---|---|---|
 | `filtering` | boolean | `true` | Focus files spam and automated updates away as they arrive, each with its reason and one key from restored. `false` stops filing new mail away; what is already filtered stays where it is. |
 | `reading` | string | `"dialog"` | Where Enter opens a message in Focus: `dialog`, over the list, or `pane`, beside it. A window narrower than 980 px uses the dialog whatever this says. F8 switches it. |
+| `after_unsubscribe` | string | `"archive"` | What the notice after you unsubscribe (M) offers to do with the mail that list already sent: `archive` or `delete`. Either is one undoable action, and nothing moves unless you press the notice's button. |
 
 Focus's settings: what it files away, what it holds into digests, and the model and vault it may use. The desktop app and the terminal are Focus and read them; the macOS app reads none of them. The contract they are built to is [`specs/007-postio-focus/contracts/config.md`](../specs/007-postio-focus/contracts/config.md).
 

@@ -3,6 +3,7 @@
 //! ```toml
 //! [focus]
 //! filtering = true        # FR-119: file spam and updates away as they arrive
+//! after_unsubscribe = "archive"  # what the notice after M offers: archive | delete
 //!
 //! [focus.filter]
 //! never = ["ada@example.org", "@example.net"]   # never filtered (FR-111, FR-116)
@@ -43,6 +44,10 @@ pub struct FocusConfig {
     /// Where `Return` opens a message (T232): over the list, or beside it.
     #[serde(default)]
     pub reading: Reading,
+    /// What the notice after unsubscribing offers to do with the mail the
+    /// list already sent (#1952): archive it, the default, or delete it.
+    #[serde(default)]
+    pub after_unsubscribe: AfterUnsubscribe,
     /// `[focus.filter]`: the user's own word on filtering.
     #[serde(default, skip_serializing_if = "FocusFilter::is_empty")]
     pub filter: FocusFilter,
@@ -81,11 +86,35 @@ impl Reading {
     }
 }
 
+/// `[focus] after_unsubscribe`: the one thing the notice after leaving a
+/// list offers to do with what the list already sent (#1952). Either is one
+/// undoable command; neither happens unless the notice's button is pressed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AfterUnsubscribe {
+    /// Archive it. The default: nothing is lost, and it leaves the inbox.
+    #[default]
+    Archive,
+    /// Delete it, to the Trash.
+    Delete,
+}
+
+impl AfterUnsubscribe {
+    /// The word the file spells it with.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AfterUnsubscribe::Archive => "archive",
+            AfterUnsubscribe::Delete => "delete",
+        }
+    }
+}
+
 impl Default for FocusConfig {
     fn default() -> Self {
         FocusConfig {
             filtering: true,
             reading: Reading::default(),
+            after_unsubscribe: AfterUnsubscribe::default(),
             filter: FocusFilter::default(),
             digests: Vec::new(),
             model: None,
