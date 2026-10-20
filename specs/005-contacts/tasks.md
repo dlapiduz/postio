@@ -218,12 +218,12 @@ member's preferred address; `group:` works through any member address.
 ### Tests first (observe each red)
 
 - [X] T065 [P] [US5] `crates/postio-storage/tests/storage_suite/contact_groups.rs` (extend): create/rename/delete, add/remove members; a case-insensitive duplicate name is refused; expansion returns preferred addresses of live members only; deleting a person keeps its membership and restoring it returns
-- [ ] T066 [P] [US5] `crates/postio-app/tests/app_suite/contact_groups.rs`: create "Family" from the pane, add two people, pick the group in a new draft's To field — both preferred addresses fill in; edit the group afterwards and the draft does not change (FR-041); `group:family` in search finds mail through a member's non-preferred address
+- [X] T066 [P] [US5] `crates/postio-app/tests/app_suite/contact_groups.rs`: create "Family" from the pane, add two people, pick the group in a new draft's To field — both preferred addresses fill in; edit the group afterwards and the draft does not change (FR-041); `group:family` in search finds mail through a member's non-preferred address
 
 ### Implementation
 
-- [ ] T067 [US5] Group commands (`CreateGroup`, `RenameGroup`, `DeleteGroup` + restore inverse, `AddMembers`, `RemoveMembers`) in `command.rs`/`undo.rs`/`actions.rs`; register `contact_group_new`, `contact_group_rename`, `contact_group_add`, `contact_group_remove`; group deletion is `contact_delete` on a group-kind row (contracts/commands.md), handled by `DeleteGroup` with a `RestoreGroup` inverse
-- [ ] T068 [US5] Groups in the pane: a groups section above the people list in `crates/postio-gtk/src/contacts/list.rs` (a group row filters the list to its members), member add/remove from the selection; wire in `crates/postio-app/src/contacts.rs`; composer expansion in `crates/postio-app/src/compose.rs` uses preferred addresses. Makes T065/T066 green
+- [X] T067 [US5] Group commands (`CreateGroup`, `RenameGroup`, `DeleteGroup` + restore inverse, `AddMembers`, `RemoveMembers`) in `command.rs`/`undo.rs`/`actions.rs`; register `contact_group_new`, `contact_group_rename`, `contact_group_add`, `contact_group_remove`; group deletion is `contact_delete` on a group-kind row (contracts/commands.md), handled by `DeleteGroup` with a `RestoreGroup` inverse
+- [X] T068 [US5] Groups in the pane: a groups list above the people in `crates/postio-gtk/src/contacts/pane.rs` (the group under the keyboard shows its members; `Return` on it is its `group:` mail), member add/remove from the selection; wire in `crates/postio-app/src/contacts.rs`; composer expansion in `crates/postio-app/src/compose.rs` uses preferred addresses. Makes T065/T066 green
 
 ---
 

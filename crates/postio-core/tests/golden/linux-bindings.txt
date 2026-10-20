@@ -166,3 +166,7 @@ contact_restore
 contacts_toggle_deleted	
 contacts_suggestions	
 suggestion_dismiss	
+contact_group_new	
+contact_group_rename	
+contact_group_add	
+contact_group_remove	

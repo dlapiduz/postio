@@ -261,6 +261,10 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::ContactsToggleDeleted
         | C::ContactsSuggestions
         | C::SuggestionDismiss
+        | C::ContactGroupNew
+        | C::ContactGroupRename
+        | C::ContactGroupAdd
+        | C::ContactGroupRemove
         | C::GoToFiltered
         | C::GoToDigestRules
         | C::ToggleHasAction

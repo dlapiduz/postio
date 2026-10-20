@@ -179,3 +179,27 @@ async fn a_deleted_member_no_longer_widens_the_group() {
         "a deleted person is offered nowhere, and a group is no exception"
     );
 }
+
+#[tokio::test]
+async fn a_group_name_with_a_space_is_found_quoted() {
+    // What `Return` on a group row writes (`postio_ui::contacts::group_mail_query`).
+    let world = world().await;
+    let groups = ContactGroupRepository::new(&world.connection);
+    let ada = ContactRepository::new(&world.connection)
+        .by_address("ada@example.com")
+        .await
+        .expect("lookup")
+        .expect("ada")
+        .id;
+    let mut club = postio_model::ContactGroup::new("Book club", at(0));
+    groups.create(&mut club).await.expect("create");
+    groups.add_member(club.id, ada).await.expect("add");
+    let hits = run(&world.connection, &postio_ui_query("Book club")).await;
+    assert!(hits.contains(&world.from_second_address.id), "{hits:?}");
+}
+
+/// `group_mail_query`'s rule, restated: postio-index may not depend on the
+/// UI crate, and the pair is what this test holds together.
+fn postio_ui_query(name: &str) -> String {
+    format!("group:\"{name}\"")
+}

@@ -27,8 +27,9 @@ use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
 use postio_model::{
-    AccountId, AddressId, ContactId, ContactState, DraftId, EmailAddress, JoinReceipt, LabelId,
-    MailboxId, MailboxRole, MessageId, OperationRange, PersonEdit, PersonFields, ThreadId,
+    AccountId, AddressId, ContactGroup, ContactGroupId, ContactId, ContactState, DraftId,
+    EmailAddress, JoinReceipt, LabelId, MailboxId, MailboxRole, MessageId, OperationRange,
+    PersonEdit, PersonFields, ThreadId,
 };
 
 /// How long an answer to an invitation waits in the outbox before it may
@@ -799,10 +800,13 @@ commands! {
         /// What is asked: a keystroke opens the editor on the focused person.
         action: ContactEditAction = ContactEditAction::Ask,
     } => "contact_edit",
-    /// Delete a person (FR-023).
+    /// Delete a person (FR-023), or a group (FR-040). Both `None` means
+    /// whichever row is focused.
     ContactDelete {
-        /// Who; `None` means the focused one.
+        /// Who.
         person: Option<ContactId> = None,
+        /// Or which group.
+        group: Option<ContactGroupId> = None,
     } => "contact_delete",
     /// Bring a deleted person back (FR-023a).
     ContactRestore {
@@ -821,6 +825,32 @@ commands! {
         /// The two people; `None` means the focused suggestion.
         pair: Option<(ContactId, ContactId)> = None,
     } => "suggestion_dismiss",
+    /// Make a group (FR-040), ask for its name, or put a deleted one back.
+    ContactGroupNew {
+        /// What is asked: a keystroke asks for the name.
+        action: ContactGroupNewAction = ContactGroupNewAction::Ask,
+    } => "contact_group_new",
+    /// Rename a group.
+    ContactGroupRename {
+        /// Which; `None` means the focused group.
+        group: Option<ContactGroupId> = None,
+        /// Its new name; `None` asks.
+        name: Option<String> = None,
+    } => "contact_group_rename",
+    /// Add people to a group.
+    ContactGroupAdd {
+        /// Which group; `None` asks which.
+        group: Option<ContactGroupId> = None,
+        /// Who; empty means the marked people, or the one under the cursor.
+        people: Vec<ContactId> = Vec::new(),
+    } => "contact_group_add",
+    /// Take people out of a group.
+    ContactGroupRemove {
+        /// Which group; `None` means the group on screen.
+        group: Option<ContactGroupId> = None,
+        /// Who; empty means the marked people, or the one under the cursor.
+        people: Vec<ContactId> = Vec::new(),
+    } => "contact_group_remove",
     ;
     /// Mark one message read because the cursor rested on it long enough to
     /// have been read — not because anyone asked.
@@ -1043,6 +1073,27 @@ pub enum ContactEditAction {
         person: ContactId,
         /// What they were.
         fields: PersonFields,
+    },
+}
+
+/// What a [`Command::ContactGroupNew`] asks for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContactGroupNewAction {
+    /// Ask for the name.
+    Ask,
+    /// Make this group of these people.
+    Create {
+        /// Its name.
+        name: String,
+        /// Its first members.
+        members: Vec<ContactId>,
+    },
+    /// Put a deleted group back -- undo's half.
+    Restore {
+        /// The group as it was.
+        group: ContactGroup,
+        /// Every member it had.
+        members: Vec<ContactId>,
     },
 }
 

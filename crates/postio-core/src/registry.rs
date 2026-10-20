@@ -2672,6 +2672,48 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
     },
+    CommandSpec {
+        id: CommandId::ContactGroupNew,
+        title: "New group",
+        default_binding: "g n",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactGroupRename,
+        title: "Rename group",
+        default_binding: "R",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactGroupAdd,
+        title: "Add to group",
+        // `l` for label: a group is the address book's way of labelling
+        // people, and `L` takes it off again.
+        default_binding: "l",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactGroupRemove,
+        title: "Remove from group",
+        default_binding: "L",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
 ];
 
 /// Every command, in cheat-sheet order.
@@ -3088,6 +3130,10 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             | (ActionId::Builtin(C::ContactsToggleDeleted), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactsSuggestions), Platform::Freedesktop)
             | (ActionId::Builtin(C::SuggestionDismiss), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactGroupNew), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactGroupRename), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactGroupAdd), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactGroupRemove), Platform::Freedesktop)
     )
 }
 
@@ -3164,7 +3210,7 @@ mod tests {
 
     /// What only the Mac draws, until Linux adopts it: the search dropdown
     /// and results view (spec 010 D23, D25) and Contacts (specs/005).
-    const NOT_ON_LINUX_YET: [CommandId; 34] = [
+    const NOT_ON_LINUX_YET: [CommandId; 38] = [
         CommandId::ShowAllResults,
         CommandId::ForgetRecent,
         CommandId::ExcludeSuggestion,
@@ -3199,6 +3245,10 @@ mod tests {
         CommandId::ContactsToggleDeleted,
         CommandId::ContactsSuggestions,
         CommandId::SuggestionDismiss,
+        CommandId::ContactGroupNew,
+        CommandId::ContactGroupRename,
+        CommandId::ContactGroupAdd,
+        CommandId::ContactGroupRemove,
     ];
 
     #[test]

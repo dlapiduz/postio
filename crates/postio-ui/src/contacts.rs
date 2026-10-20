@@ -22,6 +22,16 @@ pub fn show_mail_query(addresses: &[String]) -> String {
     }
 }
 
+/// The query `Return` on a group writes: `group:` and its name, quoted when
+/// the name has a space in it.
+pub fn group_mail_query(name: &str) -> String {
+    if name.contains(char::is_whitespace) {
+        format!("group:\"{}\"", name.replace('"', ""))
+    } else {
+        format!("group:{name}")
+    }
+}
+
 /// Whether a row carries the mark for a person the user made or imported
 /// (FR-005): the list distinguishes the address book from the mail.
 pub fn is_made(source: ContactSource) -> bool {
@@ -653,6 +663,12 @@ mod join_tests {
             person(2, None, None, None, 2),
         ]);
         assert_eq!(choices.names, ["p2@example.com", "p1@example.com"]);
+    }
+
+    #[test]
+    fn a_group_with_a_space_is_quoted_in_its_query() {
+        assert_eq!(group_mail_query("Family"), "group:Family");
+        assert_eq!(group_mail_query("Book club"), "group:\"Book club\"");
     }
 
     #[test]
