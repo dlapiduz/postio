@@ -1478,8 +1478,9 @@ impl Plan {
             params.append(&mut values);
         }
 
+        let people = request.query.is_contact_aware();
         for clause in request.query.filters() {
-            if as_sets && let Some((sql, params)) = id_set(&clause.filter) {
+            if as_sets && let Some((sql, params)) = id_set(&clause.filter, people) {
                 sets.push(IdSet {
                     sql,
                     params,
@@ -1487,7 +1488,7 @@ impl Plan {
                 });
                 continue;
             }
-            let (sql, mut values) = filter_condition(&clause.filter);
+            let (sql, mut values) = filter_condition(&clause.filter, people);
             let sql = if clause.negated {
                 format!("NOT ({sql})")
             } else {
@@ -2129,10 +2130,20 @@ fn names_a_folder(query: &ParsedQuery) -> bool {
 
 /// Translates one structured filter into a SQL condition (unnegated) plus its
 /// bound parameters, in the order the `?` placeholders appear.
-fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
+fn filter_condition(filter: &Filter, people: bool) -> (String, Vec<turso::Value>) {
     match filter {
-        Filter::From(value) => fts_column_condition("sender", value),
-        Filter::To(value) => fts_column_condition("recipients", value),
+        Filter::From(value) => with_people(
+            fts_column_condition("sender", value),
+            value,
+            FROM_KINDS,
+            people,
+        ),
+        Filter::To(value) => with_people(
+            fts_column_condition("recipients", value),
+            value,
+            TO_KINDS,
+            people,
+        ),
         Filter::Subject(value) => fts_column_condition("subject", value),
         // Resolved in SQL rather than in Rust, exactly as `in:` is below: the
         // name the user typed is matched against the account's display name
@@ -2304,7 +2315,7 @@ fn filter_condition(filter: &Filter) -> (String, Vec<turso::Value>) {
             let mut sql = Vec::with_capacity(set.members().len());
             let mut params = Vec::new();
             for member in set.members() {
-                let (condition, mut values) = filter_condition(member);
+                let (condition, mut values) = filter_condition(member, people);
                 sql.push(format!("({condition})"));
                 params.append(&mut values);
             }
@@ -2397,7 +2408,7 @@ const GROUP_SET: &str = "SELECT r.message_id FROM recipients r \
 /// cheap per row; as sets they are one walk of `message_labels` or
 /// `markers`, which lets a conversation search walk only the messages they
 /// keep when nothing else narrows it.
-fn id_set(filter: &Filter) -> Option<(String, Vec<turso::Value>)> {
+fn id_set(filter: &Filter, people: bool) -> Option<(String, Vec<turso::Value>)> {
     Some(match filter {
         // A set (D26) is the union of its members' sets, when each is one;
         // `UNION` rather than `UNION ALL`, because a set may also drive the
@@ -2406,14 +2417,18 @@ fn id_set(filter: &Filter) -> Option<(String, Vec<turso::Value>)> {
             let mut arms = Vec::with_capacity(set.members().len());
             let mut params = Vec::new();
             for member in set.members() {
-                let (sql, mut values) = id_set(member)?;
+                let (sql, mut values) = id_set(member, people)?;
                 arms.push(format!("SELECT message_id FROM ({sql})"));
                 params.append(&mut values);
             }
             (arms.join(" UNION "), params)
         }
-        Filter::From(value) => fts_column_set("sender", value),
-        Filter::To(value) => fts_column_set("recipients", value),
+        Filter::From(value) => {
+            set_with_people(fts_column_set("sender", value), value, FROM_KINDS, people)
+        }
+        Filter::To(value) => {
+            set_with_people(fts_column_set("recipients", value), value, TO_KINDS, people)
+        }
         Filter::Subject(value) => fts_column_set("subject", value),
         Filter::Filename(value) => fts_column_set("filenames", value),
         Filter::List(value) => fts_column_set("list_id", value),
@@ -2434,6 +2449,88 @@ fn id_set(filter: &Filter) -> Option<(String, Vec<turso::Value>)> {
         ),
         _ => return None,
     })
+}
+
+/// The address kinds `from:` reads, and the ones `to:` reads.
+const FROM_KINDS: &str = "'from'";
+const TO_KINDS: &str = "'to', 'cc', 'bcc'";
+
+/// The ids of the addresses a contact-aware `from:`/`to:` value names, as a
+/// subselect with its parameters: every address of each live contact one of
+/// whose words is the value, or of every live member of the group a leading
+/// `@` names. `None` for a value that names neither (a phrase of several
+/// words is left to the header).
+fn people_addresses(value: &str) -> Option<(String, Vec<turso::Value>)> {
+    let value = value.trim();
+    if let Some(group) = value.strip_prefix('@') {
+        return Some((
+            "SELECT a.id FROM contact_groups g \
+               JOIN contact_group_members gm ON gm.group_id = g.id \
+               JOIN contacts c ON c.id = gm.contact_id AND c.state = 'live' \
+               JOIN addresses a ON a.contact_id = c.id \
+              WHERE lower(g.name) = lower(?)"
+                .to_string(),
+            vec![turso::Value::Text(group.to_string())],
+        ));
+    }
+    if value.is_empty() || value.contains(char::is_whitespace) {
+        return None;
+    }
+    Some((
+        "SELECT a.id FROM contact_terms t \
+           JOIN contacts c ON c.id = t.contact_id AND c.state = 'live' \
+           JOIN addresses a ON a.contact_id = c.id \
+          WHERE t.term = ?"
+            .to_string(),
+        vec![turso::Value::Text(value.to_lowercase())],
+    ))
+}
+
+/// `header` or, when the search knows people, the mail whose `kinds` header
+/// names an address `value` means.
+fn with_people(
+    (header, mut values): (String, Vec<turso::Value>),
+    value: &str,
+    kinds: &str,
+    people: bool,
+) -> (String, Vec<turso::Value>) {
+    let Some((addresses, mut more)) = people.then(|| people_addresses(value)).flatten() else {
+        return (header, values);
+    };
+    let by_person = format!(
+        "m.id IN (SELECT r.message_id FROM recipients r \
+                   WHERE r.kind IN ({kinds}) AND r.address_id IN ({addresses}))"
+    );
+    // A group is a name for people, not words in a header.
+    if value.trim_start().starts_with('@') {
+        return (by_person, more);
+    }
+    values.append(&mut more);
+    (format!("(({header}) OR {by_person})"), values)
+}
+
+/// [`with_people`] for the set form.
+fn set_with_people(
+    (header, mut values): (String, Vec<turso::Value>),
+    value: &str,
+    kinds: &str,
+    people: bool,
+) -> (String, Vec<turso::Value>) {
+    let Some((addresses, mut more)) = people.then(|| people_addresses(value)).flatten() else {
+        return (header, values);
+    };
+    let by_person = format!(
+        "SELECT r.message_id FROM recipients r \
+          WHERE r.kind IN ({kinds}) AND r.address_id IN ({addresses})"
+    );
+    if value.trim_start().starts_with('@') {
+        return (by_person, more);
+    }
+    values.append(&mut more);
+    (
+        format!("SELECT message_id FROM ({header}) UNION {by_person}"),
+        values,
+    )
 }
 
 /// A literal for the middle of a `LIKE '%' || ? || '%' ESCAPE '\\'` pattern.

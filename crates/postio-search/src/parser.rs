@@ -58,6 +58,7 @@ pub fn parse(input: &str, today: NaiveDate) -> ParsedQuery {
         input: input.to_string(),
         tokens,
         forgiving: false,
+        contact_aware: false,
     }
 }
 

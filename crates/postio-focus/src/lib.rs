@@ -94,6 +94,11 @@ pub struct Capabilities {
     /// opens (spec 010 D17). The Mac has them; GTK's bar keeps spec 009's
     /// blend until Linux adopts them (S2).
     pub results_view: bool,
+    /// `from:` and `to:` know people: a word that names a contact finds
+    /// mail from every address they own, `from:@Group` every member
+    /// (specs/011-focus-contacts S4). The Mac has it; Linux keeps the words
+    /// in the header until it adopts Contacts (S13).
+    pub people_search: bool,
 }
 
 impl Policy {
@@ -106,6 +111,7 @@ impl Policy {
                 reading_pane: linux,
                 stacking: linux,
                 results_view: !linux,
+                people_search: !linux,
             },
         }
     }
@@ -1279,7 +1285,11 @@ impl FocusController {
             cursor: cursor::Cursor::default(),
             verbs: verbs::Verbs::default(),
             surfaces: surfaces::Surfaces::default(),
-            bar: bar::Bar::new(policy.platform, policy.caps.results_view),
+            bar: bar::Bar::new(
+                policy.platform,
+                policy.caps.results_view,
+                policy.caps.people_search,
+            ),
             pickers: pickers::Pickers::default(),
             toast_undo: None,
             shown: None,

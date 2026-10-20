@@ -21,6 +21,7 @@ mod attachment_text;
 mod backfill;
 mod body_index;
 mod completions;
+mod contact_aware_search;
 mod content_membership;
 mod conversations;
 mod digest_matcher;

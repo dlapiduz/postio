@@ -488,9 +488,32 @@ pub struct ParsedQuery {
     pub(crate) tokens: Vec<Token>,
     /// Whether a near word counts too: see [`forgiving`](Self::forgiving).
     pub(crate) forgiving: bool,
+    /// Whether `from:` and `to:` know people: see
+    /// [`contact_aware`](Self::contact_aware).
+    pub(crate) contact_aware: bool,
 }
 
 impl ParsedQuery {
+    /// This query, asked so that `from:` and `to:` know people
+    /// (specs/011-focus-contacts S4): a word that names a contact finds the
+    /// mail of every address they own, and `from:@Group` the mail of every
+    /// member, beside the words in the header. Off, they mean what they
+    /// always have.
+    ///
+    /// An option of the caller, never of the query text, as
+    /// [`forgiving`](Self::forgiving) is: a saved search, a rule and a
+    /// frontend that has not adopted people mean what they say.
+    #[must_use]
+    pub fn contact_aware(mut self) -> Self {
+        self.contact_aware = true;
+        self
+    }
+
+    /// Whether `from:` and `to:` know people: [`contact_aware`](Self::contact_aware).
+    pub fn is_contact_aware(&self) -> bool {
+        self.contact_aware
+    }
+
     /// This query, asked the forgiving way: after the words it says, the
     /// words near them -- a plural, an unfinished word, a misspelling --
     /// ranked below every exact match (ADR 0037, as amended).
@@ -1105,6 +1128,7 @@ mod tests {
             input: "from:ada docker".to_owned(),
             tokens: Vec::new(),
             forgiving: false,
+            contact_aware: false,
         };
         assert_eq!(parsed.input(), "from:ada docker");
     }
