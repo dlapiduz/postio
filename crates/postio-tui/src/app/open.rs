@@ -625,10 +625,9 @@ impl App {
             return Vec::new();
         };
         let count = found.ids.len();
-        let plus = if found.more { "+" } else { "" };
         let target = || MessageTarget::Messages(found.ids.clone());
         let item = |verb: &str, id: CommandId, command: Command| MenuItem {
-            words: format!("{verb} {count}{plus}"),
+            words: postio_ui::unsubscribe::sweep_button(verb, count, found.more),
             detail: self.hint(id).unwrap_or_default(),
             action: MenuAction::Send(command),
         };

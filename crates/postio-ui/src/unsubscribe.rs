@@ -214,6 +214,36 @@ pub fn sweep_offer(scope: &SweepScope, count: usize, more: bool) -> Option<Strin
     ))
 }
 
+/// A choice's label with its count: `Delete 14`, `Archive 5000+`.
+pub fn sweep_button(verb: &str, count: usize, more: bool) -> String {
+    format!("{verb} {count}{}", if more { "+" } else { "" })
+}
+
+/// The dialog's question, for a frontend that asks in a dialog rather than
+/// a menu: `Clear what news.example.org sent?`
+pub fn sweep_heading(scope: &SweepScope) -> String {
+    format!("Clear what {} sent?", scope.name())
+}
+
+/// The dialog's body: how much is left, and that either choice is undoable.
+/// `undo` is the key as the frontend draws it (`ctrl+z`), if it has one.
+pub fn sweep_body(count: usize, more: bool, undo: Option<&str>) -> String {
+    let plus = if more { "+" } else { "" };
+    let noun = if count == 1 && !more {
+        "message"
+    } else {
+        "messages"
+    };
+    let how = match undo {
+        Some(key) => format!("{key} takes it back"),
+        None => "Undo takes it back".to_owned(),
+    };
+    format!(
+        "{count}{plus} {noun} from it, none of them Flagged, are still here. \
+         Delete moves them to the Trash; {how}."
+    )
+}
+
 /// What a declined offer, or a finished one, leaves on screen is the
 /// command's own notice ("Deleted 14 messages"), so there is no wording here
 /// for it: the verb is one the registry already says.

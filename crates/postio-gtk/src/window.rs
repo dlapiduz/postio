@@ -69,6 +69,8 @@ type NotificationSink = Rc<dyn Fn(&postio_ui::notify::Notification)>;
 
 /// The stop-digesting confirmation (US10 scenario 5).
 const STOP_DIALOG: &str = "focus-stop-digesting";
+/// The widget name of the offer to clear what a list sent (#1931).
+const SWEEP_DIALOG: &str = "focus-sweep-list";
 
 /// The sweep's confirmation (FR-118).
 const SWEEP_DIALOG: &str = "focus-sweep";
@@ -3187,14 +3189,70 @@ impl FocusWindow {
             async move {
                 // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
                 let left = client.unsubscribe(message).await;
+                let left_ok = left.is_ok();
                 let said = match left {
                     Ok(list) => postio_ui::focus_target::unsubscribed(&list),
                     Err(error) => error.to_string(),
                 };
                 window.imp().toast.show_notice(&said);
                 window.follow_toast();
+                if left_ok {
+                    // POSTIO-GLIB-SAFE: a client call is a oneshot receive.
+                    if let Ok(found) = client.list_mail(message).await {
+                        window.offer_sweep(found);
+                    }
+                }
             }
         ));
+    }
+
+    /// After an unsubscribe: offer to archive or delete what the list sent
+    /// (#1931). Nothing found, nothing offered. Esc keeps everything; either
+    /// choice is one command on exactly the found messages, so one undo.
+    fn offer_sweep(&self, found: postio_client::protocol::ListMailFound) {
+        use postio_ui::unsubscribe::{
+            SWEEP_ARCHIVE, SWEEP_DELETE, SweepScope, sweep_body, sweep_button, sweep_heading,
+        };
+        let count = found.ids.len();
+        if count == 0 {
+            return;
+        }
+        let scope = SweepScope::ListId(found.name.clone());
+        let dialog = adw::AlertDialog::new(
+            Some(&sweep_heading(&scope)),
+            Some(&sweep_body(count, found.more, None)),
+        );
+        dialog.set_widget_name(SWEEP_DIALOG);
+        dialog.add_response("keep", "Keep them");
+        dialog.add_response("archive", &sweep_button(SWEEP_ARCHIVE, count, found.more));
+        dialog.add_response("delete", &sweep_button(SWEEP_DELETE, count, found.more));
+        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("keep"));
+        dialog.set_close_response("keep");
+        let ids = found.ids;
+        dialog.connect_response(
+            None,
+            glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |_, response| {
+                    let target = MessageTarget::Messages(ids.clone());
+                    match response {
+                        "archive" => window.post(Command::Archive { target }),
+                        "delete" => window.post(Command::Delete { target }),
+                        _ => {}
+                    }
+                }
+            ),
+        );
+        dialog.present(Some(self));
+    }
+
+    /// The sweep offer, while it is up.
+    pub fn sweep_offer(&self) -> Option<adw::AlertDialog> {
+        self.visible_dialog()
+            .filter(|dialog| dialog.widget_name() == SWEEP_DIALOG)
+            .and_then(|dialog| dialog.downcast().ok())
     }
 
     /// Edit the digest rule called `name` (T138), from its digest's `d`.
