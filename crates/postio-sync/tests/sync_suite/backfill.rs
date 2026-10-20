@@ -723,6 +723,176 @@ async fn a_cancelled_fetch_stores_nothing() {
 }
 
 // ---------------------------------------------------------------------------
+// One message that will not come must not be asked for for ever (#1918)
+// ---------------------------------------------------------------------------
+
+/// Fetches `uid`'s body once, the way the backlog would.
+async fn try_body(
+    local: &Local,
+    backend: &MockBackend,
+    id: MessageId,
+    uid: u32,
+) -> Result<Outcome, postio_sync::SyncError> {
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        backend,
+        &request(&local.inbox, id, uid, 1_024),
+        BackfillPolicy::default().max_inline_bytes,
+        None,
+        &CancelToken::new(),
+    )
+    .await
+}
+
+/// What a restart would offer: a fresh backfill, seeded from the store.
+async fn offered_after_a_restart(local: &Local) -> usize {
+    let mut backfill = Backfill::new(policy());
+    seed(&local.connection, &mut backfill, local.inbox.id, 50)
+        .await
+        .expect("seed");
+    backfill.progress().pending
+}
+
+#[tokio::test]
+async fn a_body_the_server_refuses_is_remembered_across_a_restart() {
+    let backend = server(1).await;
+    let local = local().await;
+    let (id, uid) = headers(&local, &backend).await[0];
+
+    backend.inject(Fault::Rejected("message is corrupt".to_owned()));
+    let outcome = try_body(&local, &backend, id, uid).await.expect("settled");
+    assert!(matches!(outcome, Outcome::Failed { .. }), "{outcome:?}");
+
+    let messages = MessageRepository::new(&local.connection);
+    assert!(
+        messages.body_failed(id).await.expect("read"),
+        "the refusal is on the row, not in this session's memory"
+    );
+    assert_eq!(
+        offered_after_a_restart(&local).await,
+        0,
+        "a new session must not walk into the same refusal again"
+    );
+    assert_eq!(
+        messages.get(id).await.unwrap().unwrap().sync.body_state,
+        BodyState::HeadersOnly,
+        "the headers stay readable"
+    );
+}
+
+#[tokio::test]
+async fn a_message_the_server_has_no_body_for_is_remembered() {
+    let backend = server(2).await;
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+    // A UID the server never had: the FETCH is answered with a bare OK.
+    let (id, _) = rows[0];
+    let outcome = try_body(&local, &backend, id, 9_999).await.expect("settled");
+    assert!(matches!(outcome, Outcome::Failed { .. }), "{outcome:?}");
+    assert!(
+        MessageRepository::new(&local.connection)
+            .body_failed(id)
+            .await
+            .expect("read")
+    );
+    assert_eq!(
+        offered_after_a_restart(&local).await,
+        1,
+        "only the one the server could not produce is set aside"
+    );
+}
+
+#[tokio::test]
+async fn a_dropped_connection_is_never_charged_to_the_message() {
+    let backend = server(1).await;
+    let local = local().await;
+    let (id, uid) = headers(&local, &backend).await[0];
+
+    backend.inject(Fault::Disconnect);
+    try_body(&local, &backend, id, uid)
+        .await
+        .expect_err("the fetch died");
+
+    assert!(
+        !MessageRepository::new(&local.connection)
+            .body_failed(id)
+            .await
+            .expect("read"),
+        "bytes that stop short are a bad link, not a bad message"
+    );
+    assert_eq!(offered_after_a_restart(&local).await, 1);
+}
+
+#[tokio::test]
+async fn a_timeout_is_never_charged_to_the_message() {
+    let backend = server(1).await;
+    let local = local().await;
+    let (id, uid) = headers(&local, &backend).await[0];
+
+    backend.inject(Fault::Timeout);
+    try_body(&local, &backend, id, uid)
+        .await
+        .expect_err("the fetch timed out");
+
+    assert!(
+        !MessageRepository::new(&local.connection)
+            .body_failed(id)
+            .await
+            .expect("read")
+    );
+    assert_eq!(offered_after_a_restart(&local).await, 1);
+}
+
+#[tokio::test]
+async fn opening_a_marked_message_tries_again_and_a_body_clears_the_mark() {
+    let backend = server(1).await;
+    let local = local().await;
+    let (id, uid) = headers(&local, &backend).await[0];
+    backend.inject(Fault::Rejected("try later".to_owned()));
+    try_body(&local, &backend, id, uid).await.expect("settled");
+    let messages = MessageRepository::new(&local.connection);
+    assert!(messages.body_failed(id).await.expect("read"));
+
+    // The user opens it: `request_body` goes around the seed's exclusion.
+    let mut backfill = Backfill::new(policy());
+    assert!(
+        request_body(&local.connection, &mut backfill, id)
+            .await
+            .expect("request"),
+        "an explicit open is always allowed to try"
+    );
+    let outcome = try_body(&local, &backend, id, uid).await.expect("fetch");
+
+    assert!(matches!(outcome, Outcome::Stored { .. }), "{outcome:?}");
+    assert!(!messages.body_failed(id).await.expect("read"));
+}
+
+#[tokio::test]
+async fn a_body_that_cannot_be_parsed_is_settled_not_wedged() {
+    let junk = vec![0xff, 0xfe, 0x00, b'\r', b'\n', 0x80, 0x81, 0x00, 0x00];
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(MockMessage::new(junk).with_internal_date(at(1)));
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+    let local = local().await;
+    let (id, uid) = headers(&local, &backend).await[0];
+
+    let outcome = try_body(&local, &backend, id, uid).await.expect("fetch");
+
+    assert!(matches!(outcome, Outcome::Stored { .. }), "{outcome:?}");
+    let messages = MessageRepository::new(&local.connection);
+    assert_eq!(
+        messages.get(id).await.unwrap().unwrap().sync.body_state,
+        BodyState::Full,
+        "the bytes are on this machine; asking again would return the same bytes"
+    );
+    assert!(!messages.body_failed(id).await.expect("read"));
+    assert_eq!(offered_after_a_restart(&local).await, 0);
+}
+
+// ---------------------------------------------------------------------------
 // And it reaches the search index
 // ---------------------------------------------------------------------------
 

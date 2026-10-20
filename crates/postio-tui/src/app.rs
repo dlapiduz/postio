@@ -3961,6 +3961,7 @@ impl App {
             Ok(Body::Missing) => absent(Absent::Missing),
             Ok(Body::Empty) => absent(Absent::Empty),
             Ok(Body::ForeignDraft) => absent(Absent::ForeignDraft),
+            Ok(Body::Failed) => absent(Absent::Failed),
             Err(reason) => crate::reader::from_text(&reason),
         };
         let Some(member) = self.reading.as_mut().and_then(|reading| {

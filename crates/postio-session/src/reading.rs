@@ -146,6 +146,13 @@ pub async fn load_with_row(
             return (Body::Absent(Absent::ForeignDraft), Some(message));
         }
         Ok(Some(message)) if !message.sync.body_state.has_body() => {
+            // Asked only here, on the way to "not yet": a message with a body
+            // costs the read it always did. A server's refusal outranks
+            // `Offline` because it is the fact, and offline merely the
+            // moment (#1918).
+            if repository.body_failed(id).await.unwrap_or(false) {
+                return (Body::Absent(Absent::Failed), Some(message));
+            }
             let reason = if is_offline {
                 Absent::Offline
             } else {

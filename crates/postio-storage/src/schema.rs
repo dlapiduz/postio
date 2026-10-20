@@ -292,6 +292,19 @@ SELECT a.id,
 ALTER TABLE sync_state ADD COLUMN passes_since_flag_sweep INTEGER NOT NULL DEFAULT 0;
 ",
     },
+    // A message whose body the server would not give up is remembered (#1918).
+    // A new table, so a store gains it empty and nothing is backfilled.
+    Migration {
+        from: stamp(0x069c_72b3),
+        to: stamp(0x84e7_72c0),
+        statements: "
+CREATE TABLE IF NOT EXISTS body_failures (
+    message_id  INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    mod_seq     INTEGER,
+    failed_at   INTEGER NOT NULL
+);
+",
+    },
 ];
 
 /// The steps that carry a store stamped `found` to [`FINGERPRINT`], in the
@@ -405,6 +418,18 @@ CREATE TABLE attachments (
     blob_id           TEXT,
     CHECK ((message_id IS NOT NULL) <> (draft_id IS NOT NULL)),
     CHECK (disposition <> 'other' OR disposition_raw IS NOT NULL)
+);
+
+-- A message whose body the server would not give up, remembered so a restart
+-- does not walk into the same refusal again (#1918). `mod_seq` is the
+-- message's as it stood: a row whose message has since changed no longer
+-- matches and is ignored, so the server changing a message is what asks
+-- again. The backfill's seeds skip a matching row; opening the message
+-- never does.
+CREATE TABLE body_failures (
+    message_id  INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    mod_seq     INTEGER,
+    failed_at   INTEGER NOT NULL
 );
 
 CREATE TABLE contact_group_members (

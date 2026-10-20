@@ -1594,6 +1594,7 @@ impl OpenMessage {
                 Body::Offline => reader.show_absent(postio_ui::reader::document::Absent::Offline),
                 Body::Missing => reader.show_absent(postio_ui::reader::document::Absent::Missing),
                 Body::Empty => reader.show_absent(postio_ui::reader::document::Absent::Empty),
+                Body::Failed => reader.show_absent(postio_ui::reader::document::Absent::Failed),
                 Body::ForeignDraft => {
                     reader.show_absent(postio_ui::reader::document::Absent::ForeignDraft);
                     if let Some(page) = page.upgrade() {

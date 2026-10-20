@@ -28,6 +28,7 @@ pub fn wire_body(stored: Stored) -> Body {
         Stored::Absent(Absent::Missing) => Body::Missing,
         Stored::Absent(Absent::Empty) => Body::Empty,
         Stored::Absent(Absent::ForeignDraft) => Body::ForeignDraft,
+        Stored::Absent(Absent::Failed) => Body::Failed,
     }
 }
 
@@ -128,7 +129,9 @@ impl AskedBodies {
         let mut ask = Vec::new();
         for reading in readings {
             match reading.body {
-                Body::Partial => {
+                // A body the server refused is still asked for when the
+                // person opens it: only the seeds leave it alone (#1918).
+                Body::Partial | Body::Failed => {
                     if let std::collections::hash_map::Entry::Vacant(first) =
                         asked.entry(reading.message)
                     {
@@ -186,7 +189,12 @@ mod asked_tests {
             reading(3, Body::Empty),
             reading(4, Body::ForeignDraft),
             reading(5, Body::Partial),
+            reading(6, Body::Failed),
         ];
-        assert_eq!(asked.to_ask(&read, now), vec![MessageId::new(5)]);
+        assert_eq!(
+            asked.to_ask(&read, now),
+            vec![MessageId::new(5), MessageId::new(6)],
+            "opening a message the server once refused asks again"
+        );
     }
 }

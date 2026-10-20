@@ -884,6 +884,9 @@ pub enum Body {
     Empty,
     /// A draft written by another client: nothing here to edit.
     ForeignDraft,
+    /// Headers are here; the server would not give up the body when last
+    /// asked (#1918). Opening the message asks again.
+    Failed,
 }
 
 /// Everything a reading pane draws of one message, read on one turn.

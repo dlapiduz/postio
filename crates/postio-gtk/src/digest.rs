@@ -996,6 +996,9 @@ impl DigestWindow {
                 Body::ForeignDraft => window
                     .reader
                     .show_absent(postio_ui::reader::document::Absent::ForeignDraft),
+                Body::Failed => window
+                    .reader
+                    .show_absent(postio_ui::reader::document::Absent::Failed),
             }
             crate::a11y::teach_shortcuts(&window.dialog);
             crate::motion::keep_to_budget(&window.dialog);

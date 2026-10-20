@@ -19,6 +19,7 @@
 mod attachment_extraction;
 mod attachment_index_pass;
 mod backfill_policy;
+mod body_failed_reading;
 mod body_index_pass;
 mod cid_scoping;
 mod correlation;

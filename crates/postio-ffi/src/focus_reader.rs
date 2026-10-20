@@ -268,6 +268,7 @@ impl Session {
             Body::Missing => return plate(Absent::Missing),
             Body::Empty => return plate(Absent::Empty),
             Body::ForeignDraft => return plate(Absent::ForeignDraft),
+            Body::Failed => return plate(Absent::Failed),
         };
         let row = reading.row.as_deref();
         let from = row.and_then(|row| row.from.first());
