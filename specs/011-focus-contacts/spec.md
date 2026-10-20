@@ -734,7 +734,13 @@ terminal adoption (later slices); contact-based scoring.
 
 ## Questions for the maintainer
 
-Each has a recommendation. Nothing is built until the plan is OK'd.
+**Resolved 2026-10-19: the maintainer OK'd the plan.**
+- Q1 is A: single-address rules move onto contacts. Linux-side work is
+  verified on the Linux box.
+- Q2, Q3 and Q4 take option A.
+- Q5 to Q13 take their recommendations; the maintainer raised no
+  objection.
+The options stay below as the record.
 
 **Q1. Where do per-sender settings live after the migration?** Today they are
 in four homes: `[[focus.digests]]` queries, and `[focus.filter]` `never` and
