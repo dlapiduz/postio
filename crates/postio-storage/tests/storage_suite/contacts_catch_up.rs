@@ -88,6 +88,7 @@ async fn an_address_with_mail_and_no_person_gets_one_on_demand_and_only_once() {
         vec![who(None, "ada@example.org")],
     )
     .await;
+    test_support::mark_contacts_history(&connection).await;
     let contacts = ContactRepository::new(&connection);
     let ada = address_of(&connection, "ada@example.org").await;
     assert!(
@@ -146,6 +147,7 @@ async fn the_users_own_address_is_never_made_a_person() {
         vec![me],
     )
     .await;
+    test_support::mark_contacts_history(&connection).await;
     let contacts = ContactRepository::new(&connection);
     let mine = address_of(&connection, &account.address.normalized()).await;
 
@@ -176,6 +178,7 @@ async fn the_catch_up_walks_newest_first_in_batches_and_finishes() {
         )
         .await;
     }
+    test_support::mark_contacts_history(&connection).await;
     let contacts = ContactRepository::new(&connection);
     assert_eq!(contacts.unowned_count().await.unwrap(), 5);
 
@@ -243,6 +246,7 @@ async fn a_catch_up_pass_with_nothing_to_do_is_one_read_and_no_scan() {
         vec![who(None, &account.address.address)],
     )
     .await;
+    test_support::mark_contacts_history(&connection).await;
     let contacts = ContactRepository::new(&connection);
     contacts.catch_up_batch(None, 50).await.unwrap();
 
@@ -302,6 +306,7 @@ async fn making_a_person_costs_a_fixed_number_of_statements() {
         vec![me.clone()],
     )
     .await;
+    test_support::mark_contacts_history(&connection).await;
     let contacts = ContactRepository::new(&connection);
     let busy = address_of(&connection, "busy@example.org").await;
     let quiet = address_of(&connection, "quiet@example.org").await;
@@ -349,7 +354,8 @@ async fn new_mail_from_an_address_the_catch_up_has_not_reached_keeps_its_history
         vec![who(None, "ada@example.org")],
     )
     .await;
-    // The third arrives live: stored first, then recorded, as sync does.
+    test_support::mark_contacts_history(&connection).await;
+    // The fourth arrives live: stored first, then recorded, as sync does.
     let mut live = Message::new(account.id, inbox, at(9));
     live.from = vec![who(Some("Ada"), "ada@example.org")];
     live.to = vec![me.clone()];

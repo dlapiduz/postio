@@ -21,6 +21,7 @@ async fn old_mail() -> std::sync::Arc<Session> {
             .create(&mut message)
             .await
             .expect("old mail");
+        test_support::mark_contacts_history(&connection).await;
     }
     Session::open(SessionOptions::in_memory_with(database)).expect("a session")
 }

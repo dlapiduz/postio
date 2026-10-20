@@ -319,6 +319,14 @@ CREATE TABLE IF NOT EXISTS body_failures (
         from: stamp(0x84e7_72c0),
         to: stamp(0xd831_3529),
         statements: r#"
+-- 0. Where contacts began: mail up to here was stored before anything
+-- recorded who it was from, so the people made for it are built from it
+-- (specs/011-focus-contacts plan 4.2) and the mail after it is recorded as
+-- it arrives.
+INSERT INTO settings (key, account_id, value, updated_at)
+     VALUES ('contacts.history_through', NULL,
+             (SELECT CAST(coalesce(max(id), 0) AS TEXT) FROM messages), 0);
+
 -- 1. What the old tables held, set aside.
 CREATE TABLE contacts_rows AS SELECT * FROM contacts;
 CREATE TABLE contact_groups_rows AS SELECT * FROM contact_groups;

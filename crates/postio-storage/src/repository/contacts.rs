@@ -118,7 +118,7 @@ impl<'a> ContactRepository<'a> {
             BTreeSet::new()
         };
 
-        let stored = message.id != postio_model::MessageId::UNASSIGNED;
+        let own_normalized: Vec<String> = own.iter().map(EmailAddress::normalized).collect();
         let mut seen: Vec<Seen<'_>> = Vec::new();
         for address in message
             .from
@@ -142,7 +142,7 @@ impl<'a> ContactRepository<'a> {
 
         sql::in_scope(self.connection, |transaction| async move {
             for one in &seen {
-                record_in(&transaction, account, one, at, stored).await?;
+                record_in(&transaction, account, one, at, &own_normalized).await?;
             }
             Ok(seen.len())
         })
@@ -2161,7 +2161,7 @@ async fn record_in(
     account: i64,
     seen: &Seen<'_>,
     at: i64,
-    stored: bool,
+    own: &[String],
 ) -> Result<()> {
     type Found = (
         i64,
@@ -2172,39 +2172,24 @@ async fn record_in(
     );
     let address = seen.address;
     let normalized = address.normalized();
-    let lookup = || {
-        sql::first::<Found, _>(
-            connection,
-            "SELECT a.id, a.contact_id, c.name, c.seen_name, c.last_seen_at
-               FROM addresses a LEFT JOIN contacts c ON c.id = a.contact_id
-              WHERE a.address_normalized = ?1",
-            bind![normalized.clone()],
-            |row| {
-                Ok((
-                    row.col(0)?,
-                    row.col(1)?,
-                    row.col(2)?,
-                    row.col(3)?,
-                    row.col(4)?,
-                ))
-            },
-        )
-    };
-    let mut found = lookup().await?;
-    // An address the catch-up has not reached has mail behind it that no
-    // sighting counts. Fold that history into its person first, so the
-    // counts are right whichever the walk or the next message gets to first.
-    // A message already stored is part of that history, so it is not added a
-    // second time below.
-    if let Some((id, None, ..)) = found {
-        let made = adopt(connection, id).await?;
-        if made.is_some() && stored {
-            return Ok(());
-        }
-        if made.is_some() {
-            found = lookup().await?;
-        }
-    }
+    let found: Option<Found> = sql::first(
+        connection,
+        "SELECT a.id, a.contact_id, c.name, c.seen_name, c.last_seen_at
+           FROM addresses a LEFT JOIN contacts c ON c.id = a.contact_id
+          WHERE a.address_normalized = ?1",
+        bind![normalized],
+        |row| {
+            Ok((
+                row.col(0)?,
+                row.col(1)?,
+                row.col(2)?,
+                row.col(3)?,
+                row.col(4)?,
+            ))
+        },
+    )
+    .await?;
+    let existed = found.is_some();
     let (address_id, owner, user_name, seen_name, last_seen) = match found {
         Some(found) => found,
         // Sync writes a message's recipients before recording it, so the
@@ -2271,6 +2256,12 @@ async fn record_in(
             let mut terms = address_terms(address);
             terms.extend(header_name.into_iter().flat_map(words));
             insert_terms(connection, person, &terms).await?;
+            // An address that had mail before contacts began has history
+            // nothing recorded; add it to this first sighting.
+            if existed && history_through(connection).await? > 0 {
+                fold_sightings(connection, address_id, Some(own), true).await?;
+                refresh(connection, person).await?;
+            }
         }
         Some(person) => {
             let is_newest = last_seen.is_none_or(|last| at >= last);
@@ -2361,41 +2352,6 @@ async fn adopt(connection: &Connection, address: i64) -> Result<Option<i64>> {
         return Ok(None);
     }
 
-    // What the stored mail says, folded per account in one statement: how
-    // many messages, the newest, how many the user sent to this address, and
-    // the newest name a header gave it.
-    type Sighting = (i64, i64, i64, i64, Option<String>);
-    let sightings: Vec<Sighting> = sql::all_unbounded(
-        connection,
-        "SELECT m.account_id,
-                count(DISTINCT m.id),
-                max(coalesce(m.date, m.received_at)),
-                count(DISTINCT CASE WHEN r.kind IN ('to', 'cc', 'bcc') AND EXISTS (
-                        SELECT 1 FROM recipients f JOIN addresses fa ON fa.id = f.address_id
-                         WHERE f.message_id = m.id AND f.kind = 'from'
-                           AND (fa.address_normalized IN (SELECT lower(address) FROM accounts)
-                             OR fa.address_normalized IN (SELECT lower(address) FROM identities)))
-                    THEN m.id END),
-                (SELECT r2.name FROM recipients r2 JOIN messages m2 ON m2.id = r2.message_id
-                  WHERE r2.address_id = ?1 AND m2.account_id = m.account_id
-                    AND r2.name IS NOT NULL AND trim(r2.name) <> ''
-                  ORDER BY coalesce(m2.date, m2.received_at) DESC LIMIT 1)
-           FROM recipients r JOIN messages m ON m.id = r.message_id
-          WHERE r.address_id = ?1
-          GROUP BY m.account_id",
-        [address],
-        |row| {
-            Ok((
-                row.col(0)?,
-                row.col(1)?,
-                row.col(2)?,
-                row.col(3)?,
-                row.col(4)?,
-            ))
-        },
-    )
-    .await?;
-
     let now = to_millis(Utc::now());
     sql::execute(
         connection,
@@ -2412,19 +2368,122 @@ async fn adopt(connection: &Connection, address: i64) -> Result<Option<i64>> {
         bind![address, person],
     )
     .await?;
+    fold_sightings(connection, address, None, false).await?;
+    refresh(connection, person).await?;
+    Ok(Some(person))
+}
+
+/// Sets the address's sightings to what its stored mail says, folded per
+/// account in one statement: how many messages, the newest, how many the
+/// user sent to it, and the newest name a header gave it. `own` is who
+/// counts as the user -- a caller that was told (sync) says so; `None`
+/// reads the accounts' and identities' addresses from the store.
+///
+/// Only mail stored before contacts began ([`history_through`]) is folded: a
+/// message stored since is recorded by the pass that stored it, and counting
+/// it here too would count it twice. `add` adds to the sightings already
+/// there (an address recorded since), where otherwise they are set.
+async fn fold_sightings(
+    connection: &Connection,
+    address: i64,
+    own: Option<&[String]>,
+    add: bool,
+) -> Result<()> {
+    let through = history_through(connection).await?;
+    if through == 0 {
+        return Ok(());
+    }
+    let mine = match own {
+        Some(list) => {
+            let placeholders: Vec<String> =
+                (0..list.len()).map(|n| format!("?{}", n + 2)).collect();
+            format!(
+                "fa.address_normalized IN ({})",
+                if placeholders.is_empty() {
+                    "''".to_owned()
+                } else {
+                    placeholders.join(", ")
+                }
+            )
+        }
+        None => "(fa.address_normalized IN (SELECT lower(address) FROM accounts)
+                  OR fa.address_normalized IN (SELECT lower(address) FROM identities))"
+            .to_owned(),
+    };
+    let through_at = own.map_or(0, <[String]>::len) + 2;
+    let mut parameters: Vec<turso::Value> = vec![turso::Value::Integer(address)];
+    parameters.extend(
+        own.unwrap_or_default()
+            .iter()
+            .map(|one| turso::Value::Text(one.clone())),
+    );
+    parameters.push(turso::Value::Integer(through));
+    type Sighting = (i64, i64, i64, i64, Option<String>);
+    let sightings: Vec<Sighting> = sql::all_unbounded(
+        connection,
+        &format!(
+            "SELECT m.account_id,
+                    count(DISTINCT m.id),
+                    max(coalesce(m.date, m.received_at)),
+                    count(DISTINCT CASE WHEN r.kind IN ('to', 'cc', 'bcc') AND EXISTS (
+                            SELECT 1 FROM recipients f JOIN addresses fa ON fa.id = f.address_id
+                             WHERE f.message_id = m.id AND f.kind = 'from' AND {mine})
+                        THEN m.id END),
+                    (SELECT r2.name FROM recipients r2 JOIN messages m2 ON m2.id = r2.message_id
+                      WHERE r2.address_id = ?1 AND m2.account_id = m.account_id
+                        AND m2.id <= ?{through_at}
+                        AND r2.name IS NOT NULL AND trim(r2.name) <> ''
+                      ORDER BY coalesce(m2.date, m2.received_at) DESC LIMIT 1)
+               FROM recipients r JOIN messages m ON m.id = r.message_id
+              WHERE r.address_id = ?1 AND m.id <= ?{through_at}
+              GROUP BY m.account_id"
+        ),
+        parameters,
+        |row| {
+            Ok((
+                row.col(0)?,
+                row.col(1)?,
+                row.col(2)?,
+                row.col(3)?,
+                row.col(4)?,
+            ))
+        },
+    )
+    .await?;
     for (account, seen, last, written, name) in sightings {
         sql::execute(
             connection,
             "INSERT INTO contact_sightings
                  (address_id, account_id, times_seen, last_seen_at, last_name, times_written)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT (address_id, account_id) DO NOTHING",
-            bind![address, account, seen, last, name, written],
+             ON CONFLICT (address_id, account_id) DO UPDATE SET
+                 times_seen = CASE WHEN ?7 = 1 THEN times_seen + excluded.times_seen
+                                   ELSE excluded.times_seen END,
+                 last_seen_at = max(coalesce(last_seen_at, excluded.last_seen_at),
+                                    excluded.last_seen_at),
+                 last_name = coalesce(CASE WHEN ?7 = 1 THEN last_name ELSE excluded.last_name END,
+                                      excluded.last_name),
+                 times_written = CASE WHEN ?7 = 1 THEN times_written + excluded.times_written
+                                      ELSE excluded.times_written END",
+            bind![address, account, seen, last, name, written, i64::from(add)],
         )
         .await?;
     }
-    refresh(connection, person).await?;
-    Ok(Some(person))
+    Ok(())
+}
+
+/// The newest message id the store held when contacts began, or 0 for a
+/// store that began with them. Mail up to it was stored before anything
+/// recorded who it was from; mail after it is recorded as it is stored.
+async fn history_through(connection: &Connection) -> Result<i64> {
+    let kept: Option<String> = sql::first(
+        connection,
+        "SELECT value FROM settings WHERE key = 'contacts.history_through' AND account_id IS NULL",
+        (),
+        |row| row.col(0),
+    )
+    .await?;
+    Ok(kept.and_then(|text| text.trim().parse().ok()).unwrap_or(0))
 }
 
 /// An address's row id and, if someone owns it, the owner's id and state.

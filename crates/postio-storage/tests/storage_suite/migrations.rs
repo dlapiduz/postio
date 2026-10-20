@@ -214,6 +214,19 @@ async fn the_contacts_of_the_build_before_become_people_who_own_addresses() {
         .expect("it migrates");
     let connection = store.connect().await.expect("a connection");
 
+    // The mail the store held when contacts began is marked, so the people
+    // made for it later count it (specs/011-focus-contacts plan 4.2).
+    let through: String = sql::first(
+        &connection,
+        "SELECT value FROM settings WHERE key = 'contacts.history_through'",
+        (),
+        |row| row.text(0),
+    )
+    .await
+    .unwrap()
+    .expect("the mark is written by the step");
+    assert_eq!(through, "0", "this store held no mail");
+
     // One person per address the old table knew, with the name the person
     // gave, where it came from, and that bob was deleted.
     let people: Vec<Person> = sql::all_unbounded(

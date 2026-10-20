@@ -388,6 +388,7 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
             .create(&mut message)
             .await
             .expect("store old mail");
+        test_support::mark_contacts_history(&connection).await;
     }
 
     #[tokio::test]
