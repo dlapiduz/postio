@@ -38,6 +38,9 @@ pub struct FocusSettings {
     /// What correspondents decided (ADR 0048), added to `[focus]` wherever
     /// it is read. Loaded from the store by [`FocusSettings::refresh`].
     contacts: Arc<RwLock<Vec<ContactRule>>>,
+    /// Told `[focus]` whenever it changes, besides the one `written` that
+    /// Focus mode installs: a frontend that keeps its own copy.
+    watchers: Arc<Mutex<Vec<OnFocusWritten>>>,
 }
 
 impl std::fmt::Debug for FocusSettings {
@@ -118,7 +121,21 @@ impl FocusSettings {
         Ok(())
     }
 
-    /// Tell `written` what `[focus]` reads as now.
+    /// Be told `[focus]` -- the file with what people decided -- whenever a
+    /// verb changes it: the filing pass hears through the host, and a
+    /// frontend with a copy of its own through this.
+    pub fn watch(&self, told: OnFocusWritten) {
+        self.watchers.lock().expect("never poisoned").push(told);
+    }
+
+    fn tell_watchers(&self, config: &FocusConfig) {
+        let watchers = self.watchers.lock().expect("never poisoned").clone();
+        for told in watchers {
+            told(config);
+        }
+    }
+
+    /// Tell `written` and the watchers what `[focus]` reads as now.
     fn publish(&self) {
         let told = {
             let installed = self.installed.read().expect("never poisoned");
@@ -131,6 +148,7 @@ impl FocusSettings {
         };
         if let Some((config, written)) = told {
             written(&config);
+            self.tell_watchers(&config);
         }
     }
 
@@ -174,7 +192,9 @@ impl FocusSettings {
         if let Some(installed) = self.installed.write().expect("never poisoned").as_mut() {
             installed.config = focus.clone();
         }
-        written(&self.overlaid(&focus));
+        let overlaid = self.overlaid(&focus);
+        written(&overlaid);
+        self.tell_watchers(&overlaid);
         Ok(true)
     }
 }

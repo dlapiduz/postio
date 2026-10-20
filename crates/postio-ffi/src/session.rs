@@ -2006,6 +2006,7 @@ impl Session {
                 _scratch: Some(scratch),
             });
             session.follow_config(&source);
+            session.follow_contacts();
             session.prime_focus(saved, &source);
             return Ok(session);
         }
@@ -2111,6 +2112,7 @@ impl Session {
             ),
         });
         session.follow_config(&source);
+        session.follow_contacts();
         session.prime_focus(saved, &source);
         Ok(session)
     }
@@ -4230,7 +4232,7 @@ impl Session {
                     service.config().focus.clone();
                 session
                     .focus_list
-                    .input(postio_focus::Input::Config(service.config().focus.clone()));
+                    .input(postio_focus::Input::Config(session.focus_config()));
                 session
                     ._host
                     .enable_focus(postio_host::FocusSetup::from_config(
@@ -4266,8 +4268,29 @@ impl Session {
     }
 
     /// `[focus]` as it stands.
+    ///
+    /// The file's `[focus]` with what people decided added (ADR 0048): the
+    /// strip's digest count, the controller's rules and the rule dialog all
+    /// read it.
     pub(crate) fn focus_config(&self) -> postio_config::FocusConfig {
-        self.focus_config.lock().expect("focus config lock").clone()
+        let raw = self.focus_config.lock().expect("focus config lock").clone();
+        self._host.wiring().focus.overlaid(&raw)
+    }
+
+    /// Hand Focus's controller `[focus]` again whenever a verb changes what
+    /// people decided, which no change to the file announces.
+    fn follow_contacts(self: &Arc<Self>) {
+        let session = Arc::downgrade(self);
+        self._host
+            .wiring()
+            .focus
+            .watch(Arc::new(move |config: &postio_config::FocusConfig| {
+                if let Some(session) = session.upgrade() {
+                    session
+                        .focus_list
+                        .input(postio_focus::Input::Config(config.clone()));
+                }
+            }));
     }
 
     /// Focus's list.

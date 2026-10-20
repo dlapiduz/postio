@@ -769,3 +769,49 @@ async fn the_filtering_pane_lists_a_person_s_pin_by_name_and_taking_it_back_clea
     assert_eq!(stopped_after, 1, "and only that: her marker is still off");
     session.shutdown();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_person_s_digest_counts_as_a_digest_rule_in_the_strip() {
+    use postio_model::{ContactArrival, ContactSettings, DigestSetting, EmailAddress};
+    use postio_storage::repository::{ContactRepository, ContactSettingsRepository};
+
+    let database = postio_storage::test_support::memory().await;
+    {
+        let connection = database.connect().await.expect("a connection");
+        let ledger = ContactRepository::new(&connection)
+            .person_for_email(&EmailAddress::new(None::<String>, "news@ledger.example"))
+            .await
+            .expect("a person");
+        ContactSettingsRepository::new(&connection)
+            .put(
+                ledger,
+                &ContactSettings {
+                    arrival: Some(ContactArrival::Digest),
+                    digest: Some(DigestSetting {
+                        name: "Ledger".into(),
+                        cadence: "weekly".into(),
+                        day: Some("saturday".into()),
+                        at: "16:00".into(),
+                    }),
+                    ..ContactSettings::default()
+                },
+            )
+            .await
+            .expect("their digest");
+    }
+    let session = postio_ffi::Session::open(postio_ffi::SessionOptions::in_memory_with(database))
+        .expect("a session");
+    let strip = tokio::task::spawn_blocking({
+        let session = session.clone();
+        move || session.focus_strip()
+    })
+    .await
+    .expect("the blocking call")
+    .expect("the strip");
+    assert_eq!(
+        strip.digest_rules,
+        Some(postio_ui::focus_row::digest_rules(1)),
+        "one rule, though the file has none"
+    );
+    session.shutdown();
+}
