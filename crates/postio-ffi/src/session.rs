@@ -1169,6 +1169,21 @@ impl Session {
         blocking(self.activate_unsubscribe(message))
     }
 
+    /// After leaving a list: what it left behind and the two choices about it,
+    /// or `None` when nothing is left (#1931). A read; it writes nothing.
+    #[uniffi::method(name = "listMailOffer")]
+    pub fn list_mail_offer_ffi(&self, message: i64) -> Option<crate::ListMailOfferFfi> {
+        blocking(self.list_mail_offer(message))
+    }
+
+    /// Archive (`delete == false`) or delete everything the list of `message`
+    /// sent: one command on exactly those messages, so one undo. `None` when
+    /// it was sent, a sentence when it was not. Never awaits the network.
+    #[uniffi::method(name = "clearListMail")]
+    pub fn clear_list_mail_ffi(&self, message: i64, delete: bool) -> Option<String> {
+        blocking(self.clear_list_mail(message, delete))
+    }
+
     /// Every activation this store holds, newest first — the Privacy pane's
     /// list. See [`Session::unsubscribe_activations`].
     #[uniffi::method(name = "unsubscribeActivations")]
@@ -2603,6 +2618,61 @@ impl Session {
             .await
             .err()
             .map(|error| format!("The activation could not be recorded: {error}"))
+    }
+
+    /// What the list `message` came from has left, as the offer after an
+    /// unsubscribe words it (#1931). `None` when there is nothing to offer.
+    pub async fn list_mail_offer(&self, message: i64) -> Option<crate::ListMailOfferFfi> {
+        let (database, _) = self.store_and_blobs()?;
+        let connection = database.connect().await.ok()?;
+        let found = postio_session::list_mail::find(&connection, message.into())
+            .await
+            .ok()?;
+        use postio_ui::unsubscribe::{
+            SWEEP_ARCHIVE, SWEEP_DELETE, SweepScope, sweep_button, sweep_offer,
+        };
+        let count = found.ids.len();
+        let summary = sweep_offer(&SweepScope::ListId(found.name), count, found.more)?;
+        Some(crate::ListMailOfferFfi {
+            summary,
+            count: u32::try_from(count).unwrap_or(u32::MAX),
+            archive: sweep_button(SWEEP_ARCHIVE, count, found.more),
+            delete: sweep_button(SWEEP_DELETE, count, found.more),
+        })
+    }
+
+    /// Archive or delete what the list of `message` sent, as one command.
+    pub async fn clear_list_mail(&self, message: i64, delete: bool) -> Option<String> {
+        let Some((database, _)) = self.store_and_blobs() else {
+            return Some("There is no open store.".to_owned());
+        };
+        let Some(outbox) = self.outbox() else {
+            return Some("Postio is not running its mail host.".to_owned());
+        };
+        let connection = match database.connect().await {
+            Ok(connection) => connection,
+            Err(error) => return Some(format!("The store would not answer: {error}")),
+        };
+        let found = match postio_session::list_mail::find(&connection, message.into()).await {
+            Ok(found) => found,
+            Err(refusal) => return Some(refusal.said()),
+        };
+        if found.ids.is_empty() {
+            return None;
+        }
+        let target = postio_core::MessageTarget::Messages(found.ids);
+        let command = if delete {
+            postio_core::Command::Delete { target }
+        } else {
+            postio_core::Command::Archive { target }
+        };
+        match outbox
+            .send((command, postio_core::state::SharedState::default()))
+            .await
+        {
+            Ok(()) => None,
+            Err(_) => Some("Postio has stopped taking commands.".to_owned()),
+        }
     }
 
     /// Every activation this store holds, newest first.

@@ -225,7 +225,7 @@ pub fn personal_mail_has_no_unsubscribe_band_but_u_still_works() {
 }
 
 /// After `M` the window offers to clear what the sender left (#1931): the
-/// dialog counts it, `Delete 2` is one command and says so, and Esc on the
+/// dialog counts it, `#` deletes the lot as one command and says so, and Esc on the
 /// same offer keeps everything.
 pub fn leaving_a_list_offers_to_delete_what_it_sent_and_esc_keeps_it() {
     crate::gtk_case(async {
@@ -262,8 +262,9 @@ pub fn leaving_a_list_offers_to_delete_what_it_sent_and_esc_keeps_it() {
         support::keys(&window, &["M"]);
         assert!(crate::settle_until(async || window.sweep_offer().is_some()).await);
         let dialog = window.sweep_offer().expect("the offer again");
-        let delete = support::button_labelled(&dialog, "Delete 2");
-        support::click(&window, &delete, 1);
+        // The verb's own key answers it, as the label beside the button says.
+        let _ = dialog;
+        support::keys(&window, &["#"]);
         assert!(
             crate::settle_until(async || {
                 window
@@ -271,7 +272,7 @@ pub fn leaving_a_list_offers_to_delete_what_it_sent_and_esc_keeps_it() {
                     .is_some_and(|said| said.starts_with("Deleted 2 messages"))
             })
             .await,
-            "Delete 2 was not one undoable command: {:?}",
+            "# was not one undoable command: {:?}",
             window.toast_showing()
         );
     });

@@ -3218,33 +3218,89 @@ impl FocusWindow {
             return;
         }
         let scope = SweepScope::ListId(found.name.clone());
+        let keymap = self.keymap();
+        let keyed = |label: String, command: CommandId| match postio_ui::hints::key(&keymap, command)
+        {
+            Some(key) => format!("{label} ({key})"),
+            None => label,
+        };
         let dialog = adw::AlertDialog::new(
             Some(&sweep_heading(&scope)),
             Some(&sweep_body(count, found.more, None)),
         );
         dialog.set_widget_name(SWEEP_DIALOG);
         dialog.add_response("keep", "Keep them");
-        dialog.add_response("archive", &sweep_button(SWEEP_ARCHIVE, count, found.more));
-        dialog.add_response("delete", &sweep_button(SWEEP_DELETE, count, found.more));
+        dialog.add_response(
+            "archive",
+            &keyed(
+                sweep_button(SWEEP_ARCHIVE, count, found.more),
+                CommandId::Archive,
+            ),
+        );
+        dialog.add_response(
+            "delete",
+            &keyed(
+                sweep_button(SWEEP_DELETE, count, found.more),
+                CommandId::Delete,
+            ),
+        );
         dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
         dialog.set_default_response(Some("keep"));
         dialog.set_close_response("keep");
         let ids = found.ids;
-        dialog.connect_response(
-            None,
-            glib::clone!(
-                #[weak(rename_to = window)]
-                self,
-                move |_, response| {
-                    let target = MessageTarget::Messages(ids.clone());
-                    match response {
-                        "archive" => window.post(Command::Archive { target }),
-                        "delete" => window.post(Command::Delete { target }),
-                        _ => {}
-                    }
+        // One answer, whichever way it arrives: a button, or the verb's own
+        // key (the keys the buttons name), then the dialog closes itself.
+        let answered = std::rc::Rc::new(std::cell::Cell::new(false));
+        let answer = glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            #[strong]
+            answered,
+            move |response: &str| {
+                if answered.replace(true) {
+                    return;
                 }
-            ),
+                let target = MessageTarget::Messages(ids.clone());
+                match response {
+                    "archive" => window.post(Command::Archive { target }),
+                    "delete" => window.post(Command::Delete { target }),
+                    _ => {}
+                }
+            }
         );
+        let answer = std::rc::Rc::new(answer);
+        dialog.connect_response(None, {
+            let answer = std::rc::Rc::clone(&answer);
+            move |_, response| answer(response)
+        });
+        let verbs = gtk::EventControllerKey::new();
+        verbs.connect_key_pressed({
+            let answer = std::rc::Rc::clone(&answer);
+            let dialog = dialog.downgrade();
+            let keymap = keymap.clone();
+            move |_, key, _, state| {
+                let Some(dialog) = dialog.upgrade() else {
+                    return glib::Propagation::Proceed;
+                };
+                let pressed = key.to_unicode().map(String::from);
+                let is = |command: CommandId| {
+                    state.difference(gtk::gdk::ModifierType::SHIFT_MASK).is_empty()
+                        && pressed.is_some()
+                        && postio_ui::hints::key(&keymap, command) == pressed
+                };
+                let chosen = if is(CommandId::Archive) {
+                    "archive"
+                } else if is(CommandId::Delete) {
+                    "delete"
+                } else {
+                    return glib::Propagation::Proceed;
+                };
+                answer(chosen);
+                dialog.force_close();
+                glib::Propagation::Stop
+            }
+        });
+        dialog.add_controller(verbs);
         dialog.present(Some(self));
     }
 
@@ -5249,7 +5305,11 @@ impl FocusWindow {
         let settings = self.settings_dialog().is_some();
         // The raw source and the open chooser are dialogs of their own over
         // the open message.
-        let small_dialog = [crate::source::DIALOG_NAME, crate::chooser::DIALOG_NAME]
+        let small_dialog = [
+            crate::source::DIALOG_NAME,
+            crate::chooser::DIALOG_NAME,
+            SWEEP_DIALOG,
+        ]
             .into_iter()
             .find(|name| dialog_named(name));
         // A message open beside the list, the keyboard on it (T232): the

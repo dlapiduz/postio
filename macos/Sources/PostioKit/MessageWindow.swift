@@ -20,6 +20,10 @@ public protocol MessageWindowSource: AnyObject, Sendable {
     /// Leave the list `message` came from: `nil` when the activation was
     /// recorded, else why not. Writes, so never on the main actor.
     func activateUnsubscribe(_ message: Int64) -> String?
+    /// What the list of `message` left behind, once it is left (#1931).
+    func listMailOffer(_ message: Int64) -> ListMailOfferFfi?
+    /// Archive or delete what the list of `message` sent: `nil` once sent.
+    func clearListMail(_ message: Int64, _ delete: Bool) -> String?
 }
 
 extension PostioSession: MessageWindowSource {}
@@ -232,7 +236,27 @@ public final class MessageWindowModel {
                 let complaint = await Task.detached { source.activateUnsubscribe(message) }.value
                 guard let self, self.place != nil else { return }
                 self.unsubscribing.finish(message, complaint: complaint)
+                guard complaint == nil else { return }
+                // The list is left; ask what it left behind (#1931). A read,
+                // off the main actor like the write before it.
+                let offer = await Task.detached { source.listMailOffer(message) }.value
+                guard let offer, self.place != nil else { return }
+                self.unsubscribing.offerSweep(
+                    message,
+                    .init(summary: offer.summary, archive: offer.archive, delete: offer.delete))
             })
+    }
+
+    /// The answer to the banner's offer: `true` deletes what the list sent,
+    /// `false` archives it, `nil` keeps it. Archive and Delete are one
+    /// command on exactly those messages, so one undo takes either back.
+    public func clearListMail(delete: Bool?) {
+        guard let message = displayed else { return }
+        unsubscribing.answerSweep(message)
+        guard let delete else { return }
+        let source = engine
+        pending.append(
+            Task.detached { _ = source.clearListMail(message, delete) })
     }
 
     /// `FocusReader`: what the open message does as its own.

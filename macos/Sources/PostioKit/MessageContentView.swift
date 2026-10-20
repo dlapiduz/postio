@@ -183,6 +183,7 @@ public struct MessageContentView<BodyView: View>: View {
     let run: (String) -> Void
     let alwaysForSender: () -> Void
     let leave: () -> Void
+    let clear: (Bool?) -> Void
     let bodyView: (FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
 
     /// `unsubscribe` is where this message's banner has got to, and `leave`
@@ -195,6 +196,7 @@ public struct MessageContentView<BodyView: View>: View {
         run: @escaping (String) -> Void,
         alwaysForSender: @escaping () -> Void,
         leave: @escaping () -> Void = {},
+        clear: @escaping (Bool?) -> Void = { _ in },
         @ViewBuilder body: @escaping (FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
     ) {
         self.words = words
@@ -204,6 +206,7 @@ public struct MessageContentView<BodyView: View>: View {
         self.run = run
         self.alwaysForSender = alwaysForSender
         self.leave = leave
+        self.clear = clear
         bodyView = body
     }
 
@@ -260,7 +263,7 @@ public struct MessageContentView<BodyView: View>: View {
         case let .card(card):
             MessageActionCard(card: card, run: run)
         case let .unsubscribe(offer, state):
-            UnsubscribeBanner(offer: offer, state: state, leave: leave)
+            UnsubscribeBanner(offer: offer, state: state, leave: leave, clear: clear)
         case let .renderMode(mode):
             MessageRenderModeLine(
                 line: RenderModeLine(mode, binding: binding), run: run, always: alwaysForSender)

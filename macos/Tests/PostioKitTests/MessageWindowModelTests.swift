@@ -57,6 +57,19 @@ struct MessageWindowModelTests {
             lock.withLock { _activated.append(message) }
             return refusal
         }
+
+        /// What the list left behind (#1931); `nil` leaves nothing to offer.
+        var leftBehind: ListMailOfferFfi?
+        private var _cleared: [(Int64, Bool)] = []
+        /// Every `clearListMail` asked for: the message and whether to delete.
+        var cleared: [(Int64, Bool)] { lock.withLock { _cleared } }
+
+        func listMailOffer(_ message: Int64) -> ListMailOfferFfi? { leftBehind }
+
+        func clearListMail(_ message: Int64, _ delete: Bool) -> String? {
+            lock.withLock { _cleared.append((message, delete)) }
+            return nil
+        }
     }
 
     nonisolated static func view(_ message: Int64, earlier: Int64? = nil, later: Int64? = nil) -> FocusMessageViewFfi {
@@ -361,6 +374,46 @@ struct MessageWindowModelTests {
         try await Self.until { model.unsubscribeState(of: 7) == .left }
         #expect(model.unsubscribeState(of: 7) == .left, "the banner goes once it is recorded")
         #expect(source.activated == [7])
+    }
+
+    @Test func aListThatLeftMailBehindOffersToClearItAndDeletesNothingUntilAnswered() async throws {
+        // #1931: Archive and Delete are offered, not done.
+        let source = Source()
+        source.leftBehind = ListMailOfferFfi(
+            summary: "Unsubscribed from news.example.org. 14 messages from it are still here",
+            count: 14, archive: "Archive 14", delete: "Delete 14")
+        let (model, _) = Self.model(source)
+        model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
+        await model.settled()
+
+        model.unsubscribe()
+        try await Self.until {
+            if case .clearing = model.unsubscribeState(of: 7) { return true }
+            return false
+        }
+        #expect(source.cleared.isEmpty, "offered, not done")
+
+        model.clearListMail(delete: true)
+        try await Self.until { !source.cleared.isEmpty }
+        #expect(source.cleared.map(\.0) == [7] && source.cleared.map(\.1) == [true])
+        #expect(model.unsubscribeState(of: 7) == .left, "answered, so the banner goes")
+    }
+
+    @Test func keepingWhatTheListSentSendsNothing() async throws {
+        let source = Source()
+        source.leftBehind = ListMailOfferFfi(
+            summary: "s", count: 2, archive: "Archive 2", delete: "Delete 2")
+        let (model, _) = Self.model(source)
+        model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
+        await model.settled()
+        model.unsubscribe()
+        try await Self.until {
+            if case .clearing = model.unsubscribeState(of: 7) { return true }
+            return false
+        }
+        model.clearListMail(delete: nil)
+        #expect(model.unsubscribeState(of: 7) == .left)
+        #expect(source.cleared.isEmpty)
     }
 
     @Test func aRefusedUnsubscribeSaysWhyAndCanBePressedAgain() async throws {

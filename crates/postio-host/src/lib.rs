@@ -2066,36 +2066,17 @@ impl Inner {
     /// acts on them is an ordinary command, so it is queued and undoable.
     async fn list_mail(&self, message: postio_model::MessageId) -> Resp {
         use postio_model::listing::StoreError;
-        use postio_storage::repository::{ListMail, MessageRepository, SweepRepository};
-        use postio_ui::unsubscribe::{SweepScope, sweep_scope};
-        /// A page: enough for any real list, bounded for a hostile one.
-        const PAGE: u32 = 5_000;
         let connection = match self.wiring.database.connect().await {
             Ok(connection) => connection,
             Err(error) => return Resp::Failed(StoreError::from(error)),
         };
-        let found = match MessageRepository::new(&connection).get(message).await {
-            Ok(Some(found)) => found,
-            Ok(None) => return Resp::Failed(StoreError::new("That message is gone.")),
-            Err(error) => return Resp::Failed(StoreError::from(error)),
-        };
-        let Some(scope) = sweep_scope(found.list_id.as_deref(), &found.from) else {
-            return Resp::Failed(StoreError::new("This message names no list to clear."));
-        };
-        let from = match &scope {
-            SweepScope::ListId(list) => ListMail::ListId(list),
-            SweepScope::Sender(address) => ListMail::Sender(address),
-        };
-        match SweepRepository::new(&connection)
-            .list_mail(found.account_id, from, PAGE)
-            .await
-        {
-            Ok(page) => Resp::ListMail(postio_client::protocol::ListMailFound {
-                name: scope.name().to_owned(),
-                ids: page.ids,
-                more: page.more,
+        match postio_session::list_mail::find(&connection, message).await {
+            Ok(found) => Resp::ListMail(postio_client::protocol::ListMailFound {
+                name: found.name,
+                ids: found.ids,
+                more: found.more,
             }),
-            Err(error) => Resp::Failed(StoreError::from(error)),
+            Err(refusal) => Resp::Failed(StoreError::new(refusal.said())),
         }
     }
 

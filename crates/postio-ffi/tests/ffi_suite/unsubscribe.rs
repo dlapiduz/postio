@@ -539,3 +539,58 @@ async fn focus_says_when_a_body_lost_a_part() {
     assert_eq!(whole.caveat, None);
     session.shutdown();
 }
+
+/// After leaving a list the boundary words what is left (#1931): the count of
+/// the list's messages, never another list's, never a Flagged one, and
+/// nothing at all when nothing is left.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_offer_after_leaving_counts_the_lists_mail_and_only_that() {
+    let (session, ids, _database, _) = a_store_with(&[
+        Seed {
+            sender: "news@mail.example.org",
+            list_id: Some("weekly.example.org"),
+            list_unsubscribe: true,
+            ..Seed::default()
+        },
+        Seed {
+            sender: "news@mail.example.org",
+            list_id: Some("weekly.example.org"),
+            ..Seed::default()
+        },
+        Seed {
+            sender: "other@mail.example.org",
+            list_id: Some("other.example.org"),
+            ..Seed::default()
+        },
+        Seed {
+            sender: "ada@example.net",
+            ..Seed::default()
+        },
+    ])
+    .await;
+
+    let offer = session
+        .list_mail_offer(ids[0])
+        .await
+        .expect("two messages from the list are still here");
+    assert_eq!(offer.count, 2);
+    assert_eq!(offer.archive, "Archive 2");
+    assert_eq!(offer.delete, "Delete 2");
+    assert!(
+        offer.summary.contains("weekly.example.org"),
+        "{}",
+        offer.summary
+    );
+
+    // No List-Id: the sender's exact address, and only one message is theirs.
+    let offer = session
+        .list_mail_offer(ids[3])
+        .await
+        .expect("their own mail");
+    assert_eq!(offer.count, 1);
+    assert!(
+        offer.summary.contains("ada@example.net"),
+        "{}",
+        offer.summary
+    );
+}

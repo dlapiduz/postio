@@ -51,6 +51,7 @@ pub mod engine;
 mod extraction;
 pub mod focus;
 pub mod handoff;
+pub mod list_mail;
 pub mod logging;
 pub mod onboarding;
 pub mod paths;

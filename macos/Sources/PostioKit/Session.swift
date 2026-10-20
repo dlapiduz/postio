@@ -462,6 +462,14 @@ public final class PostioSession {
     /// **`nonisolated`**: it writes, and a write waits on the store's
     /// machine-wide gate — behind whatever the sync engine is committing,
     /// which on a first sync is not a few milliseconds.
+    public nonisolated func listMailOffer(_ message: Int64) -> ListMailOfferFfi? {
+        inner.listMailOffer(message: message)
+    }
+
+    public nonisolated func clearListMail(_ message: Int64, _ delete: Bool) -> String? {
+        inner.clearListMail(message: message, delete: delete)
+    }
+
     public nonisolated func activateUnsubscribe(_ message: Int64) -> String? {
         inner.activateUnsubscribe(message: message)
     }
