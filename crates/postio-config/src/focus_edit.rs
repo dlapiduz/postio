@@ -447,8 +447,8 @@ at = \"16:00\"
                 .after_unsubscribe,
             AfterUnsubscribe::Archive
         );
-        let delete = Config::from_toml_str("[focus]\nafter_unsubscribe = \"delete\"\n")
-            .expect("it reads");
+        let delete =
+            Config::from_toml_str("[focus]\nafter_unsubscribe = \"delete\"\n").expect("it reads");
         assert_eq!(delete.focus.after_unsubscribe, AfterUnsubscribe::Delete);
     }
 
