@@ -48,6 +48,7 @@ pub mod card;
 pub mod clock;
 pub mod contact;
 pub mod contact_group;
+pub mod contact_settings;
 pub mod draft;
 pub mod egress;
 pub mod filing;
@@ -93,6 +94,7 @@ pub use contact::{
     PersonEdit, PersonFields, ShowAs, SuggestionReason,
 };
 pub use contact_group::ContactGroup;
+pub use contact_settings::{ContactArrival, ContactSettings, DigestSetting, StoppedMarker};
 pub use draft::{Draft, DraftKind, DraftState};
 pub use flag::{Flag, FlagSet};
 pub use headers::{Header, Headers};

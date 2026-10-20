@@ -574,7 +574,7 @@ DROP TABLE contacts_rows;
     // saved from when they were created.
     Migration {
         from: stamp(0xd831_3529),
-        to: FINGERPRINT,
+        to: stamp(0xaed8_856a),
         statements: r#"
 ALTER TABLE contacts ADD COLUMN kind TEXT NOT NULL DEFAULT 'person' CHECK (kind IN ('person', 'company', 'list', 'newsletter', 'automated'));
 ALTER TABLE contacts ADD COLUMN kind_source TEXT NOT NULL DEFAULT 'detected' CHECK (kind_source IN ('detected', 'user'));
@@ -594,6 +594,29 @@ UPDATE contacts SET saved_at = created_at WHERE source IN ('user', 'import');
 CREATE INDEX idx_contacts_kind_list ON contacts (state, kind, sort_key, id);
 CREATE INDEX idx_contacts_saved ON contacts (saved_at, kind, written);
 CREATE INDEX idx_contacts_kind_pending ON contacts (state, kind_source, kind_version);
+"#,
+    },
+    // `feature/focus-contacts`: what the user decided about a correspondent
+    // moves onto the correspondent (specs/011-focus-contacts S3). A new
+    // table, empty: the host moves the address-keyed entries of `config.toml`
+    // and the sender treatments into it once, on its first run after this.
+    Migration {
+        from: stamp(0xaed8_856a),
+        to: FINGERPRINT,
+        statements: r#"
+CREATE TABLE contact_settings (
+    contact_id         INTEGER PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
+    arrival            TEXT    CHECK (arrival IN ('inbox', 'digest', 'filtered')),
+    digest_name        TEXT,
+    digest_cadence     TEXT,
+    digest_day         TEXT,
+    digest_at          TEXT,
+    stop_markers       INTEGER NOT NULL DEFAULT 0,
+    notify             INTEGER NOT NULL DEFAULT 0,
+    html_treatment     TEXT    CHECK (html_treatment IN ('app', 'paper')),
+    remind_days        INTEGER,
+    archive_after_days INTEGER
+);
 "#,
     },
 ];
@@ -784,6 +807,28 @@ CREATE TABLE contact_groups (
     -- The whole group card as last imported, verbatim.
     vcard      TEXT,
     created_at INTEGER NOT NULL
+);
+
+CREATE TABLE contact_settings (
+    -- What the user decided about a correspondent (specs/011-focus-contacts
+    -- S3, ADR 0048). A person with nothing decided has no row.
+    contact_id         INTEGER PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
+    -- Where their mail arrives; NULL is by the default rules.
+    arrival            TEXT    CHECK (arrival IN ('inbox', 'digest', 'filtered')),
+    -- The digest `arrival = 'digest'` names, as a `[[focus.digests]]` rule
+    -- with one `from:` query per address would write it. The name is the one
+    -- the held mail and the deliveries are filed under.
+    digest_name        TEXT,
+    digest_cadence     TEXT,
+    digest_day         TEXT,
+    digest_at          TEXT,
+    -- Marker kinds that are off: bit 1 questions, bit 2 to-dos.
+    stop_markers       INTEGER NOT NULL DEFAULT 0,
+    notify             INTEGER NOT NULL DEFAULT 0,
+    -- How their HTML mail is always drawn: `app` or `paper`.
+    html_treatment     TEXT    CHECK (html_treatment IN ('app', 'paper')),
+    remind_days        INTEGER,
+    archive_after_days INTEGER
 );
 
 CREATE TABLE contact_sightings (

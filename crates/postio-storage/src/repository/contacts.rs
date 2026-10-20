@@ -363,6 +363,29 @@ impl<'a> ContactRepository<'a> {
         .await
     }
 
+    /// The person who owns `email`, made now if nobody does: what a setting
+    /// given to an address needs, whether or not mail from it was ever
+    /// stored. Never saved, so the setting does not put them in the
+    /// Contacts list. Refuses the user's own address.
+    pub async fn person_for_email(&self, email: &EmailAddress) -> Result<ContactId> {
+        let email = email.clone();
+        sql::in_scope(self.connection, |transaction| async move {
+            refuse_own(&transaction, &email).await?;
+            let (address, owner) = address_and_owner(&transaction, &email).await?;
+            if let Some((owner, _)) = owner {
+                return Ok(ContactId::new(owner));
+            }
+            match adopt(&transaction, address).await? {
+                Some(person) => Ok(ContactId::new(person)),
+                None => Err(Error::ForbiddenTransition {
+                    what: "contact",
+                    reason: "that address is one of yours".into(),
+                }),
+            }
+        })
+        .await
+    }
+
     /// One batch of the catch-up: up to `limit` addresses with mail and no
     /// person, newest first and strictly below `before`, each made a person
     /// in one transaction.

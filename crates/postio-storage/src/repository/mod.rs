@@ -32,6 +32,7 @@ mod settings;
 
 mod accounts;
 mod contact_groups;
+mod contact_settings;
 mod contacts;
 mod correspondents;
 mod cross_account;
@@ -55,6 +56,7 @@ mod unsubscribe;
 
 pub use accounts::{AccountRepository, IdentityRepository, SignatureRepository};
 pub use contact_groups::ContactGroupRepository;
+pub use contact_settings::{ContactSettingsRepository, DerivedSettings};
 #[cfg(feature = "test-support")]
 pub(crate) use contacts::list_statements as contact_list_statements;
 pub(crate) use contacts::release_own_address;

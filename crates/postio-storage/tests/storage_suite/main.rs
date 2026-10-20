@@ -29,6 +29,7 @@ mod concurrent_open;
 mod connections;
 mod contact_groups;
 mod contact_rank_index;
+mod contact_settings;
 mod contact_suggestions;
 mod contacts;
 mod contacts_budget;
