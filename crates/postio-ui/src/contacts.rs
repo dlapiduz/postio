@@ -6,7 +6,7 @@
 
 use chrono::{DateTime, Local, Utc};
 use postio_core::CommandId;
-use postio_model::{ContactListRow, ContactSource};
+use postio_model::{Contact, ContactId, ContactListRow, ContactSource};
 
 /// The query "show mail" writes for a person: every address they own, in one
 /// `with:` field (research R6). Addresses, not the person, so a search pinned
@@ -81,6 +81,81 @@ pub fn applies(command: CommandId, kind: RowKind) -> Result<(), Hint> {
 /// words, or nothing for someone no mail has involved.
 fn last_in_touch(at: Option<DateTime<Utc>>, now: DateTime<Local>) -> Option<String> {
     at.map(|at| crate::row::timestamp(at, now))
+}
+
+/// What joining these people offers to call them (specs/005-contacts
+/// FR-012/FR-013): the names the user chose, then what the mail called them,
+/// newest first and each once -- the first preselected, so `Return` accepts
+/// it -- and who survives the join.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JoinChoices {
+    /// The names on offer, the preselected one first. Never empty.
+    pub names: Vec<String>,
+    /// The organisations the people carry, each once. More than one is a
+    /// conflict the user has to settle: nothing they entered is dropped
+    /// without their choice.
+    pub organizations: Vec<String>,
+    /// Who the others are joined into: whoever the preselected name came
+    /// from.
+    pub into: ContactId,
+}
+
+impl JoinChoices {
+    /// Whether the join has to ask which organisation to keep.
+    pub fn organization_conflict(&self) -> bool {
+        self.organizations.len() > 1
+    }
+}
+
+/// See [`JoinChoices`]. `people` must not be empty.
+pub fn join_name_choices(people: &[Contact]) -> JoinChoices {
+    let mut newest: Vec<&Contact> = people.iter().collect();
+    newest.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at).then(a.id.cmp(&b.id)));
+    let filled =
+        |value: Option<&String>| value.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+    let mut offered: Vec<(String, ContactId)> = Vec::new();
+    let chosen = newest
+        .iter()
+        .filter_map(|p| filled(p.name.as_ref()).map(|n| (n, p.id)));
+    let seen = newest
+        .iter()
+        .filter_map(|p| filled(p.seen_name.as_ref()).map(|n| (n, p.id)));
+    let addresses = newest.iter().filter_map(|p| {
+        p.preferred_address()
+            .map(|a| (a.address.address.clone(), p.id))
+    });
+    let key = |name: &str| {
+        name.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    for (name, id) in chosen.chain(seen) {
+        if !offered.iter().any(|(n, _)| key(n) == key(&name)) {
+            offered.push((name, id));
+        }
+    }
+    if offered.is_empty() {
+        offered.extend(addresses);
+    }
+    let into = offered
+        .first()
+        .map(|(_, id)| *id)
+        .or_else(|| newest.first().map(|p| p.id))
+        .expect("a join has people in it");
+    let mut organizations: Vec<String> = Vec::new();
+    for person in people {
+        if let Some(org) = filled(person.organization.as_ref())
+            && !organizations.iter().any(|o| key(o) == key(&org))
+        {
+            organizations.push(org);
+        }
+    }
+    JoinChoices {
+        names: offered.into_iter().map(|(name, _)| name).collect(),
+        organizations,
+        into,
+    }
 }
 
 #[cfg(test)]
@@ -471,5 +546,100 @@ mod window_tests {
             Slot::Loading { request: Some(0) },
             "the first page was evicted, and is asked for again"
         );
+    }
+}
+
+#[cfg(test)]
+mod join_tests {
+    use super::*;
+    use chrono::TimeZone;
+    use postio_model::{AddressId, Contact, ContactAddress, ContactId, EmailAddress};
+
+    fn person(
+        id: i64,
+        name: Option<&str>,
+        seen: Option<&str>,
+        organization: Option<&str>,
+        day: u32,
+    ) -> Contact {
+        let mut person = Contact::new(ContactAddress {
+            id: AddressId::new(id),
+            address: EmailAddress::new(None::<String>, format!("p{id}@example.com")),
+            times_seen: 1,
+            last_seen_at: None,
+            written: 0,
+        });
+        person.id = ContactId::new(id);
+        person.name = name.map(str::to_owned);
+        person.seen_name = seen.map(str::to_owned);
+        person.organization = organization.map(str::to_owned);
+        person.last_seen_at = Some(Utc.with_ymd_and_hms(2026, 3, day, 12, 0, 0).unwrap());
+        person
+    }
+
+    #[test]
+    fn names_the_user_chose_come_first_and_the_most_recent_is_preselected() {
+        let choices = join_name_choices(&[
+            person(1, None, Some("A. L."), None, 9),
+            person(2, Some("Ada Lovelace"), Some("ada"), None, 1),
+            person(3, None, Some("ada"), None, 5),
+        ]);
+        assert_eq!(
+            choices.names,
+            ["Ada Lovelace", "A. L.", "ada"],
+            "the user's own name first, then what the mail said, newest first, \
+             each once"
+        );
+        assert_eq!(
+            choices.into,
+            ContactId::new(2),
+            "the person the user named survives"
+        );
+    }
+
+    #[test]
+    fn with_no_name_chosen_the_newest_seen_name_leads() {
+        let choices = join_name_choices(&[
+            person(1, None, Some("Old Name"), None, 1),
+            person(2, None, Some("New Name"), None, 9),
+        ]);
+        assert_eq!(choices.names, ["New Name", "Old Name"]);
+        assert_eq!(choices.into, ContactId::new(2));
+    }
+
+    #[test]
+    fn names_differing_only_in_case_or_spacing_are_one_choice() {
+        let choices = join_name_choices(&[
+            person(1, None, Some("Ada  Lovelace"), None, 2),
+            person(2, None, Some("ada lovelace"), None, 1),
+        ]);
+        assert_eq!(choices.names, ["Ada  Lovelace"]);
+    }
+
+    #[test]
+    fn a_nameless_pair_is_still_offered_a_name() {
+        // Every join ends with a name (clarification): an address is the
+        // last resort, never an empty choice.
+        let choices = join_name_choices(&[
+            person(1, None, None, None, 1),
+            person(2, None, None, None, 2),
+        ]);
+        assert_eq!(choices.names, ["p2@example.com", "p1@example.com"]);
+    }
+
+    #[test]
+    fn organisations_are_asked_about_only_when_they_disagree() {
+        let agree = join_name_choices(&[
+            person(1, Some("Ada"), None, Some("Engines Ltd"), 1),
+            person(2, None, Some("ada"), None, 2),
+        ]);
+        assert!(!agree.organization_conflict());
+        assert_eq!(agree.organizations, ["Engines Ltd"]);
+        let disagree = join_name_choices(&[
+            person(1, Some("Ada"), None, Some("Engines Ltd"), 1),
+            person(2, None, Some("ada"), Some("Looms & Co"), 2),
+        ]);
+        assert!(disagree.organization_conflict());
+        assert_eq!(disagree.organizations, ["Engines Ltd", "Looms & Co"]);
     }
 }
