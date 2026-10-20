@@ -1415,11 +1415,12 @@ impl ContactRepository<'_> {
         let rows = sql::all_unbounded(
             self.connection,
             &format!(
-                "SELECT a.address_normalized, c.name
+                "SELECT a.address_normalized, {shown}
                    FROM addresses a
                    JOIN contacts c ON c.id = a.contact_id
                   WHERE a.address_normalized IN ({placeholders})
-                    AND c.state = 'live' AND c.name IS NOT NULL"
+                    AND c.state = 'live' AND {shown} IS NOT NULL",
+                shown = crate::shown_name!("c")
             ),
             wanted,
             |row| Ok((row.col::<String>(0)?, row.col::<String>(1)?)),

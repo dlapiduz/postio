@@ -746,11 +746,14 @@ const ID_CHUNK: usize = 500;
 /// address's live owner when they gave one, and the header's otherwise
 /// (specs/005-contacts FR-032): two more primary-key seeks per row, no more
 /// statements.
-pub(crate) const LIST_COLUMNS: &str = "\
+pub(crate) const LIST_COLUMNS: &str = concat!(
+    "\
 messages.id, messages.thread_id, messages.subject, messages.preview, messages.received_at,
 messages.seen, messages.flagged, messages.answered, messages.draft, messages.has_attachments,
 messages.size, messages.send_state, messages.send_at,
-(SELECT coalesce(named.name, recipients.name) FROM recipients
+(SELECT coalesce(",
+    crate::shown_name!("named"),
+    ", recipients.name) FROM recipients
     JOIN addresses ON addresses.id = recipients.address_id
     LEFT JOIN contacts named ON named.id = addresses.contact_id AND named.state = 'live'
   WHERE recipients.message_id = messages.id AND recipients.kind = 'from'
@@ -760,7 +763,8 @@ messages.size, messages.send_state, messages.send_at,
   WHERE recipients.message_id = messages.id AND recipients.kind = 'from'
   ORDER BY recipients.position LIMIT 1),
 (SELECT threads.message_count FROM threads WHERE threads.id = messages.thread_id),
-messages.sort_at";
+messages.sort_at"
+);
 
 /// [`LIST_COLUMNS`], read off the message `alias` names rather than off
 /// `messages`: for a statement whose list row is one of several things it

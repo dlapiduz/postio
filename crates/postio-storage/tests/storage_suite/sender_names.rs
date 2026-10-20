@@ -249,3 +249,91 @@ async fn a_deleted_person_lends_their_name_to_nothing() {
             .is_empty()
     );
 }
+
+/// Gives ada a name in parts and a style to show it in.
+async fn style(mail: &Mail, show_as: &str, given: Option<&str>, family: Option<&str>) {
+    postio_storage::sql::execute(
+        &mail.connection,
+        "UPDATE contacts SET show_as = ?2, given_name = ?3, family_name = ?4 WHERE id = ?1",
+        postio_storage::sql::bind![mail.ada.get(), show_as, given, family],
+    )
+    .await
+    .expect("ada's style");
+}
+
+#[tokio::test]
+async fn the_style_a_person_chose_is_how_every_place_shows_their_name() {
+    let mail = mail().await;
+    let cases: [(&str, Option<&str>, Option<&str>, &str); 6] = [
+        (
+            "full",
+            Some("Ada"),
+            Some("Lovelace"),
+            "Countess of Lovelace",
+        ),
+        ("first", Some("Ada"), Some("Lovelace"), "Ada"),
+        ("last_first", Some("Ada"), Some("Lovelace"), "Lovelace, Ada"),
+        (
+            "custom",
+            Some("Ada"),
+            Some("Lovelace"),
+            "Countess of Lovelace",
+        ),
+        // A style that needs a part she lacks falls back, as the model does.
+        ("first", None, Some("Lovelace"), "Countess of Lovelace"),
+        ("last_first", None, Some("Lovelace"), "Lovelace"),
+    ];
+    for (show_as, given, family, wanted) in cases {
+        style(&mail, show_as, given, family).await;
+        let person = ContactRepository::new(&mail.connection)
+            .get(mail.ada)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            person.shown_as(),
+            wanted,
+            "the model, {show_as} {given:?} {family:?}"
+        );
+
+        let listed = list_names(&mail).await;
+        assert_eq!(
+            listed[0].1.as_deref(),
+            Some(wanted),
+            "the list, {show_as} {given:?}"
+        );
+        assert_eq!(listed[1].1.as_deref(), Some(wanted));
+        assert_eq!(
+            listed[2].1.as_deref(),
+            Some("Ada Lovelace"),
+            "the stranger keeps his header whatever her style"
+        );
+
+        let rows = ThreadRepository::new(&mail.connection)
+            .page(&ThreadListQuery::in_mailbox(mail.account.id, mail.inbox).limit(10))
+            .await
+            .unwrap();
+        let engines = rows
+            .iter()
+            .find(|row| row.subject.as_deref() == Some("Engines"))
+            .unwrap();
+        assert!(
+            engines
+                .participants
+                .iter()
+                .all(|p| p.name.as_deref() == Some(wanted)),
+            "a conversation, {show_as}: {:?}",
+            engines.participants
+        );
+
+        let names = ContactRepository::new(&mail.connection)
+            .user_names(&["ada@work.example".to_owned()])
+            .await
+            .unwrap();
+        assert_eq!(
+            names.get("ada@work.example").map(String::as_str),
+            Some(wanted),
+            "the reader"
+        );
+    }
+}

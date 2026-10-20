@@ -45,6 +45,48 @@
 //! See `test_support` (behind the `test-support` feature) for throwaway stores
 //! in tests.
 
+/// SQL for the name a contact is shown under -- the style they chose
+/// (`show_as`) applied to the parts of the name they gave -- for the contact
+/// aliased `$a`. `NULL` when they gave no name, so a caller's `coalesce`
+/// falls back to the header. The one home of the rule that
+/// `postio_model::Contact::shown_as` states in Rust; a test holds the two to
+/// each other.
+macro_rules! shown_name {
+    ($a:literal) => {
+        concat!(
+            "CASE ",
+            $a,
+            ".show_as ",
+            "WHEN 'first' THEN coalesce(nullif(trim(",
+            $a,
+            ".given_name), ''), ",
+            $a,
+            ".name) ",
+            "WHEN 'last_first' THEN CASE ",
+            "WHEN nullif(trim(",
+            $a,
+            ".family_name), '') IS NOT NULL ",
+            "AND nullif(trim(",
+            $a,
+            ".given_name), '') IS NOT NULL ",
+            "THEN trim(",
+            $a,
+            ".family_name) || ', ' || trim(",
+            $a,
+            ".given_name) ",
+            "ELSE coalesce(nullif(trim(",
+            $a,
+            ".family_name), ''), ",
+            $a,
+            ".name) END ",
+            "ELSE ",
+            $a,
+            ".name END"
+        )
+    };
+}
+pub(crate) use shown_name;
+
 pub mod actions;
 pub mod blob;
 pub mod body_codec;
