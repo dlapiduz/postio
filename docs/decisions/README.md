@@ -15,7 +15,6 @@ decision stands.
 | [0004](0004-composer-document-model.md) | The composer's document, and where it lives | Built (`postio-body`) |
 | [0005](0005-multiple-accounts.md) | Multiple accounts and the unified inbox | Built |
 | [0006](0006-oauth-and-provider-presets.md) | OAuth 2, and what "providers are data" has to mean | Built |
-| [0007](0007-address-book.md) | The address book: one table, two provenances | Built, except vCard import/export and a management surface |
 | [0008](0008-filters-and-rules.md) | Filters and rules: one language, two evaluators | Saved searches, `header:` and the digest-rule matcher built; the rules engine is on `feature/rules`, not on `main` |
 | [0009](0009-ai-subsystem.md) | The AI subsystem | `postio-ai` built as the client for a local model Focus uses; summarise, draft and semantic search not built |
 | [0010](0010-mcp-surface.md) | Exposing Postio over MCP | Built: `postio-mcp`; amended 2026-10-14 to allow archive, move and label |

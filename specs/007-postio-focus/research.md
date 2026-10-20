@@ -715,7 +715,7 @@ Focus turns on.
 carries. The order:
 
 1. sent count (`correspondents.sent_count`, R8);
-2. ADR 0007 Q6's band: contacts the user made or imported before those seen
+2. The address-book band (`specs/005-contacts`, from ADR 0007 Q6): contacts the user made or imported before those seen
    only in mail;
 3. last seen;
 4. times seen.

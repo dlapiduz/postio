@@ -36,7 +36,7 @@ pub fn candidate_label(candidate: &RecipientCandidate) -> String {
 ///
 /// A contact inserts one address; a group inserts every member as its own
 /// address, comma by comma, exactly as if they had been typed individually --
-/// there is no group reference to insert instead (ADR 0007 Q3).
+/// there is no group reference to insert instead (specs/005-contacts).
 pub fn accepted(text: &str, candidate: &RecipientCandidate) -> String {
     let inserted: String = match candidate {
         RecipientCandidate::Contact(address) => format!("{address}, "),
@@ -127,14 +127,14 @@ pub fn suggest(
     candidates
 }
 
-/// Which of two contacts completion offers first (research R15, over ADR
-/// 0007 Q6's bands):
+/// Which of two people completion offers first (research R15, over the
+/// address-book band of specs/005-contacts):
 ///
 /// 1. the more letters the user wrote to it: a letter is the user's own
 ///    act, the one evidence that they want to write there again;
 /// 2. then a contact the user made or imported before one only seen in
 ///    mail, because how often a list robot is seen says nothing about
-///    wanting to write to it (ADR 0007 Q6);
+///    wanting to write to it (specs/005-contacts);
 /// 3. then the more lately seen, and one never seen last;
 /// 4. then the more often seen.
 ///
@@ -288,7 +288,7 @@ mod tests {
         );
     }
 
-    /// ADR 0007 Q6 still holds for what the user did not write: a contact
+    /// The address-book band still holds for what the user did not write: a contact
     /// they made outranks every mail sighting, however frequent or recent,
     /// because four hundred sightings of a list robot are not evidence they
     /// want to write to it. A letter they wrote is that evidence, so it

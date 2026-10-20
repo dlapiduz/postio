@@ -46,8 +46,8 @@ impl ContactGroup {
 /// One row of recipient completion: a single address, or a named group that
 /// expands to every one of its members the moment it is accepted.
 ///
-/// ADR 0007 Q3: there is no group address to insert instead — a draft's
-/// recipients have to be what the user can see, which is what keeps `Bcc`
+/// There is no group address to insert instead (specs/005-contacts): a
+/// draft's recipients have to be what the user can see, which is what keeps `Bcc`
 /// honest and stops a draft's recipients from silently changing if someone
 /// edits the group's membership after it was picked.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
