@@ -153,7 +153,7 @@ pub fn detect(signals: &KindSignals, rules: &KindRules) -> Detected {
         .role_local
         .iter()
         .any(|pattern| matches_words(&words, pattern));
-    let freemail = rules.freemail_domains.iter().any(|d| *d == domain);
+    let freemail = rules.freemail_domains.contains(&domain);
     if role && !freemail && signals.people_at_domain >= rules.company_min_people {
         return Detected {
             kind: ContactKind::Company,

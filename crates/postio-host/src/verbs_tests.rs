@@ -2158,21 +2158,21 @@ at = \"08:00\"
     .to_owned()
 }
 
+/// A subject, the role of the folder it landed in, why Focus filed it away
+/// if it did, and the digest that holds it if one does.
+type Landed = (
+    String,
+    postio_model::MailboxRole,
+    Option<String>,
+    Option<String>,
+);
+
 /// Where each of a fixed corpus lands under `text`: the folder's role, the
 /// reason Focus gave for filing it away, and the digest that holds it.
 fn where_the_corpus_lands(
     text: &str,
     migrating: bool,
-) -> (
-    Vec<(
-        String,
-        postio_model::MailboxRole,
-        Option<String>,
-        Option<String>,
-    )>,
-    String,
-    std::path::PathBuf,
-) {
+) -> (Vec<Landed>, String, std::path::PathBuf) {
     let world = World::new();
     let (directory, path) = config_file(text);
     if !migrating {

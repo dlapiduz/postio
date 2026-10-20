@@ -941,7 +941,12 @@ pub fn a_persons_pin_is_listed_by_name_and_taken_back_in_settings() {
         }
         let fixture = Fixture::empty().await;
         fixture
-            .file(("Ada Lovelace", "ada@work.example"), "Budget", "A line.", 10)
+            .file(
+                ("Ada Lovelace", "ada@work.example"),
+                "Budget",
+                "A line.",
+                10,
+            )
             .await;
         let ada = {
             let connection = fixture.database.connect().await.expect("a connection");

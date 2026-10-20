@@ -21,13 +21,17 @@ pub trait SenderTreatments {
     fn set_treatment(&self, sender: &str, treatment: Option<Treatment>);
 }
 
+/// What is told when a treatment is set or forgotten: the sender, and the
+/// treatment or `None`.
+type Changed = Box<dyn Fn(&str, Option<Treatment>)>;
+
 /// Treatments held in memory and kept in step with the store by the app that
 /// owns the reader: it fills the table ([`Remembered::replace`]) from what
 /// the host holds and hears every change through the callback given to
 /// [`Remembered::new`].
 pub struct Remembered {
     chosen: RefCell<BTreeMap<String, Treatment>>,
-    changed: Box<dyn Fn(&str, Option<Treatment>)>,
+    changed: Changed,
 }
 
 impl Remembered {
@@ -87,7 +91,8 @@ mod tests {
 
     #[test]
     fn the_table_answers_at_once_in_any_case_and_tells_the_store_what_changed() {
-        let told: Rc<RefCell<Vec<(String, Option<Treatment>)>>> = Rc::default();
+        type Told = Rc<RefCell<Vec<(String, Option<Treatment>)>>>;
+        let told: Told = Rc::default();
         let log = Rc::clone(&told);
         let table = Remembered::new(move |sender, treatment| {
             log.borrow_mut().push((sender.to_owned(), treatment));

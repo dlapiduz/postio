@@ -80,12 +80,14 @@ pub(crate) fn treatments_for(
     allowlist: &Rc<RefCell<RemoteImageAllowList>>,
     path: &Path,
 ) -> Rc<dyn SenderTreatments> {
-    TREATMENTS.with(|slot| slot.borrow().clone()).unwrap_or_else(|| {
-        Rc::new(FileTreatments {
-            allowlist: Rc::clone(allowlist),
-            path: path.to_owned(),
+    TREATMENTS
+        .with(|slot| slot.borrow().clone())
+        .unwrap_or_else(|| {
+            Rc::new(FileTreatments {
+                allowlist: Rc::clone(allowlist),
+                path: path.to_owned(),
+            })
         })
-    })
 }
 
 /// A sender's treatment kept in the remote-image file beside the grants: how

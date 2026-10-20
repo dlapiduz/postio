@@ -3477,7 +3477,10 @@ impl SettingsPanel {
 
     /// Run `take_back` for a person's pin or marker, which is theirs and
     /// not the file's to edit.
-    pub fn connect_contact_take_back(&self, take_back: impl Fn(&postio_ui::filtering::Undo) + 'static) {
+    pub fn connect_contact_take_back(
+        &self,
+        take_back: impl Fn(&postio_ui::filtering::Undo) + 'static,
+    ) {
         *self.imp().contact_take_back.borrow_mut() = Some(std::rc::Rc::new(take_back));
     }
 
@@ -3493,7 +3496,8 @@ impl SettingsPanel {
         };
         let imp = self.imp();
         let focus = config.focus.with_contacts(&imp.contact_rules.borrow());
-        let page = postio_ui::filtering::page(&focus, imp.filtered_today.get(), &imp.keymap.borrow());
+        let page =
+            postio_ui::filtering::page(&focus, imp.filtered_today.get(), &imp.keymap.borrow());
         controls.switch.set_active(page.on);
         controls.after_unsubscribe.set_selected(
             postio_ui::unsubscribe::SETTING_CHOICES
@@ -3646,7 +3650,9 @@ impl SettingsPanel {
         let text = self.text();
         // A person's pin or marker is not in the buffer: the host clears it.
         if let Ok(config) = Config::from_toml_str(&text) {
-            let focus = config.focus.with_contacts(&self.imp().contact_rules.borrow());
+            let focus = config
+                .focus
+                .with_contacts(&self.imp().contact_rules.borrow());
             let theirs = match undo {
                 Undo::Never(entry) => focus.contact_pinned(entry).is_some(),
                 Undo::Marker { sender, kind } => focus.contact_stopped(sender, kind).is_some(),

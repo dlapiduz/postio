@@ -367,7 +367,7 @@ at = "07:00"
 
         // What the correspondents hold instead: one each.
         let mut rules: Vec<ContactRule> = Vec::new();
-        let mut rule_for = |address: &str, rules: &mut Vec<ContactRule>| -> usize {
+        let rule_for = |address: &str, rules: &mut Vec<ContactRule>| -> usize {
             if let Some(at) = rules
                 .iter()
                 .position(|r| r.addresses == [address.to_owned()])

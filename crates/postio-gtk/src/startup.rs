@@ -172,7 +172,10 @@ impl Session {
 
 /// Focus mode as the app sets it up: `focus`, the file it was read from, and
 /// the remote-image list the senders' treatments move out of, once.
-fn app_setup(focus: postio_config::FocusConfig, config_path: Option<&std::path::Path>) -> FocusSetup {
+fn app_setup(
+    focus: postio_config::FocusConfig,
+    config_path: Option<&std::path::Path>,
+) -> FocusSetup {
     FocusSetup::from_config(focus, config_path)
         .with_remote_images_path(postio_ui::allowlist::RemoteImageAllowList::path())
 }
