@@ -1,16 +1,12 @@
-//! Reads behind the two bulk clean-ups that name mail by where it came from
-//! or how old it is: "delete what the list sent" (#1931) and auto-emptying
-//! Junk and Trash (#1932).
+//! The read behind "delete what the list sent" (#1931): which of an
+//! account's messages a list sent.
 //!
-//! Both only *find* messages. The deleting is a command, so it is queued,
-//! undoable where it should be, and local-first like every other verb.
-//! Neither ever returns a Flagged message: that is the one promise they share.
+//! It only *finds* messages. Archiving or deleting them is a command, so it
+//! is queued, undoable and local-first like every other verb. It never
+//! returns a Flagged message.
 
-use chrono::{DateTime, Utc};
-use postio_model::MailboxRole;
 use postio_model::ids::{AccountId, MessageId};
 
-use super::to_millis;
 use crate::error::Result;
 use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
@@ -83,36 +79,6 @@ impl<'a> SweepRepository<'a> {
         self.page(
             &query,
             bind![account.get(), value, i64::from(limit) + 1].to_vec(),
-            limit,
-        )
-        .await
-    }
-
-    /// Up to `limit` of `account`'s unflagged messages in folders of `role`
-    /// received before `before`, oldest first: what auto-empty purges.
-    pub async fn expired_in(
-        &self,
-        account: AccountId,
-        role: MailboxRole,
-        before: DateTime<Utc>,
-        limit: u32,
-    ) -> Result<Found> {
-        let query = "SELECT messages.id FROM messages
-               JOIN mailboxes ON mailboxes.id = messages.mailbox_id
-              WHERE messages.account_id = ?1 AND mailboxes.role = ?2
-                AND messages.received_at < ?3
-                AND messages.flagged = 0 AND messages.deleted_locally = 0
-              ORDER BY messages.received_at ASC, messages.id ASC
-              LIMIT ?4";
-        self.page(
-            query,
-            bind![
-                account.get(),
-                role.as_str(),
-                to_millis(before),
-                i64::from(limit) + 1
-            ]
-            .to_vec(),
             limit,
         )
         .await
