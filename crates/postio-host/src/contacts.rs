@@ -183,6 +183,51 @@ pub async fn catch_up(
     Ok(made)
 }
 
+/// Decides the kind of everyone the current detector has not decided yet,
+/// `batch` at a time, and stores it. Returns how many it decided. A kind the
+/// user chose is never touched, and a better detector (a higher
+/// `KIND_VERSION`) decides everyone detected again.
+///
+/// Reads counts over each sender's newest messages (storage's
+/// `kind_signals`), never mail, and logs counts only.
+pub async fn detect_kinds(database: &Store, batch: u32) -> Result<usize, String> {
+    let failed = |error: postio_storage::Error| {
+        tracing::warn!(%error, "could not decide what sort of correspondents people are");
+        "Could not sort contacts".to_owned()
+    };
+    let connection = database.connect().await.map_err(failed)?;
+    let contacts = ContactRepository::new(&connection);
+    let rules = postio_classify::kind::KindRules::shipped();
+    let version = postio_classify::kind::KIND_VERSION;
+    let (mut decided, mut after) = (0, None);
+    loop {
+        let people = contacts
+            .pending_kinds(version, after, batch)
+            .await
+            .map_err(failed)?;
+        for person in &people {
+            // Someone deleted since the walk read them has no signals; they
+            // are decided when restored.
+            if let Some(signals) = contacts.kind_signals(*person).await.map_err(failed)? {
+                let detected = postio_classify::kind::detect(&signals, rules);
+                contacts
+                    .set_detected_kind(*person, detected.kind, version)
+                    .await
+                    .map_err(failed)?;
+                decided += 1;
+            }
+        }
+        match people.last() {
+            Some(last) if people.len() == batch as usize => after = Some(*last),
+            _ => break,
+        }
+    }
+    if decided > 0 {
+        tracing::info!(decided, version, "sorted contacts by kind");
+    }
+    Ok(decided)
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Write;
@@ -361,6 +406,79 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         assert!(
             !logged.contains("example.org") && !logged.contains("Old Friend"),
             "{logged}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_kind_pass_sorts_senders_leaves_a_users_choice_and_runs_once_per_detector() {
+        use chrono::TimeZone as _;
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        for day in 0..6 {
+            let mut message = postio_model::Message::new(
+                account.id,
+                inbox,
+                chrono::Utc.with_ymd_and_hms(2026, 3, 1, 12, 0, 0).unwrap()
+                    + chrono::Duration::days(day),
+            );
+            message.from = vec![postio_model::EmailAddress::new(
+                Some("Ledger Weekly"),
+                "news@ledger.example",
+            )];
+            message.to = vec![account.address.clone()];
+            message.promoted = Some(postio_model::promoted::PromotedHeaders {
+                unsubscribe_offered: true,
+                automation: postio_model::promoted::PRECEDENCE_BULK,
+            });
+            postio_storage::repository::MessageRepository::new(&connection)
+                .create(&mut message)
+                .await
+                .expect("store");
+        }
+        old_mail(&database, "ada@example.org", 9).await;
+        catch_up(&database, 10, |_| {})
+            .await
+            .expect("people are made");
+        let contacts = ContactRepository::new(&connection);
+        let kind = |address: &'static str| {
+            let contacts = ContactRepository::new(&connection);
+            async move {
+                contacts
+                    .by_address(address)
+                    .await
+                    .expect("read")
+                    .expect("a person")
+                    .kind
+            }
+        };
+        let choosing = contacts
+            .by_address("ada@example.org")
+            .await
+            .unwrap()
+            .unwrap()
+            .id;
+        postio_storage::sql::execute(
+            &connection,
+            "UPDATE contacts SET kind = 'company', kind_source = 'user' WHERE id = ?1",
+            postio_storage::sql::bind![choosing.get()],
+        )
+        .await
+        .expect("the user chose");
+
+        assert_eq!(detect_kinds(&database, 1).await.expect("the pass"), 1);
+        assert_eq!(
+            kind("news@ledger.example").await,
+            postio_model::ContactKind::Newsletter
+        );
+        assert_eq!(
+            kind("ada@example.org").await,
+            postio_model::ContactKind::Company
+        );
+        assert_eq!(
+            detect_kinds(&database, 1).await.expect("again"),
+            0,
+            "decided once per detector"
         );
     }
 }

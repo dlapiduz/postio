@@ -129,6 +129,10 @@ pub fn build_contacts(wiring: &Wiring) {
         if let Err(error) = crate::contacts::catch_up(&database, 500, |_| {}).await {
             tracing::warn!(%error, "could not build contacts from the mail already here");
         }
+        // After the people exist, so the newest of them are sorted too.
+        if let Err(error) = crate::contacts::detect_kinds(&database, 200).await {
+            tracing::warn!(%error, "could not sort contacts by kind");
+        }
     });
 }
 
