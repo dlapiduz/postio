@@ -199,7 +199,7 @@ pub fn show_fetches_once_and_asks_for_nothing_before() {
     });
 }
 
-/// Always show from this sender (`i a`): the images are asked for, and the
+/// Always show from this sender (`alt+I`): the images are asked for, and the
 /// sender's next message opens with them, no banner; another sender's does
 /// not.
 pub fn always_holds_for_the_senders_next_message() {
@@ -216,10 +216,14 @@ pub fn always_holds_for_the_senders_next_message() {
         let reading = window.reading().expect("open");
         crate::settle_for(std::time::Duration::from_millis(1500)).await;
         assert!(asked.borrow().is_empty(), "asked before the person did");
-        support::keys(&window, &["i", "a"]);
+        support::press(
+            &window,
+            "I",
+            gtk::gdk::ModifierType::ALT_MASK | gtk::gdk::ModifierType::SHIFT_MASK,
+        );
         assert!(
             crate::settle_until(async || !asked.borrow().is_empty()).await,
-            "`i a` asked for nothing"
+            "`alt+I` asked for nothing"
         );
         asked.borrow_mut().clear();
         support::keys(&window, &["j"]);

@@ -82,7 +82,7 @@ it.
 |---|---|---|---|
 | `O` | `switch_treatment` | Focus | Reader only: app colours or the original |
 | `.` | `more_actions` | Focus | Gmail's. Reader only: the open message's More (Label, Move, Delete) |
-| `i i` / `i a` | `show_images` / `always_show_images` | All | Once, or always for this sender |
+| `alt+i` / `alt+I` | `show_images` / `always_show_images` | All | Once, or always for this sender |
 | `mod+f`, `mod+g`, `mod+shift+g` | `find_in_message`, `find_next`, `find_previous` | All | Alternates `F3` / `shift+F3` |
 | `mod+plus`, `mod+minus`, `mod+0` | `zoom_in`, `zoom_out`, `zoom_reset` | Graphical | Kept in `[reader] zoom` |
 | `alt+d` | `darken_message` | Graphical | Withheld on macOS |

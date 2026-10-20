@@ -60,7 +60,7 @@ public enum Intercepted {
     public static let findInMessage = "find_in_message"
     public static let findNext = "find_next"
     public static let findPrevious = "find_previous"
-    /// The reader's `i i`: the one-view render the notice's Show button runs, so
+    /// The reader's `alt+i`: the one-view render the notice's Show button runs, so
     /// the key, the palette row and the notice's Show button cannot drift.
     public static let showImages = "show_images"
     /// The palette's "Quit Postio"; AppKit answers `⌘Q` from the menu itself.
@@ -72,7 +72,7 @@ public enum Intercepted {
     /// button from the keyboard and the palette (#1953), and only while the
     /// banner offers it.
     public static let clearListMail = "clear_list_mail"
-    /// The reader's `i a`: the blocked-images notice's "Always allow", for
+    /// The reader's `alt+I`: the blocked-images notice's "Always allow", for
     /// the sender the notice names, and only where the notice is.
     public static let alwaysShowImages = "always_show_images"
     /// The settings window's account verbs. Every one acts on the row the

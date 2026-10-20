@@ -94,8 +94,8 @@ settings	ctrl+comma | alt+comma
 add_account	ctrl+shift+n | alt+n
 edit_config	ctrl+e
 quit	ctrl+q | ctrl+w
-show_images	i i
-always_show_images	i a
+show_images	alt+i
+always_show_images	alt+I
 unsubscribe	M
 clear_list_mail	C
 go_to_folders	g l

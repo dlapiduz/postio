@@ -7814,13 +7814,15 @@ pub(crate) mod tests {
         let drawn = reader_text(&app);
         assert!(drawn.contains("1 remote image blocked"), "{drawn}");
         assert!(
-            drawn.contains("i i"),
+            drawn.contains("alt+i"),
             "the key that shows them is named: {drawn}"
         );
 
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
-        update(&mut app, press('i'));
-        let effects = update(&mut app, press('a'));
+        let effects = update(
+            &mut app,
+            key(KeyCode::Char('I'), KeyModifiers::ALT | KeyModifiers::SHIFT),
+        );
         let saved = effects.iter().find_map(|effect| match effect {
             Effect::SaveAllowlist(list) => Some(list.clone()),
             _ => None,

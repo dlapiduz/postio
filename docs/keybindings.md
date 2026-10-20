@@ -123,8 +123,8 @@ command from inside a text field.
 | `ctrl+shift+n` or `alt+n` | Add account | Everywhere |  | `add_account` |
 | `ctrl+e` | Edit configuration | List, conversation, reader |  | `edit_config` |
 | `ctrl+q` or `ctrl+w` | Quit Postio | Everywhere |  | `quit` |
-| `i i` | Show remote images | List, conversation, reader |  | `show_images` |
-| `i a` | Always show images from this sender | List, conversation, reader |  | `always_show_images` |
+| `alt+i` | Show remote images | List, conversation, reader |  | `show_images` |
+| `alt+I` | Always show images from this sender | List, conversation, reader |  | `always_show_images` |
 | `M` | Unsubscribe from this list | List, conversation, reader, digest |  | `unsubscribe` |
 | `C` | Clear what the list sent | List, conversation, reader, digest | Undoable | `clear_list_mail` |
 | `g l` | Go to folders | List, conversation, reader, search |  | `go_to_folders` |

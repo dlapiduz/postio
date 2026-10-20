@@ -1741,8 +1741,10 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::ShowImages,
         title: "Show remote images",
-        // A sequence under `i` for images: once, or always from this sender.
-        default_binding: "i i",
+        // `alt+i`, once; `alt+I`, always from this sender. The bare `i` is the
+        // contact popover's (specs/011-focus-contacts, Q2), so images moved
+        // to the modified pair on both platforms.
+        default_binding: "alt+i",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
@@ -1752,7 +1754,7 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::AlwaysShowImages,
         title: "Always show images from this sender",
-        default_binding: "i a",
+        default_binding: "alt+I",
         alternate_bindings: &[],
         contexts: ctx(MESSAGE_SURFACES),
         destructive: false,
