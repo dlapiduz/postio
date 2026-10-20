@@ -223,3 +223,56 @@ pub fn personal_mail_has_no_unsubscribe_band_but_u_still_works() {
         );
     });
 }
+
+/// After `M` the window offers to clear what the sender left (#1931): the
+/// dialog counts it, `Delete 2` is one command and says so, and Esc on the
+/// same offer keeps everything.
+pub fn leaving_a_list_offers_to_delete_what_it_sent_and_esc_keeps_it() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        file_the_newsletter(&fixture).await;
+        file_the_newsletter(&fixture).await;
+        let (window, _client) = fixture.open().await;
+        support::keys(&window, &["j", "Return"]);
+        let reading = window.reading().expect("Return opened the message");
+        assert!(crate::settle_until(async || reading.is_open()).await);
+
+        support::keys(&window, &["M"]);
+        assert!(
+            crate::settle_until(async || window.sweep_offer().is_some()).await,
+            "`M` left the list and offered nothing about its mail"
+        );
+        let dialog = window.sweep_offer().expect("the offer");
+        let said = gtk::prelude::ObjectExt::property::<String>(&dialog, "body");
+        assert!(said.contains("2 messages"), "it counts them: {said}");
+
+        // Esc declines: nothing is deleted, and no deletion is announced.
+        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+        crate::settle();
+        assert!(window.sweep_offer().is_none(), "Esc closes the offer");
+        assert_ne!(
+            window.toast_showing().as_deref(),
+            Some("Deleted 2 messages"),
+            "declining deleted them"
+        );
+
+        support::keys(&window, &["M"]);
+        assert!(crate::settle_until(async || window.sweep_offer().is_some()).await);
+        let dialog = window.sweep_offer().expect("the offer again");
+        let delete = support::button_labelled(&dialog, "Delete 2");
+        support::click(&window, &delete, 1);
+        assert!(
+            crate::settle_until(async || {
+                window
+                    .toast_showing()
+                    .is_some_and(|said| said.starts_with("Deleted 2 messages"))
+            })
+            .await,
+            "Delete 2 was not one undoable command: {:?}",
+            window.toast_showing()
+        );
+    });
+}

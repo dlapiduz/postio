@@ -226,6 +226,10 @@ const CASES: &[(&str, fn())] = &[
             as fn(),
     ),
     (
+        "unsubscribe::leaving_a_list_offers_to_delete_what_it_sent_and_esc_keeps_it",
+        unsubscribe::leaving_a_list_offers_to_delete_what_it_sent_and_esc_keeps_it as fn(),
+    ),
+    (
         "unsubscribe::personal_mail_has_no_unsubscribe_band_but_u_still_works",
         unsubscribe::personal_mail_has_no_unsubscribe_band_but_u_still_works as fn(),
     ),
