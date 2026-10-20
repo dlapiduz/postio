@@ -1483,16 +1483,20 @@ impl<'a> MessageRepository<'a> {
         if ids.is_empty() {
             return Ok(0);
         }
-        let sql = format!(
-            "DELETE FROM messages WHERE id IN ({})",
-            placeholders(ids.len(), 1)
-        );
-        Ok(sql::execute(
-            self.connection,
-            &sql,
-            ids.iter().map(|id| id.get()).collect::<Vec<_>>(),
-        )
-        .await? as usize)
+        let mut deleted = 0;
+        for chunk in ids.chunks(ID_LOOKUP_CHUNK) {
+            let sql = format!(
+                "DELETE FROM messages WHERE id IN ({})",
+                placeholders(chunk.len(), 1)
+            );
+            deleted += sql::execute(
+                self.connection,
+                &sql,
+                chunk.iter().map(|id| id.get()).collect::<Vec<_>>(),
+            )
+            .await? as usize;
+        }
+        Ok(deleted)
     }
 
     /// Puts a message in a thread, or takes it out of one.
@@ -1523,6 +1527,37 @@ impl<'a> MessageRepository<'a> {
             Some(id) => self.get(id).await,
             None => Ok(None),
         }
+    }
+
+    /// The ids of the messages `uids` name in `mailbox` under `generation`;
+    /// a uid the store does not hold is left out.
+    ///
+    /// One statement per [`ID_LOOKUP_CHUNK`] uids, and ids only: what a caller
+    /// that is about to delete by uid needs, where [`by_uid`](Self::by_uid)
+    /// pays a query for the id and a second to load a whole message, per uid.
+    pub async fn ids_by_uid(
+        &self,
+        mailbox_id: MailboxId,
+        generation: Generation,
+        uids: &[Uid],
+    ) -> Result<Vec<MessageId>> {
+        let mut ids = Vec::with_capacity(uids.len());
+        for chunk in uids.chunks(ID_LOOKUP_CHUNK) {
+            let sql = format!(
+                "SELECT id FROM messages
+                  WHERE mailbox_id = ?1 AND uid_validity = ?2 AND uid IN ({})",
+                placeholders(chunk.len(), 3)
+            );
+            let mut params: Vec<i64> = vec![mailbox_id.get(), i64::from(generation.get())];
+            params.extend(chunk.iter().map(|uid| i64::from(uid.get())));
+            ids.extend(
+                sql::all_unbounded(self.connection, &sql, params, |row| {
+                    Ok(MessageId::new(row.col(0)?))
+                })
+                .await?,
+            );
+        }
+        Ok(ids)
     }
 
     /// Every UID known locally for a mailbox under `uid_validity`, ascending.
@@ -2923,6 +2958,9 @@ async fn find_by_remote_id(
     )
     .await
 }
+
+/// How many uids [`MessageRepository::ids_by_uid`] binds to one statement.
+const ID_LOOKUP_CHUNK: usize = 500;
 
 /// The engine-facing lookup: the caller tracks an opaque [`Generation`],
 /// which for IMAP is numerically the stored `uid_validity` (#543).

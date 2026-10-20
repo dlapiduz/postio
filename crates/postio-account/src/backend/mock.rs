@@ -431,6 +431,12 @@ struct State {
     /// this is how a test tells "the pass kept running" from "the pass was
     /// cancelled and started again" (#1593). See [`MockBackend::uid_listings`].
     uid_listings: Vec<String>,
+    /// How many messages each served header fetch returned, oldest first. See
+    /// [`MockBackend::header_fetch_rows`].
+    header_fetch_rows: Vec<usize>,
+    /// UIDs a header fetch silently leaves out. See
+    /// [`MockBackend::drop_from_header_fetches`].
+    undecodable: Vec<u32>,
     /// One entry per *batched* section fetch: the section asked for, and how
     /// many messages were named in the one call. See
     /// [`MockBackend::section_batches`].
@@ -642,6 +648,25 @@ impl MockBackend {
     /// holding thousands listed one UID and `EXISTS` said otherwise.
     pub fn truncate_uid_listing(&self, keep: usize) {
         self.state().truncate_uid_listing = Some(keep);
+    }
+
+    /// Makes header fetches leave `uid` out of their answer without saying so,
+    /// while the message stays in the mailbox, in `SEARCH` and in `EXISTS`.
+    ///
+    /// What io-imap does with an untagged `FETCH` line it cannot decode (a
+    /// partless-multipart `BODYSTRUCTURE`, 8-bit `ENVELOPE` bytes): drops it
+    /// and completes the command `Ok`. A caller that reads absence from a
+    /// fetch as "expunged" deletes a message that is still there.
+    pub fn drop_from_header_fetches(&self, uid: u32) {
+        self.state().undecodable.push(uid);
+    }
+
+    /// How many messages each served header fetch returned, oldest first.
+    ///
+    /// The size of the download, which the call count cannot show: one fetch
+    /// of the whole folder and one of a single message are one call each.
+    pub fn header_fetch_rows(&self) -> Vec<usize> {
+        self.state().header_fetch_rows.clone()
     }
 
     /// Makes `COPY` and `MOVE` succeed without reporting the new UIDs, while
@@ -1027,6 +1052,8 @@ impl MockBackendBuilder {
                 header_fetches: Vec::new(),
                 body_fetches: Vec::new(),
                 uid_listings: Vec::new(),
+                header_fetch_rows: Vec::new(),
+                undecodable: Vec::new(),
                 section_batches: Vec::new(),
                 chunk_size: self.chunk_size,
             })),
@@ -1625,15 +1652,15 @@ impl MockBackend {
         let mut state = self.state();
         let seq = state.calls;
         state.header_fetches.push((seq, mailbox.to_owned()));
-        let state = state;
         let index = self.locate(&state, mailbox, "FETCH")?;
         let condstore = state.condstore();
         let folder = &state.mailboxes[index];
 
-        Ok(folder
+        let served: Vec<FetchedMessage> = folder
             .messages
             .iter()
             .filter(|message| uids.contains(Uid::new(message.uid)))
+            .filter(|message| !state.undecodable.contains(&message.uid))
             .filter(|message| match changed_since {
                 // RFC 7162 CHANGEDSINCE is strictly greater than.
                 Some(floor) => message.mod_seq > floor.get(),
@@ -1656,7 +1683,10 @@ impl MockBackend {
                     )
                 }),
             })
-            .collect())
+            .collect();
+        let rows = served.len();
+        state.header_fetch_rows.push(rows);
+        Ok(served)
     }
 }
 
