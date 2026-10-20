@@ -12,9 +12,9 @@ use postio_storage::BlobStore;
 use postio_storage::repository::{MailboxRepository, MessageRepository};
 use postio_storage::test_support::{self, TempStore};
 use postio_sync::backfill::{
-    AttachmentPolicy, Backfill, BackfillPolicy, BodyRequest, Outcome, Prefetched, Priority, Want,
-    fetch_body, prefetch_text_sections, request_body, request_payloads, seed, seed_header_blocks,
-    seed_payloads,
+    AttachmentPolicy, BATCH_BYTES, BATCH_LEN, Backfill, BackfillPolicy, BodyRequest, Outcome,
+    Prefetched, Priority, Want, fetch_body, prefetch_text_sections, request_body, request_payloads,
+    seed, seed_header_blocks, seed_payloads,
 };
 use postio_sync::sync_mailbox;
 
@@ -2954,6 +2954,157 @@ async fn the_text_axis_asks_for_a_set_of_messages_in_one_command() {
         rows.len(),
         "the cache should hold a section for each"
     );
+}
+
+/// The header block rides in the batch, so a batch of N bodies is two
+/// commands, not N + 1 (#1941).
+///
+/// Every text fetch also stores the message's `BODY[HEADER]`, and that used to
+/// be one command per message after the sections had been fetched as a set --
+/// which made the batch cost what it saved. Counted in commands the backend
+/// served, the one thing a fast mock and a slow server agree on.
+#[tokio::test]
+async fn a_batch_of_bodies_is_two_commands_not_one_per_message() {
+    let mut inbox = MockMailbox::new(INBOX).uid_validity(UidValidity::new(VALIDITY));
+    for uid in 1..=5u32 {
+        inbox = inbox.message(
+            MockMessage::new(note(uid))
+                .with_internal_date(at(uid as i64))
+                .with_structure(postio_account::backend::BodyStructure::from_parts(
+                    "text/plain",
+                    [
+                        postio_account::backend::PartNode::new("1", "text/plain", 26)
+                            .with_charset("utf-8"),
+                    ],
+                ))
+                .with_part("1", format!("The body of note {uid}.\r\n").into_bytes()),
+        );
+    }
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+    let requests: Vec<_> = rows
+        .iter()
+        .map(|(id, uid)| request(&local.inbox, *id, *uid, 1_024))
+        .collect();
+
+    let before = backend.calls();
+    let cancel = CancelToken::new();
+    let mut prefetched =
+        prefetch_text_sections(&local.connection, &backend, &requests, &cancel).await;
+    for request in &requests {
+        let mut mine = prefetched.split_for(&request.remote_id);
+        let outcome = fetch_body(
+            &local.connection,
+            &local.blobs,
+            &backend,
+            request,
+            BackfillPolicy::default().max_inline_bytes,
+            Some(&mut mine),
+            &cancel,
+        )
+        .await
+        .expect("fetch");
+        assert!(matches!(outcome, Outcome::Stored { .. }), "{outcome:?}");
+    }
+
+    assert_eq!(
+        backend.calls() - before,
+        2,
+        "one command for the sections and one for the header blocks, \
+         whatever the number of messages"
+    );
+    for (id, _) in &rows {
+        let stored = MessageRepository::new(&local.connection)
+            .body(*id)
+            .await
+            .expect("read the body")
+            .expect("a stored body");
+        assert!(stored.headers.is_some(), "the block came with the batch");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Batches of claims (#1941)
+// ---------------------------------------------------------------------------
+
+fn sized(n: u32, text_size: u64) -> BodyRequest {
+    let mailbox = Mailbox::new(postio_model::AccountId::new(1), INBOX, Some('/'));
+    request(&mailbox, MessageId::new(i64::from(n)), n, text_size)
+}
+
+/// A batch stops at its byte budget, but never before its first message.
+#[test]
+fn a_batch_is_bounded_by_bytes_and_always_holds_one() {
+    let mut backfill = Backfill::new(BackfillPolicy {
+        max_body_bytes: None,
+        ..policy()
+    });
+    // Newest first: uid 4 is the oversize one and leads.
+    for (uid, size) in [(1, 1_000), (2, 1_000), (3, 1_000), (4, BATCH_BYTES * 3)] {
+        assert!(backfill.enqueue(sized(uid, size)));
+    }
+    let first = backfill.next_batch();
+    assert_eq!(
+        first.len(),
+        1,
+        "a message larger than the whole budget goes alone, and goes"
+    );
+    let rest = backfill.next_batch();
+    assert_eq!(rest.len(), 3, "small ones share a batch: {rest:?}");
+    assert!(backfill.next_batch().is_empty());
+}
+
+/// A batch is also bounded by count.
+#[test]
+fn a_batch_is_bounded_by_count() {
+    let mut backfill = Backfill::new(policy());
+    let total = u32::try_from(BATCH_LEN).expect("small") * 2 + 1;
+    for uid in 1..=total {
+        assert!(backfill.enqueue(sized(uid, 100)));
+    }
+    assert_eq!(backfill.next_batch().len(), BATCH_LEN);
+    assert_eq!(backfill.next_batch().len(), BATCH_LEN);
+    assert_eq!(backfill.next_batch().len(), 1);
+}
+
+/// The user's message is never queued behind a batch of background bodies.
+#[test]
+fn a_batch_with_a_message_the_user_opened_holds_only_that() {
+    let mut backfill = Backfill::new(policy());
+    for uid in 1..=10 {
+        assert!(backfill.enqueue(sized(uid, 100)));
+    }
+    backfill.request_now(sized(5, 100));
+    let batch = backfill.next_batch();
+    assert_eq!(batch.len(), 1, "{batch:?}");
+    assert_eq!(
+        batch[0].priority,
+        postio_sync::backfill::Priority::Interactive
+    );
+    assert_eq!(backfill.next_batch().len(), 9, "the rest follow, once");
+}
+
+/// A claim handed back is offered again, and counted once.
+#[test]
+fn a_released_claim_is_offered_again() {
+    let mut backfill = Backfill::new(policy());
+    for uid in 1..=3 {
+        assert!(backfill.enqueue(sized(uid, 100)));
+    }
+    let batch = backfill.next_batch();
+    assert_eq!(batch.len(), 3);
+    assert_eq!(backfill.progress().in_flight, 3);
+    let mut batch = batch.into_iter();
+    let kept = batch.next().expect("a claim");
+    for claim in batch {
+        backfill.release(claim);
+    }
+    assert_eq!(backfill.progress().in_flight, 1);
+    assert_eq!(backfill.progress().pending, 2);
+    assert_eq!(backfill.next_batch().len(), 2, "the two came back");
+    backfill.finished(kept.request.message, Outcome::Stored { bytes: 1 });
 }
 
 /// A batch is an optimisation, so a miss must cost nothing but a round trip.
