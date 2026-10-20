@@ -127,6 +127,7 @@ final class Engine {
             digest = DigestModel(engine: session, source: session)
             ruleSheet = RuleSheetModel(engine: session)
             capture = CaptureModel(engine: session)
+            makeContactPopover(session)
             composer = ComposerWindow(engine: session)
             // The toolbar was built before there were bindings to spell.
             keycapsChanged?()
@@ -381,6 +382,7 @@ final class Engine {
     var mainContext: UiContext {
         if commandBar?.isOpen == true { return .search }
         if results?.isOpen == true { return .results }
+        if contactPopover?.isOpen == true { return .contactPopover }
         if capture?.isOpen == true { return .capture }
         if digest?.isOpen == true { return .digest }
         if filtered?.isOpen == true { return .filtered }
@@ -422,6 +424,11 @@ final class Engine {
         // when its intents come back, never here.
         table.onPoint = { [weak session] row in session?.focusPoint(row) }
         table.onPick = { [weak session] row, range in session?.focusPick(row, range: range) }
+        // A click on a sender's name hangs the known-sender popover from it.
+        table.onContactName = { [weak self, weak session] row, address in
+            self?.contactRow = row
+            session?.focusContactPopoverAt(address)
+        }
         table.onAtTop = { [weak session] atTop in session?.focusAtTop(atTop) }
         table.onAction = { [weak self, weak table] command, row in
             // An answer on a row is about that row: the controller's cursor
@@ -777,6 +784,34 @@ final class Engine {
         case .close:
             ruleSheetWindow.close()
         }
+    }
+
+    // MARK: the known-sender popover (specs/011-focus-contacts S6)
+
+    /// What the popover draws, and what hangs it from the sender's name.
+    @ObservationIgnored private(set) var contactPopover: ContactPopoverModel?
+    @ObservationIgnored private(set) var contactPresenter: ContactPopover?
+    /// The row whose name was clicked; `nil` when `i` opened it, which hangs
+    /// it from the cursor's row.
+    @ObservationIgnored private var contactRow: Int?
+
+    private func makeContactPopover(_ session: PostioSession) {
+        let model = ContactPopoverModel(engine: session)
+        let presenter = ContactPopover(model: model)
+        presenter.anchor = { [weak self] in
+            guard let self, let table = self.focusTable,
+                let row = self.contactRow ?? self.focus.cursor,
+                let rect = table.nameAnchor(row: row)
+            else { return nil }
+            return (table.tableView, rect)
+        }
+        // A click away took it down: the controller forgets it.
+        presenter.onToolkitClose = { [weak self, weak session] in
+            self?.contactRow = nil
+            session?.focusSurfaceClosed(.contactPopover)
+        }
+        contactPopover = model
+        contactPresenter = presenter
     }
 
     // MARK: capture (T116)
@@ -1328,6 +1363,22 @@ final class Engine {
         // `FocusRule`, and `FocusCloseSurface(.dialog)`.
         if let change = ruleSheet?.apply(event) {
             apply(change)
+            return
+        }
+        // The known-sender popover (S6): drawn whole, redrawn on a change of
+        // arrival, closed when the controller says. `FocusWriteTo` is the
+        // `mailto:` path: a composer on that address.
+        if let change = contactPopover?.apply(event) {
+            if change == .close { contactRow = nil }
+            contactPresenter?.apply(change)
+            return
+        }
+        if case let .focusWriteTo(address) = event {
+            if let encoded = address.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+                let url = URL(string: "mailto:\(encoded)"), let mailto = Mailto(url)
+            {
+                _ = write(mailto: mailto)
+            }
             return
         }
         // Capture (T116): `FocusOpenCapture`, every `FocusCapture`, and

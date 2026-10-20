@@ -282,7 +282,19 @@ pub fn view(facts: &Facts<'_>, keymap: &Keymap, now: DateTime<Local>) -> Popover
         address: facts.address.to_owned(),
         avatar: avatar(person.id, &name, person.kind),
         name,
-        subline: facts.address.to_owned(),
+        subline: person
+            .addresses
+            .iter()
+            .find(|owned| {
+                owned
+                    .address
+                    .address
+                    .eq_ignore_ascii_case(facts.address.trim())
+            })
+            .map_or_else(
+                || facts.address.to_owned(),
+                |owned| owned.address.address.clone(),
+            ),
         role: role_line(person),
         tiles: tiles(facts.stats, now),
         open,
@@ -427,6 +439,19 @@ mod tests {
         );
         assert_eq!(popover.name, "Ada Moreno");
         assert_eq!(popover.subline, "ada@example.org");
+        let shouted = view(
+            &Facts {
+                person: &person,
+                address: "ADA@Example.ORG",
+                stats: &stats,
+                open: &[],
+                arrival: None,
+                card: false,
+            },
+            &keymap(),
+            now(),
+        );
+        assert_eq!(shouted.subline, "ada@example.org", "as the store spells it");
         assert_eq!(popover.role, "Finance lead, Northwind Partners");
         let tiles: Vec<_> = popover
             .tiles

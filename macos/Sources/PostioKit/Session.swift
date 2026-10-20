@@ -326,6 +326,16 @@ public final class PostioSession {
     /// Create (or Save): write the rule.
     public func focusRuleCreate() { inner.focusRuleCreate() }
 
+    /// A click on a sender's name: the known-sender popover for `address`.
+    public func focusContactPopoverAt(_ address: String) {
+        inner.focusContactPopoverAt(address: address)
+    }
+
+    /// A click on a segment of the popover's arrival control.
+    public func focusContactArrival(_ arrival: ContactArrivalFfi) {
+        inner.focusContactArrival(arrival: arrival)
+    }
+
     /// Capture's text field holds `text` now.
     public func focusCaptureTyped(_ text: String) { inner.focusCaptureTyped(text: text) }
 

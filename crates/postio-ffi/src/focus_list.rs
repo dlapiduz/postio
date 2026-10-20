@@ -233,6 +233,10 @@ pub struct FocusRowFfi {
     pub threads: Vec<i64>,
     /// The sender column: names, or "Digest" words for a digest.
     pub sender: String,
+    /// The address of the sender the column names first: what a click on
+    /// the name asks the popover about. `None` for a digest, or a message
+    /// with no sender.
+    pub from_address: Option<String>,
     /// The subject column.
     pub subject: String,
     /// The first line, as sent.
@@ -283,6 +287,7 @@ impl FocusRowFfi {
                     thread: None,
                     threads: Vec::new(),
                     sender: focus_row::digest_title(digest.cadence),
+                    from_address: None,
                     subject: focus_row::digest_subject(&digest.rule, digest.count),
                     preview: Some(focus_row::digest_line(
                         digest.summary_line.as_deref(),
@@ -340,6 +345,7 @@ fn conversation_row(
             .map(|thread| thread.get())
             .collect(),
         sender: focus_row::row_names(message),
+        from_address: message.from.as_ref().map(|from| from.address.clone()),
         subject: message.subject.clone().unwrap_or_default(),
         preview: message.preview.clone(),
         time: postio_ui::row::timestamp(summary.last_at, now),
