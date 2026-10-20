@@ -305,6 +305,260 @@ CREATE TABLE IF NOT EXISTS body_failures (
 );
 ",
     },
+    // `feature/contacts-mac`: a contact is a person who owns addresses
+    // (specs/005-contacts), not one row per address. The old rows become
+    // people -- one per address, keeping the name the user set, where it came
+    // from, whether it was deleted (`suppressed`) and its vCard `uid` -- and
+    // the mail's evidence moves to the address. Addresses the old table never
+    // held get no person here: a person is made for them when one is first
+    // needed, so this step copies a row per contact and never one per message.
+    //
+    // The old `vcard_extra` is not carried: no path of any build wrote it, and
+    // the new `vcard` column holds a whole imported card, which it is not.
+    Migration {
+        from: stamp(0x84e7_72c0),
+        to: FINGERPRINT,
+        statements: r#"
+-- 1. What the old tables held, set aside.
+CREATE TABLE contacts_rows AS SELECT * FROM contacts;
+CREATE TABLE contact_groups_rows AS SELECT * FROM contact_groups;
+CREATE TABLE contact_group_members_rows AS SELECT * FROM contact_group_members;
+DROP TABLE contact_group_members;
+DROP TABLE contact_groups;
+DROP TABLE contacts;
+
+-- 2. The new shape.
+CREATE TABLE contact_join_candidates (
+    -- A pair of addresses that may be one person: mail to one was answered
+    -- from the other (specs/005-contacts R11). The lower id first, so a pair
+    -- has one row.
+    address_low   INTEGER NOT NULL REFERENCES addresses(id) ON DELETE CASCADE,
+    address_high  INTEGER NOT NULL REFERENCES addresses(id) ON DELETE CASCADE,
+    -- How many replies crossed between them.
+    replies       INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (address_low, address_high)
+);
+
+CREATE TABLE contact_join_dismissals (
+    -- The user said these two are not the same person. Kept per address pair
+    -- so it survives either side being joined to someone else: a suggestion
+    -- between two people is hidden when any dismissed pair spans them.
+    address_low   INTEGER NOT NULL REFERENCES addresses(id) ON DELETE CASCADE,
+    address_high  INTEGER NOT NULL REFERENCES addresses(id) ON DELETE CASCADE,
+    PRIMARY KEY (address_low, address_high)
+);
+
+CREATE TABLE contacts (
+    -- A person: shared across accounts, owning one or more addresses through
+    -- `addresses.contact_id` (specs/005-contacts).
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- The name the user set, or picked when joining people. Never written by
+    -- sync, and never overwritten by a display name a later message carries.
+    name                TEXT,
+    organization        TEXT,
+    note                TEXT,
+    -- How the person first appeared. `mail` is the passive kind, collected
+    -- from headers; the first edit or join promotes it to `user` in place.
+    source              TEXT    NOT NULL DEFAULT 'mail'
+                                CHECK (source IN ('mail', 'user', 'import')),
+    -- Shown, deleted, or folded into another person by a join. An address is
+    -- suppressed -- offered nowhere -- exactly when its owner is not `live`,
+    -- so deleting keeps the person and new mail from them stays hidden (R4).
+    state               TEXT    NOT NULL DEFAULT 'live'
+                                CHECK (state IN ('live', 'deleted', 'merged')),
+    -- The survivor, when `state = 'merged'`; kept so a join undoes exactly.
+    merged_into         INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+    -- The address offered first and written to by "write to"; one of the
+    -- person's own.
+    preferred_address   INTEGER REFERENCES addresses(id) ON DELETE SET NULL,
+    -- The display name most recently seen on any of the person's addresses.
+    seen_name           TEXT,
+    -- The displayed name (the user's, else the mail's, else the preferred
+    -- address), case-folded: what the list is ordered by.
+    sort_key            TEXT    NOT NULL DEFAULT '',
+    -- The displayed name, case-folded and whitespace-collapsed: two live
+    -- people sharing one are suggested as possibly the same person (R11).
+    name_key            TEXT    NOT NULL DEFAULT '',
+    -- Aggregates over the person's addresses' sightings, kept in step on
+    -- every recorded message so the list can order and filter people without
+    -- adding them up. `written` > 0 puts the person in the default list.
+    times_seen          INTEGER NOT NULL DEFAULT 0,
+    last_seen_at        INTEGER,
+    written             INTEGER NOT NULL DEFAULT 0,
+    -- vCard identity, and the whole card as last imported, verbatim -- export
+    -- edits the properties Postio models in place and leaves every other byte
+    -- alone (R9). NULL for a person never imported.
+    uid                 TEXT,
+    vcard               TEXT,
+    created_at          INTEGER NOT NULL,
+    -- Also the vCard `REV`.
+    updated_at          INTEGER NOT NULL
+);
+
+CREATE TABLE contact_groups (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- Shared across accounts, as people are. Unique ignoring case, so
+    -- `group:<name>` names one group.
+    name       TEXT    NOT NULL,
+    -- vCard `KIND:group` UID, when the group came from or goes to a card.
+    uid        TEXT,
+    -- The whole group card as last imported, verbatim.
+    vcard      TEXT,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE contact_group_members (
+    group_id   INTEGER NOT NULL REFERENCES contact_groups(id) ON DELETE CASCADE,
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    PRIMARY KEY (group_id, contact_id)
+);
+
+CREATE TABLE contact_sightings (
+    -- What the mail says about one address in one account: evidence, so it
+    -- stays with the address whoever the address belongs to, and never moves
+    -- when people are joined or split (specs/005-contacts R2).
+    address_id     INTEGER NOT NULL REFERENCES addresses(id) ON DELETE CASCADE,
+    account_id     INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    -- Messages the address appeared on, once per message, on first insert.
+    times_seen     INTEGER NOT NULL DEFAULT 0,
+    last_seen_at   INTEGER,
+    -- The display name the most recent of those messages carried.
+    last_name      TEXT,
+    -- Messages from one of this account's own addresses with this address
+    -- in To, Cc or Bcc (R3).
+    times_written  INTEGER NOT NULL DEFAULT 0,
+    -- The only key. An index on `account_id` alone was tried and the planner
+    -- chose it over this one for the per-message sighting lookup, walking an
+    -- account's every sighting per correspondent
+    -- (`threading_lookup_cost.rs`); deleting an account, its only reader, is
+    -- rare enough to scan.
+    PRIMARY KEY (address_id, account_id)
+);
+
+CREATE TABLE contact_terms (
+    -- The filter index: one row per word a person can be found by -- of the
+    -- name the user set, the organisation, the name the mail gave them, and
+    -- each address whole, by local part, by domain and by their words (R5).
+    -- A filter is a range over `term`, never a LIKE over everyone.
+    term        TEXT    NOT NULL,
+    contact_id  INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    PRIMARY KEY (term, contact_id)
+);
+
+CREATE UNIQUE INDEX idx_contact_groups_name ON contact_groups (name COLLATE NOCASE);
+
+CREATE INDEX idx_contact_group_members_contact ON contact_group_members (contact_id);
+
+CREATE INDEX idx_contact_terms_contact ON contact_terms (contact_id);
+
+CREATE INDEX idx_contacts_list_written ON contacts (state, written, sort_key, id);
+
+CREATE INDEX idx_contacts_list ON contacts (state, sort_key, id);
+
+CREATE INDEX idx_contacts_rank ON contacts (
+    state,
+    (CASE WHEN source = 'mail' THEN 1 ELSE 0 END),
+    last_seen_at DESC,
+    times_seen DESC,
+    id
+);
+
+CREATE INDEX idx_contacts_name_key ON contacts (state, name_key);
+
+ALTER TABLE addresses ADD COLUMN contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL;
+CREATE INDEX idx_addresses_contact ON addresses (contact_id);
+CREATE INDEX migrating_people_address ON contacts (note);
+
+-- 3. An address row for every address a contact named, so each person has one.
+INSERT INTO addresses (address, address_normalized)
+SELECT min(address), address_normalized FROM contacts_rows
+ WHERE address_normalized NOT IN (SELECT address_normalized FROM addresses)
+ GROUP BY address_normalized;
+
+-- 4. One person per address the old table knew. `note` carries the address
+-- across the next two statements and is cleared after them.
+INSERT INTO contacts (name, source, state, seen_name, sort_key, name_key,
+                      times_seen, last_seen_at, uid, note, created_at, updated_at)
+SELECT nullif(trim(max(name)), ''),
+       CASE WHEN max(source = 'user') THEN 'user'
+            WHEN max(source = 'import') THEN 'import'
+            ELSE 'mail' END,
+       CASE WHEN max(suppressed) = 1 THEN 'deleted' ELSE 'live' END,
+       nullif(trim(max(address_name)), ''),
+       lower(trim(coalesce(nullif(trim(max(name)), ''),
+                           nullif(trim(max(address_name)), ''),
+                           min(address)))),
+       lower(trim(coalesce(nullif(trim(max(name)), ''),
+                           nullif(trim(max(address_name)), ''),
+                           min(address)))),
+       sum(times_seen),
+       max(last_seen_at),
+       max(uid),
+       address_normalized,
+       (strftime('%s', 'now') * 1000),
+       (strftime('%s', 'now') * 1000)
+  FROM contacts_rows
+ GROUP BY address_normalized;
+
+UPDATE addresses
+   SET contact_id = (SELECT c.id FROM contacts c WHERE c.note = addresses.address_normalized)
+ WHERE address_normalized IN (SELECT note FROM contacts WHERE note IS NOT NULL);
+UPDATE contacts SET note = NULL;
+DROP INDEX migrating_people_address;
+UPDATE contacts
+   SET preferred_address = (SELECT a.id FROM addresses a WHERE a.contact_id = contacts.id);
+
+-- 5. The evidence, per address and account. A row that was shared across
+-- accounts has no account to keep it under; its counts are in the person's.
+INSERT INTO contact_sightings (address_id, account_id, times_seen, last_seen_at, last_name)
+SELECT a.id, r.account_id, r.times_seen, r.last_seen_at, nullif(trim(r.address_name), '')
+  FROM contacts_rows r
+  JOIN addresses a ON a.address_normalized = r.address_normalized
+ WHERE r.account_id IS NOT NULL;
+
+-- 6. Who the person has written to: the letters the store counted by address.
+UPDATE contacts
+   SET written = coalesce((SELECT sum(k.sent_count)
+                             FROM correspondents k
+                             JOIN addresses a ON a.id = k.address_id
+                            WHERE a.contact_id = contacts.id), 0);
+
+-- 7. How a person is found by typing: the address whole, its local part and
+-- its domain, and the name the user set or the mail gave, whole and by its
+-- first word. A later edit or message refreshes the rest of a name's words.
+INSERT OR IGNORE INTO contact_terms (term, contact_id)
+SELECT a.address_normalized, a.contact_id FROM addresses a WHERE a.contact_id IS NOT NULL;
+INSERT OR IGNORE INTO contact_terms (term, contact_id)
+SELECT substr(a.address_normalized, 1, instr(a.address_normalized, '@') - 1), a.contact_id
+  FROM addresses a WHERE a.contact_id IS NOT NULL AND instr(a.address_normalized, '@') > 1;
+INSERT OR IGNORE INTO contact_terms (term, contact_id)
+SELECT substr(a.address_normalized, instr(a.address_normalized, '@') + 1), a.contact_id
+  FROM addresses a WHERE a.contact_id IS NOT NULL AND instr(a.address_normalized, '@') > 0;
+INSERT OR IGNORE INTO contact_terms (term, contact_id)
+SELECT sort_key, id FROM contacts WHERE sort_key <> '';
+INSERT OR IGNORE INTO contact_terms (term, contact_id)
+SELECT CASE WHEN instr(sort_key, ' ') > 0 THEN substr(sort_key, 1, instr(sort_key, ' ') - 1) END, id
+  FROM contacts WHERE instr(sort_key, ' ') > 0;
+
+-- 8. Groups, by the name they had (a name taken twice keeps the first), and
+-- their members, through the address each old contact stood for.
+INSERT INTO contact_groups (name, uid, created_at)
+SELECT name, uid, created_at FROM contact_groups_rows g
+ WHERE g.id = (SELECT min(g2.id) FROM contact_groups_rows g2 WHERE lower(g2.name) = lower(g.name));
+INSERT OR IGNORE INTO contact_group_members (group_id, contact_id)
+SELECT ng.id, a.contact_id
+  FROM contact_group_members_rows m
+  JOIN contact_groups_rows og ON og.id = m.group_id
+  JOIN contacts_rows oc ON oc.id = m.contact_id
+  JOIN addresses a ON a.address_normalized = oc.address_normalized
+  JOIN contact_groups ng ON lower(ng.name) = lower(og.name)
+ WHERE a.contact_id IS NOT NULL;
+
+DROP TABLE contact_group_members_rows;
+DROP TABLE contact_groups_rows;
+DROP TABLE contacts_rows;
+"#,
+    },
 ];
 
 /// A mailbox's `bodies_owed` less the messages in it the server has refused

@@ -540,8 +540,8 @@ confirm every property Postio does not model is present byte-for-byte.
   list.
 - **CardDAV and any remote address book are out of scope**; nothing here
   prevents them later.
-- **No backwards compatibility**: the store's contact tables may be reshaped;
-  existing mail-derived contacts are rebuilt from the mail on resync.
+- **No backwards compatibility**: the store's contact tables are reshaped, and
+  a store migration carries the existing contacts across in place (R13).
 - **Issues #477 and #475 are delivered by this branch** and are closed when
   it lands; the open epic #18 and #4 are left for the maintainer to close.
 - **ADR 0007 is folded into this spec** and deleted in this branch, with its

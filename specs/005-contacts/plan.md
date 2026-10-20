@@ -30,7 +30,7 @@ ADR 0038), **new: `vcard-rs =0.4.0`** (Pimalaya; `default-features = false`,
 parser + encodings) in a new `postio-vcard` crate
 
 **Storage**: the encrypted Turso store; `crates/postio-storage/src/schema.rs`
-`HEAD` changes (data-model.md); existing stores are rebuilt by resync (R13)
+`HEAD` changes (data-model.md); existing stores migrate in place (R13)
 
 **Testing**: cargo nextest (integration suites), `cargo test --lib` (unit),
 `app_suite` custom harness, `gtk_suite` headless, `test_support::counting` for
@@ -65,7 +65,7 @@ tables
 | V. Performance | Keyset paging, covering indexes per view, term index for filtering; counting assertions on each contacts read path, on sync's statements per address, and "unchanged" on the message-list page (R2, R5, R7) | ✅ |
 | VI. Privacy | No avatars/favicons/directory lookups (initials only); logs carry counts; fixtures use reserved domains; vCard files are read only when the user picks one | ✅ |
 | VII. Boundaries | `postio-gtk` gets rows through app/runtime, never SQL; `postio-core`/`postio-session` stay GTK-free; new `postio-vcard` leaf gets a boundary check (no DB, gtk4, tokio); **Pimalaya first** was surveyed 2026-09-23 and adopted (R9) | ✅ |
-| No backwards compatibility | Schema reshaped in `HEAD`; stores rebuilt by resync; no user-made contacts exist to lose (R13) | ✅ |
+| No backwards compatibility | Schema reshaped in `HEAD`; a store migration carries existing contacts into people (R13) | ✅ |
 | One fact, one home | ADR 0007 folded into the spec and deleted, citations re-pointed (R12); no parallel ADR | ✅ |
 
 **Post-design re-check (after Phase 1):** unchanged — all pass. Two things

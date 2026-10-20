@@ -336,8 +336,30 @@ and its comment.
 
 ## R13 — Schema change and existing stores
 
-`schema.rs` has one `HEAD` and a fingerprint; any change makes an existing
-store refuse to open with `SchemaFromAnotherBuild` and be rebuilt by resync
-(`store.rs:557`). No production path ever created a user contact or group
-(research above), so a rebuild loses nothing the user made; mail-derived
-people are rebuilt from the mail.
+`schema.rs` has one `HEAD` and a fingerprint, and a change to it comes with a
+`Migration` (maintainer, 2026-10-19: a store upgrades in place, it is not
+rebuilt by resync). The step from the build before this one:
+
+- sets the old `contacts`, `contact_groups` and `contact_group_members` rows
+  aside, creates the new tables, and adds `addresses.contact_id`;
+- makes **one person per address the old table knew** (rows for the same
+  address in several accounts become one): the user's `name` wins, `source`
+  keeps the strongest of `user`, `import`, `mail`, `suppressed` becomes
+  `state = 'deleted'`, `uid` is kept, and `times_seen` and `last_seen_at`
+  are summed. The old per-account rows become that address's
+  `contact_sightings`. `written` is seeded from the `correspondents` table
+  the store already keeps;
+- fills `sort_key`, `name_key` and `contact_terms` in SQL (lowercased, not
+  accent-folded; the whole address, local part, domain, the displayed name
+  and its first word). The next message or edit refreshes a person through
+  the Rust fold;
+- carries groups by name and their members by the address each old contact
+  stood for;
+- does **not** make a person for an address the old table never held, and
+  copies no row per message: `addresses.contact_id` stays nullable and a
+  person is made lazily, the first time one is needed, so the step stays
+  inside the open transaction on a mailbox of any size. `vcard_extra` is not
+  carried: no build wrote it, and the new `vcard` holds a whole card.
+
+`tests/schemas/` keeps the schema it leaves, and the storage suite's
+`migrations` cases prove both the shape and the rows.
