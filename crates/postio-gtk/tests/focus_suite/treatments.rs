@@ -449,9 +449,8 @@ pub fn a_treatment_chosen_for_one_address_reaches_the_persons_other_address() {
             crate::settle_until(async || reader.test_document().contains("SECOND-MARK")).await,
             "the other address's mail never drew"
         );
-        assert_eq!(
-            reader.treatment(),
-            Treatment::Paper,
+        assert!(
+            crate::settle_until(async || drawn_as(&reader, "paper")).await,
             "the other address opens on paper by the rule"
         );
         support::keys(&window, &["k"]);
@@ -491,10 +490,16 @@ pub fn a_treatment_chosen_for_one_address_reaches_the_persons_other_address() {
             crate::settle_until(async || reader.test_document().contains("SECOND-MARK")).await,
             "the other address's mail never drew"
         );
-        assert_eq!(
-            reader.treatment(),
-            Treatment::AppColours,
+        assert!(
+            crate::settle_until(async || drawn_as(&reader, "app")).await,
             "the person's other address did not open in the person's choice"
         );
     });
+}
+
+/// Whether the document on screen is drawn in the treatment `word` names.
+fn drawn_as(reader: &postio_widgets::reader::Reader, word: &str) -> bool {
+    reader
+        .test_document()
+        .contains(&format!("data-postio-treatment=\"{word}\""))
 }
