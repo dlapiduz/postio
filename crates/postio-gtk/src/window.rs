@@ -114,7 +114,7 @@ mod imp {
         pub on_screen: RefCell<Option<adw::Toast>>,
         /// The answer to the offer to clear what a list sent, while it is up:
         /// a button's response name, or a verb's key, both end here (#1931).
-        pub list_sweep: RefCell<Option<SweepAnswer>>,
+        pub list_sweep: RefCell<Option<super::SweepAnswer>>,
         pub pane: RefCell<Option<ListPane>>,
         pub chrome: RefCell<Option<Rc<Chrome>>>,
         pub client: RefCell<Option<Client>>,
