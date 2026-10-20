@@ -187,14 +187,6 @@ impl HeaderCard {
         self.warning_row.set_visible(line.is_some());
     }
 
-    /// The warning line's text, or `None` when hidden. For tests.
-    #[doc(hidden)]
-    pub fn warning_text(&self) -> Option<String> {
-        self.warning_row
-            .is_visible()
-            .then(|| self.warning.text().to_string())
-    }
-
     /// Nothing drawn: no message yet.
     pub fn clear(&self) {
         self.set_warning(None);
