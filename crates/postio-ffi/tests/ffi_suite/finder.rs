@@ -28,12 +28,10 @@ async fn world() -> World {
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
     test_support::mailbox(&connection, &account, "Receipts").await;
     test_support::mailbox(&connection, &account, "Wayland-devel").await;
+    let mut sighting = Message::new(account.id, inbox, Utc::now());
+    sighting.from = vec![EmailAddress::new(Some("Ada Lovelace"), "ada@example.com")];
     ContactRepository::new(&connection)
-        .record(
-            Some(account.id),
-            &EmailAddress::new(Some("Ada Lovelace"), "ada@example.com"),
-            Utc::now(),
-        )
+        .record_message(&sighting, &[])
         .await
         .expect("a correspondent");
     let mut label = Label::new(account.id, "Taxes");

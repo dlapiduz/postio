@@ -395,17 +395,25 @@ impl Bar {
         &self.places.folders
     }
 
-    /// The name a correspondent is known by, for an address.
+    /// The name a person is known by, for any address they own.
     pub(crate) fn name_for(&self, address: &str) -> Option<String> {
         self.places
             .contacts
             .iter()
-            .find(|contact| contact.address.address.eq_ignore_ascii_case(address))
-            .and_then(|contact| {
+            .find(|contact| {
                 contact
-                    .name
-                    .clone()
-                    .or_else(|| contact.address.name.clone())
+                    .addresses
+                    .iter()
+                    .any(|owned| owned.address.address.eq_ignore_ascii_case(address))
+            })
+            .and_then(|contact| {
+                // A person known only by their address has no name to give.
+                let shown = contact.display_name();
+                (!contact
+                    .addresses
+                    .iter()
+                    .any(|owned| owned.address.address == shown))
+                .then(|| shown.to_owned())
             })
     }
 

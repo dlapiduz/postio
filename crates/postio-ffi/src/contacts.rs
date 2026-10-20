@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use postio_client::protocol::RecipientDirectory;
 use postio_model::contact_group::RecipientCandidate;
-use postio_model::{AccountId, Contact, ContactSource, EmailAddress};
+use postio_model::{AccountId, AddressId, Contact, ContactAddress, ContactSource, EmailAddress};
 use postio_ui::recipients::Correspondent;
 
 use crate::Session;
@@ -67,7 +67,8 @@ impl Session {
         let known: HashSet<String> = directory
             .contacts
             .iter()
-            .map(|row| row.contact.address.normalized())
+            .flat_map(|row| &row.contact.addresses)
+            .map(|owned| owned.address.normalized())
             .collect();
         let mut contacts = directory.contacts.clone();
         contacts.extend(
@@ -77,7 +78,12 @@ impl Session {
                 .map(|lent| EmailAddress::new(lent.name, lent.address.trim()))
                 .filter(|address| !known.contains(&address.normalized()))
                 .map(|address| {
-                    let mut contact = Contact::new(address);
+                    // Lent for one keystroke and never stored, so the id is
+                    // nobody's.
+                    let mut contact = Contact::new(ContactAddress::new(
+                        AddressId::UNASSIGNED,
+                        address,
+                    ));
                     contact.source = ContactSource::Import;
                     Correspondent::from(contact)
                 }),

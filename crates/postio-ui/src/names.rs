@@ -22,7 +22,10 @@ impl Names {
     pub fn new(contacts: &[Contact]) -> Self {
         let mut names = Names::default();
         for contact in contacts {
-            let address = contact.address.address.to_lowercase();
+            let Some(preferred) = contact.preferred_address() else {
+                continue;
+            };
+            let address = preferred.address.address.to_lowercase();
             let shown = contact.display_name().trim().to_lowercase();
             if !shown.is_empty() && shown != address {
                 names.whole.entry(shown.clone()).or_insert(address.clone());
@@ -30,8 +33,10 @@ impl Names {
                     names.short.insert(first.to_owned());
                 }
             }
-            if let Some(local) = contact.address.local_part() {
-                names.short.insert(local.to_lowercase());
+            for owned in &contact.addresses {
+                if let Some(local) = owned.address.local_part() {
+                    names.short.insert(local.to_lowercase());
+                }
             }
         }
         names
@@ -55,10 +60,13 @@ impl Names {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use postio_model::EmailAddress;
+    use postio_model::{AddressId, ContactAddress, EmailAddress};
 
     fn contact(name: &str, address: &str) -> Contact {
-        Contact::new(EmailAddress::new(Some(name), address))
+        Contact::new(ContactAddress::new(
+            AddressId::new(1),
+            EmailAddress::new(Some(name), address),
+        ))
     }
 
     #[test]

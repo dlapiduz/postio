@@ -34,6 +34,7 @@ mod content_membership;
 mod content_migration;
 mod correspondents;
 mod digests;
+mod contacts_budget;
 mod draft_indexes;
 mod drafts;
 mod encryption;

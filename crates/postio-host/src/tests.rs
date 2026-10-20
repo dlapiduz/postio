@@ -1829,6 +1829,23 @@ fn a_frontend_disables_removes_and_restores_an_account_through_the_host() {
         .expect("made the default");
 }
 
+/// One message from `address` arrived in `account` at `at`: a sighting, as
+/// sync records it.
+async fn saw(
+    connection: &postio_storage::Connection,
+    account: postio_model::AccountId,
+    address: &str,
+    at: chrono::DateTime<Utc>,
+) {
+    let mut message = postio_model::Message::new(account, postio_model::MailboxId::new(1), at);
+    message.date = Some(at);
+    message.from = vec![postio_model::EmailAddress::new(None::<String>, address)];
+    postio_storage::repository::ContactRepository::new(connection)
+        .record_message(&message, &[])
+        .await
+        .expect("a sighting");
+}
+
 #[test]
 fn the_finder_is_told_the_accounts_correspondents_and_labels() {
     // T066: `@` and `+` offer what the store knows, read through the host.
@@ -1837,14 +1854,7 @@ fn the_finder_is_told_the_accounts_correspondents_and_labels() {
     let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
-        postio_storage::repository::ContactRepository::new(&connection)
-            .record(
-                Some(account),
-                &postio_model::EmailAddress::new(None::<String>, "grace@example.test"),
-                Utc::now(),
-            )
-            .await
-            .expect("a correspondent");
+        saw(&connection, account, "grace@example.test", Utc::now()).await;
         postio_storage::repository::LabelRepository::new(&connection)
             .create(&mut postio_model::Label::new(account, "Receipts"))
             .await
@@ -1858,7 +1868,7 @@ fn the_finder_is_told_the_accounts_correspondents_and_labels() {
     assert_eq!(
         correspondents
             .iter()
-            .map(|contact| contact.address.address.as_str())
+            .map(|contact| contact.addresses[0].address.address.as_str())
             .collect::<Vec<_>>(),
         ["grace@example.test"]
     );
@@ -4387,21 +4397,13 @@ fn an_address_written_to_is_offered_before_one_only_seen() {
     let world = World::new();
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
-        let contacts = postio_storage::repository::ContactRepository::new(&connection);
         for (address, seen, days_ago) in [
             ("quill.often@example.com", 100, 0),
             ("quill.wrote@example.net", 50, 30),
         ] {
             let at = Utc::now() - chrono::Duration::days(days_ago);
             for _ in 0..seen {
-                contacts
-                    .record(
-                        Some(world.account),
-                        &postio_model::EmailAddress::new(None::<String>, address),
-                        at,
-                    )
-                    .await
-                    .expect("a sighting");
+                saw(&connection, world.account, address, at).await;
             }
         }
         for statement in [
@@ -4440,7 +4442,7 @@ fn an_address_written_to_is_offered_before_one_only_seen() {
     let wrote = directory
         .contacts
         .iter()
-        .find(|row| row.contact.address.address == "quill.wrote@example.net")
+        .find(|row| row.contact.addresses[0].address.address == "quill.wrote@example.net")
         .expect("in the directory");
     assert_eq!(wrote.sent_count, 42, "the directory carries the letters");
 }

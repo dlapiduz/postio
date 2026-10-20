@@ -601,6 +601,21 @@ pub fn demo_vault() -> std::io::Result<tempfile::TempDir> {
     Ok(vault)
 }
 
+/// Records `message`'s correspondents as a sync pass would, handing down the
+/// addresses the store's accounts send as so they are not counted as people
+/// (specs/005-contacts R3).
+pub(crate) async fn record_correspondents(
+    connection: &postio_storage::Connection,
+    message: &postio_model::Message,
+) -> postio_storage::Result<usize> {
+    let own = postio_storage::repository::IdentityRepository::new(connection)
+        .own_addresses()
+        .await?;
+    ContactRepository::new(connection)
+        .record_message(message, &own)
+        .await
+}
+
 /// What screens 05 and 06 add to the demo store: the people the To field
 /// completes to, and the Harbor thread's recipients and body, so a reply
 /// to all has someone to copy and something to quote.
@@ -613,11 +628,7 @@ pub async fn compose_demo(database: &Store, account: AccountId) {
         ("Ada Moreno", "ada@example.com"),
     ] {
         contacts
-            .create(
-                Some(account),
-                &EmailAddress::new(Some(name), address),
-                Some(name),
-            )
+            .create(Some(name), &[EmailAddress::new(Some(name), address)])
             .await
             .expect("a contact");
     }
@@ -820,8 +831,7 @@ pub async fn deliver_new_mail(
         .create(&mut message)
         .await
         .map_err(text_of)?;
-    ContactRepository::new(&connection)
-        .record_message(&message)
+    record_correspondents(&connection, &message)
         .await
         .map_err(text_of)?;
     ThreadingRepository::new(&connection, account)
@@ -1028,8 +1038,7 @@ pub async fn demo() -> (Store, AccountId) {
                 .expect("a message");
             // Sync records every address it sees; the bar reads names from
             // them (screen 07).
-            ContactRepository::new(&connection)
-                .record_message(&message)
+            record_correspondents(&connection, &message)
                 .await
                 .expect("its correspondents");
             ThreadingRepository::new(&connection, report.account.id)
@@ -1304,8 +1313,7 @@ pub async fn filed(
         .create(&mut message)
         .await
         .expect("a filed message");
-    ContactRepository::new(connection)
-        .record_message(&message)
+    record_correspondents(connection, &message)
         .await
         .expect("its correspondents");
     ThreadingRepository::new(connection, account)
