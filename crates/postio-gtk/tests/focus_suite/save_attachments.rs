@@ -49,7 +49,12 @@ fn dialog(window: &postio_gtk::window::FocusWindow) -> adw::Dialog {
 }
 
 async fn written(path: &std::path::Path) -> Option<Vec<u8>> {
-    crate::settle_until(async || path.exists()).await;
+    // The file exists before its bytes do: wait for the attached length,
+    // then read whatever is there so a wrong write still reports itself.
+    crate::settle_until(async || {
+        std::fs::metadata(path).is_ok_and(|m| m.len() >= support::ATTACHED.len() as u64)
+    })
+    .await;
     std::fs::read(path).ok()
 }
 
