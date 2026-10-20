@@ -324,3 +324,84 @@ async fn making_a_person_costs_a_fixed_number_of_statements() {
         many.rows
     );
 }
+
+#[tokio::test]
+async fn new_mail_from_an_address_the_catch_up_has_not_reached_keeps_its_history() {
+    let (_database, connection, account, inbox) = setup().await;
+    let me = who(None, &account.address.address);
+    for day in [1, 2] {
+        stored(
+            &connection,
+            &account,
+            inbox,
+            day,
+            who(Some("Ada"), "ada@example.org"),
+            vec![me.clone()],
+        )
+        .await;
+    }
+    stored(
+        &connection,
+        &account,
+        inbox,
+        3,
+        me.clone(),
+        vec![who(None, "ada@example.org")],
+    )
+    .await;
+    // The third arrives live: stored first, then recorded, as sync does.
+    let mut live = Message::new(account.id, inbox, at(9));
+    live.from = vec![who(Some("Ada"), "ada@example.org")];
+    live.to = vec![me.clone()];
+    MessageRepository::new(&connection)
+        .create(&mut live)
+        .await
+        .unwrap();
+    let contacts = ContactRepository::new(&connection);
+    contacts
+        .record_message(&live, std::slice::from_ref(&account.address))
+        .await
+        .unwrap();
+
+    let ada = contacts
+        .by_address("ada@example.org")
+        .await
+        .unwrap()
+        .expect("a person");
+    assert_eq!(
+        ada.times_seen, 4,
+        "three that were here, and the one that arrived"
+    );
+    assert_eq!(
+        ada.written, 1,
+        "the history includes the message the user sent"
+    );
+    assert_eq!(ada.last_seen_at, Some(at(9)));
+    assert_eq!(
+        contacts.unowned_count().await.unwrap(),
+        0,
+        "and the catch-up has nothing left of them"
+    );
+
+    // Recording the same kind of message again is the ordinary one-read path.
+    let mut next = Message::new(account.id, inbox, at(10));
+    next.from = vec![who(Some("Ada"), "ada@example.org")];
+    next.to = vec![me];
+    MessageRepository::new(&connection)
+        .create(&mut next)
+        .await
+        .unwrap();
+    contacts
+        .record_message(&next, std::slice::from_ref(&account.address))
+        .await
+        .unwrap();
+    assert_eq!(
+        contacts
+            .by_address("ada@example.org")
+            .await
+            .unwrap()
+            .unwrap()
+            .times_seen,
+        5
+    );
+}

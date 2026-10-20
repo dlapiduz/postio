@@ -118,6 +118,7 @@ impl<'a> ContactRepository<'a> {
             BTreeSet::new()
         };
 
+        let stored = message.id != postio_model::MessageId::UNASSIGNED;
         let mut seen: Vec<Seen<'_>> = Vec::new();
         for address in message
             .from
@@ -141,7 +142,7 @@ impl<'a> ContactRepository<'a> {
 
         sql::in_scope(self.connection, |transaction| async move {
             for one in &seen {
-                record_in(&transaction, account, one, at).await?;
+                record_in(&transaction, account, one, at, stored).await?;
             }
             Ok(seen.len())
         })
@@ -2132,7 +2133,13 @@ async fn promote(connection: &Connection, person: ContactId) -> Result<()> {
 /// aggregates. A first sighting creates the person — two more — and a new
 /// display name adds its words to the filter index. Every statement is a
 /// literal so it is compiled once per connection (#728).
-async fn record_in(connection: &Connection, account: i64, seen: &Seen<'_>, at: i64) -> Result<()> {
+async fn record_in(
+    connection: &Connection,
+    account: i64,
+    seen: &Seen<'_>,
+    at: i64,
+    stored: bool,
+) -> Result<()> {
     type Found = (
         i64,
         Option<i64>,
@@ -2142,23 +2149,39 @@ async fn record_in(connection: &Connection, account: i64, seen: &Seen<'_>, at: i
     );
     let address = seen.address;
     let normalized = address.normalized();
-    let found: Option<Found> = sql::first(
-        connection,
-        "SELECT a.id, a.contact_id, c.name, c.seen_name, c.last_seen_at
-           FROM addresses a LEFT JOIN contacts c ON c.id = a.contact_id
-          WHERE a.address_normalized = ?1",
-        bind![normalized],
-        |row| {
-            Ok((
-                row.col(0)?,
-                row.col(1)?,
-                row.col(2)?,
-                row.col(3)?,
-                row.col(4)?,
-            ))
-        },
-    )
-    .await?;
+    let lookup = || {
+        sql::first::<Found, _>(
+            connection,
+            "SELECT a.id, a.contact_id, c.name, c.seen_name, c.last_seen_at
+               FROM addresses a LEFT JOIN contacts c ON c.id = a.contact_id
+              WHERE a.address_normalized = ?1",
+            bind![normalized.clone()],
+            |row| {
+                Ok((
+                    row.col(0)?,
+                    row.col(1)?,
+                    row.col(2)?,
+                    row.col(3)?,
+                    row.col(4)?,
+                ))
+            },
+        )
+    };
+    let mut found = lookup().await?;
+    // An address the catch-up has not reached has mail behind it that no
+    // sighting counts. Fold that history into its person first, so the
+    // counts are right whichever the walk or the next message gets to first.
+    // A message already stored is part of that history, so it is not added a
+    // second time below.
+    if let Some((id, None, ..)) = found {
+        let made = adopt(connection, id).await?;
+        if made.is_some() && stored {
+            return Ok(());
+        }
+        if made.is_some() {
+            found = lookup().await?;
+        }
+    }
     let (address_id, owner, user_name, seen_name, last_seen) = match found {
         Some(found) => found,
         // Sync writes a message's recipients before recording it, so the
