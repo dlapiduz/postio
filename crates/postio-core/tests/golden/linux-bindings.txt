@@ -151,6 +151,11 @@ capture_use_subject	alt+s
 capture_write	ctrl+Return | alt+Return
 digest_like_this	L
 open_contacts	
+contact_popover	
+contact_open_card	
+contact_arrival_prev	
+contact_arrival_next	
+contact_set_arrival	
 contact_show_mail	
 contact_compose	
 contacts_filter	

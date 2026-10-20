@@ -565,6 +565,8 @@ pub enum KeyContext {
     Results,
     /// The Contacts surface's list and card (specs/005-contacts).
     Contacts,
+    /// The contact popover (specs/011-focus-contacts S6).
+    ContactPopover,
 }
 
 impl KeyContext {
@@ -622,6 +624,7 @@ impl KeyContext {
             // mail binding would act on the message list behind it, which the
             // user cannot see.
             Self::Contacts => &[Self::Contacts, Self::Global],
+            Self::ContactPopover => &[Self::ContactPopover, Self::Global],
         }
     }
 }
@@ -651,6 +654,7 @@ impl From<Context> for KeyContext {
             Context::Capture => Self::Capture,
             Context::Results => Self::Results,
             Context::Contacts => Self::Contacts,
+            Context::ContactPopover => Self::ContactPopover,
         }
     }
 }

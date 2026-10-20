@@ -68,6 +68,8 @@ pub enum UiContext {
     Results,
     /// The Contacts surface's list and card.
     Contacts,
+    /// The contact popover (specs/011-focus-contacts S6).
+    ContactPopover,
 }
 
 impl From<postio_core::Context> for UiContext {
@@ -90,6 +92,7 @@ impl From<postio_core::Context> for UiContext {
             Context::Capture => UiContext::Capture,
             Context::Results => UiContext::Results,
             Context::Contacts => UiContext::Contacts,
+            Context::ContactPopover => UiContext::ContactPopover,
         }
     }
 }
@@ -121,6 +124,7 @@ impl From<UiContext> for postio_core::Context {
             UiContext::Capture => Context::Capture,
             UiContext::Results => Context::Results,
             UiContext::Contacts => Context::Contacts,
+            UiContext::ContactPopover => Context::ContactPopover,
         }
     }
 }

@@ -757,6 +757,27 @@ commands! {
     // -- Contacts (specs/005-contacts) -----------------------------------
     /// Open Contacts.
     OpenContacts => "open_contacts",
+    /// Open the contact popover on the sender under the cursor, or on
+    /// `address` when a name was clicked (specs/011-focus-contacts S6).
+    ContactPopover {
+        /// Whose; `None` means the sender of the row or message the keyboard
+        /// is on.
+        address: Option<String> = None,
+    } => "contact_popover",
+    /// Open the contact's card from the popover. Held until the card exists.
+    ContactOpenCard => "contact_open_card",
+    /// Step the popover's arrival control to the segment before.
+    ContactArrivalPrev => "contact_arrival_prev",
+    /// Step the popover's arrival control to the segment after.
+    ContactArrivalNext => "contact_arrival_next",
+    /// Choose where one sender's mail arrives, or put the choice back
+    /// (specs/011-focus-contacts S6). Applies at once and can be undone.
+    ContactSetArrival {
+        /// Whose: any of the person's addresses.
+        address: String = String::new(),
+        /// Where: `None` is by the default rules.
+        arrival: Option<postio_model::ContactArrival> = None,
+    } => "contact_set_arrival",
     /// Show the focused person's mail: a `with:` search over every address
     /// they own.
     ContactShowMail => "contact_show_mail",

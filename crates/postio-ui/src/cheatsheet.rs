@@ -99,6 +99,7 @@ fn heading(context: Context) -> &'static str {
         Context::Capture => "Capture",
         Context::Results => "Search results",
         Context::Contacts => "Contacts",
+        Context::ContactPopover => "Contact popover",
     }
 }
 

@@ -246,6 +246,11 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::PickRelaxation3
         | C::PickRelaxation4
         | C::SaveFile
+        | C::ContactPopover
+        | C::ContactOpenCard
+        | C::ContactArrivalPrev
+        | C::ContactArrivalNext
+        | C::ContactSetArrival
         | C::ContactShowMail
         | C::ContactCompose
         | C::ContactsFilter

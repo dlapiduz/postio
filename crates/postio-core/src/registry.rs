@@ -2501,12 +2501,66 @@ static SPECS: &[CommandSpec] = &[
         requires: FOCUS_GRAPHICAL_MAIL,
     },
     CommandSpec {
+        id: CommandId::ContactPopover,
+        title: "Contact popover",
+        // The handoff's `i` (specs/011-focus-contacts Q2): images took
+        // `alt+i`, so the bare key is free everywhere a sender is on screen.
+        default_binding: "i",
+        alternate_bindings: &[],
+        contexts: ctx(MESSAGE_SURFACES).with(Context::Results).with(Context::Search),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactOpenCard,
+        title: "Open card",
+        default_binding: "mod+i",
+        alternate_bindings: &[],
+        contexts: Context::ContactPopover.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactArrivalPrev,
+        title: "Arrival: previous",
+        default_binding: "Left",
+        alternate_bindings: &[],
+        contexts: Context::ContactPopover.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactArrivalNext,
+        title: "Arrival: next",
+        default_binding: "Right",
+        alternate_bindings: &[],
+        contexts: Context::ContactPopover.as_set(),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactSetArrival,
+        title: "Choose where this sender's mail arrives",
+        // The controller sends it for a click or an arrow; the key is the
+        // keyboard's way to the default rules, which no arrow lands on.
+        default_binding: "0",
+        alternate_bindings: &[],
+        contexts: Context::ContactPopover.as_set(),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
         id: CommandId::ContactShowMail,
         title: "Show mail",
         // All the mail with this person (maintainer, 2026-10-19).
         default_binding: "Return",
         alternate_bindings: &["o"],
-        contexts: ctx(CONTACTS),
+        contexts: ctx(CONTACTS).with(Context::ContactPopover),
         destructive: false,
         recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
@@ -2517,7 +2571,7 @@ static SPECS: &[CommandSpec] = &[
         // `c` is compose everywhere else; here it composes to the person.
         default_binding: "c",
         alternate_bindings: &[],
-        contexts: ctx(CONTACTS),
+        contexts: ctx(CONTACTS).with(Context::ContactPopover),
         destructive: false,
         recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
@@ -3143,6 +3197,11 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             // (specs/005-contacts; plan 011 section 11), and its `g c`
             // is Linux's `next_scope`.
             | (ActionId::Builtin(C::OpenContacts), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactPopover), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactOpenCard), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactArrivalPrev), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactArrivalNext), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactSetArrival), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactShowMail), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactCompose), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactsFilter), Platform::Freedesktop)
@@ -3240,7 +3299,7 @@ mod tests {
 
     /// What only the Mac draws, until Linux adopts it: the search dropdown
     /// and results view (spec 010 D23, D25) and Contacts (specs/005).
-    const NOT_ON_LINUX_YET: [CommandId; 40] = [
+    const NOT_ON_LINUX_YET: [CommandId; 45] = [
         CommandId::ShowAllResults,
         CommandId::ForgetRecent,
         CommandId::ExcludeSuggestion,
@@ -3260,6 +3319,11 @@ mod tests {
         CommandId::PickRelaxation4,
         CommandId::SaveFile,
         CommandId::OpenContacts,
+        CommandId::ContactPopover,
+        CommandId::ContactOpenCard,
+        CommandId::ContactArrivalPrev,
+        CommandId::ContactArrivalNext,
+        CommandId::ContactSetArrival,
         CommandId::ContactShowMail,
         CommandId::ContactCompose,
         CommandId::ContactsFilter,

@@ -118,6 +118,8 @@ pub fn group(command: CommandId) -> Option<Group> {
 
         // ── Open ────────────────────────────────────────────────────────
         C::OpenMessage
+        // The sender's popover, a view of who wrote.
+        | C::ContactPopover
         | C::ViewSource
         | C::OpenAttachmentOrLink
         | C::ViewOriginal
@@ -254,7 +256,11 @@ pub fn group(command: CommandId) -> Option<Group> {
         // Contacts has a surface of its own, still to be drawn (specs/005
         // and 011): its key map group arrives with it. `OpenContacts`, a
         // destination, is in Go and find above.
-        C::ContactShowMail
+        C::ContactOpenCard
+        | C::ContactArrivalPrev
+        | C::ContactArrivalNext
+        | C::ContactSetArrival
+        | C::ContactShowMail
         | C::ContactCompose
         | C::ContactsFilter
         | C::ContactsToggleEveryone
