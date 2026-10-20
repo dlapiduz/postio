@@ -48,6 +48,22 @@
 //!    re-fetched with no `CHANGEDSINCE` filter; whichever ones the server no
 //!    longer answers for are gone and are deleted locally.
 //!
+//! # Flags, when the change feed cannot be believed
+//!
+//! `CHANGEDSINCE` is also how a flag set on another device reaches this one,
+//! and some servers (iCloud, Yahoo, Exchange) under-report it. What a backend
+//! says about its own feed ([`MailBackend::change_feed`], from the provider
+//! preset) goes, with the folder's size and the passes since the last
+//! sweep, to [`SweepPolicy::decide`], which says whether this pass also reads
+//! every flag in the folder. A pass that sweeps reconciles the store with the
+//! whole listing, on `UpToDate` as well as `Incremental` -- a server that
+//! under-reports may not move `HIGHESTMODSEQ` at all.
+//!
+//! **The server's `HIGHESTMODSEQ` is recorded last**, after the change pull
+//! and the sweep have both succeeded. A pass that fails in either leaves the
+//! stored value where it was, so the next one asks again from the same place;
+//! recording it first would make a failed sweep permanent.
+//!
 //! # Arrivals, from `UIDNEXT` rather than from the change feed
 //!
 //! Step 1 above rests on the server assigning every new message a `MODSEQ`
@@ -72,8 +88,8 @@ use postio_account::backend::{
 };
 use postio_account::cancel::CancelToken;
 use postio_model::{
-    FullResyncReason, Generation, Mailbox, MailboxId, MailboxStatus, Message, MessageId,
-    ResyncPlan, Uid,
+    FlagPass, FullResyncReason, Generation, Mailbox, MailboxId, MailboxStatus, Message, MessageId,
+    ResyncPlan, SweepPolicy, Uid,
 };
 use postio_storage::Checkout;
 use postio_storage::Connection;
@@ -263,6 +279,32 @@ pub async fn resync_mailbox_filing(
     cancel: &CancelToken,
     on_progress: impl FnMut(Progress),
 ) -> Result<Outcome> {
+    resync_mailbox_with_policy(
+        connection,
+        backend,
+        mailbox,
+        filing,
+        SweepPolicy::DEFAULT,
+        cancel,
+        on_progress,
+    )
+    .await
+}
+
+/// [`resync_mailbox_filing`] with the flag sweep's thresholds supplied rather
+/// than the shipped ones: when to stop believing the change feed is a policy,
+/// and a caller (a test, above all, since the shipped threshold is a folder of
+/// two thousand messages) can hold a different one.
+#[allow(clippy::too_many_arguments)]
+pub async fn resync_mailbox_with_policy(
+    connection: &Checkout,
+    backend: &dyn MailBackend,
+    mailbox: &Mailbox,
+    filing: Option<&dyn FilingPass>,
+    policy: SweepPolicy,
+    cancel: &CancelToken,
+    on_progress: impl FnMut(Progress),
+) -> Result<Outcome> {
     let sync_state = SyncStateRepository::new(connection);
     let previous = sync_state.require(mailbox.id).await?;
 
@@ -289,6 +331,11 @@ pub async fn resync_mailbox_filing(
         Err(error) => return Err(error.into()),
     };
     let reported = to_model_status(&selected);
+    let flag_pass = policy.decide(
+        selected.exists,
+        previous.passes_since_flag_sweep,
+        backend.change_feed(),
+    );
 
     match previous.plan(&reported) {
         ResyncPlan::Full(reason) => {
@@ -339,9 +386,21 @@ pub async fn resync_mailbox_filing(
                     initial::Coverage::Everything
                 }
             };
-            sync_state
-                .observe(mailbox.id, &reported, Utc::now())
-                .await?;
+            // What the server reports is recorded before the re-read for
+            // every reason but one. `GenerationChanged` has to record first:
+            // the observation is what drops the old counters and the
+            // completed-sync marker, so a pass cut short is `NeverSynced`
+            // and resumes. `ModSeqWentBackwards` must record *last*: the
+            // re-read is its flag pass, and the lower value stored ahead of
+            // it makes a pass cut short look `UpToDate` against a server
+            // that reports that very value, so the flags it was going to
+            // read are never read.
+            let record_after = reason == FullResyncReason::ModSeqWentBackwards;
+            if !record_after {
+                sync_state
+                    .observe(mailbox.id, &reported, Utc::now())
+                    .await?;
+            }
             // A backend with no MODSEQ re-reads the folder on every pass
             // after the first, and this is its incremental pass: what it
             // inserts arrived since the last one, and goes to the filing
@@ -362,6 +421,11 @@ pub async fn resync_mailbox_filing(
                 on_progress,
             )
             .await?;
+            if record_after {
+                sync_state
+                    .observe(mailbox.id, &reported, Utc::now())
+                    .await?;
+            }
             Ok(Outcome::Full { reason, report })
         }
         ResyncPlan::Incremental { since } => {
@@ -370,23 +434,43 @@ pub async fn resync_mailbox_filing(
                 since = since.get(),
                 "resyncing incrementally"
             );
-            let outcome = incremental(
-                connection,
-                backend,
-                mailbox,
-                &selected,
-                since,
-                previous.uid_next,
-                filing,
-                cancel,
-            )
+            // The change pull and the flag sweep are one unit: either failing
+            // leaves the server's `HIGHESTMODSEQ` unrecorded, and a sweep that
+            // loses a line is the same untrustworthy answer a pull that does.
+            let outcome = async {
+                let mut outcome = incremental(
+                    connection,
+                    backend,
+                    mailbox,
+                    &selected,
+                    since,
+                    previous.uid_next,
+                    filing,
+                    cancel,
+                )
+                .await?;
+                let swept = sweep_flags(
+                    connection,
+                    backend,
+                    mailbox,
+                    selected.generation,
+                    flag_pass,
+                    cancel,
+                )
+                .await?;
+                if let Outcome::Incremental { changed, .. } = &mut outcome {
+                    *changed += swept.corrected;
+                }
+                Ok::<_, SyncError>((outcome, swept.swept))
+            }
             .await;
 
             match outcome {
-                Ok(outcome) => {
+                Ok((outcome, swept)) => {
                     sync_state
                         .observe(mailbox.id, &reported, Utc::now())
                         .await?;
+                    sync_state.record_flag_pass(mailbox.id, swept).await?;
                     if still_short_of_exists(connection, mailbox, &previous, selected.exists)
                         .await?
                     {
@@ -431,14 +515,48 @@ pub async fn resync_mailbox_filing(
         }
         ResyncPlan::UpToDate => {
             tracing::debug!(mailbox = mailbox.id.get(), "already up to date");
+            // A server that under-reports changes may not have moved
+            // `HIGHESTMODSEQ` for the change it missed, so "up to date" is
+            // exactly the state a sweep is for.
+            let swept = match sweep_flags(
+                connection,
+                backend,
+                mailbox,
+                selected.generation,
+                flag_pass,
+                cancel,
+            )
+            .await
+            {
+                Ok(swept) => swept,
+                Err(SyncError::Backend(error)) if error.requires_full_resync() => {
+                    tracing::error!(
+                        mailbox = mailbox.id.get(),
+                        %error,
+                        "the flag sweep cannot be trusted; rebuilding: {error}"
+                    );
+                    return rebuild(
+                        connection,
+                        backend,
+                        mailbox,
+                        previous.generation,
+                        cancel,
+                        on_progress,
+                    )
+                    .await;
+                }
+                Err(other) => return Err(other),
+            };
             sync_state
                 .observe(mailbox.id, &reported, Utc::now())
                 .await?;
+            sync_state.record_flag_pass(mailbox.id, swept.swept).await?;
             // The steady state of the poisoned mailbox, and the one that
             // matters most: an idle server never moves `MODSEQ`, so a mailbox
             // stamped as synced without ever having been enumerated plans
             // `UpToDate` on every pass and agrees with itself for ever. "Up to
             // date" has to mean "holds what the server says it holds".
+            //
             // `HIGHESTMODSEQ` standing still does not mean nothing left: RFC
             // 7162 §3.2 makes an expunge raise it only for a server that
             // supports QRESYNC, so a CONDSTORE-only server can delete a
@@ -463,7 +581,7 @@ pub async fn resync_mailbox_filing(
                     .await?;
                     if vanished > 0 {
                         return Ok(Outcome::Incremental {
-                            changed: 0,
+                            changed: swept.corrected,
                             vanished,
                             arrived: Vec::new(),
                             filed_away: Vec::new(),
@@ -475,7 +593,34 @@ pub async fn resync_mailbox_filing(
                 return enumerate_the_shortfall(connection, backend, mailbox, cancel, on_progress)
                     .await;
             }
+            if swept.corrected > 0 {
+                // Flags moved under a mailbox the server called unchanged:
+                // the list showing it is stale, and nothing else did.
+                return Ok(Outcome::Incremental {
+                    changed: swept.corrected,
+                    vanished: 0,
+                    arrived: Vec::new(),
+                    filed_away: Vec::new(),
+                });
+            }
             Ok(Outcome::UpToDate)
+        }
+    }
+}
+
+/// Runs the flag sweep when `pass` says to.
+async fn sweep_flags(
+    connection: &Checkout,
+    backend: &dyn MailBackend,
+    mailbox: &Mailbox,
+    generation: Generation,
+    pass: FlagPass,
+    cancel: &CancelToken,
+) -> Result<crate::flag_sweep::Swept> {
+    match pass {
+        FlagPass::Trust => Ok(crate::flag_sweep::Swept::default()),
+        FlagPass::Sweep => {
+            crate::flag_sweep::sweep(connection, backend, mailbox, generation, cancel).await
         }
     }
 }

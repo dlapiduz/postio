@@ -38,7 +38,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use postio_model::{EmailAddress, Flag, FlagSet, ModSeq, RemoteId, RfcMessageId, Uid, UidValidity};
+use postio_model::{
+    ChangeFeed, EmailAddress, Flag, FlagSet, ModSeq, RemoteId, RfcMessageId, Uid, UidValidity,
+};
 use tokio::sync::Notify;
 
 use super::identity;
@@ -437,6 +439,12 @@ struct State {
     /// UIDs a header fetch silently leaves out. See
     /// [`MockBackend::drop_from_header_fetches`].
     undecodable: Vec<u32>,
+    /// Which mailbox each served flags-only `FETCH` was for, oldest first.
+    /// See [`MockBackend::flag_fetches`].
+    flag_fetches: Vec<String>,
+    /// What [`MailBackend::change_feed`] answers. See
+    /// [`MockBackendBuilder::unreliable_change_feed`].
+    change_feed: ChangeFeed,
     /// One entry per *batched* section fetch: the section asked for, and how
     /// many messages were named in the one call. See
     /// [`MockBackend::section_batches`].
@@ -764,6 +772,36 @@ impl MockBackend {
         self.state().uid_listings.clone()
     }
 
+    /// Which mailbox each served flags-only `FETCH` was for, oldest first.
+    ///
+    /// Not among [`header_fetches`](Self::header_fetches): a flag sweep
+    /// carries no message data, and the tests that count header fetches are
+    /// counting round trips that return mail.
+    pub fn flag_fetches(&self) -> Vec<String> {
+        self.state().flag_fetches.clone()
+    }
+
+    /// Changes a message's flags **without telling anyone**: the mailbox's
+    /// `HIGHESTMODSEQ` and the message's own `MODSEQ` stay where they were
+    /// and no event is queued.
+    ///
+    /// What iCloud, Yahoo and Exchange do when another device sets a flag:
+    /// the server's state moved and its change feed did not. A
+    /// `CHANGEDSINCE` pull cannot see it by construction, and neither can a
+    /// watcher, so the only way to learn of it is to read the flags.
+    pub fn set_flags_silently(&self, mailbox: &str, uid: Uid, flags: FlagSet) {
+        let mut state = self.state();
+        let index = self
+            .locate(&state, mailbox, "STORE")
+            .expect("the mailbox exists");
+        let message = state.mailboxes[index]
+            .messages
+            .iter_mut()
+            .find(|message| message.uid == uid.get())
+            .expect("the message exists");
+        message.flags = flags;
+    }
+
     /// Which mailbox each served body/part `FETCH` was for, oldest first —
     /// [`Self::header_fetches`]'s counterpart for the backfill lane, used
     /// the same way: order here is causal (#631), not a stopwatch.
@@ -977,6 +1015,7 @@ pub struct MockBackendBuilder {
     capabilities: Capabilities,
     mailboxes: Vec<MockMailbox>,
     chunk_size: usize,
+    change_feed: ChangeFeed,
 }
 
 impl MockBackendBuilder {
@@ -995,7 +1034,16 @@ impl MockBackendBuilder {
             ]),
             mailboxes: Vec::new(),
             chunk_size: DEFAULT_CHUNK,
+            change_feed: ChangeFeed::Reliable,
         }
+    }
+
+    /// Makes the backend report [`ChangeFeed::Unreliable`], as a backend
+    /// over a provider whose preset row says `condstore_reliable = false`
+    /// does.
+    pub fn unreliable_change_feed(mut self) -> Self {
+        self.change_feed = ChangeFeed::Unreliable;
+        self
     }
 
     /// Sets the host name the backend claims, for error messages.
@@ -1054,6 +1102,8 @@ impl MockBackendBuilder {
                 uid_listings: Vec::new(),
                 header_fetch_rows: Vec::new(),
                 undecodable: Vec::new(),
+                flag_fetches: Vec::new(),
+                change_feed: self.change_feed,
                 section_batches: Vec::new(),
                 chunk_size: self.chunk_size,
             })),
@@ -1184,6 +1234,33 @@ impl MailBackend for MockBackend {
     ) -> BackendResult<Vec<FetchedMessage>> {
         self.fetched(mailbox, uids, changed_since, true, cancel)
             .await
+    }
+
+    /// Every message's flags, as `UID FETCH 1:* (UID FLAGS)` answers.
+    async fn fetch_flags(
+        &self,
+        mailbox: &str,
+        cancel: &CancelToken,
+    ) -> BackendResult<Option<Vec<(Uid, FlagSet)>>> {
+        self.enter("FETCH FLAGS").await?;
+        if cancel.is_cancelled() {
+            return Err(BackendError::Cancelled);
+        }
+        let mut state = self.state();
+        state.flag_fetches.push(mailbox.to_owned());
+        let state = state;
+        let index = self.locate(&state, mailbox, "FETCH FLAGS")?;
+        Ok(Some(
+            state.mailboxes[index]
+                .messages
+                .iter()
+                .map(|message| (Uid::new(message.uid), message.flags.clone()))
+                .collect(),
+        ))
+    }
+
+    fn change_feed(&self) -> ChangeFeed {
+        self.state().change_feed
     }
 
     async fn fetch_sections(

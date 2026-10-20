@@ -27,6 +27,7 @@ mod discover;
 mod drafts;
 mod drain;
 mod filing;
+mod flag_sweep;
 mod focus_filing;
 mod focus_rules;
 mod full_resync_writes;

@@ -64,6 +64,7 @@ pub mod discover;
 pub mod drafts;
 pub mod drain;
 pub mod filing;
+mod flag_sweep;
 pub mod initial;
 pub mod order;
 pub mod resync;
@@ -84,7 +85,7 @@ pub use initial::{
     DEFAULT_BATCH_SIZE, Progress, Report, commit_batch, sync_mailbox, sync_mailbox_with_batch_size,
 };
 pub use order::sync_priority;
-pub use resync::{Outcome, resync_mailbox, resync_mailbox_filing};
+pub use resync::{Outcome, resync_mailbox, resync_mailbox_filing, resync_mailbox_with_policy};
 pub use retry::RetryPolicy;
 pub use send::SmtpContext;
 pub use status::{StatusTracker, SyncProgress, SyncStatus};

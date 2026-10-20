@@ -57,7 +57,7 @@ use std::fmt;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use postio_model::{ModSeq, RemoteId, Uid};
+use postio_model::{ChangeFeed, FlagSet, ModSeq, RemoteId, Uid};
 
 use crate::cancel::CancelToken;
 
@@ -392,6 +392,50 @@ pub trait MailBackend: Send + Sync + fmt::Debug {
     ) -> BackendResult<Option<Vec<Uid>>> {
         let _ = (mailbox, cancel);
         Ok(None)
+    }
+
+    /// Every message's flags in `mailbox`, and nothing else: `UID FETCH 1:*
+    /// (UID FLAGS)` on IMAP, if the backend can say.
+    ///
+    /// What a flag sweep reads (`postio_model::SweepPolicy`). It is *not*
+    /// [`fetch_headers`](Self::fetch_headers) with the headers ignored: the
+    /// point is that nothing but a UID and a flag list per message crosses
+    /// the wire, a few dozen bytes each, so a folder of sixty thousand
+    /// messages is a response measured in megabytes and not in the hundreds
+    /// of megabytes that refetching its envelopes and structures would be.
+    ///
+    /// The answer is the server's whole truth about flags, so a message that
+    /// was *not* listed was not there. It carries no `MODSEQ`: the caller is
+    /// comparing states, not asking what changed.
+    ///
+    /// The default answers `None`, "this backend cannot list flags alone",
+    /// and the caller then goes on trusting the change feed. That is right
+    /// for every backend but IMAP, because the others have a change feed
+    /// that is not CONDSTORE's and is reliable ([`change_feed`] says so):
+    /// Maildir reads the flags off the file names it already lists, JMAP
+    /// asks `Email/changes` against a state string, and Gmail walks the
+    /// `history` list. None of them is ever asked for a sweep.
+    ///
+    /// [`change_feed`]: Self::change_feed
+    async fn fetch_flags(
+        &self,
+        mailbox: &str,
+        cancel: &CancelToken,
+    ) -> BackendResult<Option<Vec<(Uid, FlagSet)>>> {
+        let _ = (mailbox, cancel);
+        Ok(None)
+    }
+
+    /// How far to believe this server's account of what changed.
+    ///
+    /// [`ChangeFeed::Unreliable`] makes the sync engine read every flag now
+    /// and then (`postio_model::SweepPolicy`) rather than only what
+    /// `CHANGEDSINCE` reports. The default is
+    /// [`Reliable`](ChangeFeed::Reliable): a server is believed until it is
+    /// known not to deserve it, and the IMAP backend looks that up in the
+    /// provider preset table, where it is data.
+    fn change_feed(&self) -> ChangeFeed {
+        ChangeFeed::Reliable
     }
 
     /// Waits for the server to say something about `mailbox`.

@@ -61,7 +61,8 @@ pub struct SyncStateRepository<'a> {
 }
 
 const COLUMNS: &str = "\
-mailbox_id, account_id, uid_validity, uid_next, highest_mod_seq, last_full_sync_at, last_seen_at";
+mailbox_id, account_id, uid_validity, uid_next, highest_mod_seq, last_full_sync_at, last_seen_at, \
+passes_since_flag_sweep";
 
 impl<'a> SyncStateRepository<'a> {
     /// Borrows a connection.
@@ -116,15 +117,17 @@ impl<'a> SyncStateRepository<'a> {
         sql::execute(
             self.connection,
             "INSERT INTO sync_state (mailbox_id, account_id, uid_validity, uid_next,
-                                     highest_mod_seq, last_full_sync_at, last_seen_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                                     highest_mod_seq, last_full_sync_at, last_seen_at,
+                                     passes_since_flag_sweep)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT (mailbox_id) DO UPDATE
                 SET account_id = excluded.account_id,
                     uid_validity = excluded.uid_validity,
                     uid_next = excluded.uid_next,
                     highest_mod_seq = excluded.highest_mod_seq,
                     last_full_sync_at = excluded.last_full_sync_at,
-                    last_seen_at = excluded.last_seen_at",
+                    last_seen_at = excluded.last_seen_at,
+                    passes_since_flag_sweep = excluded.passes_since_flag_sweep",
             bind![
                 mailbox_id,
                 account_id,
@@ -133,6 +136,7 @@ impl<'a> SyncStateRepository<'a> {
                 state.highest_mod_seq.map(|value| value.get() as i64),
                 state.last_full_sync_at.map(to_millis),
                 state.last_seen_at.map(to_millis),
+                i64::from(state.passes_since_flag_sweep),
             ],
         )
         .await?;
@@ -163,6 +167,16 @@ impl<'a> SyncStateRepository<'a> {
         at: DateTime<Utc>,
     ) -> Result<SyncState> {
         self.mutate(mailbox_id, |state| state.complete_full_sync(at))
+            .await
+    }
+
+    /// Records that an incremental pass finished, and whether it read every
+    /// flag in the mailbox.
+    ///
+    /// Called after the pass's flags were reconciled and after
+    /// [`observe`](Self::observe) took the server's `HIGHESTMODSEQ`.
+    pub async fn record_flag_pass(&self, mailbox_id: MailboxId, swept: bool) -> Result<SyncState> {
+        self.mutate(mailbox_id, |state| state.record_flag_pass(swept))
             .await
     }
 
@@ -222,5 +236,6 @@ fn read_state(row: &Row) -> Result<SyncState> {
             .map(|value| ModSeq::new(value as u64)),
         last_full_sync_at: row.col::<Option<i64>>(5)?.map(from_millis),
         last_seen_at: row.col::<Option<i64>>(6)?.map(from_millis),
+        passes_since_flag_sweep: row.col::<i64>(7)? as u32,
     })
 }

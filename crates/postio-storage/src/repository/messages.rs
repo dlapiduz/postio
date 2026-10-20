@@ -1633,6 +1633,88 @@ impl<'a> MessageRepository<'a> {
         .await
     }
 
+    /// Every stored message's id, UID and flags in one mailbox generation.
+    ///
+    /// What a flag sweep compares the server's flags listing against. One
+    /// statement however large the mailbox, and `all_unbounded` for the
+    /// reason [`uids_in`](Self::uids_in) gives: a sweep diffs the *whole*
+    /// local set, and a limit here would be a sweep that stopped looking
+    /// partway.
+    pub async fn flags_in(
+        &self,
+        mailbox_id: MailboxId,
+        generation: Generation,
+    ) -> Result<Vec<(MessageId, Uid, FlagSet)>> {
+        sql::all_unbounded(
+            self.connection,
+            "SELECT id, uid, flags FROM messages
+              WHERE mailbox_id = ?1 AND uid_validity = ?2 AND uid IS NOT NULL
+              ORDER BY uid",
+            bind![mailbox_id.get(), i64::from(generation.get())],
+            |row| {
+                Ok((
+                    MessageId::new(row.col(0)?),
+                    Uid::new(row.col::<i64>(1)? as u32),
+                    parse_flags(&row.col::<String>(2)?),
+                ))
+            },
+        )
+        .await
+    }
+
+    /// Writes the flags the server reports for these messages, keeping what
+    /// the user has done that the server has not heard yet. Returns the ids
+    /// whose stored flags actually changed.
+    ///
+    /// The flag sweep's write (`postio_sync`), and the same merge
+    /// [`upsert_batch`](Self::upsert_batch) applies to a `CHANGEDSINCE` pull
+    /// (#317): the server's flags plus whatever the operation queue still
+    /// holds for the message. Without it a sweep that ran before the drainer
+    /// would write the server's stale copy over a local read, and the row
+    /// would go bold again.
+    ///
+    /// A message whose merged flags already equal what is stored is not
+    /// written and is not returned, which is what keeps a message with
+    /// undrained local flags from being reported as a correction on every
+    /// pass.
+    pub async fn apply_server_flags(
+        &self,
+        updates: &[(MessageId, FlagSet)],
+    ) -> Result<Vec<MessageId>> {
+        if updates.is_empty() {
+            return Ok(Vec::new());
+        }
+        sql::in_scope(self.connection, |transaction| async move {
+            let unacknowledged = unacknowledged_flag_changes(&transaction).await?;
+            let messages = MessageRepository::new(&transaction);
+            let mut changed = Vec::new();
+            for (id, server) in updates {
+                let merged = match unacknowledged.get(id) {
+                    Some(changes) => with_unacknowledged(server, changes),
+                    None => server.clone(),
+                }
+                .persistable();
+                let stored: Option<String> = sql::first(
+                    &transaction,
+                    "SELECT flags FROM messages WHERE id = ?1",
+                    [id.get()],
+                    |row| row.col(0),
+                )
+                .await?;
+                // A row that went away since it was read has nothing to
+                // correct.
+                let Some(stored) = stored else { continue };
+                if parse_flags(&stored).persistable() == merged {
+                    continue;
+                }
+                messages.set_flags(*id, &merged, FlagSource::Server).await?;
+                changed.push(*id);
+            }
+            Ok(changed)
+        })
+        .await
+    }
+
     /// How many rows in `mailbox` the store will refuse to hold.
     ///
     /// The server's copies of drafts this client wrote. `upsert_batch`

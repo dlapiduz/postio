@@ -72,6 +72,7 @@ pub mod signature_default;
 pub mod size;
 pub mod subject;
 pub mod summary;
+pub mod sweep;
 pub mod sync;
 #[cfg(feature = "test-corpus")]
 pub mod test_corpus;
@@ -105,6 +106,7 @@ pub use operation::{Operation, OperationRange, OperationState, OperationTarget};
 pub use outgoing::{BuiltMessage, CalendarMethod, CalendarPart, OutgoingAttachment};
 pub use scope::{Arrival, FocusScope, ListScope, Reaction};
 pub use subject::{is_reply, normalize_subject};
+pub use sweep::{ChangeFeed, FlagPass, SweepPolicy};
 pub use sync::{FullResyncReason, MailboxStatus, ResyncPlan, SyncState};
 pub use thread::Thread;
 pub use threading::{Assignment, ThreadCue, ThreadIndex, assign, claimed_ids};

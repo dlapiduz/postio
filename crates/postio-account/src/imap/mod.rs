@@ -79,7 +79,7 @@ pub use self::body::{PARTIAL_FETCH_WINDOW, fetch_part, fetch_sections};
 pub use self::dispatch::{
     Dispatch, ExpungeStrategy, ListingStrategy, MoveStrategy, ResyncStrategy, WatchStrategy,
 };
-pub use self::fetch::{fetch_headers, fetch_headers_for_filing};
+pub use self::fetch::{fetch_flags, fetch_headers, fetch_headers_for_filing};
 pub use self::idle::idle;
 pub use self::mailboxes::{create_mailbox, list_mailboxes};
 pub use self::mutate::{append, copy_messages, expunge, move_messages, store_flags};
