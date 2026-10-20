@@ -446,6 +446,32 @@ fn engage_focus(
     remote_images: &std::path::Path,
 ) -> postio_host::FocusHandle {
     let path = source.path();
+    // The Filtering pane reads a file and a person's pin is not in it: it
+    // reads, and takes back, what people decided from here.
+    let (focus_settings, database) = (host.wiring().focus.clone(), host.wiring().database.clone());
+    let (reader, writer) = (focus_settings.clone(), (focus_settings, database));
+    crate::settings::follow_contacts(crate::settings::ContactFilters {
+        rules: Box::new(move || {
+            reader
+                .config()
+                .map(|config| config.contacts().to_vec())
+                .unwrap_or_default()
+        }),
+        take_back: Box::new(move |undo| {
+            let (focus, database) = &writer;
+            blocking(async {
+                match undo {
+                    postio_ui::filtering::Undo::Never(entry) => {
+                        focus.pin(database, entry, false).await
+                    }
+                    postio_ui::filtering::Undo::Marker { sender, kind } => {
+                        focus.stop_marker(database, sender, kind, false).await
+                    }
+                }
+            })
+            .is_ok()
+        }),
+    });
     host.enable_focus(
         postio_host::FocusSetup::from_config(focus.clone(), path.as_deref())
             .with_remote_images_path(remote_images.to_path_buf()),

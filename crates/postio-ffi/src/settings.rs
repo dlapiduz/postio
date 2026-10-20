@@ -761,6 +761,28 @@ impl From<postio_ui::filtering::Listed> for FilteringEntryFfi {
     }
 }
 
+/// What the Filtering pane needs of the store: the people who decided, and a
+/// way to take one of their decisions back. Installed by a session; the pane
+/// reads a file, and a person's pin is no longer in it (ADR 0048).
+pub(crate) struct ContactFilters {
+    /// Everyone who decided, as the engine reads them.
+    pub(crate) rules: Box<dyn Fn() -> Vec<postio_config::ContactRule> + Send + Sync>,
+    /// Takes a person's decision back; whether it did.
+    pub(crate) take_back: Box<dyn Fn(&postio_ui::filtering::Undo) -> bool + Send + Sync>,
+}
+
+static CONTACT_FILTERS: std::sync::Mutex<Option<std::sync::Arc<ContactFilters>>> =
+    std::sync::Mutex::new(None);
+
+/// Let the Filtering pane read, and take back, what people decided.
+pub(crate) fn follow_contacts(filters: ContactFilters) {
+    *CONTACT_FILTERS.lock().expect("never poisoned") = Some(std::sync::Arc::new(filters));
+}
+
+fn contact_filters() -> Option<std::sync::Arc<ContactFilters>> {
+    CONTACT_FILTERS.lock().expect("never poisoned").clone()
+}
+
 /// The Filtering pane's values for `text`, with `filtered_today` messages
 /// filed away so far today (`focus_counts().filtered_today`; `None` before
 /// it is known), or `None` when the file will not parse -- for the reason
@@ -770,7 +792,11 @@ pub fn settings_filtering(text: String, filtered_today: Option<u32>) -> Option<F
     use postio_ui::filtering as words;
     let config = Config::from_toml_str(&text).ok()?;
     let keymap = postio_core::Keymap::resolve_on(&config.keys, crate::PLATFORM);
-    let page = words::page(&config.focus, filtered_today, &keymap);
+    let focus = match contact_filters() {
+        Some(filters) => config.focus.with_contacts(&(filters.rules)()),
+        None => config.focus.clone(),
+    };
+    let page = words::page(&focus, filtered_today, &keymap);
     Some(FilteringPageFfi {
         switch: words::SWITCH.to_owned(),
         on: page.on,
@@ -814,6 +840,36 @@ pub fn settings_take_back_filter(
     text: String,
     undo: FilteringUndoFfi,
 ) -> Result<String, SettingsError> {
+    // A person's pin or marker is not in the file: it goes from the person.
+    if let Some(filters) = contact_filters() {
+        let focus = Config::from_toml_str(&text)
+            .map(|config| config.focus.with_contacts(&(filters.rules)()))
+            .ok();
+        let theirs = match (&undo, &focus) {
+            (FilteringUndoFfi::Never { entry }, Some(focus)) => {
+                focus.contact_pinned(entry).is_some()
+            }
+            (FilteringUndoFfi::Marker { sender, kind }, Some(focus)) => {
+                focus.contact_stopped(sender, kind).is_some()
+            }
+            _ => false,
+        };
+        if theirs {
+            let undo = match undo {
+                FilteringUndoFfi::Never { entry } => postio_ui::filtering::Undo::Never(entry),
+                FilteringUndoFfi::Marker { sender, kind } => {
+                    postio_ui::filtering::Undo::Marker { sender, kind }
+                }
+            };
+            return if (filters.take_back)(&undo) {
+                Ok(text)
+            } else {
+                Err(SettingsError::Invalid {
+                    message: "Postio could not take that back".to_owned(),
+                })
+            };
+        }
+    }
     let edit = match &undo {
         FilteringUndoFfi::Never { entry } => {
             postio_config::focus_edit::set_never(&text, entry, false)

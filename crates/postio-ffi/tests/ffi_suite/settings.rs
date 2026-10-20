@@ -711,3 +711,61 @@ fn two_filters_cannot_share_a_key() {
 
     assert!(format!("{refusal}").contains("already"), "{refusal}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_filtering_pane_lists_a_person_s_pin_by_name_and_taking_it_back_clears_the_person() {
+    use postio_model::{ContactArrival, ContactSettings, EmailAddress, StoppedMarker};
+    use postio_storage::repository::{ContactRepository, ContactSettingsRepository};
+
+    let database = postio_storage::test_support::memory().await;
+    {
+        let connection = database.connect().await.expect("a connection");
+        let ada = ContactRepository::new(&connection)
+            .create(
+                Some("Ada Lovelace"),
+                &[
+                    EmailAddress::new(None::<String>, "ada@work.example"),
+                    EmailAddress::new(None::<String>, "ada@home.example"),
+                ],
+            )
+            .await
+            .expect("a person");
+        let mut settings = ContactSettings {
+            arrival: Some(ContactArrival::Inbox),
+            ..ContactSettings::default()
+        };
+        settings.set_stop(StoppedMarker::Todo, true);
+        ContactSettingsRepository::new(&connection)
+            .put(ada, &settings)
+            .await
+            .expect("what she decided");
+    }
+    let session = postio_ffi::Session::open(postio_ffi::SessionOptions::in_memory_with(database))
+        .expect("a session");
+
+    let (listed, after, stopped_after) = tokio::task::spawn_blocking(move || {
+        let page = postio_ffi::settings_filtering("[focus]\n".to_owned(), None).expect("it parses");
+        let text = postio_ffi::settings_take_back_filter(
+            "[focus]\n".to_owned(),
+            page.never[0].undo.clone(),
+        )
+        .expect("taken back");
+        let again = postio_ffi::settings_filtering(text, None).expect("it parses");
+        let stopped_after = again.stopped.len();
+        (page, again.never.len(), stopped_after)
+    })
+    .await
+    .expect("the blocking calls");
+
+    assert_eq!(
+        listed.never[0].says,
+        "Ada Lovelace \u{b7} ada@work.example, ada@home.example"
+    );
+    assert_eq!(listed.stopped[0].says, "To-dos in mail from Ada Lovelace");
+    assert_eq!(
+        after, 0,
+        "her pin is gone, whichever address was handed back"
+    );
+    assert_eq!(stopped_after, 1, "and only that: her marker is still off");
+    session.shutdown();
+}
