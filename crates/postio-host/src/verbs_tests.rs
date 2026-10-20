@@ -2283,3 +2283,47 @@ fn moving_senders_settings_onto_the_senders_lands_every_message_where_it_landed(
         before_the_move()
     );
 }
+
+#[test]
+fn a_filter_entry_is_taken_back_through_the_host_from_whichever_home_holds_it() {
+    let world = World::new();
+    let (_directory, path) = config_file("[focus.filter]\nnever = [\"@example.net\"]\n");
+    world.host().enable_focus(
+        crate::FocusSetup::default()
+            .with_config(focus_in(&path))
+            .with_config_path(path.clone()),
+    );
+    let (client, _events) = world.frontend(ClientKind::Focus);
+    let at = |address: &str| postio_model::EmailAddress::new(None::<String>, address);
+    world.rt.block_on(async {
+        let focus = &world.host().inner.wiring.focus;
+        focus
+            .pin(world.database(), "ada@example.org", true)
+            .await
+            .unwrap();
+        focus
+            .stop_marker(world.database(), "ada@example.org", "todo", true)
+            .await
+            .unwrap();
+    });
+    assert!(engine(&world).filter.never_filters(&at("ada@example.org")));
+    assert!(engine(&world).filter.stops(&at("ada@example.org"), "todo"));
+
+    world
+        .rt
+        .block_on(client.take_back_filter("ada@example.org", None))
+        .expect("the pin comes back");
+    world
+        .rt
+        .block_on(client.take_back_filter("ada@example.org", Some("todo")))
+        .expect("the marker comes back");
+    world
+        .rt
+        .block_on(client.take_back_filter("@example.net", None))
+        .expect("the file's own entry too");
+
+    let config = engine(&world);
+    assert!(!config.filter.never_filters(&at("ada@example.org")));
+    assert!(!config.filter.stops(&at("ada@example.org"), "todo"));
+    assert!(!config.filter.never_filters(&at("x@example.net")));
+}

@@ -436,7 +436,24 @@ impl crate::window::FocusWindow {
                 seams: self.imp().settings_seams.borrow().clone(),
                 client: client.clone(),
             });
+            let for_take_back = client.clone();
             let settings = Settings::new(client, outside);
+            // A person's pin or marker is theirs, not the buffer's: the host
+            // takes it back, and the window hears of it as of any change.
+            settings.panel().connect_contact_take_back(move |undo| {
+                let client = for_take_back.clone();
+                let (entry, kind) = match undo {
+                    postio_ui::filtering::Undo::Never(entry) => (entry.clone(), None),
+                    postio_ui::filtering::Undo::Marker { sender, kind } => {
+                        (sender.clone(), Some(kind.clone()))
+                    }
+                };
+                glib::spawn_future_local(async move {
+                    if let Err(error) = client.take_back_filter(&entry, kind.as_deref()).await {
+                        tracing::warn!(%error, "could not take a filter entry back");
+                    }
+                });
+            });
             settings.panel().connect_command({
                 let window = self.downgrade();
                 move |id| {
@@ -463,6 +480,9 @@ impl crate::window::FocusWindow {
             settings
         });
         settings.panel().set_filtered_today(self.filtered_today());
+        settings
+            .panel()
+            .set_contact_rules(self.imp().focus_config.borrow().contacts().to_vec());
         settings.present(self.upcast_ref());
     }
 

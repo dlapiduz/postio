@@ -1442,6 +1442,24 @@ impl Inner {
             Req::SaveDigestRule { replacing, rule } => {
                 done(focus::rules::save(self, replacing, rule).await)
             }
+            Req::TakeBackFilter { entry, kind } => done(
+                match kind {
+                    None => {
+                        self.wiring
+                            .focus
+                            .pin(&self.wiring.database, &entry, false)
+                            .await
+                    }
+                    Some(kind) => {
+                        self.wiring
+                            .focus
+                            .stop_marker(&self.wiring.database, &entry, &kind, false)
+                            .await
+                    }
+                }
+                .map(|_| ())
+                .map_err(postio_model::listing::StoreError::new),
+            ),
             Req::Treatments => contacts::treatments(&self.wiring.database)
                 .await
                 .map_or_else(Resp::Failed, Resp::Treatments),

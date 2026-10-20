@@ -630,6 +630,16 @@ pub enum Req {
     /// Take a digest rule out of `config.toml` and release what it held into
     /// the inbox (spec 007 FR-126); answered with how many it released.
     DeleteDigestRule(String),
+    /// Take a filtering entry back: stop never filtering `entry` (an
+    /// address, or a whole domain), or with `kind` turn that marker back on.
+    /// Whichever home holds it -- the file, or the person it names -- is
+    /// where it goes from.
+    TakeBackFilter {
+        /// The pinned address or domain, or the marker's sender.
+        entry: String,
+        /// `question` or `todo` for a marker; `None` for a pin.
+        kind: Option<String>,
+    },
     /// Every sender's remembered treatment, `(address, "app" | "paper")`:
     /// what a reader that looks senders up from memory keeps.
     Treatments,

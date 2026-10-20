@@ -723,6 +723,11 @@ mod imp {
         /// How many messages were filtered today, as the host counts them:
         /// what Filtering's count line says. `None` until it is told.
         pub filtered_today: Cell<Option<u32>>,
+        /// What people decided about senders, which the file no longer holds
+        /// (ADR 0048): added to the Filtering page's lists.
+        pub contact_rules: RefCell<Vec<postio_config::ContactRule>>,
+        /// Takes a person's pin or marker back, through the host.
+        pub contact_take_back: RefCell<Option<std::rc::Rc<dyn Fn(&postio_ui::filtering::Undo)>>>,
         /// The keys in force, for the lines that teach one.
         pub keymap: RefCell<postio_core::Keymap>,
         pub tag: gtk::Label,
@@ -963,6 +968,8 @@ mod imp {
                 composing_controls: OnceCell::new(),
                 filtering_controls: OnceCell::new(),
                 filtered_today: Cell::new(None),
+                contact_rules: RefCell::default(),
+                contact_take_back: RefCell::default(),
                 keymap: RefCell::new(postio_core::Keymap::defaults().clone()),
                 tag: gtk::Label::new(None),
                 nav: gtk::ListBox::new(),
@@ -3458,6 +3465,22 @@ impl SettingsPanel {
         }
     }
 
+    /// What people decided about senders, listed with the file's entries on
+    /// Filtering (ADR 0048).
+    pub fn set_contact_rules(&self, rules: Vec<postio_config::ContactRule>) {
+        if self.imp().contact_rules.replace(rules.clone()) != rules
+            && self.imp().filtering_controls.get().is_some()
+        {
+            self.redraw_filtering();
+        }
+    }
+
+    /// Run `take_back` for a person's pin or marker, which is theirs and
+    /// not the file's to edit.
+    pub fn connect_contact_take_back(&self, take_back: impl Fn(&postio_ui::filtering::Undo) + 'static) {
+        *self.imp().contact_take_back.borrow_mut() = Some(std::rc::Rc::new(take_back));
+    }
+
     /// Draws Filtering from the buffer's `[focus]` (spec 007 US9): the
     /// switch, what it does now, today's count, and what `[focus.filter]`
     /// holds. The controls come first and unconditionally, as on Sync &
@@ -3469,11 +3492,8 @@ impl SettingsPanel {
             return;
         };
         let imp = self.imp();
-        let page = postio_ui::filtering::page(
-            &config.focus,
-            imp.filtered_today.get(),
-            &imp.keymap.borrow(),
-        );
+        let focus = config.focus.with_contacts(&imp.contact_rules.borrow());
+        let page = postio_ui::filtering::page(&focus, imp.filtered_today.get(), &imp.keymap.borrow());
         controls.switch.set_active(page.on);
         controls.after_unsubscribe.set_selected(
             postio_ui::unsubscribe::SETTING_CHOICES
@@ -3624,6 +3644,21 @@ impl SettingsPanel {
     fn take_back(&self, undo: &postio_ui::filtering::Undo) {
         use postio_ui::filtering::Undo;
         let text = self.text();
+        // A person's pin or marker is not in the buffer: the host clears it.
+        if let Ok(config) = Config::from_toml_str(&text) {
+            let focus = config.focus.with_contacts(&self.imp().contact_rules.borrow());
+            let theirs = match undo {
+                Undo::Never(entry) => focus.contact_pinned(entry).is_some(),
+                Undo::Marker { sender, kind } => focus.contact_stopped(sender, kind).is_some(),
+            };
+            if theirs {
+                let take_back = self.imp().contact_take_back.borrow().clone();
+                if let Some(take_back) = take_back {
+                    take_back(undo);
+                }
+                return;
+            }
+        }
         let written = match undo {
             Undo::Never(entry) => postio_config::focus_edit::set_never(&text, entry, false),
             Undo::Marker { sender, kind } => {

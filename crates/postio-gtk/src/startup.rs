@@ -116,8 +116,8 @@ impl Session {
             }
             if update.changed.focus {
                 let focus = service.config().focus.clone();
-                host.enable_focus(FocusSetup::from_config(focus.clone(), Some(service.path())));
-                window.set_focus_config(focus);
+                host.enable_focus(app_setup(focus.clone(), Some(service.path())));
+                window.set_focus_config(host.wiring().focus.overlaid(&focus));
             }
             // What used to wait for a restart (T235).
             if update.changed.compose {
@@ -170,6 +170,54 @@ impl Session {
     }
 }
 
+/// Focus mode as the app sets it up: `focus`, the file it was read from, and
+/// the remote-image list the senders' treatments move out of, once.
+fn app_setup(focus: postio_config::FocusConfig, config_path: Option<&std::path::Path>) -> FocusSetup {
+    FocusSetup::from_config(focus, config_path)
+        .with_remote_images_path(postio_ui::allowlist::RemoteImageAllowList::path())
+}
+
+/// Let every reader of the app look a sender's treatment up in the store,
+/// where the person's choice is kept, and keep a new one there.
+fn keep_treatments_in_the_store(host: &Host, client: &postio_client::Client) {
+    use postio_body::treatment::Treatment;
+    let (saver, runtime) = (client.clone(), host.runtime());
+    let table = std::rc::Rc::new(postio_ui::sender_treatments::Remembered::new(
+        move |sender, treatment| {
+            let (client, sender) = (saver.clone(), sender.to_owned());
+            runtime.spawn(async move {
+                let word = treatment.map(Treatment::attribute_value);
+                if let Err(error) = client.set_treatment(&sender, word).await {
+                    tracing::warn!(%error, "could not keep a sender's treatment");
+                }
+            });
+        },
+    ));
+    match postio_core::blocking::now(client.treatments()) {
+        Ok(chosen) => table.replace(chosen),
+        Err(error) => tracing::warn!(%error, "could not read the senders' treatments"),
+    }
+    postio_widgets::reader::use_store_treatments(table);
+}
+
+/// Hand the window `[focus]` again whenever a verb changes what people
+/// decided, which no change to `config.toml` announces.
+fn follow_what_people_decided(host: &Host, window: &FocusWindow) {
+    let (told, heard) = async_channel::unbounded::<postio_config::FocusConfig>();
+    host.wiring().focus.watch(std::sync::Arc::new(move |focus| {
+        let _ = told.try_send(focus.clone());
+    }));
+    let window = window.downgrade();
+    glib::spawn_future_local(async move {
+        while let Ok(focus) = heard.recv().await {
+            let Some(window) = window.upgrade() else {
+                break;
+            };
+            window.set_focus_config(focus);
+        }
+    });
+}
+
 /// Take a host over an open store and show its inbox in `window`.
 ///
 /// Focus mode first, before anything could sync: the filing pass has to be
@@ -194,11 +242,21 @@ pub fn adopt_at(
     }
     // Focus's corrections (stop markers, never-filter, digest rules) are
     // written to this file: the host has to know where it is.
-    let focus = host.enable_focus(FocusSetup::from_config(config.focus.clone(), config_path));
+    let focus = host.enable_focus(app_setup(config.focus.clone(), config_path));
     let host = std::rc::Rc::new(host);
     let state = SharedState::default();
     let client = host.connect(ClientKind::Focus).with_state(state.clone());
-    window.set_focus_config(config.focus.clone());
+    // What people decided about senders lives in the store (ADR 0048): the
+    // reader looks treatments up there, and the window follows the digests,
+    // pins and markers the file no longer holds.
+    keep_treatments_in_the_store(&host, &client);
+    follow_what_people_decided(&host, window);
+    window.set_focus_config(
+        host.wiring()
+            .focus
+            .config()
+            .unwrap_or_else(|| config.focus.clone()),
+    );
     window.set_saved_searches(postio_session::focus::saved_searches(config));
     window.set_compose_config(config.compose.clone());
     window.set_reader_config(&config.reader);

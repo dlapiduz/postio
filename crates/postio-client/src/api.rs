@@ -185,6 +185,7 @@ impl Req {
             Req::DigestLikeThis(_) => "DigestLikeThis",
             Req::SaveDigestRule { .. } => "SaveDigestRule",
             Req::DeleteDigestRule(_) => "DeleteDigestRule",
+            Req::TakeBackFilter { .. } => "TakeBackFilter",
             Req::Treatments => "Treatments",
             Req::SetTreatment { .. } => "SetTreatment",
             Req::Vault { .. } => "Vault",
@@ -538,6 +539,27 @@ impl Client {
             Resp::Recipients(found) => Some(found),
             _ => None,
         })
+        .await
+    }
+
+    /// Take a filtering entry back: `entry` is filtered again, or with `kind`
+    /// that marker comes back.
+    pub async fn take_back_filter(
+        &self,
+        entry: &str,
+        kind: Option<&str>,
+    ) -> Result<(), StoreError> {
+        self.read(
+            Req::TakeBackFilter {
+                entry: entry.to_owned(),
+                kind: kind.map(str::to_owned),
+            },
+            "taking back a filter entry",
+            |answer| match answer {
+                Resp::Done => Some(()),
+                _ => None,
+            },
+        )
         .await
     }
 

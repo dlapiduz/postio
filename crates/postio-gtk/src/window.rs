@@ -2835,6 +2835,11 @@ impl FocusWindow {
         let capture = focus.vault.is_some();
         let beside = focus.reading == postio_config::Reading::Pane;
         let for_controller = focus.clone();
+        if let Some(settings) = self.imp().settings.borrow().as_ref() {
+            settings
+                .panel()
+                .set_contact_rules(focus.contacts().to_vec());
+        }
         self.imp().focus_config.replace(focus);
         if let Some(menu) =
             self.lookup_action(crate::chrome::READING_PANE_ACTION.trim_start_matches("win."))
