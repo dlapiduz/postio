@@ -1299,3 +1299,166 @@ impl RawClient {
 fn corpus(name: &str) -> Vec<u8> {
     postio_model::test_corpus::load(name).bytes().to_vec()
 }
+
+// ---------------------------------------------------------------------------
+// COMPRESS=DEFLATE (RFC 4978)
+// ---------------------------------------------------------------------------
+
+/// A message whose body compresses well, so the wire is visibly smaller.
+fn bulky(lines: usize) -> TestMessage {
+    let body = "The quarterly figures are attached below, as agreed.\r\n".repeat(lines);
+    TestMessage::new(format!(
+        "From: ada@example.com\r\nTo: bob@example.com\r\nSubject: Bulk\r\n\
+         Date: Tue, 06 May 2025 09:00:00 +0000\r\nMessage-ID: <bulk@example.com>\r\n\
+         \r\n{body}"
+    ))
+}
+
+#[tokio::test]
+async fn a_session_negotiates_compression_after_login_when_the_server_offers_it() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
+
+    list_mailboxes(&pool, &MailboxFilter::all(), Priority::Interactive)
+        .await
+        .expect("a command over the compressed stream");
+
+    let commands = server.commands();
+    let login = commands
+        .iter()
+        .position(|command| command.contains("AUTHENTICATE") || command.contains("LOGIN"))
+        .expect("the session authenticated");
+    let compress = commands
+        .iter()
+        .position(|command| command.to_ascii_uppercase().ends_with("COMPRESS DEFLATE"))
+        .unwrap_or_else(|| panic!("COMPRESS DEFLATE was never sent: {commands:?}"));
+    assert!(
+        compress > login,
+        "COMPRESS before authentication: {commands:?}"
+    );
+    assert_eq!(server.compressed_connections(), 1);
+}
+
+#[tokio::test]
+async fn compression_is_not_attempted_when_the_server_does_not_offer_it() {
+    // The control for the test above: the same server and the same calls, with
+    // the one capability gone.
+    let server = without(&["COMPRESS=DEFLATE"]).await;
+    let pool = pool_for(&server).await;
+
+    list_mailboxes(&pool, &MailboxFilter::all(), Priority::Interactive)
+        .await
+        .unwrap();
+
+    assert!(
+        server
+            .commands()
+            .iter()
+            .all(|command| !command.to_ascii_uppercase().contains("COMPRESS")),
+        "{:?}",
+        server.commands()
+    );
+    assert_eq!(server.compressed_connections(), 0);
+}
+
+#[tokio::test]
+async fn a_refused_compress_leaves_the_session_working_in_the_clear() {
+    let server = server().await;
+    server.inject(Fault::Reject {
+        during: "COMPRESS".to_owned(),
+        reason: "not today".to_owned(),
+    });
+    let pool = pool_for(&server).await;
+
+    let mailboxes = list_mailboxes(&pool, &MailboxFilter::all(), Priority::Interactive)
+        .await
+        .expect("a refusal is not a failure to connect");
+
+    assert_eq!(mailboxes.len(), 3);
+    assert!(
+        server
+            .commands()
+            .iter()
+            .any(|command| command.to_ascii_uppercase().ends_with("COMPRESS DEFLATE")),
+        "the control: COMPRESS was asked for and refused"
+    );
+    assert_eq!(server.compressed_connections(), 0);
+}
+
+#[tokio::test]
+async fn a_large_fetch_crosses_the_wire_smaller_than_the_protocol_said_it() {
+    let server = TestServer::builder()
+        .mailbox(
+            TestMailbox::new("INBOX")
+                .uid_validity(UidValidity::new(4_242))
+                .message(bulky(4_000)),
+        )
+        .start()
+        .await;
+    let pool = pool_for(&server).await;
+    let mut sink = VecSink::new();
+
+    let fetched = fetch_part(
+        &pool,
+        "INBOX",
+        &rid(1),
+        &BodyPart::Whole,
+        &mut sink,
+        Priority::Interactive,
+        &cancel(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(fetched.bytes_written, sink.as_slice().len() as u64);
+    assert!(sink.as_slice().ends_with(b"as agreed.\r\n"));
+    let (logical, wire) = server.bytes_sent();
+    assert!(logical > 200_000, "the body was not sent: {logical}");
+    assert!(
+        wire * 10 < logical,
+        "the wire carried {wire} bytes for {logical} of protocol"
+    );
+}
+
+#[tokio::test]
+async fn idle_and_done_work_over_the_compressed_stream_and_the_session_is_reusable() {
+    let server = server().await;
+    let pool = pool_for(&server).await;
+
+    let token = cancel();
+    let (events, ()) = tokio::join!(
+        idle(&pool, "INBOX", Duration::from_secs(5), &token),
+        async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            server.deliver("INBOX", TestMessage::corpus("list-thread-01-root"));
+        }
+    );
+    assert!(
+        events
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, MailboxEvent::Exists { .. }))
+    );
+
+    // `DONE` was sent and answered over the deflate stream; the same
+    // connection must now carry an ordinary command.
+    let messages = fetch_headers(
+        &pool,
+        "INBOX",
+        &UidSet::all(),
+        None,
+        Priority::Interactive,
+        &cancel(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(messages.len(), 4);
+    // Whatever number of connections the pool opened for the watch and for
+    // the fetch, every one of them negotiated.
+    let logins = server
+        .commands()
+        .iter()
+        .filter(|command| command.contains("AUTHENTICATE") || command.contains("LOGIN"))
+        .count();
+    assert_eq!(server.compressed_connections(), logins);
+}

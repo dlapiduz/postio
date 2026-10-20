@@ -27,6 +27,7 @@ cbc = { version = "0.1", features = ["zeroize"] }
 chacha20 = { version = "0.10", default-features = false, features = ["rng", "xchacha"] }
 chrono = { version = "0.4", features = ["serde"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "zeroize"] }
+crc32fast = { version = "1" }
 crossbeam-epoch = { version = "0.9" }
 crossbeam-utils = { version = "0.8" }
 crypto-common-6f8ce4dd05d13bba = { package = "crypto-common", version = "0.2", default-features = false, features = ["getrandom"] }
@@ -38,6 +39,7 @@ either = { version = "1", features = ["use_std"] }
 event-listener = { version = "5" }
 event-listener-strategy = { version = "0.5" }
 fastrand = { version = "2" }
+flate2 = { version = "1" }
 foldhash = { version = "0.2", default-features = false, features = ["std"] }
 futures-core = { version = "0.3" }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
@@ -123,6 +125,7 @@ cc = { version = "1", default-features = false, features = ["parallel"] }
 chacha20 = { version = "0.10", default-features = false, features = ["rng", "xchacha"] }
 chrono = { version = "0.4", features = ["serde"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "zeroize"] }
+crc32fast = { version = "1" }
 crossbeam-epoch = { version = "0.9" }
 crossbeam-utils = { version = "0.8" }
 crypto-common-6f8ce4dd05d13bba = { package = "crypto-common", version = "0.2", default-features = false, features = ["getrandom"] }
@@ -135,6 +138,7 @@ either = { version = "1", features = ["use_std"] }
 event-listener = { version = "5" }
 event-listener-strategy = { version = "0.5" }
 fastrand = { version = "2" }
+flate2 = { version = "1" }
 foldhash = { version = "0.2", default-features = false, features = ["std"] }
 futures-core = { version = "0.3" }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }

@@ -15,6 +15,10 @@
 //! Retrying in the clear is a decision no mail client gets to make on the
 //! user's behalf, so the code to do it does not exist.
 
+mod deflate;
+
+pub use deflate::{DeflateCodec, DeflateStream};
+
 use std::fmt;
 use std::io;
 use std::sync::{Arc, Once};

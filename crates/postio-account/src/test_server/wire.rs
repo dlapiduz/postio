@@ -10,8 +10,23 @@
 use std::io;
 use std::time::Duration;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use postio_transport::DeflateCodec;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+
+/// What crossed the wire, summed over every connection.
+///
+/// `logical` is what the protocol said and `wire` is what the socket carried,
+/// so the two differ only on a connection that negotiated `COMPRESS`.
+#[derive(Debug, Default)]
+pub(super) struct WireStats {
+    pub(super) logical_out: AtomicUsize,
+    pub(super) wire_out: AtomicUsize,
+    pub(super) compressed_connections: AtomicUsize,
+}
 
 /// The byte that stands in for a literal in a parsed command line.
 ///
@@ -35,6 +50,10 @@ pub(super) struct Conn {
     /// When set, responses go out in pieces with this long between them —
     /// a server that is slow rather than stuck.
     trickle: Option<Duration>,
+    /// Set once `COMPRESS DEFLATE` has been answered; both directions are raw
+    /// deflate from then on.
+    codec: Option<DeflateCodec>,
+    stats: Arc<WireStats>,
 }
 
 /// A command line, with its literals lifted out.
@@ -83,12 +102,29 @@ impl Command {
 }
 
 impl Conn {
-    pub(super) fn new(stream: TcpStream) -> Self {
+    pub(super) fn new(stream: TcpStream, stats: Arc<WireStats>) -> Self {
         Self {
             stream,
             buffer: Vec::new(),
             trickle: None,
+            codec: None,
+            stats,
         }
+    }
+
+    /// Switches both directions to raw deflate, as RFC 4978 says to do right
+    /// after the tagged `OK`. Bytes already buffered stay plain: a client
+    /// waits for the `OK` before it sends anything compressed.
+    pub(super) fn start_deflate(&mut self) {
+        self.codec = Some(DeflateCodec::new());
+        self.stats
+            .compressed_connections
+            .fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Whether `COMPRESS` is active on this connection.
+    pub(super) fn is_deflating(&self) -> bool {
+        self.codec.is_some()
     }
 
     /// Sends everything from now on in pieces, `gap` apart.
@@ -127,17 +163,50 @@ impl Conn {
 
     async fn fill(&mut self) -> io::Result<bool> {
         let mut chunk = [0u8; 8 * 1024];
-        let read = self.stream.read(&mut chunk).await?;
-        if read == 0 {
-            return Ok(false);
+        loop {
+            let Some(codec) = self.codec.as_mut() else {
+                let read = self.stream.read(&mut chunk).await?;
+                if read == 0 {
+                    return Ok(false);
+                }
+                self.buffer.extend_from_slice(&chunk[..read]);
+                return Ok(true);
+            };
+
+            let inflated = codec.inflate(&mut chunk)?;
+            if inflated > 0 {
+                self.buffer.extend_from_slice(&chunk[..inflated]);
+                return Ok(true);
+            }
+            let read = self.stream.read(&mut chunk).await?;
+            if read == 0 {
+                return Ok(false);
+            }
+            codec.push(&chunk[..read]);
         }
-        self.buffer.extend_from_slice(&chunk[..read]);
-        Ok(true)
+    }
+
+    /// One socket write, through the compressor when `COMPRESS` is active.
+    async fn send(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.stats
+            .logical_out
+            .fetch_add(bytes.len(), Ordering::SeqCst);
+        match self.codec.as_mut() {
+            None => {
+                self.stats.wire_out.fetch_add(bytes.len(), Ordering::SeqCst);
+                self.stream.write_all(bytes).await
+            }
+            Some(codec) => {
+                let wire = codec.deflate(bytes);
+                self.stats.wire_out.fetch_add(wire.len(), Ordering::SeqCst);
+                self.stream.write_all(&wire).await
+            }
+        }
     }
 
     pub(super) async fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
         let Some(gap) = self.trickle else {
-            return self.stream.write_all(bytes).await;
+            return self.send(bytes).await;
         };
 
         let piece = bytes.len().div_ceil(TRICKLE_PIECES).max(1);
@@ -145,7 +214,7 @@ impl Conn {
             if index > 0 {
                 tokio::time::sleep(gap).await;
             }
-            self.stream.write_all(slice).await?;
+            self.send(slice).await?;
         }
         Ok(())
     }
