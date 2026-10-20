@@ -478,13 +478,21 @@ impl Actions {
                 self.map_mailbox_role(*account, *role, path.as_deref())
                     .await?,
             ],
-            Command::ContactJoin { action } => vec![self.join_contacts(action).await?],
+            Command::ContactJoin { action } => {
+                let applied = self.join_contacts(action).await?;
+                self.rules_follow_people().await;
+                vec![applied]
+            }
             Command::ContactAddAddress { action } => {
-                vec![self.contact_address(action).await?]
+                let applied = self.contact_address(action).await?;
+                self.rules_follow_people().await;
+                vec![applied]
             }
             Command::ContactDetachAddress { address } => {
                 let address = address.ok_or_else(|| CommandError::rejected("Pick an address"))?;
-                vec![self.detach_address(address).await?]
+                let applied = self.detach_address(address).await?;
+                self.rules_follow_people().await;
+                vec![applied]
             }
             Command::ContactSetPreferred { person, address } => {
                 let (Some(person), Some(address)) = (person, address) else {
@@ -492,20 +500,29 @@ impl Actions {
                 };
                 vec![self.set_preferred(*person, *address).await?]
             }
-            Command::ContactNew { action } => vec![self.new_contact(action).await?],
+            Command::ContactNew { action } => {
+                let applied = self.new_contact(action).await?;
+                self.rules_follow_people().await;
+                vec![applied]
+            }
             Command::ContactEdit { action } => vec![self.edit_contact(action).await?],
             Command::ContactDelete { person, group } => match (person, group) {
-                (Some(person), _) => vec![self.delete_contact(*person).await?],
+                (Some(person), _) => {
+                    let applied = self.delete_contact(*person).await?;
+                    self.rules_follow_people().await;
+                    vec![applied]
+                }
                 (None, Some(group)) => vec![self.delete_group(*group).await?],
                 (None, None) => return Err(CommandError::rejected("Choose someone first")),
             },
             Command::ContactRestore { person, state } => {
                 let person =
                     person.ok_or_else(|| CommandError::rejected("Choose someone first"))?;
-                vec![
-                    self.restore_contact(person, state.unwrap_or(ContactState::Live))
-                        .await?,
-                ]
+                let applied = self
+                    .restore_contact(person, state.unwrap_or(ContactState::Live))
+                    .await?;
+                self.rules_follow_people().await;
+                vec![applied]
             }
             // Not an undo unit (contracts/commands.md): it hides a
             // suggestion and touches nobody, so it announces itself and
@@ -2151,6 +2168,17 @@ impl Actions {
     }
 
     // ── The address book (specs/005-contacts User Story 2) ──────────────
+
+    /// What people decided covers the addresses they own, and a join, a
+    /// split, a deletion or a new person changes which those are: tell the
+    /// filing pass and Focus's tasks again (ADR 0048).
+    async fn rules_follow_people(&self) {
+        if self.focus.is_on()
+            && let Err(reason) = self.focus.refresh(&self.database).await
+        {
+            tracing::warn!(%reason, "could not follow a change to who owns what: {reason}");
+        }
+    }
 
     /// Join people, or take a join back.
     ///

@@ -2327,3 +2327,64 @@ fn a_filter_entry_is_taken_back_through_the_host_from_whichever_home_holds_it() 
     assert!(!config.filter.stops(&at("ada@example.org"), "todo"));
     assert!(!config.filter.never_filters(&at("x@example.net")));
 }
+
+#[test]
+fn a_merge_puts_the_absorbed_address_under_the_kept_pin_and_undo_takes_it_away() {
+    use postio_core::ContactJoinAction;
+    let world = World::new();
+    world.host().enable_focus(crate::FocusSetup::default());
+    let (client, events) = world.frontend(ClientKind::Focus);
+    let at = |address: &str| postio_model::EmailAddress::new(None::<String>, address);
+    let (kept, absorbed) = world.rt.block_on(async {
+        let connection = world.database().connect().await.unwrap();
+        let people = postio_storage::repository::ContactRepository::new(&connection);
+        let kept = people
+            .person_for_email(&at("ada@work.example"))
+            .await
+            .unwrap();
+        let absorbed = people
+            .person_for_email(&at("ada@home.example"))
+            .await
+            .unwrap();
+        world
+            .host()
+            .inner
+            .wiring
+            .focus
+            .pin(world.database(), "ada@work.example", true)
+            .await
+            .unwrap();
+        (kept, absorbed)
+    });
+    assert!(engine(&world).filter.never_filters(&at("ada@work.example")));
+    assert!(!engine(&world).filter.never_filters(&at("ada@home.example")));
+
+    world.send(
+        &client,
+        Command::ContactJoin {
+            action: ContactJoinAction::Join {
+                into: kept,
+                others: vec![absorbed],
+                name: "Ada Lovelace".to_owned(),
+                organization: None,
+            },
+        },
+    );
+    world.hear(&events, |event| {
+        matches!(event, Event::ActionCompleted { .. })
+    });
+    assert!(
+        engine(&world).filter.never_filters(&at("ada@home.example")),
+        "the person is pinned, and the person now owns both"
+    );
+
+    world.send(&client, Command::Undo);
+    world.hear(&events, |event| {
+        matches!(event, Event::UndoPerformed { .. })
+    });
+    assert!(engine(&world).filter.never_filters(&at("ada@work.example")));
+    assert!(
+        !engine(&world).filter.never_filters(&at("ada@home.example")),
+        "undone: the other address is its own person again"
+    );
+}

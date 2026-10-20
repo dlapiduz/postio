@@ -134,6 +134,26 @@ impl ContactSettings {
         }
     }
 
+    /// Takes what `other` decided where this one decided nothing -- a merge
+    /// keeps the kept person's word and fills its gaps from the absorbed
+    /// (specs/011-focus-contacts Q8), so a pin or a digest is never silently
+    /// dropped. Where both decided, this one stands: an `inbox` pin is not
+    /// replaced by a digest, and a digest comes with the arrival it belongs
+    /// to. A marker kind is a gap per kind.
+    pub fn absorb(&mut self, other: &ContactSettings) {
+        if self.arrival.is_none() && other.arrival.is_some() {
+            self.arrival = other.arrival;
+            self.digest = other.digest.clone();
+        }
+        self.stop_markers |= other.stop_markers;
+        self.notify |= other.notify;
+        if self.html_treatment.is_none() {
+            self.html_treatment = other.html_treatment.clone();
+        }
+        self.remind_days = self.remind_days.or(other.remind_days);
+        self.archive_after_days = self.archive_after_days.or(other.archive_after_days);
+    }
+
     /// The marker kinds that are off, in a fixed order.
     pub fn stopped(&self) -> Vec<StoppedMarker> {
         StoppedMarker::ALL
@@ -165,6 +185,71 @@ mod tests {
             Some(StoppedMarker::Todo)
         );
         assert_eq!(StoppedMarker::from_name("invite"), None);
+    }
+
+    fn digest(name: &str) -> DigestSetting {
+        DigestSetting {
+            name: name.into(),
+            cadence: "daily".into(),
+            day: None,
+            at: "08:00".into(),
+        }
+    }
+
+    #[test]
+    fn absorbing_fills_the_gaps_and_the_kept_persons_word_stands() {
+        let mut kept = ContactSettings {
+            html_treatment: Some("app".into()),
+            remind_days: Some(3),
+            ..ContactSettings::default()
+        };
+        kept.set_stop(StoppedMarker::Todo, true);
+        let mut absorbed = ContactSettings {
+            arrival: Some(ContactArrival::Digest),
+            digest: Some(digest("Ledger")),
+            notify: true,
+            html_treatment: Some("paper".into()),
+            remind_days: Some(9),
+            archive_after_days: Some(30),
+            ..ContactSettings::default()
+        };
+        absorbed.set_stop(StoppedMarker::Question, true);
+
+        kept.absorb(&absorbed);
+
+        assert_eq!(
+            kept.arrival,
+            Some(ContactArrival::Digest),
+            "a gap, so the absorbed's"
+        );
+        assert_eq!(kept.digest, Some(digest("Ledger")), "with its digest");
+        assert_eq!(
+            kept.stopped(),
+            [StoppedMarker::Question, StoppedMarker::Todo]
+        );
+        assert!(kept.notify);
+        assert_eq!(
+            kept.html_treatment.as_deref(),
+            Some("app"),
+            "both held one: the kept's"
+        );
+        assert_eq!(kept.remind_days, Some(3));
+        assert_eq!(kept.archive_after_days, Some(30));
+    }
+
+    #[test]
+    fn a_pin_is_not_replaced_by_the_absorbed_ones_digest() {
+        let mut kept = ContactSettings {
+            arrival: Some(ContactArrival::Inbox),
+            ..ContactSettings::default()
+        };
+        kept.absorb(&ContactSettings {
+            arrival: Some(ContactArrival::Digest),
+            digest: Some(digest("Ledger")),
+            ..ContactSettings::default()
+        });
+        assert_eq!(kept.arrival, Some(ContactArrival::Inbox));
+        assert_eq!(kept.digest, None, "a digest only comes with its arrival");
     }
 
     #[test]

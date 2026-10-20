@@ -186,3 +186,65 @@ async fn a_treatment_is_found_by_any_address_of_the_person() {
         "one per address, for a reader that looks up by sender"
     );
 }
+
+#[tokio::test]
+async fn a_merge_carries_the_absorbed_persons_decisions_and_an_unjoin_takes_them_back() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.unwrap();
+    let contacts = ContactRepository::new(&connection);
+    let settings = ContactSettingsRepository::new(&connection);
+    let kept = person(&connection, "ada@work.example").await;
+    let absorbed = person(&connection, "ada@home.example").await;
+    let mut mine = ContactSettings {
+        html_treatment: Some("app".into()),
+        ..ContactSettings::default()
+    };
+    mine.set_stop(StoppedMarker::Todo, true);
+    settings.put(kept, &mine).await.unwrap();
+    let mut theirs = ContactSettings {
+        arrival: Some(ContactArrival::Digest),
+        digest: Some(digest("Ada's letters")),
+        html_treatment: Some("paper".into()),
+        ..ContactSettings::default()
+    };
+    theirs.set_stop(StoppedMarker::Question, true);
+    settings.put(absorbed, &theirs).await.unwrap();
+
+    let receipt = contacts
+        .join(kept, &[absorbed], "Ada Lovelace", None)
+        .await
+        .unwrap();
+
+    let after = settings.get(kept).await.unwrap();
+    assert_eq!(
+        after.arrival,
+        Some(ContactArrival::Digest),
+        "a gap: the absorbed's digest"
+    );
+    assert_eq!(after.digest, Some(digest("Ada's letters")));
+    assert_eq!(
+        after.html_treatment.as_deref(),
+        Some("app"),
+        "both held one: the kept's"
+    );
+    assert_eq!(
+        after.stopped(),
+        [StoppedMarker::Question, StoppedMarker::Todo]
+    );
+    // The engine reads her once, covering both addresses.
+    let derived = settings.derived().await.unwrap();
+    assert_eq!(derived.len(), 1);
+    assert_eq!(derived[0].addresses.len(), 2);
+
+    contacts.unjoin(&receipt).await.unwrap();
+    assert_eq!(
+        settings.get(kept).await.unwrap(),
+        mine,
+        "the kept person as they were"
+    );
+    assert_eq!(
+        settings.get(absorbed).await.unwrap(),
+        theirs,
+        "and the absorbed"
+    );
+}

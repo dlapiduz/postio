@@ -968,6 +968,8 @@ impl ContactRepository<'_> {
         let others: Vec<ContactId> = others.iter().copied().filter(|o| *o != into).collect();
         sql::in_scope(self.connection, |transaction| async move {
             let survivor = fields(&transaction, into).await?;
+            let prior_settings = read_settings(&transaction, into.get()).await?;
+            let mut settings = prior_settings.clone();
             let into_groups = groups_of(&transaction, into).await?;
             let mut restore = Vec::new();
             let mut added: Vec<postio_model::ContactGroupId> = Vec::new();
@@ -1001,6 +1003,7 @@ impl ContactRepository<'_> {
                         added.push(group);
                     }
                 }
+                settings.absorb(&read_settings(&transaction, other.get()).await?);
                 notes.extend(absorbed.note.into_iter().filter(|n| !n.trim().is_empty()));
                 if fallback_organization.is_none() {
                     fallback_organization = absorbed.organization;
@@ -1035,11 +1038,15 @@ impl ContactRepository<'_> {
             )
             .await?;
             refresh(&transaction, into.get()).await?;
+            if settings != prior_settings {
+                write_settings(&transaction, into.get(), &settings).await?;
+            }
             Ok(JoinReceipt {
                 into,
                 restore,
                 prior: survivor,
                 added_memberships: added,
+                prior_settings,
             })
         })
         .await
@@ -1091,6 +1098,7 @@ impl ContactRepository<'_> {
                 ],
             )
             .await?;
+            write_settings(&transaction, receipt.into.get(), &receipt.prior_settings).await?;
             refresh(&transaction, receipt.into.get()).await?;
             Ok(())
         })
@@ -2470,6 +2478,27 @@ async fn fold_sightings(
         .await?;
     }
     Ok(())
+}
+
+/// What `person` decided (see `contact_settings`), the default for no row.
+async fn read_settings(
+    connection: &Connection,
+    person: i64,
+) -> Result<postio_model::ContactSettings> {
+    super::ContactSettingsRepository::new(connection)
+        .get(ContactId::new(person))
+        .await
+}
+
+/// Records what `person` decided; the default removes the row.
+async fn write_settings(
+    connection: &Connection,
+    person: i64,
+    settings: &postio_model::ContactSettings,
+) -> Result<()> {
+    super::ContactSettingsRepository::new(connection)
+        .put(ContactId::new(person), settings)
+        .await
 }
 
 /// The newest message id the store held when contacts began, or 0 for a
