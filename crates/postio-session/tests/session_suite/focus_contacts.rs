@@ -328,3 +328,31 @@ async fn the_rules_the_database_holds_reach_the_engine_when_it_starts() {
             .is_some()
     );
 }
+
+#[tokio::test]
+async fn the_treatments_are_read_with_the_rules_so_a_reader_starts_from_memory() {
+    let s = setup("").await;
+    {
+        let connection = s.database.connect().await.unwrap();
+        let ada = ContactRepository::new(&connection)
+            .person_for_email(&at("ada@example.org"))
+            .await
+            .unwrap();
+        postio_storage::repository::ContactSettingsRepository::new(&connection)
+            .put(
+                ada,
+                &postio_model::ContactSettings {
+                    html_treatment: Some("paper".into()),
+                    ..postio_model::ContactSettings::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+    assert!(s.settings.treatments().is_empty());
+    s.settings.refresh(&s.database).await.unwrap();
+    assert_eq!(
+        s.settings.treatments(),
+        [("ada@example.org".to_owned(), "paper".to_owned())]
+    );
+}

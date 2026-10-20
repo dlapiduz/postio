@@ -38,6 +38,10 @@ pub struct FocusSettings {
     /// What correspondents decided (ADR 0048), added to `[focus]` wherever
     /// it is read. Loaded from the store by [`FocusSettings::refresh`].
     contacts: Arc<RwLock<Vec<ContactRule>>>,
+    /// Each sender's remembered treatment, `(address, "app" | "paper")`,
+    /// read with the rules in the same turn: a reader that looks senders up
+    /// in memory starts from it.
+    treatments: Arc<RwLock<Vec<(String, String)>>>,
     /// Told `[focus]` whenever it changes, besides the one `written` that
     /// Focus mode installs: a frontend that keeps its own copy.
     watchers: Arc<Mutex<Vec<OnFocusWritten>>>,
@@ -107,6 +111,11 @@ impl FocusSettings {
         // A warm reader, not a connection of its own: this is read as a window
         // opens, and opening a connection there is what its budget counts.
         let reader = database.read().await.map_err(failed)?;
+        let treatments = ContactSettingsRepository::new(&reader)
+            .treatments()
+            .await
+            .map_err(failed)?;
+        *self.treatments.write().expect("never poisoned") = treatments;
         let rules = ContactSettingsRepository::new(&reader)
             .derived()
             .await
@@ -121,6 +130,12 @@ impl FocusSettings {
             .collect();
         *self.contacts.write().expect("never poisoned") = rules;
         Ok(())
+    }
+
+    /// Each sender's remembered treatment, `(address, "app" | "paper")`, as
+    /// last read ([`FocusSettings::load_contacts`]).
+    pub fn treatments(&self) -> Vec<(String, String)> {
+        self.treatments.read().expect("never poisoned").clone()
     }
 
     /// Be told `[focus]` -- the file with what people decided -- whenever a

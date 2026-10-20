@@ -193,10 +193,9 @@ fn keep_treatments_in_the_store(host: &Host, client: &postio_client::Client) {
             });
         },
     ));
-    match postio_core::blocking::now(client.treatments()) {
-        Ok(chosen) => table.replace(chosen),
-        Err(error) => tracing::warn!(%error, "could not read the senders' treatments"),
-    }
+    // What the host read with the rules, as the window opened: no read of
+    // its own, which the window's opening budget would count.
+    table.replace(host.wiring().focus.treatments());
     postio_widgets::reader::use_store_treatments(Some(table));
 }
 

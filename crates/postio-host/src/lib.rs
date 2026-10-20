@@ -1463,10 +1463,16 @@ impl Inner {
             Req::Treatments => contacts::treatments(&self.wiring.database)
                 .await
                 .map_or_else(Resp::Failed, Resp::Treatments),
-            Req::SetTreatment { address, treatment } => done(
-                contacts::set_treatment(&self.wiring.database, &address, treatment.as_deref())
-                    .await,
-            ),
+            Req::SetTreatment { address, treatment } => {
+                let set =
+                    contacts::set_treatment(&self.wiring.database, &address, treatment.as_deref())
+                        .await;
+                if set.is_ok() {
+                    // The snapshot a reader starts from follows the change.
+                    let _ = self.wiring.focus.load_contacts(&self.wiring.database).await;
+                }
+                done(set)
+            }
             Req::DeleteDigestRule(name) => focus::rules::delete(self, name)
                 .await
                 .map_or_else(Resp::Failed, Resp::Count),
