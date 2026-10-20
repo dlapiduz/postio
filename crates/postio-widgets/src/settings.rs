@@ -640,6 +640,9 @@ pub struct ComposingControls {
     pub on_forward: SegmentedControl,
 }
 
+/// Takes a person's pin or marker back, through the host.
+type ContactTakeBack = std::rc::Rc<dyn Fn(&postio_ui::filtering::Undo)>;
+
 mod imp {
     use super::*;
 
@@ -727,7 +730,7 @@ mod imp {
         /// (ADR 0048): added to the Filtering page's lists.
         pub contact_rules: RefCell<Vec<postio_config::ContactRule>>,
         /// Takes a person's pin or marker back, through the host.
-        pub contact_take_back: RefCell<Option<std::rc::Rc<dyn Fn(&postio_ui::filtering::Undo)>>>,
+        pub contact_take_back: RefCell<Option<ContactTakeBack>>,
         /// The keys in force, for the lines that teach one.
         pub keymap: RefCell<postio_core::Keymap>,
         pub tag: gtk::Label,

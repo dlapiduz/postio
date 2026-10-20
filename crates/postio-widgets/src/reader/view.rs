@@ -154,9 +154,6 @@ pub struct Reader {
     /// Where the reader is in the document, so a redraw of the same
     /// content can put them back there. See [`Place`].
     place: Rc<Place>,
-    /// Where a change to the allow list -- an "Always allow", an "Always
-    /// for this sender" -- is saved.
-    allowlist_path: Rc<std::path::PathBuf>,
 }
 
 impl Drop for Reader {
@@ -376,7 +373,6 @@ impl Reader {
             loads: Rc::new(std::cell::Cell::new(0)),
             document: Rc::new(RefCell::new(String::new())),
             place,
-            allowlist_path: Rc::new(allowlist_path.clone()),
         };
 
         // The banner's buttons are children of `reader.banner`'s own widget
