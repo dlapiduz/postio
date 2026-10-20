@@ -60,6 +60,10 @@ pub struct FocusConfig {
     /// `[focus.vault]`: the Obsidian vault Focus captures into (FR-180).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vault: Option<FocusVault>,
+    /// What correspondents decided, which [`FocusConfig::with_contacts`]
+    /// added to the lists above. Never read from or written to the file.
+    #[serde(skip)]
+    pub contacts: Vec<crate::contact_rules::ContactRule>,
     /// Keys in `[focus]` this version of Postio does not know.
     #[serde(flatten)]
     pub extras: Extras,
@@ -119,6 +123,7 @@ impl Default for FocusConfig {
             digests: Vec::new(),
             model: None,
             vault: None,
+            contacts: Vec::new(),
             extras: Extras::default(),
         }
     }
