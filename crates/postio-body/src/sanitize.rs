@@ -1210,6 +1210,15 @@ pub(crate) fn contain_declarations(value: &str, remote: RemoteImages, tally: &Ta
             tally.refuse(Refused::Unit(unit));
             continue;
         }
+        // Before the single-URL handling below, which reads only the first
+        // `url(` and so could not see `image-set("https://..")`, a second
+        // layer after a `cid:` one, an escaped `\75 rl(`, or `src("..")`
+        // (#1926). Anything remote anywhere in the value drops the whole
+        // declaration; the panel counts it with the images.
+        if remote == RemoteImages::Blocked && names_remote(declared) {
+            tally.block();
+            continue;
+        }
         if let Some(url) = css_url(declared) {
             if names_foreign_parts(&url) {
                 tally.refuse(Refused::Resource(FOREIGN_PARTS));
@@ -1234,6 +1243,50 @@ pub(crate) fn contain_declarations(value: &str, remote: RemoteImages, tally: &Ta
         kept.push(Cow::Borrowed(declaration.trim()));
     }
     kept.join("; ")
+}
+
+/// Whether a declaration's value names a remote resource in any spelling.
+///
+/// Read as CSS tokens, so an escaped function name (`\75 rl(`) arrives as
+/// the function it is, and a string handed to `image-set()` or `src()` is a
+/// string like any other. Anything remote inside a string or an unquoted
+/// `url()` counts, at any depth. A plain-text scan for a scheme backs it, for
+/// the spellings a browser would reject but a later parser might not.
+fn names_remote(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    if ["http://", "https://", "ftp://"]
+        .iter()
+        .any(|scheme| lower.contains(scheme))
+    {
+        return true;
+    }
+    fn walk(parser: &mut cssparser::Parser<'_, '_>) -> bool {
+        use cssparser::Token;
+        while let Ok(token) = parser.next_including_whitespace_and_comments().cloned() {
+            match token {
+                Token::QuotedString(text) | Token::UnquotedUrl(text) if is_remote(&text) => {
+                    return true;
+                }
+                Token::Function(_)
+                | Token::ParenthesisBlock
+                | Token::SquareBracketBlock
+                | Token::CurlyBracketBlock => {
+                    let inner = parser
+                        .parse_nested_block(|nested| {
+                            Ok::<_, cssparser::ParseError<'_, ()>>(walk(nested))
+                        })
+                        .unwrap_or(false);
+                    if inner {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+    let mut input = cssparser::ParserInput::new(value);
+    walk(&mut cssparser::Parser::new(&mut input))
 }
 
 /// Split on `;`, except inside `url(...)` or a quoted string.

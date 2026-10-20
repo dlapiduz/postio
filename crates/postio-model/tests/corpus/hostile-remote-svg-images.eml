@@ -1,0 +1,17 @@
+Message-ID: <hostile-remote-svg-images@abuse.example.com>
+Date: Mon, 19 Oct 2026 09:00:00 +0000
+From: Beacon Works <beacons@abuse.example.com>
+To: Ren Ishida <ren.ishida@example.net>
+Subject: inline svg with image href, xlink:href, 
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<html><body>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="10" height="10">
+<style>@import url("https://svgstyle.vector.example.com/s.css"); rect { fill: url("https://svgfill.vector.example.com/p.svg#x"); }</style>
+<image href="https://svgimage.vector.example.com/a.png" width="10" height="10"/>
+<image xlink:href="https://svgxlink.vector.example.com/b.png" width="10" height="10"/>
+<use href="https://svguse.vector.example.com/sprite.svg#icon"/>
+<filter id="f"><feImage href="https://svgfe.vector.example.com/c.png"/></filter>
+</svg><p>Vector art.</p></body></html>

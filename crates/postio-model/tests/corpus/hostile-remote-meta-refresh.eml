@@ -1,0 +1,15 @@
+Message-ID: <hostile-remote-meta-refresh@abuse.example.com>
+Date: Mon, 19 Oct 2026 09:00:00 +0000
+From: Beacon Works <beacons@abuse.example.com>
+To: Ren Ishida <ren.ishida@example.net>
+Subject: meta http-equiv refresh and a link prefe
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<html><head>
+<meta http-equiv="refresh" content="0; url=https://refresh.vector.example.com/landing">
+<meta http-equiv="Content-Security-Policy" content="img-src https://csp.vector.example.com">
+<link rel="prefetch" href="https://prefetch.vector.example.com/next">
+<link rel="dns-prefetch" href="https://dns.vector.example.com">
+</head><body><p>Redirected.</p></body></html>

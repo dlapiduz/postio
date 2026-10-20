@@ -1,0 +1,15 @@
+Message-ID: <hostile-remote-stylesheet-link@abuse.example.com>
+Date: Mon, 19 Oct 2026 09:00:00 +0000
+From: Beacon Works <beacons@abuse.example.com>
+To: Ren Ishida <ren.ishida@example.net>
+Subject: A link rel=stylesheet, a link rel=preloa
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<html><head>
+<link rel="stylesheet" href="https://css.vector.example.com/theme.css">
+<link rel="preload" as="image" href="https://preload.vector.example.com/hero.png">
+<link rel="icon" href="https://icon.vector.example.com/favicon.ico">
+<base href="https://base.vector.example.com/">
+</head><body><p>Stylesheet by link.</p><img src="relative.png" alt="resolved against base"></body></html>

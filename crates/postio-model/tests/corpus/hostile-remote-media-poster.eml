@@ -1,0 +1,13 @@
+Message-ID: <hostile-remote-media-poster@abuse.example.com>
+Date: Mon, 19 Oct 2026 09:00:00 +0000
+From: Beacon Works <beacons@abuse.example.com>
+To: Ren Ishida <ren.ishida@example.net>
+Subject: video poster and src, audio, source and 
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<html><body>
+<video poster="https://poster.vector.example.com/p.png" src="https://video.vector.example.com/v.mp4" controls><source src="https://vsource.vector.example.com/v.webm" type="video/webm"><track src="https://track.vector.example.com/t.vtt" kind="captions"></video>
+<audio src="https://audio.vector.example.com/a.mp3" controls><source src="https://asource.vector.example.com/a.ogg"></audio>
+<p>Media.</p></body></html>
