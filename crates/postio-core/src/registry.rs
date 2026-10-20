@@ -433,11 +433,13 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "j",
         alternate_bindings: &["Down"],
         // And Focus's Filtered view and digest window, whose rows are
-        // walked as the list's are (screen 21's footer).
+        // walked as the list's are (screen 21's footer), and the Contacts
+        // list.
         contexts: ctx(LIST_SURFACES)
             .with(Context::Filtered)
             .with(Context::Digest)
-            .with(Context::Results),
+            .with(Context::Results)
+            .with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -448,11 +450,13 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "k",
         alternate_bindings: &["Up"],
         // And Focus's Filtered view and digest window, whose rows are
-        // walked as the list's are (screen 21's footer).
+        // walked as the list's are (screen 21's footer), and the Contacts
+        // list.
         contexts: ctx(LIST_SURFACES)
             .with(Context::Filtered)
             .with(Context::Digest)
-            .with(Context::Results),
+            .with(Context::Results)
+            .with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -2508,7 +2512,7 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "i",
         alternate_bindings: &[],
         // Not the search bar: `i` there is a letter being typed.
-        contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
+        contexts: ctx(MESSAGE_SURFACES).with(Context::Results).with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
@@ -2581,6 +2585,26 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::ContactsFilter,
         title: "Filter contacts",
         default_binding: "/",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsTabPrevious,
+        title: "Previous kind tab",
+        default_binding: "[",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsTabNext,
+        title: "Next kind tab",
+        default_binding: "]",
         alternate_bindings: &[],
         contexts: ctx(CONTACTS),
         destructive: false,
@@ -3206,6 +3230,8 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             | (ActionId::Builtin(C::ContactShowMail), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactCompose), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactsFilter), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactsTabPrevious), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactsTabNext), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactsToggleEveryone), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactJoin), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactAddAddress), Platform::Freedesktop)
@@ -3300,7 +3326,7 @@ mod tests {
 
     /// What only the Mac draws, until Linux adopts it: the search dropdown
     /// and results view (spec 010 D23, D25) and Contacts (specs/005).
-    const NOT_ON_LINUX_YET: [CommandId; 45] = [
+    const NOT_ON_LINUX_YET: [CommandId; 47] = [
         CommandId::ShowAllResults,
         CommandId::ForgetRecent,
         CommandId::ExcludeSuggestion,
@@ -3328,6 +3354,8 @@ mod tests {
         CommandId::ContactShowMail,
         CommandId::ContactCompose,
         CommandId::ContactsFilter,
+        CommandId::ContactsTabPrevious,
+        CommandId::ContactsTabNext,
         CommandId::ContactsToggleEveryone,
         CommandId::ContactJoin,
         CommandId::ContactAddAddress,

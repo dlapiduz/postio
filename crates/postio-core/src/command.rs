@@ -785,6 +785,10 @@ commands! {
     ContactCompose => "contact_compose",
     /// Move the keyboard to the Contacts filter.
     ContactsFilter => "contacts_filter",
+    /// The kind tab before this one.
+    ContactsTabPrevious => "contacts_tab_previous",
+    /// The kind tab after this one.
+    ContactsTabNext => "contacts_tab_next",
     /// Show everyone from mail, or only the people the user made or wrote to.
     ContactsToggleEveryone => "contacts_toggle_everyone",
     /// Merge the marked people, or a suggested pair, into one person

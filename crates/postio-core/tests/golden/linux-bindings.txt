@@ -159,6 +159,8 @@ contact_set_arrival
 contact_show_mail	
 contact_compose	
 contacts_filter	
+contacts_tab_previous	
+contacts_tab_next	
 contacts_toggle_everyone	
 contact_join	
 contact_add_address	

@@ -495,6 +495,14 @@ impl ContactsWindow {
         self.pages.values().map(Vec::len).sum()
     }
 
+    /// The row at `index` if its page is resident, without touching the
+    /// bound's order or asking for anything.
+    pub fn peek(&self, index: u32) -> Option<&ContactListRow> {
+        self.pages
+            .get(&(index / crate::list::PAGE_SIZE))
+            .and_then(|rows| rows.get((index % crate::list::PAGE_SIZE) as usize))
+    }
+
     /// Where a person sits, if their page is resident.
     pub fn position_of(&self, id: postio_model::ContactId) -> Option<u32> {
         self.pages.iter().find_map(|(page, rows)| {

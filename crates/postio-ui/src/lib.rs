@@ -21,6 +21,7 @@ pub mod command_bar;
 pub mod compose;
 pub mod contact_popover;
 pub mod contacts;
+pub mod contacts_view;
 pub mod conversation;
 pub mod digest;
 pub mod dwell;

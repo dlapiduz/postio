@@ -254,6 +254,8 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::ContactShowMail
         | C::ContactCompose
         | C::ContactsFilter
+        | C::ContactsTabPrevious
+        | C::ContactsTabNext
         | C::ContactsToggleEveryone
         | C::ContactJoin
         | C::ContactAddAddress

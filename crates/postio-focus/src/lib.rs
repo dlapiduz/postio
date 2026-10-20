@@ -26,6 +26,7 @@ mod capture;
 mod compose;
 mod confirm;
 mod contact_popover;
+mod contacts;
 mod cursor;
 mod digest;
 mod dropdown;
@@ -44,6 +45,7 @@ pub use bar::{BarLine, BarLineKind, BarMode, BarView, Found, FoundRow, PlacesRea
 pub use capture::{CaptureProject, CaptureView};
 pub use compose::{AUTOSAVE, ComposerKind};
 pub use confirm::Confirm;
+pub use contacts::{ContactsView, FILTER_CAP};
 pub use cursor::{NoRows, RowFacts, Rows};
 pub use digest::{
     DigestCard, DigestEmail, DigestLine, DigestStatement, DigestTopic, DigestView, RulePreviewLine,
@@ -100,6 +102,9 @@ pub struct Capabilities {
     /// (specs/011-focus-contacts S4). The Mac has it; Linux keeps the words
     /// in the header until it adopts Contacts (S13).
     pub people_search: bool,
+    /// The Contacts view, a mode of the main window (specs/011-focus-contacts
+    /// S7). The Mac has it; Linux adopts it at S13.
+    pub contacts_view: bool,
 }
 
 impl Policy {
@@ -113,6 +118,7 @@ impl Policy {
                 stacking: linux,
                 results_view: !linux,
                 people_search: !linux,
+                contacts_view: !linux,
             },
         }
     }
@@ -326,6 +332,12 @@ pub enum Input {
     /// A click on a segment of the popover's arrival control: the same as
     /// the arrow that lands there.
     ContactArrival(postio_model::ContactArrival),
+    /// A kind tab was clicked in the Contacts view.
+    ContactsTab(postio_model::ContactTab),
+    /// The Contacts filter holds this now.
+    ContactsFilterTyped(String),
+    /// A click on the Contacts row at this index.
+    ContactsPoint(u32),
     /// Something was written in the open composer: a recipient, the
     /// subject, a word of the body. What its autosave waits out.
     ComposerEdited,
@@ -627,6 +639,23 @@ pub enum Intent {
     ContactPopover(Box<postio_ui::contact_popover::PopoverView>),
     /// Open a composer to this address, as a `mailto:` link would.
     WriteTo(String),
+    /// Draw the Contacts view's frame, whole. The controller has put it on
+    /// the stack as a [`SurfaceKind::Contacts`].
+    Contacts(Box<contacts::ContactsView>),
+    /// Rows of the Contacts list landed or the list started over: draw
+    /// `count` rows from `first`, or all of them with a count of 0.
+    ContactsRows {
+        /// The first row.
+        first: u32,
+        /// How many; 0 for the whole list.
+        count: u32,
+    },
+    /// The Contacts cursor is on this row now.
+    ContactsCursor(Option<u32>),
+    /// The card beside the list, whole; `None` while it is being read.
+    ContactsCard(Option<Box<postio_ui::contacts_view::CardView>>),
+    /// Put the keyboard in the Contacts filter.
+    ContactsFocusFilter,
 }
 
 /// What the controller needs from the engine. [`perform()`] is the one place
@@ -952,6 +981,41 @@ pub enum Request {
         /// The capture's stamp, echoed in the answer.
         stamp: u64,
     },
+    /// The strip's counts and the review queue.
+    ContactsOverview,
+    /// A page of the Contacts list for a tab.
+    ContactsPage {
+        /// The tab.
+        tab: postio_model::ContactTab,
+        /// Past this row.
+        after: Option<(String, postio_model::ContactId)>,
+        /// Then this many rows.
+        skip: u32,
+        /// At most this many.
+        limit: u32,
+        /// The list's generation, echoed in the answer.
+        stamp: u64,
+        /// The page number, echoed in the answer.
+        page: u32,
+    },
+    /// The people in a tab matching what was typed.
+    ContactsFiltered {
+        /// The tab.
+        tab: postio_model::ContactTab,
+        /// What was typed.
+        text: String,
+        /// At most this many.
+        cap: u32,
+        /// The filter's stamp, echoed in the answer.
+        stamp: u64,
+    },
+    /// A person's card.
+    ContactCard {
+        /// Whose.
+        person: postio_model::ContactId,
+        /// The card's stamp, echoed in the answer.
+        stamp: u64,
+    },
     /// The person at `address`, at a glance, for the popover.
     ContactGlance {
         /// The address clicked or aimed at.
@@ -1238,6 +1302,31 @@ pub enum Reply {
         /// Whether it was written, or the sentence saying why not.
         answer: Result<(), String>,
     },
+    /// The answer to [`Request::ContactsOverview`].
+    ContactsOverview(Result<postio_model::ContactsOverview, String>),
+    /// The answer to [`Request::ContactsPage`].
+    ContactsPage {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// The page.
+        page: u32,
+        /// The rows, or why not.
+        answer: Result<postio_model::ContactsPageRead, String>,
+    },
+    /// The answer to [`Request::ContactsFiltered`].
+    ContactsFiltered {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// The people, or why not.
+        answer: Result<Vec<postio_model::ContactListRow>, String>,
+    },
+    /// The answer to [`Request::ContactCard`].
+    ContactCard {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// The card, `None` for someone gone, or why not.
+        answer: Result<Option<Box<postio_model::ContactCardRead>>, String>,
+    },
     /// The answer to [`Request::ContactGlance`]: the person, or `None` for an
     /// address the store never saw.
     ContactGlance {
@@ -1291,6 +1380,7 @@ pub struct FocusController {
     rule: Option<digest::RuleDialog>,
     capture: Option<capture::Capture>,
     contact_popover: Option<contact_popover::ContactPopover>,
+    contacts: Option<contacts::Contacts>,
     confirm: Option<confirm::Asked>,
     /// The composer, and the composition in it.
     compose: compose::Compose,
@@ -1330,6 +1420,7 @@ impl FocusController {
             rule: None,
             capture: None,
             contact_popover: None,
+            contacts: None,
             confirm: None,
             compose: compose::Compose::default(),
             stamps: 0,
@@ -1491,6 +1582,10 @@ impl FocusController {
                 | Reply::Vault { .. }
                 | Reply::Captured { .. }
                 | Reply::ContactGlance { .. }
+                | Reply::ContactsOverview(_)
+                | Reply::ContactsPage { .. }
+                | Reply::ContactsFiltered { .. }
+                | Reply::ContactCard { .. }
                 | Reply::FoundMessage { .. }
                 | Reply::DraftBehind { .. }),
             ) => {
@@ -1580,6 +1675,7 @@ impl FocusController {
                 steps.extend(self.feed.event(&event));
                 steps.extend(self.hear_sync(&event));
                 steps.extend(self.filtered_event(&event));
+                steps.extend(self.contacts_heard(&event));
                 self.effects(steps)
             }
             Input::Config(config) => {
@@ -1672,6 +1768,18 @@ impl FocusController {
             }
             Input::ContactPopoverAt(address) => {
                 let steps = self.open_contact_popover(Some(address), rows);
+                self.effects(steps)
+            }
+            Input::ContactsTab(tab) => {
+                let steps = self.contacts_tab(tab);
+                self.effects(steps)
+            }
+            Input::ContactsFilterTyped(text) => {
+                let steps = self.contacts_filter_typed(text);
+                self.effects(steps)
+            }
+            Input::ContactsPoint(index) => {
+                let steps = self.contacts_point(index);
                 self.effects(steps)
             }
             Input::ContactArrival(arrival) => {
@@ -1854,6 +1962,7 @@ impl FocusController {
             }
             CommandId::DigestRule => return self.new_rule(rows),
             CommandId::ContactPopover => return self.open_contact_popover(None, rows),
+            CommandId::OpenContacts => return self.open_contacts(),
             _ => {}
         }
         // A message open that is on no cursor row -- a search hit, a digest's
@@ -1981,6 +2090,9 @@ impl FocusController {
             }
             Some(SurfaceKind::ContactPopover) if self.contact_popover.is_some() => {
                 return self.contact_popover_command(id, rows);
+            }
+            Some(SurfaceKind::Contacts) if self.contacts.is_some() => {
+                return self.contacts_command(id, rows);
             }
             _ => {}
         }
@@ -2136,6 +2248,7 @@ impl FocusController {
             Some(SurfaceKind::Digest) => Self::digest_answers(id),
             Some(SurfaceKind::Capture) => Self::capture_answers(id),
             Some(SurfaceKind::ContactPopover) => Self::contact_popover_answers(id),
+            Some(SurfaceKind::Contacts) => Self::contacts_answers(id),
             _ => false,
         };
         if own {
@@ -2165,6 +2278,7 @@ impl FocusController {
                 | CommandId::CaptureNote
                 | CommandId::DigestRule
                 | CommandId::ContactPopover
+                | CommandId::OpenContacts
         ) || bar::goes(id)
             || compose::compose_key(id)
             || pickers::opens_picker(id)
@@ -2337,6 +2451,9 @@ impl FocusController {
         if !self.surfaces.has(SurfaceKind::ContactPopover) {
             self.contact_popover = None;
         }
+        if !self.surfaces.has(SurfaceKind::Contacts) {
+            self.contacts = None;
+        }
     }
 
     /// An answer for one of the surfaces over the list.
@@ -2351,6 +2468,10 @@ impl FocusController {
             | Reply::RuleSaved { .. }) => self.rule_reply(reply),
             reply @ (Reply::Vault { .. } | Reply::Captured { .. }) => self.capture_reply(reply),
             Reply::ContactGlance { stamp, glance } => self.contact_popover_reply(stamp, glance),
+            reply @ (Reply::ContactsOverview(_)
+            | Reply::ContactsPage { .. }
+            | Reply::ContactsFiltered { .. }
+            | Reply::ContactCard { .. }) => self.contacts_reply(reply),
             Reply::FoundMessage { message, row } => self.link_found(message, row, rows),
             Reply::DraftBehind { command, draft, .. } => self.draft_behind(command, draft),
             _ => Vec::new(),

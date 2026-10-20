@@ -263,6 +263,8 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::ContactShowMail
         | C::ContactCompose
         | C::ContactsFilter
+        | C::ContactsTabPrevious
+        | C::ContactsTabNext
         | C::ContactsToggleEveryone
         | C::ContactJoin
         | C::ContactAddAddress
