@@ -123,6 +123,17 @@ pub fn the_open_message_s_unsubscribe_notice_logs_it_and_the_privacy_section_lis
     });
 }
 
+/// The offer to clear what the list sent opens once the unsubscribe lands
+/// (#1931); these cases are about the log, so they answer it with Esc.
+async fn decline_the_offer(window: &postio_gtk::window::FocusWindow) {
+    assert!(
+        crate::settle_until(async || window.sweep_offer().is_some()).await,
+        "the offer to clear the list never came"
+    );
+    support::press(window, "Escape", gtk::gdk::ModifierType::empty());
+    assert!(crate::settle_until(async || window.sweep_offer().is_none()).await);
+}
+
 /// Open Settings' Privacy section: it lists the activation.
 async fn privacy_lists_an_activation(window: &postio_gtk::window::FocusWindow) {
     support::deliver_with(window, "comma", gtk::gdk::ModifierType::CONTROL_MASK);
@@ -182,6 +193,7 @@ pub fn u_in_a_digest_logs_the_activation_and_the_privacy_section_lists_it() {
             window.toast_showing()
         );
 
+        decline_the_offer(&window).await;
         support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
         crate::settle();
         privacy_lists_an_activation(&window).await;
@@ -264,7 +276,7 @@ pub fn leaving_a_list_offers_to_delete_what_it_sent_and_esc_keeps_it() {
         let dialog = window.sweep_offer().expect("the offer again");
         // The verb's own key answers it, as the label beside the button says.
         let _ = dialog;
-        support::keys(&window, &["#"]);
+        support::press(&window, "numbersign", gtk::gdk::ModifierType::SHIFT_MASK);
         assert!(
             crate::settle_until(async || {
                 window
