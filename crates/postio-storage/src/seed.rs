@@ -158,7 +158,17 @@ pub async fn seed_small_downloaded(database: &Store, seed: u64) -> SeedReport {
 /// so one more fixture re-deals every mailbox after it. A fixture added for
 /// a parser test goes here; one that belongs in the demo is added to the seed
 /// together with the storyboards' counts (`seed_is_honest.rs` says when).
-const UNSEEDED: &[&str] = &["encoded-word-control-chars-in-header"];
+const UNSEEDED: &[&str] = &[
+    "encoded-word-control-chars-in-header",
+    "hostile-remote-attribute-variants",
+    "hostile-remote-css-obfuscated",
+    "hostile-remote-frames-embeds",
+    "hostile-remote-media-poster",
+    "hostile-remote-meta-refresh",
+    "hostile-remote-srcset-picture",
+    "hostile-remote-stylesheet-link",
+    "hostile-remote-svg-images",
+];
 
 /// The corpus fixtures every small seed files, the extra account's included.
 fn seeded_corpus() -> impl Iterator<Item = &'static test_corpus::Fixture> {
