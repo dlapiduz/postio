@@ -317,7 +317,7 @@ CREATE TABLE IF NOT EXISTS body_failures (
     // the new `vcard` column holds a whole imported card, which it is not.
     Migration {
         from: stamp(0x84e7_72c0),
-        to: FINGERPRINT,
+        to: stamp(0xd831_3529),
         statements: r#"
 -- 1. What the old tables held, set aside.
 CREATE TABLE contacts_rows AS SELECT * FROM contacts;
@@ -566,6 +566,35 @@ DROP TABLE contact_groups_rows;
 DROP TABLE contacts_rows;
 "#,
     },
+    // `feature/focus-contacts`: Contacts for Focus (specs/011-focus-contacts S1).
+    // A contact gains a kind, a saved mark, a name's parts and style, and the
+    // fields the card edits; an address gains a label and a bounce. Columns
+    // with defaults and two indexes, so it copies no row. The one backfill is
+    // `saved_at`: a person the user made or imported was asked for (005 FR-005),
+    // saved from when they were created.
+    Migration {
+        from: stamp(0xd831_3529),
+        to: FINGERPRINT,
+        statements: r#"
+ALTER TABLE contacts ADD COLUMN kind TEXT NOT NULL DEFAULT 'person' CHECK (kind IN ('person', 'company', 'list', 'newsletter', 'automated'));
+ALTER TABLE contacts ADD COLUMN kind_source TEXT NOT NULL DEFAULT 'detected' CHECK (kind_source IN ('detected', 'user'));
+ALTER TABLE contacts ADD COLUMN kind_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE contacts ADD COLUMN saved_at INTEGER;
+ALTER TABLE contacts ADD COLUMN ignored_at INTEGER;
+ALTER TABLE contacts ADD COLUMN given_name TEXT;
+ALTER TABLE contacts ADD COLUMN family_name TEXT;
+ALTER TABLE contacts ADD COLUMN show_as TEXT NOT NULL DEFAULT 'full' CHECK (show_as IN ('full', 'first', 'last_first', 'custom'));
+ALTER TABLE contacts ADD COLUMN title TEXT;
+ALTER TABLE contacts ADD COLUMN photo_blob_id TEXT;
+ALTER TABLE contacts ADD COLUMN note_path TEXT;
+ALTER TABLE contacts ADD COLUMN sync_rev INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE addresses ADD COLUMN label TEXT CHECK (label IN ('work', 'personal', 'old'));
+ALTER TABLE addresses ADD COLUMN bounced_at INTEGER;
+UPDATE contacts SET saved_at = created_at WHERE source IN ('user', 'import');
+CREATE INDEX idx_contacts_kind_list ON contacts (state, kind, sort_key, id);
+CREATE INDEX idx_contacts_saved ON contacts (saved_at, kind, written);
+"#,
+    },
 ];
 
 /// A mailbox's `bodies_owed` less the messages in it the server has refused
@@ -672,7 +701,11 @@ CREATE TABLE addresses (
     -- The person this address belongs to, or NULL. An address has at most
     -- one owner because this is a column (specs/005-contacts R1). NULL for
     -- the user's own addresses and for one only ever seen in a draft.
-    contact_id          INTEGER REFERENCES contacts(id) ON DELETE SET NULL
+    contact_id          INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+    -- What the user calls this address of a person.
+    label               TEXT    CHECK (label IN ('work', 'personal', 'old')),
+    -- When a delivery failure named this address.
+    bounced_at          INTEGER
 );
 
 CREATE TABLE attachments (
@@ -833,7 +866,32 @@ CREATE TABLE contacts (
     vcard               TEXT,
     created_at          INTEGER NOT NULL,
     -- Also the vCard `REV`.
-    updated_at          INTEGER NOT NULL
+    updated_at          INTEGER NOT NULL,
+    -- What sort of correspondent this is (specs/011-focus-contacts). Decided by
+    -- the detector unless the user chose, and `kind_version` is the detector
+    -- that decided, so a better one can re-decide every detected row.
+    kind                TEXT    NOT NULL DEFAULT 'person'
+                                CHECK (kind IN ('person', 'company', 'list',
+                                                'newsletter', 'automated')),
+    kind_source         TEXT    NOT NULL DEFAULT 'detected'
+                                CHECK (kind_source IN ('detected', 'user')),
+    kind_version        INTEGER NOT NULL DEFAULT 0,
+    -- When the user saved this person; NULL for one only known from mail,
+    -- however often they write. Not the same as `listed`.
+    saved_at            INTEGER,
+    -- "Ignore sender": when the user asked not to be shown this person.
+    ignored_at          INTEGER,
+    given_name          TEXT,
+    family_name         TEXT,
+    show_as             TEXT    NOT NULL DEFAULT 'full'
+                                CHECK (show_as IN ('full', 'first', 'last_first', 'custom')),
+    title               TEXT,
+    -- Blob store key of a photo; local only.
+    photo_blob_id       TEXT,
+    -- A linked vault note, relative to the vault.
+    note_path           TEXT,
+    -- Bumped only when a field that syncs changes.
+    sync_rev            INTEGER NOT NULL DEFAULT 0
 );
 
 -- Who the person has written to (spec 007): one row per address they have
@@ -1551,6 +1609,10 @@ CREATE INDEX idx_contacts_rank ON contacts (
     times_seen DESC,
     id
 );
+
+CREATE INDEX idx_contacts_kind_list ON contacts (state, kind, sort_key, id);
+
+CREATE INDEX idx_contacts_saved ON contacts (saved_at, kind, written);
 
 CREATE INDEX idx_contacts_name_key ON contacts (state, name_key);
 

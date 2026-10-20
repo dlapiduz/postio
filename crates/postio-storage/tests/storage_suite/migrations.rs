@@ -364,3 +364,86 @@ async fn the_contacts_of_the_build_before_become_people_who_own_addresses() {
         3
     );
 }
+
+/// What the build before Focus's Contacts held: a person the user made, one
+/// the user imported, and one only the mail knew, written to or not.
+const HELD_PEOPLE: &str = "
+INSERT INTO addresses (id, address, address_normalized)
+     VALUES (1, 'ada@example.org', 'ada@example.org'),
+            (2, 'bob@example.org', 'bob@example.org'),
+            (3, 'carol@example.org', 'carol@example.org');
+INSERT INTO contacts (id, name, source, state, preferred_address, written,
+                      created_at, updated_at)
+     VALUES (1, 'Ada', 'user', 'live', 1, 0, 500, 600),
+            (2, 'Bob', 'import', 'live', 2, 0, 700, 800),
+            (3, NULL, 'mail', 'live', 3, 4, 900, 900);
+UPDATE addresses SET contact_id = id;
+";
+
+/// A person's id, when they were saved, and the defaults every one starts at.
+type Kinded = (i64, Option<i64>, String, String, i64, String);
+
+#[tokio::test]
+async fn people_the_user_asked_for_are_saved_and_everyone_is_a_detected_person() {
+    let before = recorded()
+        .into_iter()
+        .find(|(file, _)| file == "d8313529.sql")
+        .expect("the schema before Focus's Contacts is recorded")
+        .1;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("postio.db");
+    Store::create_at_schema(&path, &test_support::key(), &before, HELD_PEOPLE)
+        .await
+        .expect("a store at the earlier schema is written");
+    let store = Store::open(&path, &test_support::key())
+        .await
+        .expect("it migrates");
+    let connection = store.connect().await.expect("a connection");
+
+    let rows: Vec<Kinded> = sql::all_unbounded(
+        &connection,
+        "SELECT id, saved_at, kind, kind_source, kind_version, show_as
+           FROM contacts ORDER BY id",
+        (),
+        |row| {
+            Ok((
+                row.int(0)?,
+                row.opt_int(1)?,
+                row.text(2)?,
+                row.text(3)?,
+                row.int(4)?,
+                row.text(5)?,
+            ))
+        },
+    )
+    .await
+    .unwrap();
+    let person = |id, saved| {
+        (
+            id,
+            saved,
+            "person".to_owned(),
+            "detected".to_owned(),
+            0,
+            "full".to_owned(),
+        )
+    };
+    assert_eq!(
+        rows,
+        [
+            // Saved when the user made or imported them (005 FR-005), at the
+            // time they did; the user writing to someone is not a save.
+            person(1, Some(500)),
+            person(2, Some(700)),
+            person(3, None),
+        ]
+    );
+    let marked: i64 = sql::scalar(
+        &connection,
+        "SELECT count(*) FROM addresses WHERE bounced_at IS NOT NULL OR label IS NOT NULL",
+        (),
+    )
+    .await
+    .unwrap();
+    assert_eq!(marked, 0, "no address starts labelled or bounced");
+}

@@ -26,9 +26,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::Utc;
 use postio_model::card::{ImportSummary, Member, ParsedCard, ParsedGroup, ParsedPerson};
 use postio_model::{
-    AddressId, AddressMove, Contact, ContactAddress, ContactDetail, ContactId, ContactListRow,
-    ContactSource, ContactState, ContactView, EmailAddress, JoinReceipt, JoinSuggestion, Message,
-    PersonEdit, PersonFields, SuggestionReason,
+    AddressId, AddressMove, Contact, ContactAddress, ContactDetail, ContactId, ContactKind,
+    ContactListRow, ContactSource, ContactState, ContactView, EmailAddress, JoinReceipt,
+    JoinSuggestion, KindSource, Message, PersonEdit, PersonFields, ShowAs, SuggestionReason,
 };
 
 use super::{from_millis, to_millis};
@@ -46,15 +46,17 @@ pub struct ContactRepository<'a> {
 
 /// The person's columns, in the order [`read_person`] reads them.
 pub(super) const PERSON_COLUMNS: &str = "id, name, organization, note, source, state, \
-     preferred_address, seen_name, times_seen, last_seen_at, written";
+     preferred_address, seen_name, times_seen, last_seen_at, written, kind, kind_source, \
+     saved_at, given_name, family_name, show_as, title";
 
 /// [`PERSON_COLUMNS`], qualified by `c.` for a join.
 pub(super) const PERSON_COLUMNS_C: &str = "c.id, c.name, c.organization, c.note, c.source, \
-     c.state, c.preferred_address, c.seen_name, c.times_seen, c.last_seen_at, c.written";
+     c.state, c.preferred_address, c.seen_name, c.times_seen, c.last_seen_at, c.written, \
+     c.kind, c.kind_source, c.saved_at, c.given_name, c.family_name, c.show_as, c.title";
 
 /// How many columns [`PERSON_COLUMNS`] is, so a joined row can find what
 /// follows it.
-const PERSON_WIDTH: usize = 11;
+const PERSON_WIDTH: usize = 18;
 
 /// The completion order: the address book above the mail, then recency, then
 /// frequency (the address-book decision's Q6, inherited by specs/005-contacts).
@@ -2306,6 +2308,9 @@ fn put_preferred_first(person: &mut Contact) {
 pub(super) fn read_person(row: &Row) -> Result<Contact> {
     let source: String = row.col(4)?;
     let state: String = row.col(5)?;
+    let kind: String = row.col(11)?;
+    let kind_source: String = row.col(12)?;
+    let show_as: String = row.col(16)?;
     Ok(Contact {
         id: ContactId::new(row.col(0)?),
         name: row.col(1)?,
@@ -2325,6 +2330,22 @@ pub(super) fn read_person(row: &Row) -> Result<Contact> {
         times_seen: row.col(8)?,
         last_seen_at: row.col::<Option<i64>>(9)?.map(from_millis),
         written: row.col(10)?,
+        kind: ContactKind::from_name(&kind).ok_or_else(|| Error::UnknownEnum {
+            column: "contacts.kind",
+            value: kind.clone(),
+        })?,
+        kind_source: KindSource::from_name(&kind_source).ok_or_else(|| Error::UnknownEnum {
+            column: "contacts.kind_source",
+            value: kind_source.clone(),
+        })?,
+        saved_at: row.col::<Option<i64>>(13)?.map(from_millis),
+        given_name: row.col(14)?,
+        family_name: row.col(15)?,
+        show_as: ShowAs::from_name(&show_as).ok_or_else(|| Error::UnknownEnum {
+            column: "contacts.show_as",
+            value: show_as.clone(),
+        })?,
+        title: row.col(17)?,
     })
 }
 
