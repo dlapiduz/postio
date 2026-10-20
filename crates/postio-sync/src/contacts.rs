@@ -40,9 +40,12 @@ pub(crate) async fn record(
     account: &Account,
     message: &Message,
 ) -> Result<()> {
-    ContactRepository::new(connection)
-        .record_message(message, &own_addresses(account))
-        .await?;
+    let own = own_addresses(account);
+    let contacts = ContactRepository::new(connection);
+    contacts.record_message(message, &own).await?;
+    // An answer to the user's mail from an address other than the one they
+    // wrote to is evidence the two are one person (specs/005-contacts R11).
+    contacts.record_reply(message, &own).await?;
     Ok(())
 }
 
@@ -196,5 +199,75 @@ mod tests {
             .expect("lookup")
             .expect("bob");
         assert_eq!(bob.written, 1, "the user wrote to bob");
+    }
+
+    /// The user writes to `to` alone, and `reply_from` answers it.
+    async fn exchange(
+        to: &str,
+        reply_from: &str,
+        parent_from_user: bool,
+    ) -> Vec<postio_model::JoinSuggestion> {
+        let database = test_support::memory().await;
+        let connection = database.connect().await.expect("checkout");
+        let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+        let mut sent = Message::new(account.id, mailbox, chrono::Utc::now());
+        sent.rfc_message_id = Some(postio_model::ids::RfcMessageId::new(
+            "question@example.test",
+        ));
+        sent.from = vec![if parent_from_user {
+            account.address.clone()
+        } else {
+            EmailAddress::new(Some("Grace"), "grace@example.org")
+        }];
+        sent.to = vec![EmailAddress::new(Some("Ada"), to)];
+        MessageRepository::new(&connection)
+            .create(&mut sent)
+            .await
+            .expect("sent");
+        record(&connection, &account, &sent).await.expect("record");
+        let mut reply = Message::new(account.id, mailbox, chrono::Utc::now());
+        reply.rfc_message_id = Some(postio_model::ids::RfcMessageId::new("answer@example.test"));
+        reply.in_reply_to = Some(postio_model::ids::RfcMessageId::new(
+            "question@example.test",
+        ));
+        reply.from = vec![EmailAddress::new(Some("A. L."), reply_from)];
+        reply.to = vec![account.address.clone()];
+        MessageRepository::new(&connection)
+            .create(&mut reply)
+            .await
+            .expect("reply");
+        record(&connection, &account, &reply).await.expect("record");
+        ContactRepository::new(&connection)
+            .suggestions(10)
+            .await
+            .expect("suggestions")
+    }
+
+    #[tokio::test]
+    async fn an_answer_from_another_address_is_evidence() {
+        let found = exchange("ada@work.example", "ada@home.example", true).await;
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(
+            found[0].reason,
+            postio_model::SuggestionReason::Replied { replies: 1 }
+        );
+    }
+
+    #[tokio::test]
+    async fn an_answer_from_the_same_address_is_not() {
+        assert!(
+            exchange("ada@work.example", "ada@work.example", true)
+                .await
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_answer_to_someone_elses_message_is_not() {
+        assert!(
+            exchange("ada@work.example", "ada@home.example", false)
+                .await
+                .is_empty()
+        );
     }
 }

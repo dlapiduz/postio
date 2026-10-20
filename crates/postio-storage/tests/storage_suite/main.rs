@@ -29,6 +29,7 @@ mod concurrent_open;
 mod connections;
 mod contact_groups;
 mod contact_rank_index;
+mod contact_suggestions;
 mod contacts;
 mod content_membership;
 mod content_migration;

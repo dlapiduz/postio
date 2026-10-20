@@ -26,8 +26,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::Utc;
 use postio_model::{
     AddressId, AddressMove, Contact, ContactAddress, ContactDetail, ContactId, ContactListRow,
-    ContactSource, ContactState, ContactView, EmailAddress, JoinReceipt, Message, PersonEdit,
-    PersonFields,
+    ContactSource, ContactState, ContactView, EmailAddress, JoinReceipt, JoinSuggestion, Message,
+    PersonEdit, PersonFields, SuggestionReason,
 };
 
 use super::{from_millis, to_millis};
@@ -586,6 +586,47 @@ fn next_page_sql(view: ContactView) -> String {
     )
 }
 
+/// The pairs a suggestion read considers: live people who share a name key,
+/// and people whose addresses answered one another -- minus any pair a
+/// dismissed address pair spans. `replies` is NULL for a name match.
+///
+/// Every step is an index seek on `contacts` and `addresses`; the one walk is
+/// over the reply candidates, which are the evidence and are read whole.
+/// `CROSS JOIN` pins that order: left to itself the planner walked
+/// `addresses` and probed the candidates, which is the wrong way round for a
+/// table that is every address the user has ever seen.
+const SUGGESTION_PAIRS: &str = "
+    SELECT a.id, b.id, NULL FROM contacts a
+      JOIN contacts b ON b.state = 'live' AND b.name_key = a.name_key AND b.id > a.id
+     WHERE a.state = 'live' AND a.name_key <> ''
+       AND NOT EXISTS (
+           SELECT 1 FROM addresses nx
+             JOIN addresses ny ON ny.contact_id = b.id
+             JOIN contact_join_dismissals d
+               ON d.address_low = min(nx.id, ny.id) AND d.address_high = max(nx.id, ny.id)
+            WHERE nx.contact_id = a.id)
+    UNION ALL
+    SELECT min(x.contact_id, y.contact_id), max(x.contact_id, y.contact_id), cand.replies
+      FROM contact_join_candidates cand
+      CROSS JOIN addresses x ON x.id = cand.address_low
+      CROSS JOIN addresses y ON y.id = cand.address_high
+      CROSS JOIN contacts px ON px.id = x.contact_id AND px.state = 'live'
+      CROSS JOIN contacts py ON py.id = y.contact_id AND py.state = 'live'
+     WHERE x.contact_id <> y.contact_id
+       AND NOT EXISTS (
+           SELECT 1 FROM addresses u
+             JOIN addresses v ON v.contact_id = y.contact_id
+             JOIN contact_join_dismissals d
+               ON d.address_low = min(u.id, v.id) AND d.address_high = max(u.id, v.id)
+            WHERE u.contact_id = x.contact_id)
+    LIMIT ?1";
+
+/// The suggestion read's statements, for the budget that asks the planner.
+#[cfg(feature = "test-support")]
+pub(crate) fn suggestion_statements() -> Vec<String> {
+    vec![SUGGESTION_PAIRS.replace("?1", "50")]
+}
+
 /// Every statement the list issues, named -- for the budget that asks the
 /// planner about them.
 #[cfg(feature = "test-support")]
@@ -1100,6 +1141,179 @@ impl ContactRepository<'_> {
             Ok(())
         })
         .await
+    }
+
+    /// Who might be the same person, with the evidence (FR-018, R11): at
+    /// most `limit` pairs, an answered-from-another-address pair before a
+    /// name match. Reads only; a suggestion joins nobody (FR-019).
+    pub async fn suggestions(&self, limit: u32) -> Result<Vec<JoinSuggestion>> {
+        let pairs: Vec<(i64, i64, Option<i64>)> = sql::all_unbounded(
+            self.connection,
+            SUGGESTION_PAIRS,
+            [i64::from(limit) * 2],
+            |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?)),
+        )
+        .await?;
+        // A pair can be both a name match and an answer; the answer is the
+        // stronger evidence, so it is the one kept.
+        let mut kept: Vec<(i64, i64, SuggestionReason)> = Vec::new();
+        for (a, b, replies) in pairs {
+            let reason = match replies {
+                Some(replies) => SuggestionReason::Replied {
+                    replies: u32::try_from(replies).unwrap_or(u32::MAX),
+                },
+                None => SuggestionReason::SameName,
+            };
+            match kept.iter_mut().find(|(x, y, _)| (*x, *y) == (a, b)) {
+                Some(existing) if matches!(reason, SuggestionReason::Replied { .. }) => {
+                    existing.2 = reason;
+                }
+                Some(_) => {}
+                None => kept.push((a, b, reason)),
+            }
+        }
+        kept.sort_by_key(|(a, b, reason)| {
+            let replies = match reason {
+                SuggestionReason::Replied { replies } => *replies,
+                SuggestionReason::SameName => 0,
+            };
+            (std::cmp::Reverse(replies), *a, *b)
+        });
+        kept.truncate(limit as usize);
+        let mut ids: Vec<i64> = kept.iter().flat_map(|(a, b, _)| [*a, *b]).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let people = self.people_by_ids(&ids).await?;
+        let find = |id: i64| people.iter().find(|p| p.id.get() == id).cloned();
+        Ok(kept
+            .into_iter()
+            .filter_map(|(a, b, reason)| {
+                Some(JoinSuggestion {
+                    people: [find(a)?, find(b)?],
+                    reason,
+                })
+            })
+            .collect())
+    }
+
+    /// People by id, with their addresses: two statements whatever the
+    /// number.
+    async fn people_by_ids(&self, ids: &[i64]) -> Result<Vec<Contact>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = (1..=ids.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let people = sql::all_unbounded(
+            self.connection,
+            &format!("SELECT {PERSON_COLUMNS} FROM contacts WHERE id IN ({placeholders})"),
+            ids.iter()
+                .map(|id| turso::Value::Integer(*id))
+                .collect::<Vec<_>>(),
+            read_person,
+        )
+        .await?;
+        self.with_addresses(people).await
+    }
+
+    /// The user says `a` and `b` are not the same person: never offered
+    /// together again. Kept as the pair of their preferred addresses, which
+    /// is what lets it outlive a join on either side (R11).
+    pub async fn dismiss(&self, a: ContactId, b: ContactId) -> Result<()> {
+        sql::in_scope(self.connection, |transaction| async move {
+            let pa = fields(&transaction, a).await?.preferred.get();
+            let pb = fields(&transaction, b).await?.preferred.get();
+            sql::execute(
+                &transaction,
+                "INSERT INTO contact_join_dismissals (address_low, address_high)
+                 VALUES (?1, ?2) ON CONFLICT DO NOTHING",
+                bind![pa.min(pb), pa.max(pb)],
+            )
+            .await?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Mail the user sent to `asked` was answered from `answered`: evidence
+    /// that the two addresses may be one person (R11). Nothing when either is
+    /// unknown or one person already owns both.
+    pub async fn note_reply(&self, asked: &str, answered: &str) -> Result<()> {
+        let (asked, answered) = (asked.to_lowercase(), answered.to_lowercase());
+        if asked == answered {
+            return Ok(());
+        }
+        sql::in_scope(self.connection, |transaction| async move {
+            let lookup = async |address: &str| -> Result<Option<(i64, Option<i64>)>> {
+                sql::first(
+                    &transaction,
+                    "SELECT id, contact_id FROM addresses WHERE address_normalized = ?1",
+                    [address],
+                    |row| Ok((row.col(0)?, row.col(1)?)),
+                )
+                .await
+            };
+            let (Some((x, px)), Some((y, py))) = (lookup(&asked).await?, lookup(&answered).await?)
+            else {
+                return Ok(());
+            };
+            if px.is_some() && px == py {
+                return Ok(());
+            }
+            sql::execute(
+                &transaction,
+                "INSERT INTO contact_join_candidates (address_low, address_high, replies)
+                 VALUES (?1, ?2, 1)
+                 ON CONFLICT (address_low, address_high) DO UPDATE SET replies = replies + 1",
+                bind![x.min(y), x.max(y)],
+            )
+            .await?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// If `message` answers mail the user sent to exactly one address, and
+    /// answers it from a different one, notes the pair (R11). One read, and
+    /// only for a reply that is not the user's own.
+    pub async fn record_reply(&self, message: &Message, own: &[EmailAddress]) -> Result<()> {
+        let (Some(parent), Some(from)) = (&message.in_reply_to, message.from.first()) else {
+            return Ok(());
+        };
+        let is_own = |address: &str| own.iter().any(|o| o.normalized() == address);
+        let answered = from.normalized();
+        if is_own(&answered) {
+            return Ok(());
+        }
+        let rows: Vec<(String, String)> = sql::all(
+            self.connection,
+            "SELECT r.kind, a.address_normalized
+               FROM messages p
+               JOIN recipients r ON r.message_id = p.id
+               JOIN addresses a ON a.id = r.address_id
+              WHERE p.account_id = ?1 AND p.rfc_message_id = ?2
+                AND r.kind IN ('from', 'to', 'cc')
+              LIMIT 64",
+            bind![message.account_id.get(), parent.as_str()],
+            |row| Ok((row.col(0)?, row.col(1)?)),
+        )
+        .await?;
+        let sent_by_user = rows
+            .iter()
+            .any(|(kind, address)| kind == "from" && is_own(address));
+        let asked: Vec<&String> = rows
+            .iter()
+            .filter(|(kind, address)| kind != "from" && !is_own(address))
+            .map(|(_, address)| address)
+            .collect();
+        match asked.as_slice() {
+            [asked] if sent_by_user && **asked != answered => {
+                self.note_reply(asked, &answered).await
+            }
+            _ => Ok(()),
+        }
     }
 
     /// Who owns `address`, or `None` for nobody.

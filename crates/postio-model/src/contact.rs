@@ -256,6 +256,28 @@ pub struct ContactDetail {
     pub messages: u64,
 }
 
+/// Why two people are offered as possibly one (specs/005-contacts R11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SuggestionReason {
+    /// Their names match, ignoring case and spacing.
+    SameName,
+    /// Mail sent to one of them was answered from the other, this often.
+    Replied {
+        /// How many answers crossed.
+        replies: u32,
+    },
+}
+
+/// Two people who might be one, and why -- offered, never acted on
+/// (FR-019).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinSuggestion {
+    /// The two, each with their addresses and counts: the evidence.
+    pub people: [Contact; 2],
+    /// Why they are offered.
+    pub reason: SuggestionReason,
+}
+
 /// What the editor changes about a person (FR-021): their name,
 /// organisation and note. Addresses are changed one at a time, with their own
 /// verbs, because each is a claim about who owns what.
