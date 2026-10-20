@@ -228,6 +228,45 @@ recorded as the person's own word, as `restored_at` records `R`.
 Neutral rule unchanged: Swift draws; every rule it would otherwise hold is a
 function in `postio-ui`, `postio-classify` or `postio-focus`.
 
+### 3.1 Shared code first (maintainer, 2026-10-19)
+
+The maintainer asked that as much of Contacts as possible be one code
+path for Linux and the Mac. This tightens the neutral rule:
+
+- **View models are Rust.** Each surface's rows, tabs, strip counts, role
+  line, tag pills, stat tiles and captions, the 12-month strip's bars and
+  axis labels, open-item rows, file chips, the edit form's fields and
+  validation, and the merge sheet's candidates, evidence and result
+  preview are built in `postio-ui` (shapes and words) and `postio-focus`
+  (state). `postio-ffi` exports them whole. The PostioKit models
+  (`ContactsModel`, `ContactCardModel` and the rest) only adapt FFI records
+  to SwiftUI/AppKit: no sorting, grouping, formatting, counting or
+  enabling logic in Swift. A Swift test fails if a model computes
+  something an FFI record already carries.
+- **Every key, verb, intent and Esc ladder goes through `postio-focus`**,
+  as spec 009's slices do. The Mac sends `Input`s and draws `Intent`s.
+- **Avatar initials, the palette hash and kind glyphs are one Rust
+  function** (`postio-ui`). Each toolkit only paints the circle or the
+  rounded square.
+- **Sync logic is Rust, and CardDAV is Rust, so Linux gets CardDAV sync
+  from the same code.** The only platform code is the `ExternalAddressBook`
+  adapter over `CNContactStore` (Swift) and, at Linux adoption, the file
+  chooser for import and export.
+- **No Apple-only engine paths.** `Policy.caps.contacts_view` hides the
+  surface on Linux only until GTK draws it. Contact-aware `from:`, kind
+  ranking in completion and the per-contact settings engine behave the
+  same on both platforms once enabled, and each is tested once, in Rust.
+- **The HTML treatment moves into `contact_settings` in S3**, not S13. The
+  GTK reader reads the shared `SenderTreatments` interface, verified on
+  the Linux box (the maintainer's offer for Linux-side work), so there is
+  one home from the start rather than a write-through.
+- **Every UI slice (S6 to S10) ships a controller test in
+  `crates/postio-focus/tests/`** that walks the slice's keys against a
+  fake list, so GTK adoption (S13) is drawing only: no rule is written
+  twice. Where a slice's Rust view model is complete, the GTK drawing may
+  land in the same slice, verified on the Linux box, at most two agents
+  there at once.
+
 ## 4. The migration
 
 Goals: create contacts from existing mail; move per-sender settings onto
@@ -505,7 +544,7 @@ compile"). The handoff's seven steps map as marked.
 | S0 | Gate: confirm section 2 with the port; storyboards `contacts/` red; demo seed `small:30` with invented contacts | | | | | |
 | S1 | Schema, migration, lazy contact creation, catch-up skeleton, `display_name` | 1 | | `contact_for_address` | | |
 | S2 | `kind::detect`, signals at insert, the header corpus, SC-003 | 1 | | kind in rows | | |
-| S3 | `contact_settings`; the settings engine; the one-shot move of address-keyed digest, `never`, `stop_markers`; `SenderTreatments`; SC-005's fixture. **ADR**: per-contact settings are the one home of sender-keyed settings. **Linux-visible: tell the maintainer before merging** | 1 | | settings reads and writes | | |
+| S3 | `contact_settings`; the settings engine; the one-shot move of address-keyed digest, `never`, `stop_markers`, and the per-address HTML treatment; `SenderTreatments`, read by the GTK reader too (verified on the Linux box); SC-005's fixture. **ADR**: per-contact settings are the one home of sender-keyed settings. **Linux-visible: tell the maintainer before merging** | 1 | | settings reads and writes | | |
 | S4 | Resolution everywhere: Show-as name in list, conversation and reader; All mail as an `AnyOf` of `from:`; the opt-in contact-aware `from:`/`to:`/`from:@Group`; person-shaped completion (still with 009's system read) | 1 | | `recipient_suggestions` shape | | |
 | S5 | `address_stats`, months, ring, counts, budgets; `insert_cost_curve` measured | 1 | | stats read | | |
 | S6 | **Popover, known sender** (04): `i`, click, arrival control with undo | 2 | `contact_popover.rs`, `Context::ContactPopover`, intents | popover read, arrival write, `UiEvent`s | `ContactPopoverModel` | `ContactPopover` (`NSPopover`) |
@@ -515,7 +554,7 @@ compile"). The handoff's seven steps map as marked.
 | S10 | **Review queue, merge and split** (07): `duplicates::score`, `bounce::detect`, Worth a look, `g w`, the sheet, `m`, `n`, split from the card | 6 | `contact_merge.rs`, `ContactSheet` | candidates, merge, split | `MergeSheetModel` | `MergeSheet` |
 | S11 | vCard import and export (File menu), no undo | | panels intents | import/export, `INTERCEPTED` | | `ContactsPanels` |
 | S12 | **Sync** (08): S12a Settings pane and the four switches (no sync); S12b `postio-contact-sync`, link tables, dry-run, fakes; S12c Apple adapter read only, permission at enable; S12d the reviewed gate lifts (maintainer's commit); S12e CardDAV. **ADR**: an external store is written only through a reviewed plan | 7 | | `ExternalAddressBook`, sync events | `ContactsSettingsModel`, `AppleAddressBook` | `ContactsSettingsPane` |
-| S13 | Linux adoption (later): GTK turns `contacts_view` on; `next_scope` → `g n`; treatment moves into `contact_settings`; storyboards filmed; the `interactions-unreviewed` label retires | | none by design | | | (GTK) |
+| S13 | Linux adoption: GTK draws the Rust view models and turns `contacts_view` on (pieces may land earlier, per section 3.1); `next_scope` → `g n`; GTK file chooser for import and export; CardDAV sync is already shared; storyboards filmed; the `interactions-unreviewed` label retires | | none by design | | | (GTK) |
 
 Ordering: S1 to S5 are engine and ship without any Mac UI (the first visible
 change is S4's names, only where a name was set); S6 can start once S2 and S3
