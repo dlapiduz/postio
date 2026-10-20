@@ -212,6 +212,13 @@ fn sample_contact() -> Contact {
         times_seen: 12,
         last_seen_at: Some(at(3_000)),
         written: 3,
+        kind: postio_model::ContactKind::Company,
+        kind_source: postio_model::KindSource::User,
+        saved_at: Some(at(2_500)),
+        given_name: Some("Alice".into()),
+        family_name: Some("Example".into()),
+        show_as: postio_model::ShowAs::LastFirst,
+        title: Some("Engineer".into()),
     }
 }
 

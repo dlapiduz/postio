@@ -95,6 +95,118 @@ impl ContactState {
     }
 }
 
+/// What sort of correspondent a contact is (specs/011-focus-contacts).
+///
+/// Decided by `postio_classify::kind::detect` from the mail's own headers
+/// unless the user has said otherwise ([`KindSource::User`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum ContactKind {
+    /// A human being.
+    #[default]
+    Person,
+    /// A business writing as itself (`info@`, `billing@`).
+    Company,
+    /// A mailing list.
+    List,
+    /// A newsletter or other bulk sender.
+    Newsletter,
+    /// A robot: notifications, receipts, bounces.
+    Automated,
+}
+
+impl ContactKind {
+    /// Every kind, in the order the Contacts tabs list them.
+    pub const ALL: [Self; 5] = [
+        Self::Person,
+        Self::Company,
+        Self::List,
+        Self::Newsletter,
+        Self::Automated,
+    ];
+
+    /// A stable lowercase identifier, for storage.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Person => "person",
+            Self::Company => "company",
+            Self::List => "list",
+            Self::Newsletter => "newsletter",
+            Self::Automated => "automated",
+        }
+    }
+
+    /// The inverse of [`ContactKind::as_str`]; `None` for anything else.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == name)
+    }
+}
+
+/// Who decided a contact's [`ContactKind`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum KindSource {
+    /// The detector, which a newer detector may overrule.
+    #[default]
+    Detected,
+    /// The user, whose word is final.
+    User,
+}
+
+impl KindSource {
+    /// A stable lowercase identifier, for storage.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Detected => "detected",
+            Self::User => "user",
+        }
+    }
+
+    /// The inverse of [`KindSource::as_str`]; `None` for anything else.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "detected" => Some(Self::Detected),
+            "user" => Some(Self::User),
+            _ => None,
+        }
+    }
+}
+
+/// How a contact's name is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum ShowAs {
+    /// The name as set.
+    #[default]
+    Full,
+    /// The given name alone.
+    First,
+    /// "Family, Given".
+    LastFirst,
+    /// The name exactly as the user typed it.
+    Custom,
+}
+
+impl ShowAs {
+    /// A stable lowercase identifier, for storage.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::First => "first",
+            Self::LastFirst => "last_first",
+            Self::Custom => "custom",
+        }
+    }
+
+    /// The inverse of [`ShowAs::as_str`]; `None` for anything else.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "full" => Some(Self::Full),
+            "first" => Some(Self::First),
+            "last_first" => Some(Self::LastFirst),
+            "custom" => Some(Self::Custom),
+            _ => None,
+        }
+    }
+}
+
 /// One address a person owns, with what the mail says about it.
 ///
 /// The counts are summed across the accounts the address was seen through;
@@ -167,6 +279,21 @@ pub struct Contact {
     /// Messages the user sent to any of them. More than zero puts the person
     /// in the Contacts list's default view.
     pub written: u32,
+    /// What sort of correspondent this is.
+    pub kind: ContactKind,
+    /// Who decided [`Contact::kind`].
+    pub kind_source: KindSource,
+    /// When the user saved this person; `None` for someone only known from
+    /// mail, however often they write.
+    pub saved_at: Option<DateTime<Utc>>,
+    /// The given name, when the person has one apart from [`Contact::name`].
+    pub given_name: Option<String>,
+    /// The family name, likewise.
+    pub family_name: Option<String>,
+    /// How [`Contact::shown_as`] styles the name.
+    pub show_as: ShowAs,
+    /// A job title.
+    pub title: Option<String>,
 }
 
 impl Contact {
@@ -184,6 +311,13 @@ impl Contact {
             times_seen: address.times_seen,
             last_seen_at: address.last_seen_at,
             written: address.written,
+            kind: ContactKind::default(),
+            kind_source: KindSource::default(),
+            saved_at: None,
+            given_name: None,
+            family_name: None,
+            show_as: ShowAs::default(),
+            title: None,
             addresses: vec![address],
         }
     }
@@ -207,6 +341,31 @@ impl Contact {
             .or_else(|| filled(self.seen_name.as_deref()))
             .or_else(|| self.preferred_address().map(|a| a.address.address.as_str()))
             .unwrap_or("")
+    }
+
+    /// Whether the user saved this person.
+    pub fn is_saved(&self) -> bool {
+        self.saved_at.is_some()
+    }
+
+    /// The name in the style the person asked for ([`Contact::show_as`]).
+    ///
+    /// A style that needs a part the person lacks falls back rather than
+    /// inventing one: to the family name, then [`Contact::display_name`].
+    pub fn shown_as(&self) -> std::borrow::Cow<'_, str> {
+        use std::borrow::Cow;
+        fn filled(value: &Option<String>) -> Option<&str> {
+            value.as_deref().map(str::trim).filter(|v| !v.is_empty())
+        }
+        let (given, family) = (filled(&self.given_name), filled(&self.family_name));
+        match (self.show_as, given, family) {
+            (ShowAs::First, Some(given), _) => Cow::Borrowed(given),
+            (ShowAs::LastFirst, Some(given), Some(family)) => {
+                Cow::Owned(format!("{family}, {given}"))
+            }
+            (ShowAs::LastFirst, None, Some(family)) => Cow::Borrowed(family),
+            _ => Cow::Borrowed(self.display_name()),
+        }
     }
 }
 
@@ -338,6 +497,64 @@ mod tests {
 
     fn address(id: i64, name: Option<&str>, addr: &str) -> ContactAddress {
         ContactAddress::new(AddressId::new(id), EmailAddress::new(name, addr))
+    }
+
+    #[test]
+    fn kind_source_and_show_as_round_trip_and_refuse_the_unknown() {
+        for kind in ContactKind::ALL {
+            assert_eq!(ContactKind::from_name(kind.as_str()), Some(kind));
+        }
+        assert_eq!(ContactKind::from_name("bot"), None);
+        for source in [KindSource::Detected, KindSource::User] {
+            assert_eq!(KindSource::from_name(source.as_str()), Some(source));
+        }
+        assert_eq!(KindSource::from_name("guessed"), None);
+        for style in [
+            ShowAs::Full,
+            ShowAs::First,
+            ShowAs::LastFirst,
+            ShowAs::Custom,
+        ] {
+            assert_eq!(ShowAs::from_name(style.as_str()), Some(style));
+        }
+        assert_eq!(ShowAs::from_name("shouting"), None);
+    }
+
+    #[test]
+    fn a_new_contact_is_a_detected_person_who_is_not_saved() {
+        let contact = Contact::new(address(1, None, "ada@example.com"));
+        assert_eq!(contact.kind, ContactKind::Person);
+        assert_eq!(contact.kind_source, KindSource::Detected);
+        assert_eq!(contact.show_as, ShowAs::Full);
+        assert!(contact.saved_at.is_none());
+        assert!(!contact.is_saved());
+    }
+
+    #[test]
+    fn show_as_styles_the_name_and_never_invents_one() {
+        let mut contact = Contact::new(address(1, None, "ada@example.com"));
+        contact.name = Some("Ada King Lovelace".into());
+        contact.given_name = Some("Ada".into());
+        contact.family_name = Some("Lovelace".into());
+
+        assert_eq!(contact.shown_as(), "Ada King Lovelace");
+        contact.show_as = ShowAs::First;
+        assert_eq!(contact.shown_as(), "Ada");
+        contact.show_as = ShowAs::LastFirst;
+        assert_eq!(contact.shown_as(), "Lovelace, Ada");
+        contact.show_as = ShowAs::Custom;
+        assert_eq!(contact.shown_as(), "Ada King Lovelace");
+
+        // A style that needs a part the person does not have falls back to
+        // the name, then to what the mail called them, then the address.
+        contact.given_name = None;
+        contact.show_as = ShowAs::First;
+        assert_eq!(contact.shown_as(), "Ada King Lovelace");
+        contact.show_as = ShowAs::LastFirst;
+        assert_eq!(contact.shown_as(), "Lovelace");
+        contact.name = None;
+        contact.family_name = None;
+        assert_eq!(contact.shown_as(), "ada@example.com");
     }
 
     #[test]
