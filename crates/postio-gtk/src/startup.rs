@@ -197,7 +197,7 @@ fn keep_treatments_in_the_store(host: &Host, client: &postio_client::Client) {
         Ok(chosen) => table.replace(chosen),
         Err(error) => tracing::warn!(%error, "could not read the senders' treatments"),
     }
-    postio_widgets::reader::use_store_treatments(table);
+    postio_widgets::reader::use_store_treatments(Some(table));
 }
 
 /// Hand the window `[focus]` again whenever a verb changes what people

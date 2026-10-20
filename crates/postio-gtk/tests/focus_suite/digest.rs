@@ -310,12 +310,9 @@ pub fn d_on_a_message_previews_the_rule_and_create_writes_it() {
         let config = postio_config::Config::load_from_path(&path).expect("it reads");
         let window = postio_gtk::window::FocusWindow::new(None);
         gtk::prelude::GtkWindowExt::present(&window);
-        support::keep(postio_gtk::startup::adopt_at(
-            &window,
-            fixture.host(),
-            &config,
-            Some(&path),
-        ));
+        let session = postio_gtk::startup::adopt_at(&window, fixture.host(), &config, Some(&path));
+        let focus = session.host().wiring().focus.clone();
+        support::keep(session);
         support::keep(directory);
         assert!(
             crate::settle_until(async || support::subjects(&window).len() == 5).await,
@@ -348,20 +345,24 @@ pub fn d_on_a_message_previews_the_rule_and_create_writes_it() {
             "the rule dialog's keycaps do not teach their controls (T142)"
         );
         dialog.create();
+        // A rule that is one sender's is that person's (ADR 0048): the engine
+        // reads it, and the file is as it was.
         assert!(
             crate::settle_until(async || {
-                std::fs::read_to_string(&path)
-                    .unwrap_or_default()
-                    .contains("from:news@ledger.test")
+                focus.config().is_some_and(|config| {
+                    config
+                        .digests
+                        .iter()
+                        .any(|rule| rule.queries == ["from:news@ledger.test"])
+                })
             })
             .await,
-            "Create wrote no rule:\n{}",
-            std::fs::read_to_string(&path).unwrap_or_default()
+            "Create wrote no rule: {:?}",
+            focus.config().map(|config| config.digests)
         );
-        assert!(
-            std::fs::read_to_string(&path)
-                .unwrap_or_default()
-                .starts_with("# Mine."),
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap_or_default(),
+            "# Mine.\n",
             "the rest of the file is as it was"
         );
         assert!(

@@ -1,7 +1,6 @@
-//! Focus's corrections reach `config.toml` (the commands lane's verbs):
-//! dismissing a sender's question three times writes a stop marker to the
-//! file Focus was opened with, because Focus tells its host where that file
-//! is (`FocusSetup::with_config_path`).
+//! Focus's corrections reach the engine (the commands lane's verbs):
+//! dismissing a sender's question three times turns that marker off for the
+//! sender, kept on the person they are (ADR 0048).
 
 use postio_core::{Command, MessageTarget};
 
@@ -47,11 +46,25 @@ pub fn three_dismissals_write_a_stop_marker_to_focus_s_config() {
                 .await
                 .expect("the host takes it");
         }
-        let written = || std::fs::read_to_string(&path).unwrap_or_default();
+        // The correction is the person's (ADR 0048): the engine reads it, and
+        // the file is not written.
+        let ada = postio_model::EmailAddress::new(None::<String>, "ada@example.com");
+        let stopped = || {
+            session
+                .host()
+                .wiring()
+                .focus
+                .config()
+                .is_some_and(|focus| focus.filter.stops(&ada, "question"))
+        };
         assert!(
-            crate::settle_until(async || written().contains("ada@example.com")).await,
-            "no stop marker was written to Focus's config: {:?}",
-            written()
+            crate::settle_until(async || stopped()).await,
+            "no stop marker reached Focus's engine"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap_or_default(),
+            "",
+            "an address is the person's, not the file's"
         );
         support::keep(session);
         drop(directory);

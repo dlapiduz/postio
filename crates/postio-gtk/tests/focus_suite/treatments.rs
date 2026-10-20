@@ -52,7 +52,7 @@ pub fn a_newsletter_opens_on_paper_and_o_switches_it_to_app_colours() {
         fixture
             .write_body(plain, "Noon at the usual place?\n")
             .await;
-        let (window, _client) = fixture.open().await;
+        let (window, client) = fixture.open().await;
         assert!(
             crate::settle_until(async || support::subjects(&window).len() == 3).await,
             "the inbox never reached the screen"
@@ -115,10 +115,15 @@ pub fn a_newsletter_opens_on_paper_and_o_switches_it_to_app_colours() {
         );
 
         line.press_always();
-        assert_eq!(
-            reader.allowlist_snapshot().treatment_for(NEWS),
-            Some(Treatment::AppColours),
-            "Always for this sender was not stored with the sender's settings"
+        assert!(
+            crate::settle_until(async || {
+                client.treatments().await.is_ok_and(|kept| {
+                    kept.iter()
+                        .any(|(address, word)| address == NEWS && word == "app")
+                })
+            })
+            .await,
+            "Always for this sender was not kept on the sender (ADR 0048)"
         );
         assert!(!line.offers_always());
         assert!(

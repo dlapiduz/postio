@@ -931,6 +931,99 @@ pub fn a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings() {
     });
 }
 
+/// A person's pin is the person's (ADR 0048), not a line of `config.toml`:
+/// Filtering lists it once, by name, with the addresses it covers, and "Filter
+/// again" clears it on the person.
+pub fn a_persons_pin_is_listed_by_name_and_taken_back_in_settings() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Lovelace", "ada@work.example"), "Budget", "A line.", 10)
+            .await;
+        let ada = {
+            let connection = fixture.database.connect().await.expect("a connection");
+            let ada = postio_storage::repository::ContactRepository::new(&connection)
+                .create(
+                    Some("Ada Lovelace"),
+                    &[
+                        postio_model::EmailAddress::new(None::<String>, "ada@work.example"),
+                        postio_model::EmailAddress::new(None::<String>, "ada@home.example"),
+                    ],
+                )
+                .await
+                .expect("a person");
+            postio_storage::repository::ContactSettingsRepository::new(&connection)
+                .put(
+                    ada,
+                    &postio_model::ContactSettings {
+                        arrival: Some(postio_model::ContactArrival::Inbox),
+                        ..postio_model::ContactSettings::default()
+                    },
+                )
+                .await
+                .expect("a pin");
+            ada
+        };
+        let (window, _directory, path) = open_under(&fixture, "[focus]\nfiltering = true\n").await;
+        mod_comma(&window);
+        let dialog = settings_shown(&window).await.expect("Settings opened");
+        let row = section_rows(&dialog)
+            .into_iter()
+            .find(|(name, _)| name == "Filtering")
+            .map(|(_, row)| row)
+            .expect("Settings lists Filtering");
+        support::click(&window, &row, 1);
+        assert!(
+            crate::settle_until(async || pane_title(&dialog) == "Filtering").await,
+            "Filtering shows its page"
+        );
+        let said = || support::texts(&dialog);
+        assert!(
+            crate::settle_until(async || {
+                said()
+                    .iter()
+                    .any(|text| text == "Ada Lovelace \u{b7} ada@work.example, ada@home.example")
+            })
+            .await,
+            "the person's pin is listed by name: {:?}",
+            said()
+        );
+
+        let again = support::only(&dialog, "postio-settings-filtering-undo-never");
+        support::settle_still(&again, &dialog);
+        support::click(&window, &again, 1);
+        let kept = || async {
+            let connection = fixture.database.connect().await.expect("a connection");
+            postio_storage::repository::ContactSettingsRepository::new(&connection)
+                .get(ada)
+                .await
+                .expect("a read")
+        };
+        let mut cleared = false;
+        for _ in 0..200 {
+            if kept().await.arrival.is_none() {
+                cleared = true;
+                break;
+            }
+            crate::settle_until(async || false).await;
+        }
+        assert!(cleared, "Filter again did not clear the person's pin");
+        assert!(
+            crate::settle_until(async || !said().iter().any(|text| text == "Filter again")).await,
+            "the list is empty on the page: {:?}",
+            said()
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap_or_default(),
+            "[focus]\nfiltering = true\n",
+            "and the file was never written for it"
+        );
+    });
+}
+
 /// A click aimed into Settings the moment it is up lands where the person
 /// aimed: libadwaita opens a dialog by scaling it from 0.8 to 1 in its
 /// allocation, so until it has opened every row in it is smaller and

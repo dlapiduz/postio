@@ -68,9 +68,10 @@ pub fn shared_allowlist(path: &Path) -> Rc<RefCell<RemoteImageAllowList>> {
 /// Make `treatments` what every reader of this app looks a sender's
 /// treatment up in and keeps it in (ADR 0048): the person's choice, read
 /// from the store, rather than a section of the remote-image file. An app
-/// that never calls this keeps them in that file, as its tests do.
-pub fn use_store_treatments(treatments: Rc<dyn SenderTreatments>) {
-    TREATMENTS.with(|slot| *slot.borrow_mut() = Some(treatments));
+/// that never calls this keeps them in that file, as its tests do; `None`
+/// goes back to that.
+pub fn use_store_treatments(treatments: Option<Rc<dyn SenderTreatments>>) {
+    TREATMENTS.with(|slot| *slot.borrow_mut() = treatments);
 }
 
 /// What a reader built on `allowlist` (persisting to `path`) looks

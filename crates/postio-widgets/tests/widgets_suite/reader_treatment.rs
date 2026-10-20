@@ -95,3 +95,33 @@ pub fn a_reader_that_draws_no_treatments_answers_app_colours() {
     assert!(told.borrow().is_empty(), "told {:?}", told.borrow());
     window.close();
 }
+
+pub fn a_reader_opens_a_message_in_the_treatment_the_store_remembers_for_its_sender() {
+    if adw::init().is_err() || gdk::Display::default().is_none() {
+        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
+        return;
+    }
+    let kept: Rc<RefCell<Vec<(String, Option<Treatment>)>>> = Rc::default();
+    let table = Rc::new(postio_ui::sender_treatments::Remembered::new({
+        let kept = Rc::clone(&kept);
+        move |sender, treatment| kept.borrow_mut().push((sender.to_owned(), treatment))
+    }));
+    table.replace([("news@treatment.example.com".to_owned(), "app".to_owned())]);
+    postio_widgets::reader::use_store_treatments(Some(table.clone()));
+
+    let (window, reader) = reader("stored");
+    reader.use_treatments();
+    reader.render(&newsletter(), Some("news@treatment.example.com"));
+    assert!(
+        support::until(|| reader.treated().is_some()),
+        "the newsletter was never drawn under a treatment"
+    );
+    // The rule says paper for this newsletter; the person chose app colours.
+    assert_eq!(
+        reader.treatment(),
+        Treatment::AppColours,
+        "the store's choice was not the one the message opened with"
+    );
+    window.close();
+    postio_widgets::reader::use_store_treatments(None);
+}

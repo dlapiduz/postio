@@ -1665,6 +1665,10 @@ const CASES: &[(&str, fn())] = &[
         settings::a_pinned_sender_and_a_turned_off_marker_are_taken_back_in_settings as fn(),
     ),
     (
+        "settings::a_persons_pin_is_listed_by_name_and_taken_back_in_settings",
+        settings::a_persons_pin_is_listed_by_name_and_taken_back_in_settings as fn(),
+    ),
+    (
         "settings::a_click_into_settings_as_it_opens_waits_for_it_to_open",
         settings::a_click_into_settings_as_it_opens_waits_for_it_to_open as fn(),
     ),
