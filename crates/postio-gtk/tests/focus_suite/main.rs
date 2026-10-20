@@ -235,6 +235,10 @@ const CASES: &[(&str, fn())] = &[
         unsubscribe::the_offer_is_taken_up_from_the_keyboard as fn(),
     ),
     (
+        "unsubscribe::opening_a_message_ends_the_offer_it_would_hide",
+        unsubscribe::opening_a_message_ends_the_offer_it_would_hide as fn(),
+    ),
+    (
         "unsubscribe::the_setting_makes_the_one_action_delete",
         unsubscribe::the_setting_makes_the_one_action_delete as fn(),
     ),

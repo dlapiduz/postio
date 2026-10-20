@@ -416,7 +416,11 @@ fn caps_on_the_toast(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
         .filter(|widget| widget.type_().name() == "AdwToastWidget")
         .flat_map(|toast| support::descendants(toast))
         .filter(|widget| widget.has_css_class("postio-keyhint") && widget.is_mapped())
-        .filter_map(|widget| widget.downcast_ref::<gtk::Label>().map(|l| l.text().to_string()))
+        .filter_map(|widget| {
+            widget
+                .downcast_ref::<gtk::Label>()
+                .map(|l| l.text().to_string())
+        })
         .collect()
 }
 
@@ -489,3 +493,40 @@ pub fn the_offer_is_taken_up_from_the_keyboard() {
     });
 }
 
+/// An offer the message dialog opens over is gone, not hidden: `C` must not
+/// archive a sender's mail on the strength of a toast nobody can see.
+pub fn opening_a_message_ends_the_offer_it_would_hide() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        file_the_newsletter(&fixture).await;
+        file_the_newsletter(&fixture).await;
+        let (window, _client) = fixture.open().await;
+        support::keys(&window, &["j", "Return"]);
+        let reading = window.reading().expect("Return opened the message");
+        the_dialog_is_open(&reading).await;
+        support::keys(&window, &["M"]);
+        the_offer_is_up(&window, "Archive 2").await;
+        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+        crate::settle();
+        support::keys(&window, &["Return"]);
+        the_dialog_is_open(&reading).await;
+        support::keys(&window, &["C"]);
+        assert!(
+            crate::settle_until(async || {
+                window
+                    .toast_showing()
+                    .is_some_and(|said| said == postio_ui::unsubscribe::NO_OFFER)
+            })
+            .await,
+            "the hidden offer answered a key: {:?}",
+            window.toast_showing()
+        );
+        assert!(
+            !inbox_is_empty(&fixture).await,
+            "it archived under the dialog"
+        );
+    });
+}

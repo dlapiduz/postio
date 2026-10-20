@@ -118,7 +118,7 @@ The store is Turso (ADR 0038). Its planner and defaults are not SQLite's, and mo
 
 **A Clamp cannot override a child's minimum width.** Several unbroken addresses in a horizontal box add their minimum widths together, widening the reading column and then its dialog. Wrap recipient fields inside the column; prove the dialog's allocated size with long bare addresses, not only display names.
 
-**A key controller on a dialog never beats the window's.** `keys_under_dialogs` gives every dialog the window's own capture handler (T195), so a verb's key (`#`, `e`) inside your dialog first runs that verb on the row behind it. A dialog that wants a verb's key answers it in `FocusWindow::handle_key`, ahead of the list's. The list-sweep offer did, until it became a toast that takes no keys (#1952); keep a new offer non-modal rather than copying that.
+**A key controller on a dialog never beats the window's.** `keys_under_dialogs` gives every dialog the window's own capture handler (T195), so a verb's key (`#`, `e`) inside your dialog first runs that verb on the row behind it. A dialog that wants a verb's key answers it in `FocusWindow::handle_key`, ahead of the list's. The list-sweep offer did, until it became a toast (#1952); keep a new offer non-modal, and give its action a registry command (`clear_list_mail`, #1953) rather than a key of the notice's own.
 
 **Whether a surface is open and whether it has the keyboard are separate questions.** A surface left open while focus is elsewhere pins the resolver's context and silently drops bare keys.
 

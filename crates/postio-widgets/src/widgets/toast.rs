@@ -319,6 +319,18 @@ impl Toast {
         }
     }
 
+    /// Let the offer on screen go unanswered, with its toast: a notice belongs
+    /// to the moment it was raised, and a message dialog opening over it
+    /// hides it, so its key must not go on reaching what nobody can see.
+    /// Answers whether there was an offer.
+    pub fn drop_offer(&self) -> bool {
+        let Some((toast, _)) = self.pending_offer.borrow_mut().take() else {
+            return false;
+        };
+        toast.dismiss();
+        true
+    }
+
     /// Take up the offer on screen, as its button does, and let its toast go.
     /// Answers whether there was an offer to take.
     pub fn take_offer(&self) -> bool {

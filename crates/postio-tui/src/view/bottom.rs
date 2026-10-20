@@ -81,7 +81,10 @@ pub fn toast(app: &App, theme: &Theme) -> Option<Toast> {
         let from: usize = spans.iter().map(|span| span.content.width()).sum();
         spans.push(Span::styled(label.to_owned(), theme.style(Role::Accent)));
         if let Some(key) = app.hint(CommandId::ClearListMail) {
-            spans.push(Span::styled(format!(" {}", cap(&key)), theme.style(Role::Dim)));
+            spans.push(Span::styled(
+                format!(" {}", cap(&key)),
+                theme.style(Role::Dim),
+            ));
         }
         let to: usize = spans.iter().map(|span| span.content.width()).sum();
         offer = Some(from..to);

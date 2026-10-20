@@ -4154,6 +4154,11 @@ impl FocusWindow {
                 bar.reopen(&typed, reading.shown());
             }
         }
+        // A message opening over an offer hides it: the offer ends with the
+        // moment it was made, rather than staying reachable by key unseen.
+        if reading.is_open() && self.imp().toast.drop_offer() {
+            self.imp().on_screen.take();
+        }
         self.show_pane_page();
         if reading.in_pane() && !reading.is_open() {
             self.focus_list();
