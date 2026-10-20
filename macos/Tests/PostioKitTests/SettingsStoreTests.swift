@@ -47,6 +47,23 @@ import Testing
         #expect(written.contains("mystery = 1"), "an unknown key was dropped: \(written)")
     }
 
+    @Test func theUnsubscribeActionDefaultsToArchiveAndOneKeyChangesIt() throws {
+        // #1952: the notice after leaving a list offers one action.
+        let path = tempPath("after-unsubscribe")
+        try "# mine\n[ui]\ndensity = \"compact\"\n".write(
+            toFile: path, atomically: true, encoding: .utf8)
+        let store = SettingsStore(path: path)
+        let control = try #require(store.afterUnsubscribe)
+        #expect(control.choices == ["Archive", "Delete"])
+        #expect(!control.delete, "archive is the default")
+
+        store.applyAfterUnsubscribe(delete: true)
+        let written = try String(contentsOfFile: path, encoding: .utf8)
+        #expect(written.contains("after_unsubscribe = \"delete\""), "\(written)")
+        #expect(written.contains("# mine"), "the comment did not survive: \(written)")
+        #expect(store.afterUnsubscribe?.delete == true)
+    }
+
     @Test func theFooterFollowsWhateverIsInTheFile() throws {
         let path = tempPath("footer")
         try "[ui]\ndensity = = \n".write(toFile: path, atomically: true, encoding: .utf8)

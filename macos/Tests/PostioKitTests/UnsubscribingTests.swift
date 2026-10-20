@@ -56,12 +56,12 @@ import Testing
     }
 
     @Test func aLeftListThatLeftMailOffersToClearItAndAnAnswerSettlesIt() {
-        // #1931: the banner stays with Archive and Delete until one is
-        // answered; nothing is offered for a list that was not left.
+        // #1952: the banner stays with the one action until it is pressed or
+        // dismissed; nothing is offered for a list that was not left.
         var unsubscribing = Unsubscribing()
         let sweep = Unsubscribing.Sweep(
             summary: "Unsubscribed from news.example.org. 14 messages from it are still here",
-            archive: "Archive 14", delete: "Delete 14")
+            button: "Archive 14", delete: false)
         unsubscribing.offerSweep(7, sweep)
         #expect(unsubscribing.state(of: 7) == .offered, "not left, so nothing to clear")
 

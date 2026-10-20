@@ -381,7 +381,7 @@ struct MessageWindowModelTests {
         let source = Source()
         source.leftBehind = ListMailOfferFfi(
             summary: "Unsubscribed from news.example.org. 14 messages from it are still here",
-            count: 14, archive: "Archive 14", delete: "Delete 14")
+            count: 14, button: "Archive 14", delete: false)
         let (model, _) = Self.model(source)
         model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
         await model.settled()
@@ -399,10 +399,28 @@ struct MessageWindowModelTests {
         #expect(model.unsubscribeState(of: 7) == .left, "answered, so the banner goes")
     }
 
-    @Test func keepingWhatTheListSentSendsNothing() async throws {
+    @Test func theConfiguredDeleteIsTheOneActionTheOfferHands() async throws {
+        // #1952: the setting picks the verb; the model hands it back as is.
         let source = Source()
         source.leftBehind = ListMailOfferFfi(
-            summary: "s", count: 2, archive: "Archive 2", delete: "Delete 2")
+            summary: "s", count: 2, button: "Delete 2", delete: true)
+        let (model, _) = Self.model(source)
+        model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
+        await model.settled()
+        model.unsubscribe()
+        try await Self.until {
+            if case .clearing(let sweep) = model.unsubscribeState(of: 7) {
+                return sweep.button == "Delete 2" && sweep.delete
+            }
+            return false
+        }
+        #expect(source.cleared.isEmpty, "offered, not done")
+    }
+
+    @Test func dismissingTheOfferSendsNothing() async throws {
+        let source = Source()
+        source.leftBehind = ListMailOfferFfi(
+            summary: "s", count: 2, button: "Archive 2", delete: false)
         let (model, _) = Self.model(source)
         model.open(message: 7, index: 2, total: 9, mainWidth: 1440)
         await model.settled()

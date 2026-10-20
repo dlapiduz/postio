@@ -27,8 +27,8 @@ public struct UnsubscribeBanner: View {
     /// Run the `unsubscribe` command for this message -- the one deliberate
     /// act, and the same path the key takes.
     private let leave: () -> Void
-    /// The answer to "clear what the list sent?": `true` deletes, `false`
-    /// archives, `nil` keeps it all.
+    /// The answer to the offer to clear what the list sent: `true` deletes,
+    /// `false` archives, `nil` dismisses it and keeps it all.
     private let clear: (Bool?) -> Void
 
     public init(
@@ -51,17 +51,16 @@ public struct UnsubscribeBanner: View {
                         .foregroundStyle(.secondary)
                     if case .clearing(let sweep) = state {
                         // Left, and mail is still here: the offer replaces
-                        // the button. Nothing moves until one is pressed, and
-                        // either is one undo (#1931).
+                        // the button, with the one action the setting names.
+                        // Nothing moves until it is pressed, it is one undo,
+                        // and dismissing keeps everything (#1952).
                         Text(sweep.summary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Spacer(minLength: PostioTokens.space2)
-                        Button(sweep.archive) { clear(false) }
+                        Button(sweep.button) { clear(sweep.delete) }
                             .buttonStyle(ReaderButtonStyle(.secondary))
-                        Button(sweep.delete) { clear(true) }
-                            .buttonStyle(ReaderButtonStyle(.secondary))
-                        Button("Keep") { clear(nil) }
+                        Button("Dismiss") { clear(nil) }
                             .buttonStyle(ReaderButtonStyle(.secondary))
                             .keyboardShortcut(.cancelAction)
                     } else {

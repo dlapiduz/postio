@@ -243,13 +243,13 @@ public final class MessageWindowModel {
                 guard let offer, self.place != nil else { return }
                 self.unsubscribing.offerSweep(
                     message,
-                    .init(summary: offer.summary, archive: offer.archive, delete: offer.delete))
+                    .init(summary: offer.summary, button: offer.button, delete: offer.delete))
             })
     }
 
     /// The answer to the banner's offer: `true` deletes what the list sent,
-    /// `false` archives it, `nil` keeps it. Archive and Delete are one
-    /// command on exactly those messages, so one undo takes either back.
+    /// `false` archives it, `nil` dismisses the offer and keeps it. The one
+    /// action is one command on exactly those messages, so one undo.
     public func clearListMail(delete: Bool?) {
         guard let message = displayed else { return }
         unsubscribing.answerSweep(message)

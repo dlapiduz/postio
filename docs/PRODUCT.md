@@ -622,11 +622,15 @@ twelve keystrokes are one toast and one `mod+z`; and the stack **forgets**, beca
 putting back something archived an hour ago is a surprise rather than a mercy.
 `ARCHITECTURE.md` §5.
 
-**Leaving a list offers to clear it.** After `M` unsubscribes, the window
-offers to Archive or Delete what the list already sent: its `List-Id`, or for
-a sender with none their exact address (never the domain), without the Flagged
-and without what is already in Trash, Junk, Sent or Drafts. It is one command,
-so one undo; `Esc` keeps everything.
+**Leaving a list offers to clear it.** After `M` unsubscribes, a notice says
+`Unsubscribed from` the list's `List-Id`, or for a sender with none their
+exact address (never the domain, which the activation log files it under),
+and, when mail from it is still here, offers one action on it: Archive, or
+Delete if `[focus] after_unsubscribe` says so. The mail is the list's, without
+the Flagged and without what is already in Trash, Junk, Sent or Drafts. The
+notice never takes the keyboard (a toast on the desktop, the status line in
+the terminal, the banner row on the Mac): ignoring it, or `Esc`, keeps
+everything. The action is one command, so one undo.
 
 ---
 
