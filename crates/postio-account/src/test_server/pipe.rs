@@ -38,8 +38,9 @@ impl InMemoryConnector {
     fn open(&self) -> Box<dyn Stream> {
         let (client, server) = tokio::io::duplex(self.capacity);
         let shared = Arc::clone(&self.shared);
+        let stats = Arc::clone(&shared.stats);
         tokio::spawn(async move {
-            let _ = Session::new(Conn::new(server), shared).run().await;
+            let _ = Session::new(Conn::new(server, stats), shared).run().await;
         });
         Box::new(Pipe(client))
     }
