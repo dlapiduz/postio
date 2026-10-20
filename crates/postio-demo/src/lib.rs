@@ -1183,8 +1183,31 @@ pub async fn demo() -> (Store, AccountId) {
             .create(&mut message)
             .await
             .expect("a newsletter");
+        record_correspondents(&connection, &message)
+            .await
+            .expect("its correspondents");
         digests.hold(id, "Newsletters", at).await.expect("held");
         newsletter_ids.push(id);
+    }
+    // Earlier issues, a week apart, kept in the Archive: what makes a
+    // newsletter's card say how often it comes (specs/011-focus-contacts S7).
+    let mut sent = std::collections::HashSet::new();
+    for ((name, address), _, _) in NEWSLETTERS {
+        if !sent.insert(*address) {
+            continue;
+        }
+        for week in 1..=3 {
+            filed(
+                &connection,
+                report.account.id,
+                archive,
+                (name, address),
+                &format!("Issue {}", 50 - week),
+                "An earlier issue.",
+                today - chrono::Duration::days(7 * week),
+            )
+            .await;
+        }
     }
     let due = today - chrono::Duration::minutes(9);
     let delivery = digests
@@ -1297,8 +1320,72 @@ pub async fn demo() -> (Store, AccountId) {
     postio_index::index::ensure_schema(&connection)
         .await
         .expect("the search index");
+    people(&connection).await;
     drop(connection);
     (database, report.account.id)
+}
+
+/// Everyone the mail names becomes a person, and the senders that are not
+/// people say what they are -- the newsletters of the digest, a list, a
+/// builder -- as the kind detector would have decided, so Contacts has its
+/// tabs to show (specs/011-focus-contacts S7).
+async fn people(connection: &postio_storage::Connection) {
+    ContactRepository::new(connection)
+        .catch_up_batch(None, 100_000)
+        .await
+        .expect("a person for every address");
+    let mut kinds: Vec<(&str, String)> = NEWSLETTERS
+        .iter()
+        .map(|((_, address), _, _)| ("newsletter", (*address).to_owned()))
+        .collect();
+    for (kind, address) in [
+        ("list", "announce@lists.example.org"),
+        ("list", "all-staff@example.com"),
+        ("list", "finance@example.org"),
+        ("automated", "reports@builds.example.com"),
+        ("automated", "receipts@shop.example"),
+        ("automated", "no-reply@city.example"),
+    ] {
+        kinds.push((kind, address.to_owned()));
+    }
+    let mut seen = std::collections::HashSet::new();
+    kinds.retain(|(_, address)| seen.insert(address.clone()));
+    for (kind, address) in &kinds {
+        postio_storage::sql::execute(
+            connection,
+            "UPDATE contacts SET kind = ?2, kind_source = 'user'
+              WHERE id = (SELECT contact_id FROM addresses WHERE address_normalized = ?1)",
+            postio_storage::sql::bind![address.as_str(), *kind],
+        )
+        .await
+        .expect("a kind");
+        if *kind == "newsletter" {
+            // Held for the weekly digest, as the demo's rule holds them.
+            postio_storage::sql::execute(
+                connection,
+                "INSERT INTO contact_settings
+                   (contact_id, arrival, digest_name, digest_cadence, digest_day, digest_at)
+                 SELECT contact_id, 'digest', 'Newsletters', 'weekly', 'Saturday', '16:00'
+                   FROM addresses WHERE address_normalized = ?1",
+                postio_storage::sql::bind![address.as_str()],
+            )
+            .await
+            .expect("a digest setting");
+        }
+    }
+    // Marisol is saved, notifies, is reminded about, and has a note.
+    for statement in [
+        "UPDATE contacts SET saved_at = 1, source = 'user',
+                note = 'Prefers numbers in a sheet rather than in the email body.',
+                organization = 'Northwind Partners', title = 'Finance lead'
+          WHERE id = (SELECT contact_id FROM addresses WHERE address_normalized = 'marisol@example.com')",
+        "INSERT INTO contact_settings (contact_id, notify, remind_days)
+         SELECT contact_id, 1, 3 FROM addresses WHERE address_normalized = 'marisol@example.com'",
+    ] {
+        postio_storage::sql::execute(connection, statement, ())
+            .await
+            .expect("a person's details");
+    }
 }
 
 /// File one message from `from` about `subject` into `mailbox` at `at`.

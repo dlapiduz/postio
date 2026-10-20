@@ -326,6 +326,30 @@ public final class PostioSession {
     /// Create (or Save): write the rule.
     public func focusRuleCreate() { inner.focusRuleCreate() }
 
+    /// The Contacts list's row at `index`, or `nil` while its page is on its
+    /// way (`FocusContactsRows` follows).
+    public func focusContactsRow(_ index: UInt32) -> ContactRowViewFfi? {
+        inner.focusContactsRow(index: index)
+    }
+
+    /// How many rows the Contacts list has.
+    public func focusContactsTotal() -> UInt32 { inner.focusContactsTotal() }
+
+    /// Where the Contacts cursor is.
+    public func focusContactsCursor() -> UInt32? { inner.focusContactsCursor() }
+
+    /// The card beside the Contacts list, once read.
+    public func focusContactsCard() -> ContactCardViewFfi? { inner.focusContactsCard() }
+
+    /// A click on a kind tab.
+    public func focusContactsTab(_ tab: ContactTabFfi) { inner.focusContactsTab(tab: tab) }
+
+    /// The Contacts filter holds `text` now.
+    public func focusContactsFilter(_ text: String) { inner.focusContactsFilter(text: text) }
+
+    /// A click on the Contacts row at `index`.
+    public func focusContactsPoint(_ index: UInt32) { inner.focusContactsPoint(index: index) }
+
     /// A click on a sender's name: the known-sender popover for `address`.
     public func focusContactPopoverAt(_ address: String) {
         inner.focusContactPopoverAt(address: address)

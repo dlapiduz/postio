@@ -21,7 +21,7 @@ pub fn thousands(n: u32) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -586,10 +586,9 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
                 .as_deref()
                 .map(str::trim)
                 .filter(|name| !name.is_empty() && *name != shown)
+                && !names.iter().any(|known| known == name)
             {
-                if !names.iter().any(|known| known == name) {
-                    names.push(name.to_owned());
-                }
+                names.push(name.to_owned());
             }
         }
         names

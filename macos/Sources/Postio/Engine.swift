@@ -128,6 +128,7 @@ final class Engine {
             ruleSheet = RuleSheetModel(engine: session)
             capture = CaptureModel(engine: session)
             makeContactPopover(session)
+            contactsView = ContactsModel(engine: session)
             composer = ComposerWindow(engine: session)
             // The toolbar was built before there were bindings to spell.
             keycapsChanged?()
@@ -383,6 +384,7 @@ final class Engine {
         if commandBar?.isOpen == true { return .search }
         if results?.isOpen == true { return .results }
         if contactPopover?.isOpen == true { return .contactPopover }
+        if contactsView?.isOpen == true { return .contacts }
         if capture?.isOpen == true { return .capture }
         if digest?.isOpen == true { return .digest }
         if filtered?.isOpen == true { return .filtered }
@@ -786,6 +788,11 @@ final class Engine {
         }
     }
 
+    // MARK: the Contacts view (specs/011-focus-contacts S7)
+
+    /// The Contacts view: a mode of the main window, in the list's place.
+    @ObservationIgnored private(set) var contactsView: ContactsModel?
+
     // MARK: the known-sender popover (specs/011-focus-contacts S6)
 
     /// What the popover draws, and what hangs it from the sender's name.
@@ -800,6 +807,14 @@ final class Engine {
         let presenter = ContactPopover(model: model)
         presenter.anchor = { [weak self] in
             guard let self else { return nil }
+            // Over Contacts, the list's rows are SwiftUI's and have no frame
+            // to read: it hangs from the list's upper part, where the cursor
+            // row mostly is, level with the window's content.
+            if self.contactsView?.isOpen == true, let content = self.mainWindow?.contentView {
+                let height = content.bounds.height
+                let y = content.isFlipped ? 200 : height - 200
+                return (content, NSRect(x: 16 + ContactPopoverView.width / 2, y: y, width: 1, height: 20))
+            }
             // Over the results, the name is in the results table's row.
             if self.results?.isOpen == true, let table = self.resultsTable,
                 let row = self.contactRow ?? table.cursorTableRow,
@@ -1392,6 +1407,8 @@ final class Engine {
             contactPresenter?.apply(change)
             return
         }
+        // The Contacts view (S7): the frame, its rows, the cursor and the card.
+        if contactsView?.apply(event) != nil { return }
         if case let .focusWriteTo(address) = event {
             if let encoded = address.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
                 let url = URL(string: "mailto:\(encoded)"), let mailto = Mailto(url)

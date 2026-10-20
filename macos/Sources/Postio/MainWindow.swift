@@ -71,9 +71,15 @@ struct MainWindow: View {
             {
                 ResultsPane(engine: engine, results: results, query: query, table: table)
             }
+            // Contacts (`g c`, handoff screens 01 to 03): a mode of the
+            // window, in the inbox's place, the inbox kept under it.
+            if let contacts = engine.contactsView, contacts.isOpen {
+                ContactsScreen(model: contacts)
+            }
         }
         .animation(nil, value: engine.filtered?.isOpen)
         .animation(nil, value: engine.results?.isOpen)
+        .animation(nil, value: engine.contactsView?.isOpen)
         // ⌘[ and ⌘] by trackpad: the swipe is reported as the command.
         .background(HistorySwipeInstaller(engine: engine))
         // The command bar is a panel dropping from the toolbar's field

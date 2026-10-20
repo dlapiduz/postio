@@ -49,7 +49,7 @@ async fn row_when_ready(
 async fn g_c_draws_the_frame_rows_in_letters_and_the_card_of_the_cursor() {
     let session = with_people().await;
     let s = session.clone();
-    tokio::task::spawn_blocking(move || s.invoke("open_contacts".into()))
+    tokio::task::spawn_blocking(move || s.invoke("open_contacts"))
         .await
         .expect("g c");
 
@@ -102,7 +102,7 @@ async fn g_c_draws_the_frame_rows_in_letters_and_the_card_of_the_cursor() {
     assert_eq!(card.months.bars.len(), 12);
 
     let s = session.clone();
-    tokio::task::spawn_blocking(move || s.invoke("next_message".into()))
+    tokio::task::spawn_blocking(move || s.invoke("next_message"))
         .await
         .expect("j");
     assert!(
@@ -139,8 +139,8 @@ async fn g_c_draws_the_frame_rows_in_letters_and_the_card_of_the_cursor() {
 
     let s = session.clone();
     tokio::task::spawn_blocking(move || {
-        s.invoke("back".into());
-        s.invoke("back".into());
+        s.invoke("back");
+        s.invoke("back");
     })
     .await
     .expect("escape");

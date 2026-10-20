@@ -974,12 +974,6 @@ impl ContactRepository<'_> {
             .await
     }
 
-    /// The statements a tab's pages issue, for the budget that asks the
-    /// planner about them.
-    pub fn explain_kind_pages() -> [String; 2] {
-        [kind_first_sql(), kind_next_sql()]
-    }
-
     /// What the strip and the footer say: each tab's count and the totals
     /// from `contact_counts`, the review queue, and how many addresses with
     /// mail still wait for a person. A handful of rows and three capped
@@ -1012,7 +1006,7 @@ impl ContactRepository<'_> {
         };
         let frequent = sql::scalar(
             self.connection,
-            &Self::explain_review()[0],
+            Self::explain_review()[0],
             bind![i64::from(REVIEW_CAP)],
         )
         .await?;

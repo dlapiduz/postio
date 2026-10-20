@@ -60,7 +60,6 @@ is_paused                         # crates/postio-sync/src/backfill.rs:507
 is_reversible                     # crates/postio-model/src/operation.rs:351
 is_settled                        # crates/postio-model/src/operation.rs:172
 join_name_choices                 # crates/postio-ui/src/contacts.rs:201 -- the Contacts surface for Focus (specs/011-focus-contacts) is its caller
-kind_counts                       # crates/postio-storage/src/repository/contacts.rs:474 -- the Contacts tabs' counts (specs/011-focus-contacts S7 reads it; S5 keeps and tests it)
 latest_message_id                 # crates/postio-model/src/thread.rs:91
 lookup_binding                    # crates/postio-core/src/registry.rs:1067
 mark_in_flight                    # crates/postio-storage/src/repository/operations.rs:465

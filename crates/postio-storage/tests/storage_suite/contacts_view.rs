@@ -126,11 +126,14 @@ async fn a_tab_lists_its_kinds_by_name_and_a_page_seeks_past_the_last() {
         "a filter within the tab"
     );
 
-    for sql in ContactRepository::explain_kind_pages() {
+    for (name, sql) in postio_storage::test_support::contact_list_statements()
+        .into_iter()
+        .filter(|(name, _)| name.starts_with("kind"))
+    {
         assert_eq!(
             unbounded(&connection, &sql, &["contacts"]).await,
             Vec::<String>::new(),
-            "a page is a seek over the kind index: {sql}"
+            "{name} is a seek over the kind index: {sql}"
         );
     }
     let _ = ContactView::Everyone;

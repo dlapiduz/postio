@@ -1,0 +1,31 @@
+# A newsletter's card (specs/011-focus-contacts S7, handoff screen 03): the
+# kind-specific variant of the same card. Digest is chosen with the switch
+# for its digest and the rule's cadence; its tiles are issues this year, how
+# many were opened, how often it comes and when the last one did; its recent
+# issues say opened or not; there are no files. Its head offers All issues,
+# Unsubscribe and Edit.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/011-focus-contacts S7" }
+seed   = "small"
+design = "03-newsletter-card"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "open_contacts"
+
+[[step]]
+command = "contacts_tab_next"
+
+[[step]]
+command = "contacts_tab_next"
+
+[[step]]
+command = "contacts_tab_next"
+expect  = "Lists and newsletters is chosen and its list is shorter, each row with its kind and count line (newsletter · n issues) and a rounded-square avatar with the kind's glyph."
+
+[[step]]
+id      = "card"
+command = "next_message"
+expect  = "A newsletter's card: “Newsletter · recognised from its unsubscribe header · stays in Postio, not synced”, All issues as the primary button, Digest chosen, “In the weekly digest, Saturday 16:00” on, Its mail with issues this year, you opened, how often and the last issue, and Recent issues with whether each was opened."

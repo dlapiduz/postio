@@ -109,7 +109,8 @@ impl Contacts {
         }
         // The first row of a page whose neighbour is not resident: the page
         // said what came before it.
-        (index % PAGE_SIZE == 0)
+        index
+            .is_multiple_of(PAGE_SIZE)
             .then(|| self.befores.get(&(index / PAGE_SIZE)).cloned().flatten())
             .flatten()
     }
