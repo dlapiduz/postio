@@ -19,6 +19,7 @@ pub mod cheatsheet;
 pub mod clock;
 pub mod command_bar;
 pub mod compose;
+pub mod contacts;
 pub mod conversation;
 pub mod digest;
 pub mod dwell;
