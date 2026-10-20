@@ -239,8 +239,8 @@ pub fn sweep_body(count: usize, more: bool, undo: Option<&str>) -> String {
         None => "Undo takes it back".to_owned(),
     };
     format!(
-        "{count}{plus} {noun} from it, none of them Flagged, are still here. \
-         Delete moves them to the Trash; {how}."
+        "{count}{plus} {noun} from this sender, none of them Flagged, are still in \
+         your mail. Delete moves them to the Trash; {how}."
     )
 }
 
