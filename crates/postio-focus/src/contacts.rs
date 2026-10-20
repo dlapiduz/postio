@@ -165,11 +165,7 @@ impl FocusController {
 
     /// A command while the Contacts view is on top. It holds the keyboard:
     /// what is not its own does nothing, but the key map and Quit.
-    pub(crate) fn contacts_command(
-        &mut self,
-        id: CommandId,
-        rows: &dyn Rows,
-    ) -> Option<Vec<Step>> {
+    pub(crate) fn contacts_command(&mut self, id: CommandId, rows: &dyn Rows) -> Option<Vec<Step>> {
         let contacts = self.contacts.as_mut()?;
         match id {
             CommandId::Back => {

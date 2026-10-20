@@ -136,6 +136,15 @@ impl FocusController {
                 steps.insert(0, Step::Show(Intent::WriteTo(address)));
                 Some(steps)
             }
+            // The card is the Contacts view with this person found: the view
+            // opens over the list filtered to their address, so the card
+            // beside it is theirs.
+            CommandId::ContactOpenCard if self.policy.caps.contacts_view => {
+                let mut steps = self.close_contact_popover();
+                steps.extend(self.open_contacts());
+                steps.extend(self.contacts_filter_typed(address));
+                Some(steps)
+            }
             CommandId::CheatSheet => None,
             _ => Some(Vec::new()),
         }
@@ -228,8 +237,8 @@ impl FocusController {
             open: &glance.open,
             arrival: glance.arrival,
             default_arrival: glance.default_arrival,
-            // The card is the Contacts mode's, which comes with S7.
-            card: false,
+            // The card is the Contacts view's, where there is one.
+            card: self.policy.caps.contacts_view,
         };
         let view = words::view(&facts, self.bar.keymap(), self.bar.now());
         vec![Step::Show(Intent::ContactPopover(Box::new(view)))]

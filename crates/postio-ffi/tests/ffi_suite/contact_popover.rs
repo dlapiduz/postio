@@ -67,7 +67,7 @@ async fn a_click_on_a_name_draws_the_popover_and_a_segment_changes_arrival_for_g
             .iter()
             .map(|a| (a.label.as_str(), a.enabled))
             .collect::<Vec<_>>(),
-        [("All mail", true), ("Write", true), ("Open card", false)]
+        [("All mail", true), ("Write", true), ("Open card", true)]
     );
 
     let s = session.clone();

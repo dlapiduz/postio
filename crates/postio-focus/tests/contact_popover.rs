@@ -307,14 +307,10 @@ fn escape_puts_it_away_and_the_keyboard_goes_home() {
 }
 
 #[test]
-fn the_card_waits_for_its_mode_and_other_keys_do_nothing_under_the_popover() {
+fn other_keys_do_nothing_under_the_popover() {
     let mut focus = ready();
     let _ = open(&mut focus, None);
-    for command in [
-        CommandId::ContactOpenCard,
-        CommandId::Archive,
-        CommandId::NextMessage,
-    ] {
+    for command in [CommandId::Archive, CommandId::NextMessage] {
         let effects = run(&mut focus, command);
         assert!(
             shown(&effects).is_empty() && asks(&effects).is_empty(),
@@ -399,4 +395,32 @@ fn a_sender_the_default_rules_filter_starts_on_filtered_out_and_the_arrow_goes_f
     assert_eq!(on(&drawn(&effects).unwrap()), ["Filtered out"]);
     let effects = run(&mut focus, CommandId::ContactArrivalPrev);
     assert_eq!(on(&drawn(&effects).unwrap()), ["Digest"]);
+}
+
+#[test]
+fn open_card_is_enabled_and_opens_the_contacts_view_on_the_person() {
+    let mut focus = ready();
+    let view = open(&mut focus, None);
+    let card = view
+        .actions
+        .iter()
+        .find(|action| action.label == "Open card")
+        .unwrap();
+    assert!(card.enabled, "the Contacts view exists on the Mac");
+    let effects = run(&mut focus, CommandId::ContactOpenCard);
+    let intents = shown(&effects);
+    assert!(intents.contains(&Intent::CloseSurface(SurfaceKind::ContactPopover)));
+    assert_eq!(focus.key_context(), KeyContext::Contacts);
+    let asked: Vec<Request> = asks(&effects)
+        .into_iter()
+        .map(|(_, request)| request)
+        .collect();
+    assert!(asked.contains(&Request::ContactsOverview));
+    assert!(
+        asked.iter().any(|request| matches!(
+            request,
+            Request::ContactsFiltered { text, .. } if text == "ada@example.com"
+        )),
+        "the list is found down to them: {asked:?}"
+    );
 }

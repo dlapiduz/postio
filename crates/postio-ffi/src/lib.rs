@@ -104,8 +104,11 @@ pub use focus_bar::{
 };
 pub use focus_compose::ComposerKindFfi;
 pub use focus_contacts::{
-    ArrivalOptionFfi, AvatarFfi, ContactArrivalFfi, ContactPopoverViewFfi, OpenLineFfi,
-    PopoverActionFfi, PopoverTileFfi,
+    ArrivalOptionFfi, AvatarFfi, CardAddressFfi, CardButtonFfi, CardFileFfi, CardLineFfi,
+    CardMonthsFfi, CardSwitchFfi, ContactArrivalFfi, ContactCardViewFfi, ContactPopoverViewFfi,
+    ContactReviewLineFfi, ContactRowViewFfi, ContactTabFfi, ContactTabViewFfi,
+    ContactsFooterFfi, ContactsStripFfi, ContactsViewFfi, OpenLineFfi, PopoverActionFfi,
+    PopoverTileFfi,
 };
 pub use focus_keymap::{KeyMapGroupFfi, KeyMapRowFfi, KeyMapSheetFfi};
 pub use focus_list::{

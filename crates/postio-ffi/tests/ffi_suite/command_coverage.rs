@@ -73,8 +73,6 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     // Contacts (specs/005-contacts): the commands are in the registry and
     // answered in `postio_session::actions` as they land, and the surface that
     // sends them is Focus's, designed in specs/011-focus-contacts.
-    (CommandId::OpenContacts, "specs/011-focus-contacts"),
-    (CommandId::ContactsFilter, "specs/011-focus-contacts"),
     (
         CommandId::ContactsToggleEveryone,
         "specs/011-focus-contacts",
@@ -122,6 +120,7 @@ fn the_controller_answers(id: CommandId) -> bool {
             SurfaceKind::Digest,
             SurfaceKind::Capture,
             SurfaceKind::ContactPopover,
+            SurfaceKind::Contacts,
         ]
         .into_iter()
         .any(|kind| {

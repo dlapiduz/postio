@@ -421,7 +421,14 @@ pub fn role_line(card: &ContactCardRead) -> String {
         if !work.is_empty() {
             parts.push(work.join(", "));
         }
-        parts.push(if person.is_saved() { "saved" } else { "not saved yet" }.to_owned());
+        parts.push(
+            if person.is_saved() {
+                "saved"
+            } else {
+                "not saved yet"
+            }
+            .to_owned(),
+        );
     } else {
         parts.push(
             match person.kind {
@@ -585,12 +592,18 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
                 }
             }
         }
-        names.into_iter().map(|name| format!("\u{201c}{name}\u{201d}")).collect()
+        names
+            .into_iter()
+            .map(|name| format!("\u{201c}{name}\u{201d}"))
+            .collect()
     };
     let also_seen = match seen.as_slice() {
         [] => None,
         [one] => Some(format!("Also seen as {one} in headers")),
-        [rest @ .., last] => Some(format!("Also seen as {} and {last} in headers", rest.join(", "))),
+        [rest @ .., last] => Some(format!(
+            "Also seen as {} and {last} in headers",
+            rest.join(", ")
+        )),
     };
     let in_force = card.settings.arrival.unwrap_or(card.default_arrival);
     let arrival = [
@@ -630,7 +643,9 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
                         "When you write to {first}, turn on {} for {days} {}",
                         keymap
                             .binding(CommandId::RemindIfNoReply)
-                            .map(|key| crate::hints::short(key).replace("cmd+", "\u{2318}").to_uppercase())
+                            .map(|key| crate::hints::short(key)
+                                .replace("cmd+", "\u{2318}")
+                                .to_uppercase())
                             .unwrap_or_else(|| "it".to_owned()),
                         if days == 1 { "day" } else { "days" }
                     ),
@@ -642,7 +657,11 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
     } else {
         let digest = match (&card.settings.digest, in_force) {
             (Some(digest), _) => {
-                let day = digest.day.as_deref().map(|day| format!(", {day}")).unwrap_or_default();
+                let day = digest
+                    .day
+                    .as_deref()
+                    .map(|day| format!(", {day}"))
+                    .unwrap_or_default();
                 format!("In the {} digest{day} {}", digest.cadence, digest.at)
             }
             (None, ContactArrival::Digest) => "In a digest".to_owned(),
@@ -656,8 +675,12 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
             },
             SwitchLine {
                 title: "Always show its HTML as sent".to_owned(),
-                note: if html_on { "It sets its own background" } else { "Off: the usual rule decides" }
-                    .to_owned(),
+                note: if html_on {
+                    "It sets its own background"
+                } else {
+                    "Off: the usual rule decides"
+                }
+                .to_owned(),
                 on: html_on,
             },
             SwitchLine {
@@ -676,7 +699,12 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
         vec![
             Tile {
                 value: thousands(stats.messages),
-                caption: if stats.messages == 1 { "message" } else { "messages" }.to_owned(),
+                caption: if stats.messages == 1 {
+                    "message"
+                } else {
+                    "messages"
+                }
+                .to_owned(),
             },
             Tile {
                 value: thousands(stats.from_you),
@@ -689,7 +717,9 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
             Tile {
                 value: when_word(stats.last, now),
                 caption: match stats.last {
-                    Some(at) => format!("last {}", at.with_timezone(&now.timezone()).format("%H:%M")),
+                    Some(at) => {
+                        format!("last {}", at.with_timezone(&now.timezone()).format("%H:%M"))
+                    }
                     None => "last".to_owned(),
                 },
             },
@@ -699,7 +729,12 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
         vec![
             Tile {
                 value: thousands(year),
-                caption: if year == 1 { "issue this year" } else { "issues this year" }.to_owned(),
+                caption: if year == 1 {
+                    "issue this year"
+                } else {
+                    "issues this year"
+                }
+                .to_owned(),
             },
             Tile {
                 value: thousands(stats.opened),
@@ -707,7 +742,9 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
             },
             Tile {
                 value: cadence,
-                caption: day.map(weekday_plural).unwrap_or_else(|| "between issues".to_owned()),
+                caption: day
+                    .map(weekday_plural)
+                    .unwrap_or_else(|| "between issues".to_owned()),
             },
             Tile {
                 value: when_word(stats.last, now),
@@ -723,7 +760,9 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
             .find(|(key, _)| *key == month)
             .map_or(0, |(_, n)| *n)
     };
-    let counts: Vec<u32> = (0..12).map(|back| by_month(this_month - 11 + back)).collect();
+    let counts: Vec<u32> = (0..12)
+        .map(|back| by_month(this_month - 11 + back))
+        .collect();
     let tallest = counts.iter().copied().max().unwrap_or(0).max(1) as f32;
     let month_label = |month: i64| {
         let (year, index) = (month.div_euclid(12), month.rem_euclid(12));
@@ -788,7 +827,12 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
             .filter(|note| !note.is_empty())
             .map(str::to_owned),
         notes_foot: "Kept on this Mac.".to_owned(),
-        stats_title: if correspondent { "Your mail together" } else { "Its mail" }.to_owned(),
+        stats_title: if correspondent {
+            "Your mail together"
+        } else {
+            "Its mail"
+        }
+        .to_owned(),
         tiles,
         months,
         lines_title,
@@ -821,11 +865,20 @@ pub struct FooterView {
 pub fn footer(overview: &ContactsOverview, keymap: &Keymap) -> FooterView {
     use crate::hints::{hint, pair};
     let hints = [
-        pair(keymap, CommandId::NextMessage, CommandId::PrevMessage, "move"),
+        pair(
+            keymap,
+            CommandId::NextMessage,
+            CommandId::PrevMessage,
+            "move",
+        ),
         hint(keymap, CommandId::ContactShowMail, "all mail with them"),
         hint(keymap, CommandId::ContactCompose, "write"),
         hint(keymap, CommandId::ContactEdit, "edit"),
-        hint(keymap, CommandId::ContactPopover, "contact popover, anywhere"),
+        hint(
+            keymap,
+            CommandId::ContactPopover,
+            "contact popover, anywhere",
+        ),
         hint(keymap, CommandId::ContactJoin, "merge selected"),
         hint(keymap, CommandId::ContactsFilter, "filter"),
     ]
@@ -835,11 +888,19 @@ pub fn footer(overview: &ContactsOverview, keymap: &Keymap) -> FooterView {
     let mut status = format!(
         "{} {} \u{b7} {} saved",
         thousands(overview.total),
-        if overview.total == 1 { "contact" } else { "contacts" },
+        if overview.total == 1 {
+            "contact"
+        } else {
+            "contacts"
+        },
         thousands(overview.saved)
     );
     if let Some((made, of)) = overview.building {
-        status = format!("Building contacts, {} of {} \u{b7} {status}", thousands(made), thousands(of));
+        status = format!(
+            "Building contacts, {} of {} \u{b7} {status}",
+            thousands(made),
+            thousands(of)
+        );
     }
     FooterView { hints, status }
 }
@@ -848,8 +909,9 @@ pub fn footer(overview: &ContactsOverview, keymap: &Keymap) -> FooterView {
 mod tests {
     use chrono::TimeZone;
     use postio_model::{
-        AddressId, Contact, ContactAddress, ContactId, ContactSettings, ContactSource, ContactState,
-        ContactStats, EmailAddress, FileChip, IssueRead, MessageId, OpenItem, OpenSide,
+        AddressId, Contact, ContactAddress, ContactId, ContactSettings, ContactSource,
+        ContactState, ContactStats, EmailAddress, FileChip, IssueRead, MessageId, OpenItem,
+        OpenSide,
     };
 
     use super::*;
@@ -980,7 +1042,10 @@ mod tests {
         ] {
             assert_eq!(count_line(&list_row(kind, "X", 57)), line);
         }
-        assert_eq!(count_line(&list_row(ContactKind::Person, "X", 1)), "1 message");
+        assert_eq!(
+            count_line(&list_row(ContactKind::Person, "X", 1)),
+            "1 message"
+        );
     }
 
     #[test]
@@ -1018,8 +1083,12 @@ mod tests {
         person.organization = Some("Northwind Partners".into());
         person.saved_at = Some(Utc::now());
         person.note = Some("Prefers numbers in a sheet.".into());
-        person.addresses.push(address(2, "a.moreno@example.net", Some("A. Moreno"), 14));
-        person.addresses.push(address(3, "ada.moreno@example.com", Some("Ada M."), 6));
+        person
+            .addresses
+            .push(address(2, "a.moreno@example.net", Some("A. Moreno"), 14));
+        person
+            .addresses
+            .push(address(3, "ada.moreno@example.com", Some("Ada M."), 6));
         let month = postio_model::month_key(now().with_timezone(&Utc));
         ContactCardRead {
             person,
@@ -1073,7 +1142,11 @@ mod tests {
             .collect();
         assert_eq!(
             buttons,
-            [("Write", true, true), ("All mail", false, true), ("Edit", false, false)]
+            [
+                ("Write", true, true),
+                ("All mail", false, true),
+                ("Edit", false, false)
+            ]
         );
         assert_eq!(view.addresses[0].address, "ada@example.org");
         assert!(view.addresses[0].primary);
@@ -1085,10 +1158,18 @@ mod tests {
         );
         assert_eq!(view.arrival_title, "How mail from Ada arrives");
         assert_eq!(
-            view.arrival.iter().filter(|o| o.on).map(|o| o.label.as_str()).collect::<Vec<_>>(),
+            view.arrival
+                .iter()
+                .filter(|o| o.on)
+                .map(|o| o.label.as_str())
+                .collect::<Vec<_>>(),
             ["Inbox"]
         );
-        let switches: Vec<_> = view.switches.iter().map(|s| (s.title.as_str(), s.on)).collect();
+        let switches: Vec<_> = view
+            .switches
+            .iter()
+            .map(|s| (s.title.as_str(), s.on))
+            .collect();
         assert_eq!(
             switches,
             [
@@ -1097,20 +1178,36 @@ mod tests {
                 ("Remind if no reply, by default", true),
             ]
         );
-        assert!(view.switches[2].note.starts_with("When you write to Ada, turn on "));
+        assert!(
+            view.switches[2]
+                .note
+                .starts_with("When you write to Ada, turn on ")
+        );
         assert_eq!(view.notes.as_deref(), Some("Prefers numbers in a sheet."));
         assert_eq!(view.stats_title, "Your mail together");
-        let tiles: Vec<_> = view.tiles.iter().map(|t| (t.value.as_str(), t.caption.as_str())).collect();
+        let tiles: Vec<_> = view
+            .tiles
+            .iter()
+            .map(|t| (t.value.as_str(), t.caption.as_str()))
+            .collect();
         assert_eq!(
             tiles,
-            [("431", "messages"), ("168", "from you"), ("—", "replies in"), ("today", "last 16:05")]
+            [
+                ("431", "messages"),
+                ("168", "from you"),
+                ("—", "replies in"),
+                ("today", "last 16:05")
+            ]
         );
         assert_eq!(view.months.bars.len(), 12);
         assert_eq!(view.months.bars[11], 1.0);
         assert_eq!(view.months.bars[10], 0.5);
         assert_eq!(view.months.bars[0], 0.25);
         assert_eq!(view.months.bars[5], 0.0);
-        assert_eq!((view.months.from.as_str(), view.months.to.as_str()), ("Oct 2025", "Sep 2026"));
+        assert_eq!(
+            (view.months.from.as_str(), view.months.to.as_str()),
+            ("Oct 2025", "Sep 2026")
+        );
         assert_eq!(view.lines_title, "Open between you");
         assert_eq!(view.lines[0].label, "Waiting on you");
         assert!(view.lines[0].yours);
@@ -1143,7 +1240,8 @@ mod tests {
         news.stats.recent = (0..4)
             .map(|week| RecentMessage {
                 message: MessageId::new(week + 1),
-                at: Utc.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap() + chrono::Duration::days(7 * week),
+                at: Utc.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap()
+                    + chrono::Duration::days(7 * week),
                 outgoing: false,
             })
             .collect();
@@ -1171,7 +1269,11 @@ mod tests {
         let buttons: Vec<_> = view.buttons.iter().map(|b| b.label.as_str()).collect();
         assert_eq!(buttons, ["All issues", "Unsubscribe", "Edit"]);
         assert_eq!(view.stats_title, "Its mail");
-        let tiles: Vec<_> = view.tiles.iter().map(|t| (t.value.as_str(), t.caption.as_str())).collect();
+        let tiles: Vec<_> = view
+            .tiles
+            .iter()
+            .map(|t| (t.value.as_str(), t.caption.as_str()))
+            .collect();
         assert_eq!(
             tiles,
             [
@@ -1183,15 +1285,31 @@ mod tests {
         );
         assert_eq!(view.lines_title, "Recent issues");
         assert_eq!(
-            view.lines.iter().map(|l| (l.text.as_str(), l.state.as_str())).collect::<Vec<_>>(),
-            [("The quiet season", "not opened"), ("Seed saving, done properly", "opened")]
+            view.lines
+                .iter()
+                .map(|l| (l.text.as_str(), l.state.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("The quiet season", "not opened"),
+                ("Seed saving, done properly", "opened")
+            ]
         );
-        assert!(view.files_title.is_none() && view.files.is_empty(), "no files for a newsletter");
-        assert_eq!(view.switches[0].title, "In the weekly digest, Saturday 16:00");
+        assert!(
+            view.files_title.is_none() && view.files.is_empty(),
+            "no files for a newsletter"
+        );
+        assert_eq!(
+            view.switches[0].title,
+            "In the weekly digest, Saturday 16:00"
+        );
         assert!(view.switches[0].on);
         assert_eq!(view.switches[2].title, "Archive issues after 30 days");
         assert_eq!(
-            view.arrival.iter().filter(|o| o.on).map(|o| o.label.as_str()).collect::<Vec<_>>(),
+            view.arrival
+                .iter()
+                .filter(|o| o.on)
+                .map(|o| o.label.as_str())
+                .collect::<Vec<_>>(),
             ["Digest"]
         );
     }

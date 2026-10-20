@@ -281,6 +281,35 @@ pub enum UiEvent {
         /// Everything it draws.
         view: crate::focus_contacts::ContactPopoverViewFfi,
     },
+    /// Draw the Contacts view's frame, whole, in the list's place. The
+    /// controller has put it on the stack as `Contacts`; it closes on
+    /// `FocusCloseSurface { kind: Contacts }`. Read rows with
+    /// `focus_contacts_row` and the card with `focus_contacts_card`.
+    FocusContacts {
+        /// The strip, the footer, the length.
+        view: crate::focus_contacts::ContactsViewFfi,
+    },
+    /// Contacts rows landed: draw `count` rows from `first`, or the whole
+    /// list when `count` is 0 (it started over).
+    FocusContactsRows {
+        /// The first row.
+        first: u32,
+        /// How many; 0 for all.
+        count: u32,
+    },
+    /// The Contacts cursor is on this row.
+    FocusContactsCursor {
+        /// The row.
+        index: Option<u32>,
+    },
+    /// The card beside the Contacts list: draw it whole, or empty while it
+    /// is read.
+    FocusContactsCard {
+        /// The card.
+        card: Option<crate::focus_contacts::ContactCardViewFfi>,
+    },
+    /// Put the keyboard in the Contacts filter field.
+    FocusContactsFocusFilter,
     /// Open a composer to this address, as a `mailto:` link would, and say
     /// `focus_surface_opened(Composer)` once it shows.
     FocusWriteTo {

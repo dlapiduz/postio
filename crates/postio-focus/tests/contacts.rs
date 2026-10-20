@@ -48,10 +48,13 @@ fn asks(effects: &[Effect]) -> Vec<(Ticket, Request)> {
 }
 
 fn frame(effects: &[Effect]) -> Option<ContactsView> {
-    shown(effects).into_iter().rev().find_map(|intent| match intent {
-        Intent::Contacts(view) => Some(*view),
-        _ => None,
-    })
+    shown(effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::Contacts(view) => Some(*view),
+            _ => None,
+        })
 }
 
 fn run(focus: &mut FocusController, command: CommandId) -> Vec<Effect> {
@@ -62,7 +65,10 @@ fn row(n: i64, name: &str, kind: ContactKind) -> ContactListRow {
     ContactListRow {
         id: ContactId::new(n),
         name: name.to_owned(),
-        preferred: Some(format!("{}@example.org", name.to_lowercase().replace(' ', "."))),
+        preferred: Some(format!(
+            "{}@example.org",
+            name.to_lowercase().replace(' ', ".")
+        )),
         address_count: 1,
         last_seen_at: Some(Utc.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap()),
         source: ContactSource::Mail,
@@ -105,7 +111,10 @@ fn overview(building: Option<(u32, u32)>) -> ContactsOverview {
 fn card(id: i64, name: &str) -> ContactCardRead {
     let mut person = Contact::new(ContactAddress::new(
         AddressId::new(id),
-        EmailAddress::new(Some(name), format!("{}@example.org", name.to_lowercase().replace(' ', "."))),
+        EmailAddress::new(
+            Some(name),
+            format!("{}@example.org", name.to_lowercase().replace(' ', ".")),
+        ),
     ));
     person.id = ContactId::new(id);
     ContactCardRead {
@@ -160,7 +169,10 @@ fn g_c_opens_the_view_and_reads_the_counts() {
     assert_eq!(focus.top_surface(), Some(SurfaceKind::Contacts));
     let skeleton = frame(&effects).expect("a frame at once");
     assert!(!skeleton.loaded);
-    assert!(matches!(&asks(&effects)[..], [(_, Request::ContactsOverview)]));
+    assert!(matches!(
+        &asks(&effects)[..],
+        [(_, Request::ContactsOverview)]
+    ));
 }
 
 #[test]
@@ -172,10 +184,16 @@ fn the_overview_fills_the_strip_and_the_first_page_gives_rows_in_letters() {
     assert_eq!(view.total, 3);
     assert_eq!(view.strip.title, "Contacts");
     assert_eq!(view.strip.tabs.len(), 5);
-    assert!(view.strip.review.is_none(), "nothing to review hides the line");
+    assert!(
+        view.strip.review.is_none(),
+        "nothing to review hides the line"
+    );
     assert_eq!(view.footer.status, "3 contacts · 1 saved");
     let first = focus.contacts_row(0).expect("row 0");
-    assert_eq!((first.name.as_str(), first.letter), ("Ada Moreno", Some('A')));
+    assert_eq!(
+        (first.name.as_str(), first.letter),
+        ("Ada Moreno", Some('A'))
+    );
     let second = focus.contacts_row(1).unwrap();
     assert_eq!(second.letter, None, "Adam is under the same A");
     let third = focus.contacts_row(2).unwrap();
@@ -207,11 +225,9 @@ fn the_cursor_walks_the_list_and_the_card_follows_it() {
         ),
         &NoRows,
     );
-    assert!(
-        shown(&effects)
-            .iter()
-            .any(|intent| matches!(intent, Intent::ContactsCard(Some(card)) if card.name == "Ada Moreno"))
-    );
+    assert!(shown(&effects).iter().any(
+        |intent| matches!(intent, Intent::ContactsCard(Some(card)) if card.name == "Ada Moreno")
+    ));
 
     let effects = run(&mut focus, CommandId::NextMessage);
     assert!(shown(&effects).contains(&Intent::ContactsCursor(Some(1))));
@@ -269,11 +285,24 @@ fn a_tab_starts_the_list_over_and_a_stale_page_is_dropped() {
     drop(wanted_before);
     let effects = run(&mut focus, CommandId::ContactsTabNext);
     let view = frame(&effects).expect("the frame is drawn again");
-    assert!(view.strip.tabs.iter().any(|tab| tab.on && tab.title == "People"));
+    assert!(
+        view.strip
+            .tabs
+            .iter()
+            .any(|tab| tab.on && tab.title == "People")
+    );
     assert_eq!(view.total, 3);
     assert!(focus.contacts_row(0).is_none(), "the old rows are gone");
     let wanted = focus.contacts_wanted(0);
-    let [(ticket, Request::ContactsPage { tab, stamp, page, .. })] = asks(&wanted)[..] else {
+    let [
+        (
+            ticket,
+            Request::ContactsPage {
+                tab, stamp, page, ..
+            },
+        ),
+    ] = asks(&wanted)[..]
+    else {
         panic!("{wanted:?}");
     };
     assert_eq!(tab, ContactTab::People);
@@ -283,7 +312,10 @@ fn a_tab_starts_the_list_over_and_a_stale_page_is_dropped() {
             Reply::ContactsPage {
                 stamp: stamp - 1,
                 page,
-                answer: Ok(ContactsPageRead { rows: people(), before: None }),
+                answer: Ok(ContactsPageRead {
+                    rows: people(),
+                    before: None,
+                }),
             },
         ),
         &NoRows,
@@ -296,7 +328,14 @@ fn a_tab_starts_the_list_over_and_a_stale_page_is_dropped() {
         "All is the first tab: nothing moves"
     );
     let effects = focus.handle_on(Input::ContactsTab(ContactTab::Automated), &NoRows);
-    assert!(frame(&effects).unwrap().strip.tabs.iter().any(|t| t.on && t.title == "Automated"));
+    assert!(
+        frame(&effects)
+            .unwrap()
+            .strip
+            .tabs
+            .iter()
+            .any(|t| t.on && t.title == "Automated")
+    );
 }
 
 #[test]
@@ -307,7 +346,15 @@ fn the_filter_lists_what_it_finds_and_escape_unwinds_filter_then_view() {
     assert!(shown(&effects).contains(&Intent::ContactsFocusFilter));
     let effects = focus.handle_on(Input::ContactsFilterTyped("ben".to_owned()), &NoRows);
     let found = asks(&effects);
-    let [(ticket, Request::ContactsFiltered { text, stamp, tab, .. })] = &found[..] else {
+    let [
+        (
+            ticket,
+            Request::ContactsFiltered {
+                text, stamp, tab, ..
+            },
+        ),
+    ] = &found[..]
+    else {
         panic!("{effects:?}");
     };
     let (ticket, stamp) = (*ticket, *stamp);
@@ -393,7 +440,11 @@ fn the_catch_up_shows_in_the_footer_and_the_review_line_when_something_waits() {
         &NoRows,
     );
     let view = frame(&effects).unwrap();
-    assert!(view.footer.status.starts_with("Building contacts, 1,200 of 1,533"));
+    assert!(
+        view.footer
+            .status
+            .starts_with("Building contacts, 1,200 of 1,533")
+    );
     let line = view.strip.review.expect("something is worth a look");
     assert_eq!(
         line.text,
@@ -406,14 +457,23 @@ fn a_change_to_the_people_reads_the_counts_again_and_gtk_has_no_such_view() {
     let mut focus = mac();
     let _ = open(&mut focus);
     let effects = focus.handle_on(
-        Input::Event(postio_core::Event::ContactsChanged { names_changed: true }),
+        Input::Event(postio_core::Event::ContactsChanged {
+            names_changed: true,
+        }),
         &NoRows,
     );
-    assert!(asks(&effects).iter().any(|(_, request)| matches!(request, Request::ContactsOverview)));
+    assert!(
+        asks(&effects)
+            .iter()
+            .any(|(_, request)| matches!(request, Request::ContactsOverview))
+    );
 
     let mut linux = FocusController::new(Policy::for_platform(Platform::Freedesktop));
     let effects = run(&mut linux, CommandId::OpenContacts);
-    assert!(effects.is_empty(), "Linux adopts Contacts later: {effects:?}");
+    assert!(
+        effects.is_empty(),
+        "Linux adopts Contacts later: {effects:?}"
+    );
     assert_eq!(linux.key_context(), KeyContext::List);
 }
 

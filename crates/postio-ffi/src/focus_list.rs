@@ -75,6 +75,8 @@ pub enum SurfaceKindFfi {
     RowMenu,
     /// The known-sender popover, hung from a sender's name.
     ContactPopover,
+    /// The Contacts view, in the list's place.
+    Contacts,
 }
 
 impl From<SurfaceKindFfi> for postio_focus::SurfaceKind {
@@ -93,6 +95,7 @@ impl From<SurfaceKindFfi> for postio_focus::SurfaceKind {
             SurfaceKindFfi::Picker => Kind::Picker,
             SurfaceKindFfi::RowMenu => Kind::RowMenu,
             SurfaceKindFfi::ContactPopover => Kind::ContactPopover,
+            SurfaceKindFfi::Contacts => Kind::Contacts,
         }
     }
 }
@@ -115,6 +118,7 @@ impl SurfaceKindFfi {
             Kind::Picker => SurfaceKindFfi::Picker,
             Kind::RowMenu => SurfaceKindFfi::RowMenu,
             Kind::ContactPopover => SurfaceKindFfi::ContactPopover,
+            Kind::Contacts => SurfaceKindFfi::Contacts,
             _ => return None,
         })
     }
@@ -613,6 +617,37 @@ impl FocusDriver {
         None
     }
 
+    /// The Contacts list's row at `index`; a miss asks for its page.
+    pub(crate) fn contacts_row(
+        self: &Arc<Self>,
+        index: u32,
+    ) -> Option<postio_ui::contacts_view::RowView> {
+        let effects = {
+            let mut focus = self.focus.lock().expect("focus lock");
+            if let Some(row) = focus.contacts_row(index) {
+                return Some(row);
+            }
+            focus.contacts_wanted(index)
+        };
+        self.apply(effects);
+        None
+    }
+
+    /// How many rows the Contacts list has.
+    pub(crate) fn contacts_total(&self) -> u32 {
+        self.focus.lock().expect("focus lock").contacts_total()
+    }
+
+    /// Where the Contacts cursor is.
+    pub(crate) fn contacts_cursor(&self) -> Option<u32> {
+        self.focus.lock().expect("focus lock").contacts_cursor()
+    }
+
+    /// The card beside the list, once read.
+    pub(crate) fn contacts_card(&self) -> Option<postio_ui::contacts_view::CardView> {
+        self.focus.lock().expect("focus lock").contacts_card()
+    }
+
     /// The message under the cursor, once its page has landed: what a verb
     /// that is not the list's own aims at.
     pub(crate) fn cursor_message(&self) -> Option<postio_model::MessageId> {
@@ -962,6 +997,17 @@ impl FocusDriver {
                 view: (*view).into(),
             }),
             Intent::WriteTo(address) => self.say(UiEvent::FocusWriteTo { address }),
+            Intent::Contacts(view) => self.say(UiEvent::FocusContacts {
+                view: (*view).into(),
+            }),
+            Intent::ContactsRows { first, count } => {
+                self.say(UiEvent::FocusContactsRows { first, count });
+            }
+            Intent::ContactsCursor(index) => self.say(UiEvent::FocusContactsCursor { index }),
+            Intent::ContactsCard(card) => self.say(UiEvent::FocusContactsCard {
+                card: card.map(|card| (*card).into()),
+            }),
+            Intent::ContactsFocusFilter => self.say(UiEvent::FocusContactsFocusFilter),
             Intent::Composer { kind, message } => {
                 if let Some(kind) = crate::focus_compose::ComposerKindFfi::of(kind) {
                     self.say(UiEvent::FocusComposer {
