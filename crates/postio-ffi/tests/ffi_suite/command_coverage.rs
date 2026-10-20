@@ -74,13 +74,6 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     // answered in `postio_session::actions` as they land, and the surface that
     // sends them is Focus's, designed in specs/011-focus-contacts.
     (CommandId::OpenContacts, "specs/011-focus-contacts"),
-    (CommandId::ContactPopover, "specs/011-focus-contacts S6"),
-    (CommandId::ContactOpenCard, "specs/011-focus-contacts S7"),
-    (CommandId::ContactArrivalPrev, "specs/011-focus-contacts S6"),
-    (CommandId::ContactArrivalNext, "specs/011-focus-contacts S6"),
-    (CommandId::ContactSetArrival, "specs/011-focus-contacts S6"),
-    (CommandId::ContactShowMail, "specs/011-focus-contacts"),
-    (CommandId::ContactCompose, "specs/011-focus-contacts"),
     (CommandId::ContactsFilter, "specs/011-focus-contacts"),
     (
         CommandId::ContactsToggleEveryone,
@@ -128,6 +121,7 @@ fn the_controller_answers(id: CommandId) -> bool {
             SurfaceKind::Filtered,
             SurfaceKind::Digest,
             SurfaceKind::Capture,
+            SurfaceKind::ContactPopover,
         ]
         .into_iter()
         .any(|kind| {

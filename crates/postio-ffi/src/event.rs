@@ -271,6 +271,22 @@ pub enum UiEvent {
         /// The delivery.
         delivery: i64,
     },
+    /// Show the known-sender popover, hung from the sender's name that was
+    /// clicked or the cursor row's, or draw it again, whole (specs/011-focus-
+    /// contacts S6). The controller has put it on the stack as
+    /// `ContactPopover`; it closes on `FocusCloseSurface { kind:
+    /// ContactPopover }`, and any other way it closes is
+    /// `focus_surface_closed(ContactPopover)`.
+    FocusContactPopover {
+        /// Everything it draws.
+        view: crate::focus_contacts::ContactPopoverViewFfi,
+    },
+    /// Open a composer to this address, as a `mailto:` link would, and say
+    /// `focus_surface_opened(Composer)` once it shows.
+    FocusWriteTo {
+        /// Who to write to.
+        address: String,
+    },
     /// Close this surface, then say `focus_surface_closed`.
     FocusCloseSurface {
         /// Which.

@@ -100,6 +100,7 @@ pub const WIRED: &[CommandId] = &[
     CommandId::MapMailboxRole,
     CommandId::RestoreFiltered,
     CommandId::SweepInbox,
+    CommandId::ContactSetArrival,
     CommandId::ContactJoin,
     CommandId::ContactAddAddress,
     CommandId::ContactDetachAddress,

@@ -24,6 +24,7 @@ mod command_coverage;
 mod compose;
 mod config;
 mod contact_for_address;
+mod contact_popover;
 mod conversation;
 mod dwell;
 mod facts;

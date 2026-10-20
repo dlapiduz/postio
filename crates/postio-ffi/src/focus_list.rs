@@ -73,6 +73,8 @@ pub enum SurfaceKindFfi {
     Picker,
     /// A row's menu.
     RowMenu,
+    /// The known-sender popover, hung from a sender's name.
+    ContactPopover,
 }
 
 impl From<SurfaceKindFfi> for postio_focus::SurfaceKind {
@@ -90,6 +92,7 @@ impl From<SurfaceKindFfi> for postio_focus::SurfaceKind {
             SurfaceKindFfi::Filtered => Kind::Filtered,
             SurfaceKindFfi::Picker => Kind::Picker,
             SurfaceKindFfi::RowMenu => Kind::RowMenu,
+            SurfaceKindFfi::ContactPopover => Kind::ContactPopover,
         }
     }
 }
@@ -111,6 +114,7 @@ impl SurfaceKindFfi {
             Kind::Filtered => SurfaceKindFfi::Filtered,
             Kind::Picker => SurfaceKindFfi::Picker,
             Kind::RowMenu => SurfaceKindFfi::RowMenu,
+            Kind::ContactPopover => SurfaceKindFfi::ContactPopover,
             _ => return None,
         })
     }
@@ -948,6 +952,10 @@ impl FocusDriver {
             Intent::Capture(view) => self.say(UiEvent::FocusCapture {
                 view: (*view).into(),
             }),
+            Intent::ContactPopover(view) => self.say(UiEvent::FocusContactPopover {
+                view: (*view).into(),
+            }),
+            Intent::WriteTo(address) => self.say(UiEvent::FocusWriteTo { address }),
             Intent::Composer { kind, message } => {
                 if let Some(kind) = crate::focus_compose::ComposerKindFfi::of(kind) {
                     self.say(UiEvent::FocusComposer {
