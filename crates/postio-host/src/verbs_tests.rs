@@ -2133,3 +2133,153 @@ fn a_rule_the_filing_pass_could_never_answer_is_refused_with_a_sentence() {
         ["list:billing.lists.example.org"]
     );
 }
+
+// ── SC-005: moving senders' settings onto the senders changes nothing ───────
+
+/// A `config.toml` holding one of each entry the move gives to a
+/// correspondent, beside the ones it leaves in the file.
+fn before_the_move() -> String {
+    "[focus.filter]
+never = [\"notifications@forge.example\", \"@pinned.example\"]
+
+[[focus.digests]]
+name = \"Ledger digest\"
+match = [\"from:news@ledger.example\"]
+cadence = \"weekly\"
+day = \"saturday\"
+at = \"16:00\"
+
+[[focus.digests]]
+name = \"Promotions\"
+match = [\"from:@promo.example\"]
+cadence = \"daily\"
+at = \"08:00\"
+"
+    .to_owned()
+}
+
+/// Where each of a fixed corpus lands under `text`: the folder's role, the
+/// reason Focus gave for filing it away, and the digest that holds it.
+fn where_the_corpus_lands(
+    text: &str,
+    migrating: bool,
+) -> (
+    Vec<(
+        String,
+        postio_model::MailboxRole,
+        Option<String>,
+        Option<String>,
+    )>,
+    String,
+    std::path::PathBuf,
+) {
+    let world = World::new();
+    let (directory, path) = config_file(text);
+    if !migrating {
+        world
+            .host()
+            .inner
+            .contacts_moved
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+    crate::tests::focus_ran_before(&world);
+    world.host().enable_focus(
+        crate::FocusSetup::default()
+            .with_config(focus_in(&path))
+            .with_config_path(path.clone()),
+    );
+    let corpus = [
+        ("notifications@forge.example", "Build passed"),
+        ("alerts@monitor.example", "Disk almost full"),
+        ("noreply@pinned.example", "Your receipt"),
+        ("noreply@elsewhere.example", "Your other receipt"),
+        ("news@ledger.example", "Issue 41"),
+        ("News@Ledger.example", "Issue 42"),
+        ("editor@ledger.example", "A note from the editor"),
+        ("offers@promo.example", "Half price"),
+        ("tove@example.org", "Lunch?"),
+    ];
+    for (from, subject) in corpus {
+        let message = newsletter_unheld(&world, from, subject);
+        file_now(&world, message);
+    }
+    let held = holds(&world);
+    let landed = corpus
+        .iter()
+        .map(|(_, subject)| {
+            let (role, reason) = crate::tests::filed_where(&world, subject).expect("filed");
+            let id: i64 = world.rt.block_on(async {
+                let connection = world.database().connect().await.expect("a connection");
+                postio_storage::sql::first(
+                    &connection,
+                    "SELECT id FROM messages WHERE subject = ?1",
+                    [*subject],
+                    |row| postio_storage::sql::RowExt::col(row, 0),
+                )
+                .await
+                .expect("a read")
+                .expect("the message")
+            });
+            let hold = held
+                .iter()
+                .find(|(message, _, _)| message.get() == id)
+                .map(|(_, rule, _)| rule.clone());
+            (
+                (*subject).to_owned(),
+                role,
+                reason.map(|reason| format!("{reason:?}")),
+                hold,
+            )
+        })
+        .collect();
+    let file = std::fs::read_to_string(&path).expect("the file");
+    std::mem::forget(directory);
+    (landed, file, path)
+}
+
+#[test]
+fn moving_senders_settings_onto_the_senders_lands_every_message_where_it_landed() {
+    let (before, file_before, _) = where_the_corpus_lands(&before_the_move(), false);
+    let (after, file_after, path_after) = where_the_corpus_lands(&before_the_move(), true);
+
+    // The fixture means something: some mail stays, some is filed away, some
+    // is held for a digest.
+    let roles: std::collections::BTreeSet<_> = before.iter().map(|row| row.1).collect();
+    assert!(roles.len() >= 2, "{before:?}");
+    assert!(
+        before
+            .iter()
+            .any(|row| row.3.as_deref() == Some("Ledger digest")),
+        "{before:?}"
+    );
+    assert!(
+        before
+            .iter()
+            .any(|row| row.3.as_deref() == Some("Promotions")),
+        "{before:?}"
+    );
+    assert!(
+        before.iter().any(|row| row.2.is_some()),
+        "something is filed away with a reason: {before:?}"
+    );
+
+    assert_eq!(
+        before, after,
+        "every message lands in the same folder, for the same reason, in the same digest"
+    );
+
+    // And the move happened: the file lost what a person can hold, kept the
+    // rest, and the old file is beside it.
+    assert!(file_before.contains("notifications@forge.example"));
+    assert!(
+        !file_after.contains("notifications@forge.example"),
+        "{file_after}"
+    );
+    assert!(!file_after.contains("Ledger digest"), "{file_after}");
+    assert!(file_after.contains("@pinned.example") && file_after.contains("Promotions"));
+    assert_eq!(
+        std::fs::read_to_string(crate::focus::contacts_move::pre_contacts_path(&path_after))
+            .unwrap(),
+        before_the_move()
+    );
+}

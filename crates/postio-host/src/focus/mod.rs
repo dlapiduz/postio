@@ -28,6 +28,7 @@
 
 mod body;
 mod catch_up;
+pub(crate) mod contacts_move;
 pub(crate) mod digests;
 mod due;
 pub(crate) mod filtered;
@@ -191,6 +192,30 @@ impl Host {
     pub fn enable_focus(&self, setup: FocusSetup) -> FocusHandle {
         // What correspondents decided is read once here, and kept current by
         // the verbs that change it; the file is read by whoever reloads it.
+        let mut setup = setup;
+        let path = setup.config_path.clone().or_else(|| {
+            self.inner
+                .config_path
+                .lock()
+                .expect("never poisoned")
+                .clone()
+        });
+        // The first time, the file's address-keyed entries move onto the
+        // correspondents they name, and `[focus]` is what the file then says.
+        if let Some(path) = path.as_deref()
+            && !self.inner.contacts_moved.swap(true, Ordering::AcqRel)
+        {
+            let (database, file) = (self.inner.wiring.database.clone(), path.to_path_buf());
+            match postio_session::blocking::now(async move {
+                contacts_move::run(&database, &file).await
+            }) {
+                Ok(Some((_, focus))) => setup.config = focus,
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(%error, "Focus could not move senders' settings: {error}");
+                }
+            }
+        }
         let database = self.inner.wiring.database.clone();
         let settings = self.inner.wiring.focus.clone();
         if let Err(error) =
@@ -246,13 +271,6 @@ impl Host {
         // Focus's verbs read `[focus]` and write the person's corrections
         // to the file. What they write reaches the filing pass and Focus's
         // tasks at once, as a reload from the file would.
-        let path = setup.config_path.clone().or_else(|| {
-            self.inner
-                .config_path
-                .lock()
-                .expect("never poisoned")
-                .clone()
-        });
         let tasks = Arc::clone(&handle.config);
         let filing = self.inner.wiring.filing.clone();
         let chosen = setup.filing.clone();

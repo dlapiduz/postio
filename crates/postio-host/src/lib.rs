@@ -80,6 +80,9 @@ struct Inner {
     /// Where `config.toml` is, when the host was opened on one: where Focus
     /// writes the person's corrections, unless told otherwise.
     config_path: Mutex<Option<std::path::PathBuf>>,
+    /// Whether this process has moved the file's address-keyed entries onto
+    /// the correspondents they name (`focus::contacts_move`).
+    contacts_moved: std::sync::atomic::AtomicBool,
     /// The bodies a reading pane has asked for (#1788).
     asked_bodies: reading::AskedBodies,
     #[cfg(test)]
@@ -507,6 +510,7 @@ impl Host {
             engines: Engines::default(),
             focus: Mutex::new(None),
             config_path: Mutex::new(None),
+            contacts_moved: std::sync::atomic::AtomicBool::new(false),
             offers: Mutex::new(HashMap::new()),
             oauth_offers: Mutex::new(HashMap::new()),
             sign_ins: Mutex::new(HashMap::new()),
