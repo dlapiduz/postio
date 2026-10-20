@@ -2779,7 +2779,7 @@ fn a_body_the_server_refuses_is_announced_and_then_read_as_failed() {
     world.host().start_syncing();
     let message = eventually(&world, || row_titled(&world, &client, "Tide gate"));
 
-    mock.inject(postio_account::backend::Fault::Rejected(
+    mock.fail_all(postio_account::backend::Fault::Rejected(
         "no such body".to_owned(),
     ));
     client.fetch_body(message);
