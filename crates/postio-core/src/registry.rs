@@ -2570,7 +2570,9 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::ContactDetachAddress,
         title: "Detach address",
-        default_binding: "minus",
+        // The bare `-` rather than `minus`: the Mac draws both as the same
+        // accelerator, and its menu test rejects two spellings of one key.
+        default_binding: "-",
         alternate_bindings: &[],
         contexts: ctx(CONTACTS),
         destructive: false,
