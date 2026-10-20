@@ -24,6 +24,9 @@ public struct ContactPopoverView: View {
                 actions(view)
             }
             .frame(width: Self.width)
+            // An opaque card on the view's own colour, as screen 04 draws
+            // it, not the popover's vibrant material.
+            .background(Color(nsColor: .textBackgroundColor))
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Contact")
         }
@@ -75,7 +78,7 @@ public struct ContactPopoverView: View {
                     Text(line.label)
                         .font(.system(size: 11.5, weight: .semibold))
                         .foregroundStyle(line.yours ? Color.accentColor : Color.secondary)
-                        .frame(width: 98, alignment: .leading)
+                        .lineLimit(1).frame(width: 112, alignment: .leading)
                     Text(line.text).font(.system(size: 12.5)).lineLimit(1)
                 }
                 .accessibilityElement(children: .combine)
@@ -87,7 +90,16 @@ public struct ContactPopoverView: View {
 
     private func arrival(_ view: ContactPopoverViewFfi) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(view.arrivalTitle).font(.system(size: 11.5, weight: .bold)).foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Text(view.arrivalTitle).font(.system(size: 11.5, weight: .bold)).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                ForEach(Array(view.hints.enumerated()), id: \.offset) { _, hint in
+                    HStack(spacing: 4) {
+                        if let cap = KeyCapSpelling.cap(hint.key) { KeyCap(cap) }
+                        Text(hint.label).font(.system(size: 10.5)).foregroundStyle(.tertiary)
+                    }
+                }
+            }
             HStack(spacing: 2) {
                 ForEach(Array(view.arrival.enumerated()), id: \.offset) { _, option in
                     Button { model.choose(option.arrival) } label: {

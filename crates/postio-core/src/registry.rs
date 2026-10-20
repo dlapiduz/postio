@@ -2507,7 +2507,8 @@ static SPECS: &[CommandSpec] = &[
         // `alt+i`, so the bare key is free everywhere a sender is on screen.
         default_binding: "i",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES).with(Context::Results).with(Context::Search),
+        // Not the search bar: `i` there is a letter being typed.
+        contexts: ctx(MESSAGE_SURFACES).with(Context::Results),
         destructive: false,
         recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,

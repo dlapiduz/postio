@@ -139,6 +139,7 @@ fn ada(arrival: Option<ContactArrival>) -> ContactGlance {
             message: MessageId::new(42),
         }],
         arrival,
+        default_arrival: ContactArrival::Inbox,
     }
 }
 
@@ -374,4 +375,28 @@ fn a_click_away_forgets_it_without_a_close_echo() {
     assert_eq!(focus.key_context(), KeyContext::List);
     let effects = run(&mut focus, CommandId::ContactArrivalNext);
     assert!(asks(&effects).is_empty(), "nothing is open to change");
+}
+
+#[test]
+fn a_sender_the_default_rules_filter_starts_on_filtered_out_and_the_arrow_goes_from_there() {
+    let mut focus = ready();
+    let effects = run(&mut focus, CommandId::ContactPopover);
+    let [(ticket, Request::ContactGlance { stamp, .. })] = asks(&effects)[..] else {
+        panic!("asked");
+    };
+    let mut glance = ada(None);
+    glance.default_arrival = ContactArrival::Filtered;
+    let effects = focus.handle_on(
+        Input::Reply(
+            ticket,
+            Reply::ContactGlance {
+                stamp,
+                glance: Ok(Some(Box::new(glance))),
+            },
+        ),
+        &List,
+    );
+    assert_eq!(on(&drawn(&effects).unwrap()), ["Filtered out"]);
+    let effects = run(&mut focus, CommandId::ContactArrivalPrev);
+    assert_eq!(on(&drawn(&effects).unwrap()), ["Digest"]);
 }

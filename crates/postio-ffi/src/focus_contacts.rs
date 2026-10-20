@@ -123,6 +123,9 @@ pub struct ContactPopoverViewFfi {
     pub arrival: Vec<ArrivalOptionFfi>,
     /// All mail, Write, Open card.
     pub actions: Vec<PopoverActionFfi>,
+    /// The arrival control's own keys: "Left/Right" choose, "0" default
+    /// rules.
+    pub hints: Vec<crate::focus_surfaces::FocusHintFfi>,
 }
 
 impl From<postio_ui::contact_popover::PopoverView> for ContactPopoverViewFfi {
@@ -176,6 +179,7 @@ impl From<postio_ui::contact_popover::PopoverView> for ContactPopoverViewFfi {
                     enabled: action.enabled,
                 })
                 .collect(),
+            hints: view.hints.into_iter().map(Into::into).collect(),
         }
     }
 }

@@ -560,6 +560,55 @@ impl<'a> ContactRepository<'a> {
         Ok(items)
     }
 
+    /// Where the default rules put `person`'s mail: what the engine did with
+    /// their newest inbound message, found through the address rings. Filtered
+    /// when it was filed away and not restored, Digest when a digest rule is
+    /// holding it, Inbox otherwise and for someone with no mail.
+    pub async fn default_arrival(&self, person: ContactId) -> Result<postio_model::ContactArrival> {
+        use postio_model::ContactArrival;
+        let owned: Vec<i64> = sql::all(
+            self.connection,
+            &Self::explain_stats(1)[0],
+            [person.get()],
+            |row| row.col(0),
+        )
+        .await?;
+        if owned.is_empty() {
+            return Ok(ContactArrival::Inbox);
+        }
+        let bound: Vec<turso::Value> = owned.iter().map(|id| turso::Value::Integer(*id)).collect();
+        let found: Vec<String> = sql::all_unbounded(
+            self.connection,
+            &Self::explain_default_arrival(owned.len())[0],
+            bound,
+            |row| row.col(0),
+        )
+        .await?;
+        Ok(found
+            .first()
+            .and_then(|name| ContactArrival::from_name(name))
+            .unwrap_or(ContactArrival::Inbox))
+    }
+
+    /// The SQL [`Self::default_arrival`] runs for a person with `addresses`
+    /// addresses.
+    pub fn explain_default_arrival(addresses: usize) -> [String; 1] {
+        let ids = (1..=addresses.max(1))
+            .map(|n| format!("?{n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        [format!(
+            "SELECT CASE WHEN f.message_id IS NOT NULL THEN 'filtered'
+                        WHEN h.message_id IS NOT NULL THEN 'digest'
+                        ELSE 'inbox' END
+               FROM address_recent r
+               LEFT JOIN filter_decisions f ON f.message_id = r.message_id AND f.restored_at IS NULL
+               LEFT JOIN digest_holds h ON h.message_id = r.message_id
+              WHERE r.address_id IN ({ids}) AND r.direction = 'in'
+              ORDER BY r.at DESC, r.message_id DESC LIMIT 1"
+        )]
+    }
+
     /// The SQL [`Self::open_items`] runs for a person with `addresses`
     /// addresses: what waits on the user, then what the user waits on.
     pub fn explain_open_items(addresses: usize) -> [String; 2] {

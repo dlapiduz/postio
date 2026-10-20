@@ -46,6 +46,10 @@ struct ContactPopoverModelTests {
                 PopoverActionFfi(
                     label: "Open card", command: "contact_open_card", key: "cmd+i", primary: false,
                     enabled: false),
+            ],
+            hints: [
+                FocusHintFfi(key: "Left/Right", label: "choose"),
+                FocusHintFfi(key: "0", label: "default rules"),
             ])
     }
 

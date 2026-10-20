@@ -799,7 +799,16 @@ final class Engine {
         let model = ContactPopoverModel(engine: session)
         let presenter = ContactPopover(model: model)
         presenter.anchor = { [weak self] in
-            guard let self, let table = self.focusTable,
+            guard let self else { return nil }
+            // Over the results, the name is in the results table's row.
+            if self.results?.isOpen == true, let table = self.resultsTable,
+                let row = self.contactRow ?? table.cursorTableRow,
+                let rect = table.nameAnchor(row: row)
+            {
+                let centre = max(rect.midX, 16 + ContactPopoverView.width / 2)
+                return (table.tableView, NSRect(x: centre, y: rect.minY, width: 1, height: rect.height))
+            }
+            guard let table = self.focusTable,
                 let row = self.contactRow ?? self.focus.cursor,
                 let rect = table.nameAnchor(row: row)
             else { return nil }
@@ -1069,7 +1078,12 @@ final class Engine {
         searchQuery = SearchQueryModel(engine: session)
         let results = ResultsModel(engine: session)
         self.results = results
-        resultsTable = ResultsTable(model: results)
+        let resultsTable = ResultsTable(model: results)
+        self.resultsTable = resultsTable
+        resultsTable.onContactName = { [weak self, weak session] row, address in
+            self?.contactRow = row
+            session?.focusContactPopoverAt(address)
+        }
         let grid = FilesGrid(model: results)
         let preview = FilePreview(done: { [weak session] in session?.focusSearchFileDone() })
         grid.preview = preview

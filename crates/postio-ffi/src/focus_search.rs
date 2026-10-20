@@ -1201,6 +1201,9 @@ pub struct ResultRowFfi {
     pub top_hit: bool,
     /// The sender column.
     pub sender: String,
+    /// The sender's address: what a click on the name asks the popover
+    /// about.
+    pub from_address: Option<String>,
     /// Bold sender, and the unread dot.
     pub unread: bool,
     /// Under the sender on a top hit: "you replied · 3 matches".
@@ -1237,6 +1240,7 @@ impl From<postio_focus::ResultRow> for ResultRowFfi {
             group: row.group,
             top_hit: row.top_hit,
             sender: row.sender,
+            from_address: row.from_address,
             unread: row.unread,
             reason: row.reason,
             subject: runs(row.subject),

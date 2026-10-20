@@ -260,6 +260,9 @@ pub struct ResultRow {
     pub top_hit: bool,
     /// The sender column.
     pub sender: String,
+    /// The best message's sender's address: what a click on the name asks
+    /// the popover about.
+    pub from_address: Option<String>,
     /// Bold when something in it is unread.
     pub unread: bool,
     /// Why it ranked, on a top hit: "you replied · 3 matches".
@@ -1321,6 +1324,12 @@ impl Results {
     }
 
     /// The message under the focus ring, once its row is read.
+    /// The address of the sender of the result under the focus ring.
+    pub(crate) fn cursor_sender(&self) -> Option<String> {
+        let (hit, _, _) = self.hit_at(self.cursor?)?;
+        hit.from.as_ref().map(|from| from.address.clone())
+    }
+
     pub(crate) fn cursor_message(&self) -> Option<(MessageId, Option<ThreadId>)> {
         let (hit, _, _) = self.hit_at(self.cursor?)?;
         Some((hit.best, thread_of(hit)))
@@ -2290,6 +2299,7 @@ impl Results {
             .as_ref()
             .map(postio_ui::command_bar::said_of)
             .unwrap_or_default();
+        let from_address = hit.from.as_ref().map(|from| from.address.clone());
         let subject = hit.subject.clone().unwrap_or_default();
         let shown = words::shown_match(&hit.matches);
         let mut sources: Vec<Source> = shown.map(|each| each.source.clone()).into_iter().collect();
@@ -2333,6 +2343,7 @@ impl Results {
             thread: thread_of(hit),
             group,
             top_hit,
+            from_address,
             accessible: words::accessible_row(
                 &sender,
                 &subject,
@@ -2704,6 +2715,7 @@ const RESULTS_KEYS: [CommandId; 26] = [
 /// the verbs on a row, which act on the focused result.
 pub(crate) fn results_key(id: CommandId) -> bool {
     RESULTS_KEYS.contains(&id)
+        || id == CommandId::ContactPopover
         || matches!(
             id,
             CommandId::Reply | CommandId::ReplyAll | CommandId::Forward
@@ -2973,6 +2985,14 @@ impl FocusController {
         }
         if let Some(steps) = self.quick_look_command(id) {
             return Some(steps);
+        }
+        if id == CommandId::ContactPopover {
+            let address = self.results.as_ref()?.cursor_sender();
+            return Some(
+                address
+                    .map(|address| self.open_contact_popover(Some(address), &crate::cursor::NoRows))
+                    .unwrap_or_default(),
+            );
         }
         let results = self.results.as_mut()?;
         // Nothing found: the keys walk and run its ways out (US6, D24).

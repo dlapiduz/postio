@@ -1136,6 +1136,18 @@ pub async fn demo() -> (Store, AccountId) {
         )
         .await;
     }
+    // Something you are waiting on Marisol for: a message you sent her, with
+    // a reminder no reply has settled, which her popover lists as "Waiting
+    // on Marisol" beside what waits on you.
+    waiting_on(
+        &connection,
+        &report.account,
+        archive,
+        ("Marisol Quint", "marisol@example.com"),
+        "Q4 headcount numbers",
+        today - chrono::Duration::days(2),
+    )
+    .await;
     for (subject, days) in [
         ("Your coffee order", 2),
         ("Bookshop receipt", 9),
@@ -1320,6 +1332,52 @@ pub async fn filed(
         .thread(&message)
         .await
         .expect("threaded");
+}
+
+/// A message the user sent to `to`, with a reminder that no reply has
+/// settled: what is open "Waiting on them".
+async fn waiting_on(
+    connection: &postio_storage::Connection,
+    account: &postio_model::Account,
+    mailbox: MailboxId,
+    to: (&str, &str),
+    subject: &str,
+    at: DateTime<Utc>,
+) {
+    let mut message = Message::new(account.id, mailbox, at);
+    message.date = Some(at);
+    message.from = vec![account.address.clone()];
+    message.to = vec![EmailAddress::new(Some(to.0), to.1)];
+    message.subject = Some(subject.to_owned());
+    message.flags = [Flag::Seen].into_iter().collect();
+    message.rfc_message_id = Some(RfcMessageId::new(format!(
+        "<sent.{}@example.test>",
+        subject.to_lowercase().replace(' ', ".")
+    )));
+    let id = MessageRepository::new(connection)
+        .create(&mut message)
+        .await
+        .expect("a sent message");
+    record_correspondents(connection, &message)
+        .await
+        .expect("its correspondents");
+    let thread = ThreadingRepository::new(connection, account.id)
+        .thread(&message)
+        .await
+        .expect("threaded");
+    postio_storage::sql::execute(
+        connection,
+        "INSERT INTO reminders (thread_id, anchor_message_id, set_at, due_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        postio_storage::sql::bind![
+            thread.thread_id.get(),
+            id.get(),
+            at.timestamp(),
+            (at + chrono::Duration::days(7)).timestamp()
+        ],
+    )
+    .await
+    .expect("a reminder");
 }
 
 pub fn message(

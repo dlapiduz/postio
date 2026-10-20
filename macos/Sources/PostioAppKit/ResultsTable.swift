@@ -66,6 +66,21 @@ public final class ResultsTable: NSObject {
         tableView.doubleAction = #selector(doubleClicked)
     }
 
+    /// A click landed on a sender's name: the table row and the address.
+    public var onContactName: ((Int, String) -> Void)?
+
+    /// Where the sender's name is in table row `row`, in the table's
+    /// coordinates: what the known-sender popover hangs from.
+    public func nameAnchor(row: Int) -> NSRect? {
+        guard row >= 0, row < tableView.numberOfRows else { return nil }
+        let frame = tableView.rect(ofRow: row)
+        let x = ResultRowView.Columns.leading + ResultRowView.Columns.gutter + ResultRowView.Columns.gap
+        return NSRect(x: frame.minX + x, y: frame.minY + 8, width: 120, height: 20)
+    }
+
+    /// The table row under the focus ring, when there is one.
+    public var cursorTableRow: Int? { model.cursorRow }
+
     @objc private func clicked() {
         model.point(tableRow: tableView.clickedRow)
     }
@@ -160,7 +175,9 @@ extension ResultsTable: NSTableViewDelegate {
             return cell
         case let .row(position):
             let shown = model.row(at: position)
-            let view = ResultRowView(row: shown, selecting: model.selected > 0)
+            let view = ResultRowView(
+                row: shown, selecting: model.selected > 0,
+                onName: { [weak self] address in self?.onContactName?(row, address) })
             if let rowView = tableView.rowView(atRow: row, makeIfNecessary: false) as? ResultRowBackground {
                 dress(rowView, row: row, shown: shown)
             }

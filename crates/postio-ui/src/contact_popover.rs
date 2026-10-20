@@ -141,6 +141,10 @@ pub struct PopoverView {
     pub arrival: Vec<ArrivalOption>,
     /// All mail, Write, Open card.
     pub actions: Vec<Action>,
+    /// The arrival control's own keys, as the keymap binds them: `←→
+    /// choose`, `0 default rules`. Drawn beside its title, so `0` is not a
+    /// hidden key.
+    pub hints: Vec<crate::hints::Hint>,
 }
 
 /// The most open lines the popover shows.
@@ -159,6 +163,8 @@ pub struct Facts<'a> {
     pub open: &'a [OpenItem],
     /// Where their mail arrives, `None` for by the default rules.
     pub arrival: Option<ContactArrival>,
+    /// Where the default rules put it, which is what `None` shows.
+    pub default_arrival: ContactArrival,
     /// Whether the person's card can be opened (the Contacts mode exists).
     pub card: bool,
 }
@@ -258,7 +264,7 @@ pub fn view(facts: &Facts<'_>, keymap: &Keymap, now: DateTime<Local>) -> Popover
             message: item.message,
         })
         .collect();
-    let in_force = facts.arrival.unwrap_or(ContactArrival::Inbox);
+    let in_force = facts.arrival.unwrap_or(facts.default_arrival);
     let arrival = [
         ("Inbox", ContactArrival::Inbox),
         ("Digest", ContactArrival::Digest),
@@ -298,6 +304,18 @@ pub fn view(facts: &Facts<'_>, keymap: &Keymap, now: DateTime<Local>) -> Popover
         role: role_line(person),
         tiles: tiles(facts.stats, now),
         open,
+        hints: [
+            crate::hints::pair(
+                keymap,
+                CommandId::ContactArrivalPrev,
+                CommandId::ContactArrivalNext,
+                "choose",
+            ),
+            crate::hints::hint(keymap, CommandId::ContactSetArrival, "default rules"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
         arrival_title: format!("Mail from {first} arrives in"),
         arrival,
         actions: vec![
@@ -432,6 +450,7 @@ mod tests {
                 stats: &stats,
                 open: &open,
                 arrival: None,
+                default_arrival: ContactArrival::Inbox,
                 card: false,
             },
             &keymap(),
@@ -446,6 +465,7 @@ mod tests {
                 stats: &stats,
                 open: &[],
                 arrival: None,
+                default_arrival: ContactArrival::Inbox,
                 card: false,
             },
             &keymap(),
@@ -488,6 +508,7 @@ mod tests {
                 stats: &stats,
                 open: &[],
                 arrival,
+                default_arrival: ContactArrival::Inbox,
                 card: false,
             };
             view(&facts, &keymap(), now())
@@ -503,6 +524,64 @@ mod tests {
     }
 
     #[test]
+    fn with_no_rule_it_shows_where_the_default_rules_put_their_mail() {
+        let person = ada();
+        let stats = stats();
+        let on = |arrival, default_arrival| {
+            view(
+                &Facts {
+                    person: &person,
+                    address: "ada@example.org",
+                    stats: &stats,
+                    open: &[],
+                    arrival,
+                    default_arrival,
+                    card: false,
+                },
+                &keymap(),
+                now(),
+            )
+            .arrival
+            .iter()
+            .filter(|option| option.on)
+            .map(|option| option.label.clone())
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(on(None, ContactArrival::Filtered), ["Filtered out"]);
+        assert_eq!(on(None, ContactArrival::Digest), ["Digest"]);
+        assert_eq!(
+            on(Some(ContactArrival::Inbox), ContactArrival::Filtered),
+            ["Inbox"],
+            "a rule of theirs outranks the default"
+        );
+    }
+
+    #[test]
+    fn the_arrival_controls_own_keys_are_drawn_with_it() {
+        let person = ada();
+        let stats = stats();
+        let popover = view(
+            &Facts {
+                person: &person,
+                address: "ada@example.org",
+                stats: &stats,
+                open: &[],
+                arrival: None,
+                default_arrival: ContactArrival::Inbox,
+                card: false,
+            },
+            &keymap(),
+            now(),
+        );
+        let hints: Vec<_> = popover
+            .hints
+            .iter()
+            .map(|hint| (hint.key.as_str(), hint.label.as_str()))
+            .collect();
+        assert_eq!(hints, [("Left/Right", "choose"), ("0", "default rules")]);
+    }
+
+    #[test]
     fn the_actions_are_all_mail_write_and_a_card_that_waits_for_its_mode() {
         let person = ada();
         let stats = stats();
@@ -513,6 +592,7 @@ mod tests {
                 stats: &stats,
                 open: &[],
                 arrival: None,
+                default_arrival: ContactArrival::Inbox,
                 card: false,
             },
             &keymap(),

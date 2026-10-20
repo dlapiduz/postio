@@ -43,7 +43,7 @@ struct ResultsModelTests {
 
     nonisolated static func row(_ position: UInt64) -> ResultRowFfi {
         ResultRowFfi(
-            id: Int64(position) + 100, thread: nil, group: 0, topHit: position < 3, sender: "Ada Moreno",
+            id: Int64(position) + 100, thread: nil, group: 0, topHit: position < 3, sender: "Ada Moreno", fromAddress: "ada@example.org",
             unread: false, reason: nil, subject: [RunFfi(text: "Atlas", highlighted: true, style: .plain)],
             pills: [], attachments: false, countBadge: nil, sourceTag: "body", sourceIsFile: false,
             passage: [], folder: "in:Inbox", date: "26 Sep", checked: false, accessible: "Ada Moreno")

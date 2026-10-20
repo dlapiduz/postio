@@ -166,11 +166,13 @@ pub async fn contact_glance(
         .await
         .ok()?
         .arrival;
+    let default_arrival = contacts.default_arrival(person.id).await.ok()?;
     Some(postio_model::ContactGlance {
         person,
         stats,
         open,
         arrival,
+        default_arrival,
     })
 }
 
@@ -467,6 +469,7 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         assert_eq!(glance.person.display_name(), "Old Friend");
         assert_eq!(glance.stats.messages, 1);
         assert_eq!(glance.arrival, None);
+        assert_eq!(glance.default_arrival, postio_model::ContactArrival::Inbox);
         assert!(glance.open.is_empty());
 
         let connection = database.connect().await.unwrap();

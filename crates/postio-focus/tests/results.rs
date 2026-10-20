@@ -2863,3 +2863,27 @@ fn a_capped_answer_says_every_count_is_a_floor() {
         [("Ada Moreno", 24, "24+"), ("Tom\u{e1}s Reyes", 24, "24+")]
     );
 }
+
+#[test]
+fn i_in_the_results_asks_about_the_focused_results_sender_and_a_click_on_a_name_too() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    screen_twelve(&mut focus, &rows);
+    let row = focus.result_row(0).expect("the first result is read");
+    let address = row.from_address.clone().expect("its sender's address");
+    let effects = run(&mut focus, CommandId::ContactPopover, &rows);
+    let asked: Vec<String> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Ask(_, postio_focus::Request::ContactGlance { address, .. }) => {
+                Some(address.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asked, [address], "`i` on the focused result");
+    assert_eq!(
+        focus.key_context(),
+        postio_ui::keymap::KeyContext::ContactPopover
+    );
+}

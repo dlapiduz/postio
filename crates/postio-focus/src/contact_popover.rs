@@ -110,7 +110,8 @@ impl FocusController {
                 } else {
                     -1
                 };
-                let to = words::step_arrival(glance.arrival, by);
+                let to =
+                    words::step_arrival(Some(glance.arrival.unwrap_or(glance.default_arrival)), by);
                 Some(self.set_contact_arrival(Some(to)))
             }
             CommandId::ContactSetArrival => Some(self.set_contact_arrival(None)),
@@ -226,6 +227,7 @@ impl FocusController {
             stats: &glance.stats,
             open: &glance.open,
             arrival: glance.arrival,
+            default_arrival: glance.default_arrival,
             // The card is the Contacts mode's, which comes with S7.
             card: false,
         };

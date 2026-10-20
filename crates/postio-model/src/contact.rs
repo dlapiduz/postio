@@ -321,6 +321,9 @@ pub struct ContactGlance {
     pub open: Vec<OpenItem>,
     /// Where their mail arrives; `None` for by the default rules.
     pub arrival: Option<crate::ContactArrival>,
+    /// Where the default rules put it, as the engine last decided for their
+    /// newest mail: what [`ContactGlance::arrival`] of `None` means.
+    pub default_arrival: crate::ContactArrival,
 }
 
 /// How many open things the popover shows.

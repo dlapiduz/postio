@@ -510,3 +510,87 @@ async fn what_is_open_between_you_is_read_from_the_ring_whoever_sent_it() {
         );
     }
 }
+
+#[tokio::test]
+async fn where_the_default_rules_put_a_sender_is_what_they_did_with_their_newest_mail() {
+    use postio_model::ContactArrival;
+    let (_database, connection, account, inbox) = setup().await;
+    let me = account.address.address.clone();
+    let contacts = ContactRepository::new(&connection);
+    let old = mail(
+        &connection,
+        &account,
+        inbox,
+        at(2026, 2, 1),
+        "robot@example.org",
+        &me,
+        true,
+    )
+    .await;
+    let robot = person(&connection, "robot@example.org").await;
+    assert_eq!(
+        contacts.default_arrival(robot).await.unwrap(),
+        ContactArrival::Inbox
+    );
+
+    let new = mail(
+        &connection,
+        &account,
+        inbox,
+        at(2026, 2, 2),
+        "robot@example.org",
+        &me,
+        true,
+    )
+    .await;
+    postio_storage::sql::execute(
+        &connection,
+        "INSERT INTO filter_decisions (message_id, reason, layer, decided_at)
+         VALUES (?1, 'notification', 'header', 1)",
+        [new.get()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        contacts.default_arrival(robot).await.unwrap(),
+        ContactArrival::Filtered,
+        "the newest mail was filed away"
+    );
+
+    postio_storage::sql::execute(
+        &connection,
+        "UPDATE filter_decisions SET restored_at = 2 WHERE message_id = ?1",
+        [new.get()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        contacts.default_arrival(robot).await.unwrap(),
+        ContactArrival::Inbox
+    );
+
+    postio_storage::sql::execute(
+        &connection,
+        "INSERT INTO digest_holds (message_id, rule, held_at) VALUES (?1, 'weekly', 1)",
+        [new.get()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        contacts.default_arrival(robot).await.unwrap(),
+        ContactArrival::Digest
+    );
+    let _ = old;
+    for sql in ContactRepository::explain_default_arrival(1) {
+        assert_eq!(
+            unbounded(
+                &connection,
+                &sql,
+                &["address_recent", "filter_decisions", "digest_holds"]
+            )
+            .await,
+            Vec::<String>::new(),
+            "{sql}"
+        );
+    }
+}
