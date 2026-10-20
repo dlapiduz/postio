@@ -67,7 +67,9 @@
 use std::collections::BTreeSet;
 
 use chrono::Utc;
-use postio_account::backend::{MailBackend, MailboxStatus as ServerStatus, SelectMode, UidSet};
+use postio_account::backend::{
+    BackendError, MailBackend, MailboxStatus as ServerStatus, SelectMode, UidSet,
+};
 use postio_account::cancel::CancelToken;
 use postio_model::{
     FullResyncReason, Generation, Mailbox, MailboxId, MailboxStatus, Message, MessageId,
@@ -448,9 +450,17 @@ pub async fn resync_mailbox_filing(
                 let messages = MessageRepository::new(connection);
                 if messages.count_in(mailbox.id, generation).await? > selected.exists {
                     let known = messages.uids_in(mailbox.id, generation).await?;
-                    let vanished =
-                        reconcile_vanished(connection, backend, mailbox, generation, known, cancel)
-                            .await?;
+                    let expected_gone = known.len() - selected.exists as usize;
+                    let vanished = reconcile_vanished(
+                        connection,
+                        backend,
+                        mailbox,
+                        generation,
+                        known,
+                        expected_gone,
+                        cancel,
+                    )
+                    .await?;
                     if vanished > 0 {
                         return Ok(Outcome::Incremental {
                             changed: 0,
@@ -716,12 +726,14 @@ async fn incremental(
     let mut vanished_count = 0;
     let expected_exists = known_count + newly_arrived;
     if !known_set.is_empty() && selected.exists != expected_exists {
+        let expected_gone = (known_count + newly_arrived).saturating_sub(selected.exists);
         vanished_count = reconcile_vanished(
             connection,
             backend,
             mailbox,
             selected.generation,
             known,
+            expected_gone as usize,
             cancel,
         )
         .await?;
@@ -737,31 +749,64 @@ async fn incremental(
 
 /// Asks the server which of `known` it still holds, and deletes the rest
 /// locally. Returns how many rows went.
+///
+/// `expected_gone` is how many of `known` the server's own `EXISTS` says are
+/// gone: `known + arrivals - EXISTS`. It is the integrity check on the
+/// answer. Absence from a fetch is not proof of an expunge -- io-imap drops
+/// an untagged `FETCH` line it cannot decode and completes the command `Ok`
+/// -- and a `SEARCH` can come back short, so an answer that does not account
+/// for exactly the vanishings the count demands is not believed, and nothing
+/// is deleted. The next pass sees the same count and asks again, which costs
+/// a stale row a little longer; the alternative is deleting mail the server
+/// still holds (#1913).
+///
+/// Presence is one `UID SEARCH` where the backend can list. Where it cannot,
+/// the known set is fetched in chunks, never in one call.
 async fn reconcile_vanished(
     connection: &Checkout,
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     generation: Generation,
     known: Vec<Uid>,
+    expected_gone: usize,
     cancel: &CancelToken,
 ) -> Result<usize> {
-    let messages = MessageRepository::new(connection);
-    let known_set: UidSet = known.iter().copied().collect();
-    let still_present = backend
-        .fetch_headers(&mailbox.path, &known_set, None, cancel)
-        .await?;
-    let present: BTreeSet<Uid> = still_present.iter().map(|message| message.uid).collect();
+    let present: BTreeSet<Uid> = match initial::existing_uids(backend, mailbox, cancel).await? {
+        Some(listing) => listing.into_iter().collect(),
+        None => {
+            let known_set: UidSet = known.iter().copied().collect();
+            let mut present = BTreeSet::new();
+            for chunk in known_set.chunks(initial::DEFAULT_BATCH_SIZE) {
+                if cancel.is_cancelled() {
+                    return Err(SyncError::Backend(BackendError::Cancelled));
+                }
+                let fetched = backend
+                    .fetch_headers(&mailbox.path, &chunk, None, cancel)
+                    .await?;
+                present.extend(fetched.iter().map(|message| message.uid));
+            }
+            present
+        }
+    };
     let vanished: Vec<Uid> = known
         .into_iter()
         .filter(|uid| !present.contains(uid))
         .collect();
 
-    let mut ids = Vec::with_capacity(vanished.len());
-    for uid in vanished {
-        if let Some(message) = messages.by_uid(mailbox.id, generation, uid).await? {
-            ids.push(message.id);
-        }
+    if vanished.len() != expected_gone {
+        tracing::warn!(
+            mailbox = mailbox.id.get(),
+            absent = vanished.len(),
+            expected = expected_gone,
+            "the presence check disagrees with EXISTS; deleting nothing this pass"
+        );
+        return Ok(0);
     }
+
+    let messages = MessageRepository::new(connection);
+    let ids = messages
+        .ids_by_uid(mailbox.id, generation, &vanished)
+        .await?;
     Ok(messages.delete(&ids).await?)
 }
 
@@ -800,7 +845,6 @@ async fn wipe_mailbox(
 ) -> Result<()> {
     let messages = MessageRepository::new(connection);
     let uids = messages.uids_in(mailbox_id, generation).await?;
-
     let mut ids = Vec::with_capacity(uids.len());
     for uid in uids {
         if let Some(message) = messages.by_uid(mailbox_id, generation, uid).await? {

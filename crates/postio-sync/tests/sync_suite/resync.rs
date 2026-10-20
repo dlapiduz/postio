@@ -215,6 +215,166 @@ async fn a_deletion_that_leaves_highestmodseq_alone_still_reflects_locally() {
     );
 }
 
+/// A message the server holds but whose `FETCH` line the client cannot
+/// decode looks, to a fetch, exactly like an expunged one. The vanish check
+/// must not take the first for the second: that deletes mail the server still
+/// has (#1913).
+#[tokio::test]
+async fn a_message_the_client_cannot_decode_is_not_taken_for_expunged() {
+    let backend = server_with_messages(4).await;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = local(&connection).await;
+    bootstrap(&connection, &backend, &inbox).await;
+
+    backend.drop_from_header_fetches(2);
+    backend
+        .store_flags(
+            INBOX,
+            &[rid(4)],
+            &postio_account::backend::FlagChange::Add(FlagSet::from_iter([Flag::Deleted])),
+        )
+        .await
+        .expect("mark deleted");
+    backend
+        .expunge(INBOX, Some(&[rid(4)]))
+        .await
+        .expect("expunge");
+
+    let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    assert!(
+        matches!(outcome, Outcome::Incremental { vanished: 1, .. }),
+        "only message 4 was expunged: {outcome:?}"
+    );
+    assert_eq!(
+        known_uids(&connection, &inbox).await,
+        vec![1, 2, 3],
+        "message 2 is still on the server and must stay"
+    );
+}
+
+/// One message expunged elsewhere must not cost a download of the folder:
+/// presence is one `SEARCH`, not an envelope and structure per known message.
+#[tokio::test]
+async fn one_expunge_in_a_large_folder_does_not_refetch_every_header() {
+    const FOLDER: u32 = 300;
+    let backend = server_with_messages(FOLDER).await;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = local(&connection).await;
+    bootstrap(&connection, &backend, &inbox).await;
+
+    backend
+        .store_flags(
+            INBOX,
+            &[rid(7)],
+            &postio_account::backend::FlagChange::Add(FlagSet::from_iter([Flag::Deleted])),
+        )
+        .await
+        .expect("mark deleted");
+    backend
+        .expunge(INBOX, Some(&[rid(7)]))
+        .await
+        .expect("expunge");
+
+    let rows_before = backend.header_fetch_rows().len();
+    let listings_before = backend.uid_listings().len();
+    let outcome = resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    assert!(
+        matches!(outcome, Outcome::Incremental { vanished: 1, .. }),
+        "{outcome:?}"
+    );
+    let rows = backend.header_fetch_rows();
+    let largest = rows[rows_before..].iter().copied().max().unwrap_or(0);
+    assert!(
+        largest < 10,
+        "the pass downloaded {largest} headers to learn that one message went"
+    );
+    assert_eq!(
+        backend.uid_listings().len() - listings_before,
+        1,
+        "presence is one UID listing"
+    );
+    assert_eq!(known_uids(&connection, &inbox).await.len(), 299);
+}
+
+/// A listing that under-reports is an answer that might be partial, and the
+/// one thing a partial answer cannot be used for is deleting.
+#[tokio::test]
+async fn a_short_uid_listing_deletes_nothing() {
+    let backend = server_with_messages(6).await;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = local(&connection).await;
+    bootstrap(&connection, &backend, &inbox).await;
+
+    backend
+        .store_flags(
+            INBOX,
+            &[rid(6)],
+            &postio_account::backend::FlagChange::Add(FlagSet::from_iter([Flag::Deleted])),
+        )
+        .await
+        .expect("mark deleted");
+    backend
+        .expunge(INBOX, Some(&[rid(6)]))
+        .await
+        .expect("expunge");
+    backend.truncate_uid_listing(2);
+
+    resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    assert_eq!(
+        known_uids(&connection, &inbox).await,
+        vec![1, 2, 3, 4, 5, 6],
+        "a listing that disagrees with EXISTS is not evidence of anything"
+    );
+}
+
+/// With no listing to ask for, the check is a chunked fetch, and it still
+/// deletes only what the arithmetic says went.
+#[tokio::test]
+async fn without_a_uid_listing_the_check_still_finds_the_expunge() {
+    let backend = server_with_messages(5).await;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (_account, inbox) = local(&connection).await;
+    bootstrap(&connection, &backend, &inbox).await;
+
+    backend.refuse_uid_listing();
+    backend.drop_from_header_fetches(2);
+    backend
+        .store_flags(
+            INBOX,
+            &[rid(5)],
+            &postio_account::backend::FlagChange::Add(FlagSet::from_iter([Flag::Deleted])),
+        )
+        .await
+        .expect("mark deleted");
+    backend
+        .expunge(INBOX, Some(&[rid(5)]))
+        .await
+        .expect("expunge");
+
+    resync_mailbox(&connection, &backend, &inbox, &CancelToken::new(), |_| {})
+        .await
+        .expect("resync");
+
+    assert_eq!(
+        known_uids(&connection, &inbox).await,
+        vec![1, 2, 3, 4, 5],
+        "two messages look absent but only one went: the answer is not trusted, nothing is deleted"
+    );
+}
+
 /// postio-66j's "watch out for": a flag change resyncs the message that
 /// already has a contact sighting from bootstrap, and must not add another
 /// one — `times_seen` counting flag changes as new mail would overstate every

@@ -586,7 +586,7 @@ async fn rethread_orphans(connection: &Checkout, mailbox: &Mailbox) {
 /// does propagate. Cancellation is the one thing that must not be swallowed —
 /// a cancelled pass has to stop, not quietly fall back to the slow path it
 /// was cancelled out of.
-async fn existing_uids(
+pub(crate) async fn existing_uids(
     backend: &dyn MailBackend,
     mailbox: &Mailbox,
     cancel: &CancelToken,
