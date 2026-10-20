@@ -1,0 +1,50 @@
+# Leaving a list offers to clear what it already sent (#1931).
+#
+# `M` leaves the list of the message under the cursor. Until now that was the
+# end of it: the list's old mail stayed in the inbox, to be swept by hand. The
+# acceptance: after `M`, an offer names how much is still here and offers
+# Archive and Delete, each under the verb's own key; Esc keeps everything and
+# nothing moves; the verb's key does it as ONE command, with Undo.
+#
+# Red on the base: there `M` shows only the "Unsubscribed" notice, so no
+# dialog opens and the first check on step "offer" fails.
+#
+# The small seed's senders repeat, and a message with no List-Id is swept by
+# its exact sender address, so the cursor's row always has mail to clear.
+source = { kind = "issue", ref = "#1931" }
+proof  = "base"
+apps   = ["focus"]
+
+[[step]]
+id    = "start"
+wait  = { until = { cursor.index = 0 } }
+check = { keyboard.region = "list", overlay.kind = "none" }
+
+[[step]]
+id      = "offer"
+command = "unsubscribe"
+check   = { overlay.kind = "dialog", overlay.mode = "sweep-list", keyboard.region = "dialog" }
+expect  = "A small dialog over the list asks \"Clear what <the sender> sent?\" and says how many messages from it are still here, none of them Flagged, that Delete moves them to the Trash, and that Undo takes it back. Three answers: \"Keep them\" is the default, \"Archive N (e)\" and \"Delete N (#)\" each show their key. The notice behind it says what was unsubscribed from."
+
+[[step]]
+id    = "keep"
+key   = "Escape"
+check = { overlay.kind = "none", keyboard.region = "list", rows.count = { same_as = "start" }, cursor.index = 0 }
+expect = "Esc keeps everything: the dialog closes, the list is as it was and the cursor is on the same first row."
+
+[[step]]
+id      = "again"
+command = "unsubscribe"
+check   = { overlay.kind = "dialog", overlay.mode = "sweep-list" }
+expect  = "The same offer, asked for again."
+
+[[step]]
+id    = "delete"
+key   = "numbersign"
+check = { overlay.kind = "none", keyboard.region = "list", notice.undo = true, rows.count = { changed = true } }
+expect = "The verb's own key answers it: the dialog closes, everything that sender sent has left the inbox at once, and the toast says how many were deleted and offers Undo with its key."
+
+[[step]]
+command = "undo"
+check   = { overlay.kind = "none", rows.count = { same_as = "start" } }
+expect  = "One undo brings back all of it: the list is the size it was, because the whole sweep was one command."
