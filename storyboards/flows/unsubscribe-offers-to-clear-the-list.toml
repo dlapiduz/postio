@@ -23,6 +23,7 @@ check = { keyboard.region = "list", overlay.kind = "none" }
 [[step]]
 id      = "offer"
 command = "unsubscribe"
+settle  = { until = { overlay.kind = "dialog" } }
 check   = { overlay.kind = "dialog", overlay.mode = "sweep-list", keyboard.region = "dialog" }
 expect  = "A small dialog over the list asks \"Clear what <the sender> sent?\" and says how many messages from it are still here, none of them Flagged, that Delete moves them to the Trash, and that Undo takes it back. Three answers: \"Keep them\" is the default, \"Archive N (e)\" and \"Delete N (#)\" each show their key. The notice behind it says what was unsubscribed from."
 
@@ -35,6 +36,7 @@ expect = "Esc keeps everything: the dialog closes, the list is as it was and the
 [[step]]
 id      = "again"
 command = "unsubscribe"
+settle  = { until = { overlay.kind = "dialog" } }
 check   = { overlay.kind = "dialog", overlay.mode = "sweep-list" }
 expect  = "The same offer, asked for again."
 
