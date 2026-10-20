@@ -1,0 +1,5 @@
+label = "company"
+address = "billing@nimbus.example"
+name = "Nimbus Billing"
+messages = 7
+people_at_domain = 2

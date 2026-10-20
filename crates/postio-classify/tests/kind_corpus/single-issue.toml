@@ -1,0 +1,6 @@
+label = "newsletter"
+address = "news@oneissue.example"
+name = "One Issue"
+messages = 1
+with_unsubscribe = 1
+with_bulk = 1

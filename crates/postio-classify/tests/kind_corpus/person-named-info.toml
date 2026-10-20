@@ -1,0 +1,5 @@
+label = "person"
+address = "info@example.com"
+name = "Isabel Info"
+messages = 2
+written_to = 3

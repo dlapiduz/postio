@@ -1,0 +1,4 @@
+label = "automated"
+address = "bounce-8231@mail.example.org"
+messages = 5
+with_junk = 2

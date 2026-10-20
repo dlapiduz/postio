@@ -207,6 +207,43 @@ impl ShowAs {
     }
 }
 
+/// What the mail has said about one sender, counted over the newest messages
+/// it sent: the evidence `postio_classify::kind::detect` decides a
+/// [`ContactKind`] from. Plain counts and the address's own words, so
+/// detection never rereads mail and cannot reach the network.
+///
+/// A count of messages carrying a signal is "no evidence" at zero, never
+/// "no": a header not yet known counts as absent.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KindSignals {
+    /// The sender's address, which the local part and domain are read from.
+    pub address: String,
+    /// The display name its mail carries.
+    pub name: Option<String>,
+    /// Messages counted.
+    pub messages: u32,
+    /// Of them, those carrying a `List-Id`.
+    pub with_list_id: u32,
+    /// Those with `Precedence: list`.
+    pub with_list_precedence: u32,
+    /// Those offering `List-Unsubscribe`.
+    pub with_unsubscribe: u32,
+    /// Those with `Precedence: bulk`.
+    pub with_bulk: u32,
+    /// Those with `Precedence: junk`.
+    pub with_junk: u32,
+    /// Those with `Auto-Submitted` other than `no` or `auto-replied`.
+    pub with_auto_generated: u32,
+    /// Those with `Auto-Submitted: auto-replied`.
+    pub with_auto_replied: u32,
+    /// Messages the user has sent to this person: a reply is evidence of a
+    /// human on the other end.
+    pub written_to: u32,
+    /// Other people at this address's domain among the user's contacts.
+    pub people_at_domain: u32,
+}
+
 /// One address a person owns, with what the mail says about it.
 ///
 /// The counts are summed across the accounts the address was seen through;

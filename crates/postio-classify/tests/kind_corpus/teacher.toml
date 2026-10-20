@@ -1,0 +1,5 @@
+label = "person"
+address = "teacher@school.example"
+name = "Mx Teacher"
+messages = 10
+written_to = 3

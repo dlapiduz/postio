@@ -1,0 +1,7 @@
+label = "newsletter"
+address = "roundup@lists.example.net"
+name = "Weekly Roundup"
+messages = 15
+with_list_id = 15
+with_unsubscribe = 15
+with_list_precedence = 3

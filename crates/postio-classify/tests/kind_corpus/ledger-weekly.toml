@@ -1,0 +1,7 @@
+label = "newsletter"
+address = "news@mail.ledger-weekly.example"
+name = "Ledger Weekly"
+messages = 30
+with_list_id = 30
+with_unsubscribe = 30
+with_bulk = 28

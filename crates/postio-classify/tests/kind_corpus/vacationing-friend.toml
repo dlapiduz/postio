@@ -1,0 +1,5 @@
+label = "person"
+address = "sam@example.com"
+name = "Sam Rivera"
+messages = 9
+with_auto_replied = 1

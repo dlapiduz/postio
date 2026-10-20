@@ -1,0 +1,6 @@
+label = "newsletter"
+address = "hello@gardennotes.example"
+name = "Garden Notes"
+messages = 12
+with_unsubscribe = 12
+with_bulk = 12

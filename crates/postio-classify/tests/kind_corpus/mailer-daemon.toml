@@ -1,0 +1,5 @@
+label = "automated"
+address = "mailer-daemon@mx.example.org"
+name = "Mail Delivery System"
+messages = 2
+with_auto_replied = 2

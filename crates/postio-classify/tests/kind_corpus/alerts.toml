@@ -1,0 +1,5 @@
+label = "automated"
+address = "alerts@monitor.example"
+name = "Monitor"
+messages = 120
+with_auto_generated = 120

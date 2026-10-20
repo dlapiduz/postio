@@ -29,6 +29,7 @@ mod facts;
 mod filters;
 mod guards;
 mod input;
+pub mod kind;
 mod needs_action;
 mod outcome;
 mod pipeline;
