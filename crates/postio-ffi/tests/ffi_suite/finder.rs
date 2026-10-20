@@ -91,7 +91,7 @@ async fn an_empty_folder_query_offers_every_folder_and_a_miss_says_so() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_correspondent_is_found_and_becomes_a_from_query() {
+async fn a_correspondent_is_found_and_becomes_a_with_query() {
     // Picking one writes `from:` into the box and drops back into search,
     // so what follows is an ordinary query -- GTK's behaviour.
     let world = world().await;
@@ -101,7 +101,7 @@ async fn a_correspondent_is_found_and_becomes_a_from_query() {
     let hit = found.hits.first().expect("Ada");
     assert_eq!(hit.title, "Ada Lovelace");
     assert_eq!(hit.detail.as_deref(), Some("ada@example.com"));
-    assert_eq!(hit.query.as_deref(), Some("from:ada@example.com"));
+    assert_eq!(hit.query.as_deref(), Some("with:ada@example.com"));
     world.session.shutdown();
 }
 

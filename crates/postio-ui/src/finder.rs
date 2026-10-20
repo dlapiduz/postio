@@ -214,15 +214,16 @@ fn contact_name(contact: &postio_model::Contact) -> String {
 
 /// The query picking `hit` puts in the box.
 ///
-/// A `from:` chip, quoted if the address could not survive being typed back
-/// in. Deliberately *the query*, not a search that has already run: the point
-/// of landing back in search is that the user can go on building on it.
+/// A `with:` clause over every address the person owns, so their mail is
+/// found whichever address it came through and whichever way it went
+/// (specs/005-contacts FR-031; research R6 names the old `from:` as the
+/// defect). The one spelling is [`crate::contacts::show_mail_query`], which
+/// "show mail" in Contacts writes too, so the two can never spell it
+/// differently. Deliberately *the query*, not a search that has already run:
+/// the point of landing back in search is that the user can go on building
+/// on it.
 pub fn contact_query(hit: &ContactHit) -> String {
-    if hit.address.chars().any(char::is_whitespace) {
-        format!("from:\"{}\"", hit.address.replace('"', ""))
-    } else {
-        format!("from:{}", hit.address)
-    }
+    crate::contacts::show_mail_query(&hit.addresses)
 }
 
 // ---------------------------------------------------------------------------
@@ -444,6 +445,42 @@ impl Held {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn person(name: &str, addresses: &[&str]) -> postio_model::Contact {
+        let owned = |id: i64, name: Option<&str>, address: &str| {
+            postio_model::ContactAddress::new(
+                postio_model::AddressId::new(id),
+                postio_model::EmailAddress::new(name, address),
+            )
+        };
+        let mut person = postio_model::Contact::new(owned(1, Some(name), addresses[0]));
+        for (at, address) in addresses.iter().enumerate().skip(1) {
+            person.addresses.push(owned(at as i64 + 1, None, address));
+        }
+        person
+    }
+
+    /// Specs/005-contacts FR-031: the finder finds a person, not a row per
+    /// address, and picking them is about all of their mail.
+    #[test]
+    fn a_person_with_two_addresses_is_found_by_either_and_offered_once() {
+        let ada = person("Ada Lovelace", &["ada@work.example", "lovelace@home.example"]);
+        for query in ["ada", "work.example", "home.example"] {
+            let hits = contacts(std::slice::from_ref(&ada), query);
+            assert_eq!(hits.len(), 1, "{query} finds ada once");
+            assert_eq!(hits[0].name, "Ada Lovelace");
+            assert_eq!(
+                hits[0].addresses,
+                ["ada@work.example", "lovelace@home.example"],
+                "the hit carries every address, preferred first"
+            );
+            assert_eq!(
+                contact_query(&hits[0]),
+                "with:ada@work.example,lovelace@home.example",
+                "picking them searches every address, not the first"
+            );
+        }
+    }
 
     #[test]
     fn every_mode_has_a_marker_and_a_purpose() {

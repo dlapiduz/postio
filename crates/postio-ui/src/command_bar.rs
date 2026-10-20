@@ -303,7 +303,7 @@ pub fn empty_lines() -> Vec<Line> {
 }
 
 /// The lines `@` draws: the correspondents it matched, each under one
-/// heading, running as the `from:` search for them.
+/// heading, running as the `with:` search for them.
 pub fn correspondent_lines(hits: &[finder::ContactHit]) -> Vec<Line> {
     if hits.is_empty() {
         return Vec::new();
@@ -517,7 +517,7 @@ mod tests {
         assert_eq!(detail.as_deref(), Some("ada@example.com"));
         assert_eq!(
             row.clone().run(),
-            Run::SearchFor("from:ada@example.com".to_owned())
+            Run::SearchFor("with:ada@example.com".to_owned())
         );
         assert!(correspondent_lines(&[]).is_empty());
     }
