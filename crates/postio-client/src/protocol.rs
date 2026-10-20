@@ -219,6 +219,9 @@ pub enum Req {
     },
     /// The account's correspondents, for the finder's `@`.
     Correspondents(AccountId),
+    /// The person at an address, made now from the stored mail when the
+    /// catch-up has not reached them (specs/011-focus-contacts).
+    ContactForAddress(String),
     /// Everything recipient completion can offer for an account, read once
     /// so each keystroke is answered from memory rather than by a query.
     RecipientDirectory(AccountId),
@@ -759,6 +762,8 @@ pub enum Resp {
     Recipients(Vec<RecipientCandidate>),
     /// Correspondents, most often seen first.
     Correspondents(Vec<postio_model::Contact>),
+    /// The person at an address, if the store knows one.
+    ContactFor(Option<Box<postio_model::Contact>>),
     /// What recipient completion can offer.
     RecipientDirectory(RecipientDirectory),
     /// Labels, by name.

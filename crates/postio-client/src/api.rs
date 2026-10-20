@@ -114,6 +114,7 @@ impl Req {
             Req::DiscardDraft { .. } => "DiscardDraft",
             Req::Recipients { .. } => "Recipients",
             Req::Correspondents(_) => "Correspondents",
+            Req::ContactForAddress(_) => "ContactForAddress",
             Req::RecipientDirectory(_) => "RecipientDirectory",
             Req::Labels(_) => "Labels",
             Req::LabelCounts(_) => "LabelCounts",
@@ -535,6 +536,23 @@ impl Client {
             Resp::Recipients(found) => Some(found),
             _ => None,
         })
+        .await
+    }
+
+    /// The person at `address`, made from the stored mail if the catch-up has
+    /// not reached them; `None` for an address the store never saw.
+    pub async fn contact_for_address(
+        &self,
+        address: &str,
+    ) -> Result<Option<postio_model::Contact>, StoreError> {
+        self.read(
+            Req::ContactForAddress(address.to_owned()),
+            "the person at an address",
+            |answer| match answer {
+                Resp::ContactFor(found) => Some(found.map(|person| *person)),
+                _ => None,
+            },
+        )
         .await
     }
 

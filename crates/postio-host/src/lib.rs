@@ -1030,6 +1030,11 @@ impl Inner {
             Req::Recipients { account, prefix } => {
                 Resp::Recipients(compose::recipients(&self.wiring.database, account, &prefix).await)
             }
+            Req::ContactForAddress(address) => Resp::ContactFor(
+                contacts::contact_for_address(&self.wiring.database, &address)
+                    .await
+                    .map(Box::new),
+            ),
             Req::RecipientDirectory(account) => Resp::RecipientDirectory(
                 compose::recipient_directory(&self.wiring.database, account).await,
             ),
