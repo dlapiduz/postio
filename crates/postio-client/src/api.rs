@@ -310,7 +310,8 @@ impl Client {
         .await
     }
 
-    /// Leave the list `message` came from; the answer is the list's name.
+    /// Leave the list `message` came from; the answer names what the offer
+    /// after it acts on: the `List-Id`, else the sender's exact address.
     pub async fn unsubscribe(&self, message: MessageId) -> Result<String, StoreError> {
         self.read(
             Req::Unsubscribe(message),

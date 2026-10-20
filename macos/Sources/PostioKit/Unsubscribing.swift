@@ -19,7 +19,8 @@ public struct Unsubscribing: Equatable, Sendable {
         /// behind a sync's commit, so the banner says what it is doing.
         case leaving
         /// Recorded, and the list left mail behind: the banner stays to offer
-        /// Archive or Delete for it (#1931). Neither is done until pressed.
+        /// the one action `[focus] after_unsubscribe` names (#1952). It is not
+        /// done until pressed, and dismissing keeps everything.
         case clearing(Sweep)
         /// Recorded. The banner goes; its absence is the confirmation.
         case left
@@ -30,12 +31,14 @@ public struct Unsubscribing: Equatable, Sendable {
     /// What the list left behind, in the boundary's words.
     public struct Sweep: Equatable, Sendable {
         public let summary: String
-        public let archive: String
-        public let delete: String
+        /// The one button: `Archive 14`, or `Delete 14` by the setting.
+        public let button: String
+        /// Whether the button deletes (else archives).
+        public let delete: Bool
 
-        public init(summary: String, archive: String, delete: String) {
+        public init(summary: String, button: String, delete: Bool) {
             self.summary = summary
-            self.archive = archive
+            self.button = button
             self.delete = delete
         }
     }

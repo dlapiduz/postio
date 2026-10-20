@@ -15,6 +15,7 @@
 //! the layer that has a store.
 
 use chrono::{DateTime, Utc};
+use postio_config::AfterUnsubscribe;
 use postio_model::{DraftState, EmailAddress, UnsubscribeActivation};
 
 use crate::reader::header::ReaderAction;
@@ -188,13 +189,21 @@ pub fn sweep_scope(list_id: Option<&str>, from: &[EmailAddress]) -> Option<Sweep
     }
 }
 
-/// Words for the two choices: the registry's verbs, not new ones.
-pub const SWEEP_ARCHIVE: &str = "Archive";
-/// See [`SWEEP_ARCHIVE`]; `Delete` moves to the Trash and `z` takes it back.
-pub const SWEEP_DELETE: &str = "Delete";
+/// The verb of the one action the notice offers: the registry's own word,
+/// not a new one. `Delete` moves to the Trash and Undo takes it back.
+pub fn sweep_verb(action: AfterUnsubscribe) -> &'static str {
+    match action {
+        AfterUnsubscribe::Archive => "Archive",
+        AfterUnsubscribe::Delete => "Delete",
+    }
+}
 
 /// What the offer says once the unsubscribe is recorded: how much mail the
 /// list left behind, or `None` when there is nothing to offer.
+///
+/// It begins with the confirmation, [`crate::focus_target::unsubscribed`],
+/// naming the same list or address the sweep acts on, so there is one
+/// sentence on screen and not a confirmation and an offer that disagree.
 ///
 /// `more` is the storage page being full: the count is then a floor, and
 /// says so rather than claiming a number it did not read.
@@ -209,43 +218,69 @@ pub fn sweep_offer(scope: &SweepScope, count: usize, more: bool) -> Option<Strin
         ("messages", "are")
     };
     Some(format!(
-        "Unsubscribed from {}. {count}{plus} {noun} from it {verb} still here",
-        scope.name()
+        "{}. {count}{plus} {noun} from it {verb} still here",
+        crate::focus_target::unsubscribed(scope.name())
     ))
 }
 
-/// A choice's label with its count: `Delete 14`, `Archive 5000+`.
-pub fn sweep_button(verb: &str, count: usize, more: bool) -> String {
-    format!("{verb} {count}{}", if more { "+" } else { "" })
-}
-
-/// The dialog's question, for a frontend that asks in a dialog rather than
-/// a menu: `Clear what news.example.org sent?`
-pub fn sweep_heading(scope: &SweepScope) -> String {
-    format!("Clear what {} sent?", scope.name())
-}
-
-/// The dialog's body: how much is left, and that either choice is undoable.
-/// `undo` is the key as the frontend draws it (`ctrl+z`), if it has one.
-pub fn sweep_body(count: usize, more: bool, undo: Option<&str>) -> String {
-    let plus = if more { "+" } else { "" };
-    let noun = if count == 1 && !more {
-        "message"
-    } else {
-        "messages"
-    };
-    let how = match undo {
-        Some(key) => format!("{key} takes it back"),
-        None => "Undo takes it back".to_owned(),
-    };
+/// The action's label with its count: `Archive 14`, `Delete 5000+`.
+pub fn sweep_button(action: AfterUnsubscribe, count: usize, more: bool) -> String {
     format!(
-        "{count}{plus} {noun} from this sender, none of them Flagged, are still in \
-         your mail. Delete moves them to the Trash; {how}."
+        "{} {count}{}",
+        sweep_verb(action),
+        if more { "+" } else { "" }
     )
 }
 
+/// The non-blocking notice after leaving a list (#1952): what it says, and
+/// the ONE action it offers, in the configured verb. Ignoring it, or `Esc`,
+/// keeps everything; pressing the button is one undoable bulk command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SweepNotice {
+    /// The sentence: the confirmation, then how much is still here.
+    pub text: String,
+    /// The button: `Archive 14`.
+    pub button: String,
+    /// What the button does with the mail.
+    pub action: AfterUnsubscribe,
+}
+
+/// The notice for a list that left `count` messages behind, or `None` when
+/// nothing is left (the plain confirmation then says all there is to say).
+pub fn sweep_notice(
+    scope: &SweepScope,
+    count: usize,
+    more: bool,
+    action: AfterUnsubscribe,
+) -> Option<SweepNotice> {
+    Some(SweepNotice {
+        text: sweep_offer(scope, count, more)?,
+        button: sweep_button(action, count, more),
+        action,
+    })
+}
+
+/// What the confirmation names for the message just left: the sweep's own
+/// scope, so the exact sender address when the message names no list and
+/// never the domain the activation log files it under.
+pub fn confirmation_name(list_id: Option<&str>, from: &[EmailAddress]) -> Option<String> {
+    sweep_scope(list_id, from).map(|scope| scope.name().to_owned())
+}
+
+/// The setting's heading in a settings pane (#1952).
+pub const SETTING_HEADING: &str = "After you unsubscribe";
+
+/// What the setting does, said plainly because it is the one place a person
+/// learns that the notice never acts by itself.
+pub const SETTING_NOTE: &str = "The notice after you unsubscribe offers this for the mail the list \
+     already sent. Nothing moves unless you press it, and Undo takes it back.";
+
+/// The choices a settings pane offers, the default first.
+pub const SETTING_CHOICES: [AfterUnsubscribe; 2] =
+    [AfterUnsubscribe::Archive, AfterUnsubscribe::Delete];
+
 /// What a declined offer, or a finished one, leaves on screen is the
-/// command's own notice ("Deleted 14 messages"), so there is no wording here
+/// command's own notice ("Archived 14 messages"), so there is no wording here
 /// for it: the verb is one the registry already says.
 #[cfg(test)]
 mod sweep_tests {
@@ -292,6 +327,61 @@ mod sweep_tests {
                 .unwrap()
                 .contains("5000+ messages"),
             "a full page is a floor"
+        );
+    }
+
+    #[test]
+    fn the_notice_offers_one_action_and_archive_is_the_default() {
+        let scope = SweepScope::ListId("news.example.org".into());
+        let archive = sweep_notice(&scope, 14, false, AfterUnsubscribe::default()).unwrap();
+        assert_eq!(archive.action, AfterUnsubscribe::Archive);
+        assert_eq!(archive.button, "Archive 14");
+        let delete = sweep_notice(&scope, 14, false, AfterUnsubscribe::Delete).unwrap();
+        assert_eq!(delete.button, "Delete 14", "the setting picks the verb");
+        assert_eq!(delete.text, archive.text, "the words do not change with it");
+        assert_eq!(
+            sweep_notice(&scope, 5000, true, AfterUnsubscribe::Archive)
+                .unwrap()
+                .button,
+            "Archive 5000+"
+        );
+        assert_eq!(
+            sweep_notice(&scope, 0, false, AfterUnsubscribe::Delete),
+            None,
+            "nothing left, nothing to offer"
+        );
+    }
+
+    #[test]
+    fn the_confirmation_names_the_exact_sender_never_the_domain() {
+        // No List-Id: the address the sweep acts on, not `example.org`.
+        assert_eq!(
+            confirmation_name(None, &sender("Shop@Mail.Example.org")).as_deref(),
+            Some("shop@mail.example.org")
+        );
+        // A List-Id wins, as it does for the sweep.
+        assert_eq!(
+            confirmation_name(Some("news.example.org"), &sender("a@mail.example.org")).as_deref(),
+            Some("news.example.org")
+        );
+        assert_eq!(confirmation_name(None, &[]), None);
+    }
+
+    #[test]
+    fn the_setting_offers_archive_first_and_says_nothing_moves_by_itself() {
+        assert_eq!(SETTING_CHOICES[0], AfterUnsubscribe::default());
+        let named: Vec<&str> = SETTING_CHOICES.iter().map(|a| sweep_verb(*a)).collect();
+        assert_eq!(named, ["Archive", "Delete"]);
+        assert!(SETTING_NOTE.contains("Nothing moves") && SETTING_NOTE.contains("Undo"));
+    }
+
+    #[test]
+    fn the_offer_opens_with_the_confirmation_it_replaces() {
+        let scope = SweepScope::Sender("shop@example.com".into());
+        let said = sweep_offer(&scope, 3, false).unwrap();
+        assert!(
+            said.starts_with(&crate::focus_target::unsubscribed(scope.name())),
+            "{said}"
         );
     }
 }

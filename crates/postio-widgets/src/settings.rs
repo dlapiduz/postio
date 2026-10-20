@@ -627,6 +627,9 @@ pub struct FilteringControls {
     pub stopped: gtk::Box,
     /// What the stopped list says with nothing in it.
     pub stopped_empty: gtk::Label,
+    /// `[focus] after_unsubscribe`: the one action the notice after leaving a
+    /// list offers, Archive or Delete (#1952).
+    pub after_unsubscribe: SegmentedControl,
 }
 
 /// Composing's controls.
@@ -3472,6 +3475,12 @@ impl SettingsPanel {
             &imp.keymap.borrow(),
         );
         controls.switch.set_active(page.on);
+        controls.after_unsubscribe.set_selected(
+            postio_ui::unsubscribe::SETTING_CHOICES
+                .iter()
+                .position(|choice| *choice == config.focus.after_unsubscribe)
+                .unwrap_or(0),
+        );
         controls.state.set_label(&page.state);
         controls
             .today
@@ -3553,6 +3562,25 @@ impl SettingsPanel {
         let stopped_empty = note("postio-settings-filtering-stopped-empty");
         stopped_empty.set_label(filtering::STOPPED_EMPTY);
 
+        let choices: Vec<&str> = postio_ui::unsubscribe::SETTING_CHOICES
+            .iter()
+            .map(|choice| postio_ui::unsubscribe::sweep_verb(*choice))
+            .collect();
+        let after_unsubscribe = SegmentedControl::new("After you unsubscribe", &choices);
+        after_unsubscribe.connect_selected(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |index| {
+                if let Some(action) = postio_ui::unsubscribe::SETTING_CHOICES.get(index) {
+                    panel.apply_after_unsubscribe(*action);
+                }
+            }
+        ));
+        let after_unsubscribe_note = note("postio-settings-after-unsubscribe-note");
+        after_unsubscribe_note.set_label(postio_ui::unsubscribe::SETTING_NOTE);
+        after_unsubscribe_note.set_ellipsize(pango::EllipsizeMode::None);
+        after_unsubscribe_note.set_wrap(true);
+
         let group = SettingsGroup::on(&imp.filtering_pane);
         group.control(switch.widget()).note(&state);
         group.section(filtering::FILTERED);
@@ -3571,6 +3599,10 @@ impl SettingsPanel {
         group.note(&never).note(&never_empty);
         group.section(filtering::STOPPED);
         group.control(&stopped).control(&stopped_empty);
+        group.section(postio_ui::unsubscribe::SETTING_HEADING);
+        group
+            .control(after_unsubscribe.widget())
+            .note(&after_unsubscribe_note);
 
         let _ = imp.filtering_controls.set(FilteringControls {
             switch,
@@ -3582,6 +3614,7 @@ impl SettingsPanel {
             never_empty,
             stopped,
             stopped_empty,
+            after_unsubscribe,
         });
         imp.filtering_controls.get().expect("just set")
     }
@@ -3601,6 +3634,18 @@ impl SettingsPanel {
             Ok(Some(written)) => self.imp().buffer.set_text(&written),
             Ok(None) => {}
             Err(error) => tracing::error!(%error, "could not take back a filter entry: {error}"),
+        }
+    }
+
+    /// Writes `[focus] after_unsubscribe` into the buffer: the one action the
+    /// notice after leaving a list offers (#1952).
+    fn apply_after_unsubscribe(&self, action: postio_config::AfterUnsubscribe) {
+        match postio_config::focus_edit::set_after_unsubscribe(&self.text(), action) {
+            Ok(Some(written)) => self.imp().buffer.set_text(&written),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::error!(%error, "could not write [focus] after_unsubscribe: {error}");
+            }
         }
     }
 

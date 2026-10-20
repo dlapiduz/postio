@@ -219,6 +219,7 @@ fn status_line(
     }
     let mut spans: Vec<Span> = vec![Span::raw(" ")];
     let mut undo = None;
+    let mut offer = None;
     if let Some(toast) = bottom::toast(app, theme) {
         if spans.len() > 1 {
             spans.push(Span::styled(" · ", theme.style(Role::Dim)));
@@ -227,6 +228,9 @@ fn status_line(
         undo = toast
             .undo
             .map(|undo| before + undo.start..before + undo.end);
+        offer = toast
+            .offer
+            .map(|offer| before + offer.start..before + offer.end);
         spans.extend(toast.spans);
     }
     let width = usize::from(area.width);
@@ -246,9 +250,7 @@ fn status_line(
         return;
     }
     frame.render_widget(left, area);
-    if let Some(undo) = undo {
-        bottom::toast_target(hits, area.x, area.y, &undo);
-    }
+    bottom::toast_targets(hits, area.x, area.y, undo.as_ref(), offer.as_ref());
 }
 
 /// `text`, cut to at most `width` terminal columns, ending in `…` when cut.

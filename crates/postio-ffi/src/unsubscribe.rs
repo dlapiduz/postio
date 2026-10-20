@@ -42,8 +42,8 @@ pub struct UnsubscribeOfferFfi {
     pub action: String,
 }
 
-/// What is still here after leaving a list, and the two things the reader
-/// offers to do about it (#1931). Words only: acting on it is
+/// What is still here after leaving a list, and the one thing the reader
+/// offers to do about it (#1952). Words only: acting on it is
 /// [`Session::clear_list_mail`](crate::Session::clear_list_mail), by message id.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ListMailOfferFfi {
@@ -52,10 +52,12 @@ pub struct ListMailOfferFfi {
     pub summary: String,
     /// How many, as a floor when `more`.
     pub count: u32,
-    /// The Archive button: `Archive 14`.
-    pub archive: String,
-    /// The Delete button: `Delete 14`.
-    pub delete: String,
+    /// The button: `Archive 14`, or `Delete 14` when `[focus]
+    /// after_unsubscribe` says so.
+    pub button: String,
+    /// Whether the button deletes (`true`) or archives (`false`): what to
+    /// hand back to `clearListMail`.
+    pub delete: bool,
 }
 
 /// One past activation, for the Privacy pane.

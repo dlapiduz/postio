@@ -231,6 +231,14 @@ const ENTRIES: &[Entry] = &[
                        `pane`, beside it. A window narrower than 980 px uses the dialog \
                        whatever this says. F8 switches it.",
     },
+    Entry {
+        path: "focus.after_unsubscribe",
+        kind: "string",
+        default: "\"archive\"",
+        description: "What the notice after you unsubscribe (M) offers to do with the mail \
+                       that list already sent: `archive` or `delete`. Either is one undoable \
+                       action, and nothing moves unless you press the notice's button.",
+    },
     // ── [focus.filter] ────────────────────────────────────────────────
     Entry {
         path: "focus.filter.never",

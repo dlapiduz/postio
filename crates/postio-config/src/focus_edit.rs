@@ -135,6 +135,37 @@ pub fn set_reading(text: &str, reading: crate::Reading) -> Result<Option<String>
     Ok(Some(render(text, doc)))
 }
 
+/// `[focus] after_unsubscribe` set to `action`: what the notice after
+/// leaving a list offers to do with its mail (#1952), as Settings' Filtering
+/// page chooses it. `None` when the file already says so -- and a file that
+/// says nothing says `archive`, the default.
+pub fn set_after_unsubscribe(
+    text: &str,
+    action: crate::AfterUnsubscribe,
+) -> Result<Option<String>> {
+    let mut doc = document(text)?;
+    let written = doc
+        .get("focus")
+        .and_then(|focus| focus.get("after_unsubscribe"))
+        .and_then(Item::as_str)
+        .map(str::to_owned);
+    let says = written
+        .as_deref()
+        .unwrap_or(crate::AfterUnsubscribe::default().as_str());
+    if says == action.as_str() {
+        return Ok(None);
+    }
+    let focus = doc
+        .as_table_mut()
+        .entry("focus")
+        .or_insert_with(|| Item::Table(Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| shape("[focus] is not a table"))?;
+    focus.set_implicit(false);
+    focus.insert("after_unsubscribe", toml_edit::value(action.as_str()));
+    Ok(Some(render(text, doc)))
+}
+
 /// `[focus] filtering` set to `on`: whether Focus files spam and automated
 /// updates away as they arrive (FR-119), as Settings' Filtering page turns
 /// it. `None` when the file already says so -- and a file that says nothing
@@ -403,6 +434,58 @@ at = \"16:00\"
         assert_eq!(
             set_reading("", Reading::Pane).expect("an edit").as_deref(),
             Some("[focus]\nreading = \"pane\"\n")
+        );
+    }
+
+    #[test]
+    fn after_unsubscribe_archives_unless_the_file_says_delete() {
+        use crate::AfterUnsubscribe;
+        assert_eq!(
+            Config::from_toml_str("")
+                .expect("it reads")
+                .focus
+                .after_unsubscribe,
+            AfterUnsubscribe::Archive
+        );
+        let delete =
+            Config::from_toml_str("[focus]\nafter_unsubscribe = \"delete\"\n").expect("it reads");
+        assert_eq!(delete.focus.after_unsubscribe, AfterUnsubscribe::Delete);
+    }
+
+    #[test]
+    fn after_unsubscribe_is_written_in_place_and_nothing_else_moves() {
+        use crate::AfterUnsubscribe;
+        let written = set_after_unsubscribe(FILE, AfterUnsubscribe::Delete)
+            .expect("an edit")
+            .expect("a change");
+        assert!(
+            written.starts_with("# My settings.\n[ui]\ndensity = \"compact\" # as I like it\n")
+        );
+        assert!(
+            written.contains("after_unsubscribe = \"delete\"\n"),
+            "{written}"
+        );
+        let config = Config::from_toml_str(&written).expect("it reads");
+        assert_eq!(config.focus.after_unsubscribe, AfterUnsubscribe::Delete);
+        assert_eq!(config.focus.digests.len(), 1, "the rule is untouched");
+        assert_eq!(
+            set_after_unsubscribe(&written, AfterUnsubscribe::Delete).expect("an edit"),
+            None
+        );
+        let back = set_after_unsubscribe(&written, AfterUnsubscribe::Archive)
+            .expect("an edit")
+            .expect("a change");
+        assert_eq!(
+            Config::from_toml_str(&back)
+                .expect("it reads")
+                .focus
+                .after_unsubscribe,
+            AfterUnsubscribe::Archive
+        );
+        // A file that says nothing already says archive.
+        assert_eq!(
+            set_after_unsubscribe("", AfterUnsubscribe::Archive).expect("an edit"),
+            None
         );
     }
 

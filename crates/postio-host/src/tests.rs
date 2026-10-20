@@ -758,6 +758,49 @@ fn unsubscribing_records_the_activation_against_the_messages_list() {
 }
 
 #[test]
+fn leaving_a_sender_with_no_list_is_said_with_the_exact_address() {
+    // #1952: the confirmation names what the sweep acts on, the sender's
+    // exact address, while the activation log keeps filing the domain.
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Tui);
+    let (account, message) = world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let first = MessageRepository::new(&connection)
+            .get(world.message)
+            .await
+            .expect("read")
+            .expect("there");
+        let mut shop = Message::new(first.account_id, world.inbox, Utc::now());
+        shop.from = vec![postio_model::EmailAddress::new(
+            Some("Shop"),
+            "Shop@Mail.Example.org",
+        )];
+        let id = MessageRepository::new(&connection)
+            .create(&mut shop)
+            .await
+            .expect("a message");
+        (first.account_id, id)
+    });
+    let said = world
+        .rt
+        .block_on(client.unsubscribe(message))
+        .expect("unsubscribed");
+    assert_eq!(said, "shop@mail.example.org", "the address, not the domain");
+    let recorded = world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::repository::UnsubscribeRepository::new(&connection)
+            .for_account(account)
+            .await
+            .expect("the activations")
+    });
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(
+        recorded[0].list_identifier, "Mail.Example.org",
+        "the log needs no address to say it: it is derived from the message"
+    );
+}
+
+#[test]
 fn what_a_list_sent_is_deleted_as_one_undoable_command() {
     // #1931: after leaving a list, one Delete takes everything it sent, one
     // undo brings it all back, and a Flagged message and another list's mail

@@ -2019,9 +2019,12 @@ impl Inner {
 
     /// Record that the person asked to leave `message`'s list, and name it.
     ///
-    /// The list is its `List-Id`, else the sender's domain -- the desktop
-    /// reader's rule (#971), moved here from the classic app so every frontend
-    /// records it the same way. Only ever answered for a deliberate act.
+    /// The activation is filed under the list's `List-Id`, else the sender's
+    /// domain -- the desktop reader's rule (#971), moved here from the classic
+    /// app so every frontend records it the same way. The answer, which is
+    /// what the confirmation says, names what the offer after it acts on:
+    /// the `List-Id`, else the sender's exact address (#1952), so the log
+    /// needs no address to say it. Only ever answered for a deliberate act.
     async fn unsubscribe(&self, message: postio_model::MessageId) -> Resp {
         use postio_model::listing::StoreError;
         use postio_storage::repository::{MessageRepository, UnsubscribeRepository};
@@ -2051,11 +2054,13 @@ impl Inner {
             list.clone(),
             chrono::Utc::now(),
         );
+        let said = postio_ui::unsubscribe::confirmation_name(found.list_id.as_deref(), &found.from)
+            .unwrap_or(list);
         match UnsubscribeRepository::new(&connection)
             .record(&mut activation)
             .await
         {
-            Ok(_) => Resp::Unsubscribed(list),
+            Ok(_) => Resp::Unsubscribed(said),
             Err(error) => Resp::Failed(StoreError::from(error)),
         }
     }

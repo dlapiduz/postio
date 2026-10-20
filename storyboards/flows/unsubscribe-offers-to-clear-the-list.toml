@@ -1,17 +1,21 @@
-# Leaving a list offers to clear what it already sent (#1931).
+# Leaving a list offers to clear what it already sent, as a notice (#1952,
+# after #1931).
 #
-# `M` leaves the list of the message under the cursor. Until now that was the
-# end of it: the list's old mail stayed in the inbox, to be swept by hand. The
-# acceptance: after `M`, an offer names how much is still here and offers
-# Archive and Delete, each under the verb's own key; Esc keeps everything and
-# nothing moves; the verb's key does it as ONE command, with Undo.
+# `M` leaves the list of the message under the cursor. The offer to clear
+# what that list already sent is a NOTICE, not a dialog: a toast with one
+# button, Archive by default (`[focus] after_unsubscribe` can make it
+# Delete). It never takes the keyboard, so nothing is a mode and no verb key
+# means something else while it is up. Esc, or ignoring it, keeps
+# everything. Its first sentence is the confirmation, and it names the exact
+# sender address, never the domain.
 #
-# Red on the base: there `M` shows only the "Unsubscribed" notice, so no
-# dialog opens and the first check on step "offer" fails.
+# Red on the base: there `M` opens a blocking dialog (Clear what ... sent?)
+# with three answers, so the "offer" step's overlay is a dialog and no
+# notice appears behind it.
 #
 # The small seed's senders repeat, and a message with no List-Id is swept by
 # its exact sender address, so the cursor's row always has mail to clear.
-source = { kind = "issue", ref = "#1931" }
+source = { kind = "issue", ref = "#1952" }
 proof  = "base"
 apps   = ["focus"]
 
@@ -30,30 +34,32 @@ expect  = "The first message opens over the list."
 [[step]]
 id      = "offer"
 command = "unsubscribe"
-settle  = { until = { overlay.kind = "dialog" } }
-check   = { overlay.kind = "dialog", overlay.mode = "sweep-list", keyboard.region = "dialog" }
-expect  = "A small dialog over the open message asks \"Clear what <the sender> sent?\" and says how many messages from it are still here, none of them Flagged, that Delete moves them to the Trash, and that Undo takes it back. Three answers: \"Keep them\" is the default, \"Archive N (e)\" and \"Delete N (#)\" each show their key. The notice behind it says what was unsubscribed from."
+settle  = { until = { notice.tone = "info" } }
+check   = { overlay.kind = "none", view = "reader", keyboard.region = "reader", notice.tone = "info", notice.undo = false, notice.text = "Unsubscribed from hollis@example.com. 2 messages from it are still here" }
+expect  = "A toast appears over the open message, with no dialog: \"Unsubscribed from <the sender's exact address>. N messages from it are still here\" and one button, \"Archive N\". The message stays open and keeps the keyboard. The toast names an address, not a bare domain."
 
 [[step]]
-id    = "keep"
-key   = "Escape"
-check = { overlay.kind = "none", view = "reader", keyboard.region = "reader", rows.count = { same_as = "start" } }
-expect = "Esc keeps everything: the dialog closes and the message is still open, with the list behind it the size it was."
+id     = "keep"
+key    = "Escape"
+check  = { overlay.kind = "none", view = "list", keyboard.region = "list", rows.count = { same_as = "start" } }
+expect = "Esc is the reader's own: it closes the message back to the list. Nothing was archived, so the list is the size it was."
 
 [[step]]
 id      = "again"
+command = "open_message"
+settle  = { until = { view = "reader" } }
+check   = { view = "reader", keyboard.region = "reader" }
+expect  = "The same message opens again."
+
+[[step]]
+id      = "ignore"
 command = "unsubscribe"
-settle  = { until = { overlay.kind = "dialog" } }
-check   = { overlay.kind = "dialog", overlay.mode = "sweep-list" }
-expect  = "The same offer, asked for again."
+settle  = { until = { notice.tone = "info" } }
+check   = { overlay.kind = "none", keyboard.region = "reader" }
+expect  = "The same toast, asked for again."
 
 [[step]]
-id    = "delete"
-key   = "numbersign"
-check = { overlay.kind = "none", notice.undo = true, rows.count = { changed = true } }
-expect = "The verb's own key answers it: the dialog closes, everything that sender sent has left the inbox at once, and the toast says how many were deleted and offers Undo with its key."
-
-[[step]]
-command = "undo"
-check   = { overlay.kind = "none", rows.count = { same_as = "start" } }
-expect  = "One undo brings back all of it: the list is the size it was, because the whole sweep was one command."
+id      = "verb"
+command = "archive"
+check   = { overlay.kind = "none", notice.undo = true, notice.text = "Archived 1 message", rows.count = 60 }
+expect  = "The verb's own key still means what it always means: it archives only the open message, never everything the list sent, and the toast says it can be undone."

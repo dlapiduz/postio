@@ -41,6 +41,8 @@ pub struct Toast {
     pub spans: Vec<Span<'static>>,
     /// The columns, within the spans, that a click undoes from.
     pub undo: Option<std::ops::Range<usize>>,
+    /// The columns of the notice's one button, when it offers one (#1952).
+    pub offer: Option<std::ops::Range<usize>>,
 }
 
 impl Toast {
@@ -73,7 +75,15 @@ pub fn toast(app: &App, theme: &Theme) -> Option<Toast> {
         let to: usize = spans.iter().map(|span| span.content.width()).sum();
         undo = Some(from..to);
     }
-    Some(Toast { spans, undo })
+    let mut offer = None;
+    if let Some(label) = app.notice_offer() {
+        spans.push(Span::styled(" · ", theme.style(Role::Dim)));
+        let from: usize = spans.iter().map(|span| span.content.width()).sum();
+        spans.push(Span::styled(label.to_owned(), theme.style(Role::Accent)));
+        let to: usize = spans.iter().map(|span| span.content.width()).sum();
+        offer = Some(from..to);
+    }
+    Some(Toast { spans, undo, offer })
 }
 
 /// One thing on the bar: its spans and the command a click on it runs.
@@ -250,21 +260,36 @@ pub fn bulk_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &
             Line::from(right.into_iter().map(|(span, _)| span).collect::<Vec<_>>()),
             Rect::new(at, area.y, w, 1),
         );
-        if let Some(undo) = toast.filter(|_| toast_whole).and_then(|toast| toast.undo) {
-            toast_target(hits, at, area.y, &undo);
+        if let Some(toast) = toast.filter(|_| toast_whole) {
+            toast_targets(hits, at, area.y, toast.undo.as_ref(), toast.offer.as_ref());
         }
     }
     true
 }
 
-/// Undo is a click for the command its key runs.
-pub fn toast_target(hits: &mut Hits, x: u16, y: u16, undo: &std::ops::Range<usize>) {
-    let from = x + u16::try_from(undo.start).unwrap_or(0);
-    let width = u16::try_from(undo.len()).unwrap_or(0);
-    hits.add(
-        Rect::new(from, y, width, 1),
-        Target::Command(CommandId::Undo.as_str()),
-    );
+/// What a toast's words can be clicked for: Undo is the command its key
+/// runs, and an offer's button is the one command the notice carries.
+pub fn toast_targets(
+    hits: &mut Hits,
+    x: u16,
+    y: u16,
+    undo: Option<&std::ops::Range<usize>>,
+    offer: Option<&std::ops::Range<usize>>,
+) {
+    let region = |range: &std::ops::Range<usize>| {
+        Rect::new(
+            x + u16::try_from(range.start).unwrap_or(0),
+            y,
+            u16::try_from(range.len()).unwrap_or(0),
+            1,
+        )
+    };
+    if let Some(undo) = undo {
+        hits.add(region(undo), Target::Command(CommandId::Undo.as_str()));
+    }
+    if let Some(offer) = offer {
+        hits.add(region(offer), Target::NoticeOffer);
+    }
 }
 
 /// The gap between two things on the bar.
@@ -508,6 +533,37 @@ mod tests {
         );
         assert!(
             effects.contains(&crate::app::Effect::Send(postio_core::Command::Undo)),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn the_unsubscribe_notice_draws_its_one_action_and_a_click_takes_it_up() {
+        let mut app = inbox((120, 24));
+        app.confirm_unsubscribed_for_test("news.example.com", &[7, 8]);
+        let drawn = screen(120, 24, &app);
+        let line = bottom(&drawn);
+        assert!(
+            line.contains("Unsubscribed from news.example.com") && line.contains("Archive 2"),
+            "{drawn}"
+        );
+        let x = u16::try_from(line[..line.find("Archive 2").unwrap()].chars().count()).unwrap();
+        let hit = hits_of(120, 24, &app)
+            .at(x, 23)
+            .expect("the button is a target");
+        let effects = update(
+            &mut app,
+            crate::app::Input::Pointer(crate::app::Pointer::Click {
+                hit,
+                ctrl: false,
+                shift: false,
+            }),
+        );
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                crate::app::Effect::Send(postio_core::Command::Archive { .. })
+            )),
             "{effects:?}"
         );
     }

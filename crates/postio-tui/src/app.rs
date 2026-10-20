@@ -152,6 +152,8 @@ pub enum Input {
     ListMail {
         /// The message the unsubscribe was from.
         message: postio_model::MessageId,
+        /// The list or sender it left, as the confirmation names it.
+        name: String,
         /// What the list left behind, or why it could not be read.
         found: Result<postio_client::protocol::ListMailFound, String>,
     },
@@ -347,8 +349,14 @@ pub enum Effect {
     /// [`Input::Unsubscribed`].
     Unsubscribe(postio_model::MessageId),
     /// Read what the list this message came from has sent, and answer with
-    /// [`Input::ListMail`]: the offer after an unsubscribe (#1931).
-    ReadListMail(postio_model::MessageId),
+    /// [`Input::ListMail`]: the offer after an unsubscribe (#1931). `name` is
+    /// what the confirmation says it left.
+    ReadListMail {
+        /// The message `M` was pressed over.
+        message: postio_model::MessageId,
+        /// The list or sender left.
+        name: String,
+    },
     /// Read a message's parts and answer with [`Input::Parts`].
     ReadParts(postio_model::MessageId),
     /// Hand a new-mail notice to the desktop's notification service, where
@@ -630,6 +638,9 @@ pub struct App {
     notice_tone: Tone,
     /// The key the notice offers undo on, when it offers it.
     notice_undo: Option<String>,
+    /// The one button the notice offers, when it offers one (#1952): its
+    /// label and the command a click runs.
+    notice_offer: Option<(String, postio_core::Command)>,
     /// Which notice is on the line: a timer is for one of them.
     notice_generation: u64,
     /// An answer to an invitation was sent, and its toast is the next one:
@@ -967,6 +978,7 @@ impl App {
             notice: None,
             notice_tone: Tone::Plain,
             notice_undo: None,
+            notice_offer: None,
             notice_generation: 0,
             answering: false,
             focus: Focus::List,
@@ -1712,6 +1724,8 @@ impl App {
                 Target::Surface(part, index) => self.surface_click(part, index),
                 // A row of the menu over the message is chosen.
                 Target::MenuRow(at) => self.choose(at),
+                // The notice's one button (#1952).
+                Target::NoticeOffer => self.take_up_offer(),
                 // A row's drawn answer is its key, for that row: an answer
                 // to an invitation is about the invitation wherever the
                 // cursor is; the rest take the cursor there first.
@@ -2902,6 +2916,7 @@ impl App {
         self.notice = Some(postio_ui::terminal::SafeText::new(sentence).to_string());
         self.notice_tone = tone;
         self.notice_undo = undo;
+        self.notice_offer = None;
         self.notice_generation += 1;
         vec![
             Effect::ExpireNotice {
@@ -2920,6 +2935,11 @@ impl App {
     /// The key the notice offers undo on, when it does.
     pub fn notice_undo(&self) -> Option<&str> {
         self.notice_undo.as_deref()
+    }
+
+    /// The label of the one button the notice offers, when it offers one.
+    pub fn notice_offer(&self) -> Option<&str> {
+        self.notice_offer.as_ref().map(|(label, _)| label.as_str())
     }
 
     /// The same app, mirroring into `state`: the one the client snapshots.
@@ -4495,6 +4515,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
         Input::NoticeDue { generation } => {
             if generation == app.notice_generation && app.notice.take().is_some() {
                 app.notice_undo = None;
+                app.notice_offer = None;
                 vec![Effect::Redraw]
             } else {
                 Vec::new()
@@ -4723,18 +4744,12 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             None => app.say("That message could not be read to reply to"),
         },
         Input::Unsubscribed { message, answer } => match answer {
-            Ok(list) => {
-                let mut effects = app.say(&format!("Asked to leave {list}"));
-                effects.push(Effect::ReadListMail(message));
-                effects
-            }
+            // Said once, with the offer if the list left mail behind: a
+            // local read, so the one notice is not late.
+            Ok(name) => vec![Effect::ReadListMail { message, name }],
             Err(reason) => app.say(&reason),
         },
-        Input::ListMail { found, .. } => match found {
-            Ok(found) => app.offer_sweep(&found),
-            // The offer is a courtesy; the unsubscribe already said its piece.
-            Err(_) => Vec::new(),
-        },
+        Input::ListMail { name, found, .. } => app.confirm_unsubscribed(&name, found.ok()),
         Input::Addressed {
             message,
             to,
@@ -7812,69 +7827,89 @@ pub(crate) mod tests {
                 answer: Ok("news.example.com".into()),
             },
         );
-        assert_eq!(app.notice(), Some("Asked to leave news.example.com"));
         assert!(
-            effects.contains(&Effect::ReadListMail(MessageId::new(3))),
+            effects.contains(&Effect::ReadListMail {
+                message: MessageId::new(3),
+                name: "news.example.com".into()
+            }),
             "it then looks for what the list left behind: {effects:?}"
+        );
+        assert_eq!(
+            app.notice(),
+            None,
+            "one notice, once the list's mail is known"
         );
     }
 
-    /// What `M` leaves on screen once the list's mail is found (#1931).
-    fn offered_list_mail(app: &mut App, ids: &[i64]) {
+    /// What `M` leaves on screen once the list's mail is found (#1952).
+    fn offered_list_mail(app: &mut App, ids: &[i64]) -> Vec<Effect> {
         reading_a_conversation(app);
         update(
             app,
             Input::ListMail {
                 message: MessageId::new(3),
+                name: "news.example.com".into(),
                 found: Ok(postio_client::protocol::ListMailFound {
                     name: "news.example.com".into(),
                     ids: ids.iter().copied().map(MessageId::new).collect(),
                     more: false,
                 }),
             },
-        );
+        )
     }
 
     #[test]
-    fn after_leaving_a_list_the_reader_offers_to_archive_or_delete_what_it_sent() {
+    fn after_leaving_a_list_the_status_line_offers_one_action_not_a_menu() {
         let mut app = app((160, 40));
         offered_list_mail(&mut app, &[5, 6]);
-        let menu = app.menu().expect("the offer is a menu over the message");
+        assert!(app.menu().is_none(), "the offer does not take the keyboard");
+        let said = app.notice().expect("the notice");
         assert!(
-            menu.title.contains("2 messages from it are still here"),
-            "{}",
-            menu.title
+            said.starts_with("Unsubscribed from news.example.com")
+                && said.contains("2 messages from it are still here"),
+            "{said}"
         );
-        let words: Vec<&str> = menu.items.iter().map(|item| item.words.as_str()).collect();
-        assert_eq!(words, ["Archive 2", "Delete 2"]);
-        assert_eq!(menu.items[1].detail, "#", "the key is named inside the row");
+        assert_eq!(app.notice_offer(), Some("Archive 2"), "archive by default");
 
-        // The row's own key does it: one command, aimed at exactly those.
-        let effects = update(&mut app, press('#'));
+        // The button is one command, aimed at exactly those messages.
+        let effects = update(
+            &mut app,
+            crate::test_support::click(crate::view::hit::Target::NoticeOffer, false, false),
+        );
         let ids = vec![MessageId::new(5), MessageId::new(6)];
         assert!(
-            effects.contains(&Effect::Send(postio_core::Command::Delete {
-                target: postio_core::MessageTarget::Messages(ids.clone()),
+            effects.contains(&Effect::Send(postio_core::Command::Archive {
+                target: postio_core::MessageTarget::Messages(ids),
             })),
             "{effects:?}"
         );
-        assert!(app.menu().is_none(), "the offer closes");
+        assert_eq!(app.notice_offer(), None, "taken up, the offer goes");
     }
 
     #[test]
-    fn the_offer_archives_with_the_archive_key_and_esc_keeps_everything() {
+    fn the_setting_makes_the_one_action_delete() {
         let mut app = app((160, 40));
+        app.features.after_unsubscribe = postio_config::AfterUnsubscribe::Delete;
         offered_list_mail(&mut app, &[5]);
-        let effects = update(&mut app, press('e'));
+        assert_eq!(app.notice_offer(), Some("Delete 1"));
+        let effects = update(
+            &mut app,
+            crate::test_support::click(crate::view::hit::Target::NoticeOffer, false, false),
+        );
         assert!(
-            effects.contains(&Effect::Send(postio_core::Command::Archive {
+            effects.contains(&Effect::Send(postio_core::Command::Delete {
                 target: postio_core::MessageTarget::Messages(vec![MessageId::new(5)]),
             })),
             "{effects:?}"
         );
+    }
 
-        let mut app = crate::test_support::app((160, 40));
+    #[test]
+    fn ignoring_the_offer_or_pressing_esc_keeps_everything() {
+        let mut app = app((160, 40));
         offered_list_mail(&mut app, &[5]);
+        // Keys are the reader's own: the offer is not a mode, and the verb
+        // keys act on the open message, never on what the list sent.
         let effects = update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
         assert!(
             !effects
@@ -7882,14 +7917,22 @@ pub(crate) mod tests {
                 .any(|effect| matches!(effect, Effect::Send(_))),
             "declining sends nothing: {effects:?}"
         );
-        assert!(app.menu().is_none());
+        // A newer notice replaces the offer; its time running out takes it.
+        let mut app = crate::test_support::app((160, 40));
+        offered_list_mail(&mut app, &[5]);
+        let generation = app.notice_generation;
+        update(&mut app, Input::NoticeDue { generation });
+        assert_eq!(app.notice_offer(), None);
+        assert_eq!(app.notice(), None);
     }
 
     #[test]
-    fn a_list_with_nothing_left_makes_no_offer() {
+    fn a_list_with_nothing_left_only_confirms() {
         let mut app = app((160, 40));
         offered_list_mail(&mut app, &[]);
         assert!(app.menu().is_none());
+        assert_eq!(app.notice(), Some("Unsubscribed from news.example.com"));
+        assert_eq!(app.notice_offer(), None);
     }
 
     #[test]

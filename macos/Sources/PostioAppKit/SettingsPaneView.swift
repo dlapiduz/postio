@@ -646,11 +646,43 @@ public struct SettingsPaneView: View {
                     field(page.stoppedHeading.uppercased()) {
                         filteringList(page.stopped, empty: page.stoppedEmpty, name: page.stoppedHeading)
                     }
+                    if let control = store.afterUnsubscribe {
+                        Divider()
+                        afterUnsubscribeControl(control)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
             unreadable
+        }
+    }
+
+    /// "After you unsubscribe" (#1952): the one action the notice offers for
+    /// the mail a list already sent. The words and the choices are the
+    /// boundary's, so GTK says the same ones.
+    @ViewBuilder private func afterUnsubscribeControl(_ control: AfterUnsubscribeFfi) -> some View {
+        field(control.heading.uppercased()) {
+            VStack(alignment: .leading, spacing: PostioTokens.space2) {
+                Picker(
+                    control.heading,
+                    selection: Binding(
+                        get: { control.delete },
+                        set: { store.applyAfterUnsubscribe(delete: $0) }
+                    )
+                ) {
+                    ForEach(Array(control.choices.enumerated()), id: \.offset) { index, label in
+                        Text(label).tag(index == 1)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .equalSegments(control.choices.count, each: 76)
+                Text(control.note)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 

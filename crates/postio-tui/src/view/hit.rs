@@ -41,6 +41,8 @@ pub enum Target {
     /// A control of the window that runs a command, by its id: the top bar's
     /// and the strip's.
     Command(&'static str),
+    /// The status line's notice offer: its one button (#1952).
+    NoticeOffer,
     /// A row of the menu over the open message, by its place in the menu.
     MenuRow(usize),
     /// One of a Focus surface's many parts, by its place.

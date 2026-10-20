@@ -37,6 +37,8 @@ pub struct Features {
     pub digests: Rules,
     /// Where `[focus] reading` opens a message.
     pub reading: postio_config::Reading,
+    /// What the notice after `M` offers to do with the list's mail (#1952).
+    pub after_unsubscribe: postio_config::AfterUnsubscribe,
     /// Whether `[focus.vault]` is configured, so a to-do offers Task.
     pub capture: bool,
     /// Whether `[focus.model]` has `like_this` on, so the rule dialog offers

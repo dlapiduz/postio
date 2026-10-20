@@ -40,6 +40,7 @@ impl Read {
                 digest_rules: config.focus.digests.len(),
                 digests: crate::places::Rules(config.focus.digests.clone()),
                 reading: config.focus.reading,
+                after_unsubscribe: config.focus.after_unsubscribe,
                 capture: config.focus.vault.is_some(),
                 like_this: config
                     .focus

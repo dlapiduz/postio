@@ -72,6 +72,14 @@ struct Seed {
 async fn a_store_with(
     seeds: &[Seed],
 ) -> (std::sync::Arc<Session>, Vec<i64>, Store, Vec<AccountId>) {
+    a_store_configured("", seeds).await
+}
+
+/// [`a_store_with`], over a session whose `config.toml` says `config`.
+async fn a_store_configured(
+    config: &str,
+    seeds: &[Seed],
+) -> (std::sync::Arc<Session>, Vec<i64>, Store, Vec<AccountId>) {
     let database = test_support::memory().await;
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let blobs =
@@ -141,7 +149,9 @@ async fn a_store_with(
     };
 
     let session = Session::open(
-        SessionOptions::in_memory_with(database.clone()).with_blobs_for_test(blobs, scratch),
+        SessionOptions::in_memory_with(database.clone())
+            .with_blobs_for_test(blobs, scratch)
+            .with_config_for_test(config),
     )
     .expect("a session over the store");
     (session, ids, database, accounts)
@@ -574,8 +584,8 @@ async fn the_offer_after_leaving_counts_the_lists_mail_and_only_that() {
         .await
         .expect("two messages from the list are still here");
     assert_eq!(offer.count, 2);
-    assert_eq!(offer.archive, "Archive 2");
-    assert_eq!(offer.delete, "Delete 2");
+    assert_eq!(offer.button, "Archive 2", "archive is the default action");
+    assert!(!offer.delete);
     assert!(
         offer.summary.contains("weekly.example.org"),
         "{}",
@@ -592,5 +602,36 @@ async fn the_offer_after_leaving_counts_the_lists_mail_and_only_that() {
         offer.summary.contains("ada@example.net"),
         "{}",
         offer.summary
+    );
+}
+
+/// The one action the notice offers is the one `[focus] after_unsubscribe`
+/// names (#1952); the words around it do not change.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_notice_offers_the_configured_action() {
+    let seeds = [
+        Seed {
+            sender: "news@mail.example.org",
+            list_id: Some("weekly.example.org"),
+            ..Seed::default()
+        },
+        Seed {
+            sender: "news@mail.example.org",
+            list_id: Some("weekly.example.org"),
+            ..Seed::default()
+        },
+    ];
+    let (session, ids, _database, _) =
+        a_store_configured("[focus]\nafter_unsubscribe = \"delete\"\n", &seeds).await;
+    let offer = session
+        .list_mail_offer(ids[0])
+        .await
+        .expect("two messages are still here");
+    assert_eq!(offer.button, "Delete 2");
+    assert!(offer.delete, "the boundary says which verb the button is");
+    assert!(
+        offer
+            .summary
+            .starts_with("Unsubscribed from weekly.example.org")
     );
 }

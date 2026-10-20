@@ -1169,8 +1169,8 @@ impl Session {
         blocking(self.activate_unsubscribe(message))
     }
 
-    /// After leaving a list: what it left behind and the two choices about it,
-    /// or `None` when nothing is left (#1931). A read; it writes nothing.
+    /// After leaving a list: what it left behind and the one action offered
+    /// about it, or `None` when nothing is left (#1931, #1952). A read.
     #[uniffi::method(name = "listMailOffer")]
     pub fn list_mail_offer_ffi(&self, message: i64) -> Option<crate::ListMailOfferFfi> {
         blocking(self.list_mail_offer(message))
@@ -2629,16 +2629,19 @@ impl Session {
         let found = postio_session::list_mail::find(&connection, message.into())
             .await
             .ok()?;
-        use postio_ui::unsubscribe::{
-            SWEEP_ARCHIVE, SWEEP_DELETE, SweepScope, sweep_button, sweep_offer,
-        };
+        use postio_ui::unsubscribe::{SweepScope, sweep_notice};
+        let action = self
+            .focus_config
+            .lock()
+            .expect("focus config lock")
+            .after_unsubscribe;
         let count = found.ids.len();
-        let summary = sweep_offer(&SweepScope::ListId(found.name), count, found.more)?;
+        let notice = sweep_notice(&SweepScope::ListId(found.name), count, found.more, action)?;
         Some(crate::ListMailOfferFfi {
-            summary,
+            summary: notice.text,
             count: u32::try_from(count).unwrap_or(u32::MAX),
-            archive: sweep_button(SWEEP_ARCHIVE, count, found.more),
-            delete: sweep_button(SWEEP_DELETE, count, found.more),
+            button: notice.button,
+            delete: notice.action == postio_config::AfterUnsubscribe::Delete,
         })
     }
 

@@ -76,6 +76,20 @@ public final class SettingsStore {
         write { try settingsPatchFiltering(text: $0, on: on) }
     }
 
+    /// The "After you unsubscribe" control (#1952): its words, the choices and
+    /// which one `[focus] after_unsubscribe` holds, or `nil` when the file
+    /// will not parse.
+    public var afterUnsubscribe: AfterUnsubscribeFfi? {
+        settingsAfterUnsubscribe(text: text)
+    }
+
+    /// Choose the one action the notice after leaving a list offers (`true`
+    /// deletes, `false` archives) and save: one key, the rest as it was.
+    public func applyAfterUnsubscribe(delete: Bool) {
+        reload()
+        write { try settingsPatchAfterUnsubscribe(text: $0, delete: delete) }
+    }
+
     /// Take one `[focus.filter]` entry back and save: the control beside
     /// each line of the pane's two lists ("Filter again", "Turn back on").
     public func takeBack(_ undo: FilteringUndoFfi) {
