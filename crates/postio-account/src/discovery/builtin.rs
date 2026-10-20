@@ -135,7 +135,7 @@ impl Preset {
 
     /// How far this provider's `CHANGEDSINCE` answer can be believed.
     ///
-    /// [`ChangeFeed::Unreliable`] for a row with `condstore_reliable = false`.
+    /// `Unreliable` for a row with `condstore_reliable = false`.
     pub fn change_feed(&self) -> postio_model::ChangeFeed {
         if self.row.condstore_reliable {
             postio_model::ChangeFeed::Reliable
