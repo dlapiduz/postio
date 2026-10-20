@@ -35,7 +35,7 @@ expect  = "The first message opens over the list."
 id      = "offer"
 command = "unsubscribe"
 settle  = { until = { notice.tone = "info" } }
-check   = { overlay.kind = "none", view = "reader", keyboard.region = "reader", notice.tone = "info", notice.undo = false }
+check   = { overlay.kind = "none", view = "reader", keyboard.region = "reader", notice.tone = "info", notice.undo = false, notice.text = "Unsubscribed from hollis@example.com. 2 messages from it are still here" }
 expect  = "A toast appears over the open message, with no dialog: \"Unsubscribed from <the sender's exact address>. N messages from it are still here\" and one button, \"Archive N\". The message stays open and keeps the keyboard. The toast names an address, not a bare domain."
 
 [[step]]
@@ -61,5 +61,5 @@ expect  = "The same toast, asked for again."
 [[step]]
 id      = "verb"
 command = "archive"
-check   = { overlay.kind = "none", notice.undo = true }
+check   = { overlay.kind = "none", notice.undo = true, notice.text = "Archived 1 message", rows.count = 60 }
 expect  = "The verb's own key still means what it always means: it archives only the open message, never everything the list sent, and the toast says it can be undone."
