@@ -845,12 +845,7 @@ async fn wipe_mailbox(
 ) -> Result<()> {
     let messages = MessageRepository::new(connection);
     let uids = messages.uids_in(mailbox_id, generation).await?;
-    let mut ids = Vec::with_capacity(uids.len());
-    for uid in uids {
-        if let Some(message) = messages.by_uid(mailbox_id, generation, uid).await? {
-            ids.push(message.id);
-        }
-    }
+    let ids = messages.ids_by_uid(mailbox_id, generation, &uids).await?;
     messages.delete(&ids).await?;
     Ok(())
 }
