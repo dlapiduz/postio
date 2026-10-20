@@ -511,6 +511,14 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .map(|_| ())
                 .map_err(|error| error.to_string()),
         },
+        Request::ContactGlance { address, stamp } => Reply::ContactGlance {
+            stamp,
+            glance: client
+                .contact_glance(&address)
+                .await
+                .map(|glance| glance.map(Box::new))
+                .map_err(|error| error.to_string()),
+        },
         Request::FindMessage(message) => Reply::FoundMessage {
             message,
             row: client

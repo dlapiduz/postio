@@ -1280,7 +1280,7 @@ impl FocusController {
     }
 
     /// Open the bar `mode`'s way on `text`, over the cursor's row.
-    fn open_bar(&mut self, mode: BarMode, text: &str, rows: &dyn Rows) -> Vec<Step> {
+    pub(crate) fn open_bar(&mut self, mode: BarMode, text: &str, rows: &dyn Rows) -> Vec<Step> {
         let aim = self.cursor.row(rows).map(|row| row.id);
         let mut steps = self
             .surfaces

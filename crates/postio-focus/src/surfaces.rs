@@ -39,6 +39,8 @@ pub enum SurfaceKind {
     Bar,
     /// The Filtered view.
     Filtered,
+    /// The known-sender popover, anchored to a sender's name.
+    ContactPopover,
     /// A picker anchored to a row.
     Picker,
     /// A row's menu.
@@ -67,6 +69,7 @@ impl SurfaceKind {
             SurfaceKind::Bar => KeyContext::Search,
             SurfaceKind::Filtered => KeyContext::Filtered,
             SurfaceKind::Picker => KeyContext::Picker,
+            SurfaceKind::ContactPopover => KeyContext::ContactPopover,
             // Their keys are the list's context, and only the ones that
             // close them are the window's (GTK's dialog close rule).
             SurfaceKind::Settings
@@ -91,6 +94,7 @@ impl SurfaceKind {
                 | SurfaceKind::KeyMap
                 | SurfaceKind::Dialog
                 | SurfaceKind::Filtered
+                | SurfaceKind::ContactPopover
         )
     }
 }
@@ -284,6 +288,7 @@ impl Surfaces {
                     Route::Surface(top)
                 }
             }
+            SurfaceKind::ContactPopover => Route::Controller,
             SurfaceKind::Digest
             | SurfaceKind::Capture
             | SurfaceKind::Composer

@@ -25,6 +25,7 @@ mod bar;
 mod capture;
 mod compose;
 mod confirm;
+mod contact_popover;
 mod cursor;
 mod digest;
 mod dropdown;
@@ -319,6 +320,12 @@ pub enum Input {
     CaptureProject(u64),
     /// Open the message a `postio://` link names, or say why not.
     OpenLink(String),
+    /// A click on a sender's name: the known-sender popover for this address
+    /// (specs/011-focus-contacts S6). The same as `i` on the name's row.
+    ContactPopoverAt(String),
+    /// A click on a segment of the popover's arrival control: the same as
+    /// the arrow that lands there.
+    ContactArrival(postio_model::ContactArrival),
     /// Something was written in the open composer: a recipient, the
     /// subject, a word of the body. What its autosave waits out.
     ComposerEdited,
@@ -614,6 +621,12 @@ pub enum Intent {
     OpenCapture(Box<CaptureView>),
     /// Redraw the capture window, whole.
     Capture(Box<CaptureView>),
+    /// Show the known-sender popover, or redraw it, whole. The controller has
+    /// put it on the stack as a [`SurfaceKind::ContactPopover`]; the frontend
+    /// anchors it to the sender's name.
+    ContactPopover(Box<postio_ui::contact_popover::PopoverView>),
+    /// Open a composer to this address, as a `mailto:` link would.
+    WriteTo(String),
 }
 
 /// What the controller needs from the engine. [`perform()`] is the one place
@@ -939,6 +952,13 @@ pub enum Request {
         /// The capture's stamp, echoed in the answer.
         stamp: u64,
     },
+    /// The person at `address`, at a glance, for the popover.
+    ContactGlance {
+        /// The address clicked or aimed at.
+        address: String,
+        /// The popover's stamp, echoed in the answer.
+        stamp: u64,
+    },
     /// Whether this store holds `message`, and its row: what a link opens.
     FindMessage(MessageId),
     /// The draft behind `message`, for the send verb `command` to settle.
@@ -1218,6 +1238,14 @@ pub enum Reply {
         /// Whether it was written, or the sentence saying why not.
         answer: Result<(), String>,
     },
+    /// The answer to [`Request::ContactGlance`]: the person, or `None` for an
+    /// address the store never saw.
+    ContactGlance {
+        /// The stamp it was asked under.
+        stamp: u64,
+        /// What the popover shows.
+        glance: Result<Option<Box<postio_model::ContactGlance>>, String>,
+    },
     /// The answer to [`Request::FindMessage`]: its row, when it is here.
     FoundMessage {
         /// The message asked about.
@@ -1262,6 +1290,7 @@ pub struct FocusController {
     digest: Option<digest::DigestWindow>,
     rule: Option<digest::RuleDialog>,
     capture: Option<capture::Capture>,
+    contact_popover: Option<contact_popover::ContactPopover>,
     confirm: Option<confirm::Asked>,
     /// The composer, and the composition in it.
     compose: compose::Compose,
@@ -1300,6 +1329,7 @@ impl FocusController {
             digest: None,
             rule: None,
             capture: None,
+            contact_popover: None,
             confirm: None,
             compose: compose::Compose::default(),
             stamps: 0,
@@ -1460,6 +1490,7 @@ impl FocusController {
                 | Reply::RuleSaved { .. }
                 | Reply::Vault { .. }
                 | Reply::Captured { .. }
+                | Reply::ContactGlance { .. }
                 | Reply::FoundMessage { .. }
                 | Reply::DraftBehind { .. }),
             ) => {
@@ -1639,6 +1670,14 @@ impl FocusController {
                 let steps = self.open_link(&uri);
                 self.effects(steps)
             }
+            Input::ContactPopoverAt(address) => {
+                let steps = self.open_contact_popover(Some(address), rows);
+                self.effects(steps)
+            }
+            Input::ContactArrival(arrival) => {
+                let steps = self.contact_arrival_picked(arrival);
+                self.effects(steps)
+            }
             Input::ComposerEdited => {
                 let steps = self.composer_edited();
                 self.effects(steps)
@@ -1814,6 +1853,7 @@ impl FocusController {
                 return self.open_capture(postio_ui::capture::Mode::Note, rows);
             }
             CommandId::DigestRule => return self.new_rule(rows),
+            CommandId::ContactPopover => return self.open_contact_popover(None, rows),
             _ => {}
         }
         // A message open that is on no cursor row -- a search hit, a digest's
@@ -1939,6 +1979,9 @@ impl FocusController {
             Some(SurfaceKind::Capture) if self.capture.is_some() => {
                 return self.capture_command(id);
             }
+            Some(SurfaceKind::ContactPopover) if self.contact_popover.is_some() => {
+                return self.contact_popover_command(id, rows);
+            }
             _ => {}
         }
         if self.surfaces.top() != Some(SurfaceKind::Message) {
@@ -1996,6 +2039,8 @@ impl FocusController {
                 }
                 Some(steps)
             }
+            // `i` on the message on screen: who it is from, at a glance.
+            CommandId::ContactPopover => Some(self.open_contact_popover(None, rows)),
             // `-` takes the marker off the message on screen alone.
             CommandId::DismissMarker => Some(self.verbs.post(Command::DismissMarker {
                 target: MessageTarget::Messages(vec![reading]),
@@ -2090,6 +2135,7 @@ impl FocusController {
             Some(SurfaceKind::Filtered) => Self::filtered_answers(id),
             Some(SurfaceKind::Digest) => Self::digest_answers(id),
             Some(SurfaceKind::Capture) => Self::capture_answers(id),
+            Some(SurfaceKind::ContactPopover) => Self::contact_popover_answers(id),
             _ => false,
         };
         if own {
@@ -2118,6 +2164,7 @@ impl FocusController {
                 | CommandId::CaptureTask
                 | CommandId::CaptureNote
                 | CommandId::DigestRule
+                | CommandId::ContactPopover
         ) || bar::goes(id)
             || compose::compose_key(id)
             || pickers::opens_picker(id)
@@ -2287,6 +2334,9 @@ impl FocusController {
         if !self.surfaces.has(SurfaceKind::Capture) {
             self.capture = None;
         }
+        if !self.surfaces.has(SurfaceKind::ContactPopover) {
+            self.contact_popover = None;
+        }
     }
 
     /// An answer for one of the surfaces over the list.
@@ -2300,6 +2350,7 @@ impl FocusController {
             | Reply::LikeThis { .. }
             | Reply::RuleSaved { .. }) => self.rule_reply(reply),
             reply @ (Reply::Vault { .. } | Reply::Captured { .. }) => self.capture_reply(reply),
+            Reply::ContactGlance { stamp, glance } => self.contact_popover_reply(stamp, glance),
             Reply::FoundMessage { message, row } => self.link_found(message, row, rows),
             Reply::DraftBehind { command, draft, .. } => self.draft_behind(command, draft),
             _ => Vec::new(),
