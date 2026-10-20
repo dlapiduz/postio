@@ -23,6 +23,7 @@ mod aiming;
 mod command_coverage;
 mod compose;
 mod config;
+mod contact_for_address;
 mod conversation;
 mod dwell;
 mod facts;

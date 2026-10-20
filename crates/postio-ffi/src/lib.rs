@@ -84,7 +84,7 @@ pub use compose::{
     QuoteFoldFfi, composer_title, draft_saved_words, draft_summary, fold_quote, outgoing_shape,
     recipient_summary, remind_meaning, remind_presets,
 };
-pub use contacts::{ExternalContactFfi, RecipientSuggestionFfi};
+pub use contacts::{ContactFfi, ContactKindFfi, ExternalContactFfi, RecipientSuggestionFfi};
 pub use conversation::{
     ConversationFfi, ThreadAnchorFfi, ThreadDocumentFfi, ThreadVerbFfi, ThreadVerbKindFfi,
     message_when, thread_expand_all_script, thread_observer_script, thread_scroll_script,

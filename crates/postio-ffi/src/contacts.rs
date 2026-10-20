@@ -35,6 +35,72 @@ pub struct ExternalContactFfi {
     pub address: String,
 }
 
+/// What sort of correspondent a person is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ContactKindFfi {
+    /// A human being.
+    Person,
+    /// A business writing as itself.
+    Company,
+    /// A mailing list.
+    List,
+    /// A newsletter or other bulk sender.
+    Newsletter,
+    /// A robot.
+    Automated,
+}
+
+impl From<postio_model::ContactKind> for ContactKindFfi {
+    fn from(kind: postio_model::ContactKind) -> Self {
+        match kind {
+            postio_model::ContactKind::Person => Self::Person,
+            postio_model::ContactKind::Company => Self::Company,
+            postio_model::ContactKind::List => Self::List,
+            postio_model::ContactKind::Newsletter => Self::Newsletter,
+            postio_model::ContactKind::Automated => Self::Automated,
+        }
+    }
+}
+
+/// A person, as the card and the popover draw them. Every word and choice is
+/// made in Rust (`Contact::shown_as`); Swift paints it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ContactFfi {
+    /// The store's id for the person.
+    pub id: i64,
+    /// The name in the style the person asked for, else what the mail called
+    /// them, else the preferred address.
+    pub name: String,
+    /// What sort of correspondent this is.
+    pub kind: ContactKindFfi,
+    /// Whether the user saved this person.
+    pub saved: bool,
+    /// Every address they own, the preferred one first.
+    pub addresses: Vec<String>,
+    /// Messages any of their addresses has been seen on.
+    pub times_seen: u32,
+    /// Messages the user sent to any of them.
+    pub written: u32,
+}
+
+impl From<&Contact> for ContactFfi {
+    fn from(person: &Contact) -> Self {
+        Self {
+            id: person.id.get(),
+            name: person.shown_as().into_owned(),
+            kind: person.kind.into(),
+            saved: person.is_saved(),
+            addresses: person
+                .addresses
+                .iter()
+                .map(|a| a.address.address.clone())
+                .collect(),
+            times_seen: person.times_seen,
+            written: person.written,
+        }
+    }
+}
+
 /// One suggestion for the recipient being typed.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RecipientSuggestionFfi {
@@ -49,6 +115,21 @@ pub struct RecipientSuggestionFfi {
 
 #[uniffi::export]
 impl Session {
+    /// The person at `address`, made now from the stored mail when the
+    /// background catch-up has not reached them, so a card or `i` on any
+    /// sender answers at once. `None` for an address the store never saw,
+    /// the user's own, or while there is no host.
+    pub fn contact_for_address(&self, address: String) -> Option<ContactFfi> {
+        let client = self.client()?;
+        match crate::session::blocking(client.contact_for_address(&address)) {
+            Ok(person) => person.as_ref().map(ContactFfi::from),
+            Err(error) => {
+                tracing::warn!(%error, "could not read the person at an address");
+                None
+            }
+        }
+    }
+
     /// At most `limit` suggestions for the recipient being typed at the end
     /// of `text` in `account`'s composer, or none until enough of it is
     /// typed. `extra` is what the platform's address book lends for this
