@@ -1,5 +1,5 @@
 //! Recipient completion for the Mac's composer (specs/009-focus-macos
-//! T075): `postio_ui::recipients::suggest` -- the rule GTK's composer and
+//! T075): `postio_ui::recipients::suggest_ranked` -- the rule GTK's composer and
 //! the terminal rank by -- over the account's directory, with the people
 //! the Mac's Contacts lends for the keystroke beside it.
 //!
@@ -167,14 +167,20 @@ impl Session {
                     Correspondent::from(contact)
                 }),
         );
-        postio_ui::recipients::suggest(&directory.groups, &contacts, prefix, limit as usize)
-            .into_iter()
-            .map(|candidate| RecipientSuggestionFfi {
-                label: postio_ui::recipients::candidate_label(&candidate),
-                accepted: postio_ui::recipients::accepted(&text, &candidate),
-                group: matches!(candidate, RecipientCandidate::Group { .. }),
-            })
-            .collect()
+        postio_ui::recipients::suggest_ranked(
+            &directory.groups,
+            &contacts,
+            prefix,
+            limit as usize,
+            true,
+        )
+        .into_iter()
+        .map(|candidate| RecipientSuggestionFfi {
+            label: postio_ui::recipients::candidate_label(&candidate),
+            accepted: postio_ui::recipients::accepted(&text, &candidate),
+            group: matches!(candidate, RecipientCandidate::Group { .. }),
+        })
+        .collect()
     }
 }
 

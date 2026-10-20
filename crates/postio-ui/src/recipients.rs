@@ -101,6 +101,19 @@ pub fn suggest(
     prefix: &str,
     limit: usize,
 ) -> Vec<RecipientCandidate> {
+    suggest_ranked(groups, correspondents, prefix, limit, false)
+}
+
+/// [`suggest`], and with `by_kind` a robot, a list or a newsletter ranks
+/// below every person and company unless the user has written to it: what a
+/// platform that has adopted people asks for (specs/011-focus-contacts S4).
+pub fn suggest_ranked(
+    groups: &[(String, Vec<EmailAddress>)],
+    correspondents: &[Correspondent],
+    prefix: &str,
+    limit: usize,
+    by_kind: bool,
+) -> Vec<RecipientCandidate> {
     let prefix = prefix.trim().to_lowercase();
     let mut candidates: Vec<RecipientCandidate> = groups
         .iter()
@@ -116,7 +129,7 @@ pub fn suggest(
         .filter(|row| completes(&row.contact, &prefix))
         .collect();
     // Stable: rows the rule cannot tell apart keep the directory's order.
-    matching.sort_by(|a, b| rank(a, b));
+    matching.sort_by(|a, b| rank(a, b, by_kind));
     candidates.extend(
         matching
             .into_iter()
@@ -140,10 +153,20 @@ pub fn suggest(
 ///
 /// Until letters are counted (T075) every count is zero, and this is the
 /// store's order, `ContactRepository::search`'s.
-fn rank(a: &Correspondent, b: &Correspondent) -> Ordering {
+fn rank(a: &Correspondent, b: &Correspondent, by_kind: bool) -> Ordering {
     let band = |row: &Correspondent| row.contact.source == ContactSource::Mail;
-    b.sent_count
-        .cmp(&a.sent_count)
+    // Not someone you write to: nobody you have written to is demoted.
+    let demoted = |row: &Correspondent| {
+        by_kind
+            && row.sent_count == 0
+            && !matches!(
+                row.contact.kind,
+                postio_model::ContactKind::Person | postio_model::ContactKind::Company
+            )
+    };
+    demoted(a)
+        .cmp(&demoted(b))
+        .then_with(|| b.sent_count.cmp(&a.sent_count))
         .then_with(|| band(a).cmp(&band(b)))
         .then_with(|| b.contact.last_seen_at.cmp(&a.contact.last_seen_at))
         .then_with(|| b.contact.times_seen.cmp(&a.contact.times_seen))
@@ -386,5 +409,51 @@ mod tests {
     fn three_letters_are_not_enough_to_look_up() {
         assert_eq!(prefix("x@example.com, ada"), None);
         assert_eq!(prefix("x@example.com, ada@"), Some("ada@"));
+    }
+
+    #[test]
+    fn ranked_by_kind_a_robot_or_a_list_never_outranks_a_person_unless_you_write_to_it() {
+        let mut noisy = correspondent("Alpha Alerts", "alerts@alpha.example", 900, 0, 0);
+        noisy.contact.kind = postio_model::ContactKind::Automated;
+        let mut list = correspondent("Alpha List", "list@alpha.example", 800, 0, 0);
+        list.contact.kind = postio_model::ContactKind::List;
+        let mut posted_to = correspondent("Alpha Dev List", "dev@alpha.example", 5, 90, 3);
+        posted_to.contact.kind = postio_model::ContactKind::List;
+        let mut quiet = correspondent("Alpha Person", "person@alpha.example", 2, 300, 0);
+        quiet.contact.kind = postio_model::ContactKind::Person;
+        let directory = [noisy, list, posted_to, quiet];
+        let order = |by_kind: bool| -> Vec<String> {
+            suggest_ranked(&[], &directory, "alpha", 10, by_kind)
+                .into_iter()
+                .filter_map(|c| match c {
+                    RecipientCandidate::Contact(c) => Some(c.address),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(
+            order(false),
+            [
+                "dev@alpha.example",
+                "alerts@alpha.example",
+                "list@alpha.example",
+                "person@alpha.example"
+            ],
+            "unranked: written-to first, then recency"
+        );
+        assert_eq!(
+            order(true),
+            [
+                "dev@alpha.example",
+                "person@alpha.example",
+                "alerts@alpha.example",
+                "list@alpha.example"
+            ],
+            "ranked: the person before the robot and the list nobody writes to"
+        );
+        assert_eq!(
+            suggest(&[], &directory, "alpha", 10),
+            suggest_ranked(&[], &directory, "alpha", 10, false)
+        );
     }
 }
