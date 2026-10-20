@@ -309,7 +309,9 @@ pub fn leaving_a_list_offers_one_action_on_a_toast_and_ignoring_it_keeps_the_mai
         support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
         crate::settle();
         window.dismiss_toast();
-        crate::settle();
+        // The dismissed toast animates out, still mapped, for a moment: the
+        // next offer's button is the one to press, not the leaving one.
+        crate::settle_for(std::time::Duration::from_millis(800)).await;
         assert!(!inbox_is_empty(&fixture).await, "declining archived them");
         assert_ne!(
             window.toast_showing().as_deref(),
