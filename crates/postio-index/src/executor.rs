@@ -874,7 +874,7 @@ async fn corpus_complete(connection: &Connection, request: &SearchRequest<'_>) -
 /// a store whose backfill had finished, reading each row for `body_state`.
 #[doc(hidden)]
 pub fn corpus_complete_sql(request: &SearchRequest<'_>) -> (String, Vec<turso::Value>) {
-    let mut conditions = vec!["bodies_owed > 0".to_string()];
+    let mut conditions = vec![format!("{} > 0", postio_storage::schema::BODIES_STILL_OWED)];
     let mut params: Vec<turso::Value> = Vec::new();
     if let Some(id) = request.account.account() {
         conditions.push("account_id = ?".to_string());

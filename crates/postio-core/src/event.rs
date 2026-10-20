@@ -143,6 +143,15 @@ pub enum Event {
         /// The message whose body is now available.
         message: MessageId,
     },
+    /// The server would not give up a message's body (#1918): read the open
+    /// message again, so "Downloading" becomes "could not be downloaded"
+    /// without waiting for anything else to prompt a re-read.
+    BodyFailed {
+        /// The account the message belongs to.
+        account: AccountId,
+        /// The message whose body will not come.
+        message: MessageId,
+    },
     /// The rows Focus's inbox surfaces among its conversations changed: a
     /// digest was delivered or archived, or a reminder fired or stopped
     /// standing (spec 007). Read them again with `surfaced()`.
@@ -435,6 +444,7 @@ mod tests {
             },
             Event::ThreadChanged { account, thread },
             Event::BodyLoaded { account, message },
+            Event::BodyFailed { account, message },
         ];
         for event in events {
             let json = serde_json::to_string(&event).unwrap();

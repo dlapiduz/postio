@@ -307,6 +307,23 @@ CREATE TABLE IF NOT EXISTS body_failures (
     },
 ];
 
+/// A mailbox's `bodies_owed` less the messages in it the server has refused
+/// (`body_failures`, still matching their `MODSEQ`): what is actually still
+/// to come (#1918). For a statement over `mailboxes`.
+///
+/// Written to be driven from `body_failures` and to reach `messages` only by
+/// primary key (`CROSS JOIN`, and the unary `+` that keeps the planner off
+/// the mailbox's message index): the other order walks every message in the
+/// folder, which is the scan #1612 removed.
+///
+/// Subtracted at read rather than kept by triggers: a refusal is rare, so the
+/// subquery walks a table that is nearly always empty, where a trigger would
+/// have to follow a message moving, being deleted or changing `MODSEQ`.
+pub const BODIES_STILL_OWED: &str = "(mailboxes.bodies_owed - (SELECT count(*) FROM body_failures f \
+    CROSS JOIN messages m ON m.id = f.message_id \
+    WHERE +m.mailbox_id = mailboxes.id AND m.deleted_locally = 0 \
+    AND m.body_state IN ('not_fetched', 'headers_only') AND f.mod_seq IS m.mod_seq))";
+
 /// The steps that carry a store stamped `found` to [`FINGERPRINT`], in the
 /// order they run: none for a store already there, and `None` when no
 /// recorded step leads from `found` -- a schema this build cannot carry
