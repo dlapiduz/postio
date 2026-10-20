@@ -389,3 +389,75 @@ pub fn switching_a_marked_message_keeps_the_reading_position() {
         );
     });
 }
+
+/// A treatment chosen for one address is the person's (ADR 0048): their other
+/// address opens in it too, without a restart.
+pub fn a_treatment_chosen_for_one_address_reaches_the_persons_other_address() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let other = "field-notes@treatments.example.com";
+        let (first, _) = fixture
+            .file(("Field Notes Weekly", NEWS), "Issue 50", "The light.", 5)
+            .await;
+        let (second, _) = fixture
+            .file(("Field Notes", other), "Issue 51", "The dark.", 6)
+            .await;
+        for message in [first, second] {
+            fixture
+                .write_html_body(message, &html_of("html-newsletter-own-page"))
+                .await;
+        }
+        {
+            let connection = fixture.database.connect().await.expect("a connection");
+            postio_storage::repository::ContactRepository::new(&connection)
+                .create(
+                    Some("Field Notes"),
+                    &[
+                        postio_model::EmailAddress::new(None::<String>, NEWS),
+                        postio_model::EmailAddress::new(None::<String>, other),
+                    ],
+                )
+                .await
+                .expect("one person, two addresses");
+        }
+        let (window, client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "the inbox never reached the screen"
+        );
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+        let reading = window.reading().expect("open");
+        let reader = reading.reader();
+        let line = reader.render_mode_line().expect("Focus draws the line");
+        assert!(
+            crate::settle_until(async || reader.treatment() == Treatment::Paper).await,
+            "a newsletter opens on paper by the rule"
+        );
+        assert!(reader.switch_treatment(), "an HTML body can be switched");
+        assert!(
+            crate::settle_until(async || reader.treatment() == Treatment::AppColours).await,
+            "O did not switch to app colours"
+        );
+        line.press_always();
+        assert!(
+            crate::settle_until(async || {
+                client.treatments().await.is_ok_and(|kept| kept.len() == 2)
+            })
+            .await,
+            "the host should hold the choice for both of the person's addresses"
+        );
+
+        support::keys(&window, &["j"]);
+        assert!(
+            crate::settle_until(async || reading.title() == "Issue 51").await,
+            "j did not step to the other address's mail"
+        );
+        assert!(
+            crate::settle_until(async || reader.treatment() == Treatment::AppColours).await,
+            "the person's other address did not open in the person's choice"
+        );
+    });
+}

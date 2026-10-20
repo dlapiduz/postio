@@ -162,7 +162,10 @@ pub fn typing_a_recipient_opens_no_connections_and_still_completes() {
             postio_storage::repository::ContactRepository::new(&connection)
                 .create(
                     Some("Wilhelmina Quartz"),
-                    &[postio_model::EmailAddress::new(None::<String>, "wilhelmina@example.com")],
+                    &[postio_model::EmailAddress::new(
+                        None::<String>,
+                        "wilhelmina@example.com",
+                    )],
                 )
                 .await
                 .expect("create the contact");
@@ -242,7 +245,10 @@ pub fn typing_back_and_forth_across_the_threshold_stays_connected() {
             postio_storage::repository::ContactRepository::new(&connection)
                 .create(
                     Some("Wilhelmina Quartz"),
-                    &[postio_model::EmailAddress::new(None::<String>, "wilhelmina@example.com")],
+                    &[postio_model::EmailAddress::new(
+                        None::<String>,
+                        "wilhelmina@example.com",
+                    )],
                 )
                 .await
                 .expect("create the contact");

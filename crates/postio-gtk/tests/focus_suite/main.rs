@@ -770,6 +770,10 @@ const CASES: &[(&str, fn())] = &[
         treatments::a_newsletter_opens_on_paper_and_o_switches_it_to_app_colours as fn(),
     ),
     (
+        "treatments::a_treatment_chosen_for_one_address_reaches_the_persons_other_address",
+        treatments::a_treatment_chosen_for_one_address_reaches_the_persons_other_address as fn(),
+    ),
+    (
         "treatments::opening_and_stepping_prepare_no_body_on_the_interface_thread",
         treatments::opening_and_stepping_prepare_no_body_on_the_interface_thread as fn(),
     ),

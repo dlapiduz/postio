@@ -184,14 +184,21 @@ fn app_setup(
 /// where the person's choice is kept, and keep a new one there.
 fn keep_treatments_in_the_store(host: &Host, client: &postio_client::Client) {
     use postio_body::treatment::Treatment;
+    // A choice for one address is the person's, so it covers their others:
+    // after keeping it, the host's list is read again and the table follows.
+    let (refreshed, hear) = async_channel::unbounded::<Vec<(String, String)>>();
     let (saver, runtime) = (client.clone(), host.runtime());
     let table = std::rc::Rc::new(postio_ui::sender_treatments::Remembered::new(
         move |sender, treatment| {
-            let (client, sender) = (saver.clone(), sender.to_owned());
+            let (client, sender, refreshed) = (saver.clone(), sender.to_owned(), refreshed.clone());
             runtime.spawn(async move {
                 let word = treatment.map(Treatment::attribute_value);
                 if let Err(error) = client.set_treatment(&sender, word).await {
                     tracing::warn!(%error, "could not keep a sender's treatment");
+                    return;
+                }
+                if let Ok(all) = client.treatments().await {
+                    let _ = refreshed.send(all).await;
                 }
             });
         },
@@ -199,6 +206,12 @@ fn keep_treatments_in_the_store(host: &Host, client: &postio_client::Client) {
     // What the host read with the rules, as the window opened: no read of
     // its own, which the window's opening budget would count.
     table.replace(host.wiring().focus.treatments());
+    let following = std::rc::Rc::clone(&table);
+    glib::spawn_future_local(async move {
+        while let Ok(all) = hear.recv().await {
+            following.replace(all);
+        }
+    });
     postio_widgets::reader::use_store_treatments(Some(table));
 }
 
