@@ -405,11 +405,14 @@ pub fn a_treatment_chosen_for_one_address_reaches_the_persons_other_address() {
         let (second, _) = fixture
             .file(("Field Notes", other), "Issue 51", "The dark.", 6)
             .await;
-        for message in [first, second] {
-            fixture
-                .write_html_body(message, &html_of("html-newsletter-own-page"))
-                .await;
-        }
+        let page = html_of("html-newsletter-own-page");
+        fixture.write_html_body(first, &page).await;
+        fixture
+            .write_html_body(
+                second,
+                &page.replace("</body>", "<p>SECOND-MARK</p></body>"),
+            )
+            .await;
         {
             let connection = fixture.database.connect().await.expect("a connection");
             postio_storage::repository::ContactRepository::new(&connection)
@@ -443,7 +446,12 @@ pub fn a_treatment_chosen_for_one_address_reaches_the_persons_other_address() {
             "j did not step to the other address's mail"
         );
         assert!(
-            crate::settle_until(async || reader.treatment() == Treatment::Paper).await,
+            crate::settle_until(async || reader.test_document().contains("SECOND-MARK")).await,
+            "the other address's mail never drew"
+        );
+        assert_eq!(
+            reader.treatment(),
+            Treatment::Paper,
             "the other address opens on paper by the rule"
         );
         support::keys(&window, &["k"]);
@@ -452,7 +460,12 @@ pub fn a_treatment_chosen_for_one_address_reaches_the_persons_other_address() {
             "k did not step back"
         );
         assert!(
-            crate::settle_until(async || reader.treatment() == Treatment::Paper).await,
+            crate::settle_until(async || !reader.test_document().contains("SECOND-MARK")).await,
+            "the first address's mail never drew again"
+        );
+        assert_eq!(
+            reader.treatment(),
+            Treatment::Paper,
             "and so does the first"
         );
         assert!(reader.switch_treatment(), "an HTML body can be switched");
@@ -475,7 +488,12 @@ pub fn a_treatment_chosen_for_one_address_reaches_the_persons_other_address() {
             "j did not step to the other address's mail"
         );
         assert!(
-            crate::settle_until(async || reader.treatment() == Treatment::AppColours).await,
+            crate::settle_until(async || reader.test_document().contains("SECOND-MARK")).await,
+            "the other address's mail never drew"
+        );
+        assert_eq!(
+            reader.treatment(),
+            Treatment::AppColours,
             "the person's other address did not open in the person's choice"
         );
     });
