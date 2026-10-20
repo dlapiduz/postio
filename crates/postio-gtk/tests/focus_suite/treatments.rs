@@ -500,8 +500,11 @@ pub fn a_treatment_chosen_for_one_address_reaches_the_persons_other_address() {
 }
 
 /// Whether the document on screen is drawn in the treatment `word` names.
+/// The stylesheet names both, so the page colour the newsletter paints for
+/// itself is what tells paper from app colours.
 fn drawn_as(reader: &postio_widgets::reader::Reader, word: &str) -> bool {
-    reader
-        .test_document()
-        .contains(&format!("data-postio-treatment=\"{word}\""))
+    let document = reader.test_document();
+    let own_page = document.contains("f6f1e7");
+    document.contains(&format!("data-postio-treatment=\"{word}\""))
+        && (own_page == (word == "paper"))
 }
