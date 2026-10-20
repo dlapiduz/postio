@@ -110,6 +110,9 @@ mod imp {
         /// The toast on screen, until it is dismissed -- by its timeout, its
         /// button, or a newer one.
         pub on_screen: RefCell<Option<adw::Toast>>,
+        /// The answer to the offer to clear what a list sent, while it is up:
+        /// a button's response name, or a verb's key, both end here (#1931).
+        pub list_sweep: RefCell<Option<std::rc::Rc<dyn Fn(&str)>>>,
         pub pane: RefCell<Option<ListPane>>,
         pub chrome: RefCell<Option<Rc<Chrome>>>,
         pub client: RefCell<Option<Client>>,
@@ -283,6 +286,7 @@ mod imp {
                 inbox: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 toast: postio_widgets::widgets::toast::Toast::new(),
                 on_screen: RefCell::default(),
+                list_sweep: RefCell::default(),
                 pane: RefCell::default(),
                 chrome: RefCell::default(),
                 client: RefCell::default(),
@@ -799,6 +803,36 @@ impl FocusWindow {
     /// through it without synthesizing a GDK event, which GTK4 gives no
     /// supported way to do.
     pub fn handle_key(&self, key: gdk::Key, state: gdk::ModifierType) -> glib::Propagation {
+        // The offer to clear what a list sent takes its two verbs' own keys,
+        // and nothing else of the list's: `#` here deletes what the list
+        // sent, not the row behind the dialog (#1931).
+        if self.sweep_offer().is_some()
+            && let Some(answer) = self.imp().list_sweep.borrow().clone()
+            && let Some(chord) = postio_widgets::keys::chord(key, state)
+        {
+            let command = {
+                let mut resolver = self.imp().resolver.borrow_mut();
+                resolver.as_mut().and_then(|resolver| {
+                    match resolver.press(&chord, KeyContext::List, false, std::time::Instant::now())
+                    {
+                        Outcome::Command(id) => id.parse::<CommandId>().ok(),
+                        _ => None,
+                    }
+                })
+            };
+            match command {
+                Some(CommandId::Archive) => {
+                    answer("archive");
+                    return glib::Propagation::Stop;
+                }
+                Some(CommandId::Delete) => {
+                    answer("delete");
+                    return glib::Propagation::Stop;
+                }
+                // Esc is the dialog's own; the list's other verbs wait.
+                _ => {}
+            }
+        }
         // A picker at the row has the keyboard: its keys are the picker
         // context's, and what it does not use goes on to its field.
         // The row menu has the keyboard while it is up (T199): Escape
@@ -3219,11 +3253,11 @@ impl FocusWindow {
         }
         let scope = SweepScope::ListId(found.name.clone());
         let keymap = self.keymap();
-        let keyed = |label: String, command: CommandId| match postio_ui::hints::key(&keymap, command)
-        {
-            Some(key) => format!("{label} ({key})"),
-            None => label,
-        };
+        let keyed =
+            |label: String, command: CommandId| match postio_ui::hints::key(&keymap, command) {
+                Some(key) => format!("{label} ({key})"),
+                None => label,
+            };
         let dialog = adw::AlertDialog::new(
             Some(&sweep_heading(&scope)),
             Some(&sweep_body(count, found.more, None)),
@@ -3273,34 +3307,25 @@ impl FocusWindow {
             let answer = std::rc::Rc::clone(&answer);
             move |_, response| answer(response)
         });
-        let verbs = gtk::EventControllerKey::new();
-        verbs.connect_key_pressed({
+        // The verbs' own keys answer too, through `handle_key` (the window's
+        // keyboard reaches every dialog; see `keys_under_dialogs`).
+        self.imp().list_sweep.replace(Some(std::rc::Rc::new({
             let answer = std::rc::Rc::clone(&answer);
             let dialog = dialog.downgrade();
-            let keymap = keymap.clone();
-            move |_, key, _, state| {
-                let Some(dialog) = dialog.upgrade() else {
-                    return glib::Propagation::Proceed;
-                };
-                let pressed = key.to_unicode().map(String::from);
-                let is = |command: CommandId| {
-                    state.difference(gtk::gdk::ModifierType::SHIFT_MASK).is_empty()
-                        && pressed.is_some()
-                        && postio_ui::hints::key(&keymap, command) == pressed
-                };
-                let chosen = if is(CommandId::Archive) {
-                    "archive"
-                } else if is(CommandId::Delete) {
-                    "delete"
-                } else {
-                    return glib::Propagation::Proceed;
-                };
-                answer(chosen);
-                dialog.force_close();
-                glib::Propagation::Stop
+            move |response: &str| {
+                answer(response);
+                if let Some(dialog) = dialog.upgrade() {
+                    dialog.force_close();
+                }
             }
-        });
-        dialog.add_controller(verbs);
+        })));
+        dialog.connect_closed(glib::clone!(
+            #[weak(rename_to = window)]
+            self,
+            move |_| {
+                window.imp().list_sweep.replace(None);
+            }
+        ));
         dialog.present(Some(self));
     }
 
@@ -5310,8 +5335,8 @@ impl FocusWindow {
             crate::chooser::DIALOG_NAME,
             LIST_SWEEP_DIALOG,
         ]
-            .into_iter()
-            .find(|name| dialog_named(name));
+        .into_iter()
+        .find(|name| dialog_named(name));
         // A message open beside the list, the keyboard on it (T232): the
         // window's own context says so, as it does for every key.
         let reading_here = self.visible_dialog().is_none() && self.reading_beside();

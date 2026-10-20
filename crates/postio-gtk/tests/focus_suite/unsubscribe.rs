@@ -280,7 +280,9 @@ pub fn leaving_a_list_offers_to_delete_what_it_sent_and_esc_keeps_it() {
         let deleted = crate::settle_until(async || {
             let connection = fixture.database.connect().await.expect("a connection");
             MessageRepository::new(&connection)
-                .page(&postio_storage::repository::ListQuery::mailbox(fixture.inbox))
+                .page(&postio_storage::repository::ListQuery::mailbox(
+                    fixture.inbox,
+                ))
                 .await
                 .expect("a page")
                 .is_empty()
