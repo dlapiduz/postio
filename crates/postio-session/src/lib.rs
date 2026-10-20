@@ -43,6 +43,7 @@
 pub mod actions;
 pub mod attaching;
 mod attachment_text;
+pub mod auto_empty;
 pub mod blocking;
 pub mod checkup;
 pub mod diag;
