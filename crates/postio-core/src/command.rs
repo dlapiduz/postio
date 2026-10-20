@@ -814,6 +814,13 @@ commands! {
     } => "contact_restore",
     /// Show the deleted people, or the default view again.
     ContactsToggleDeleted => "contacts_toggle_deleted",
+    /// Show who might be the same person, or the people again.
+    ContactsSuggestions => "contacts_suggestions",
+    /// Say the focused suggestion is two people, for good.
+    SuggestionDismiss {
+        /// The two people; `None` means the focused suggestion.
+        pair: Option<(ContactId, ContactId)> = None,
+    } => "suggestion_dismiss",
     ;
     /// Mark one message read because the cursor rested on it long enough to
     /// have been read — not because anyone asked.

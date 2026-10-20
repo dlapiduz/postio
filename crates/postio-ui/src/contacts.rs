@@ -83,6 +83,34 @@ fn last_in_touch(at: Option<DateTime<Utc>>, now: DateTime<Local>) -> Option<Stri
     at.map(|at| crate::row::timestamp(at, now))
 }
 
+/// One suggestion as its row reads: each person with their addresses and
+/// how often each was seen, then why they are offered -- the evidence the
+/// user decides on (FR-018).
+pub fn suggestion_line(suggestion: &postio_model::JoinSuggestion) -> String {
+    let side = |person: &Contact| {
+        let addresses: Vec<String> = person
+            .addresses
+            .iter()
+            .map(|a| format!("{} · {}", a.address.address, a.times_seen))
+            .collect();
+        format!("{} ({})", person.display_name(), addresses.join(", "))
+    };
+    let why = match suggestion.reason {
+        postio_model::SuggestionReason::SameName => "same name".to_owned(),
+        postio_model::SuggestionReason::Replied { replies: 1 } => {
+            "answered from the other address once".to_owned()
+        }
+        postio_model::SuggestionReason::Replied { replies } => {
+            format!("answered from the other address {replies} times")
+        }
+    };
+    format!(
+        "{} and {} — {why}",
+        side(&suggestion.people[0]),
+        side(&suggestion.people[1])
+    )
+}
+
 /// What joining these people offers to call them (specs/005-contacts
 /// FR-012/FR-013): the names the user chose, then what the mail called them,
 /// newest first and each once -- the first preselected, so `Return` accepts
@@ -625,6 +653,22 @@ mod join_tests {
             person(2, None, None, None, 2),
         ]);
         assert_eq!(choices.names, ["p2@example.com", "p1@example.com"]);
+    }
+
+    #[test]
+    fn a_suggestion_reads_as_its_evidence() {
+        let line = suggestion_line(&postio_model::JoinSuggestion {
+            people: [
+                person(1, None, Some("Ada"), None, 1),
+                person(2, None, Some("Ada"), None, 2),
+            ],
+            reason: postio_model::SuggestionReason::Replied { replies: 2 },
+        });
+        assert_eq!(
+            line,
+            "Ada (p1@example.com · 1) and Ada (p2@example.com · 1) — \
+             answered from the other address 2 times"
+        );
     }
 
     #[test]

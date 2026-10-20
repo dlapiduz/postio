@@ -266,7 +266,9 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::ContactEdit
         | C::ContactDelete
         | C::ContactRestore
-        | C::ContactsToggleDeleted => None,
+        | C::ContactsToggleDeleted
+        | C::ContactsSuggestions
+        | C::SuggestionDismiss => None,
         // The composer's own keys, which the compose dialog teaches on its
         // buttons and its footer.
         C::Send

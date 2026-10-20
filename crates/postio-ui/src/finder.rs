@@ -464,7 +464,10 @@ mod tests {
     /// address, and picking them is about all of their mail.
     #[test]
     fn a_person_with_two_addresses_is_found_by_either_and_offered_once() {
-        let ada = person("Ada Lovelace", &["ada@work.example", "lovelace@home.example"]);
+        let ada = person(
+            "Ada Lovelace",
+            &["ada@work.example", "lovelace@home.example"],
+        );
         for query in ["ada", "work.example", "home.example"] {
             let hits = contacts(std::slice::from_ref(&ada), query);
             assert_eq!(hits.len(), 1, "{query} finds ada once");

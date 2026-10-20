@@ -502,10 +502,12 @@ mod tests {
     fn at_offers_correspondents_and_a_pick_searches_their_mail() {
         assert_eq!(route("@"), Route::Correspondent(""));
         assert_eq!(route("@ada"), Route::Correspondent("ada"));
-        let contacts = [postio_model::Contact::new(postio_model::ContactAddress::new(
-            postio_model::AddressId::new(1),
-            postio_model::EmailAddress::new(Some("Ada Moreno"), "ada@example.com"),
-        ))];
+        let contacts = [postio_model::Contact::new(
+            postio_model::ContactAddress::new(
+                postio_model::AddressId::new(1),
+                postio_model::EmailAddress::new(Some("Ada Moreno"), "ada@example.com"),
+            ),
+        )];
         let lines = correspondent_lines(&finder::contacts(&contacts, ""));
         let Some(Line::Row {
             row, title, detail, ..

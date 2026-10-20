@@ -2647,6 +2647,31 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
     },
+    CommandSpec {
+        id: CommandId::ContactsSuggestions,
+        title: "Possible duplicates",
+        default_binding: "v s",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::SuggestionDismiss,
+        title: "Not the same person",
+        // 005 bound `X`, which is also Select all's alternate and so a second
+        // meaning in Contacts; `N` for "not": free here.
+        default_binding: "N",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        // It hides a suggestion and nothing else: the two people, their
+        // addresses and their mail are untouched, so there is nothing to
+        // lose and nothing for undo to give back (contracts/commands.md).
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
 ];
 
 /// Every command, in cheat-sheet order.
@@ -3061,6 +3086,8 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             | (ActionId::Builtin(C::ContactDelete), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactRestore), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactsToggleDeleted), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactsSuggestions), Platform::Freedesktop)
+            | (ActionId::Builtin(C::SuggestionDismiss), Platform::Freedesktop)
     )
 }
 
@@ -3137,7 +3164,7 @@ mod tests {
 
     /// What only the Mac draws, until Linux adopts it: the search dropdown
     /// and results view (spec 010 D23, D25) and Contacts (specs/005).
-    const NOT_ON_LINUX_YET: [CommandId; 32] = [
+    const NOT_ON_LINUX_YET: [CommandId; 34] = [
         CommandId::ShowAllResults,
         CommandId::ForgetRecent,
         CommandId::ExcludeSuggestion,
@@ -3170,6 +3197,8 @@ mod tests {
         CommandId::ContactDelete,
         CommandId::ContactRestore,
         CommandId::ContactsToggleDeleted,
+        CommandId::ContactsSuggestions,
+        CommandId::SuggestionDismiss,
     ];
 
     #[test]

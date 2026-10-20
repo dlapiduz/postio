@@ -164,3 +164,5 @@ contact_edit
 contact_delete	
 contact_restore	
 contacts_toggle_deleted	
+contacts_suggestions	
+suggestion_dismiss	

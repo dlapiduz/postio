@@ -259,6 +259,8 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::ContactDelete
         | C::ContactRestore
         | C::ContactsToggleDeleted
+        | C::ContactsSuggestions
+        | C::SuggestionDismiss
         | C::GoToFiltered
         | C::GoToDigestRules
         | C::ToggleHasAction

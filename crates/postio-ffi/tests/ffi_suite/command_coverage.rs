@@ -79,6 +79,7 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     (CommandId::ContactsFilter, "specs/011-focus-contacts"),
     (CommandId::ContactsToggleEveryone, "specs/011-focus-contacts"),
     (CommandId::ContactsToggleDeleted, "specs/011-focus-contacts"),
+    (CommandId::ContactsSuggestions, "specs/011-focus-contacts"),
 ];
 
 /// Whether Focus's controller answers `id` on the Mac: on the list with
