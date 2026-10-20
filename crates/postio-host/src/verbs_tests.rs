@@ -927,6 +927,18 @@ fn focus_in(path: &std::path::Path) -> postio_config::FocusConfig {
         .focus
 }
 
+/// `[focus]` as the engine reads it now: the file, and what correspondents
+/// decided beside it (ADR 0048).
+fn engine(world: &World) -> postio_config::FocusConfig {
+    world
+        .host()
+        .inner
+        .wiring
+        .focus
+        .config()
+        .expect("Focus mode is on")
+}
+
 /// A dismissal, or its undoing, of `message`'s marker, as the frontend
 /// sends it.
 fn dismiss(message: MessageId, dismissed: bool) -> Command {
@@ -992,7 +1004,7 @@ fn a_dismissed_marker_stays_gone_and_three_from_one_sender_stop_that_kind() {
         let marker = crate::tests::marker_on(&world, *question).expect("the marker is kept");
         assert!(marker.dismissed_at.is_some(), "dismissed");
         assert_eq!(
-            focus_in(&path).filter.stop_markers.is_empty(),
+            engine(&world).filter.stop_markers.is_empty(),
             n < 2,
             "the correction is written at the third dismissal, and not before"
         );
@@ -1003,7 +1015,7 @@ fn a_dismissed_marker_stays_gone_and_three_from_one_sender_stop_that_kind() {
         "{written}"
     );
     assert_eq!(
-        focus_in(&path).filter.stop_markers,
+        engine(&world).filter.stop_markers,
         vec![postio_config::StopMarker {
             sender: "tove@example.org".to_owned(),
             kind: "question".to_owned(),
@@ -1065,7 +1077,7 @@ fn a_dismissed_marker_stays_gone_and_three_from_one_sender_stop_that_kind() {
         );
     }
     assert!(
-        focus_in(&path).filter.stop_markers.is_empty(),
+        engine(&world).filter.stop_markers.is_empty(),
         "and the correction is gone"
     );
 }
@@ -1156,7 +1168,7 @@ fn a_restore_brings_the_message_back_pins_its_sender_and_one_undo_reverses_both(
         "back in the inbox, and no longer filtered"
     );
     assert_eq!(
-        focus_in(&path).filter.never,
+        engine(&world).filter.never,
         vec!["notifications@forge.example"],
         "its sender pinned"
     );
@@ -1181,7 +1193,7 @@ fn a_restore_brings_the_message_back_pins_its_sender_and_one_undo_reverses_both(
         Some((postio_model::MailboxRole::Archive, Some(reason))),
         "back in Filtered, with its reason"
     );
-    assert!(focus_in(&path).filter.never.is_empty(), "and unpinned");
+    assert!(engine(&world).filter.never.is_empty(), "and unpinned");
     let again = crate::tests::filed_elsewhere(&world, "notifications@forge.example", "Build fixed");
     file_now(&world, again);
     assert_eq!(
@@ -1675,7 +1687,7 @@ fn stopping_a_sender_releases_what_the_rule_held_for_them_and_undo_puts_it_back(
         }
     );
     assert_eq!(
-        focus_in(&path).digests[0].queries,
+        engine(&world).digests[0].queries,
         ["from:editor@ledger.example"],
         "the rule no longer holds the sender"
     );
@@ -1696,7 +1708,7 @@ fn stopping_a_sender_releases_what_the_rule_held_for_them_and_undo_puts_it_back(
         matches!(event, Event::UndoPerformed { .. })
     });
     assert_eq!(
-        focus_in(&path).digests[0].queries,
+        engine(&world).digests[0].queries,
         ["from:news@ledger.example", "from:editor@ledger.example"],
         "the rule is as it was"
     );
@@ -1726,7 +1738,7 @@ fn stopping_a_rule_s_only_sender_removes_the_rule_and_undo_puts_it_back_whole() 
             .with_config_path(path.clone()),
     );
     let (client, events) = world.frontend(ClientKind::Focus);
-    let before = focus_in(&path).digests;
+    let before = engine(&world).digests;
 
     world.send(
         &client,
@@ -1739,14 +1751,14 @@ fn stopping_a_rule_s_only_sender_removes_the_rule_and_undo_puts_it_back_whole() 
     world.hear(&events, |event| {
         matches!(event, Event::ActionCompleted { .. })
     });
-    assert!(focus_in(&path).digests.is_empty(), "the rule went");
+    assert!(engine(&world).digests.is_empty(), "the rule went");
     assert!(holds(&world).is_empty(), "and holds nothing");
 
     world.send(&client, Command::Undo);
     world.hear(&events, |event| {
         matches!(event, Event::UndoPerformed { .. })
     });
-    assert_eq!(focus_in(&path).digests, before, "back exactly");
+    assert_eq!(engine(&world).digests, before, "back exactly");
     assert_eq!(holds(&world).len(), 1, "holding its mail again");
 }
 
@@ -1908,7 +1920,7 @@ fn a_rule_is_written_to_config_edited_in_its_place_and_removing_it_releases_its_
         .rt
         .block_on(client.save_digest_rule(None, weekly("Ledger")))
         .expect("written");
-    let written = focus_in(&path).digests;
+    let written = engine(&world).digests;
     assert_eq!(written.len(), 1);
     assert_eq!(written[0].name, "Ledger");
     assert_eq!(written[0].queries, ["from:news@ledger.example"]);
@@ -1925,7 +1937,7 @@ fn a_rule_is_written_to_config_edited_in_its_place_and_removing_it_releases_its_
         .rt
         .block_on(client.save_digest_rule(Some("Ledger".to_owned()), weekly("The Ledger")))
         .expect("edited");
-    let names: Vec<String> = focus_in(&path)
+    let names: Vec<String> = engine(&world)
         .digests
         .into_iter()
         .map(|rule| rule.name)
@@ -1945,7 +1957,7 @@ fn a_rule_is_written_to_config_edited_in_its_place_and_removing_it_releases_its_
         .block_on(client.delete_digest_rule("The Ledger".to_owned()))
         .expect("removed");
     assert_eq!(released, 1);
-    assert!(focus_in(&path).digests.is_empty(), "gone from the file");
+    assert!(engine(&world).digests.is_empty(), "gone from the file");
     assert!(holds(&world).is_empty(), "and its mail rejoined the inbox");
 }
 
@@ -2110,14 +2122,14 @@ fn a_rule_the_filing_pass_could_never_answer_is_refused_with_a_sentence() {
             .expect_err(query);
         assert!(refused.to_string().contains("list:"), "{refused}");
     }
-    assert!(focus_in(&path).digests.is_empty(), "nothing written");
+    assert!(engine(&world).digests.is_empty(), "nothing written");
 
     world
         .rt
         .block_on(client.save_digest_rule(None, rule("list:billing.lists.example.org")))
         .expect("a list rule is written");
     assert_eq!(
-        focus_in(&path).digests[0].queries,
+        engine(&world).digests[0].queries,
         ["list:billing.lists.example.org"]
     );
 }

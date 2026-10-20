@@ -189,6 +189,20 @@ impl Host {
     /// A second call changes the filing pass and answers the tasks the
     /// first one started: it is how a changed `[focus]` reaches the pass.
     pub fn enable_focus(&self, setup: FocusSetup) -> FocusHandle {
+        // What correspondents decided is read once here, and kept current by
+        // the verbs that change it; the file is read by whoever reloads it.
+        let database = self.inner.wiring.database.clone();
+        let settings = self.inner.wiring.focus.clone();
+        if let Err(error) =
+            postio_session::blocking::now(async move { settings.load_contacts(&database).await })
+        {
+            tracing::warn!(%error, "Focus could not read what you decided about senders: {error}");
+        }
+        let raw = setup.config.clone();
+        let setup = {
+            let overlaid = self.inner.wiring.focus.overlaid(&raw);
+            setup.with_config(overlaid)
+        };
         self.inner.wiring.filing.set(Some(setup.pass()));
         let mut focus = self.inner.focus.lock().expect("never poisoned");
         let handle = match &*focus {
@@ -244,7 +258,7 @@ impl Host {
         let chosen = setup.filing.clone();
         self.inner.wiring.focus.install(
             path,
-            setup.config,
+            raw,
             Arc::new(move |written: &FocusConfig| {
                 *tasks.write().expect("never poisoned") = written.clone();
                 filing.set(Some(chosen.clone().unwrap_or_else(|| {

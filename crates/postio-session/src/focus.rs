@@ -92,6 +92,14 @@ impl FocusSettings {
     /// Read what correspondents decided from `database` and tell the filing
     /// pass and Focus's tasks, as a write to the file would.
     pub async fn refresh(&self, database: &Store) -> Result<(), String> {
+        self.load_contacts(database).await?;
+        self.publish();
+        Ok(())
+    }
+
+    /// Read what correspondents decided from `database`, telling nobody:
+    /// what Focus mode does before it installs.
+    pub async fn load_contacts(&self, database: &Store) -> Result<(), String> {
         let failed = |_| "Postio could not read what you decided about senders".to_owned();
         let connection = database.connect().await.map_err(failed)?;
         let rules = ContactSettingsRepository::new(&connection)
@@ -107,7 +115,6 @@ impl FocusSettings {
             })
             .collect();
         *self.contacts.write().expect("never poisoned") = rules;
-        self.publish();
         Ok(())
     }
 
