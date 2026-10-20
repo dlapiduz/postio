@@ -163,7 +163,7 @@ impl MessageHeader {
         // Under the recipients, where the eye already is after reading who
         // it is from. Text and a symbolic icon, no badge and no colour fill:
         // it is a sentence, and nothing at all on mail that raises nothing.
-        let warning_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let warning_row = gtk::Box::new(gtk::Orientation::Horizontal, crate::widgets::space::S2);
         warning_row.add_css_class("postio-message-header-warning");
         warning_row.set_visible(false);
         let warning_icon = gtk::Image::from_icon_name("dialog-warning-symbolic");
