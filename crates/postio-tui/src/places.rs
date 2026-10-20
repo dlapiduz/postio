@@ -35,6 +35,9 @@ pub struct Features {
     pub digest_rules: usize,
     /// The digest rules, for when the next digest comes.
     pub digests: Rules,
+    /// For each digest rule that is a person's, the rule's name and the
+    /// person's: the rules list names whose it is.
+    pub rule_owners: Vec<(String, String)>,
     /// Where `[focus] reading` opens a message.
     pub reading: postio_config::Reading,
     /// What the notice after `M` offers to do with the list's mail (#1952).
@@ -54,6 +57,15 @@ pub struct Rules(pub Vec<postio_config::DigestRule>);
 impl Eq for Rules {}
 
 impl Features {
+    /// The person whose digest the rule called `name` is, if it is a
+    /// person's and not the file's.
+    pub fn rule_owner(&self, name: &str) -> Option<&str> {
+        self.rule_owners
+            .iter()
+            .find(|(rule, _)| rule.trim() == name.trim())
+            .map(|(_, owner)| owner.as_str())
+    }
+
     /// What the empty inbox is told of `[focus]`.
     pub fn focus(&self) -> postio_config::FocusConfig {
         postio_config::FocusConfig {

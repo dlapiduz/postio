@@ -39,6 +39,7 @@ impl Read {
                 filtering: config.focus.filtering,
                 digest_rules: config.focus.digests.len(),
                 digests: crate::places::Rules(config.focus.digests.clone()),
+                rule_owners: Vec::new(),
                 reading: config.focus.reading,
                 after_unsubscribe: config.focus.after_unsubscribe,
                 capture: config.focus.vault.is_some(),
@@ -48,6 +49,30 @@ impl Read {
                     .is_some(),
             },
         }
+    }
+}
+
+impl Read {
+    /// This, with the digest rules as the engine reads them: the file's, and
+    /// the ones people have (ADR 0048), each named by whose it is. `None`
+    /// -- Focus mode is not on -- leaves the file's alone.
+    #[must_use]
+    pub fn with_contacts(mut self, focus: Option<postio_config::FocusConfig>) -> Read {
+        let Some(focus) = focus else {
+            return self;
+        };
+        self.features.digest_rules = focus.digests.len();
+        self.features.rule_owners = focus
+            .digests
+            .iter()
+            .filter_map(|rule| {
+                focus
+                    .contact_digest(&rule.name)
+                    .map(|person| (rule.name.clone(), person.name.clone()))
+            })
+            .collect();
+        self.features.digests = crate::places::Rules(focus.digests);
+        self
     }
 }
 
@@ -113,6 +138,48 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn a_senders_digest_is_listed_with_the_rules_and_named_by_the_person() {
+        use postio_model::{ContactArrival, ContactSettings, DigestSetting};
+        let config = postio_config::Config::from_toml_str(
+            "[[focus.digests]]\nname = \"Lists\"\nmatch = [\"list:dev.lists.example\"]\ncadence = \"daily\"\nat = \"08:00\"\n",
+        )
+        .unwrap();
+        let focus = config.focus.with_contacts(&[postio_config::ContactRule {
+            contact: 4,
+            name: "Ledger Weekly".into(),
+            addresses: vec!["news@ledger.example".into()],
+            settings: ContactSettings {
+                arrival: Some(ContactArrival::Digest),
+                digest: Some(DigestSetting {
+                    name: "Ledger".into(),
+                    cadence: "weekly".into(),
+                    day: Some("saturday".into()),
+                    at: "16:00".into(),
+                }),
+                ..ContactSettings::default()
+            },
+        }]);
+
+        let read = Read::of(&config).with_contacts(Some(focus));
+
+        assert_eq!(read.features.digest_rules, 2);
+        let names: Vec<&str> = read
+            .features
+            .digests
+            .0
+            .iter()
+            .map(|r| r.name.as_str())
+            .collect();
+        assert_eq!(names, ["Lists", "Ledger"]);
+        assert_eq!(read.features.rule_owner("Ledger"), Some("Ledger Weekly"));
+        assert_eq!(read.features.rule_owner("Lists"), None);
+        assert_eq!(
+            Read::of(&config).with_contacts(None).features.digest_rules,
+            1
+        );
+    }
 
     #[test]
     fn where_messages_open_is_written_in_focus_and_the_rest_of_the_file_stays() {

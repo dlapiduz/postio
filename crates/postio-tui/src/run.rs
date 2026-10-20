@@ -519,7 +519,14 @@ async fn drive(
     let mut terminal_events = EventStream::new();
     let host_events = client.events();
 
-    let contents = places_contents(client, senders.config.clone()).await;
+    let contents = places_contents(
+        client,
+        senders
+            .config
+            .clone()
+            .with_contacts(senders.host.wiring().focus.config()),
+    )
+    .await;
     // The first list is opened by what the places say: Focus's inbox, once
     // there is an account to show.
     let effects = update(app, Input::Places(contents));
@@ -1418,6 +1425,7 @@ fn perform(
             Effect::SaveSearch(query) => {
                 let client = client.clone();
                 let inputs = inputs.clone();
+                let focus = senders.host.wiring().focus.config();
                 tokio::spawn(async move {
                     let saved = tokio::task::spawn_blocking(move || {
                         crate::config_file::path()
@@ -1428,7 +1436,8 @@ fn perform(
                     .unwrap_or_else(|error| Err(error.to_string()));
                     match saved {
                         Ok(read) => {
-                            let contents = places_contents(&client, read).await;
+                            let contents =
+                                places_contents(&client, read.with_contacts(focus)).await;
                             let _ = inputs.send(Input::Places(contents)).await;
                         }
                         Err(reason) => {
@@ -1460,7 +1469,8 @@ fn perform(
                 // not in what was read then.
                 let read = crate::config_file::path()
                     .and_then(|path| crate::config_file::read_at(&path))
-                    .unwrap_or_else(|| config.clone());
+                    .unwrap_or_else(|| config.clone())
+                    .with_contacts(senders.host.wiring().focus.config());
                 tokio::spawn(async move {
                     let contents = places_contents(&client, read).await;
                     let _ = inputs.send(Input::Places(contents)).await;
