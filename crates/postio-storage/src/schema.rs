@@ -593,6 +593,7 @@ ALTER TABLE addresses ADD COLUMN bounced_at INTEGER;
 UPDATE contacts SET saved_at = created_at WHERE source IN ('user', 'import');
 CREATE INDEX idx_contacts_kind_list ON contacts (state, kind, sort_key, id);
 CREATE INDEX idx_contacts_saved ON contacts (saved_at, kind, written);
+CREATE INDEX idx_contacts_kind_pending ON contacts (state, kind_source, kind_version);
 "#,
     },
 ];
@@ -1613,6 +1614,8 @@ CREATE INDEX idx_contacts_rank ON contacts (
 CREATE INDEX idx_contacts_kind_list ON contacts (state, kind, sort_key, id);
 
 CREATE INDEX idx_contacts_saved ON contacts (saved_at, kind, written);
+
+CREATE INDEX idx_contacts_kind_pending ON contacts (state, kind_source, kind_version);
 
 CREATE INDEX idx_contacts_name_key ON contacts (state, name_key);
 

@@ -199,27 +199,28 @@ pub async fn detect_kinds(database: &Store, batch: u32) -> Result<usize, String>
     let contacts = ContactRepository::new(&connection);
     let rules = postio_classify::kind::KindRules::shipped();
     let version = postio_classify::kind::KIND_VERSION;
-    let (mut decided, mut after) = (0, None);
+    let mut decided = 0;
     loop {
         let people = contacts
-            .pending_kinds(version, after, batch)
+            .pending_kinds(version, batch)
             .await
             .map_err(failed)?;
         for person in &people {
-            // Someone deleted since the walk read them has no signals; they
-            // are decided when restored.
-            if let Some(signals) = contacts.kind_signals(*person).await.map_err(failed)? {
-                let detected = postio_classify::kind::detect(&signals, rules);
-                contacts
-                    .set_detected_kind(*person, detected.kind, version)
-                    .await
-                    .map_err(failed)?;
-                decided += 1;
-            }
+            // Someone with no mail to count (no preferred address) is a
+            // person until there is some; deciding them anyway is what takes
+            // them out of the walk.
+            let kind = match contacts.kind_signals(*person).await.map_err(failed)? {
+                Some(signals) => postio_classify::kind::detect(&signals, rules).kind,
+                None => postio_model::ContactKind::Person,
+            };
+            contacts
+                .set_detected_kind(*person, kind, version)
+                .await
+                .map_err(failed)?;
+            decided += 1;
         }
-        match people.last() {
-            Some(last) if people.len() == batch as usize => after = Some(*last),
-            _ => break,
+        if people.len() < batch as usize {
+            break;
         }
     }
     if decided > 0 {

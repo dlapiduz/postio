@@ -519,28 +519,28 @@ impl<'a> ContactRepository<'a> {
            JOIN messages m ON m.id = w.message_id"
     }
 
-    /// Up to `limit` live people, above `after`, whose kind the detector
-    /// decides and has not decided at `version` yet: the kind pass's walk. A
-    /// kind the user chose is not in it.
-    pub async fn pending_kinds(
-        &self,
-        version: u32,
-        after: Option<ContactId>,
-        limit: u32,
-    ) -> Result<Vec<ContactId>> {
+    /// Up to `limit` live people whose kind the detector decides and has not
+    /// decided at `version` yet: the kind pass's walk. A kind the user chose
+    /// is not in it.
+    ///
+    /// No cursor: deciding someone takes them out of the walk, so the next
+    /// call finds the next ones, and a start where everyone is decided is one
+    /// seek that finds nothing.
+    pub async fn pending_kinds(&self, version: u32, limit: u32) -> Result<Vec<ContactId>> {
         sql::all(
             self.connection,
-            "SELECT id FROM contacts
-              WHERE id > ?1 AND state = 'live' AND kind_source = 'detected' AND kind_version < ?2
-              ORDER BY id LIMIT ?3",
-            bind![
-                after.map_or(0, ContactId::get),
-                i64::from(version),
-                i64::from(limit)
-            ],
+            Self::explain_pending_kinds(),
+            bind![i64::from(version), i64::from(limit)],
             |row| Ok(ContactId::new(row.col(0)?)),
         )
         .await
+    }
+
+    /// The SQL [`Self::pending_kinds`] runs, over `idx_contacts_kind_pending`.
+    pub fn explain_pending_kinds() -> &'static str {
+        "SELECT id FROM contacts
+          WHERE state = 'live' AND kind_source = 'detected' AND kind_version < ?1
+          LIMIT ?2"
     }
 
     /// Records what the detector decided, at `version`. Does nothing for a

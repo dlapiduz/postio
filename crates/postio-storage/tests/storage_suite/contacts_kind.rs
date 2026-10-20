@@ -228,7 +228,7 @@ async fn a_detected_kind_is_stored_once_per_detector_and_a_users_kind_is_never_o
     .unwrap();
 
     assert_eq!(
-        contacts.pending_kinds(1, None, 10).await.unwrap().len(),
+        contacts.pending_kinds(1, 10).await.unwrap().len(),
         2,
         "b chose for themselves"
     );
@@ -253,13 +253,43 @@ async fn a_detected_kind_is_stored_once_per_detector_and_a_users_kind_is_never_o
         "the user's word stands"
     );
     assert_eq!(
-        contacts.pending_kinds(1, None, 10).await.unwrap(),
+        contacts.pending_kinds(1, 10).await.unwrap(),
         vec![c],
         "only c is still to decide"
     );
     assert_eq!(
-        contacts.pending_kinds(2, None, 10).await.unwrap().len(),
+        contacts.pending_kinds(2, 10).await.unwrap().len(),
         2,
         "a better detector decides again"
+    );
+}
+
+#[tokio::test]
+async fn the_kind_walk_is_an_index_seek_so_a_start_with_everyone_decided_reads_nothing() {
+    let (_database, connection, _account, _inbox) = setup().await;
+    let plan = postio_storage::test_support::counting::plan_steps(
+        &connection,
+        ContactRepository::explain_pending_kinds(),
+    )
+    .await
+    .expect("the walk plans");
+    assert!(
+        plan.iter()
+            .any(|step| step.contains("idx_contacts_kind_pending")),
+        "the walk seeks its index: {plan:?}"
+    );
+    assert_eq!(
+        unbounded(
+            &connection,
+            ContactRepository::explain_pending_kinds(),
+            &["contacts"]
+        )
+        .await,
+        Vec::<String>::new(),
+        "and does not scan contacts: {plan:?}"
+    );
+    assert!(
+        !plan.iter().any(|step| step.contains("TEMP B-TREE")),
+        "or sort what it finds: {plan:?}"
     );
 }
