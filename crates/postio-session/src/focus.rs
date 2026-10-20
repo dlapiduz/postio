@@ -104,8 +104,10 @@ impl FocusSettings {
     /// what Focus mode does before it installs.
     pub async fn load_contacts(&self, database: &Store) -> Result<(), String> {
         let failed = |_| "Postio could not read what you decided about senders".to_owned();
-        let connection = database.connect().await.map_err(failed)?;
-        let rules = ContactSettingsRepository::new(&connection)
+        // A warm reader, not a connection of its own: this is read as a window
+        // opens, and opening a connection there is what its budget counts.
+        let reader = database.read().await.map_err(failed)?;
+        let rules = ContactSettingsRepository::new(&reader)
             .derived()
             .await
             .map_err(failed)?

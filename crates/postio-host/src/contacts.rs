@@ -234,9 +234,9 @@ pub async fn detect_kinds(database: &Store, batch: u32) -> Result<usize, String>
 pub async fn treatments(
     database: &Store,
 ) -> Result<Vec<(String, String)>, postio_model::listing::StoreError> {
-    let connection = database.connect().await?;
+    let reader = database.read().await?;
     Ok(
-        postio_storage::repository::ContactSettingsRepository::new(&connection)
+        postio_storage::repository::ContactSettingsRepository::new(&reader)
             .treatments()
             .await?,
     )
