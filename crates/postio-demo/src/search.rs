@@ -15,8 +15,7 @@ use postio_model::{
     MessageId, RfcMessageId,
 };
 use postio_storage::repository::{
-    LabelRepository, MarkerRepository, MessageRepository, StoredBody,
-    ThreadingRepository,
+    LabelRepository, MarkerRepository, MessageRepository, StoredBody, ThreadingRepository,
 };
 use postio_storage::{BlobStore, Connection, Store};
 

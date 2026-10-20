@@ -1487,7 +1487,7 @@ mod tests {
         // Every address is on a reserved domain.
         let outside = scalar(
             &connection,
-            "SELECT count(*) FROM contacts WHERE address NOT LIKE '%@example.com'",
+            "SELECT count(*) FROM addresses WHERE contact_id IS NOT NULL AND address NOT LIKE '%@example.com'",
             (),
         )
         .await

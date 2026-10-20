@@ -201,27 +201,47 @@ async fn build_corpus() -> Corpus {
     // The corpus' own senders get affinity to exercise the probe's hit path;
     // the rest is the long tail every real address book carries.
     {
-        let mut insert = connection
-            .prepare(
-                "INSERT INTO contacts (account_id, address, address_normalized, times_seen)
-                 VALUES (?1, ?2, ?2, ?3)",
-            )
-            .await
-            .expect("prepare contact insert");
         for i in 0..CONTACT_COUNT {
             let address = if i < SENDER_COUNT {
                 format!("sender{i}@example.com")
             } else {
                 format!("correspondent{i}@example.com")
             };
-            insert
-                .execute(postio_storage::bind![
-                    account.id.get(),
-                    address,
-                    rng.below(100) as i64
-                ])
+            let seen = rng.below(100) as i64;
+            // A person who owns the address, and the account's sighting of
+            // it: the two places affinity reads (specs/005-contacts R2).
+            connection
+                .execute(
+                    "INSERT OR IGNORE INTO addresses (address, address_normalized)
+                     VALUES (?1, ?1)",
+                    [address.as_str()],
+                )
+                .await
+                .expect("seed address");
+            connection
+                .execute(
+                    "INSERT INTO contacts (times_seen, created_at, updated_at)
+                     VALUES (?1, 0, 0)",
+                    [seen],
+                )
                 .await
                 .expect("seed contact");
+            connection
+                .execute(
+                    "UPDATE addresses SET contact_id = (SELECT max(id) FROM contacts)
+                      WHERE address_normalized = ?1",
+                    [address.as_str()],
+                )
+                .await
+                .expect("seed owner");
+            connection
+                .execute(
+                    "INSERT OR IGNORE INTO contact_sightings (address_id, account_id, times_seen)
+                     SELECT id, ?2, ?3 FROM addresses WHERE address_normalized = ?1",
+                    (address.as_str(), account.id.get(), seen),
+                )
+                .await
+                .expect("seed sighting");
         }
     }
     connection
