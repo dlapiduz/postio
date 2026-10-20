@@ -529,7 +529,7 @@ pub struct JoinReceipt {
     /// What the survivor had decided before the join, which the join fills
     /// the gaps of from the absorbed people (specs/011-focus-contacts Q8).
     #[serde(default)]
-    pub prior_settings: crate::ContactSettings,
+    pub prior_settings: Box<crate::ContactSettings>,
 }
 
 #[cfg(test)]

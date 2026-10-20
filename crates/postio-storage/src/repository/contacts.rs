@@ -1046,7 +1046,7 @@ impl ContactRepository<'_> {
                 restore,
                 prior: survivor,
                 added_memberships: added,
-                prior_settings,
+                prior_settings: Box::new(prior_settings),
             })
         })
         .await
