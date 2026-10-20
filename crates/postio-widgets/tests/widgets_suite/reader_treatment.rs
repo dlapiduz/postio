@@ -101,11 +101,7 @@ pub fn a_reader_opens_a_message_in_the_treatment_the_store_remembers_for_its_sen
         eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
         return;
     }
-    let kept: Rc<RefCell<Vec<(String, Option<Treatment>)>>> = Rc::default();
-    let table = Rc::new(postio_ui::sender_treatments::Remembered::new({
-        let kept = Rc::clone(&kept);
-        move |sender, treatment| kept.borrow_mut().push((sender.to_owned(), treatment))
-    }));
+    let table = Rc::new(postio_ui::sender_treatments::Remembered::new(|_, _| {}));
     table.replace([("news@treatment.example.com".to_owned(), "app".to_owned())]);
     postio_widgets::reader::use_store_treatments(Some(table.clone()));
 
