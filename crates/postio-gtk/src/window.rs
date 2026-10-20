@@ -70,7 +70,7 @@ type NotificationSink = Rc<dyn Fn(&postio_ui::notify::Notification)>;
 /// The stop-digesting confirmation (US10 scenario 5).
 const STOP_DIALOG: &str = "focus-stop-digesting";
 /// The widget name of the offer to clear what a list sent (#1931).
-const SWEEP_DIALOG: &str = "focus-sweep-list";
+const LIST_SWEEP_DIALOG: &str = "focus-sweep-list";
 
 /// The sweep's confirmation (FR-118).
 const SWEEP_DIALOG: &str = "focus-sweep";
@@ -3228,7 +3228,7 @@ impl FocusWindow {
             Some(&sweep_heading(&scope)),
             Some(&sweep_body(count, found.more, None)),
         );
-        dialog.set_widget_name(SWEEP_DIALOG);
+        dialog.set_widget_name(LIST_SWEEP_DIALOG);
         dialog.add_response("keep", "Keep them");
         dialog.add_response(
             "archive",
@@ -3307,7 +3307,7 @@ impl FocusWindow {
     /// The sweep offer, while it is up.
     pub fn sweep_offer(&self) -> Option<adw::AlertDialog> {
         self.visible_dialog()
-            .filter(|dialog| dialog.widget_name() == SWEEP_DIALOG)
+            .filter(|dialog| dialog.widget_name() == LIST_SWEEP_DIALOG)
             .and_then(|dialog| dialog.downcast().ok())
     }
 
@@ -5308,7 +5308,7 @@ impl FocusWindow {
         let small_dialog = [
             crate::source::DIALOG_NAME,
             crate::chooser::DIALOG_NAME,
-            SWEEP_DIALOG,
+            LIST_SWEEP_DIALOG,
         ]
             .into_iter()
             .find(|name| dialog_named(name));
