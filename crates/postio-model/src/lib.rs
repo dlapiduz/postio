@@ -89,10 +89,11 @@ pub use account::{
 pub use address::EmailAddress;
 pub use attachment::{Attachment, Disposition};
 pub use contact::{
-    AddressMove, Contact, ContactAddress, ContactDetail, ContactGlance, ContactKind,
-    ContactListRow, ContactSource, ContactState, ContactStats, ContactView, JoinReceipt,
-    JoinSuggestion, KindSignals, KindSource, OpenItem, OpenSide, PersonEdit, PersonFields, RECENT,
-    RecentMessage, ShowAs, SuggestionReason, month_key,
+    AddressMove, CARD_RECENT, Contact, ContactAddress, ContactCardRead, ContactDetail,
+    ContactGlance, ContactKind, ContactListRow, ContactSource, ContactState, ContactStats,
+    ContactTab, ContactView, ContactsOverview, ContactsPageRead, FileChip, IssueRead, JoinReceipt, JoinSuggestion,
+    KindSignals, KindSource, OpenItem, OpenSide, PersonEdit, PersonFields, RECENT, REVIEW_CAP,
+    RecentMessage, ReviewSummary, ShowAs, SuggestionReason, month_key,
 };
 pub use contact_group::ContactGroup;
 pub use contact_settings::{ContactArrival, ContactSettings, DigestSetting, StoppedMarker};

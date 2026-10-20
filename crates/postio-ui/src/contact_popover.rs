@@ -233,11 +233,30 @@ fn count_tile(count: u32, one: &str, many: &str) -> Tile {
     }
 }
 
-/// The three tiles.
+/// How long they take to reply, as a tile says it: `~45 min`, `~3 h`,
+/// `~2 d`; `—` when the ring has too few answers to say.
+pub fn reply_word(median: Option<chrono::Duration>) -> String {
+    let Some(median) = median else {
+        return "—".to_owned();
+    };
+    let minutes = median.num_minutes().max(1);
+    if minutes < 60 {
+        format!("~{minutes} min")
+    } else if minutes < 48 * 60 {
+        format!("~{} h", (minutes + 30) / 60)
+    } else {
+        format!("~{} d", (minutes + 12 * 60) / (24 * 60))
+    }
+}
+
+/// The three tiles: messages, how fast they reply, and the last message.
 pub fn tiles(stats: &ContactStats, now: DateTime<Local>) -> [Tile; 3] {
     [
         count_tile(stats.messages, "message", "messages"),
-        count_tile(stats.from_you, "from you", "from you"),
+        Tile {
+            value: reply_word(stats.reply_median()),
+            caption: "replies in".to_owned(),
+        },
         Tile {
             value: last_word(stats.last, now),
             caption: "last".to_owned(),
@@ -480,7 +499,7 @@ mod tests {
             .collect();
         assert_eq!(
             tiles,
-            [("431", "messages"), ("88", "from you"), ("today", "last")]
+            [("431", "messages"), ("—", "replies in"), ("today", "last")]
         );
         let lines: Vec<_> = popover
             .open
@@ -642,10 +661,19 @@ mod tests {
     fn one_message_is_not_messages() {
         let mut one = stats();
         one.messages = 1;
-        one.from_you = 1;
         let tiles = tiles(&one, now());
         assert_eq!(tiles[0].caption, "message");
-        assert_eq!(tiles[1].caption, "from you");
+    }
+
+    #[test]
+    fn a_reply_time_is_said_in_the_unit_a_person_would() {
+        let said = |minutes| reply_word(Some(chrono::Duration::minutes(minutes)));
+        assert_eq!(said(0), "~1 min");
+        assert_eq!(said(45), "~45 min");
+        assert_eq!(said(180), "~3 h");
+        assert_eq!(said(60 * 47), "~47 h");
+        assert_eq!(said(60 * 24 * 3), "~3 d");
+        assert_eq!(reply_word(None), "—");
     }
 
     #[test]

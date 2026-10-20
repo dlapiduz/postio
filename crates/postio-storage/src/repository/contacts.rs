@@ -897,6 +897,246 @@ impl<'a> ContactRepository<'a> {
     }
 }
 
+/// The columns of a kind-tab page, and its seek: `idx_contacts_kind_list`.
+fn kind_first_sql() -> String {
+    format!(
+        "SELECT {LIST_COLUMNS} FROM contacts c
+           {LIST_JOINS}
+          WHERE c.state = 'live' AND c.kind = ?1
+          ORDER BY c.sort_key, c.id LIMIT ?2"
+    )
+}
+
+fn kind_next_sql() -> String {
+    format!(
+        "SELECT {LIST_COLUMNS} FROM contacts c
+           {LIST_JOINS}
+          WHERE c.state = 'live' AND c.kind = ?1
+            AND c.sort_key >= ?2 AND (c.sort_key > ?2 OR c.id > ?3)
+          ORDER BY c.sort_key, c.id LIMIT ?4"
+    )
+}
+
+impl ContactRepository<'_> {
+    /// One page of the people of `kinds`, by name, starting `skip` rows past
+    /// `after`. One seek over the kind index per kind, each at most
+    /// `skip + limit` rows, merged in name order, so a tab holding two kinds
+    /// costs two statements and a page of it is the same size as any other.
+    pub async fn page_kinds(
+        &self,
+        kinds: &[ContactKind],
+        after: Option<&ContactCursor>,
+        skip: u32,
+        limit: u32,
+    ) -> Result<Vec<ContactListRow>> {
+        let wanted = i64::from(skip) + i64::from(limit);
+        let mut rows: Vec<ContactListRow> = Vec::new();
+        for kind in kinds {
+            let found = match after {
+                None => {
+                    sql::all(
+                        self.connection,
+                        &kind_first_sql(),
+                        bind![kind.as_str(), wanted],
+                        read_list_row,
+                    )
+                    .await?
+                }
+                Some(cursor) => {
+                    sql::all(
+                        self.connection,
+                        &kind_next_sql(),
+                        bind![kind.as_str(), cursor.sort_key, cursor.id.get(), wanted],
+                        read_list_row,
+                    )
+                    .await?
+                }
+            };
+            rows.extend(found);
+        }
+        rows.sort_by(|a, b| (&a.sort_key, a.id.get()).cmp(&(&b.sort_key, b.id.get())));
+        Ok(rows
+            .into_iter()
+            .skip(skip as usize)
+            .take(limit as usize)
+            .collect())
+    }
+
+    /// The people of `kinds` matching every word of `text`, by name, at most
+    /// `cap` of them: [`filtered`](Self::filtered) within a tab.
+    pub async fn filtered_kinds(
+        &self,
+        kinds: &[ContactKind],
+        text: &str,
+        cap: u32,
+    ) -> Result<Vec<ContactListRow>> {
+        self.filtered_in(ContactView::Everyone, kinds, text, cap)
+            .await
+    }
+
+    /// The statements a tab's pages issue, for the budget that asks the
+    /// planner about them.
+    pub fn explain_kind_pages() -> [String; 2] {
+        [kind_first_sql(), kind_next_sql()]
+    }
+
+    /// What the strip and the footer say: each tab's count and the totals
+    /// from `contact_counts`, the review queue, and how many addresses with
+    /// mail still wait for a person. A handful of rows and three capped
+    /// counts, whatever the number of people.
+    pub async fn overview(&self) -> Result<postio_model::ContactsOverview> {
+        use postio_model::{ContactTab, ContactsOverview, REVIEW_CAP, ReviewSummary};
+        let counts = self.kind_counts().await?;
+        let of = |kinds: &[ContactKind]| -> u32 {
+            counts
+                .iter()
+                .filter(|(kind, _, _)| kinds.contains(kind))
+                .map(|(_, total, _)| *total)
+                .sum()
+        };
+        let saved: u32 = counts.iter().map(|(_, _, saved)| *saved).sum();
+        let capped = |count: i64| {
+            u32::try_from(count.max(0))
+                .unwrap_or(u32::MAX)
+                .min(REVIEW_CAP)
+        };
+        let duplicates = {
+            let pairs: Vec<i64> = sql::all_unbounded(
+                self.connection,
+                &format!("SELECT count(*) FROM ({SUGGESTION_PAIRS})"),
+                bind![i64::from(REVIEW_CAP)],
+                |row| row.col(0),
+            )
+            .await?;
+            capped(pairs.first().copied().unwrap_or(0))
+        };
+        let frequent = sql::scalar(
+            self.connection,
+            &Self::explain_review()[0],
+            bind![i64::from(REVIEW_CAP)],
+        )
+        .await?;
+        let waiting = self.unowned_count().await?;
+        let people = u64::from(of(&ContactKind::ALL));
+        Ok(ContactsOverview {
+            total: of(&ContactKind::ALL),
+            saved,
+            tabs: ContactTab::ALL
+                .iter()
+                .map(|tab| (*tab, of(tab.kinds())))
+                .collect(),
+            review: ReviewSummary {
+                duplicates,
+                // Bounces are recorded once DSN detection lands (S10); until
+                // then nothing sets `bounced_at`, and counting it would walk
+                // every address for a zero.
+                bounced: 0,
+                frequent_unsaved: capped(frequent),
+            },
+            building: (waiting > 0).then(|| {
+                (
+                    u32::try_from(people).unwrap_or(u32::MAX),
+                    u32::try_from(people + waiting).unwrap_or(u32::MAX),
+                )
+            }),
+        })
+    }
+
+    /// The SQL the review counts run that are not the suggestion read.
+    pub fn explain_review() -> [&'static str; 1] {
+        ["SELECT count(*) FROM (SELECT 1 FROM contacts
+           WHERE saved_at IS NULL AND kind = 'person' AND written >= 3
+             AND ignored_at IS NULL AND state = 'live' LIMIT ?1)"]
+    }
+
+    /// Everything a person's card shows, in a fixed number of statements over
+    /// their addresses: the person and their groups, the stats, what is open
+    /// between you, what they decided, and the files and issues of their
+    /// recent messages. `None` for someone who is not there.
+    pub async fn card(
+        &self,
+        person: ContactId,
+        since_month: i64,
+    ) -> Result<Option<postio_model::ContactCardRead>> {
+        use postio_model::{CARD_RECENT, FileChip, IssueRead};
+        let Some(detail) = self.detail(person).await? else {
+            return Ok(None);
+        };
+        let stats = self.stats(person, since_month).await?;
+        let open = self.open_items(person, CARD_RECENT).await?;
+        let settings = super::ContactSettingsRepository::new(self.connection)
+            .get(person)
+            .await?;
+        let default_arrival = self.default_arrival(person).await?;
+        let owned: Vec<i64> = sql::all(
+            self.connection,
+            &Self::explain_stats(1)[0],
+            [person.get()],
+            |row| row.col(0),
+        )
+        .await?;
+        let (mut files, mut issues) = (Vec::new(), Vec::new());
+        if !owned.is_empty() {
+            let queries = Self::explain_card_recent(owned.len());
+            let mut bound: Vec<turso::Value> =
+                owned.iter().map(|id| turso::Value::Integer(*id)).collect();
+            bound.push(turso::Value::Integer(i64::from(CARD_RECENT)));
+            files = sql::all_unbounded(self.connection, &queries[0], bound.clone(), |row| {
+                Ok(FileChip {
+                    name: row.col::<Option<String>>(0)?.unwrap_or_default(),
+                    mime: row.col(1)?,
+                })
+            })
+            .await?;
+            issues = sql::all_unbounded(self.connection, &queries[1], bound, |row| {
+                Ok(IssueRead {
+                    message: postio_model::MessageId::new(row.col(0)?),
+                    subject: row.col(1)?,
+                    at: from_millis(row.col(2)?),
+                    opened: row.col::<i64>(3)? != 0,
+                })
+            })
+            .await?;
+        }
+        Ok(Some(postio_model::ContactCardRead {
+            person: detail.person,
+            groups: detail.groups,
+            stats,
+            open,
+            settings,
+            default_arrival,
+            files,
+            issues,
+        }))
+    }
+
+    /// The SQL the card's recent files and issues run for a person with
+    /// `addresses` addresses: both walk the ring's newest messages.
+    pub fn explain_card_recent(addresses: usize) -> [String; 2] {
+        let ids = (1..=addresses.max(1))
+            .map(|n| format!("?{n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let limit = addresses.max(1) + 1;
+        [
+            format!(
+                "SELECT t.filename, t.mime_type FROM address_recent r
+                   JOIN attachments t ON t.message_id = r.message_id
+                                     AND t.disposition = 'attachment'
+                  WHERE r.address_id IN ({ids})
+                  ORDER BY r.at DESC, r.message_id DESC LIMIT ?{limit}"
+            ),
+            format!(
+                "SELECT r.message_id, coalesce(m.subject, '(no subject)'), r.at, m.seen
+                   FROM address_recent r
+                   JOIN messages m ON m.id = r.message_id
+                  WHERE r.address_id IN ({ids}) AND r.direction = 'in'
+                  ORDER BY r.at DESC, r.message_id DESC LIMIT ?{limit}"
+            ),
+        ]
+    }
+}
+
 /// Where the next page of a Contacts view starts: just past this row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContactCursor {
@@ -905,6 +1145,11 @@ pub struct ContactCursor {
 }
 
 impl ContactCursor {
+    /// The cursor just past the row with this sort key and id.
+    pub fn from_parts(sort_key: String, id: ContactId) -> Self {
+        Self { sort_key, id }
+    }
+
     /// The cursor just past `row`.
     pub fn after(row: &ContactListRow) -> Self {
         Self {
@@ -1035,10 +1280,36 @@ impl ContactRepository<'_> {
         text: &str,
         cap: u32,
     ) -> Result<Vec<ContactListRow>> {
+        self.filtered_in(view, &ContactKind::ALL, text, cap).await
+    }
+
+    async fn filtered_in(
+        &self,
+        view: ContactView,
+        kinds: &[ContactKind],
+        text: &str,
+        cap: u32,
+    ) -> Result<Vec<ContactListRow>> {
         let words: Vec<String> = words(text).collect();
         if words.is_empty() {
-            return self.page(view, None, cap).await;
+            return if kinds.len() == ContactKind::ALL.len() {
+                self.page(view, None, cap).await
+            } else {
+                self.page_kinds(kinds, None, 0, cap).await
+            };
         }
+        let kind_clause = if kinds.len() == ContactKind::ALL.len() {
+            String::new()
+        } else {
+            format!(
+                " AND c.kind IN ({})",
+                kinds
+                    .iter()
+                    .map(|kind| format!("'{}'", kind.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
         let mut arguments: Vec<turso::Value> = Vec::new();
         let mut clauses = Vec::new();
         for word in &words {
@@ -1057,8 +1328,8 @@ impl ContactRepository<'_> {
             self.connection,
             &format!(
                 "SELECT {LIST_COLUMNS} FROM contacts c
-                   LEFT JOIN addresses pa ON pa.id = c.preferred_address
-                  WHERE {} AND {}
+                   {LIST_JOINS}
+                  WHERE {} AND {}{kind_clause}
                   ORDER BY c.sort_key, c.id LIMIT ?{limit}",
                 view_predicate(view),
                 clauses.join(" AND ")
@@ -1076,7 +1347,13 @@ const LIST_COLUMNS: &str = "c.id,
        coalesce(nullif(trim(c.name), ''), nullif(trim(c.seen_name), ''), pa.address, ''),
        pa.address,
        (SELECT count(*) FROM addresses x WHERE x.contact_id = c.id),
-       c.last_seen_at, c.source, c.state, c.sort_key";
+       c.last_seen_at, c.source, c.state, c.sort_key,
+       c.kind, c.times_seen, c.saved_at IS NOT NULL,
+       cs.arrival, coalesce(cs.notify, 0), cs.html_treatment, cs.digest_cadence";
+
+/// What a list row joins to: the preferred address and what the user decided.
+const LIST_JOINS: &str = "LEFT JOIN addresses pa ON pa.id = c.preferred_address
+           LEFT JOIN contact_settings cs ON cs.contact_id = c.id";
 
 /// Which people a view holds. Each is a prefix of one of the list indexes, so
 /// a page is a seek: `idx_contacts_list_default` for the default view,
@@ -1092,7 +1369,7 @@ fn view_predicate(view: ContactView) -> &'static str {
 fn first_page_sql(view: ContactView) -> String {
     format!(
         "SELECT {LIST_COLUMNS} FROM contacts c
-           LEFT JOIN addresses pa ON pa.id = c.preferred_address
+           {LIST_JOINS}
           WHERE {}
           ORDER BY c.sort_key, c.id LIMIT ?1 OFFSET ?2",
         view_predicate(view)
@@ -1102,7 +1379,7 @@ fn first_page_sql(view: ContactView) -> String {
 fn next_page_sql(view: ContactView) -> String {
     format!(
         "SELECT {LIST_COLUMNS} FROM contacts c
-           LEFT JOIN addresses pa ON pa.id = c.preferred_address
+           {LIST_JOINS}
           WHERE {} AND c.sort_key >= ?1 AND (c.sort_key > ?1 OR c.id > ?2)
           ORDER BY c.sort_key, c.id LIMIT ?3 OFFSET ?4",
         view_predicate(view)
@@ -1161,6 +1438,8 @@ pub(crate) fn list_statements() -> Vec<(&'static str, String)> {
         ("everyone after", next_page_sql(ContactView::Everyone)),
         ("deleted first", first_page_sql(ContactView::Deleted)),
         ("deleted after", next_page_sql(ContactView::Deleted)),
+        ("kind first", kind_first_sql()),
+        ("kind after", kind_next_sql()),
     ]
 }
 
@@ -1182,6 +1461,21 @@ fn read_list_row(row: &Row) -> Result<ContactListRow> {
             value: state.clone(),
         })?,
         sort_key: row.col(7)?,
+        kind: {
+            let kind: String = row.col(8)?;
+            ContactKind::from_name(&kind).ok_or_else(|| Error::UnknownEnum {
+                column: "contacts.kind",
+                value: kind.clone(),
+            })?
+        },
+        messages: u32::try_from(row.col::<i64>(9)?.max(0)).unwrap_or(u32::MAX),
+        saved: row.col::<i64>(10)? != 0,
+        arrival: row
+            .col::<Option<String>>(11)?
+            .and_then(|name| postio_model::ContactArrival::from_name(&name)),
+        notify: row.col::<i64>(12)? != 0,
+        html_original: row.col::<Option<String>>(13)?.as_deref() == Some("paper"),
+        digest_cadence: row.col(14)?,
     })
 }
 
@@ -1687,7 +1981,7 @@ impl ContactRepository<'_> {
             &format!(
                 "SELECT {LIST_COLUMNS} FROM contact_group_members m
                    JOIN contacts c ON c.id = m.contact_id
-                   LEFT JOIN addresses pa ON pa.id = c.preferred_address
+                   {LIST_JOINS}
                   WHERE m.group_id = ?1 AND c.state = 'live'
                   ORDER BY c.sort_key, c.id LIMIT ?2"
             ),

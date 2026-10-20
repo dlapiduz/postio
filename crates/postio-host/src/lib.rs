@@ -1047,6 +1047,35 @@ impl Inner {
                     .await
                     .map(Box::new),
             ),
+            Req::ContactsPage {
+                tab,
+                after,
+                skip,
+                limit,
+            } => match contacts::contacts_page(&self.wiring.database, tab, after, skip, limit).await
+            {
+                Ok(page) => Resp::ContactsPage(page),
+                Err(error) => Resp::Failed(error),
+            },
+            Req::ContactsFiltered { tab, text, cap } => {
+                match contacts::contacts_filtered(&self.wiring.database, tab, &text, cap).await {
+                    Ok(rows) => Resp::ContactsFiltered(rows),
+                    Err(error) => Resp::Failed(error),
+                }
+            }
+            Req::ContactsOverview => match contacts::contacts_overview(&self.wiring.database).await
+            {
+                Ok(overview) => Resp::ContactsOverview(overview),
+                Err(error) => Resp::Failed(error),
+            },
+            Req::ContactCard(person) => {
+                match contacts::contact_card(&self.wiring.database, person, chrono::Utc::now())
+                    .await
+                {
+                    Ok(card) => Resp::ContactCard(card.map(Box::new)),
+                    Err(error) => Resp::Failed(error),
+                }
+            }
             Req::RecipientDirectory(account) => Resp::RecipientDirectory(
                 compose::recipient_directory(&self.wiring.database, account).await,
             ),

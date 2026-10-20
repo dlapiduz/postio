@@ -14,11 +14,11 @@ use postio_storage::repository::{ContactRepository, MessageRepository};
 use postio_storage::test_support::counting::{counted_async, unbounded};
 use postio_storage::{Checkout, test_support};
 
-fn at(year: i32, month: u32, day: u32) -> DateTime<Utc> {
+pub(crate) fn at(year: i32, month: u32, day: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(year, month, day, 12, 0, 0).unwrap()
 }
 
-async fn setup() -> (postio_storage::Store, Checkout, Account, MailboxId) {
+pub(crate) async fn setup() -> (postio_storage::Store, Checkout, Account, MailboxId) {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -26,7 +26,7 @@ async fn setup() -> (postio_storage::Store, Checkout, Account, MailboxId) {
 }
 
 /// A message `from` `to` on `when`, stored and recorded as sync does.
-async fn mail(
+pub(crate) async fn mail(
     connection: &Checkout,
     account: &Account,
     inbox: MailboxId,
@@ -52,7 +52,7 @@ async fn mail(
     message.id
 }
 
-async fn person(connection: &Checkout, email: &str) -> ContactId {
+pub(crate) async fn person(connection: &Checkout, email: &str) -> ContactId {
     ContactRepository::new(connection)
         .by_address(email)
         .await

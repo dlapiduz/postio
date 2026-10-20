@@ -226,6 +226,31 @@ pub enum Req {
     /// counts, what is open between them and the user, and where their mail
     /// arrives (specs/011-focus-contacts S6).
     ContactGlance(String),
+    /// A page of the Contacts list for a kind tab: past `after` (a sort key
+    /// and a person) and then `skip` more, at most `limit` rows.
+    ContactsPage {
+        /// The tab.
+        tab: postio_model::ContactTab,
+        /// Where the page starts, past this row.
+        after: Option<(String, postio_model::ContactId)>,
+        /// Rows to pass over after that.
+        skip: u32,
+        /// At most this many.
+        limit: u32,
+    },
+    /// The people in a tab matching what was typed, at most `cap`.
+    ContactsFiltered {
+        /// The tab.
+        tab: postio_model::ContactTab,
+        /// What was typed.
+        text: String,
+        /// At most this many.
+        cap: u32,
+    },
+    /// The strip's counts, the review queue and the catch-up's progress.
+    ContactsOverview,
+    /// Everything a person's card shows.
+    ContactCard(postio_model::ContactId),
     /// Everything recipient completion can offer for an account, read once
     /// so each keystroke is answered from memory rather than by a query.
     RecipientDirectory(AccountId),
@@ -792,6 +817,14 @@ pub enum Resp {
     ContactFor(Option<Box<postio_model::Contact>>),
     /// The answer to [`Req::ContactGlance`].
     ContactGlance(Option<Box<postio_model::ContactGlance>>),
+    /// The answer to [`Req::ContactsPage`].
+    ContactsPage(postio_model::ContactsPageRead),
+    /// The answer to [`Req::ContactsFiltered`].
+    ContactsFiltered(Vec<postio_model::ContactListRow>),
+    /// The answer to [`Req::ContactsOverview`].
+    ContactsOverview(postio_model::ContactsOverview),
+    /// The answer to [`Req::ContactCard`].
+    ContactCard(Option<Box<postio_model::ContactCardRead>>),
     /// Each sender's remembered treatment.
     Treatments(Vec<(String, String)>),
     /// What recipient completion can offer.

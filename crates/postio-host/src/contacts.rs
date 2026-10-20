@@ -176,6 +176,87 @@ pub async fn contact_glance(
     })
 }
 
+/// How many rows a filtered Contacts list holds at most.
+pub const FILTER_CAP: u32 = 200;
+
+fn store_error(error: postio_storage::Error) -> postio_model::listing::StoreError {
+    tracing::warn!(%error, "could not read contacts");
+    postio_model::listing::StoreError::new("Could not read contacts")
+}
+
+/// A page of the Contacts list for `tab`: past `after`, then `skip` more.
+/// The page carries the sort key of the row before it, so the list can tell
+/// whether its first row starts a new letter without a read of its own.
+pub async fn contacts_page(
+    database: &Store,
+    tab: postio_model::ContactTab,
+    after: Option<(String, postio_model::ContactId)>,
+    skip: u32,
+    limit: u32,
+) -> Result<postio_model::ContactsPageRead, postio_model::listing::StoreError> {
+    let reader = database.read().await?;
+    let contacts = ContactRepository::new(&reader);
+    let cursor = after
+        .as_ref()
+        .map(|(key, id)| postio_storage::repository::ContactCursor::from_parts(key.clone(), *id));
+    if skip == 0 {
+        let rows = contacts
+            .page_kinds(tab.kinds(), cursor.as_ref(), 0, limit)
+            .await
+            .map_err(store_error)?;
+        return Ok(postio_model::ContactsPageRead {
+            rows,
+            before: after.map(|(key, _)| key),
+        });
+    }
+    // One row early, to know what the first row follows.
+    let mut rows = contacts
+        .page_kinds(tab.kinds(), cursor.as_ref(), skip - 1, limit + 1)
+        .await
+        .map_err(store_error)?;
+    let before = (!rows.is_empty()).then(|| rows.remove(0).sort_key);
+    Ok(postio_model::ContactsPageRead { rows, before })
+}
+
+/// The people in `tab` matching `text`, at most `cap`.
+pub async fn contacts_filtered(
+    database: &Store,
+    tab: postio_model::ContactTab,
+    text: &str,
+    cap: u32,
+) -> Result<Vec<postio_model::ContactListRow>, postio_model::listing::StoreError> {
+    let reader = database.read().await?;
+    ContactRepository::new(&reader)
+        .filtered_kinds(tab.kinds(), text, cap.min(FILTER_CAP))
+        .await
+        .map_err(store_error)
+}
+
+/// The strip's counts, the review queue and the catch-up's progress.
+pub async fn contacts_overview(
+    database: &Store,
+) -> Result<postio_model::ContactsOverview, postio_model::listing::StoreError> {
+    let reader = database.read().await?;
+    ContactRepository::new(&reader)
+        .overview()
+        .await
+        .map_err(store_error)
+}
+
+/// What `person`'s card shows, as of `now`: the twelve months ending this
+/// month.
+pub async fn contact_card(
+    database: &Store,
+    person: postio_model::ContactId,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<Option<postio_model::ContactCardRead>, postio_model::listing::StoreError> {
+    let reader = database.read().await?;
+    ContactRepository::new(&reader)
+        .card(person, postio_model::month_key(now) - 11)
+        .await
+        .map_err(store_error)
+}
+
 /// How far the catch-up has got: "Building contacts, n of m".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CatchUpProgress {
@@ -487,6 +568,66 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
             .await
             .unwrap();
         assert_eq!(again.arrival, Some(postio_model::ContactArrival::Digest));
+    }
+
+    #[tokio::test]
+    async fn the_list_pages_by_tab_and_says_what_each_page_follows() {
+        let database = test_support::memory().await;
+        {
+            let connection = database.connect().await.unwrap();
+            let contacts = ContactRepository::new(&connection);
+            for n in 0..5 {
+                let address =
+                    postio_model::EmailAddress::new(None::<String>, format!("p{n}@example.org"));
+                contacts
+                    .create(Some(&format!("Person {n}")), &[address])
+                    .await
+                    .unwrap();
+            }
+        }
+        let tab = postio_model::ContactTab::All;
+        let first = contacts_page(&database, tab, None, 0, 2).await.unwrap();
+        assert_eq!(first.rows.len(), 2);
+        assert_eq!(first.before, None, "the first row starts the list");
+        let last = first.rows.last().unwrap();
+        let next = contacts_page(&database, tab, Some((last.sort_key.clone(), last.id)), 0, 2)
+            .await
+            .unwrap();
+        assert_eq!(next.before.as_deref(), Some(last.sort_key.as_str()));
+        let jumped = contacts_page(&database, tab, None, 3, 2).await.unwrap();
+        assert_eq!(jumped.rows.len(), 2);
+        assert_eq!(
+            jumped.before.as_deref(),
+            Some(next.rows.first().unwrap().sort_key.as_str()),
+            "a jump finds the row before it"
+        );
+        let found = contacts_filtered(&database, tab, "p3", 10).await.unwrap();
+        assert_eq!(found.len(), 1);
+        let overview = contacts_overview(&database).await.unwrap();
+        assert_eq!(overview.total, 5);
+    }
+
+    #[tokio::test]
+    async fn a_card_reads_as_of_the_twelve_months_ending_now() {
+        let database = test_support::memory().await;
+        old_mail(&database, "friend@example.org", 1).await;
+        let person = contact_for_address(&database, "friend@example.org")
+            .await
+            .unwrap();
+        use chrono::TimeZone as _;
+        let now = chrono::Utc.with_ymd_and_hms(2026, 3, 9, 12, 0, 0).unwrap();
+        let card = contact_card(&database, person.id, now)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(card.stats.messages, 1);
+        assert_eq!(card.stats.months.len(), 1);
+        assert!(
+            contact_card(&database, postio_model::ContactId::new(99), now)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]

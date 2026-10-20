@@ -116,6 +116,10 @@ impl Req {
             Req::Correspondents(_) => "Correspondents",
             Req::ContactForAddress(_) => "ContactForAddress",
             Req::ContactGlance(_) => "ContactGlance",
+            Req::ContactsPage { .. } => "ContactsPage",
+            Req::ContactsFiltered { .. } => "ContactsFiltered",
+            Req::ContactsOverview => "ContactsOverview",
+            Req::ContactCard(_) => "ContactCard",
             Req::RecipientDirectory(_) => "RecipientDirectory",
             Req::Labels(_) => "Labels",
             Req::LabelCounts(_) => "LabelCounts",
@@ -626,6 +630,81 @@ impl Client {
             "the person at an address, at a glance",
             |answer| match answer {
                 Resp::ContactGlance(found) => Some(found.map(|glance| *glance)),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// A page of the Contacts list for `tab`.
+    pub async fn contacts_page(
+        &self,
+        tab: postio_model::ContactTab,
+        after: Option<(String, postio_model::ContactId)>,
+        skip: u32,
+        limit: u32,
+    ) -> Result<postio_model::ContactsPageRead, StoreError> {
+        self.read(
+            Req::ContactsPage {
+                tab,
+                after,
+                skip,
+                limit,
+            },
+            "a page of contacts",
+            |answer| match answer {
+                Resp::ContactsPage(page) => Some(page),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// The people in `tab` matching `text`, at most `cap`.
+    pub async fn contacts_filtered(
+        &self,
+        tab: postio_model::ContactTab,
+        text: &str,
+        cap: u32,
+    ) -> Result<Vec<postio_model::ContactListRow>, StoreError> {
+        self.read(
+            Req::ContactsFiltered {
+                tab,
+                text: text.to_owned(),
+                cap,
+            },
+            "the contacts matching a filter",
+            |answer| match answer {
+                Resp::ContactsFiltered(rows) => Some(rows),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// The Contacts view's counts, review queue and catch-up progress.
+    pub async fn contacts_overview(&self) -> Result<postio_model::ContactsOverview, StoreError> {
+        self.read(
+            Req::ContactsOverview,
+            "the contacts overview",
+            |answer| match answer {
+                Resp::ContactsOverview(overview) => Some(overview),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Everything `person`'s card shows; `None` for someone who is gone.
+    pub async fn contact_card(
+        &self,
+        person: postio_model::ContactId,
+    ) -> Result<Option<postio_model::ContactCardRead>, StoreError> {
+        self.read(
+            Req::ContactCard(person),
+            "a contact's card",
+            |answer| match answer {
+                Resp::ContactCard(card) => Some(card.map(|card| *card)),
                 _ => None,
             },
         )

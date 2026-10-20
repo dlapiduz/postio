@@ -284,6 +284,41 @@ pub struct ContactStats {
     pub recent: Vec<RecentMessage>,
 }
 
+impl ContactStats {
+    /// How long they typically take to answer the user: the median, over
+    /// the ring, of the time from a message the user sent to the first
+    /// message back. `None` with fewer than [`MIN_REPLIES`] answered
+    /// messages, and a gap longer than [`MAX_REPLY_GAP`] is a conversation
+    /// picked up again, not an answer.
+    pub fn reply_median(&self) -> Option<chrono::Duration> {
+        let mut ring: Vec<&RecentMessage> = self.recent.iter().collect();
+        ring.sort_by_key(|message| message.at);
+        let mut gaps: Vec<chrono::Duration> = Vec::new();
+        let mut asked: Option<DateTime<Utc>> = None;
+        for message in ring {
+            if message.outgoing {
+                asked = Some(message.at);
+            } else if let Some(at) = asked.take() {
+                let gap = message.at - at;
+                if gap >= chrono::Duration::zero() && gap <= MAX_REPLY_GAP {
+                    gaps.push(gap);
+                }
+            }
+        }
+        if gaps.len() < MIN_REPLIES {
+            return None;
+        }
+        gaps.sort();
+        Some(gaps[gaps.len() / 2])
+    }
+}
+
+/// How many answered messages it takes to say how fast someone replies.
+pub const MIN_REPLIES: usize = 3;
+
+/// The longest a gap can be and still be an answer.
+pub const MAX_REPLY_GAP: chrono::Duration = chrono::Duration::days(30);
+
 /// Whose move it is on something open between the user and a person.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OpenSide {
@@ -527,6 +562,170 @@ pub struct ContactListRow {
     pub state: ContactState,
     /// The list's ordering key, which the next page seeks past.
     pub sort_key: String,
+    /// What sort of correspondent they are.
+    pub kind: ContactKind,
+    /// Messages any of their addresses has been seen on.
+    pub messages: u32,
+    /// Whether the user saved them.
+    pub saved: bool,
+    /// Where their mail arrives, when the user decided.
+    pub arrival: Option<crate::ContactArrival>,
+    /// Whether a message from them notifies.
+    pub notify: bool,
+    /// Whether their HTML is always drawn as sent.
+    pub html_original: bool,
+    /// The cadence of the digest their mail is held for, when it is.
+    pub digest_cadence: Option<String>,
+}
+
+/// The Contacts view's kind tabs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum ContactTab {
+    /// Everyone.
+    #[default]
+    All,
+    /// People.
+    People,
+    /// Companies.
+    Companies,
+    /// Lists and newsletters.
+    Lists,
+    /// Automated senders.
+    Automated,
+}
+
+impl ContactTab {
+    /// Every tab, left to right.
+    pub const ALL: [Self; 5] = [
+        Self::All,
+        Self::People,
+        Self::Companies,
+        Self::Lists,
+        Self::Automated,
+    ];
+
+    /// The kinds the tab holds.
+    pub fn kinds(self) -> &'static [ContactKind] {
+        match self {
+            Self::All => &ContactKind::ALL,
+            Self::People => &[ContactKind::Person],
+            Self::Companies => &[ContactKind::Company],
+            Self::Lists => &[ContactKind::List, ContactKind::Newsletter],
+            Self::Automated => &[ContactKind::Automated],
+        }
+    }
+
+    /// The tab after this one, stopping at the last.
+    pub fn next(self) -> Self {
+        Self::ALL[(Self::ALL.iter().position(|tab| *tab == self).unwrap_or(0) + 1).min(4)]
+    }
+
+    /// The tab before this one, stopping at the first.
+    pub fn previous(self) -> Self {
+        Self::ALL[Self::ALL
+            .iter()
+            .position(|tab| *tab == self)
+            .unwrap_or(0)
+            .saturating_sub(1)]
+    }
+}
+
+/// What waits in the review queue, each count capped at [`REVIEW_CAP`]:
+/// the "Worth a look" line (specs/011-focus-contacts S7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ReviewSummary {
+    /// Pairs that may be the same person.
+    pub duplicates: u32,
+    /// Addresses whose mail bounced.
+    pub bounced: u32,
+    /// People the user writes to often and has not saved.
+    pub frequent_unsaved: u32,
+}
+
+/// Where a review count stops counting.
+pub const REVIEW_CAP: u32 = 99;
+
+impl ReviewSummary {
+    /// Whether there is nothing to review: the line is hidden.
+    pub fn is_empty(&self) -> bool {
+        self.duplicates == 0 && self.bounced == 0 && self.frequent_unsaved == 0
+    }
+}
+
+/// A file in a recent message from a person: a chip on their card.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileChip {
+    /// Its name.
+    pub name: String,
+    /// Its media type, which says the chip's letters (`XLSX`, `PDF`).
+    pub mime: String,
+}
+
+/// One recent issue of a newsletter or list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueRead {
+    /// The message.
+    pub message: crate::MessageId,
+    /// Its subject.
+    pub subject: String,
+    /// When it arrived.
+    pub at: DateTime<Utc>,
+    /// Whether the user has read it.
+    pub opened: bool,
+}
+
+/// How many recent issues and files a card shows.
+pub const CARD_RECENT: u32 = 3;
+
+/// Everything a person's card shows, read in one go: the person with their
+/// addresses, what the mail says about them, what is open between them and
+/// the user, what the user decided about them, and what came recently
+/// (specs/011-focus-contacts S7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContactCardRead {
+    /// The person, with every address and what the mail says about each.
+    pub person: Contact,
+    /// The groups they are in.
+    pub groups: Vec<String>,
+    /// The tiles, the 12 months and the ring.
+    pub stats: ContactStats,
+    /// Up to [`CARD_RECENT`] things open between them and the user.
+    pub open: Vec<OpenItem>,
+    /// What the user decided about them.
+    pub settings: crate::ContactSettings,
+    /// Where the default rules put their mail.
+    pub default_arrival: crate::ContactArrival,
+    /// Files in their recent messages, newest first.
+    pub files: Vec<FileChip>,
+    /// Their recent messages, newest first: a newsletter's issues.
+    pub issues: Vec<IssueRead>,
+}
+
+/// A page of the Contacts list: its rows, and the sort key of the row just
+/// before the first, which says whether the first starts a new letter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContactsPageRead {
+    /// The rows, by name.
+    pub rows: Vec<ContactListRow>,
+    /// The sort key of the row before them; `None` for the first row of
+    /// the list.
+    pub before: Option<String>,
+}
+
+/// What the Contacts view's strip and footer say: the counts the tabs and
+/// the footer show, the review queue, and how far the catch-up has got.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ContactsOverview {
+    /// Every live person.
+    pub total: u32,
+    /// How many of them are saved.
+    pub saved: u32,
+    /// Each tab's count, in [`ContactTab::ALL`] order.
+    pub tabs: Vec<(ContactTab, u32)>,
+    /// What waits in the review queue.
+    pub review: ReviewSummary,
+    /// `(made, of)` while addresses with mail still wait for a person.
+    pub building: Option<(u32, u32)>,
 }
 
 /// Everything the Contacts detail view shows about one person (FR-006).
@@ -764,5 +963,66 @@ mod tests {
         addr.record_seen(earlier);
         assert_eq!(addr.times_seen, 2);
         assert_eq!(addr.last_seen_at, Some(later));
+    }
+}
+
+#[cfg(test)]
+mod reply_time_tests {
+    use chrono::TimeZone;
+
+    use super::*;
+
+    fn ring(events: &[(i64, bool)]) -> ContactStats {
+        let base = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        ContactStats {
+            recent: events
+                .iter()
+                .enumerate()
+                .map(|(n, (minutes, outgoing))| RecentMessage {
+                    message: crate::MessageId::new(n as i64 + 1),
+                    at: base + chrono::Duration::minutes(*minutes),
+                    outgoing: *outgoing,
+                })
+                .rev()
+                .collect(),
+            ..ContactStats::default()
+        }
+    }
+
+    #[test]
+    fn the_median_of_the_gaps_from_what_you_sent_to_what_came_back() {
+        // Sent at 0, answered at 60; sent at 100, answered at 280; sent at
+        // 300, answered at 420: gaps 60, 180 and 120 minutes.
+        let stats = ring(&[
+            (0, true),
+            (60, false),
+            (100, true),
+            (280, false),
+            (300, true),
+            (420, false),
+        ]);
+        assert_eq!(stats.reply_median(), Some(chrono::Duration::minutes(120)));
+    }
+
+    #[test]
+    fn too_few_answers_say_nothing_and_a_revival_is_not_an_answer() {
+        let few = ring(&[(0, true), (60, false), (100, true), (160, false)]);
+        assert_eq!(few.reply_median(), None);
+        let day = 60 * 24;
+        let stale = ring(&[
+            (0, true),
+            (60, false),
+            (100, true),
+            (160, false),
+            (200, true),
+            (200 + 40 * day, false),
+        ]);
+        assert_eq!(stale.reply_median(), None, "two answers and a revival");
+    }
+
+    #[test]
+    fn mail_they_sent_unprompted_is_no_answer() {
+        let stats = ring(&[(0, false), (10, false), (20, true), (80, false)]);
+        assert_eq!(stats.reply_median(), None);
     }
 }

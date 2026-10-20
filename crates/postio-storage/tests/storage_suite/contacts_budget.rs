@@ -288,8 +288,8 @@ async fn a_cursor_page_seeks_past_the_cursor_instead_of_filtering_down_to_it() {
         .collect();
     assert_eq!(
         cursors.len(),
-        3,
-        "one cursor read per view; an empty list here would make this test vacuous"
+        4,
+        "one cursor read per view and one per kind tab; an empty list here would make this test vacuous"
     );
     for (name, sql) in cursors {
         let plan = test_support::plan(&connection, &sql).await;

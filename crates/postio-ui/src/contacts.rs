@@ -264,6 +264,13 @@ mod tests {
             source,
             state: ContactState::Live,
             sort_key: "ada lovelace".into(),
+            kind: postio_model::ContactKind::Person,
+            messages: 0,
+            saved: false,
+            arrival: None,
+            notify: false,
+            html_original: false,
+            digest_cadence: None,
         }
     }
 
@@ -523,6 +530,13 @@ mod window_tests {
                     source: ContactSource::Mail,
                     state: ContactState::Live,
                     sort_key: format!("person {n:06}"),
+                    kind: postio_model::ContactKind::Person,
+                    messages: 0,
+                    saved: false,
+                    arrival: None,
+                    notify: false,
+                    html_original: false,
+                    digest_cadence: None,
                 }
             })
             .collect()
