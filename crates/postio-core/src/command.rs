@@ -27,7 +27,8 @@ use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
 use postio_model::{
-    AccountId, DraftId, LabelId, MailboxId, MailboxRole, MessageId, OperationRange, ThreadId,
+    AccountId, AddressId, ContactId, ContactState, DraftId, EmailAddress, JoinReceipt, LabelId,
+    MailboxId, MailboxRole, MessageId, OperationRange, ThreadId,
 };
 
 /// How long an answer to an invitation waits in the outbox before it may
@@ -764,6 +765,30 @@ commands! {
     ContactsFilter => "contacts_filter",
     /// Show everyone from mail, or only the people the user made or wrote to.
     ContactsToggleEveryone => "contacts_toggle_everyone",
+    /// Merge the marked people, or a suggested pair, into one person
+    /// (specs/005-contacts FR-012; the word on screen is Merge, the id keeps
+    /// the name the contracts gave it), or take a merge back.
+    ContactJoin {
+        /// What is asked: a keystroke asks which name the merged person keeps.
+        action: ContactJoinAction = ContactJoinAction::Ask,
+    } => "contact_join",
+    /// Give a person an address, or put an address back where it was.
+    ContactAddAddress {
+        /// What is asked: a keystroke asks for the address.
+        action: ContactAddressAction = ContactAddressAction::Ask,
+    } => "contact_add_address",
+    /// Make an address a person of its own (FR-014).
+    ContactDetachAddress {
+        /// The address; `None` means the one the keyboard is on.
+        address: Option<AddressId> = None,
+    } => "contact_detach_address",
+    /// Offer an address first (FR-016).
+    ContactSetPreferred {
+        /// Whose; `None` means the focused person.
+        person: Option<ContactId> = None,
+        /// Which; `None` means the focused address.
+        address: Option<AddressId> = None,
+    } => "contact_set_preferred",
     ;
     /// Mark one message read because the cursor rested on it long enough to
     /// have been read — not because anyone asked.
@@ -926,6 +951,56 @@ pub enum MessageTarget {
         /// a bulk flag over a smart folder leaves every message where it was,
         /// across as many folders as it spanned (#52).
         from: Option<MailboxId>,
+    },
+}
+
+/// What a [`Command::ContactJoin`] asks for.
+///
+/// A keystroke is [`Ask`](Self::Ask): Contacts asks which name the merged
+/// person keeps, then invokes [`Join`](Self::Join). Undo invokes
+/// [`Unjoin`](Self::Unjoin) with what the merge handed back -- one verb, three
+/// shapes, the way `Move` with no destination asks and with one moves.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContactJoinAction {
+    /// Ask the user which name, and which organisation if theirs disagree.
+    Ask,
+    /// Merge `others` into `into`, under `name`.
+    Join {
+        /// The survivor.
+        into: ContactId,
+        /// The people merged into it.
+        others: Vec<ContactId>,
+        /// The merged person's name, which every merge ends with.
+        name: String,
+        /// The organisation chosen when theirs disagreed.
+        organization: Option<String>,
+    },
+    /// Take a merge back.
+    Unjoin(JoinReceipt),
+}
+
+/// What a [`Command::ContactAddAddress`] asks for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContactAddressAction {
+    /// Ask the user for the address.
+    Ask,
+    /// Give `person` the typed `address`; refused while a live person owns it.
+    Add {
+        /// Whose.
+        person: ContactId,
+        /// The address as typed.
+        address: EmailAddress,
+    },
+    /// Give `address` to `to`, whoever has it -- the "move it" answer, and
+    /// the way undo puts an address back. `to: None` lets go of it.
+    Put {
+        /// The address.
+        address: AddressId,
+        /// Who gets it, or nobody.
+        to: Option<ContactId>,
+        /// Undo's half: the state `to` was in before an earlier move left
+        /// them with no address, to bring them back in.
+        revive: Option<ContactState>,
     },
 }
 

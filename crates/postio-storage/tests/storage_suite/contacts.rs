@@ -689,12 +689,15 @@ async fn an_address_a_deleted_person_owns_moves_and_keeps_its_history() {
         ada.times_seen, 3,
         "the sightings travel with the address (FR-024)"
     );
-    assert!(
-        ContactRepository::new(&connection)
-            .get(old.id)
-            .await
-            .expect("get")
-            .is_none(),
-        "a deleted person left with no address is gone"
+    let emptied = ContactRepository::new(&connection)
+        .get(old.id)
+        .await
+        .expect("get")
+        .expect("kept, for an undo to give the address back to");
+    assert_eq!(
+        emptied.state,
+        ContactState::Merged,
+        "a deleted person left with no address is folded away, offered nowhere"
     );
+    assert!(emptied.addresses.is_empty());
 }

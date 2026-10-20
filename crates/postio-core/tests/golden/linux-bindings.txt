@@ -155,3 +155,7 @@ contact_show_mail
 contact_compose	
 contacts_filter	
 contacts_toggle_everyone	
+contact_join	
+contact_add_address	
+contact_detach_address	
+contact_set_preferred	

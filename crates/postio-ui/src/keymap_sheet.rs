@@ -257,7 +257,11 @@ pub fn group(command: CommandId) -> Option<Group> {
         C::ContactShowMail
         | C::ContactCompose
         | C::ContactsFilter
-        | C::ContactsToggleEveryone => None,
+        | C::ContactsToggleEveryone
+        | C::ContactJoin
+        | C::ContactAddAddress
+        | C::ContactDetachAddress
+        | C::ContactSetPreferred => None,
         // The composer's own keys, which the compose dialog teaches on its
         // buttons and its footer.
         C::Send

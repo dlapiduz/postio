@@ -68,7 +68,10 @@ pub mod undo;
 
 pub use action::{ActionId, ExtId};
 pub use bridge::{Bridge, CommandHandler, CommandSender, EventSink, EventStream};
-pub use command::{Command, CommandId, KeptRule, MessageTarget, UnknownCommand};
+pub use command::{
+    Command, CommandId, ContactAddressAction, ContactJoinAction, KeptRule, MessageTarget,
+    UnknownCommand,
+};
 pub use config::{ConfigChange, ConfigService, Keymap, SharedConfig};
 pub use context::{Context, ContextSet, UnknownContext};
 pub use dispatch::{CommandError, Dispatcher, Invocation};

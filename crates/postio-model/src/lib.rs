@@ -87,8 +87,8 @@ pub use account::{
 pub use address::EmailAddress;
 pub use attachment::{Attachment, Disposition};
 pub use contact::{
-    Contact, ContactAddress, ContactDetail, ContactListRow, ContactSource, ContactState,
-    ContactView,
+    AddressMove, Contact, ContactAddress, ContactDetail, ContactListRow, ContactSource, ContactState,
+    ContactView, JoinReceipt, PersonFields,
 };
 pub use contact_group::ContactGroup;
 pub use draft::{Draft, DraftKind, DraftState};

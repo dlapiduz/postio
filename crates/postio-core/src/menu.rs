@@ -250,6 +250,10 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::ContactCompose
         | C::ContactsFilter
         | C::ContactsToggleEveryone
+        | C::ContactJoin
+        | C::ContactAddAddress
+        | C::ContactDetachAddress
+        | C::ContactSetPreferred
         | C::GoToFiltered
         | C::GoToDigestRules
         | C::ToggleHasAction

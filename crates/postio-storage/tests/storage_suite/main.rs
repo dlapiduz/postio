@@ -35,6 +35,7 @@ mod content_migration;
 mod correspondents;
 mod digests;
 mod contacts_budget;
+mod contacts_join;
 mod contacts_list_views;
 mod draft_indexes;
 mod drafts;

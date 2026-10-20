@@ -2539,6 +2539,52 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: MAIL,
     },
+    CommandSpec {
+        id: CommandId::ContactJoin,
+        title: "Merge",
+        // `m` for merge: `J` extends the selection being merged, and `x`
+        // marks it -- the merge acts on what they built. The id keeps 005's
+        // word, "join"; the word on screen is Merge.
+        default_binding: "m",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactAddAddress,
+        title: "Add address",
+        default_binding: "plus",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactDetachAddress,
+        title: "Detach address",
+        default_binding: "minus",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactSetPreferred,
+        title: "Use this address first",
+        // 005 bound `*`, which is the first key of Select all's `* a` in
+        // this keymap and would have waited for a second key; `P` is free
+        // in Contacts (it is `P` in plan 011's table too).
+        default_binding: "P",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: MAIL,
+    },
 ];
 
 /// Every command, in cheat-sheet order.
@@ -2944,6 +2990,10 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             | (ActionId::Builtin(C::ContactCompose), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactsFilter), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactsToggleEveryone), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactJoin), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactAddAddress), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactDetachAddress), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactSetPreferred), Platform::Freedesktop)
     )
 }
 
@@ -3020,7 +3070,7 @@ mod tests {
 
     /// What only the Mac draws, until Linux adopts it: the search dropdown
     /// and results view (spec 010 D23, D25) and Contacts (specs/005).
-    const NOT_ON_LINUX_YET: [CommandId; 23] = [
+    const NOT_ON_LINUX_YET: [CommandId; 27] = [
         CommandId::ShowAllResults,
         CommandId::ForgetRecent,
         CommandId::ExcludeSuggestion,
@@ -3044,6 +3094,10 @@ mod tests {
         CommandId::ContactCompose,
         CommandId::ContactsFilter,
         CommandId::ContactsToggleEveryone,
+        CommandId::ContactJoin,
+        CommandId::ContactAddAddress,
+        CommandId::ContactDetachAddress,
+        CommandId::ContactSetPreferred,
     ];
 
     #[test]

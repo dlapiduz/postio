@@ -105,6 +105,7 @@ impl Actions {
 
         let anchors: Vec<MessageId> = conversations.into_values().collect();
         Ok(Applied {
+            contacts_changed: None,
             rows: None,
             lasts: None,
             surfaced,
@@ -264,6 +265,7 @@ impl Actions {
         transaction.commit().await.map_err(store_failure)?;
 
         Ok(Applied {
+            contacts_changed: None,
             rows: None,
             lasts: Some(RSVP_WINDOW),
             surfaced: false,
@@ -422,6 +424,7 @@ impl Actions {
         }
 
         Ok(Applied {
+            contacts_changed: None,
             rows: None,
             lasts: None,
             surfaced: false,
@@ -534,6 +537,7 @@ impl Actions {
                 continue;
             }
             applied.push(Applied {
+                contacts_changed: None,
                 rows: None,
                 lasts: None,
                 surfaced: false,
@@ -648,6 +652,7 @@ impl Actions {
                 continue;
             };
             applied.push(Applied {
+                contacts_changed: None,
                 rows: None,
                 lasts: None,
                 surfaced: false,
@@ -720,6 +725,7 @@ impl Actions {
             transaction.commit().await.map_err(store_failure)?;
             let ids: Vec<MessageId> = rows.iter().map(|row| row.id).collect();
             applied.push(Applied {
+                contacts_changed: None,
                 rows: None,
                 lasts: None,
                 surfaced: false,
@@ -870,6 +876,7 @@ impl Actions {
                     .map_err(store_failure)?;
             }
             return Ok(Applied {
+                contacts_changed: None,
                 rows: None,
                 lasts: None,
                 surfaced: false,
@@ -941,6 +948,7 @@ impl Actions {
             released
         };
         Ok(Applied {
+            contacts_changed: None,
             rows: None,
             lasts: None,
             surfaced: false,

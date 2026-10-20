@@ -98,6 +98,14 @@ pub enum UndoKind {
     CancelledSend,
     /// One of an account's roles was pointed at a folder (ADR 0035).
     MapMailboxRole,
+    /// People were joined into one (specs/005-contacts).
+    JoinContacts,
+    /// An address was given to a person, or moved to one.
+    ContactAddress,
+    /// An address was made a person of its own.
+    DetachAddress,
+    /// A person's preferred address changed.
+    PreferredAddress,
 }
 
 impl UndoKind {
@@ -125,6 +133,11 @@ impl UndoKind {
             UndoKind::CancelledSend => "Send cancelled \u{2014} back in Drafts".to_owned(),
             // Never counted either: it is about a folder, not about messages.
             UndoKind::MapMailboxRole => "Changed a folder's role".to_owned(),
+            // About people, not messages, so never counted in messages.
+            UndoKind::JoinContacts => "Joined contacts".to_owned(),
+            UndoKind::ContactAddress => "Added an address".to_owned(),
+            UndoKind::DetachAddress => "Detached an address".to_owned(),
+            UndoKind::PreferredAddress => "Changed the preferred address".to_owned(),
             UndoKind::Snooze => format!("Snoozed {count} {messages}"),
             UndoKind::Unsnooze => format!("Unsnoozed {count} {messages}"),
             // Counted in conversations: a reminder waits on a reply to the
