@@ -277,6 +277,21 @@ pub fn leaving_a_list_offers_to_delete_what_it_sent_and_esc_keeps_it() {
         // The verb's own key answers it, as the label beside the button says.
         let _ = dialog;
         support::press(&window, "numbersign", gtk::gdk::ModifierType::SHIFT_MASK);
+        let deleted = crate::settle_until(async || {
+            let connection = fixture.database.connect().await.expect("a connection");
+            MessageRepository::new(&connection)
+                .page(&postio_storage::repository::ListQuery::mailbox(fixture.inbox))
+                .await
+                .expect("a page")
+                .is_empty()
+        })
+        .await;
+        assert!(
+            deleted,
+            "# deleted nothing (toast {:?}, offer up: {})",
+            window.toast_showing(),
+            window.sweep_offer().is_some()
+        );
         assert!(
             crate::settle_until(async || {
                 window
@@ -284,7 +299,7 @@ pub fn leaving_a_list_offers_to_delete_what_it_sent_and_esc_keeps_it() {
                     .is_some_and(|said| said.starts_with("Deleted 2 messages"))
             })
             .await,
-            "# was not one undoable command: {:?}",
+            "the deletion did not say it was one undoable command: {:?}",
             window.toast_showing()
         );
     });
