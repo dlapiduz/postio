@@ -64,7 +64,7 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use self::state::{Mailbox, ServerState};
-use self::wire::Conn;
+use self::wire::{Conn, WireStats};
 
 /// The account the server accepts, unless a builder says otherwise.
 const DEFAULT_ACCOUNT: &str = "someone@example.com";
@@ -87,7 +87,7 @@ const DEFAULT_ACCESS_TOKEN: &str = "test-access-token";
 const DEFAULT_BANNER: [&str; 4] = ["IMAP4rev1", "SASL-IR", "AUTH=PLAIN", "AUTH=LOGIN"];
 
 /// What `CAPABILITY` reports once authenticated.
-const DEFAULT_CAPABILITIES: [&str; 13] = [
+const DEFAULT_CAPABILITIES: [&str; 14] = [
     "IMAP4rev1",
     "SASL-IR",
     "AUTH=PLAIN",
@@ -101,6 +101,7 @@ const DEFAULT_CAPABILITIES: [&str; 13] = [
     "NAMESPACE",
     "UNSELECT",
     "ID",
+    "COMPRESS=DEFLATE",
 ];
 
 /// A way this server misbehaves for as long as it is set.
@@ -372,6 +373,7 @@ impl TestMailbox {
 pub(crate) struct Shared {
     state: Mutex<ServerState>,
     notify: Notify,
+    stats: Arc<WireStats>,
 }
 
 impl Shared {
@@ -512,16 +514,20 @@ impl TestServerBuilder {
                 idle_limit: self.idle_limit,
             }),
             notify: Notify::new(),
+            stats: Arc::new(WireStats::default()),
         });
 
         let accepting = Arc::clone(&shared);
         let accept = tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
                 let shared = Arc::clone(&accepting);
+                let stats = Arc::clone(&shared.stats);
                 tokio::spawn(async move {
                     // A connection ending badly is usually the point — a
                     // dropped socket is a fault a test asked for.
-                    let _ = session::Session::new(Conn::new(stream), shared).run().await;
+                    let _ = session::Session::new(Conn::new(stream, stats), shared)
+                        .run()
+                        .await;
                 });
             }
         });
@@ -597,6 +603,24 @@ impl TestServer {
     /// Makes the server misbehave from now on.
     pub fn quirk(&self, quirk: Quirk) {
         self.shared.lock().quirks.insert(quirk);
+    }
+
+    /// How many connections have switched to `COMPRESS=DEFLATE`.
+    pub fn compressed_connections(&self) -> usize {
+        self.shared
+            .stats
+            .compressed_connections
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// What the server has sent: `(protocol bytes, socket bytes)`. They
+    /// differ only on connections that negotiated compression.
+    pub fn bytes_sent(&self) -> (usize, usize) {
+        let stats = &self.shared.stats;
+        (
+            stats.logical_out.load(std::sync::atomic::Ordering::SeqCst),
+            stats.wire_out.load(std::sync::atomic::Ordering::SeqCst),
+        )
     }
 
     /// Every command line the server has received, tags included.

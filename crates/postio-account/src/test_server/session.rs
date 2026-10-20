@@ -112,6 +112,7 @@ impl Session {
                     .await?;
                 self.ok(&tag, "CAPABILITY completed").await?;
             }
+            "COMPRESS" => self.compress(command).await?,
             "NOOP" | "CHECK" => {
                 let updates = self.updates();
                 self.conn.write(&updates).await?;
@@ -244,6 +245,33 @@ impl Session {
         }
 
         self.finish_auth(&command.tag, accepted).await
+    }
+
+    /// RFC 4978: answer `OK`, then speak raw deflate in both directions.
+    async fn compress(&mut self, command: &Command) -> io::Result<()> {
+        let advertised = self
+            .shared
+            .lock()
+            .capabilities
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case("COMPRESS=DEFLATE"));
+        if !self.authenticated || !advertised {
+            return self.bad(&command.tag, "COMPRESS is not available").await;
+        }
+        if self.conn.is_deflating() {
+            return self
+                .no(
+                    &command.tag,
+                    "[COMPRESSIONACTIVE] DEFLATE active via COMPRESS",
+                )
+                .await;
+        }
+        if !command.args.trim().eq_ignore_ascii_case("DEFLATE") {
+            return self.no(&command.tag, "Unknown compression mechanism").await;
+        }
+        self.ok(&command.tag, "DEFLATE active").await?;
+        self.conn.start_deflate();
+        Ok(())
     }
 
     async fn finish_auth(&mut self, tag: &str, accepted: bool) -> io::Result<()> {

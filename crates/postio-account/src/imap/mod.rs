@@ -69,8 +69,9 @@ use io_sasl::rfc4616::plain::SaslPlainCreds;
 use io_sasl::rfc7628::oauthbearer::SaslOauthbearerCreds;
 use io_sasl::xoauth2::SaslXoauth2Creds;
 use postio_model::{AuthMethod, TransportSecurity};
+use postio_transport::DeflateStream;
 
-use crate::backend::{BackendError, BackendResult, Capabilities};
+use crate::backend::{BackendError, BackendResult, Capabilities, Capability};
 use crate::secret::Password;
 
 pub use self::backend::ImapBackend;
@@ -108,6 +109,10 @@ pub use self::transport::{
 /// wants in one buffer, but a *response* this large is a server misbehaving or
 /// a fetch that should have been streamed.
 const MAX_MESSAGE_SIZE: u32 = 100 * 1024 * 1024;
+
+/// The tagged command that starts compression, and the start of its `OK`.
+const COMPRESS_COMMAND: &[u8] = b"pz1 COMPRESS DEFLATE\r\n";
+const COMPRESS_TAG_OK: &str = "pz1 OK";
 
 /// Read buffer, sized for line-oriented protocol traffic.
 const READ_BUFFER: usize = 16 * 1024;
@@ -247,7 +252,7 @@ impl ImapSession {
         let stream = stream.ok_or_else(no_stream)?;
         let capabilities = post_auth_capabilities(&settings.host, &opened.capability)?;
 
-        Ok(Self {
+        let mut session = Self {
             stream,
             fragmentizer,
             capabilities,
@@ -260,7 +265,38 @@ impl ImapSession {
             selection_max_age: DEFAULT_SELECTION_MAX_AGE,
             command_timeout: DEFAULT_COMMAND_TIMEOUT,
             timed_out: None,
-        })
+        };
+        session.negotiate_compression().await?;
+        Ok(session)
+    }
+
+    /// `COMPRESS DEFLATE` (RFC 4978), when the server advertised it after
+    /// authentication.
+    ///
+    /// `io-imap` has no coroutine for it, so the command goes through its raw
+    /// passthrough and the stream is swapped for a [`DeflateStream`] on the
+    /// tagged `OK`. A refusal leaves the session working in the clear: the
+    /// extension is an optimisation, and the server saying no is not an error.
+    async fn negotiate_compression(&mut self) -> BackendResult<()> {
+        if !self.capabilities.contains(Capability::Compress) {
+            return Ok(());
+        }
+
+        let response = self.raw(COMPRESS_COMMAND).await;
+        let response = response.map_err(|error| self.command_error("COMPRESS", error))?;
+        if !response
+            .lines()
+            .any(|line| line.starts_with(COMPRESS_TAG_OK))
+        {
+            tracing::debug!(endpoint = %self.endpoint, "the server declined COMPRESS DEFLATE");
+            return Ok(());
+        }
+
+        // Nothing follows the `OK` in the clear, so the parser holds no
+        // plaintext that belongs to the compressed stream.
+        DeflateStream::wrap(&mut self.stream);
+        tracing::debug!(endpoint = %self.endpoint, "COMPRESS DEFLATE active");
+        Ok(())
     }
 
     /// The capabilities this server advertised after authentication.
