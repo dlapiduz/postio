@@ -5,17 +5,12 @@
 //! `MODSEQ`, so a message that changed is a message worth trying again.
 
 use chrono::{TimeZone, Utc};
-use postio_model::{
-    BodyState, Message, MessageId, ModSeq, RemoteId, Uid, UidValidity,
-};
+use postio_model::{BodyState, Message, MessageId, ModSeq, RemoteId, Uid, UidValidity};
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 
-async fn one_message_owing_its_body() -> (
-    postio_storage::Store,
-    postio_model::MailboxId,
-    MessageId,
-) {
+async fn one_message_owing_its_body() -> (postio_storage::Store, postio_model::MailboxId, MessageId)
+{
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -68,7 +63,10 @@ async fn a_message_that_changed_is_worth_another_try() {
 
     let mut row = messages.get(id).await.unwrap().unwrap();
     row.server.mod_seq = Some(ModSeq::new(11));
-    messages.update(&mut row).await.expect("the server changed it");
+    messages
+        .update(&mut row)
+        .await
+        .expect("the server changed it");
 
     assert!(!messages.body_failed(id).await.expect("read"));
     assert_eq!(

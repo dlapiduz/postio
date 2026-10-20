@@ -788,7 +788,9 @@ async fn a_message_the_server_has_no_body_for_is_remembered() {
     let rows = headers(&local, &backend).await;
     // A UID the server never had: the FETCH is answered with a bare OK.
     let (id, _) = rows[0];
-    let outcome = try_body(&local, &backend, id, 9_999).await.expect("settled");
+    let outcome = try_body(&local, &backend, id, 9_999)
+        .await
+        .expect("settled");
     assert!(matches!(outcome, Outcome::Failed { .. }), "{outcome:?}");
     assert!(
         MessageRepository::new(&local.connection)

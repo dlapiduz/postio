@@ -88,3 +88,51 @@ pub fn a_body_that_lands_while_its_message_is_open_is_drawn_in_place() {
         assert_eq!(support::focus_path(&window), focus, "the focus moved");
     });
 }
+
+pub fn a_body_the_server_refuses_stops_saying_it_is_downloading() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        let (message, _) = fixture
+            .file(("Ada Moreno", "ada@example.com"), "Tide gate", "", 5)
+            .await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Older", "", 50)
+            .await;
+        let (host, sink) = fixture.host_telling();
+        let window = postio_gtk::window::FocusWindow::new(None);
+        window.present();
+        support::keep(postio_gtk::startup::adopt(
+            &window,
+            host,
+            &postio_config::Config::default(),
+        ));
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 2).await,
+            "the inbox never reached the screen"
+        );
+        support::press(&window, "Return", gtk::gdk::ModifierType::empty());
+        let reading = window.reading().expect("Return opened the message");
+        assert!(
+            crate::settle_until(async || reading.body_text().contains("Downloading")).await,
+            "the plate never drew: {:?}",
+            reading.body_text()
+        );
+
+        // The engine records the refusal and says so (#1918).
+        fixture.refuse_body(message).await;
+        assert!(sink.emit(Event::BodyFailed {
+            account: fixture.account.id,
+            message,
+        }));
+        assert!(
+            crate::settle_until(async || reading.body_text().contains("could not be downloaded"))
+                .await,
+            "the refusal never reached the open message: {:?}",
+            reading.body_text()
+        );
+        assert!(reading.is_open());
+    });
+}
