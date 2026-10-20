@@ -1,911 +1,826 @@
 # Feature Specification: Contacts for Postio Focus
 
 **Feature Branch**: `feature/focus-contacts` (cut from `main` once spec 005's
-backend port, `feature/contacts-mac`, has landed)
+backend port, `feature/contacts-mac`, has landed its person model)
 
-**Created**: 2026-10-19
+**Created**: 2026-10-19; **Revised**: 2026-10-19, to the designer's handoff
 
-**Status**: Draft, awaiting the maintainer's answers to the questions at the
-end
+**Status**: Draft, revised to the handoff and the maintainer's decisions of
+2026-10-19; awaiting the maintainer's OK of `plan.md` and answers to the
+questions at the end
 
-**Input**: "Design the Contacts surface for Postio Focus, Mac first." Decided
-by the maintainer before this spec: the surface is designed new for Focus;
-it is built on the Mac first, through `postio-ffi`, `PostioKit` and
-`PostioAppKit`, with its rules in the shared controller `postio-focus` where
-they are cross-platform, so GTK can adopt it later the way spec 009's slices
-did; and it is **Postio's own address book only** (the macOS system Contacts
-stays only for recipient completion, spec 009 FR-051).
+**Input**: the designer's handoff `Design/focus-macos-contacts/` (the
+maintainer's local, untracked folder: `SPEC.md`, `PROMPT.md`, `README.md`,
+`screens/01` to `08`, `source/*.dc.html`), which builds on the earlier macOS
+handoff `Design/focus-macos-design/`. **`Design/focus-macos-contacts/SPEC.md`
+is the source of truth for the design.** Nothing from `Design/` is copied into
+the repository (CLAUDE.md); the handoff's `PROMPT.md` suggests copying the
+folder in, and that is declined. Screens are cited by filename, as
+`specs/007-postio-focus/screens.md` does, and the handoff's example names are
+not reproduced: this spec's examples are invented and use reserved domains.
+
+## What changed from the first draft of this spec
+
+The first draft (merged as #1924) was written with no design reference. The
+handoff supersedes it wherever they differ. The table is the record, so a
+decision is not re-argued from the old text.
+
+| First draft | Now | Why |
+|---|---|---|
+| K1: `g p` opens Contacts | **`g c`**, on the Mac. `next_scope` is not offered on Apple, so nothing collides there; it moves to `g n` when Linux adopts (M2, Q9) | Maintainer, 2026-10-19 |
+| K2: Contacts is a mode of the main window | Kept | `01-contacts-list-and-card.png` |
+| K3: a person opens in a secondary window | **Superseded.** The card is the right part of the Contacts mode, beside a 440 pt list | `01-contacts-list-and-card.png` |
+| K4: five tabs: Written to, Everyone, Groups, Duplicates, Deleted | **Superseded.** Kind tabs: All, People, Companies, Lists and newsletters, Automated. Duplicates are a "Worth a look" line and a Merge sheet; no Deleted tab, no Groups tab (Q5, Q6) | `01`, `07` |
+| K5: `/` opens the one box in `@` mode | **Superseded** by a "Filter contacts" field in the strip, focused by `/` (Q4) | `01` |
+| K6: per-field editing, no Save | **Superseded.** Edit is a form: Save ⌘S, Cancel Esc | Maintainer; `06-edit-contact.png` |
+| K7: join through a picker at the row | **Superseded.** A Merge sheet with the evidence and a preview of the result | `07-merge-duplicates.png` |
+| K8: Groups tab and group picker | Groups are chips on the card and in Edit; `to:Quarry crew` and `from:@Finance` use them (Q5) | `06` |
+| K9: the word is **Join**; "Preferred" | **Merge**; **primary** for the address replies go to | Maintainer; handoff |
+| K10: neutral initials, no hue | **Superseded.** A palette hashed from the contact id, a shape per kind, a photo when there is one; the accent stays for focus and action markers only | `01`, `03` |
+| K11: cursor and selection never conflated | Kept | Constitution II |
+| K12: no confirmations | Kept, with one question: deleting a synced contact asks whether to delete it from the other store too | Handoff SPEC §2 |
+| Contacts is Postio's address book only; the Mac's Contacts is read only for completion | **Superseded.** Apple Contacts and CardDAV are optional sync targets, built last, writes off until reviewed | Maintainer; handoff §2 |
+| Q3: import is one undo step | **Resolved the other way:** import is not undoable for now (005's rule) | Maintainer |
 
 ## Context
 
 Spec 005 (`specs/005-contacts`, on `origin/feature/contacts`) specifies the
-whole address book: a person who owns many addresses, groups, possible
-duplicates, vCard import and export, `with:` search, editing, delete and
-restore, and the person's name shown in the mail lists. It was drawn for the
-old GTK shell (a sidebar entry, a reading-pane takeover, a `Context::Contacts`
-list), which Postio Focus (spec 007, #1784) replaced. Another session is
-porting 005's backend and command layers to `main` on `feature/contacts-mac`.
-
-This spec is the **surface**: how a person gets to Contacts from Focus, what
-the list and a person's page show, every verb by keyboard, import and export,
-empty and failing states, and the Mac idioms. It does not restate 005's data
-rules; it cites them.
+address book: a person who owns many addresses, groups, possible duplicates,
+vCard import and export, `with:` search, and the person's name shown in the
+mail lists. Another session is porting its backend to `main` on
+`feature/contacts-mac` (not pushed; on 2026-10-19 it holds the 005 specs, a
+`postio-vcard` leaf crate and an `AddressId` type, and no schema). This spec is
+the **surface** and the engine additions the handoff needs on top of 005:
+`kind`, `saved`, per-contact settings, stats, review queue, sync. It cites 005
+by FR number and does not restate its data rules. `plan.md` lists what it
+needs from the port.
 
 | What | Where it is decided |
 |---|---|
-| A person owns addresses; join, detach, preferred; suppression; sightings; provenance; groups; suggestions; deletion and restore; vCard fidelity; name substitution in mail lists | Spec 005 (FR-010 to FR-061), unchanged. Cited as `005 FR-nnn` |
-| Where Contacts is, what it looks like, which key does what, what it says when empty or failed, how it sits with Focus's one list and one dialog pattern | **This spec** |
-| Behaviour (which row a key reaches, where the cursor goes after a join, the Esc ladder, which tab an empty state belongs to) | `postio-focus`, per ADR 0045; this spec states the rules, the plan says where they live |
+| A person owns addresses; merge (005's "join"), detach, primary (005's "preferred"); sightings; groups; deletion and restore; vCard fidelity; name substitution in mail lists | Spec 005, unchanged. Cited as `005 FR-nnn` |
+| `kind`, `saved`, per-contact settings, stats, signature details, review queue, sync links | **This spec and `plan.md`** |
+| Where Contacts is, what it looks like, which key does what | **This spec**, against the handoff |
+| Behaviour (which row a key reaches, the Esc ladder, cursor after a merge) | `postio-focus`, per ADR 0045 |
 
 ### What this spec inherits
 
-- **Spec 005** for the data model, the store, the commands' payloads and
-  undo kinds, and `with:` search (`contracts/commands.md`,
-  `contracts/query-with.md`, `contracts/vcard.md`). Where this spec changes a
-  *binding*, a *context* or a *surface*, 005's command **ids** stay: ids are
-  a file format (constitution II). Section "Command table" lists each id and
-  what changed.
-- **Specs 007, 009 and 010** in full. Focus has one list and no sidebar;
-  everything else opens over it in one dialog pattern; `Esc` closes back to
-  the same row; behaviour lives in `postio-focus` and the Mac draws intents
-  (009 FR-002, ADR 0045); pickers at the row, the toast pill, the `?` key
-  map, the one box; one secondary window at a time on the Mac (009 M4);
-  results as a *mode* of the main window with History (010 D17); Mac-only
-  commands carried by `registry::offered_on` until Linux adopts (010 D25).
-- **The constitution**, in particular I (local-first), II (one command
-  table), IV (test-first), V (performance, gated as counts), VI (privacy),
-  VII (boundaries).
-- **The design pack has no Contacts screens.** `Design/` holds the Focus
-  macOS and Focus macOS search references; nothing in them draws a contact
-  list or a person. This spec therefore describes the surface by analogy to
-  screens that exist (the Filtered view's tabs, the message window, the
-  label picker, the results mode). Question Q1 asks whether to commission
-  screens; until then every layout here is a proposal, and the plan puts a
-  design-review gate after the first slice that shows pixels.
+- **Spec 005** for the data model, the store, the commands' payloads and undo
+  kinds. 005's command **ids** stay (ids are a file format, constitution II);
+  the Command table lists each id and what changed.
+- **Specs 007, 009 and 010**: one list; secondary surfaces over it; `Esc`
+  closes back to the same row; behaviour in `postio-focus` and the Mac draws
+  intents; pickers at the row, the toast pill, the `?` key map, the one box;
+  one secondary window at a time on the Mac (009 M4); results as a mode of the
+  main window with History (010 D17); Mac-only commands carried by
+  `registry::offered_on` until Linux adopts (010 D25).
+- **The general macOS rules** of the earlier handoff: semantic colours only,
+  the accent only for focus and action markers, SF Pro and SF Mono, every
+  action has one key shown as a keycap, all logic in the Rust engine. Where its
+  `KEYS.md` disagrees with the registry (it predates #1834's adoption of
+  Gmail's keys), **the registry wins**; "Keys" lists each case.
+- **The constitution**: I local-first, II one command table, III one query
+  language, IV test-first, V performance gated as counts, VI privacy, VII
+  boundaries.
 
-### Decisions this spec takes
+## Decisions
 
-Each was open. The alternative rejected is recorded so it is not re-argued.
+### Recorded 2026-10-19 (maintainer)
 
-| # | Topic | Decision | Rejected |
-|---|---|---|---|
-| K1 | Getting there | `g p` ("people") from every surface that has the other `g` destinations; **Contacts** in the folders and places popover (`g l`'s sibling, Inbox ▾); in the command bar as a command and as `@` (finding one person); Go ▸ Contacts in the Mac menu bar; `@` on a message row or in an open message jumps to **that sender's** contact | `g c`, 005's and Gmail's key: Postio's `g c` is *Next scope* (PRODUCT.md §8 records Gmail's key displaced). A sidebar entry: Focus has none |
-| K2 | Where it lives | Contacts is a **mode of the main window**, held by `postio-focus` with History entries, as 010's results view is: the list is replaced by the people list under the same toolbar and header strip. It is behind `Policy.caps.contacts_view` (true on the Mac, false on Linux until it adopts) | A window of its own: a second thing to manage beside the one list. A reading-pane takeover (005): Focus has no reading pane by default |
-| K3 | A person's page | A person opens in the **secondary window**, as a message does: `Return` opens, `j`/`k` step to the next and previous person without closing, `Esc` or ⌘W closes and returns the keyboard to the same row with the selection kept. One secondary window at a time (009 M4) | An inline detail split beside the list: Focus's "one list, nothing beside it" rule, and `F8` reading beside the list is opt-in and for mail |
-| K4 | The views | Five **tabs** in the header strip, switched with `1`–`5` as the Filtered view's reason tabs are: **1 Written to** (the default; 005 FR-005), **2 Everyone**, **3 Groups**, **4 Duplicates** (with a count), **5 Deleted** | Toggles on `v` sequences (005): `v` is Move now. A filter menu: five fixed views are better as numbered tabs, which the keyboard already knows |
-| K5 | Finding | `/` in Contacts opens **the one box in its `@` (people) mode**, pre-set and filtering this list as you type. There is no contacts filter field and no second bar | 005's `contacts_filter` field: a new bar (ux-architect §6) |
-| K6 | Editing | **Per field, in place, each commit a store write and an undo entry.** `e` puts the page's name, organisation and note and each address in editable fields; `Tab` moves between them, `Return` commits one, `Esc` reverts that field and a second `Esc` closes the page. There is no Save button and no "discard changes?" question | A form with Save/Cancel: it asks a confirmation where undo would do |
-| K7 | Joining | `m` on a selection (or on a pair in Duplicates, or on one person: "Join with…" finds the other) opens a **picker at the row** as the label and snooze pickers are: the candidate names, `1`–`4` to pick one, `Tab` to type one, `Return` to confirm, the most recently seen name preselected. A conflict of organisations is a second step of the same picker. Undo is `z` / ⌘Z, and the toast says "Joined 2 contacts" | A join dialog: a modal for something undo reverses |
-| K8 | Groups | A **Groups tab** whose rows are groups; `Return` on a group opens its members as the same list titled "Family" (Esc back to Groups). Adding people to groups is the **label picker's twin** (`l`: filter as you type, `Space` toggles, create from the typed text) | A groups sidebar: Focus has none |
-| K9 | The word | The surface and its rows are **Contacts** and **contact** (005 and PRODUCT.md use it), the action is **Join** (005's word; the palette also finds it by "merge"), the bad copy is **Possible duplicates**. A person's preferred address is "Preferred"; the app never says "starred" or "primary" for it. New vocabulary, recorded here | "People" as the surface name; "Merge" as the verb |
-| K10 | Neutral identity | A contact is drawn with **initials in a neutral circle**: no photo, no network, no hue (the accent is for markers and focus only, 009 FR-017) | A colour per person: spends the accent and invents a palette |
-| K11 | Cursor and selection | Never conflated (constitution II). `x` marks, `m` joins the *marks* (or the cursor row when nothing is marked), `#` deletes the marks or the cursor row, `c` composes to them, `l` groups them | Verbs that act only on the cursor row |
-| K12 | No confirmations | Join, detach, delete, restore, edit, group changes and import are `Recovery::Undo`. The only asked question is **Move** ("this address belongs to Grace Hopper") because it names an owner the person may not know about, and it is a popover that `Esc` cancels | A "Delete this contact?" dialog |
+| # | Decision |
+|---|---|
+| M1 | **Follow the handoff.** Its `SPEC.md` is the source of truth; where it disagrees with the first draft of this spec, it wins. |
+| M2 | **`g c` opens Contacts.** Next scope moves to another key: `g n` is proposed (free in the registry), applied when Linux adopts Contacts (Q9). |
+| M3 | The word is **Merge**, not Join; `m` merges. |
+| M4 | **Import is not undoable for now.** |
+| M5 | **Finder integration** (a `.vcf` association, dragging a contact out) **comes later.** |
+| M6 | **The duplicates count shows only inside Contacts.** |
+| M7 | **Apple Contacts and CardDAV sync is in scope as the last step.** Writes stay off until the maintainer has reviewed the dry-run output; tests use a scratch container, never the real address book; Contacts permission is asked for only when sync is turned on (this changes 009 FR-051's prompt, Q3). |
+| M8 | **Edit is the handoff's form**: Save ⌘S, Cancel Esc. It replaces per-field editing. |
+
+**M6 against the handoff's "Worth a look" line: no conflict.** The line
+(`01`, `03`, `06`, `07`) is drawn only under the Contacts strip. It summarises
+the review queue (possible duplicates, bounced addresses, frequent
+correspondents who are not saved), and the duplicates count is a part of that
+line, so it appears only inside Contacts. One clarification, recorded here:
+Review (`g w`) is reachable from every surface, but it *goes to* Contacts; it
+puts no count anywhere else. There is no dot on Inbox ▾, in the places popover
+or in the Dock. The new-sender popover (`05`) appears in the inbox but states
+one fact about one sender, not a count.
+
+### From the handoff (restated so the build can cite them)
+
+| # | Decision |
+|---|---|
+| H1 | **Postio owns its contacts**, in the store beside mail. A store with no sync account is a normal, fully working state. |
+| H2 | **Every sender and recipient gets a contact automatically** the first time they appear, so stats, the popover and per-contact settings work from day one. |
+| H3 | **Saved and not saved.** Saved when the user adds the contact (⌘↩ in the new-sender popover, New contact, or automatically when "Save people I write to, automatically" is on). **Only saved contacts sync.** An unsaved contact has a full card. |
+| H4 | **One contact, many addresses**, one **primary** (replies and new mail go to it). Mail from any address counts as that contact everywhere: list name, search, digest and filter rules, stats. |
+| H5 | **Kind**: Person, Company, List, Newsletter, Automated; detected from headers, editable, the user's choice always wins. |
+| H6 | **Groups**: named sets that work as recipients (`to:Quarry crew`) and as search filters (`from:@Finance`). |
+| H7 | **Per-contact settings**, stored once on the contact: where mail arrives (Inbox, Digest, Filtered out), notify, always show HTML as sent, remind-if-no-reply by default, archive issues after N days (newsletters), private notes with a linked note path. |
+| H8 | **Stats are local**: messages, from you, typical reply time, last message, 12 months; for newsletters issues, opened, frequency, last issue; and what is **open between you**. |
+| H9 | **Merge** keeps every address and never changes mail; undoable with ⌘Z; a merged contact can be split from its card. |
+| H10 | **Contact work happens where you meet senders**: `i` on any message opens a popover; the Contacts view is for reviewing and tidying. |
 
 ## The surface
 
-### Entry and the ladder
+Sizes are in points for a 1440×900 window and come from the handoff's
+`SPEC.md`; `source/*.dc.html` is consulted for exact values only.
+
+### D1. Entry and the ladder
 
 ```text
-Inbox ── g p ──▶ Contacts (mode) ── Return ──▶ Person window
-  ▲                │   ▲                          │
-  └── Esc ─────────┘   └──────── Esc / ⌘W ────────┘
+anywhere ── g c ──▶ Contacts (mode of the main window) ◀── g w (Review)
+ any row ── i ──▶ popover ── ⌘I ──▶ Contacts on that card
+Esc climbs one rung: popover, edit form, filter text, selection, Contacts back
+to where it was opened from (History: the inbox with its cursor and scroll).
 ```
 
-`Esc` climbs one rung per press, as 010 D18 does for results: popover or
-picker, then the box (clearing its text), then the selection, then a group
-back to the Groups tab, then Contacts back to the place it was opened from
-(History: the inbox with its cursor and scroll, a message list, a search).
+Also offered in the places popover (Inbox ▾), the command bar, and Go ▸
+Contacts in the menu bar.
 
-### The list (the main window in Contacts mode)
+### D2. The Contacts view (`01-contacts-list-and-card.png`, `02-contacts-dark.png`)
 
-Under the unified toolbar (compose on the left; sync status and the search
-field on the right, unchanged), the **header strip** reads
-`Contacts · 1,204` on the left and the tabs on the right:
+- **Toolbar** as the inbox's, with the sync status ("Synced with Contacts
+  16:09") where the inbox shows mail sync.
+- **Strip, 46**: "Contacts ▾ `g c`" and the total; kind tabs **All · People
+  · Companies · Lists and newsletters · Automated**, each with a count; on the
+  right the filter field (`/`) and **New contact ⌘⇧N**.
+- **Worth a look, 36**: "3 contacts may be the same person · 2 addresses
+  bounced recently · 5 people you write to often aren't saved" and **Review
+  `g w`**. Hidden when there is nothing to review.
+- **List, 440 wide**, windowed over the paged store, alphabetical under
+  26-tall letter headers. Rows 52 tall: avatar 32; name (semibold 13.5) with
+  an optional tag pill (`notify`, `digest weekly`, `filtered`, `always
+  original`); the primary address in SF Mono 11.5 with "+2" for the rest; on
+  the right the last message date over a count line ("431 messages", "list ·
+  112 messages", "newsletter · 48 issues", "company · 3 people · 57
+  messages"). The cursor row has the accent ring, nothing else.
+- **Avatars**: a circle with initials for people; a rounded square (radius 8
+  in the list, 14 on the card) with initials for companies, ≡ for lists, ✉ for
+  newsletters, ⚙ for automated. The colour comes from a fixed palette hashed
+  from the contact id; a photo replaces initials.
+- **Card**, padding 26/36. **Header**: avatar 64, name at 24 bold, and a role
+  line "Kind · title, company · saved, synced with Contacts (iCloud) · groups:
+  …". Buttons by kind: person or company **Write `c`** (primary), **All mail
+  `↩`**, **Edit `⌘E`**; list, newsletter or automated **All issues/messages
+  `↩`** (primary), **Unsubscribe `U`**, **Edit `⌘E`**.
+  - *Left column*: **Addresses** (★ marks the primary; each row has a note,
+    "old work · last used March 2025"; a bounced address is flagged in orange
+    with the date; below, "Also seen as …" display names). **How mail from X
+    arrives**: a segmented control Inbox / Digest / Filtered out, then
+    switches: notify; always show HTML as sent; remind if no reply by default
+    (for newsletters: the digest line "in the weekly digest, Saturday 16:00,
+    edit the rule with `d`", and archive after 30 days). **Notes**, with the
+    linked note path ("Kept on this Mac").
+  - *Right column*: **Your mail together** ("Its mail" for non-people): four
+    stat tiles, a 12-month bar strip and its axis labels; **Open between you**
+    ("Recent issues" for newsletters): rows with a kind on the left, the text,
+    and a when or state on the right; **Recent files from X** (hidden for
+    newsletters).
+- **Footer**: key hints, and on the right "1,533 contacts · 640 saved ·
+  synced with Contacts (iCloud) 16:09".
+- **Dark** (`02`): the same; switches on use a light track with a dark knob.
+- **A newsletter** (`03-newsletter-card.png`): Digest selected; the digest
+  cadence line; always show HTML as sent; archive issues after N days; stats
+  for issues, opened, frequency and last issue; Recent issues with state (in
+  digest, opened, not opened).
 
-```text
-Contacts · 1,204        1 Written to   2 Everyone   3 Groups   4 Duplicates 7   5 Deleted
-```
+### D3. The popover, known sender (`04-popover-known-sender.png`)
 
-One row per contact, **alphabetical by name**
-under single-letter headers (A, B, …) set as the day headers are, windowed
-over the paged store (never loaded whole). A row shows, left to right:
+`i` on any inbox row, search result or open message, or a click on a sender
+name, opens an `NSPopover` anchored to the name, 400 wide: avatar, name,
+address, role; three stat tiles; up to two open items; the arrival segmented
+control (a change applies at once and shows an undo toast); **All mail `↩`**
+(primary), **Write `c`**, **Open card `⌘I`**.
 
-- a checkbox in the gutter when selected (as message rows);
-- initials in a neutral circle (K10);
-- the **name** (the user's, else the most recently seen, else the preferred
-  address), with the organisation after it in the muted colour;
-- the **preferred address**, muted, and `+2` when the person has more;
-- a provenance mark for a contact the user made or imported (005 FR-005);
-- **last in touch** (relative for today and this week, absolute beyond) and
-  the number of messages, in the monospaced face.
+### D4. The popover, new sender (`05-popover-new-sender.png`)
 
-Narrow windows drop columns from the right: message count, then last in
-touch, then the address; the name never drops. The Duplicates tab's rows are
-pairs (below) and the Groups tab's rows are groups (a name and "12 people").
+Opens above the row when there is no room below. It says "Not saved yet" and
+how the sender reached the person (who is on copy, who mentioned them); **From
+the signature**: title, company, phone, website, parsed on this Mac, "Added
+only if you save"; the arrival control; **Add contact `⌘↩`**, **Not now
+`Esc`**, **Ignore sender `⌘⌫`** (never suggest this sender again).
 
-**Footer** (the action bar, as for mail selections): with marks, the count and
-the actions with their keys (`m` Join · `l` Group · `c` Compose · `#` Delete
-· ⌘⇧E Export); without, the hint line "n new contact · / find · ⌘⇧I import".
+### D5. Edit (`06-edit-contact.png`)
 
-### The person's page (the secondary window)
+`⌘E` on the card: an accent-tinted bar "Editing X · saved in Postio, then
+synced to …" with **Cancel `Esc`** and **Save `⌘S`**; a form with right-aligned
+labels in a 110 column and fields up to 560 wide: **Photo**; **Kind**
+(segmented, with the note "Detected from her mail. Only people and companies
+sync to Contacts."); **Name** (first, last); **Show as** (how the inbox
+displays the contact whatever name their mail sends: "First Last", "First",
+"Last, First"); **Work** (title, company); **Addresses** (a radio for the
+primary, the address, a type menu, remove, "+ Add address"); **Seen in mail**
+(details found in headers and signatures, each with Ignore or Add); **Groups**
+(chips and "+ Add to group"). Footer: Tab next field, ⌘S save, Esc cancel. One
+write on Save; one undo entry.
 
-Sized and placed as the message window (009 M1): `clamp(640, W − 2·max(96,
-0.18·W), 880)` wide, one centred column, `Esc` and ⌘W close. Top to bottom:
+### D6. Merge (`07-merge-duplicates.png`)
 
-1. **Header**: initials, the name large, the organisation under it, and a
-   provenance chip (`From mail`, `Made by you`, `Imported`). A *deleted*
-   contact shows a "Deleted · R restores" strip instead of the verbs.
-2. **Addresses**: one row per address, the preferred first and marked
-   `Preferred`, each with its message count and when last seen. The rows are
-   the page's cursor stops (`↓`/`↑`).
-3. **Groups**: the groups it belongs to, as chips (`l` edits).
-4. **Note**, and any vCard properties Postio does not model (phones,
-   birthday, postal address), shown read-only (005 Assumptions).
-5. **Mail**: "42 messages · last 3 days ago", and the five most recent
-   conversations as rows (`Return` on one opens it in this window, as a
-   digest's reference does; `Esc` returns).
-6. **Action row** (the message window's pattern, each with its keycap):
-   Compose `c` · Show mail `⌥↩` · Edit `e` · Add address `+` · Group `l` ·
-   Join `m` · Delete `#`.
+A sheet from the toolbar over the dimmed Contacts view, 780 wide: "These 3
+look like the same person", one card per candidate (the record whose name and
+photo are kept has the accent ring and says "Keep this name and photo"; the
+others say "Address kept"), **Why we think so** (the evidence: the same
+signature, one address replacing another in the same threads, forwarding
+headers), a preview of the result, and **Not the same `n`** (never suggest this
+pair again), **Later `Esc`**, **Merge `↩`**. Candidates come from the review
+queue, or from selecting contacts and pressing `m`. "Undo with ⌘Z. Merged
+records can be split again from the card."
 
-### Keys
+### D7. Settings › Contacts (`08-settings-sync.png`)
 
-All of Focus's bindings are Gmail's (PRODUCT.md §8); a command Gmail has no
-key for keeps its own. Two new contexts carry the Contacts keys, both
-`offered_on` Apple only until Linux adopts (010 D25): **`Contacts`** (the
-list) and **`ContactCard`** (the person's page). Movement and selection reuse
-the existing commands, which gain the contexts (cursor and selection stay
-distinct): `j`/`k`, `g g`, `G`, `x`, `J`/`K`, `X`/`* a`, `Esc`, `z`.
+An explainer; **Sync with**: "Contacts on this Mac (iCloud)" and CardDAV
+accounts, each two-way or read only, each row with matched count, items
+waiting and last synced; "+ Sync with another account (CardDAV)"; **What
+syncs**: People / People and companies (default) / Everything saved. Four
+**Suggestions** switches: save people I write to automatically (off);
+recognise lists, newsletters and automated senders (on); read signatures for
+details (on); suggest merging duplicates (on).
 
-The list and the page are context-scoped, so a letter may mean different
-things in different contexts, as the Account list already does (`c` updates a
-credential there and composes in mail; `m` sets the default account there).
-No letter below collides *within* a context; the registry's
-`bindings_do_not_collide_within_a_context` and `keybindings.md` generation
-enforce it.
+## Model rules the handoff adds to 005
 
-| Verb | Keys (Mac spelling) | Where | Recovery |
-|---|---|---|---|
-| Contacts | `g p` | every `g` destination surface | none |
-| Open contact | `Return`, `o`, `→` | list | none |
-| Next / previous contact | `j` `↓` / `k` `↑` (page: `j` / `k` only) | list, page | none |
-| Next / previous row | `↓` / `↑` | page | none |
-| Tabs | `1` `2` `3` `4` `5` | list | none |
-| New contact (in Groups: new group is `g n`) | `n`, ⌘⌥N | list, page | Undo |
-| Find | `/`, ⌘F | list | none |
-| Compose to | `c`, ⌘N | list, page | none |
-| Show mail | `⌥↩` | list, page | none |
-| Edit (a group row: rename is `E`) | `e` | list, page | Undo |
-| Join | `m` | list, page, Duplicates | Undo |
-| Delete | `#`, `⌫` | list, page | Undo |
-| Restore | `R` | Deleted tab, page | Undo |
-| Add address | `+` | page | Undo |
-| Detach address | `-` | page, on an address | Undo |
-| Preferred | `P` | page, on an address | Undo |
-| Not the same person | `-` | Duplicates | none |
-| Group… | `l` | list, page | Undo |
-| Leave this group | `L` | a group's members | Undo |
-| New group | `g n` | list | Undo |
-| Rename group | `E` | Groups | Undo |
-| Import vCard… | ⌘⇧I | Contacts | Undo |
-| Export vCard… | ⌘⇧E | Contacts | none |
-| Contact of this sender | `@` | list, conversation, reader | none |
-| Undo | `z`, ⌘Z | as for mail | none |
+- **Kind** is detected (`plan.md`, "Kind detection") and editable. A user's
+  choice survives every later detection.
+- **Saved** is a state of a contact, not of its mail. Unsaved contacts are
+  complete: stats, popover, card, settings. Saving makes a person or company
+  eligible to sync; Lists, Newsletters and Automated stay in Postio unless the
+  person picks "Everything saved".
+- **Stats** are defined once. *Messages*: mail to or from any of the
+  contact's addresses. *From you*: those the user sent. *Replies in*: the
+  median of up to the last 25 gaps between a message the user sent and the
+  contact's next message in the same conversation. *Last*: the newest message
+  either way. *The bar strip*: messages per calendar month for the last 12
+  months, this one included. Newsletters: *issues this year*; *you opened*
+  (read); *frequency* (the median gap of the last eight issues, spelled
+  "weekly on Saturdays", "monthly" or "irregular"); *last issue*.
+- **Open between you**: undismissed action markers on the contact's mail
+  (waiting on the user); sent messages with an unfired remind-if-no-reply
+  (waiting on the contact); tasks captured to the vault from their mail where
+  the store records the link (`plan.md`).
+- **Recent files**: the three newest attachments among the contact's last 50
+  messages.
+- **Show as** is a display style (full, first, last-first) or custom text; the
+  list, conversation and reader read it for every address of the contact (005
+  FR-032); the reader's header details still show the name and address the
+  mail carried.
+- **Ignore sender** keeps the contact (stats and card still work) and stops the
+  new-sender popover and the review queue suggesting it.
 
-### Collisions found and how they are resolved
+## Sync (the last slices; `contracts/contact-sync.md` has the shapes)
 
-Checked against `crates/postio-core/src/registry.rs` and
-`docs/keybindings.md` on `main` (2026-10-19). No Contacts command exists
-there yet.
+- **Targets**: Contacts on this Mac (`CNContactStore`, Swift) and CardDAV
+  accounts (Rust). Postio is always the source of truth for kind, settings,
+  notes, stats and Postio-only groups.
+- **Scope** (What syncs): People, People and companies (default), Everything
+  saved. Only *saved* contacts of those kinds are written outward.
+- **Matching**: by any shared normalised email first, then by name plus phone.
+  A match is kept as a stable link (the external identifier); an email that
+  matches more than one contact is not auto-linked and goes to the review
+  queue.
+- **Field ownership**: name, photo, addresses, phone, organisation and job
+  title sync. Everything else stays in Postio. If the external store has
+  groups, Postio groups map to them for synced contacts only.
+- **Conflicts**: both sides changed the same field since the last sync → a
+  small list in Settings, **Keep mine / Keep theirs**. Different fields merge
+  field by field, from a stored base.
+- **Deletes**: deleted in Contacts → unsaved in Postio, card and stats kept.
+  Deleted in Postio → asks whether to delete it from Contacts too.
+- **Permissions**: Contacts access is requested **only when the person turns
+  that sync on**, never at first launch.
+- **Safety**: until the maintainer has reviewed the dry-run output, the engine
+  must never delete or overwrite anything in an external store. Writes are off
+  by default and the gate is a reviewed commit (`plan.md`, S12). Tests run
+  against fake adapters and, by hand, a scratch container the maintainer names;
+  the real address book is never used. The dry-run report is shown in Settings
+  or written to a file the person asked for; **it is never a log line** (logs
+  carry ids and counts only).
 
-| Proposal | Collides with | Resolution |
-|---|---|---|
-| 005: `g c` opens Contacts | `next_scope` is `g c` (List, folder list) | Contacts is **`g p`** (K1) |
-| 005: `d` deletes | `d` is *Digest rule…* in mail | Contacts delete is **`#` / ⌫**, Gmail's delete key; the id `contact_delete` stays and is bound to `#`, `Delete` |
-| 005: `r` restores, `u` undoes | `r` is Reply; `u` is *Previous view* | Restore is **`R`** (the Filtered view's `R`, same meaning); undo is `z` / ⌘Z as everywhere |
-| 005: `X` dismisses a suggestion | `X` selects all (spec 007 C19) | Dismiss is **`-`**, the dismiss key (`dismiss_marker`) |
-| 005: `v e`, `v d`, `v s`, `v i`, `v x` | `v` is *Move to…* | No `v` sequences. Tabs are `1`–`5`; import and export are ⌘⇧I and ⌘⇧E |
-| 005: `*` sets the preferred address | `* a` is *Select all*, so `*` is a chord prefix | **`P`** |
-| 005: `Return`, `o` show mail | In Focus `Return` opens the thing | `Return` opens the contact's page; show mail is **`⌥↩`** |
-| 005: `contacts_filter` on `/` | A second bar | `/` opens the one box in `@` mode (K5) |
-| 005: `n`, `l`, `L`, `E`/`R` for groups | `n` Next in conversation; `l` Add label; `L` Digest mail like this; `E` Archive thread | All in contexts that are not those lists. Rename is **`E`** (not 005's `R`, which restore owns) |
-| ⌘N | `compose` (009 M6) | In Contacts it composes **to the contact**, through `contact_compose`; new contact is ⌘⌥N |
-| ⌘⇧I, ⌘⇧E | Registry has `ctrl+shift+…` bindings (`mod` becomes ⌘ on the Mac) that are composer-scoped | Different contexts; no collision |
-| `@` as a key | The box's `@` mode when it is empty and typing | Single keys do not fire in a text field (009 FR-032), so `@` is a command only outside the box |
+## Keys
+
+All of Focus's bindings are Gmail's (PRODUCT.md §8) and the registry is the
+truth. A new context **`Contacts`** carries the list and card; **`ContactEdit`**
+the form; **`ContactPopover`** the two popovers; **`ContactSheet`** the merge
+sheet. All are `offered_on` Apple only until Linux adopts (010 D25). Movement
+and selection reuse the existing commands, which gain the contexts: `j`/`k`,
+`g g`, `G`, `x`, `J`/`K`, `X`, `Esc`, `z`.
+
+Checked on 2026-10-19 against `crates/postio-core/src/registry.rs`,
+`docs/keybindings.md` (generated), the earlier handoff's `KEYS.md`, and the
+four keys the maintainer named: `U`, `i`, `x`, `g a`. The registry's collision
+test is platform-aware: two commands may share a key if no platform offers
+both (`tests/core_suite/command_registry.rs:232`).
+
+| Handoff key | Where | Command id | Binding here | Collision and resolution |
+|---|---|---|---|---|
+| `g c` | anywhere | `open_contacts` | `g c` | `next_scope` is `g c` (Sidebar, List, registry.rs:2097) but **not offered on Apple** (`offered_on`, registry.rs:2818), so the collision test passes. Linux keeps `g c` = next scope until it adopts, then `next_scope` moves to `g n` (M2, Q9) |
+| `g a` | anywhere | `review_contacts` | **`g w`** ("worth a look") | `g a` is **Go to archive** (Gmail's all mail) on both platforms, registry.rs:1869; the handoff predates #1834 and `KEYS.md` has the archive on `g r`. `g w` is free and mnemonic. The Review button's keycap reads `g w` |
+| `i` | List, search, message window | `contact_popover` | `i` | `i i` (Show remote images) and `i a` (Always show images) make `i` a chord prefix in List, Conversation and Reader, offered on both platforms (registry.rs:1725, 1736). Resolution (Q2): the images commands move to `alt+i` and `alt+I`, a change to two Linux bindings. Fallback: the popover on `@` |
+| `⌘I` | popover | `contact_open_card` | `mod+i` | `ctrl+i` is Italic in Composer only: another context |
+| `U` | newsletter or list card | `contact_unsubscribe` | `U` | `U` is an alternate of `toggle_read` (List, Conversation, Reader, Filtered), and Unsubscribe is **`M`** in the registry (the handoff's `KEYS.md` has `U`). A Contacts-only command bound `U` runs the same unsubscribe; `toggle_read` is not offered in Contacts, so no collision. `M` stays everywhere else |
+| `x` | Contacts | `toggle_selection` | `x` | The command gains the `Contacts` context. No collision |
+| `m` | Contacts | `contact_merge` | `m` | `m` is only `set_default_account` (Accounts context). Move is `v` in the registry (the earlier `KEYS.md` has it on `m`, stale). No collision |
+| `c` | Contacts, popover | `contact_compose` | `c`, `mod+n` | `compose` is `c` in List, Conversation, Reader; a new Contacts command composes **to the contact** |
+| `↩` | Contacts, popover | `contact_show_mail` | `Return` | `open_message` is `Return` in List and others; not in Contacts, where the card is already beside the list |
+| `⌘E` | Contacts | `contact_edit` | `mod+e` | `edit_config` is `ctrl+e` (List, Conversation, Reader); not in Contacts |
+| `⌘⇧N` | Contacts | `contact_new` | `mod+shift+n` | **`add_account` is `mod+shift+n` in every context** (`ContextSet::ANY`, registry.rs:1690-1695), so the test would fail. Resolution: narrow `add_account` to every context but `Contacts`; it stays in Settings › Accounts and the palette. Linux is unaffected: `Contacts` is not offered there |
+| `⌘S`, `Esc` | Edit | `contact_save`, `back` | `mod+s`, `Escape` | `ctrl+s` is Save search (Search) and Save draft (Composer): other contexts |
+| `⌘↩` | new-sender popover | `contact_add` | `mod+Return` | `ctrl+Return` is Send (Composer) and Add to the vault (Capture sheet): other contexts |
+| `⌘⌫` | new-sender popover | `contact_ignore` | `mod+BackSpace` | `ctrl+BackSpace` is Back to words (Search): another context |
+| `Esc`, `n`, `↩` | Merge sheet | `contact_merge_later`, `contact_not_same`, `contact_merge_confirm` | as drawn | `n` is Next in conversation (Conversation, Reader): another context |
+| `/` | Contacts | `contacts_filter` | `/`, `mod+f` | `search` is `/` in List and others; not in Contacts. The filter is a field in the strip (Q4) |
+| `d` | newsletter card | `digest_rule` | `d` | gains the `Contacts` context |
+| `⌘Z` | anywhere | `undo` | `z`, `mod+z` | gains `Contacts` and the popovers; the toast names the change |
+| `⌘H` | composer | `remind_if_no_reply` | as is | "when you write to X, turn on ⌘H" is copy; the default is the contact's setting |
+
+Not drawn by the handoff and needing a decision (Q6): **Delete** (`#`,
+`Delete`, as the registry's `delete`; 005's `d` is Digest rule), **Unsave**,
+**Split**.
 
 ## User Scenarios & Testing *(mandatory)*
 
-### User Story 1 - Open Contacts and find a person (Priority: P1)
+### User Story 1 - See who a sender is, where I meet them (Priority: P1)
 
-From the inbox the person presses `g p`. The inbox is replaced, with no
-transition, by the Contacts list, alphabetical under letter headers, showing
-people they have written to and people they have made. They press `/`, type
-"ada", the list narrows as they type, and `Return` opens the person's page
-in its own window. `Esc` closes the page onto the same row; `Esc` again
-leaves Contacts for the inbox with the cursor where it was.
+On any message row, search result or open message the person presses `i`. A
+popover anchored to the sender's name shows the avatar, name, address and
+role, three tiles (messages, how fast they reply, last), up to two open items
+and the arrival control. `↩` shows all their mail, `c` writes to them, `⌘I`
+opens the card, `Esc` closes back to the same row.
 
-**Why this priority**: The surface does not exist without it, and it is
-useful alone: it answers "who is this, and what have we said."
+**Why this priority**: This is the entry the design chose (H10), and it needs
+no Contacts view.
 
-**Independent Test**: Over the demo store, `g p`, `/ada`, `Return`; the page
-shows Ada's two addresses and their counts; `Esc` `Esc` `Esc` lands on the
-original inbox row.
-
-**Acceptance Scenarios**:
-
-1. **Given** a store with mail exchanged with ten correspondents and one
-   contact made by hand, **When** `g p` is pressed, **Then** the Written to
-   tab shows the contacts the user made and those they have sent mail to, the
-   cursor is on the first row, and no import was needed (005 FR-003).
-2. **Given** newsletters the user never answered, **When** the list is shown,
-   **Then** they are absent from tab 1, present in tab 2, and still offered
-   by composer completion (005 FR-005).
-3. **Given** `/` is pressed and "ada" typed, **When** a character is typed,
-   **Then** only contacts whose name, organisation or any address matches
-   remain, within the interaction budget, and the box shows the people mode
-   marker; `Esc` clears the text, a second `Esc` closes the box.
-4. **Given** the cursor on a message row in the inbox, **When** `@` is
-   pressed, **Then** Contacts opens on that sender's page; `Esc` returns to
-   the same message row.
-5. **Given** the main window is narrower than 1024, **When** Contacts is
-   shown, **Then** columns drop from the right and the name stays.
-6. **Given** `?` is pressed in Contacts, **Then** every Contacts command
-   appears with its binding, generated from the registry.
-
----
-
-### User Story 2 - Read a person's page and act on it (Priority: P1)
-
-On a contact the person presses `Return`. The page opens in its own window,
-centred over the list, which stays visible. It shows the addresses (the
-preferred first), groups, note, and recent mail. `c` composes to the
-preferred address, `⌥↩` shows all mail from or to any of the person's
-addresses as an ordinary editable search, `j`/`k` step to the next and
-previous contact without closing.
-
-**Why this priority**: Reading a person and writing to them is why the
-surface exists.
-
-**Independent Test**: Open a contact with two addresses; `c` opens a draft
-addressed to the preferred one; `Esc` returns to the page; `⌥↩` lands on a
-results view whose query names both addresses and finds the messages of both.
+**Independent Test**: Over the demo store, `j j i`: the popover opens on the
+focused message's sender and `Esc` returns the keyboard to that row. `i` on a
+sender with no contact yet creates one (H2) and still opens within budget.
 
 **Acceptance Scenarios**:
 
-1. **Given** a contact with three addresses, **When** the page opens,
-   **Then** each address shows with its message count and last seen, the
-   preferred one first and marked.
-2. **Given** the page is open, **When** `c` is pressed, **Then** the composer
-   replaces the window (009 M4) addressed to the preferred address, and
-   `Esc` or sending returns to the list on the same contact.
-3. **Given** the page is open, **When** `⌥↩` is pressed, **Then** the main
-   window shows a search whose visible, editable query is the one 005 FR-007
-   defines for this person, and `Esc` returns to the Contacts list.
-4. **Given** the page is open, **When** `j` is pressed, **Then** the next
-   contact in the list shows in the same window at the same size.
-5. **Given** a recent conversation row on the page, **When** `Return` is
-   pressed, **Then** the message opens in the same window and `Esc` returns
-   to the page.
-6. **Given** a contact with a vCard phone number Postio does not model,
-   **When** the page opens, **Then** it is shown read-only.
+1. **Given** a sender seen on three addresses merged into one contact, **When**
+   `i` is pressed on mail from any of them, **Then** one card opens with the
+   three counts summed.
+2. **Given** the arrival control on Digest, **When** the person picks Inbox,
+   **Then** the rule changes at once, a toast says "Mail from X arrives in
+   Inbox · Undo ⌘Z", and `z` restores Digest with its cadence.
+3. **Given** a sender that is a mailing list, **When** the popover opens,
+   **Then** the avatar, role line and actions are the list's (All messages, no
+   Write).
+4. **Given** a click on a sender name, **Then** the same popover opens.
 
 ---
 
-### User Story 3 - Create and edit a contact (Priority: P2)
+### User Story 2 - Review and tidy contacts (Priority: P1)
 
-`n` opens the page empty: name and one address. Typing the address and
-`Return` on the last field creates the contact, which is offered in the
-composer at once. `e` on an existing contact turns the page's fields
-editable; each commit is saved at once and can be undone. Editing a contact
-known only from mail makes it the user's own, keeping its history (005
-FR-022).
+`g c` opens Contacts: every sender and recipient is there, alphabetical, with
+kind tabs. Selecting a row shows its card beside the list; `j`/`k` move and the
+card follows. `↩` shows all mail with them as an ordinary results view; `c`
+writes to them. "Worth a look" says what to review; `g w` goes to it.
 
-**Why this priority**: Closes most of what an address book is for, and builds
-on Story 2.
-
-**Independent Test**: `n`, type "Grace Hopper", `Tab`, "grace@example.org",
-`Return`; compose and type "gra": Grace is offered. Rename a mail-derived
-contact and deliver another message from it: the name holds.
+**Independent Test**: `g c`, `j j`: the card names the third contact; `↩` lands
+on a results view whose query names every address of that contact; `Esc`
+returns to Contacts on the same row; `Esc` again returns to the inbox row.
 
 **Acceptance Scenarios**:
 
-1. **Given** no mail from `grace@example.org`, **When** a contact is created
-   with that address, **Then** composer completion offers it at once.
-2. **Given** a mail-derived contact, **When** its name is committed,
-   **Then** later mail with another display name does not overwrite it, and
-   the message list shows the new name (005 FR-021, FR-032).
-3. **Given** the name field holds uncommitted text, **When** `Esc` is
-   pressed, **Then** the field reverts and the page stays; the next `Esc`
-   closes it.
-4. **Given** a new, empty page, **When** `Esc` is pressed, **Then** nothing is
-   created and no question is asked.
-5. **Given** a create with no address, **When** `Return` is pressed on the
-   name, **Then** the focus moves to the address field with the hint "A
-   contact needs at least one address"; nothing is saved.
-6. **Given** any edit, **When** it is made, **Then** it is visible at once
-   and waits on no network; `z` undoes it and the toast names it.
+1. **Given** the demo store, **When** `g c` is pressed, **Then** All is
+   selected, the tabs carry counts, the cursor is on the first row and its card
+   is shown, within the interaction budget (SC-001).
+2. **Given** the Lists and newsletters tab, **Then** it lists both kinds and
+   the card's primary button reads All issues or All messages.
+3. **Given** nothing to review, **Then** the Worth a look line is absent.
+4. **Given** the filter field focused with `/` and "mir" typed, **Then** only
+   contacts whose name, organisation or any address matches remain, within
+   100 ms, and `Esc` clears the text, then leaves the field.
+5. **Given** a narrow window, **Then** the list keeps its width and the card's
+   two columns stack, the name first.
+6. **Given** a contact whose stats are not built yet (catch-up running),
+   **Then** the card shows what is known and the tiles show "—", never a
+   spinner or a blank.
 
 ---
 
-### User Story 4 - Delete, and bring back (Priority: P2)
+### User Story 3 - Settings on the contact (Priority: P2)
 
-`#` (or ⌫) on a contact, or on several marked, deletes them: they leave the
-list, the composer and the `@` finder, and do not return when the next
-newsletter arrives (005 FR-023). The pill says "Deleted Ada Lovelace · Undo
-⌘Z". Later, tab 5 shows deleted contacts; `R` brings one back whole, history
-included (005 FR-023a).
+On a card the person sets how mail from this contact arrives (Inbox, Digest,
+Filtered out) and switches notify, always-original HTML and remind-if-no-reply
+by default. Each change is one store write and one undo entry and takes effect
+for every address of the contact.
 
-**Why this priority**: Mailing-list robots are most of a mailbox's
-"contacts"; deletion is the cleaning tool.
-
-**Independent Test**: Delete a mail-derived contact, deliver mail from its
-address, confirm it is absent from tabs 1 and 2 and from completion; restore
-it from tab 5 and confirm its counts include the mail that arrived meanwhile.
+**Independent Test**: Set Digest on a two-address contact; mail from either
+address is held for the digest; `z` restores the earlier arrival.
 
 **Acceptance Scenarios**:
 
-1. **Given** three marked contacts, **When** `#` is pressed, **Then** they
-   leave the list, the cursor lands on the row after the last one, and the
-   pill reads "Deleted 3 contacts".
-2. **Given** the pill is showing, **When** `z` is pressed, **Then** all
-   three return with their addresses and details and the cursor goes to the
-   first.
-3. **Given** a deleted contact, **When** tab 5 is opened and `R` pressed,
-   **Then** it returns exactly as before, is offered in completion again,
-   and tab 5 shows its empty state when it was the last.
-4. **Given** the page of a deleted contact is open, **When** it is read,
-   **Then** it carries the "Deleted · R restores" strip and no verb other
-   than restore and compose works on it.
+1. **Given** a store migrated from one whose digest rule held `from:` one
+   address, **When** the card opens, **Then** it says Digest with that cadence
+   and mail arrives exactly as before (SC-005).
+2. **Given** remind-if-no-reply on, **When** the person writes to the contact,
+   **Then** the composer opens with the reminder preset to the stated days.
+3. **Given** Filtered out, **Then** new mail is filed in Filtered with the
+   reason the classifier gives, and `R` restores a message and never re-files
+   that contact (the existing rule).
 
 ---
 
-### User Story 5 - Join the same person's addresses (Priority: P1)
+### User Story 4 - Edit a contact (Priority: P2)
 
-The person sees "Ada Lovelace" twice. They mark both with `x`, press `m`,
-and a picker at the row offers the names the addresses were seen with, the
-most recent preselected; `Return` confirms. One contact remains holding both
-addresses, the history of both, and every group and note (005 FR-012,
-FR-013). `z` undoes it exactly. Alternatively the Duplicates tab shows the
-pair with its evidence; `m` then `Return` joins it, and `-` says they are
-not the same person.
-
-**Why this priority**: This is what the original request asked for by name.
-
-**Independent Test**: With mail from `ada@example.com` and `ada@example.org`
-both seen as "Ada Lovelace", the Duplicates tab shows the pair with "same
-name · 14 and 3 messages"; `m` `Return` joins them in two keys; the list
-shows one row; `z` restores two.
+`⌘E` turns the card into the form of `06-edit-contact.png`. Tab moves between
+fields, `⌘S` saves, `Esc` cancels. Saving is one write and one undo entry.
+Editing a mail-derived contact keeps its history.
 
 **Acceptance Scenarios**:
 
-1. **Given** two marked contacts, **When** `m` is pressed, **Then** a picker
-   opens at the cursor row listing the candidate names with `1`–`4`, the most
-   recent preselected, `Tab` for a typed name.
-2. **Given** the picker, **When** `Return` is pressed, **Then** the join
-   happens at once, the list redraws with one row, the cursor is on the
-   joined contact, and the pill says "Joined 2 contacts · Undo ⌘Z".
-3. **Given** joined contacts with different organisations, **When** the name
-   is confirmed, **Then** a second step of the same picker asks which
-   organisation to keep; nothing the user entered is discarded without that
-   choice (005 FR-013).
-4. **Given** a single contact with no marks, **When** `m` is pressed,
-   **Then** a finder at the row lists other contacts as the box's people mode
-   does; choosing one continues as above.
-5. **Given** the Duplicates tab, **When** `-` is pressed on a pair, **Then**
-   it leaves the tab, is never offered again (005 FR-019), and the tab's
-   count drops; there is no undo and no confirmation, since it hides a hint,
-   not data.
-6. **Given** the Duplicates tab, **When** the person does nothing, **Then**
-   nothing is joined (005 FR-018).
-7. **Given** a joined contact, **When** new mail arrives from either of its
-   addresses, **Then** it counts toward that contact and no new one appears
-   (005 FR-017).
+1. **Given** a changed name and primary address, **When** `⌘S` is pressed,
+   **Then** the list row, the card and the inbox's sender name show the new
+   name and replies go to the new primary.
+2. **Given** edits made, **When** `Esc` is pressed, **Then** the footer says
+   "Esc again to discard" and a second `Esc` discards (Q10).
+3. **Given** a kind chosen by the person, **When** later mail looks like a
+   newsletter, **Then** the kind does not change.
+4. **Given** a display name under Seen in mail, **When** Ignore is pressed,
+   **Then** it is not offered again for this contact.
+5. **Given** a write fails, **Then** the form stays open with its values and a
+   one-line "Couldn't save. Nothing changed. <reason>".
 
 ---
 
-### User Story 6 - Several addresses, one preferred (Priority: P2)
+### User Story 5 - Save a new sender from their first mail (Priority: P2)
 
-On a person's page `+` adds an address by typing it. If it belongs to someone
-else, a popover names them and offers "Move it here" (`Return`) or leaves it
-(`Esc`). `-` detaches the address under the cursor into a contact of its own;
-`P` makes it the preferred one, which composition and completion offer first.
-
-**Why this priority**: The rest of "one person, many addresses" (005 FR-014
-to FR-016).
-
-**Independent Test**: Add `ada@example.net` to Ada; press `P` on it; `c`
-composes to it. Add `grace@example.org` (owned by Grace) and see the popover
-name Grace.
+On the first mail from someone, `i` shows "Not saved yet", the signature
+details found on this Mac, the arrival control and **Add contact `⌘↩`**. The
+details are added only if the person saves.
 
 **Acceptance Scenarios**:
 
-1. **Given** a person with three addresses, **When** `-` is pressed on one,
-   **Then** it becomes a contact of its own with its history, and the page
-   keeps two.
-2. **Given** a person with one address, **When** `-` is pressed on it,
-   **Then** it is refused with "A contact needs at least one address · # to
-   delete the contact".
-3. **Given** an address owned elsewhere, **When** it is added, **Then** the
-   popover reads "<address> belongs to Grace Hopper · Return moves it here ·
-   Esc leaves it" and nothing else changes until the person chooses.
-4. **Given** a suppressed address, **When** it is added or a contact is
-   created with it, **Then** it is offered again and its earlier history is
-   kept (005 FR-024).
+1. **Given** a signature with a title, company and phone, **When** the popover
+   opens, **Then** they are listed under "From the signature" and none is
+   stored until `⌘↩`.
+2. **Given** Ignore sender `⌘⌫`, **Then** the popover and the review queue
+   never suggest this sender again and the card still works.
+3. **Given** "Read signatures for details" off, **Then** the section is absent.
+4. **Given** a message near the window's foot, **Then** the popover opens above
+   the row.
 
 ---
 
-### User Story 7 - Groups (Priority: P3)
+### User Story 6 - Merge the same person's addresses (Priority: P1)
 
-`l` on a contact (or marks) opens a picker with the existing groups: type to
-filter, `Space` toggles membership, typing a name that does not exist offers
-"Create group Family" (`Return`). Tab 3 lists groups; `Return` on one shows
-its members, `E` renames it, `#` deletes it (undoable), and `L` in the
-members view takes the contact out. `c` on a group row composes to its
-members' preferred addresses; `group:family` finds their mail (005 FR-040
-to FR-042).
+The person sees one human three times. They press `g w`, or select two and
+press `m`; the sheet shows the candidates, why Postio thinks so, and the
+result. `↩` merges; `n` says they are not the same; `Esc` is later. One contact
+remains with every address, all history, every group and note; `z` undoes it;
+the card can split an address off again.
 
-**Why this priority**: The store and the query language have groups; this
-gives them a place.
-
-**Independent Test**: Create "Family" from the picker on two marked contacts,
-open tab 3, open the group, compose to it and see both preferred addresses.
+**Independent Test**: With three address contacts that share a signature, the
+sheet lists the three and the evidence; `↩` leaves one row; `z` restores three.
 
 **Acceptance Scenarios**:
 
-1. **Given** two marked contacts, **When** `l`, "Family", `Return` are
-   pressed, **Then** the group exists with both as members and the pill says
-   "Added 2 contacts to Family".
-2. **Given** tab 3, **When** `Return` is pressed on a group, **Then** the
-   members show under the title "Family", `Esc` returns to tab 3 with the
-   cursor on the group.
-3. **Given** a group with a member of two addresses, **When** `c` is pressed
-   on the group, **Then** the draft is addressed to that member's preferred
-   address (005 FR-041).
-4. **Given** a group is deleted, **When** `z` is pressed, **Then** it returns
-   with its members.
+1. **Given** candidates with different names, **Then** the one with the most
+   mail is the default kept record and the person can pick another (the ring
+   moves).
+2. **Given** contacts with different arrival settings, **When** they merge,
+   **Then** the kept record's settings win and the preview names what changes
+   (Q8).
+3. **Given** `n`, **Then** the pair never returns; there is no undo and no
+   question, since it hides a hint, not data.
+4. **Given** "Suggest merging duplicates" off, **Then** no candidate is
+   proposed, and `m` on a selection still works.
+5. **Given** new mail from any merged address, **Then** it counts toward the
+   contact.
+6. **Given** a merge, **Then** no message, label or digest hold changes.
 
 ---
 
-### User Story 8 - Import and export vCard (Priority: P4)
+### User Story 7 - Contacts everywhere else (Priority: P3)
 
-⌘⇧I opens the system open panel for `.vcf` files (several may be chosen), or
-the person drops a `.vcf` on the window. A summary sheet says what happened:
-"Imported 41 contacts and 2 groups. Joined 3 into people you already had.
-Skipped 2 cards that could not be read." ⌘⇧E opens the save panel: it
-exports the marked contacts, or with none the contacts the tab and filter
-currently show; deleted contacts are never exported (005 FR-050).
-
-**Why this priority**: Real, independent of the rest, and the bridge from the
-macOS Contacts app (which Postio otherwise never reads for its address book).
-
-**Independent Test**: Import a fixture 3.0 file with a two-address card, a
-phone number and a vendor property, and a group card; export; every
-unmodelled property is reproduced as 005 FR-051 says.
+Recipient completion shows a contact once, with its addresses, the primary
+first. A name the person set reads in the list, conversation and reader for
+every address. `to:Quarry crew` expands to a group's primary addresses; `from:`
+and All mail find mail from every address (005 SC-003).
 
 **Acceptance Scenarios**:
 
-1. **Given** the open panel, **When** two files are chosen, **Then** both are
-   imported in one summary.
-2. **Given** a card whose address already belongs to a contact, **When** it is
-   imported, **Then** they become one contact and the summary lists the join
-   (005 FR-053).
-3. **Given** an unreadable file, **When** it is chosen, **Then** the sheet
-   says "<name> is not a vCard file" and nothing is imported.
-4. **Given** the Written to tab filtered by "ada", **When** export is run
-   with no marks, **Then** the file holds exactly the contacts shown.
-5. **Given** the save panel is cancelled, **Then** nothing is written and no
-   message appears.
-6. **Given** a `.vcf` dropped on the main window outside Contacts, **Then**
-   Contacts opens and the import runs as ⌘⇧I would.
+1. **Given** a merged contact, **When** "mir" is typed in To, **Then** one
+   entry shows with its addresses.
+2. **Given** All mail on a contact, **Then** the results view's visible query
+   names every address and finds the messages of all.
+3. **Given** `from:@Finance`, **Then** mail from every member of the group.
 
 ---
 
-### User Story 9 - Contacts everywhere else (Priority: P3)
+### User Story 8 - Sync with Contacts or CardDAV (Priority: P3, last)
 
-Recipient completion shows a contact **once**, under one name, with each of
-its addresses beneath the name and the preferred first, ranked above people
-known only from mail (005 FR-030), merged with macOS Contacts suggestions
-(009 FR-051) by address with Postio's contact winning. A name the user set
-reads in the message list, the conversation and the reader in place of the
-header's display name (005 FR-032), and `@` in the box finds a contact by any
-address.
-
-**Why this priority**: What makes the address book a part of mail rather than
-a screen beside it. Mostly the 005 port; this story is that the Mac's
-surfaces show it.
-
-**Independent Test**: With "Ada Lovelace" joined across two addresses, type
-"ada" in the composer's To field and see one entry with two addresses; the
-list rows from either address read "Ada Lovelace".
+In Settings › Contacts the person turns on "Contacts on this Mac". macOS asks
+for access then, not before. The first run is **read only** and shows the
+dry-run report: matches, what would be created, what would change. Writes stay
+off until the maintainer has reviewed the output (the gate is code, S12).
 
 **Acceptance Scenarios**:
 
-1. **Given** a joined contact and an identical address in macOS Contacts,
-   **When** "ada" is typed, **Then** one entry shows, with Postio's name.
-2. **Given** macOS Contacts permission was refused, **When** the composer
-   completes, **Then** Postio's contacts still complete and no prompt
-   reappears (009 edge case).
-3. **Given** the name was set, **When** the inbox list is shown, **Then**
-   rows from every address of that contact read the set name, and the reader's
-   header details still show the name and address as the mail carried them.
+1. **Given** sync is off, **Then** no Contacts permission prompt has ever been
+   shown by Postio.
+2. **Given** a saved person whose address matches a record, **Then** a link is
+   made, their title and phone fill in, and nothing is written back in read
+   only.
+3. **Given** both sides changed a phone, **Then** a conflict row offers Keep
+   mine / Keep theirs and nothing is overwritten meanwhile.
+4. **Given** a record deleted in Contacts, **Then** the contact is unsaved and
+   keeps its card and stats.
+5. **Given** a synced contact deleted in Postio, **Then** a question asks
+   whether to delete it from Contacts too.
+6. **Given** Lists and newsletters, **Then** they never sync under "People and
+   companies".
 
 ---
 
-### Edge Cases
+### User Story 9 - Import and export vCard (Priority: P4)
 
-- **Empty, never blank.** Each tab owns an empty state, with a key:
-  - *Written to*, nothing yet: "No one yet. People you write to, and people
-    you add, appear here. 1,204 people are known from mail: press 2. `n` adds
-    someone · ⌘⇧I imports." (the count is real; when it is 0 the sentence
-    drops).
-  - *Everyone*, before the first sync: "Nothing synced yet. People appear as
-    mail arrives." with the sync strip (009 FR-016) beneath the header.
-  - *Duplicates*: "No possible duplicates."
-  - *Groups*: "No groups yet. `l` on a contact makes one."
-  - *Deleted*: "Nothing deleted. `#` on a contact moves it here."
-  - *A filter with no match*: "No one matches 'xyz'. `Esc` clears the filter
-    · `n` adds 'xyz'" (the typed text pre-fills a new contact's name or
-    address).
-- **Loading.** Local reads are instant; there is no spinner. A list that is
-  still paging shows what has landed (the list never waits).
-- **Offline, failing, first sync.** Contacts reads and writes the local store
-  and works with the network absent; the sync strip and the toolbar label
-  tell the sync state as on every surface. A person added offline needs no
-  queue: there is no remote half (005, CardDAV out of scope).
-- **A write fails** (the store is locked or full): the field or verb reverts,
-  the pill reads "Couldn't save. Nothing changed. <reason>"; the controller
-  keeps the intent, so pressing the same key again retries it.
-- **An import that fails midway** (disk, an unreadable file): the sheet names
-  how many cards were read and applied, and the import is one undo entry, so
-  `z` removes what it applied (Q3).
-- **Mixed ownership.** Deleting a contact made of mail-derived and
-  user-made addresses hides it whole (005); the page of a deleted contact is
-  read-only except restore.
+Kept from the first draft because 005's backend has it and the handoff is
+silent: File ▸ Import vCard… and Export vCard… (system panels, `.vcf`), a
+summary sheet, **not undoable** (M4). The Finder association and drag-out are
+later (M5).
+
+## Edge Cases
+
+- **Empty, never blank.** No contacts yet: "Contacts appear as mail arrives."
+  A filter with no match: "No one matches 'xyz'. `Esc` clears the filter." A
+  kind tab with none: "No lists or newsletters yet." Each with its key.
+- **Catch-up running.** After the upgrade the store builds contacts in the
+  background. The list shows what has landed and `i` on a sender without a
+  contact creates it on the spot. The footer says "Building contacts, n of m"
+  until done. It never blocks startup (< 500 ms).
+- **Offline, failing, first sync.** Everything but sync is local and works
+  offline; sync shows its own state in Settings and the toolbar label.
+- **A write fails** (store locked or full): the visible change reverts, a
+  one-line refusal, the intent kept so the same key retries.
 - **Forged display names.** A name header never turns an unowned address into
-  a contact (005 edge case); the list shows only owned addresses.
-- **The user's own addresses** never appear as contacts (005).
-- **A very large store.** 20,000 contacts: the list opens, scrolls and
-  filters within the budgets and is never loaded whole.
-- **Two windows.** If a message window is open, `g p` is not reachable from
-  it (as `g` destinations are not); in the main window, opening a person's
-  page closes the message window (009 M4) and reports it closed.
-- **Reduced motion.** There are no transitions to reduce: mode and tab
-  changes are immediate. The pill fades as it does elsewhere and honours the
-  setting (009).
-- **Input method composing.** No key is taken as a command (009 edge case).
-- **Rebinding.** Every key here is overridable under `[keys]` by command id;
-  a key rebound to one a Mac system shortcut owns is reported and the default
-  kept (009).
-- **Full keyboard access and VoiceOver.** A row is read as "Ada Lovelace,
-  Lovelace Analytics, 3 addresses, last in touch 3 days ago, 42 messages,
-  marked"; every verb is a menu item and a palette entry, and reachable
-  without a pointer (SC-008).
-- **Mouse.** A click moves the cursor, a double-click opens, ⌘-click toggles
-  a mark, ⇧-click ranges, right-click shows the row menu generated from the
-  registry; dragging a contact onto a group in tab 3 adds it. Dragging never
-  joins (K7: a join always names its result).
+  a contact (005); the user's own addresses never appear as contacts.
+- **Recipients.** Contacts are made from recipients too (H2); someone who never
+  writes back is a contact with "from you" above zero and no reply time.
+- **A very large store.** 20,000 contacts: the list opens, scrolls and filters
+  within budget and is never loaded whole; the card opens in under 50 ms.
+- **Privacy.** No network: no avatar, no favicon, no directory lookup. A photo
+  is a local file or comes from sync. Signature reading runs on this Mac and
+  keeps nothing until the person saves.
+- **Reduced motion.** No transitions to reduce; the toast fades as elsewhere
+  and honours the setting.
+- **VoiceOver and full keyboard access.** A row reads "Mira Okafor, person,
+  mira@example.org plus 2, 431 messages, last today, notify"; every verb is a
+  menu item and a palette entry.
+- **Rebinding.** Every key is overridable by command id.
+- **Two windows.** Opening Contacts or a popover closes a message window
+  (009 M4) and reports it closed.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
-**Getting there and getting back**
+**Engine**
 
-- **FR-001**: `g p` MUST open Contacts from every surface that offers the
-  other `g` destinations; Contacts MUST also be offered in the places
-  popover, the command bar, Go ▸ Contacts in the menu bar, and `@` on a
-  message row or open message (the sender's page).
-- **FR-002**: Contacts MUST be a mode of the main window held by the shared
-  controller, behind `Policy.caps.contacts_view` (true on the Mac). Entering
-  and leaving MUST add a History entry; leaving MUST return to the place
-  entered from with its cursor, selection and scroll.
-- **FR-003**: `Esc` MUST climb one rung per press: picker or popover, box
-  text, selection, a group's members, Contacts.
-- **FR-004**: A person's page MUST open in the secondary window (one at a
-  time, 009 M4), centred over the main window, with the list visible and not
-  dimmed; `Esc` and ⌘W MUST close it and return the keyboard to the same row
-  with the selection kept.
+- **FR-001**: Every address that appears as sender or recipient on a message
+  MUST belong to a contact (H2), created on first sight and, for any address the
+  catch-up has not reached, on demand.
+- **FR-002**: A contact MUST have a kind, a saved state and a primary address;
+  kind MUST be detected from headers by one pure function and MUST NOT override
+  a kind the user chose.
+- **FR-003**: Per-contact settings MUST apply to every address of the contact
+  and MUST behave exactly as the per-sender settings they replace (SC-005).
+- **FR-004**: Stats MUST be answered from maintained columns and bound index
+  ranges, never a scan of a contact's mail, and the card MUST open in under
+  50 ms (SC-002).
+- **FR-005**: Merge MUST keep every address, change no mail, and be undone
+  exactly; Split MUST return an address with its history (005 FR-012, FR-014).
+- **FR-006**: No engine change may stop the GTK app building or change what
+  Linux shows without the maintainer being told before merge (`plan.md`,
+  "Linux").
 
-**The list**
+**Surface**
 
-- **FR-010**: The list MUST be windowed over the paged store and MUST never
-  load every contact; alphabetical by displayed name under letter headers.
-- **FR-011**: Tabs `1` to `5` MUST switch Written to, Everyone, Groups,
-  Duplicates and Deleted, without animation, keeping each tab's cursor. The
-  default MUST be Written to (005 FR-005). Duplicates MUST show a count.
-- **FR-012**: A row MUST show initials in a neutral circle, the name, the
-  organisation, the preferred address with `+n`, provenance, last in touch and
-  message count, and MUST drop columns from the right before the name.
-- **FR-013**: `/` MUST open the one box in its people mode, filtering the
-  current tab by name, organisation and every address as the person types
-  (005 FR-004). No other filter field may exist.
-- **FR-014**: Cursor and selection MUST be separate; `x`, `J`, `K`, `X` and
-  `* a` MUST work as in mail; every verb acts on the marks when there are
-  any, otherwise on the cursor row.
-- **FR-015**: With marks, the footer MUST show the count and the actions with
-  their keycaps; without, a one-line hint.
-
-**The page**
-
-- **FR-020**: The page MUST show what 005 FR-006 lists, in the order of the
-  surface section, with vCard properties Postio does not model shown
-  read-only.
-- **FR-021**: `j`/`k` MUST step to the next and previous contact in the list
-  without closing or resizing the window; `↓`/`↑` MUST move among the
-  page's rows.
-- **FR-022**: A recent conversation row MUST open in the page's own window
-  and `Esc` MUST return to the page.
-- **FR-023**: Compose MUST open a draft addressed to the preferred address
-  (the marked contacts' for several; a group's members' for a group), in the
-  composer's place (009 M4). Show mail MUST open a results view for the
-  query 005 FR-007 specifies, visible and editable in the box.
-
-**Create, edit, delete, restore**
-
-- **FR-030**: `n` MUST open an empty page that creates the contact when a
-  name or address and at least one address are committed (005 FR-020);
-  `Esc` MUST cancel an unsaved page without a question.
-- **FR-031**: `e` MUST make the page's fields editable; each commit MUST be
-  one store write and one undo entry; `Esc` MUST revert the field being
-  edited and a second `Esc` close the page; single-letter keys MUST NOT fire
-  while a field has the keyboard (009 FR-032).
-- **FR-032**: Delete (`#`, `Delete`, ⌫) MUST delete the marks or the cursor
-  row, and a group row's delete MUST delete the group; both are
-  `Recovery::Undo`. The cursor MUST land on the row after the last deleted,
-  and return on undo to the first restored.
-- **FR-033**: `R` MUST restore a deleted contact whole (005 FR-023a); a
-  deleted contact's page MUST show the restore strip.
-- **FR-034**: Every verb MUST take effect locally and visibly without
-  waiting on the network and MUST name itself in the pill and in Edit ▸ Undo.
-
-**Joining, addresses, groups**
-
-- **FR-040**: `m` MUST open a picker at the row that names the joined
-  contact (the user-set and seen names, the most recent preselected, a typed
-  one allowed), then, only on a conflict, asks which organisation to keep
-  (005 FR-013). Nothing is joined until the picker is confirmed.
-- **FR-041**: `m` on a single contact MUST offer a finder for the other; `m`
-  in Duplicates MUST act on the pair under the cursor.
-- **FR-042**: The Duplicates tab MUST show each pair with the evidence (the
-  shared name and each address's message count); `-` MUST dismiss a pair for
-  good (005 FR-019); the app MUST NOT join without the person's action
+- **FR-010**: `g c` MUST open Contacts from every surface that offers the other
+  `g` destinations; Contacts MUST be a mode of the main window held by the
+  shared controller, behind `Policy.caps.contacts_view`, with History entries
+  and return to the place entered from.
+- **FR-011**: The list MUST be windowed over the paged store, alphabetical
+  under letter headers, with the kind tabs and counts of D2; the card MUST
+  follow the cursor.
+- **FR-012**: `i` MUST open the contact popover for the focused message's
+  sender from the list, search results and the message window; a click on a
+  sender name MUST do the same.
+- **FR-013**: The arrival control MUST apply at once and be undoable.
+- **FR-014**: `⌘E` MUST open the form; Save MUST be one write and one undo
+  entry; Cancel MUST discard.
+- **FR-015**: The Merge sheet MUST show the evidence and the result before
+  anything is merged, and the app MUST NOT merge without the person's action
   (005 FR-018).
-- **FR-043**: `+` MUST add an address; an address owned by another contact
-  MUST be answered with a popover naming the owner and offering to move it
-  (005 FR-015); `-` on an address MUST detach it (refused for the last, 005
-  FR-014); `P` MUST set it preferred (005 FR-016).
-- **FR-044**: `l` MUST open a group picker (filter as you type, `Space`
-  toggles, a typed name offers "Create group"); the Groups tab MUST list
-  groups with member counts, `Return` open one, `E` rename, `#` delete, `L`
-  remove a member (005 FR-040).
+- **FR-016**: Worth a look MUST show only inside Contacts and only when there
+  is something to review; the duplicates count MUST appear nowhere else (M6).
+- **FR-017**: Cursor and selection MUST be separate; every verb acts on the
+  marks when there are any, otherwise on the cursor row.
+- **FR-018**: Every command MUST be in the registry with a binding, a palette
+  entry and an accessible action, offered on Apple only until Linux adopts;
+  `docs/keybindings.md` MUST regenerate with no Linux row changed except where
+  the Keys table says so.
+- **FR-019**: Words MUST come from `postio-ui`, not Swift literals.
 
-**Import and export**
+**Sync**
 
-- **FR-050**: ⌘⇧I MUST present the system open panel for `.vcf` files (one or
-  more) and a drop of `.vcf` files on the main window MUST do the same;
-  nothing is read until the person chooses a file.
-- **FR-051**: Import MUST end with a summary sheet stating contacts and
-  groups made, joins to existing contacts (each listed, 005 FR-053), and
-  cards skipped with the reason (005 FR-054). It MUST be dismissable with
-  `Esc` or `Return`.
-- **FR-052**: ⌘⇧E MUST present the save panel and export the marked
-  contacts or, with none, exactly the contacts the tab and filter show,
-  never deleted ones (005 FR-050, FR-051).
-- **FR-053**: The vCard mapping and fidelity MUST be 005's
-  (`contracts/vcard.md`); this spec adds no vCard rule.
-
-**Command table and discovery**
-
-- **FR-060**: Every command MUST be in the registry with a binding, a
-  palette entry and an accessible action, derived from the one table; the
-  menu bar's Contacts items, the `?` key map, the row menu and the keycaps
-  MUST come from it (constitution II). `docs/keybindings.md` MUST regenerate.
-- **FR-061**: The Contacts commands MUST be offered on Apple only until
-  Linux adopts (`registry::offered_on`), so GTK's keymap and
-  `keybindings.md` Linux rows do not change.
-- **FR-062**: `contacts_import` and `contacts_export` MUST be on the
-  frontend-presented list (`Intercepted` on both sides of the boundary,
-  `macos/CLAUDE.md`) because a panel is toolkit-only.
-- **FR-063**: Words MUST come from `postio-ui`, not Swift literals; the
-  vocabulary decisions K9 apply.
-
-**Where contacts reach the rest of Postio**
-
-- **FR-070**: Recipient completion MUST show a contact once with each
-  address and the preferred first, ranked above mail-only people (005
-  FR-030), merged with macOS Contacts suggestions by address with Postio's
-  contact winning, and MUST fall back to Postio's contacts alone when the
-  system permission is refused or revoked.
-- **FR-071**: The `@` mode of the box MUST find a contact by name or any
-  address (005 FR-031).
-- **FR-072**: A name the user set MUST read in the Focus list, conversation
-  and reader for every address of the contact (005 FR-032), and the reader's
-  header details MUST show the mail's own name and address.
-
-**Privacy, speed, accessibility**
-
-- **FR-080**: Contacts MUST make no network request: no avatar, favicon or
-  directory lookup (005 FR-060). Nothing MUST read the macOS Contacts store
-  for the address book; only completion does, as 009 FR-051 has it. A file is
-  read or written only after the person chose it in a panel or dropped it.
-- **FR-081**: Logs MUST carry ids, counts and outcomes, never a name,
-  address or note (005 FR-061).
-- **FR-082**: The list MUST open and scroll, and the filter MUST answer,
-  within the budgets of the constitution (Success Criteria), gated as counts
-  with `postio_storage::test_support::counting`.
-- **FR-083**: Every verb MUST be completable without a pointer, and the list,
-  page and sheet MUST be labelled for VoiceOver and honour full keyboard
-  access and reduced motion.
-- **FR-084**: Rows and states MUST use the system semantic colours; the
-  accent MUST appear only on the focus ring and the Duplicates count marker
-  (009 FR-017).
+- **FR-030**: No Contacts permission request, no `CNContactStore` read and no
+  sync network request MAY happen before the person turns a sync on (this
+  supersedes 009 FR-051's per-keystroke prompt, Q3).
+- **FR-031**: Writes to an external store MUST be impossible until the
+  reviewed gate is lifted; the dry-run plan MUST be producible and MUST list
+  every create, update and delete it would make.
+- **FR-032**: A conflict MUST never be resolved silently; a delete in either
+  store MUST follow the rules above.
+- **FR-033**: The dry-run report MUST NOT be written to a log.
 
 **Verification**
 
-- **FR-090**: Every rule above MUST be tested in the shared layer first
-  (`postio-focus`, `postio-ui`), the FFI exports in `ffi_suite`, and the Swift
-  view models and keyboard paths without a window (009 FR-062).
-- **FR-091**: Each interaction MUST be written as a storyboard in
-  `storyboards/contacts/`, red on the base, before it is built (CLAUDE.md,
-  009 FR-063). The Mac runner is out of scope; a Mac landing that changes an
-  interaction is labelled `interactions-unreviewed` until Linux adopts and
-  films them.
-- **FR-092**: A screen MUST NOT be called done until it has been captured at
-  1440×900 in light and dark and reviewed (Q1 says against what).
-
-### Key Entities
-
-- **Contacts mode**: the main window showing the people list. Holds the tab,
-  the box text, the cursor, the selection and, in Groups, the open group.
-- **Person's page**: the secondary window showing one contact; holds which
-  field is being edited and the row cursor.
-- **Contact, address, group, suggestion**: 005's entities, unchanged.
-- **Pickers**: the join name, the organisation conflict, the group toggle
-  and the move question, all the pickers pattern.
-- **Import summary**: counts, joins and skipped cards, kept until dismissed.
+- **FR-040**: Every rule MUST be tested in the shared layer first, the FFI
+  exports in `ffi_suite`, and the Swift view models and keyboard paths without
+  a window.
+- **FR-041**: Each interaction MUST be written as a storyboard in
+  `storyboards/contacts/`, red on the base, before it is built; Mac landings
+  are labelled `interactions-unreviewed` until Linux films them.
+- **FR-042**: Each screen MUST be captured at 1440×900 (light and dark for 01
+  and 02), compared with its PNG, and every difference listed with its reason
+  in `specs/011-focus-contacts/screens.md`.
+- **FR-043**: Fixtures use reserved domains and invented names.
 
 ## Success Criteria *(mandatory)*
 
-### Measurable Outcomes
-
-- **SC-001**: On a store with 20,000 contacts, `g p` shows the first rows
-  within the interaction budget, and every key press, tab change, scroll
-  step and keystroke of the filter is answered within 16 ms, gated as
-  statement and row counts.
-- **SC-002**: The filter answers within 100 ms on the same store.
-- **SC-003**: A person can join the pair in Duplicates in two key presses
-  (`m`, `Return`), join two named contacts in five (`x`, `j`, `x`, `m`,
-  `Return`), and undo in one.
-- **SC-004**: A person with several addresses appears once in the list, in
-  completion and in the `@` finder, and "show mail" returns every message
-  involving any of their addresses (005 SC-003).
-- **SC-005**: Every Contacts verb is completable without a pointer and every
-  one appears in the key map, the palette and the menu bar.
-- **SC-006**: A deleted mail-derived contact stays absent after any number of
-  further messages, and `R` brings it back with the history gathered while
-  deleted (005 SC-005).
-- **SC-007**: A vCard imported and exported reproduces what 005 SC-006
-  requires.
-- **SC-008**: Contacts produces no network traffic and reads the macOS
-  Contacts store only for completion.
-- **SC-009**: Every tab has an empty state with a key, and no state is a
-  blank frame or a bare "something went wrong".
-- **SC-010**: `bindings_do_not_collide_within_a_context` and the generated
-  `keybindings.md` pass with the Contacts commands, and the Linux rows of
-  `keybindings.md` are unchanged by this feature's Mac slices.
+- **SC-001**: `g c` shows the first rows and a card within 16 ms on 20,000
+  contacts, and every key, tab change and filter keystroke answers within
+  16 ms, gated as counts; the filter within 100 ms.
+- **SC-002**: The card (stats, open items, files) opens in under 50 ms, gated
+  as a statement and row count with a plan assertion naming the bound columns
+  (ADR 0040).
+- **SC-003**: Kind detection over the sample-header corpus agrees with the
+  labelled expectation on at least 95% of senders and never marks a person's
+  correspondence Automated (precision before recall).
+- **SC-004**: A merge is one key from the sheet (`↩`) and `z` undoes it in one.
+- **SC-005**: A store migrated from before this feature delivers mail exactly
+  as before: the same messages in the same digests, the same filtered mail, the
+  same pinned senders and the same HTML treatments, proven by a before-and-after
+  fixture.
+- **SC-006**: No Contacts permission prompt and no sync network request before
+  sync is turned on.
+- **SC-007**: In a sync dry run no external record is created, changed or
+  deleted; with writes off the adapter's write methods are unreachable.
+- **SC-008**: The generated `keybindings.md` passes
+  `bindings_do_not_collide_within_a_context` with the new contexts, and only
+  the rows the Keys table names change on Linux.
 
 ## Command table
 
-005's ids stay. This table lists each id, its binding here (replacing 005's
-proposal where they differ), and what is new. All are `offered_on` Apple
-until Linux adopts (FR-061).
+005's ids stay. All are `offered_on` Apple until Linux adopts.
 
-| id | Title | Binding | Contexts | Recovery | vs 005 |
+| id | Title | Binding | Contexts | Recovery | vs the first draft |
 |---|---|---|---|---|---|
-| `open_contacts` | Contacts | `g p` | the `g` surfaces | None | was `g c` |
-| `contact_open` | Open contact | `Return`, `o`, `Right` | Contacts | None | new |
-| `next_contact`, `prev_contact` | Next / previous contact | `j` `Down` / `k` `Up` | Contacts, ContactCard | None | new |
-| `card_next_row`, `card_prev_row` | Next / previous row | `Down` / `Up` | ContactCard | None | new |
-| `contacts_written_to` | Written to | `1` | Contacts | None | new |
-| `contacts_toggle_everyone` | Everyone | `2` | Contacts | None | was `v e` |
-| `contacts_groups` | Groups | `3` | Contacts | None | new |
-| `contacts_suggestions` | Possible duplicates | `4` | Contacts | None | was `v s` |
-| `contacts_toggle_deleted` | Deleted | `5` | Contacts | None | was `v d` |
-| `contacts_filter` | Find contact | `/`, `mod+f` | Contacts | None | opens the box in people mode |
-| `contact_new` | New contact | `n`, `mod+alt+n` | Contacts, ContactCard | Undo | same |
-| `contact_edit` | Edit | `e` | Contacts, ContactCard | Undo | was `e`, now also a group's rename-on-Return |
-| `contact_delete` | Delete | `#`, `Delete` | Contacts, ContactCard | Undo | was `d` |
-| `contact_restore` | Restore | `R` | Contacts (Deleted), ContactCard | Undo | was `r` |
-| `contact_join` | Join | `m` | Contacts, ContactCard | Undo | same |
-| `contact_add_address` | Add address | `+` | ContactCard | Undo | same |
-| `contact_detach_address` | Detach address | `-` | ContactCard | Undo | same |
-| `contact_set_preferred` | Preferred | `P` | ContactCard | Undo | was `*` |
-| `contact_show_mail` | Show mail | `alt+Return` | Contacts, ContactCard | None | was `Return` |
-| `contact_compose` | Compose to | `c`, `mod+n` | Contacts, ContactCard | None | same, plus ⌘N |
-| `suggestion_dismiss` | Not the same person | `-` | Contacts (Duplicates) | None | was `X` |
-| `contact_group_new` | New group | `g n` | Contacts | Undo | same |
-| `contact_group_rename` | Rename group | `E` | Contacts (Groups) | Undo | was `R` |
-| `contact_group_add` | Group… | `l` | Contacts, ContactCard | Undo | same |
-| `contact_group_remove` | Leave this group | `L` | Contacts (a group) | Undo | same |
-| `contacts_import` | Import vCard… | `mod+shift+i` | Contacts | Undo | was `v i`; undoable (Q3) |
-| `contacts_export` | Export vCard… | `mod+shift+e` | Contacts | None | was `v x` |
-| `contact_of_sender` | Contact of this sender | `@` | List, conversation, reader | None | new |
+| `open_contacts` | Contacts | `g c` | the `g` surfaces | None | was `g p` |
+| `review_contacts` | Review contacts | `g w` | the `g` surfaces | None | new |
+| `contact_popover` | Contact popover | `i` | List, Search, Reader | None | new |
+| `contact_open_card` | Open card | `mod+i` | ContactPopover | None | new |
+| `contacts_filter` | Filter contacts | `/`, `mod+f` | Contacts | None | a field in the strip |
+| `contacts_tab_all` … `_automated` | Kind tab | none (click, palette) | Contacts | None | replaces tabs `1` to `5` |
+| `contact_show_mail` | All mail | `Return` | Contacts, ContactPopover | None | was `alt+Return` |
+| `contact_compose` | Write | `c`, `mod+n` | Contacts, ContactPopover | None | same |
+| `contact_edit` | Edit | `mod+e` | Contacts | Undo | was `e` |
+| `contact_save` | Save | `mod+s` | ContactEdit | Undo | new |
+| `contact_new` | New contact | `mod+shift+n` | Contacts | Undo | was `n` |
+| `contact_merge` | Merge | `m` | Contacts | Undo | was Join |
+| `contact_merge_confirm`, `contact_merge_later`, `contact_not_same` | Merge, Later, Not the same | `Return`, `Escape`, `n` | ContactSheet | Undo, None, None | new |
+| `contact_split` | Split address | none (card menu, palette) | Contacts | Undo | new |
+| `contact_unsubscribe` | Unsubscribe | `U` | Contacts | None | new |
+| `contact_add` | Add contact | `mod+Return` | ContactPopover | Undo | new |
+| `contact_ignore` | Ignore sender | `mod+BackSpace` | ContactPopover | Undo | new |
+| `contact_arrival_inbox`, `_digest`, `_filtered` | Arrives in… | none (the control, palette) | Contacts, ContactPopover | Undo | new |
+| `contact_delete` | Delete | `#`, `Delete` | Contacts | Undo | same as the draft; Q6 |
+| `contact_group_add` | Add to group… | none (Edit, palette) | ContactEdit | Undo | was `l` |
+| `contacts_import`, `contacts_export` | Import, Export vCard… | `mod+shift+i`, `mod+shift+e` | Contacts | None | import no longer undoable (M4) |
 
-`toggle_selection`, `extend_selection_*`, `select_all`, `first_message`,
-`last_message`, `back` and `undo` gain the two contexts rather than being
-duplicated.
+`toggle_selection`, `extend_selection_*`, `select_all`, `next_message`,
+`prev_message`, `first_message`, `last_message`, `digest_rule`, `back` and
+`undo` gain the contexts rather than being duplicated; `add_account` loses
+`Contacts`. The first draft's `contact_open`, `card_next_row`, `card_prev_row`,
+`contacts_toggle_*`, `contacts_suggestions`, `contact_restore`,
+`contact_add_address`, `contact_detach_address`, `contact_set_preferred`,
+`contact_group_*` (except add) and `suggestion_dismiss` are dropped; the form
+and the sheet carry what they did.
 
 ## Assumptions
 
-- Spec 005's backend and command layer lands on `main` before this branch is
-  cut; this spec consumes its reads (list pages by tab and filter, a
-  contact's detail, suggestions, groups) and writes (`contracts/commands.md`)
-  and adds none to the store.
-- The Mac is the only app that offers these commands at first; Linux and the
-  terminal adopt later (the plan's later slices).
-- Alphabetical order is the only order in v1; recency is what Written to
-  already means by membership. This is the UX architect's call, not asked.
-- Fields edited are 005's: name, addresses, organisation, note. Other vCard
-  properties are kept and shown read-only.
-- No ADR: the rule that outlives the feature (behaviour in `postio-focus`) is
-  ADR 0045; the decisions here are the feature's (constitution, "A spec
-  records its decisions").
-- Importing from the macOS Contacts app is done by exporting a vCard from it
-  and importing the file; Postio never reads the system address book for its
-  own (maintainer's decision).
+- Spec 005's person model lands on `main` first; `plan.md` lists what this
+  needs from it and how to ask.
+- The Mac is the only app that offers these commands at first.
+- The handoff's `KEYS.md` is stale where the registry disagrees; the registry
+  is edited to fit the handoff only where the Keys table says so.
+- No ADR for the feature's decisions (CLAUDE.md: a spec records its decisions).
+  Two rules outlive it and get ADRs in the slice that needs them: *per-contact
+  settings are the one home of sender-keyed settings* (S3) and *an external
+  store is written only through a reviewed plan* (S12).
+- Fields edited are 005's plus title, company, phones and websites (the last
+  two are shown and added from signatures or sync); other vCard properties are
+  kept and shown read-only.
 
 ## Out of Scope
 
-CardDAV and any remote address book; reading the macOS address book for
-Postio's own contacts; photos and avatars; birthdays and other fields as
-editable; a Finder `.vcf` file association and dragging a contact out as a
-`.vcf` (a later slice, Q4); Linux and terminal adoption (the plan's later
-slices); contact-based rules, notifications or scoring.
+Finder integration (`.vcf` association, dragging a contact out: M5); undo of an
+import (M4); a Deleted tab and a Groups tab (Q5, Q6); dropping an image onto
+the Photo row before sync exists (Q12); creating or opening the linked Obsidian
+note (the path is stored; the vault integration owns the rest); Linux and
+terminal adoption (later slices); contact-based scoring.
 
 ## Questions for the maintainer
 
-**Resolved 2026-10-19.** The maintainer approved the spec to build ("go
-ahead and build it") after asking why editing has no Save button and
-hearing the trade-off against an Edit/Done mode. Every question below takes
-its recommended option (A), and K6's per-field editing stands. The record
-of the options is kept here for whoever revisits them.
+**Resolved 2026-10-19: the maintainer OK'd the plan.**
+- Q1 is A: single-address rules move onto contacts. Linux-side work is
+  verified on the Linux box.
+- Q2, Q3 and Q4 take option A.
+- Q5 to Q13 take their recommendations; the maintainer raised no
+  objection.
+The options stay below as the record.
 
-**Q1. Is there, or should there be, a design reference for Contacts?** The
-`Design/` pack has none; every layout here is by analogy.
-- A. Build from this description, review the first slice's screenshots
-  against it, and adjust. *(Recommended: no new design work blocks the
-  engine slices, and the plan's review gate after slice 1 catches drift.)*
-- B. Commission screens first (list, page, the join picker, the import
-  sheet, five empty states), as spec 009 and 010 had.
-- C. Skip the review gate.
+**Q1. Where do per-sender settings live after the migration?** Today they are
+in four homes: `[[focus.digests]]` queries, and `[focus.filter]` `never` and
+`stop_markers`, in `config.toml` (`postio-config/src/focus.rs`); and the
+"always for this sender" HTML treatment in the allowlist file's `[Treatment]`
+section (`postio-ui/src/allowlist.rs`), which the GTK reader reads directly.
+- A. Hybrid. *(Recommended.)* Move the address-keyed digest, `never` and
+  `stop_markers` entries into `contact_settings` in the store, one-shot, with
+  the file keeping every other rule (domains, `list:`, `subject:`,
+  multi-address) and the digest engine reading both. The HTML treatment stays in
+  its file, written through per address, until Linux adopts (the GTK reader
+  needs a host call first). **Linux sees contact-derived rules in the rules
+  page, so the maintainer is told before that slice merges.**
+- B. Write-through only: the card's controls edit the existing homes per
+  address; nothing moves. Behaviour cannot change; settings stay in four places
+  and a merged contact with different arrivals shows "mixed".
+- C. Move everything now, the treatment included, changing the GTK reader in
+  the same PR (it cannot be built on this Mac).
 
-**Q2. The entry key.** `g p` (this spec) because `g c` is *Next scope*.
-- A. `g p`. *(Recommended: nothing is displaced.)*
-- B. Give Gmail's `g c` to Contacts and move *Next scope* elsewhere, which
-  disturbs a binding people already use.
-- C. `g p` and also ⌘⌥C (Mac chord in the Go menu).
+**Q2. `i` against `i i` and `i a`.** `i` is the popover's key in the handoff
+and the prefix of Show images and Always show images.
+- A. Popover `i`; images move to `alt+i` and `alt+I`. *(Recommended: follows the
+  handoff; it is the one change to Linux bindings.)*
+- B. Popover on `@` and a keycap `@`; nothing on Linux changes; the handoff's
+  keycap changes.
 
-**Q3. Should import be one undoable step?** 005 says import is not undoable
-(its summary lists the joins). With a one-transaction import and one undo
-entry the person can undo a bad file with `z`, which this spec asks for.
-- A. One undo entry. *(Recommended: a wrong 4,000-card file otherwise needs
-  4,000 deletes; it costs the port one entry kind.)*
-- B. As 005 says: no undo, summary only.
+**Q3. One Contacts permission.** M7 says ask only when sync is turned on; 009
+FR-051 asks on the first keystroke in a recipient field.
+- A. One prompt, in Settings › Contacts. Recipient completion uses Postio's
+  store; "Contacts on this Mac, read only" is how a person who wants their
+  address book in completion gets it. 009's prompt and `ContactsSource` retire
+  in slice 12. *(Recommended.)*
+- B. Keep 009's prompt for completion and add sync's: two prompts, and the old
+  behaviour for people who never turn sync on.
 
-**Q4. A Finder `.vcf` association and drag-out.** Double-click on a `.vcf`
-opening Postio's import, and dragging a contact to Finder to make one.
-- A. Later slice, after the surface is proven. *(Recommended.)*
-- B. In slice 7 with import.
-- C. Never.
+**Q4. The filter field and the one box.** The handoff draws "Filter contacts
+`/`" in the strip; the first draft routed `/` to the one box (the UX
+architect's no-second-bar rule).
+- A. The handoff's field, a list filter only, `/` focuses it, and a recorded
+  exception. *(Recommended: M1.)*
+- B. Draw the field in the strip but implement it as the one box's `@` mode.
 
-**Q5. The word "Join".** 005 chose Join; `m` is the key because Gmail's `m`
-(mute) has no Postio meaning here.
-- A. Keep "Join", find it by "merge" in the palette. *(Recommended.)*
-- B. Rename to "Merge" (the key then matches), changing 005's user words.
+**Q5. Where are groups managed?** The handoff shows chips (card, Edit) and the
+`to:` and `from:@` syntax, and no Groups tab.
+- A. Chips and "+ Add to group" in Edit; typing `@Finance` in the filter field
+  lists its members; rename and delete from the palette. *(Recommended.)*
+- B. Also keep the first draft's Groups tab.
 
-**Q6. Should the Duplicates tab's count ever appear outside Contacts**
-(for instance a dot on Inbox ▾ or the `g p` entry)?
-- A. No: a nudge is a notification; the count shows only inside Contacts.
-  *(Recommended: matches "never a banner".)*
-- B. A quiet count beside Contacts in the places popover.
+**Q6. Delete, Unsave, Split and Ignore.** The handoff draws only Ignore (in the
+popover); 005 has delete and restore.
+- A. Four distinct verbs. **Unsave**: stays in All, stops syncing (`⌘↩`
+  toggles it in Contacts). **Ignore**: stays, never suggested. **Delete**
+  (`#`): hides everywhere, kept for restore as 005, asks when synced. **Split**:
+  card menu. No Deleted tab; restore from the palette. *(Recommended.)*
+- B. Only Ignore and Unsave; no Delete in v1.
+
+**Q7. Unmatched external contacts.** Create Postio contacts for records no mail
+matches?
+- A. No: only matches fill in titles and phones; the person may pick extra
+  records to import by hand later. *(Recommended; the handoff says "for people
+  you have mail with".)*
+- B. Import every record as a saved contact with no mail.
+
+**Q8. Merge when settings differ.** The kept record's settings win and the
+preview names the change. *(Recommended.)* Or the most restrictive wins
+(Filtered over Digest over Inbox).
+
+**Q9. Review key and Next scope.** `g w` for Review; `g n` for Next scope,
+applied at Linux's adoption and not now, so no Linux key moves until Contacts
+exist there. *(Recommended.)* Alternatives: `g v` for Review; move Next scope
+now.
+
+**Q10. Esc on an edited form.** The first `Esc` arms ("Esc again to discard"),
+the second discards. *(Recommended.)* Or discard at once, as the handoff reads.
+
+**Q11. Kind of a merged contact.** The kept record's kind. *(Recommended.)*
+
+**Q12. Photos.** Photos arrive with sync (slice 12); contacts without sync show
+initials, and the Photo row's "drop an image" waits until then.
+*(Recommended.)* Or store a dropped image from slice 4.
+
+**Q13. vCard import and export** (story 9) as the last slice before sync, no
+undo, no screens drawn. *(Recommended.)* Or drop it, since sync is the import.
