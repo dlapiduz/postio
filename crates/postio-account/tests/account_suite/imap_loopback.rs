@@ -1105,106 +1105,50 @@ fn idle_armings(server: &TestServer) -> usize {
         .count()
 }
 
-/// Waits until the server has seen at least `count` `IDLE` arm-ups.
-///
-/// Observed rather than scheduled (#80): the property under test is "the
-/// watcher re-arms before the server's patience runs out", which is a fact
-/// about how many times `IDLE` was sent, not about how much real time
-/// passed. A sleep long enough to outlast the server's limit on a quiet
-/// machine is also long enough to be outlasted *by* the limit on a loaded
-/// one — the two wall-clock budgets blur together under exactly the load
-/// this project's own CLAUDE.md says is ordinary. Waiting for the count
-/// directly means a slow re-arm only makes the test slower, never wrong; the
-/// timeout here is a liveness bound for a genuinely deaf watcher, not a
-/// measurement.
-async fn wait_for_idle_armings(server: &TestServer, count: usize) {
-    tokio::time::timeout(Duration::from_secs(30), async {
-        while idle_armings(server) < count {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("the watcher never armed IDLE the expected number of times");
-}
-
 #[tokio::test]
-async fn idle_re_arms_before_the_server_gets_impatient() {
-    // The failure this guards is silent: a server drops an IDLE that has run
-    // too long, and the watcher goes deaf without an error anywhere. New mail
-    // simply stops appearing.
-    let server = TestServer::builder()
-        .mailbox(TestMailbox::new("INBOX").corpus(["plain-text-simple"]))
-        // 50x the refresh interval below, not 5x: the margin is what used to
-        // blur under load, not the property itself (re-arm cadence < server
-        // limit is unchanged either way). #80.
-        .idle_limit(Duration::from_secs(5))
-        .start()
-        .await;
-    let pool = pool_with(
-        &server,
-        PoolConfig {
-            watch_refresh: Duration::from_millis(100),
-            ..PoolConfig::default()
-        },
-    )
-    .await;
+async fn idle_waits_one_round_of_exactly_the_time_it_is_given() {
+    // How often IDLE is re-armed is the watcher's policy
+    // (`WatchPolicy::idle_refresh`, handed over as `timeout`), not a second
+    // interval in the pool. A round that outlives its timeout is a watcher
+    // deaf for as long as the difference; a round re-armed behind the
+    // caller's back is a second policy.
+    let server = server().await;
+    let pool = pool_for(&server).await;
 
-    let token = cancel();
-    let (events, _) = tokio::join!(
-        idle(&pool, "INBOX", Duration::from_secs(5), &token),
-        async {
-            // Deliver once the watcher has demonstrably re-armed at least
-            // once beyond its first IDLE, rather than sleeping past where
-            // that "should" have happened by now.
-            wait_for_idle_armings(&server, 2).await;
-            server.deliver("INBOX", TestMessage::corpus("list-thread-01-root"))
-        }
-    );
+    let events = idle(&pool, "INBOX", Duration::from_millis(100), &cancel())
+        .await
+        .unwrap();
 
-    assert!(!events.unwrap().is_empty(), "the watcher went deaf");
-    let armings = idle_armings(&server);
-    assert!(
-        armings > 1,
-        "IDLE was armed {armings} times, never re-armed"
+    assert!(events.is_empty());
+    assert_eq!(idle_armings(&server), 1, "one IDLE for one timeout");
+    assert_eq!(
+        pool.stats().idle,
+        1,
+        "wound down with DONE, so the connection went back usable"
     );
 }
 
 #[tokio::test]
-async fn a_server_without_idle_is_polled_instead() {
+async fn a_server_without_idle_is_never_sent_one() {
+    // Polling such a server is the watcher's job, on
+    // `WatchPolicy::poll_interval`, over `status`.
     let server = TestServer::builder()
         .capabilities(["IMAP4rev1", "SASL-IR", "AUTH=PLAIN", "ENABLE", "CONDSTORE"])
         .mailbox(TestMailbox::new("INBOX").corpus(["plain-text-simple"]))
         .start()
         .await;
-    let pool = pool_with(
-        &server,
-        PoolConfig {
-            watch_poll_interval: Duration::from_millis(50),
-            ..PoolConfig::default()
-        },
-    )
-    .await;
+    let pool = pool_for(&server).await;
 
-    let token = cancel();
-    let (events, _) = tokio::join!(
-        idle(&pool, "INBOX", Duration::from_secs(5), &token),
-        async {
-            tokio::time::sleep(Duration::from_millis(80)).await;
-            server.deliver("INBOX", TestMessage::corpus("list-thread-01-root"))
-        }
-    );
+    let error = idle(&pool, "INBOX", Duration::from_millis(100), &cancel())
+        .await
+        .unwrap_err();
 
+    assert!(matches!(error, BackendError::Unsupported { .. }), "{error}");
     assert!(
-        events
-            .unwrap()
+        !server
+            .commands()
             .iter()
-            .any(|event| matches!(event, MailboxEvent::Exists { count: 2 })),
-        "polling has to notice the arrival"
-    );
-    let commands = server.commands();
-    assert!(commands.iter().any(|command| command.contains("STATUS")));
-    assert!(
-        !commands.iter().any(|command| command.contains("IDLE")),
+            .any(|command| command.contains("IDLE")),
         "a server that never advertised IDLE must not be sent one"
     );
 }

@@ -9,19 +9,19 @@
 //! is a diff that can be applied. The answer to any of them is a resync pull.
 //! Returning them unchewed is what keeps that decision with the sync engine.
 //!
-//! # Re-arming is the whole job
+//! # Re-arming belongs to the caller
 //!
-//! A server is entitled to drop an `IDLE` that has run too long — RFC 2177 §3
-//! allows it after 29 minutes, and NAT middle-boxes are far less patient. A
-//! watcher that does not re-issue `IDLE` inside that window goes deaf with no
-//! error anywhere: new mail simply stops appearing. So the wait is broken into
-//! [`PoolConfig::watch_refresh`](super::PoolConfig::watch_refresh) rounds, each
-//! wound down with a clean `DONE` and immediately re-armed, until something
-//! arrives or the caller's own deadline passes.
+//! A server is entitled to drop an `IDLE` that has run too long -- RFC 2177
+//! §3 allows it after 29 minutes, and NAT middle-boxes are far less patient
+//! -- so a watcher has to wind `IDLE` down with a clean `DONE` and arm it
+//! again. How often is policy, and it has one home:
+//! `postio_sync::WatchPolicy::idle_refresh`, which the watcher hands to
+//! [`idle`] as `timeout`. This module waits for exactly that long and no
+//! longer, in one `IDLE` ... `DONE` round, so there is no second interval
+//! here for the two to disagree about.
 //!
-//! `io-imap`'s own default is 29 seconds — about 120 round trips an hour per
-//! mailbox, which is more than any provider needs and more than a laptop on
-//! battery should pay. Postio sets its own.
+//! The same goes for a server without `IDLE`: the watcher polls it with
+//! `STATUS` on `WatchPolicy::poll_interval` and never calls [`idle`].
 //!
 //! # Gated on `CAPABILITY`, never on an echo
 //!
@@ -36,37 +36,22 @@
 //! the life of the watch, which is exactly the "never load a whole mailbox
 //! into memory" invariant this project is built on. ADR 0001, Q2 gap 4.
 
-use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use io_imap::client::ImapClientAsync;
 use io_imap::coroutine::{ImapCoroutine, ImapCoroutineState};
 use io_imap::rfc2177::idle::{
     ImapIdle, ImapIdleError, ImapIdleEvent, ImapIdleOptions, ImapIdleYield,
 };
 use io_imap::types::response::Data;
-use io_imap::types::status::{StatusDataItem, StatusDataItemName};
 use postio_model::{FlagSet, Uid};
-use tokio::time::Instant;
 
-use crate::backend::{BackendError, BackendResult, MailboxEvent};
+use crate::backend::{BackendError, BackendResult, Capability, MailboxEvent};
 use crate::cancel::CancelToken;
 
 use super::fetch::flag_from_wire;
-use super::mailboxes::mailbox_argument;
 use super::{ConnectionPool, Dispatch, ImapSession, READ_BUFFER, WatchStrategy};
-
-/// The status items a poll compares between rounds.
-///
-/// Enough to notice an arrival, a departure and a flag change without asking
-/// what any of them were: the answer to all three is the same resync.
-const POLLED: [StatusDataItemName; 3] = [
-    StatusDataItemName::Messages,
-    StatusDataItemName::UidNext,
-    StatusDataItemName::Unseen,
-];
 
 /// Waits for the server to say something about `mailbox`.
 ///
@@ -87,47 +72,24 @@ pub async fn idle(
     }
 
     let mailbox = mailbox.to_owned();
-    let refresh = pool.watch_refresh();
-    let interval = pool.watch_poll_interval();
 
     pool.watch(async |session| {
         // From this session's own capability list rather than a pool-level
         // cache, so the very first watch of an account decides the same way
         // as every later one.
-        let strategy = Dispatch::new(session.capabilities().clone()).watch_strategy();
-
-        match strategy {
+        match Dispatch::new(session.capabilities().clone()).watch_strategy() {
             WatchStrategy::Idle => {
                 session.ensure_selected(&mailbox, false).await?;
-                watch(session, timeout, refresh, cancel).await
+                round_of_idle(session, timeout, cancel).await
             }
-            WatchStrategy::Poll => poll(session, &mailbox, timeout, interval, cancel).await,
+            // Polling is the watcher's job (`WatchPolicy::poll_interval`):
+            // it asks `status` and never reaches here for such a server.
+            WatchStrategy::Poll => Err(BackendError::Unsupported {
+                capability: Capability::Idle,
+            }),
         }
     })
     .await
-}
-
-/// Arms `IDLE` for one round after another until something happens.
-async fn watch(
-    session: &mut ImapSession,
-    timeout: Duration,
-    refresh: Duration,
-    cancel: &CancelToken,
-) -> BackendResult<Vec<MailboxEvent>> {
-    let deadline = Instant::now() + timeout;
-
-    loop {
-        let now = Instant::now();
-        if now >= deadline || cancel.is_cancelled() {
-            return Ok(Vec::new());
-        }
-
-        let round = refresh.min(deadline - now);
-        let events = round_of_idle(session, round, cancel).await?;
-        if !events.is_empty() {
-            return Ok(events);
-        }
-    }
 }
 
 /// One `IDLE` … `DONE` round, at most `window` long.
@@ -142,11 +104,13 @@ async fn round_of_idle(
 ) -> BackendResult<Vec<MailboxEvent>> {
     let shutdown = Arc::new(AtomicBool::new(false));
     // The coroutine's own timer is a backstop; this loop decides when the
-    // round ends, so the two cannot disagree about who sends `DONE`.
+    // round ends. It is set past the window, never at it: when the two
+    // expire together the coroutine re-arms `IDLE` itself after the `DONE`
+    // this loop asked for, and the round that was meant to end goes on.
     let mut coroutine = ImapIdle::new(
         Arc::clone(&shutdown),
         ImapIdleOptions {
-            timeout: Some(window),
+            timeout: Some(window.saturating_add(Duration::from_secs(60))),
         },
     );
 
@@ -163,7 +127,8 @@ async fn round_of_idle(
             ImapCoroutineState::Complete(Ok(())) => return Ok(events),
             ImapCoroutineState::Complete(Err(error)) => return Err(map_idle_error(error)),
             ImapCoroutineState::Yielded(ImapIdleYield::WantsWrite(bytes)) => {
-                session.stream.write_all(&bytes).await?;
+                let timeout = session.command_timeout();
+                session.stream.write_within(&bytes, timeout, "IDLE").await?;
             }
             ImapCoroutineState::Yielded(ImapIdleYield::Event(event)) => {
                 events.extend(translate(event));
@@ -208,59 +173,6 @@ async fn round_of_idle(
             }
         }
     }
-}
-
-/// `STATUS` on an interval, for a server that cannot be told to speak up.
-async fn poll(
-    session: &mut ImapSession,
-    mailbox: &str,
-    timeout: Duration,
-    interval: Duration,
-    cancel: &CancelToken,
-) -> BackendResult<Vec<MailboxEvent>> {
-    let deadline = Instant::now() + timeout;
-    let before = status_of(session, mailbox).await?;
-
-    loop {
-        let now = Instant::now();
-        if now >= deadline {
-            return Ok(Vec::new());
-        }
-
-        tokio::select! {
-            _ = tokio::time::sleep(interval.min(deadline - now)) => {}
-            _ = cancel.cancelled() => return Ok(Vec::new()),
-        }
-
-        let after = status_of(session, mailbox).await?;
-        if after != before {
-            // What changed is not worth reconstructing from two counts: the
-            // caller resyncs either way, and a wrong guess here would be a
-            // diff applied to the wrong messages.
-            return Ok(vec![MailboxEvent::Exists { count: after.0 }]);
-        }
-    }
-}
-
-/// `(messages, uid_next, unseen)`.
-async fn status_of(session: &mut ImapSession, mailbox: &str) -> BackendResult<(u32, u32, u32)> {
-    let argument = mailbox_argument(mailbox)?;
-    let items = session.status(argument, Cow::Borrowed(&POLLED[..])).await;
-    let items = items.map_err(|error| session.command_error("STATUS", error))?;
-
-    let mut messages = 0;
-    let mut uid_next = 0;
-    let mut unseen = 0;
-    for item in items {
-        match item {
-            StatusDataItem::Messages(count) => messages = count,
-            StatusDataItem::UidNext(next) => uid_next = next.get(),
-            StatusDataItem::Unseen(count) => unseen = count,
-            _ => {}
-        }
-    }
-
-    Ok((messages, uid_next, unseen))
 }
 
 /// Turns one batch of untagged responses into events.

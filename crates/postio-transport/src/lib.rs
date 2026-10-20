@@ -36,6 +36,9 @@ use tokio_rustls::client::TlsStream;
 /// How long to wait for a socket or a TLS handshake.
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The most bytes [`Stream::write_within`] asks a peer to take at once.
+const WRITE_CHUNK: usize = 16 * 1024;
+
 /// Everything the transport layer can fail with.
 ///
 /// No variant carries a credential: the handshake bytes never reach an error
@@ -127,6 +130,37 @@ pub trait Stream: Send + fmt::Debug {
                 after: timeout,
             }),
         }
+    }
+
+    /// Writes every byte, giving up if the peer takes nothing for `timeout`.
+    ///
+    /// The write-side twin of [`read_within`](Self::read_within), and bounded
+    /// the same way: on silence, not on duration. A peer that has stopped
+    /// reading fills every buffer between us and it and blocks `write_all`
+    /// for ever; a large upload over a slow link makes steady progress. The
+    /// bytes go in chunks, each of which must be accepted within `timeout`,
+    /// so only the first kind is caught. `Duration::ZERO` waits forever.
+    async fn write_within(
+        &mut self,
+        bytes: &[u8],
+        timeout: Duration,
+        context: &str,
+    ) -> Result<(), TransportError> {
+        if timeout.is_zero() {
+            return self.write_all(bytes).await;
+        }
+        for chunk in bytes.chunks(WRITE_CHUNK) {
+            match tokio::time::timeout(timeout, self.write_all(chunk)).await {
+                Ok(written) => written?,
+                Err(_) => {
+                    return Err(TransportError::TimedOut {
+                        context: context.to_owned(),
+                        after: timeout,
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Wraps this connection in TLS, the `STARTTLS` half the protocol cannot

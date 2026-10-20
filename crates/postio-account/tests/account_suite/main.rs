@@ -29,6 +29,7 @@ mod imap_mailboxes;
 mod imap_oauth_session;
 mod imap_pool;
 mod imap_session;
+mod imap_stalls;
 mod keychain;
 #[cfg(feature = "maildir")]
 mod maildir;

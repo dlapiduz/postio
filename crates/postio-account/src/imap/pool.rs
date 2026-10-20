@@ -67,22 +67,6 @@ pub const DEFAULT_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(30);
 /// forever, which is what this replaced.
 pub const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// How often a watcher winds `IDLE` down and arms it again.
-///
-/// A server may drop an `IDLE` that has run too long — RFC 2177 §3 allows it
-/// after 29 minutes, and NAT middle-boxes are far less patient — and a
-/// watcher that does not re-arm inside that window goes deaf with no error
-/// anywhere. Ten minutes is six round trips an hour per mailbox, against the
-/// hundred and twenty `io-imap`'s own 29-second default would cost a laptop
-/// on battery.
-pub const DEFAULT_WATCH_REFRESH: Duration = Duration::from_secs(10 * 60);
-
-/// How often a server without `IDLE` is asked for a `STATUS` instead.
-///
-/// This is the latency of "new mail appears" on such a server, so it is a
-/// user-visible number rather than a housekeeping one.
-pub const DEFAULT_WATCH_POLL_INTERVAL: Duration = Duration::from_secs(30);
-
 /// How long a cached mailbox selection may answer before the server is asked
 /// to confirm it again.
 ///
@@ -148,11 +132,6 @@ pub struct PoolConfig {
     /// is what the pool before this bound did. See
     /// [`DEFAULT_COMMAND_TIMEOUT`].
     pub command_timeout: Duration,
-    /// How often a watcher re-arms `IDLE`. See [`DEFAULT_WATCH_REFRESH`].
-    pub watch_refresh: Duration,
-    /// How often a server without `IDLE` is polled with `STATUS`. See
-    /// [`DEFAULT_WATCH_POLL_INTERVAL`].
-    pub watch_poll_interval: Duration,
 }
 
 impl Default for PoolConfig {
@@ -164,8 +143,6 @@ impl Default for PoolConfig {
             dedicate_watch_connection: true,
             selection_max_age: DEFAULT_SELECTION_MAX_AGE,
             command_timeout: DEFAULT_COMMAND_TIMEOUT,
-            watch_refresh: DEFAULT_WATCH_REFRESH,
-            watch_poll_interval: DEFAULT_WATCH_POLL_INTERVAL,
         }
     }
 }
@@ -416,16 +393,6 @@ impl ConnectionPool {
         self.capabilities().map(Dispatch::new)
     }
 
-    /// How often a watcher on this pool re-arms `IDLE`.
-    pub(super) fn watch_refresh(&self) -> Duration {
-        self.config.watch_refresh
-    }
-
-    /// How often a watcher polls a server that has no `IDLE`.
-    pub(super) fn watch_poll_interval(&self) -> Duration {
-        self.config.watch_poll_interval
-    }
-
     /// Runs one operation on a pooled connection.
     ///
     /// A connection whose operation failed transiently is discarded rather
@@ -436,13 +403,30 @@ impl ConnectionPool {
         priority: Priority,
         operation: impl AsyncFnOnce(&mut ImapSession) -> BackendResult<T>,
     ) -> BackendResult<T> {
-        let mut connection = self.acquire(priority).await?;
+        let connection = self.acquire(priority).await?;
+        Self::run_on(connection, operation).await
+    }
+
+    /// Runs `operation` on `connection`, and decides afterwards whether the
+    /// connection may be parked.
+    ///
+    /// The connection is condemned *before* the operation starts and
+    /// reprieved only by a result that proves the exchange finished: a
+    /// success, or a failure that is not transient (a `NO`, which the server
+    /// answered in full). If the caller drops this future instead -- a job
+    /// superseded, a view closed, an outer timeout -- the operation stops
+    /// wherever it was, possibly with half a response unread or the session
+    /// inside `IDLE`, and the connection must not go back to the pool for
+    /// the next caller to find that out.
+    async fn run_on<T>(
+        mut connection: PooledSession<'_>,
+        operation: impl AsyncFnOnce(&mut ImapSession) -> BackendResult<T>,
+    ) -> BackendResult<T> {
+        connection.discard();
         let result = operation(&mut connection).await;
-        if let Err(error) = result.as_ref()
-            && error.is_transient()
-        {
-            Self::discarding(error);
-            connection.discard();
+        match result.as_ref() {
+            Err(error) if error.is_transient() => Self::discarding(error),
+            _ => connection.discard = false,
         }
         result
     }
@@ -476,17 +460,10 @@ impl ConnectionPool {
         &self,
         operation: impl AsyncFnOnce(&mut ImapSession) -> BackendResult<T>,
     ) -> BackendResult<T> {
-        let mut connection = self
+        let connection = self
             .acquire_lane(LaneKind::Watch, Priority::Interactive)
             .await?;
-        let result = operation(&mut connection).await;
-        if let Err(error) = result.as_ref()
-            && error.is_transient()
-        {
-            Self::discarding(error);
-            connection.discard();
-        }
-        result
+        Self::run_on(connection, operation).await
     }
 
     /// Checks out a connection, opening one if the pool has room.

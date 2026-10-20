@@ -167,7 +167,11 @@ async fn stream_whole(
                 return Err(map_fetch_stream_error(error));
             }
             ImapCoroutineState::Yielded(ImapMessageFetchStreamYield::WantsWrite(bytes)) => {
-                session.stream.write_all(&bytes).await?;
+                let timeout = session.command_timeout();
+                session
+                    .stream
+                    .write_within(&bytes, timeout, "a streamed FETCH")
+                    .await?;
             }
             ImapCoroutineState::Yielded(ImapMessageFetchStreamYield::WantsRead) => {
                 // Bounded on silence, not on how long the download takes: a
