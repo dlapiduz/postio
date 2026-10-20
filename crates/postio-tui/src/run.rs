@@ -87,10 +87,10 @@ pub fn engage_focus(
     config: &postio_config::Config,
     config_path: Option<&std::path::Path>,
 ) -> postio_host::FocusHandle {
-    host.enable_focus(postio_host::FocusSetup::from_config(
-        config.focus.clone(),
-        config_path,
-    ))
+    host.enable_focus(
+        postio_host::FocusSetup::from_config(config.focus.clone(), config_path)
+            .with_remote_images_path(postio_ui::allowlist::RemoteImageAllowList::path()),
+    )
 }
 
 /// Apply `[focus]` to `host` again whenever the file at `path` changes it.
@@ -107,10 +107,13 @@ pub fn follow_focus_config(
         if update.changed.focus
             && let Some(host) = host.upgrade()
         {
-            host.enable_focus(postio_host::FocusSetup::from_config(
-                service.config().focus.clone(),
-                Some(service.path()),
-            ));
+            host.enable_focus(
+                postio_host::FocusSetup::from_config(
+                    service.config().focus.clone(),
+                    Some(service.path()),
+                )
+                .with_remote_images_path(postio_ui::allowlist::RemoteImageAllowList::path()),
+            );
         }
     })
     .inspect_err(|error| tracing::warn!(%error, "config will not be watched; edits need a restart"))

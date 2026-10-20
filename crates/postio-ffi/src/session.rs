@@ -443,12 +443,13 @@ fn engage_focus(
     host: &Host,
     focus: &postio_config::FocusConfig,
     source: &ConfigSource,
+    remote_images: &std::path::Path,
 ) -> postio_host::FocusHandle {
     let path = source.path();
-    host.enable_focus(postio_host::FocusSetup::from_config(
-        focus.clone(),
-        path.as_deref(),
-    ))
+    host.enable_focus(
+        postio_host::FocusSetup::from_config(focus.clone(), path.as_deref())
+            .with_remote_images_path(remote_images.to_path_buf()),
+    )
 }
 
 /// Start the store's owner over an open store, as ADR 0041 allows here:
@@ -1924,6 +1925,17 @@ impl Session {
                 wiring.events.subscribe("attachment-indexer"),
                 &wiring.runtime,
             );
+            // A file of its own per session: an in-memory store has no
+            // directory to sit beside, and one shared path made a grant
+            // from one test true for the next.
+            let allow_list_at = std::env::temp_dir().join(format!(
+                "postio-allowed-{}-{}.toml",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|since| since.as_nanos())
+                    .unwrap_or_default()
+            ));
             let session = Arc::new(Session {
                 wiring: Mutex::new(Some(wiring)),
                 keymap: Mutex::new(None),
@@ -1943,14 +1955,7 @@ impl Session {
                 // A file of its own per session: an in-memory store has no
                 // directory to sit beside, and one shared path made a grant
                 // from one test true for the next.
-                allow_list_at: std::env::temp_dir().join(format!(
-                    "postio-allowed-{}-{}.toml",
-                    std::process::id(),
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|since| since.as_nanos())
-                        .unwrap_or_default()
-                )),
+                allow_list_at: allow_list_at.clone(),
                 serial: next_serial(),
                 allow_list_kept: Mutex::new(None),
                 thread_renders: Mutex::new(postio_ui::reader::document::RenderCache::default()),
@@ -1962,7 +1967,7 @@ impl Session {
                 events,
                 link: Mutex::new(Some(link)),
                 wired: host.wired(),
-                _focus: engage_focus(&host, &config.focus, &source),
+                _focus: engage_focus(&host, &config.focus, &source, &allow_list_at),
                 focus_config: Mutex::new(config.focus.clone()),
                 notices: Mutex::new(crate::NoticesFfi::from(&sync_config)),
                 _host: host,
@@ -2036,6 +2041,11 @@ impl Session {
             wiring.events.subscribe("attachment-indexer"),
             &wiring.runtime,
         );
+        let allow_list_at = store_at
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(&store_at)
+            .join("allowed-senders.toml");
         let session = Arc::new(Session {
             wiring: Mutex::new(Some(wiring)),
             keymap: Mutex::new(None),
@@ -2048,11 +2058,7 @@ impl Session {
             conversation: Arc::default(),
             sign_in: Mutex::new(None),
             sign_in_port: Arc::default(),
-            allow_list_at: store_at
-                .parent()
-                .filter(|parent| !parent.as_os_str().is_empty())
-                .unwrap_or(&store_at)
-                .join("allowed-senders.toml"),
+            allow_list_at: allow_list_at.clone(),
             agents: answer_agents(postio_mcp::socket::path_for(&store_at), &host, &source),
             store_at,
             serial: next_serial(),
@@ -2065,7 +2071,7 @@ impl Session {
             events,
             link: Mutex::new(Some(link)),
             wired: host.wired(),
-            _focus: engage_focus(&host, &focus_config, &source),
+            _focus: engage_focus(&host, &focus_config, &source, &allow_list_at),
             focus_config: Mutex::new(focus_config.clone()),
             notices: Mutex::new(crate::NoticesFfi::from(&sync_config)),
             _host: host,

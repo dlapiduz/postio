@@ -168,6 +168,42 @@ pub async fn run(database: &Store, path: &Path) -> Result<Option<(Moved, FocusCo
     Ok(Some((moved, reread.focus)))
 }
 
+/// Give the senders the treatments the remote-image list at `path` holds
+/// under `[Treatment]`, and take the section out of it, keeping the list as
+/// it was once as `<path>.pre-contacts`. The grants -- who may load remote
+/// images -- are a privacy rule and stay exactly where they are. Answers how
+/// many treatments moved.
+pub async fn run_treatments(database: &Store, path: &Path) -> Result<usize, String> {
+    let mut list = postio_ui::allowlist::RemoteImageAllowList::load_from(path);
+    let held: Vec<(String, postio_body::treatment::Treatment)> = list
+        .treatments()
+        .map(|(sender, treatment)| (sender.to_owned(), treatment))
+        .collect();
+    if held.is_empty() {
+        return Ok(0);
+    }
+    let kept = pre_contacts_path(path);
+    if !kept.exists()
+        && let Ok(original) = std::fs::read_to_string(path)
+    {
+        std::fs::write(&kept, original)
+            .map_err(|_| "could not keep the remote-image list as it was".to_owned())?;
+    }
+    for (sender, treatment) in &held {
+        crate::contacts::set_treatment(database, sender, Some(treatment.attribute_value()))
+            .await
+            .map_err(|_| "could not keep a sender's treatment".to_owned())?;
+    }
+    list.clear_treatments();
+    list.save_to(path)
+        .map_err(|_| "could not save the remote-image list".to_owned())?;
+    tracing::info!(
+        moved = held.len(),
+        "moved senders' treatments onto the senders"
+    );
+    Ok(held.len())
+}
+
 #[cfg(test)]
 mod tests {
     use postio_storage::test_support;
@@ -314,5 +350,45 @@ at = "17:00"
         let (_dir, path) = setup(text);
         assert_eq!(run(&database, &path).await.unwrap(), None);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
+    #[tokio::test]
+    async fn treatments_move_onto_the_senders_and_the_grants_stay_where_they_are() {
+        let database = test_support::memory().await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("remote-images.ini");
+        let mut list = postio_ui::allowlist::RemoteImageAllowList::default();
+        list.allow("ada@example.com");
+        list.set_treatment(
+            "news@example.com",
+            Some(postio_body::treatment::Treatment::Paper),
+        );
+        list.set_treatment(
+            "bea@example.org",
+            Some(postio_body::treatment::Treatment::AppColours),
+        );
+        list.save_to(&path).unwrap();
+        let original = std::fs::read_to_string(&path).unwrap();
+
+        assert_eq!(run_treatments(&database, &path).await.unwrap(), 2);
+
+        let list = postio_ui::allowlist::RemoteImageAllowList::load_from(&path);
+        assert!(
+            list.is_allowed("ada@example.com"),
+            "who may see images is untouched"
+        );
+        assert_eq!(list.treatments().count(), 0);
+        assert_eq!(
+            std::fs::read_to_string(pre_contacts_path(&path)).unwrap(),
+            original
+        );
+        assert_eq!(
+            crate::contacts::treatments(&database).await.unwrap(),
+            [
+                ("bea@example.org".to_owned(), "app".to_owned()),
+                ("news@example.com".to_owned(), "paper".to_owned())
+            ]
+        );
+        assert_eq!(run_treatments(&database, &path).await.unwrap(), 0, "once");
     }
 }

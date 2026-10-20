@@ -83,6 +83,8 @@ struct Inner {
     /// Whether this process has moved the file's address-keyed entries onto
     /// the correspondents they name (`focus::contacts_move`).
     contacts_moved: std::sync::atomic::AtomicBool,
+    /// Likewise for the remote-image list's treatments.
+    treatments_moved: std::sync::atomic::AtomicBool,
     /// The bodies a reading pane has asked for (#1788).
     asked_bodies: reading::AskedBodies,
     #[cfg(test)]
@@ -511,6 +513,7 @@ impl Host {
             focus: Mutex::new(None),
             config_path: Mutex::new(None),
             contacts_moved: std::sync::atomic::AtomicBool::new(false),
+            treatments_moved: std::sync::atomic::AtomicBool::new(false),
             offers: Mutex::new(HashMap::new()),
             oauth_offers: Mutex::new(HashMap::new()),
             sign_ins: Mutex::new(HashMap::new()),
@@ -1439,6 +1442,13 @@ impl Inner {
             Req::SaveDigestRule { replacing, rule } => {
                 done(focus::rules::save(self, replacing, rule).await)
             }
+            Req::Treatments => contacts::treatments(&self.wiring.database)
+                .await
+                .map_or_else(Resp::Failed, Resp::Treatments),
+            Req::SetTreatment { address, treatment } => done(
+                contacts::set_treatment(&self.wiring.database, &address, treatment.as_deref())
+                    .await,
+            ),
             Req::DeleteDigestRule(name) => focus::rules::delete(self, name)
                 .await
                 .map_or_else(Resp::Failed, Resp::Count),

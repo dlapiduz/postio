@@ -229,6 +229,52 @@ pub async fn detect_kinds(database: &Store, batch: u32) -> Result<usize, String>
     Ok(decided)
 }
 
+/// Every sender's remembered treatment, `(address, "app" | "paper")`: one
+/// entry per address of each person who chose one.
+pub async fn treatments(
+    database: &Store,
+) -> Result<Vec<(String, String)>, postio_model::listing::StoreError> {
+    let connection = database.connect().await?;
+    Ok(
+        postio_storage::repository::ContactSettingsRepository::new(&connection)
+            .treatments()
+            .await?,
+    )
+}
+
+/// Remember that `address`'s mail is always drawn in `treatment`, or forget
+/// the choice. The treatment is the person's, so it covers every address they
+/// own; one who has never been seen is made a person to hold it.
+pub async fn set_treatment(
+    database: &Store,
+    address: &str,
+    treatment: Option<&str>,
+) -> Result<(), postio_model::listing::StoreError> {
+    use postio_storage::repository::ContactSettingsRepository;
+    if treatment.is_some_and(|t| !matches!(t, "app" | "paper")) {
+        return Err(postio_model::listing::StoreError::new(
+            "A treatment is app or paper",
+        ));
+    }
+    let connection = database.connect().await?;
+    let people = ContactRepository::new(&connection);
+    let email = postio_model::EmailAddress::new(None::<String>, address.trim());
+    let person = match (people.by_address(address.trim()).await?, treatment) {
+        (Some(person), _) => person.id,
+        // Forgetting a choice nobody made makes nobody.
+        (None, None) => return Ok(()),
+        (None, Some(_)) => people
+            .person_for_email(&email)
+            .await
+            .map_err(|_| postio_model::listing::StoreError::new("That is not a sender"))?,
+    };
+    let settings = ContactSettingsRepository::new(&connection);
+    let mut held = settings.get(person).await?;
+    held.html_treatment = treatment.map(str::to_owned);
+    settings.put(person, &held).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Write;
@@ -480,6 +526,47 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
             detect_kinds(&database, 1).await.expect("again"),
             0,
             "decided once per detector"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_treatment_is_the_persons_and_forgetting_one_nobody_chose_makes_nobody() {
+        let database = test_support::memory().await;
+        old_mail(&database, "friend@example.org", 1).await;
+        assert_eq!(treatments(&database).await.unwrap(), []);
+
+        set_treatment(&database, "Friend@Example.org", Some("paper"))
+            .await
+            .unwrap();
+        set_treatment(&database, "stranger@example.org", Some("app"))
+            .await
+            .unwrap();
+        assert_eq!(
+            treatments(&database).await.unwrap(),
+            [
+                ("friend@example.org".to_owned(), "paper".to_owned()),
+                ("stranger@example.org".to_owned(), "app".to_owned())
+            ]
+        );
+        set_treatment(&database, "friend@example.org", None)
+            .await
+            .unwrap();
+        set_treatment(&database, "nobody@example.org", None)
+            .await
+            .unwrap();
+        assert_eq!(treatments(&database).await.unwrap().len(), 1);
+        assert!(
+            set_treatment(&database, "friend@example.org", Some("sepia"))
+                .await
+                .is_err()
+        );
+        let connection = database.connect().await.unwrap();
+        assert!(
+            ContactRepository::new(&connection)
+                .by_address("nobody@example.org")
+                .await
+                .unwrap()
+                .is_none()
         );
     }
 }

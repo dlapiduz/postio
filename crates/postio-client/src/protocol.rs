@@ -630,6 +630,18 @@ pub enum Req {
     /// Take a digest rule out of `config.toml` and release what it held into
     /// the inbox (spec 007 FR-126); answered with how many it released.
     DeleteDigestRule(String),
+    /// Every sender's remembered treatment, `(address, "app" | "paper")`:
+    /// what a reader that looks senders up from memory keeps.
+    Treatments,
+    /// Always draw `address`'s mail in `treatment` -- `app` or `paper` -- or
+    /// forget the choice with `None`. The treatment is the person's, so it
+    /// covers every address they own.
+    SetTreatment {
+        /// The sender.
+        address: String,
+        /// The choice, or none to forget it.
+        treatment: Option<String>,
+    },
 }
 
 /// A digest rule as the rule dialog writes it (spec 007 screen 24): what
@@ -764,6 +776,8 @@ pub enum Resp {
     Correspondents(Vec<postio_model::Contact>),
     /// The person at an address, if the store knows one.
     ContactFor(Option<Box<postio_model::Contact>>),
+    /// Each sender's remembered treatment.
+    Treatments(Vec<(String, String)>),
     /// What recipient completion can offer.
     RecipientDirectory(RecipientDirectory),
     /// Labels, by name.

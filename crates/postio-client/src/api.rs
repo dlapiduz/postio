@@ -185,6 +185,8 @@ impl Req {
             Req::DigestLikeThis(_) => "DigestLikeThis",
             Req::SaveDigestRule { .. } => "SaveDigestRule",
             Req::DeleteDigestRule(_) => "DeleteDigestRule",
+            Req::Treatments => "Treatments",
+            Req::SetTreatment { .. } => "SetTreatment",
             Req::Vault { .. } => "Vault",
             Req::CaptureTask { .. } => "CaptureTask",
             Req::CaptureNote { .. } => "CaptureNote",
@@ -536,6 +538,40 @@ impl Client {
             Resp::Recipients(found) => Some(found),
             _ => None,
         })
+        .await
+    }
+
+    /// Every sender's remembered treatment, `(address, "app" | "paper")`.
+    pub async fn treatments(&self) -> Result<Vec<(String, String)>, StoreError> {
+        self.read(
+            Req::Treatments,
+            "the senders' treatments",
+            |answer| match answer {
+                Resp::Treatments(found) => Some(found),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Always draw `address`'s mail in `treatment`, or forget the choice
+    /// with `None`.
+    pub async fn set_treatment(
+        &self,
+        address: &str,
+        treatment: Option<&str>,
+    ) -> Result<(), StoreError> {
+        self.read(
+            Req::SetTreatment {
+                address: address.to_owned(),
+                treatment: treatment.map(str::to_owned),
+            },
+            "a sender's treatment",
+            |answer| match answer {
+                Resp::Done => Some(()),
+                _ => None,
+            },
+        )
         .await
     }
 

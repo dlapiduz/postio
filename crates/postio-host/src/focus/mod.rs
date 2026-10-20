@@ -67,6 +67,10 @@ pub struct FocusSetup {
     /// How the person's model is reached instead of this computer's own
     /// sockets: a test's fake runtime.
     model_transport: Option<Arc<dyn postio_ai::Transport>>,
+    /// The remote-image list the senders' remembered treatments move out of,
+    /// once (ADR 0048). Nothing is moved without it, so a test never reads
+    /// the machine's own.
+    remote_images: Option<std::path::PathBuf>,
 }
 
 impl FocusSetup {
@@ -93,6 +97,13 @@ impl FocusSetup {
     /// (contracts/config.md). Without it, the path [`Host::open`] was given.
     pub fn with_config_path(mut self, path: std::path::PathBuf) -> Self {
         self.config_path = Some(path);
+        self
+    }
+
+    /// Move the treatments the remote-image list at `path` remembers per
+    /// sender onto the senders, the first time Focus mode starts.
+    pub fn with_remote_images_path(mut self, path: std::path::PathBuf) -> Self {
+        self.remote_images = Some(path);
         self
     }
 
@@ -214,6 +225,16 @@ impl Host {
                 Err(error) => {
                     tracing::warn!(%error, "Focus could not move senders' settings: {error}");
                 }
+            }
+        }
+        if let Some(list) = setup.remote_images.clone()
+            && !self.inner.treatments_moved.swap(true, Ordering::AcqRel)
+        {
+            let database = self.inner.wiring.database.clone();
+            if let Err(error) = postio_session::blocking::now(async move {
+                contacts_move::run_treatments(&database, &list).await
+            }) {
+                tracing::warn!(%error, "Focus could not move senders' treatments: {error}");
             }
         }
         let database = self.inner.wiring.database.clone();

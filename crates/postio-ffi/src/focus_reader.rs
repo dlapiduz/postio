@@ -147,6 +147,7 @@ impl Session {
         crate::session::blocking(async {
             let reading = self.reading_of(message).await;
             self.focus_reader_answers(reading.as_ref(), remote, chosen, main_width)
+                .await
         })
     }
 
@@ -172,7 +173,9 @@ impl Session {
                 view: self
                     .focus_message_answers(message, index, total, row, reading.as_ref())
                     .await,
-                document: self.focus_reader_answers(reading.as_ref(), remote, chosen, main_width),
+                document: self
+                    .focus_reader_answers(reading.as_ref(), remote, chosen, main_width)
+                    .await,
             }
         })
     }
@@ -204,22 +207,38 @@ impl Session {
     }
 
     /// Always draw `sender`'s mail in `treatment`, or forget the choice with
-    /// `None`: "Always for this sender". Saved beside the remote-image
-    /// grants, where GTK's reader keeps it.
+    /// `None`: "Always for this sender". Kept on the person the sender is
+    /// (ADR 0048), so every address of theirs is drawn the same way; GTK's
+    /// reader reads the same place.
     pub fn always_treatment(&self, sender: String, treatment: Option<TreatmentFfi>) {
-        if let Err(error) =
-            self.amend_remote_images(|list| list.set_treatment(&sender, treatment.map(Into::into)))
-        {
+        let Some(client) = self.client() else {
+            return;
+        };
+        let treatment: Option<Treatment> = treatment.map(Into::into);
+        if let Err(error) = crate::session::blocking(
+            client.set_treatment(&sender, treatment.map(Treatment::attribute_value)),
+        ) {
             tracing::error!(%error, "a sender's treatment could not be saved: {error}");
         }
     }
 }
 
 impl Session {
+    /// The treatment the person chose to always draw `sender`'s mail in, if
+    /// they did.
+    async fn sender_treatment(&self, sender: &str) -> Option<Treatment> {
+        let client = self.client()?;
+        let chosen = client.treatments().await.ok()?;
+        chosen
+            .into_iter()
+            .find(|(address, _)| address == sender)
+            .and_then(|(_, treatment)| Treatment::from_attribute(&treatment))
+    }
+
     /// The document for the message `reading` read, or the plate for why
     /// there is none. No store read of its own: the body, the row and the
     /// send state are all on `reading`, which the caller read once.
-    fn focus_reader_answers(
+    async fn focus_reader_answers(
         &self,
         reading: Option<&postio_client::protocol::Reading>,
         remote: crate::RemoteImagesFfi,
@@ -295,9 +314,10 @@ impl Session {
                 action: postio_ui::unsubscribe::ACTION.to_owned(),
             })
         });
-        let remembered = sender
-            .as_deref()
-            .and_then(|sender| self.with_remote_images(|list| list.treatment_for(sender)));
+        let remembered = match sender.as_deref() {
+            Some(sender) => self.sender_treatment(sender).await,
+            None => None,
+        };
         let rendered = body_html_treated(body, remote, chosen.map(Into::into).or(remembered), None);
         let treated = rendered.treated;
         let shown = treated.map_or(Treatment::AppColours, |treated| treated.shown);
