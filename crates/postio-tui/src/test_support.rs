@@ -400,6 +400,7 @@ pub fn open_message(app: &mut App, message: MessageId, to: Vec<EmailAddress>, bo
             message,
             to,
             cc: Vec::new(),
+            warning: None,
         },
     );
     update(

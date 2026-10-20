@@ -32,6 +32,9 @@ domains = ["icloud.com", "me.com", "mac.com"]
 # is matched on a label boundary, so `alice-com.mx01.mail.icloud.com` counts
 # and `evilmail.icloud.com` does not.
 mx_suffixes = ["mail.icloud.com"]
+# Stamped on incoming mail's Authentication-Results; the reader trusts that
+# header from these and from no other server (#1928).
+authserv_ids = ["mx.icloud.com"]
 imap_host = "imap.mail.me.com"
 imap_port = 993
 imap_security = "tls"
@@ -88,6 +91,7 @@ domains = ["gmail.com", "googlemail.com"]
 # Google Workspace domains publish these; a custom domain on Workspace is
 # reached at the same IMAP/SMTP hosts as a consumer account.
 mx_suffixes = ["google.com", "googlemail.com"]
+authserv_ids = ["mx.google.com"]
 imap_host = "imap.gmail.com"
 imap_port = 993
 imap_security = "tls"
@@ -122,6 +126,9 @@ domains = ["outlook.com", "hotmail.com", "live.com", "msn.com"]
 # uses Microsoft 365" scenario) publishes this as its MX (#94); matched on a
 # label boundary like every other provider's suffix.
 mx_suffixes = ["mail.protection.outlook.com"]
+# No authserv_ids: Microsoft writes an Authentication-Results that starts
+# at "spf=" with no authserv-id, so there is nothing to tell its header from
+# a sender's, and the reader shows no sender-authentication line (#1928).
 imap_host = "outlook.office365.com"
 imap_port = 993
 imap_security = "tls"
@@ -151,6 +158,7 @@ refresh_token_lifetime_days = 90
 display_name = "Fastmail"
 domains = ["fastmail.com", "fastmail.fm"]
 mx_suffixes = ["messagingengine.com"]
+authserv_ids = ["messagingengine.com"]
 # Fastmail's native protocol first (ADR 0018 Q5); the add-account proof
 # tries backends in this order and stores the first that works, so a
 # credential that only speaks IMAP still lands.

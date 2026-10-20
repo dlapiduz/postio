@@ -24,4 +24,5 @@ mod keymap_live;
 mod keymap_sheet;
 mod reader_tokens;
 mod remote_blocked_document;
+mod sender_authenticity;
 mod tokens;

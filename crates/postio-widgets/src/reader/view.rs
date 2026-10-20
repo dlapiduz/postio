@@ -718,6 +718,19 @@ impl Reader {
         self.header.set_message(from, to, cc, subject, date);
     }
 
+    /// Says that the sender may not be who they claim, or hides the line.
+    ///
+    /// See [`MessageHeader::set_warning`].
+    pub fn set_sender_warning(&self, line: Option<&str>) {
+        self.header.set_warning(line);
+    }
+
+    /// The sender warning's text, or `None` when hidden. For tests.
+    #[doc(hidden)]
+    pub fn sender_warning_label(&self) -> Option<String> {
+        self.header.warning_label()
+    }
+
     /// Names the account the message on screen arrived in, or hides the line.
     ///
     /// See [`MessageHeader::set_account`] for why the reading pane is where

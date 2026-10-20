@@ -866,6 +866,10 @@ const CASES: &[(&str, fn())] = &[
         reader_notices::the_body_starts_at_the_same_place_whoever_the_message_went_to as fn(),
     ),
     (
+        "reader_notices::a_sender_warning_is_one_line_and_does_not_outlast_its_message",
+        reader_notices::a_sender_warning_is_one_line_and_does_not_outlast_its_message as fn(),
+    ),
+    (
         "reader_notices::every_notice_action_carries_its_key",
         reader_notices::every_notice_action_carries_its_key as fn(),
     ),

@@ -126,6 +126,8 @@ Fixtures are tagged, not filed — most carry several tags.
 | `nested-multipart.eml` | `mixed` > `alternative` > `related`, three levels deep, with an inline PNG in the innermost part and an attachment after the whole nest. |
 | `inline-image-cid.eml` | Two inline PNGs addressed by `cid:`, one with `name=` and one without, plus a third `cid:` reference with **no matching part** — the dangling case. |
 | `inline-disposed-body.eml` | Both alternatives carry `Content-Disposition: inline` — the part that *is* the message, marked the way an attachment is. The IMAP header sync used to demote such a part to an attachment, leaving `html_part_id` unset, so the text axis fetched only the plain-text alternative and the pane rendered a body with no images and no links (#751). |
+| `auth-results-verified.eml` | A receiving server's `Authentication-Results` with DKIM, SPF and DMARC passing for the From domain: the reader says nothing. |
+| `auth-results-forged-lower.eml` | The receiving server's failing `Authentication-Results` above a passing one the sender wrote themselves. Only the topmost header of the account's provider is trusted, so this reads as failed. |
 | `attachment-pdf.eml` | Two attachments, `Content-Description`, `size=` and `creation-date=` disposition parameters, `Cc` recipients. |
 | `attachment-large.eml` | ~256 KiB of base64. This is the fixture that proves attachments stream to the blob store instead of sitting in memory; it is the only file here over 64 KiB, and a test enforces that. |
 | `attachment-rfc2231-filename.eml` | Three spellings of one non-ASCII filename: RFC 2231 continuations (`name*0*`, `name*1*`), the `charset'language'value` form, and the RFC 2047 encoded-word-in-a-parameter abuse that is illegal and ubiquitous. |
@@ -240,6 +242,7 @@ body's treatment (`postio_body::treatment`) is proven on real-shaped markup.
 | `malformed-bare-lf.eml` | Bare LF line endings everywhere, including at the MIME boundaries. Anything written against a strict CRLF reading of RFC 5322 finds no body, or no boundary, or neither. |
 | `malformed-truncated-multipart.eml` | Delivery cut short mid-attachment: no closing boundary, a truncated base64 run. The first part must still reach the reader, and nothing may hang. |
 | `missing-message-id-and-date.eml` | No `Message-ID`, no `Date`, no `To`. Storage has to synthesize a stable local identity, the list has to sort it anyway, and threading has nothing to link on. |
+| `display-name-impersonation.eml` | Authenticates as `other.example.com`, but the display name is `billing@bank.example`. |
 | `duplicate-message-id.eml` | Deliberately reuses the `Message-ID` of `plain-text-simple.eml` with a different body and a later `Date`. Servers really do deliver a `Message-ID` twice, so deduplication must not key on it alone and threading must not build a cycle from the pair. |
 | `broken-references.eml` | Every way a `References` header can be broken, in one header: an unterminated angle-addr, an empty `<>`, a bare non-angle token, a duplicate entry, a reference to a message not in the store, and an `In-Reply-To` that matches nothing. |
 

@@ -1502,6 +1502,10 @@ impl OpenMessage {
                     row.subject.as_deref(),
                     row.date.unwrap_or(row.received_at),
                 );
+                // A message is read once, and its warning rides the same
+                // reading as the header it belongs under (#1928).
+                header_card.set_warning(reading.sender_warning.as_deref());
+                reader.set_sender_warning(reading.sender_warning.as_deref());
             }
             let sender = reading
                 .row

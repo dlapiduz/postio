@@ -46,6 +46,9 @@ pub struct Member {
     pub to: Vec<SafeText>,
     /// Who was copied.
     pub cc: Vec<SafeText>,
+    /// Why the sender may not be who they say, once its body has been read
+    /// (#1928). Ordinary mail has none.
+    pub warning: Option<SafeText>,
 }
 
 impl Member {
@@ -79,6 +82,7 @@ impl Member {
             parts: Vec::new(),
             to: Vec::new(),
             cc: Vec::new(),
+            warning: None,
         }
     }
 
@@ -100,6 +104,7 @@ impl Member {
             parts: Vec::new(),
             to: Vec::new(),
             cc: Vec::new(),
+            warning: None,
         }
     }
 }
@@ -212,6 +217,7 @@ pub(crate) mod tests {
             parts: Vec::new(),
             to: Vec::new(),
             cc: Vec::new(),
+            warning: None,
         }
     }
 

@@ -738,6 +738,16 @@ is one sentence: **nothing leaves this machine that the user did not ask for.**
   assertion in `postio-body` is what keeps that true: zero scripts, zero
   remote-loading references, zero tracking pixels, and not one broken image
   element, across every HTML message in the corpus.
+- **A sender who may not be who they say gets one quiet line in the reader's
+  header, and ordinary mail gets nothing** (#1928). It speaks for two things:
+  the account's provider stamped an `Authentication-Results` saying DMARC
+  failed (or SPF and DKIM both failed for the From domain), or the display
+  name is itself another address or domain than the one the mail came from.
+  Only the topmost `Authentication-Results` whose authserv-id is in the
+  provider's preset row (`authserv_ids`) is believed, because a sender writes
+  every header it sends; with none, nothing is known and nothing is shown.
+  There is no "verified" badge. Link and PGP/S/MIME warnings are still
+  unscheduled.
 - No telemetry, no crash reporting, no update ping.
 - **The local store holds the whole mailbox, and it is encrypted.** §14's
   backfill means this machine ends up with a complete copy of the user's mail
@@ -756,7 +766,7 @@ When adding anything that could make a network request, the question is not
 not ship. `scripts/checks/check-no-silent-tracking.py` refuses the two mechanisms that
 are easiest to add by accident; `ARCHITECTURE.md` §11 is the enforcement story.
 
-Phishing and link warnings, PGP and S/MIME are unscheduled.
+Link warnings, PGP and S/MIME are unscheduled.
 
 ---
 

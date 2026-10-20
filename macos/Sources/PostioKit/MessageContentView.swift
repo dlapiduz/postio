@@ -260,6 +260,13 @@ public struct MessageContentView<BodyView: View>: View {
             MessageLabelsLine(labels: words.labels, add: words.addLabel, run: run)
         case .sender:
             MessageSenderBlock(fields: words.fields, date: words.date)
+        case let .senderWarning(warning):
+            // A sentence, not a badge: only when the host doubts the sender.
+            Label(warning, systemImage: "exclamationmark.triangle")
+                .font(.system(size: 12.5))
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         case let .card(card):
             MessageActionCard(card: card, run: run)
         case let .unsubscribe(offer, state):
@@ -294,6 +301,9 @@ public enum MessageBlock: Equatable, Identifiable {
     case labels
     /// From, To and Cc, and the date.
     case sender
+    /// Why the sender may not be who they say, under their header; absent
+    /// for nearly all mail (#1928).
+    case senderWarning(String)
     /// The action card.
     case card(MessageHeaderWords.Card)
     /// The unsubscribe banner over list mail, and where it has got to. Gone
@@ -314,6 +324,7 @@ public enum MessageBlock: Equatable, Identifiable {
         case .subject: "subject"
         case .labels: "labels"
         case .sender: "sender"
+        case .senderWarning: "senderWarning"
         case .card: "card"
         case .unsubscribe: "unsubscribe"
         case .renderMode: "renderMode"
@@ -334,6 +345,7 @@ public enum MessageBlock: Equatable, Identifiable {
         var blocks: [MessageBlock] = []
         if let thread = words.thread { blocks.append(.thread(thread)) }
         blocks += [.subject(words.subject), .labels, .sender]
+        if let warning = document?.senderWarning { blocks.append(.senderWarning(warning)) }
         if let card = words.card { blocks.append(.card(card)) }
         if let document {
             if let offer = document.unsubscribe, unsubscribe != .left {
@@ -354,6 +366,7 @@ public enum MessageBlock: Equatable, Identifiable {
         case .subject: previous == nil ? 0 : MessageRhythm.markerToSubject
         case .labels: MessageRhythm.subjectToLabels
         case .sender: MessageRhythm.labelsToSender
+        case .senderWarning: MessageRhythm.senderToCard
         case .card: MessageRhythm.senderToCard
         case .unsubscribe: MessageRhythm.cardToNotice
         case .renderMode: MessageRhythm.cardToBody

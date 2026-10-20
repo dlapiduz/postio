@@ -174,6 +174,45 @@ pub fn a_waiting_plate_carries_no_notice_from_the_message_before() {
     window.close();
 }
 
+pub fn a_sender_warning_is_one_line_and_does_not_outlast_its_message() {
+    let Some((window, reader, _dir)) = reader_in_a_window() else {
+        return;
+    };
+    header(&reader);
+    reader.render(&plain("an ordinary message"), Some("ada@example.com"));
+    lay_out();
+    assert_eq!(
+        reader.sender_warning_label(),
+        None,
+        "ordinary mail is quiet"
+    );
+    let quiet = body_top(&reader);
+
+    let said = "This message failed sender verification: it may not be from example.com.";
+    reader.set_sender_warning(Some(said));
+    lay_out();
+    assert_eq!(reader.sender_warning_label().as_deref(), Some(said));
+    // A busy machine can need more than one frame to size the new row.
+    for _ in 0..20 {
+        if body_top(&reader) > quiet {
+            break;
+        }
+        lay_out();
+    }
+    assert!(
+        body_top(&reader) > quiet,
+        "the warning took no room above the body"
+    );
+
+    // The next message is a different sender's.
+    header(&reader);
+    lay_out();
+    assert_eq!(reader.sender_warning_label(), None);
+    assert!((body_top(&reader) - quiet).abs() < 0.5);
+
+    window.close();
+}
+
 pub fn the_body_starts_at_the_same_place_whoever_the_message_went_to() {
     let Some((window, reader, _dir)) = reader_in_a_window() else {
         return;

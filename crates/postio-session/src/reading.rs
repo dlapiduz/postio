@@ -63,6 +63,10 @@ pub enum Body {
         /// level up — four kinds of "no body" rendered as one blank column
         /// (#70) — applied to "a body, but not the sender's" (#901).
         encoding_problems: bool,
+        /// The header block the body was stored with, unparsed: what
+        /// [`sender_warning`] reads, carried from the one body read so
+        /// judging the sender costs no second decompression (#1928).
+        headers: Option<String>,
     },
     /// There are none, for this reason.
     Absent(Absent),
@@ -127,6 +131,7 @@ pub async fn load_with_row(
             Body::Ready {
                 body: draft.body,
                 encoding_problems: false,
+                headers: None,
             },
             None,
         );
@@ -191,6 +196,7 @@ pub async fn load_with_row(
     (
         Body::Ready {
             encoding_problems: stored.encoding_problems,
+            headers: stored.headers,
             body: postio_model::MessageBody {
                 text: stored.text,
                 html: stored.html,
@@ -198,6 +204,50 @@ pub async fn load_with_row(
         },
         Some(row),
     )
+}
+
+/// The one line a reading says about who the sender really is, or `None`
+/// (#1928).
+///
+/// `headers` is the stored header block of the body that was read. The rule
+/// is [`postio_ui::reader::authenticity::warning`]; what this adds is which
+/// servers to believe, which is the account's provider (`authserv_ids` in
+/// the preset table, found by the IMAP host the account talks to). The
+/// account is read only when the block has an `Authentication-Results` to
+/// judge, and mail the user sent is never judged.
+pub async fn sender_warning(
+    connection: &postio_storage::Checkout,
+    row: &postio_model::Message,
+    headers: Option<&str>,
+) -> Option<String> {
+    let headers = headers.map(postio_model::headers::parse_block);
+    let wants_account = headers
+        .as_ref()
+        .is_some_and(|headers| headers.contains("Authentication-Results"));
+    // Ordinary mail without a header to judge or a name to doubt costs no
+    // read at all.
+    if !wants_account && postio_ui::reader::authenticity::impersonation(&row.from).is_none() {
+        return None;
+    }
+    let account = postio_storage::repository::AccountRepository::new(connection)
+        .get(row.account_id)
+        .await
+        .ok()
+        .flatten();
+    if let Some(account) = &account
+        && std::iter::once(&account.address)
+            .chain(account.identities.iter().map(|identity| &identity.address))
+            .any(|own| row.from.iter().any(|from| from.same_address(own)))
+    {
+        return None;
+    }
+    let trusted: &[String] = match (&account, wants_account) {
+        (Some(account), true) => {
+            postio_account::discovery::authserv_ids_for_imap_host(&account.incoming.host)
+        }
+        _ => &[],
+    };
+    postio_ui::reader::authenticity::warning(&headers.unwrap_or_default(), &row.from, trusted)
 }
 
 /// One inline part of `message`, by its `Content-ID`.
