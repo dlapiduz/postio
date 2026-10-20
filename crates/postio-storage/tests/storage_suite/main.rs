@@ -60,6 +60,7 @@ mod reclaim_pages;
 mod reminders;
 mod schema_fidelity;
 mod searches;
+mod sender_names;
 mod seed_is_honest;
 mod seed_shapes;
 mod snoozed_due_index;

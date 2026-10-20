@@ -169,9 +169,16 @@ surface already goes through: `LIST_COLUMNS`' sender subquery
 (`messages.rs:672`), `ThreadRepository::participants_for` (`threads.rs:1327`),
 and `read_recipients` (`messages.rs:2611`). Each resolves a sender's name as
 `coalesce(<owner's user-set name, if the owner is live>, recipients.name)`
-through `addresses.contact_id`. `read_recipients` additionally returns the raw
-header name beside it so the reader's header details can show the mail's own
-words (FR-032's second clause).
+through `addresses.contact_id`. **Revised during implementation:**
+`read_recipients` is *not* substituted. It fills a `Message`, and a `Message`
+is written back whole by `MessageRepository::update` (the Sent copy in
+`postio-sync/src/send.rs` does exactly that), so a substituted name would be
+persisted into `recipients.name` and the header's own words lost. The reader
+asks `ContactRepository::user_names(addresses)` instead -- one statement,
+keyed by normalised address -- and keeps the message's names as the raw
+header for FR-032's second clause. The search hydrate
+(`postio-index/src/executor.rs`) is the fourth site and takes the same
+`coalesce`.
 
 **Rationale.** Substituting in the app mappers (`feed.rs::row`,
 `reading.rs::Envelope`) would mean every surface — list, thread rows,

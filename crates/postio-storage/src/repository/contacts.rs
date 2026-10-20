@@ -949,6 +949,41 @@ impl ContactRepository<'_> {
         .await
     }
 
+    /// The names the user gave the live owners of `addresses`, keyed by
+    /// normalised address -- what the reader substitutes for a header's
+    /// display name (FR-032). An address nobody live owns, or whose owner the
+    /// user never named, is absent: its mail says what it said.
+    pub async fn user_names(
+        &self,
+        addresses: &[String],
+    ) -> Result<std::collections::HashMap<String, String>> {
+        if addresses.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let placeholders = (1..=addresses.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let wanted: Vec<turso::Value> = addresses
+            .iter()
+            .map(|a| turso::Value::Text(a.to_lowercase()))
+            .collect();
+        let rows = sql::all_unbounded(
+            self.connection,
+            &format!(
+                "SELECT a.address_normalized, c.name
+                   FROM addresses a
+                   JOIN contacts c ON c.id = a.contact_id
+                  WHERE a.address_normalized IN ({placeholders})
+                    AND c.state = 'live' AND c.name IS NOT NULL"
+            ),
+            wanted,
+            |row| Ok((row.col::<String>(0)?, row.col::<String>(1)?)),
+        )
+        .await?;
+        Ok(rows.into_iter().collect())
+    }
+
     /// Who owns `address`, or `None` for nobody.
     pub async fn owner_of_address(&self, address: AddressId) -> Result<Option<ContactId>> {
         Ok(owner_of(self.connection, address)
