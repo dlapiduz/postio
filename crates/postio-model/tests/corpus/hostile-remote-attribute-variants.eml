@@ -1,0 +1,22 @@
+Message-ID: <hostile-remote-attribute-variants@abuse.example.com>
+Date: Mon, 19 Oct 2026 09:00:00 +0000
+From: Beacon Works <beacons@abuse.example.com>
+To: Ren Ishida <ren.ishida@example.net>
+Subject: Legacy and oddly spelled attributes that
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<html><body background="https://bodybg.vector.example.com/b.png">
+<img src="HTTPS://upper.vector.example.com/1.gif" alt="a">
+<img src="  https://space.vector.example.com/2.gif" alt="b">
+<img src="&#104;ttps://entity.vector.example.com/3.gif" alt="c">
+<img src="//protorel.vector.example.com/4.gif" alt="d">
+<img src="x.gif" lowsrc="https://lowsrc.vector.example.com/5.gif" dynsrc="https://dynsrc.vector.example.com/6.avi" longdesc="https://longdesc.vector.example.com/7.html" alt="e">
+<img src="https://src.vector.example.com/8.gif" srcset="" alt="f">
+<input type="image" src="https://inputimage.vector.example.com/9.gif">
+<table background="https://tablebg.vector.example.com/t.png"><tr><td background="https://tdbg.vector.example.com/d.png">cell</td></tr></table>
+<a href="https://link.example.com/offer" ping="https://ping.vector.example.com/p">An ordinary link</a>
+<form action="https://form.vector.example.com/post"><button formaction="https://formaction.vector.example.com/x">Go</button></form>
+<math><mglyph src="https://mglyph.vector.example.com/m.png"/></math>
+</body></html>

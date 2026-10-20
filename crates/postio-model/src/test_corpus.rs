@@ -362,6 +362,22 @@ corpus! {
         "Deeply folded headers: a three-hop Received chain, DKIM-Signature, multi-line Authentication-Results and Subject.",
     "headers-only-no-body": [MissingHeaders, PlainText] =>
         "A message that ends after its headers, with no blank line and no body at all.",
+    "hostile-remote-attribute-variants": [Html, RemoteContent, Hostile] =>
+        "Legacy and oddly spelled attributes that name a remote resource.",
+    "hostile-remote-css-obfuscated": [Html, RemoteContent, Hostile] =>
+        "CSS that names a URL without a plain url( token: image-set, escapes, string @import, comments.",
+    "hostile-remote-frames-embeds": [Html, RemoteContent, Hostile] =>
+        "iframe, frameset, object, embed, applet and an img inside object fallback.",
+    "hostile-remote-media-poster": [Html, RemoteContent, Hostile] =>
+        "video poster and src, audio, source and track.",
+    "hostile-remote-meta-refresh": [Html, RemoteContent, Hostile] =>
+        "meta http-equiv refresh and a link prefetch.",
+    "hostile-remote-srcset-picture": [Html, RemoteContent, Hostile] =>
+        "srcset, picture/source and imagesrcset.",
+    "hostile-remote-stylesheet-link": [Html, RemoteContent, Hostile] =>
+        "A link rel=stylesheet, a link rel=preload and a base href.",
+    "hostile-remote-svg-images": [Html, RemoteContent, Hostile] =>
+        "inline svg with image href, xlink:href, use, feImage and a style @import.",
     "html-cjk-emoji": [Html] =>
         "Chinese, Japanese and Korean paragraphs and ZWJ emoji in HTML: shaping and font fallback with no tofu (spec 006 T006).",
     "html-class-styled": [Html, Designed] =>

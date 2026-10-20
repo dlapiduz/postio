@@ -1,0 +1,14 @@
+Message-ID: <hostile-remote-srcset-picture@abuse.example.com>
+Date: Mon, 19 Oct 2026 09:00:00 +0000
+From: Beacon Works <beacons@abuse.example.com>
+To: Ren Ishida <ren.ishida@example.net>
+Subject: srcset, picture/source and imagesrcset
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<html><body>
+<img src="cid:logo" srcset="https://srcset.vector.example.com/a.png 1x, https://srcset.vector.example.com/b.png 2x" alt="srcset">
+<picture><source srcset="https://picture.vector.example.com/wide.webp" media="(min-width: 400px)" type="image/webp"><img src="cid:logo" alt="picture"></picture>
+<img src="cid:logo" sizes="100vw" srcset="//proto.vector.example.com/c.png 640w">
+</body></html>

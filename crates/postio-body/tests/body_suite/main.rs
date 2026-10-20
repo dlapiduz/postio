@@ -23,5 +23,6 @@ mod markdown_parity;
 mod outgoing;
 mod own_text;
 mod reader_view;
+mod remote_vectors;
 mod replying;
 mod treatment;

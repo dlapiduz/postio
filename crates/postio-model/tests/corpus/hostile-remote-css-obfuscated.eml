@@ -1,0 +1,29 @@
+Message-ID: <hostile-remote-css-obfuscated@abuse.example.com>
+Date: Mon, 19 Oct 2026 09:00:00 +0000
+From: Beacon Works <beacons@abuse.example.com>
+To: Ren Ishida <ren.ishida@example.net>
+Subject: CSS that names a URL without a plain url
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<html><head><style>
+@import "https://importstring.vector.example.com/a.css";
+@import url(https://importbare.vector.example.com/b.css) screen;
+@namespace svg url(https://namespace.vector.example.com/ns);
+.a { background-image: image-set("https://imageset.vector.example.com/a.png" 1x, "https://imageset.vector.example.com/b.png" 2x); height: 10px; }
+.b { background: -webkit-image-set(url("https://webkitset.vector.example.com/a.png") 1x); height: 10px; }
+.c { background: \75 rl("https://escaped.vector.example.com/c.png"); height: 10px; }
+.d { background: u/**/rl(https://comment.vector.example.com/d.png); height: 10px; }
+.e { background: URL( 'https://upper.vector.example.com/e.png' ); height: 10px; }
+.f { background: src("https://srcfn.vector.example.com/f.png"); height: 10px; }
+.g { mask-image: url(//protorel.vector.example.com/g.png); -webkit-mask-image: url(https://mask.vector.example.com/g.png); }
+.i { background: url(cid:logo), url("https://multilayer.vector.example.com/i.png"); height: 10px; }
+.h { background: cross-fade(url(https://crossfade.vector.example.com/h.png), none, 50%); height: 10px; }
+@font-face { font-family: "X"; src: local("Arial"), url(https://fontface.vector.example.com/x.woff2); }
+@font-face { font-family: "Y"; src: url(//fontproto.vector.example.com/y.woff) format("woff"); }
+</style></head><body>
+<p class="a">a</p><p class="b">b</p><p class="c">c</p><p class="d">d</p><p class="e">e</p><p class="f">f</p><p class="g">g</p><p class="h">h</p><p class="i">i</p>
+<p style="background:image-set('https://inlineset.vector.example.com/i.png' 1x); behavior: url(https://behavior.vector.example.com/b.htc); -moz-binding: url(https://binding.vector.example.com/b.xml#b)">inline</p>
+<p style="background:&#117;rl(https://entity.vector.example.com/j.png)">entity</p>
+</body></html>

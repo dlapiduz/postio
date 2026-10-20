@@ -1,0 +1,16 @@
+Message-ID: <hostile-remote-frames-embeds@abuse.example.com>
+Date: Mon, 19 Oct 2026 09:00:00 +0000
+From: Beacon Works <beacons@abuse.example.com>
+To: Ren Ishida <ren.ishida@example.net>
+Subject: iframe, frameset, object, embed, applet 
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<html><body>
+<iframe src="https://iframe.vector.example.com/f.html"></iframe>
+<iframe srcdoc="&lt;img src=&quot;https://srcdoc.vector.example.com/x.gif&quot;&gt;"></iframe>
+<object data="https://object.vector.example.com/o.swf" type="application/x-shockwave-flash"><img src="https://objfallback.vector.example.com/fb.png"></object>
+<embed src="https://embed.vector.example.com/e.swf">
+<applet code="A.class" codebase="https://applet.vector.example.com/"></applet>
+<p>Frames.</p></body></html>
