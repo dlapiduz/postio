@@ -806,8 +806,11 @@ impl FocusWindow {
         // The offer to clear what a list sent takes its two verbs' own keys,
         // and nothing else of the list's: `#` here deletes what the list
         // sent, not the row behind the dialog (#1931).
+        // The closure is cloned out first: answering closes the dialog, which
+        // clears this very slot.
+        let answering = self.imp().list_sweep.borrow().clone();
         if self.sweep_offer().is_some()
-            && let Some(answer) = self.imp().list_sweep.borrow().clone()
+            && let Some(answer) = answering
             && let Some(chord) = postio_widgets::keys::chord(key, state)
         {
             let command = {
