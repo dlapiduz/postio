@@ -154,6 +154,112 @@ pub fn newest_first(activations: &mut [UnsubscribeActivation]) {
     });
 }
 
+/// Which of an account's mail "what this list sent" means (#1931).
+///
+/// Narrower than [`list_identifier`] on purpose: that one falls back to the
+/// sender's *domain*, which is right for a note in the privacy pane and wrong
+/// for something that moves mail, because `gmail.com` is not a list. Here the
+/// fallback is the exact sender address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SweepScope {
+    /// Messages carrying this `List-Id`.
+    ListId(String),
+    /// Messages from exactly this address, for a sender that names no list.
+    Sender(String),
+}
+
+impl SweepScope {
+    /// What the offer calls it: the list, or the sender's address.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::ListId(list) | Self::Sender(list) => list,
+        }
+    }
+}
+
+/// The mail an unsubscribe could also clear: the `List-Id` if the message has
+/// one, else its first sender's exact address, else nothing.
+pub fn sweep_scope(list_id: Option<&str>, from: &[EmailAddress]) -> Option<SweepScope> {
+    match list_id.map(str::trim).filter(|list| !list.is_empty()) {
+        Some(list) => Some(SweepScope::ListId(list.to_owned())),
+        None => from
+            .first()
+            .map(|sender| SweepScope::Sender(sender.normalized())),
+    }
+}
+
+/// Words for the two choices: the registry's verbs, not new ones.
+pub const SWEEP_ARCHIVE: &str = "Archive";
+/// See [`SWEEP_ARCHIVE`]; `Delete` moves to the Trash and `z` takes it back.
+pub const SWEEP_DELETE: &str = "Delete";
+
+/// What the offer says once the unsubscribe is recorded: how much mail the
+/// list left behind, or `None` when there is nothing to offer.
+///
+/// `more` is the storage page being full: the count is then a floor, and
+/// says so rather than claiming a number it did not read.
+pub fn sweep_offer(scope: &SweepScope, count: usize, more: bool) -> Option<String> {
+    if count == 0 {
+        return None;
+    }
+    let plus = if more { "+" } else { "" };
+    let (noun, verb) = if count == 1 && !more {
+        ("message", "is")
+    } else {
+        ("messages", "are")
+    };
+    Some(format!(
+        "Unsubscribed from {}. {count}{plus} {noun} from it {verb} still here",
+        scope.name()
+    ))
+}
+
+/// What a declined offer, or a finished one, leaves on screen is the
+/// command's own notice ("Deleted 14 messages"), so there is no wording here
+/// for it: the verb is one the registry already says.
+#[cfg(test)]
+mod sweep_tests {
+    use super::*;
+
+    fn sender(address: &str) -> Vec<EmailAddress> {
+        vec![EmailAddress::new(Some("Shop"), address)]
+    }
+
+    #[test]
+    fn a_list_id_is_the_scope_and_the_domain_never_is() {
+        assert_eq!(
+            sweep_scope(Some("news.example.org"), &sender("a@mail.example.org")),
+            Some(SweepScope::ListId("news.example.org".into()))
+        );
+        assert_eq!(
+            sweep_scope(None, &sender("Shop@Example.COM")),
+            Some(SweepScope::Sender("shop@example.com".into())),
+            "the exact address, not example.com"
+        );
+        assert_eq!(
+            sweep_scope(Some("  "), &sender("a@example.com")),
+            Some(SweepScope::Sender("a@example.com".into())),
+            "a blank List-Id names no list"
+        );
+        assert_eq!(sweep_scope(None, &[]), None);
+    }
+
+    #[test]
+    fn the_offer_counts_and_is_silent_when_there_is_nothing() {
+        let scope = SweepScope::ListId("news.example.org".into());
+        assert_eq!(sweep_offer(&scope, 0, false), None);
+        assert_eq!(
+            sweep_offer(&scope, 1, false).unwrap(),
+            "Unsubscribed from news.example.org. 1 message from it is still here"
+        );
+        assert!(sweep_offer(&scope, 14, false).unwrap().contains("14 messages"));
+        assert!(
+            sweep_offer(&scope, 5000, true).unwrap().contains("5000+ messages"),
+            "a full page is a floor"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

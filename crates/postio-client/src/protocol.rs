@@ -117,6 +117,9 @@ pub enum Req {
     /// Leave the list this message came from: record the activation, and
     /// answer the list's name. Only ever on a person's deliberate act.
     Unsubscribe(MessageId),
+    /// What the list `message` came from has sent that "delete what the list
+    /// sent" would reach (#1931): its ids, newest first, and a name.
+    ListMail(MessageId),
     /// A message's parts: its attachments, and inline parts.
     Parts(MessageId),
     /// Write one part to `to`, fetching it first if it was never downloaded.
@@ -736,6 +739,8 @@ pub enum Resp {
     Body(Body),
     /// The list a message was unsubscribed from.
     Unsubscribed(String),
+    /// A list's mail, as the offer after an unsubscribe counts it.
+    ListMail(ListMailFound),
     /// A message's parts.
     Parts(Vec<postio_model::Attachment>),
     /// Where a part was written.
@@ -1213,4 +1218,17 @@ mod tests {
             Err(postio_ui::digest::TIME_ERROR.to_owned())
         );
     }
+=======
+/// The mail a list has left behind, found for the offer that follows an
+/// unsubscribe (#1931). Flagged mail and mail already in Trash, Junk, Sent or
+/// Drafts is not in it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListMailFound {
+    /// The `List-Id`, or the sender's address when the message named no list.
+    pub name: String,
+    /// The messages, newest first, one page: act on these as one command.
+    pub ids: Vec<MessageId>,
+    /// More matched than the page held, so `ids.len()` is a floor.
+    pub more: bool,
+>>>>>>> 234f7116 (feat(host): find what a list sent for a sweep)
 }

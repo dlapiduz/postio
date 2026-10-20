@@ -42,6 +42,7 @@ mod focus_classified;
 mod focus_inbox;
 mod focus_plans;
 mod labels;
+mod list_mail;
 mod list_statement_count;
 mod mailbox_counts;
 mod mailbox_roles;

@@ -47,6 +47,7 @@ mod markers;
 mod messages;
 mod operations;
 mod reminders;
+mod sweeps;
 mod sync_state;
 mod threading;
 mod threads;
@@ -71,6 +72,7 @@ pub use markers::{InviteIdentity, InviteState, Marker, MarkerRepository, MarkerS
 pub use operations::{OperationQueueRepository, QueuedOperation};
 pub use reminders::{Reminder, ReminderRepository};
 pub use settings::SettingsRepository;
+pub use sweeps::{Found, ListMail, SweepRepository};
 pub use sync_state::SyncStateRepository;
 pub use threading::{Threaded, ThreadingRepository};
 pub use threads::{

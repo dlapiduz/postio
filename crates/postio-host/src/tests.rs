@@ -758,6 +758,63 @@ fn unsubscribing_records_the_activation_against_the_messages_list() {
 }
 
 #[test]
+fn what_a_list_sent_is_deleted_as_one_undoable_command() {
+    // #1931: after leaving a list, one Delete takes everything it sent, one
+    // undo brings it all back, and a Flagged message and another list's mail
+    // are untouched.
+    let world = World::new();
+    let (client, events) = world.frontend(ClientKind::Tui);
+    let filed = |list: Option<&str>, flagged: bool| {
+        world.rt.block_on(async {
+            let connection = world.database.connect().await.expect("a connection");
+            let first = MessageRepository::new(&connection)
+                .get(world.message)
+                .await
+                .expect("read")
+                .expect("there");
+            let mut message = Message::new(first.account_id, world.inbox, Utc::now());
+            message.list_id = list.map(str::to_owned);
+            if flagged {
+                message.flags.insert(postio_model::Flag::Flagged);
+            }
+            MessageRepository::new(&connection)
+                .create(&mut message)
+                .await
+                .expect("a message")
+        })
+    };
+    let first = filed(Some("weekly.news.example.org"), false);
+    let second = filed(Some("weekly.news.example.org"), false);
+    filed(Some("weekly.news.example.org"), true);
+    filed(Some("other.example.org"), false);
+    let before = world.inbox_rows(&client);
+
+    let found = world.rt.block_on(client.list_mail(first)).expect("found");
+    assert_eq!(found.name, "weekly.news.example.org");
+    let mut ids = found.ids.clone();
+    ids.sort();
+    assert_eq!(ids, vec![first, second], "not the flagged, not the other list");
+    assert!(!found.more);
+
+    world.send(
+        &client,
+        Command::Delete {
+            target: MessageTarget::Messages(found.ids),
+        },
+    );
+    world.hear(&events, |event| matches!(event, Event::ActionCompleted { .. }));
+    assert_eq!(world.inbox_rows(&client), before - 2);
+    assert_eq!(
+        world.rt.block_on(client.undo_top()).expect("top").as_deref(),
+        Some("Deleted 2 messages"),
+        "one unit"
+    );
+    world.send(&client, Command::Undo);
+    world.hear(&events, |event| matches!(event, Event::UndoPerformed { .. }));
+    assert_eq!(world.inbox_rows(&client), before);
+}
+
+#[test]
 fn a_frontend_lists_a_messages_parts_and_saves_one() {
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Tui);

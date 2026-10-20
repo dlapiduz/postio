@@ -24,7 +24,7 @@ use postio_model::mailbox::Mailbox;
 use postio_model::{Draft, DraftId};
 
 use crate::counting::Counts;
-use crate::protocol::{Queued, Req, Resp};
+use crate::protocol::{ListMailFound, Queued, Req, Resp};
 
 /// The host is not answering: it exited, or the connection broke.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -101,6 +101,7 @@ impl Req {
             Req::Body(_) => "Body",
             Req::Conversation(_) => "Conversation",
             Req::Unsubscribe(_) => "Unsubscribe",
+            Req::ListMail(_) => "ListMail",
             Req::Parts(_) => "Parts",
             Req::SavePart { .. } => "SavePart",
             Req::OpenPart { .. } => "OpenPart",
@@ -319,6 +320,17 @@ impl Client {
                 _ => None,
             },
         )
+        .await
+    }
+
+    /// What the list `message` came from has sent and a sweep could still
+    /// reach: for the offer after [`Self::unsubscribe`], which then acts on
+    /// `ids` with one ordinary `Archive` or `Delete` (#1931).
+    pub async fn list_mail(&self, message: MessageId) -> Result<ListMailFound, StoreError> {
+        self.read(Req::ListMail(message), "a list's mail", |answer| match answer {
+            Resp::ListMail(found) => Some(found),
+            _ => None,
+        })
         .await
     }
 
