@@ -803,7 +803,12 @@ final class Engine {
                 let row = self.contactRow ?? self.focus.cursor,
                 let rect = table.nameAnchor(row: row)
             else { return nil }
-            return (table.tableView, rect)
+            // Centred on the name it would hang past the window's left edge
+            // (the name starts 56 in and the popover is 400 wide), so it
+            // hangs from a point level with the name, further in: its left
+            // edge 16 from the window's, as screen 04 draws it.
+            let centre = max(rect.midX, 16 + ContactPopoverView.width / 2)
+            return (table.tableView, NSRect(x: centre, y: rect.minY, width: 1, height: rect.height))
         }
         // A click away took it down: the controller forgets it.
         presenter.onToolkitClose = { [weak self, weak session] in
