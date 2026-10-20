@@ -48,21 +48,30 @@ pub fn the_pane_shows_the_files_values() {
     window.destroy();
 }
 
-/// The segment labelled `label` inside the control whose accessible name is
-/// `group` -- Junk's and Trash's offer the same words.
+/// The segment labelled `label` inside Junk's control (`group` "Empty Junk")
+/// or Trash's ("Empty Trash"). Both offer the same words, so they are told
+/// apart by their place: the two controls whose segments say "90 days", in
+/// the order the pane draws them, Junk first.
 fn segment_in(panel: &SettingsPanel, group: &str, label: &str) -> gtk::ToggleButton {
-    collect(panel.upcast_ref::<gtk::Widget>(), "postio-segmented")
+    let segments_of = |root: &gtk::Widget| -> Vec<gtk::ToggleButton> {
+        collect(root, "postio-segment")
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<gtk::ToggleButton>().ok())
+            .collect()
+    };
+    let emptying: Vec<gtk::Widget> = collect(panel.upcast_ref::<gtk::Widget>(), "postio-segmented")
         .into_iter()
-        .find(|root| {
-            gtk::prelude::ObjectExt::property::<Option<String>>(root, "accessible-label").as_deref()
-                == Some(group)
+        .filter(|root| {
+            segments_of(root)
+                .iter()
+                .any(|button| button.label().is_some_and(|text| text == "90 days"))
         })
-        .and_then(|root| {
-            collect(&root, "postio-segment")
-                .into_iter()
-                .filter_map(|widget| widget.downcast::<gtk::ToggleButton>().ok())
-                .find(|button| button.label().is_some_and(|text| text == label))
-        })
+        .collect();
+    assert_eq!(emptying.len(), 2, "Junk's control and Trash's");
+    let root = &emptying[usize::from(group == "Empty Trash")];
+    segments_of(root)
+        .into_iter()
+        .find(|button| button.label().is_some_and(|text| text == label))
         .unwrap_or_else(|| panic!("no {label:?} segment in {group:?}"))
 }
 
