@@ -63,6 +63,7 @@ pub mod schedule;
 pub mod search;
 pub mod search_view;
 pub mod selection;
+pub mod sender_treatments;
 pub mod sending;
 pub mod settings;
 pub mod sidebar;
