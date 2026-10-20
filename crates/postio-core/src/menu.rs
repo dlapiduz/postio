@@ -254,6 +254,11 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::ContactAddAddress
         | C::ContactDetachAddress
         | C::ContactSetPreferred
+        | C::ContactNew
+        | C::ContactEdit
+        | C::ContactDelete
+        | C::ContactRestore
+        | C::ContactsToggleDeleted
         | C::GoToFiltered
         | C::GoToDigestRules
         | C::ToggleHasAction
@@ -343,8 +348,14 @@ mod tests {
         // this guards is the opposite failure -- a table that fell out of
         // date and started answering `None` broadly, leaving a menu bar that
         // is technically generated and practically empty.
-        let total = crate::registry::all().count();
-        let placed = crate::registry::all()
+        // Less Contacts' own commands: they act on a focused row, which a
+        // global menu cannot say (the arm above), and there are more of them
+        // than any other surface has.
+        let counted = || {
+            crate::registry::all().filter(|spec| spec.contexts != crate::Context::Contacts.as_set())
+        };
+        let total = counted().count();
+        let placed = counted()
             .filter(|spec| section_for(spec.id).is_some())
             .count();
         assert!(

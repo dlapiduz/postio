@@ -41,7 +41,7 @@ the row it wants. This keeps one binding per verb, which is what
 | `open_contacts` | Contacts | `g c` | the `g` destinations' surfaces (list, conversation, reader, search, folder list) — not the composer, where `g` is a letter | | None | FR-001 |
 | `contact_new` | New contact | `n` | Contacts | | Undo | FR-020 |
 | `contact_edit` | Edit contact | `e` | Contacts (person) | | Undo | FR-021 |
-| `contact_delete` | Delete | `#`, `Delete` | Contacts (person or group) | ✓ | Undo | FR-023, FR-040 |
+| `contact_delete` | Delete | `d`, `Delete` (the message list's own `d`) | Contacts (person or group) | ✓ | Undo | FR-023, FR-040 |
 | `contact_restore` | Restore contact | `r` | Contacts (person in the Deleted view) | | Undo | FR-023a |
 | `contact_join` | Join | `m` | Contacts (selection, or a suggestion) | | Undo | FR-012/13, FR-019 |
 | `contact_add_address` | Add address | `+` | Contacts | | Undo | FR-015 |

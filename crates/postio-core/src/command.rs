@@ -28,7 +28,7 @@ use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, AddressId, ContactId, ContactState, DraftId, EmailAddress, JoinReceipt, LabelId,
-    MailboxId, MailboxRole, MessageId, OperationRange, ThreadId,
+    MailboxId, MailboxRole, MessageId, OperationRange, PersonEdit, PersonFields, ThreadId,
 };
 
 /// How long an answer to an invitation waits in the outbox before it may
@@ -789,6 +789,31 @@ commands! {
         /// Which; `None` means the focused address.
         address: Option<AddressId> = None,
     } => "contact_set_preferred",
+    /// Make a person (FR-020), or ask for one.
+    ContactNew {
+        /// What is asked: a keystroke asks for the name and addresses.
+        action: ContactNewAction = ContactNewAction::Ask,
+    } => "contact_new",
+    /// Edit a person (FR-021), or put an edit back.
+    ContactEdit {
+        /// What is asked: a keystroke opens the editor on the focused person.
+        action: ContactEditAction = ContactEditAction::Ask,
+    } => "contact_edit",
+    /// Delete a person (FR-023).
+    ContactDelete {
+        /// Who; `None` means the focused one.
+        person: Option<ContactId> = None,
+    } => "contact_delete",
+    /// Bring a deleted person back (FR-023a).
+    ContactRestore {
+        /// Who; `None` means the focused one.
+        person: Option<ContactId> = None,
+        /// The state they come back in; live when not given. Undo knows what
+        /// they were and a key does not.
+        state: Option<ContactState> = None,
+    } => "contact_restore",
+    /// Show the deleted people, or the default view again.
+    ContactsToggleDeleted => "contacts_toggle_deleted",
     ;
     /// Mark one message read because the cursor rested on it long enough to
     /// have been read — not because anyone asked.
@@ -977,6 +1002,41 @@ pub enum ContactJoinAction {
     },
     /// Take a merge back.
     Unjoin(JoinReceipt),
+}
+
+/// What a [`Command::ContactNew`] asks for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContactNewAction {
+    /// Ask the user: the editor, empty.
+    Ask,
+    /// Make this person.
+    Create {
+        /// Their name, if the user gave one.
+        name: Option<String>,
+        /// Their addresses; at least one.
+        addresses: Vec<EmailAddress>,
+    },
+}
+
+/// What a [`Command::ContactEdit`] asks for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContactEditAction {
+    /// Ask the user: the editor, on the focused person.
+    Ask,
+    /// Set these fields.
+    Edit {
+        /// Whose.
+        person: ContactId,
+        /// What they become.
+        edit: PersonEdit,
+    },
+    /// Put fields back exactly -- undo's half.
+    Put {
+        /// Whose.
+        person: ContactId,
+        /// What they were.
+        fields: PersonFields,
+    },
 }
 
 /// What a [`Command::ContactAddAddress`] asks for.

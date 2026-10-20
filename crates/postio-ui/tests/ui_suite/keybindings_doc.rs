@@ -33,7 +33,9 @@ fn document_path() -> PathBuf {
 
 /// Where a command is available, phrased for a reader rather than a compiler.
 fn where_available(contexts: ContextSet) -> String {
-    if contexts == ContextSet::ANY {
+    // Contacts is the Mac's, and this file documents Linux: a command that is
+    // everywhere but there is everywhere here.
+    if contexts.with(Context::Contacts) == ContextSet::ANY {
         return "Everywhere".to_owned();
     }
     let names: Vec<&str> = contexts

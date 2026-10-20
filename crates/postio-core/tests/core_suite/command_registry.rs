@@ -462,10 +462,14 @@ fn adding_an_account_is_reachable_wherever_settings_is() {
     let spec = registry::get(CommandId::AddAccount);
 
     assert_eq!(
-        spec.contexts,
+        spec.contexts.with(Context::Contacts),
         registry::get(CommandId::Settings).contexts,
         "add account is reached from the same places settings is (ADR 0012 Q1); \
          a narrower set would hide it from a surface that offers settings"
+    );
+    assert!(
+        !spec.contexts.contains(Context::Contacts),
+        "Contacts is the one place it is not: `mod+shift+n` is New contact there"
     );
     assert!(
         spec.contexts.contains(Context::Sidebar),

@@ -261,7 +261,12 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::ContactJoin
         | C::ContactAddAddress
         | C::ContactDetachAddress
-        | C::ContactSetPreferred => None,
+        | C::ContactSetPreferred
+        | C::ContactNew
+        | C::ContactEdit
+        | C::ContactDelete
+        | C::ContactRestore
+        | C::ContactsToggleDeleted => None,
         // The composer's own keys, which the compose dialog teaches on its
         // buttons and its footer.
         C::Send

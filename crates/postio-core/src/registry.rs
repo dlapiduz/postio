@@ -1707,7 +1707,9 @@ static SPECS: &[CommandSpec] = &[
         // The same reach `Settings` has, for the reason ADR 0012 Q1 gives:
         // adding an account is a setting, and the folder list is where the
         // account will eventually appear.
-        contexts: ContextSet::ANY,
+        // Less Contacts, where `mod+shift+n` is New contact: the same gesture
+        // aimed at the surface in front of the person (plan 011 section 9).
+        contexts: ContextSet::ANY.without(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,
@@ -2588,6 +2590,63 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::Undo,
         requires: FOCUS_GRAPHICAL_MAIL,
     },
+    CommandSpec {
+        id: CommandId::ContactNew,
+        title: "New contact",
+        // `n` as 005 had it, and the Mac's ⌘⇧N (maintainer, 2026-10-19). In
+        // Contacts the surface's own binding wins over the global
+        // `add_account` that holds `mod+shift+n` everywhere else.
+        default_binding: "n",
+        alternate_bindings: &["mod+shift+n"],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactEdit,
+        title: "Edit contact",
+        // `e`, and the Mac's ⌘E (maintainer, 2026-10-19), which is
+        // `edit_config` in every other context.
+        default_binding: "e",
+        alternate_bindings: &["mod+e"],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactDelete,
+        title: "Delete",
+        // The message list's own delete key: the same gesture means the
+        // same thing on a person, and `z` takes it back.
+        default_binding: "d",
+        alternate_bindings: &["Delete"],
+        contexts: ctx(CONTACTS),
+        destructive: true,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactRestore,
+        title: "Restore contact",
+        default_binding: "r",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactsToggleDeleted,
+        title: "Deleted contacts",
+        default_binding: "v d",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
 ];
 
 /// Every command, in cheat-sheet order.
@@ -2997,6 +3056,11 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             | (ActionId::Builtin(C::ContactAddAddress), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactDetachAddress), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactSetPreferred), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactNew), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactEdit), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactDelete), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactRestore), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactsToggleDeleted), Platform::Freedesktop)
     )
 }
 
@@ -3073,7 +3137,7 @@ mod tests {
 
     /// What only the Mac draws, until Linux adopts it: the search dropdown
     /// and results view (spec 010 D23, D25) and Contacts (specs/005).
-    const NOT_ON_LINUX_YET: [CommandId; 27] = [
+    const NOT_ON_LINUX_YET: [CommandId; 32] = [
         CommandId::ShowAllResults,
         CommandId::ForgetRecent,
         CommandId::ExcludeSuggestion,
@@ -3101,6 +3165,11 @@ mod tests {
         CommandId::ContactAddAddress,
         CommandId::ContactDetachAddress,
         CommandId::ContactSetPreferred,
+        CommandId::ContactNew,
+        CommandId::ContactEdit,
+        CommandId::ContactDelete,
+        CommandId::ContactRestore,
+        CommandId::ContactsToggleDeleted,
     ];
 
     #[test]

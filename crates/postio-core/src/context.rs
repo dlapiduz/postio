@@ -260,6 +260,13 @@ impl ContextSet {
         ContextSet(self.0 | context.bit())
     }
 
+    /// This set less `context`: "everywhere but there", for the one command
+    /// whose key another surface takes for its own (`add_account`'s
+    /// `mod+shift+n` is New contact in Contacts).
+    pub const fn without(self, context: Context) -> ContextSet {
+        ContextSet(self.0 & !context.bit())
+    }
+
     /// A set built from a slice, usable in a `const` table.
     pub const fn from_slice(contexts: &[Context]) -> ContextSet {
         let mut bits = 0u16;
