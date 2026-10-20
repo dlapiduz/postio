@@ -1345,6 +1345,7 @@ impl Inner {
             Req::Body(message) => self.body(message).await,
             Req::Conversation(thread) => self.conversation(thread).await,
             Req::Unsubscribe(message) => self.unsubscribe(message).await,
+            Req::ListMail(message) => self.list_mail(message).await,
             Req::Parts(message) => {
                 match parts::read_message(&self.wiring.database, message).await {
                     Ok(found) => Resp::Parts(found.attachments),
@@ -2056,6 +2057,26 @@ impl Inner {
         {
             Ok(_) => Resp::Unsubscribed(list),
             Err(error) => Resp::Failed(StoreError::from(error)),
+        }
+    }
+
+    /// What the list `message` came from has sent that a sweep could reach
+    /// (#1931): a page of ids from one indexed read, the scope chosen by
+    /// [`postio_ui::unsubscribe::sweep_scope`]. Reads only; the verb that
+    /// acts on them is an ordinary command, so it is queued and undoable.
+    async fn list_mail(&self, message: postio_model::MessageId) -> Resp {
+        use postio_model::listing::StoreError;
+        let connection = match self.wiring.database.connect().await {
+            Ok(connection) => connection,
+            Err(error) => return Resp::Failed(StoreError::from(error)),
+        };
+        match postio_session::list_mail::find(&connection, message).await {
+            Ok(found) => Resp::ListMail(postio_client::protocol::ListMailFound {
+                name: found.name,
+                ids: found.ids,
+                more: found.more,
+            }),
+            Err(refusal) => Resp::Failed(StoreError::new(refusal.said())),
         }
     }
 

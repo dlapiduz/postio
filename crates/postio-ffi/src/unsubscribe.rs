@@ -42,6 +42,22 @@ pub struct UnsubscribeOfferFfi {
     pub action: String,
 }
 
+/// What is still here after leaving a list, and the two things the reader
+/// offers to do about it (#1931). Words only: acting on it is
+/// [`Session::clear_list_mail`](crate::Session::clear_list_mail), by message id.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ListMailOfferFfi {
+    /// The sentence: `Unsubscribed from news.example.org. 14 messages from it
+    /// are still here`.
+    pub summary: String,
+    /// How many, as a floor when `more`.
+    pub count: u32,
+    /// The Archive button: `Archive 14`.
+    pub archive: String,
+    /// The Delete button: `Delete 14`.
+    pub delete: String,
+}
+
 /// One past activation, for the Privacy pane.
 ///
 /// The same argument the remote-image grants make: an action the user cannot

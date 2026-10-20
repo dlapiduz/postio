@@ -18,10 +18,26 @@ public struct Unsubscribing: Equatable, Sendable {
         /// The activation is in flight: it writes, and a write can queue
         /// behind a sync's commit, so the banner says what it is doing.
         case leaving
+        /// Recorded, and the list left mail behind: the banner stays to offer
+        /// Archive or Delete for it (#1931). Neither is done until pressed.
+        case clearing(Sweep)
         /// Recorded. The banner goes; its absence is the confirmation.
         case left
         /// Refused, with the boundary's sentence. Pressing again retries.
         case failed(String)
+    }
+
+    /// What the list left behind, in the boundary's words.
+    public struct Sweep: Equatable, Sendable {
+        public let summary: String
+        public let archive: String
+        public let delete: String
+
+        public init(summary: String, archive: String, delete: String) {
+            self.summary = summary
+            self.archive = archive
+            self.delete = delete
+        }
     }
 
     private var states: [Int64: State] = [:]
@@ -34,7 +50,7 @@ public struct Unsubscribing: Equatable, Sendable {
     /// a second activation -- one already in flight, or a list already left.
     public mutating func begin(_ message: Int64) -> Bool {
         switch state(of: message) {
-        case .leaving, .left:
+        case .leaving, .left, .clearing:
             return false
         case .offered, .failed:
             states[message] = .leaving
@@ -45,6 +61,17 @@ public struct Unsubscribing: Equatable, Sendable {
     /// What the boundary answered: `nil` when the activation was recorded.
     public mutating func finish(_ message: Int64, complaint: String?) {
         states[message] = complaint.map(State.failed) ?? .left
+    }
+
+    /// The list is left and it left mail behind: offer to clear it.
+    public mutating func offerSweep(_ message: Int64, _ sweep: Sweep) {
+        guard state(of: message) == .left else { return }
+        states[message] = .clearing(sweep)
+    }
+
+    /// The offer was answered, either way: the banner goes.
+    public mutating func answerSweep(_ message: Int64) {
+        if case .clearing = state(of: message) { states[message] = .left }
     }
 
     /// Take back a `begin` that turned out to have nothing to act on -- a

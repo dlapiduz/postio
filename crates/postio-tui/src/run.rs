@@ -899,7 +899,18 @@ fn perform(
                         .unsubscribe(message)
                         .await
                         .map_err(|error| error.message().to_owned());
-                    let _ = inputs.send(Input::Unsubscribed(answer)).await;
+                    let _ = inputs.send(Input::Unsubscribed { message, answer }).await;
+                });
+            }
+            Effect::ReadListMail(message) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let found = client
+                        .list_mail(message)
+                        .await
+                        .map_err(|error| error.message().to_owned());
+                    let _ = inputs.send(Input::ListMail { message, found }).await;
                 });
             }
             Effect::ReadParts(message) => {

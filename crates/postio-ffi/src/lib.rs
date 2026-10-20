@@ -172,7 +172,7 @@ pub use settings::{
     settings_patch_syncing, settings_path, settings_remove_filter, settings_save,
     settings_sections, settings_status, settings_syncing, settings_take_back_filter,
 };
-pub use unsubscribe::{UnsubscribeActivationFfi, UnsubscribeOfferFfi};
+pub use unsubscribe::{ListMailOfferFfi, UnsubscribeActivationFfi, UnsubscribeOfferFfi};
 
 /// Every command the registry knows, in cheat-sheet order.
 ///

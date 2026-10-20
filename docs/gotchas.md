@@ -118,6 +118,8 @@ The store is Turso (ADR 0038). Its planner and defaults are not SQLite's, and mo
 
 **A Clamp cannot override a child's minimum width.** Several unbroken addresses in a horizontal box add their minimum widths together, widening the reading column and then its dialog. Wrap recipient fields inside the column; prove the dialog's allocated size with long bare addresses, not only display names.
 
+**A key controller on a dialog never beats the window's.** `keys_under_dialogs` gives every dialog the window's own capture handler (T195), so a verb's key (`#`, `e`) inside your dialog first runs that verb on the row behind it. A dialog that wants a verb's key answers it in `FocusWindow::handle_key`, ahead of the list's, as the list-sweep offer does (#1931).
+
 **Whether a surface is open and whether it has the keyboard are separate questions.** A surface left open while focus is elsewhere pins the resolver's context and silently drops bare keys.
 
 **Cursor, selection and activation are three facts.** State which one a surface follows. A verb with an empty selection acts on the cursor row. `SingleSelection` autoselects row 0, which is not the user landing there. Push state into `AppState` through `postio_core::aim::mirror`, not with a signal.

@@ -123,6 +123,17 @@ pub fn the_open_message_s_unsubscribe_notice_logs_it_and_the_privacy_section_lis
     });
 }
 
+/// The offer to clear what the list sent opens once the unsubscribe lands
+/// (#1931); these cases are about the log, so they answer it with Esc.
+async fn decline_the_offer(window: &postio_gtk::window::FocusWindow) {
+    assert!(
+        crate::settle_until(async || window.sweep_offer().is_some()).await,
+        "the offer to clear the list never came"
+    );
+    support::press(window, "Escape", gtk::gdk::ModifierType::empty());
+    assert!(crate::settle_until(async || window.sweep_offer().is_none()).await);
+}
+
 /// Open Settings' Privacy section: it lists the activation.
 async fn privacy_lists_an_activation(window: &postio_gtk::window::FocusWindow) {
     support::deliver_with(window, "comma", gtk::gdk::ModifierType::CONTROL_MASK);
@@ -182,6 +193,7 @@ pub fn u_in_a_digest_logs_the_activation_and_the_privacy_section_lists_it() {
             window.toast_showing()
         );
 
+        decline_the_offer(&window).await;
         support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
         crate::settle();
         privacy_lists_an_activation(&window).await;
@@ -220,6 +232,77 @@ pub fn personal_mail_has_no_unsubscribe_band_but_u_still_works() {
         assert_eq!(
             logged(&fixture).await[0].list_identifier,
             "friends.example.net"
+        );
+    });
+}
+
+/// After `M` the window offers to clear what the sender left (#1931): the
+/// dialog counts it, `#` deletes the lot as one command and says so, and Esc on the
+/// same offer keeps everything.
+pub fn leaving_a_list_offers_to_delete_what_it_sent_and_esc_keeps_it() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        file_the_newsletter(&fixture).await;
+        file_the_newsletter(&fixture).await;
+        let (window, _client) = fixture.open().await;
+        support::keys(&window, &["j", "Return"]);
+        let reading = window.reading().expect("Return opened the message");
+        assert!(crate::settle_until(async || reading.is_open()).await);
+
+        support::keys(&window, &["M"]);
+        assert!(
+            crate::settle_until(async || window.sweep_offer().is_some()).await,
+            "`M` left the list and offered nothing about its mail"
+        );
+        let dialog = window.sweep_offer().expect("the offer");
+        let said = gtk::prelude::ObjectExt::property::<String>(&dialog, "body");
+        assert!(said.contains("2 messages"), "it counts them: {said}");
+
+        // Esc declines: nothing is deleted, and no deletion is announced.
+        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
+        crate::settle();
+        assert!(window.sweep_offer().is_none(), "Esc closes the offer");
+        assert_ne!(
+            window.toast_showing().as_deref(),
+            Some("Deleted 2 messages"),
+            "declining deleted them"
+        );
+
+        support::keys(&window, &["M"]);
+        assert!(crate::settle_until(async || window.sweep_offer().is_some()).await);
+        let dialog = window.sweep_offer().expect("the offer again");
+        // The verb's own key answers it, as the label beside the button says.
+        let _ = dialog;
+        support::press(&window, "numbersign", gtk::gdk::ModifierType::SHIFT_MASK);
+        let deleted = crate::settle_until(async || {
+            let connection = fixture.database.connect().await.expect("a connection");
+            MessageRepository::new(&connection)
+                .page(&postio_storage::repository::ListQuery::mailbox(
+                    fixture.inbox,
+                ))
+                .await
+                .expect("a page")
+                .is_empty()
+        })
+        .await;
+        assert!(
+            deleted,
+            "# deleted nothing (toast {:?}, offer up: {})",
+            window.toast_showing(),
+            window.sweep_offer().is_some()
+        );
+        assert!(
+            crate::settle_until(async || {
+                window
+                    .toast_showing()
+                    .is_some_and(|said| said.starts_with("Deleted 2 messages"))
+            })
+            .await,
+            "the deletion did not say it was one undoable command: {:?}",
+            window.toast_showing()
         );
     });
 }

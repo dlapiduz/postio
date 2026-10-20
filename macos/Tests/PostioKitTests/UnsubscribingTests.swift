@@ -54,4 +54,25 @@ import Testing
         unsubscribing.withdraw(7)
         #expect(unsubscribing.state(of: 7) == .offered)
     }
+
+    @Test func aLeftListThatLeftMailOffersToClearItAndAnAnswerSettlesIt() {
+        // #1931: the banner stays with Archive and Delete until one is
+        // answered; nothing is offered for a list that was not left.
+        var unsubscribing = Unsubscribing()
+        let sweep = Unsubscribing.Sweep(
+            summary: "Unsubscribed from news.example.org. 14 messages from it are still here",
+            archive: "Archive 14", delete: "Delete 14")
+        unsubscribing.offerSweep(7, sweep)
+        #expect(unsubscribing.state(of: 7) == .offered, "not left, so nothing to clear")
+
+        _ = unsubscribing.begin(7)
+        unsubscribing.finish(7, complaint: nil)
+        unsubscribing.offerSweep(7, sweep)
+        #expect(unsubscribing.state(of: 7) == .clearing(sweep))
+        let again = unsubscribing.begin(7)
+        #expect(!again, "pressing Unsubscribe again does not restart it")
+
+        unsubscribing.answerSweep(7)
+        #expect(unsubscribing.state(of: 7) == .left)
+    }
 }

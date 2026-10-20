@@ -342,6 +342,7 @@ public struct MessageWindowView<BodyView: View>: View {
                         // The command, as `M` runs it: one way to leave a
                         // list, whichever was pressed.
                         leave: { run(Intercepted.unsubscribe) },
+                        clear: { model.clearListMail(delete: $0) },
                         body: { document, card in bodyView(layer.message, document, card) })
                         .environment(\.messageBodyDrawn) { model.bodyDrawn(layer.message) }
                         .opacity(front ? 1 : 0)

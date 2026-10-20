@@ -27,11 +27,18 @@ public struct UnsubscribeBanner: View {
     /// Run the `unsubscribe` command for this message -- the one deliberate
     /// act, and the same path the key takes.
     private let leave: () -> Void
+    /// The answer to "clear what the list sent?": `true` deletes, `false`
+    /// archives, `nil` keeps it all.
+    private let clear: (Bool?) -> Void
 
-    public init(offer: UnsubscribeOfferFfi, state: Unsubscribing.State, leave: @escaping () -> Void) {
+    public init(
+        offer: UnsubscribeOfferFfi, state: Unsubscribing.State, leave: @escaping () -> Void,
+        clear: @escaping (Bool?) -> Void = { _ in }
+    ) {
         self.offer = offer
         self.state = state
         self.leave = leave
+        self.clear = clear
     }
 
     public var body: some View {
@@ -42,13 +49,30 @@ public struct UnsubscribeBanner: View {
                 HStack(spacing: PostioTokens.space3) {
                     Image(systemName: "envelope.open")
                         .foregroundStyle(.secondary)
-                    Text(offer.summary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: PostioTokens.space2)
-                    Button(state == .leaving ? "Leaving…" : offer.action, action: leave)
-                        .buttonStyle(ReaderButtonStyle(.secondary))
-                        .disabled(state == .leaving)
+                    if case .clearing(let sweep) = state {
+                        // Left, and mail is still here: the offer replaces
+                        // the button. Nothing moves until one is pressed, and
+                        // either is one undo (#1931).
+                        Text(sweep.summary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: PostioTokens.space2)
+                        Button(sweep.archive) { clear(false) }
+                            .buttonStyle(ReaderButtonStyle(.secondary))
+                        Button(sweep.delete) { clear(true) }
+                            .buttonStyle(ReaderButtonStyle(.secondary))
+                        Button("Keep") { clear(nil) }
+                            .buttonStyle(ReaderButtonStyle(.secondary))
+                            .keyboardShortcut(.cancelAction)
+                    } else {
+                        Text(offer.summary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: PostioTokens.space2)
+                        Button(state == .leaving ? "Leaving…" : offer.action, action: leave)
+                            .buttonStyle(ReaderButtonStyle(.secondary))
+                            .disabled(state == .leaving)
+                    }
                 }
                 if case .failed(let failure) = state {
                     Text(failure)

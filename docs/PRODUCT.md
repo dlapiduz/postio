@@ -622,6 +622,12 @@ twelve keystrokes are one toast and one `mod+z`; and the stack **forgets**, beca
 putting back something archived an hour ago is a surprise rather than a mercy.
 `ARCHITECTURE.md` §5.
 
+**Leaving a list offers to clear it.** After `M` unsubscribes, the window
+offers to Archive or Delete what the list already sent: its `List-Id`, or for
+a sender with none their exact address (never the domain), without the Flagged
+and without what is already in Trash, Junk, Sent or Drafts. It is one command,
+so one undo; `Esc` keeps everything.
+
 ---
 
 ## 17. Notifications
