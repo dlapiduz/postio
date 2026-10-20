@@ -120,7 +120,12 @@ pub fn editing_a_list_rule_keeps_its_name_until_a_query_is_typed() {
         }
         let fixture = Fixture::empty().await;
         fixture
-            .file(("Ada Moreno", "ada@example.com"), "Atlas budget", "Numbers.", 5)
+            .file(
+                ("Ada Moreno", "ada@example.com"),
+                "Atlas budget",
+                "Numbers.",
+                5,
+            )
             .await;
         fixture.index().await;
         let directory = tempfile::tempdir().expect("a config directory");

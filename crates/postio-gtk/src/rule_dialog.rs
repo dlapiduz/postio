@@ -11,11 +11,12 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::glib;
 use postio_client::Client;
-use postio_client::protocol::{DigestRuleDraft, RuleDay};
-use postio_config::{DigestRule, Due};
+use postio_client::protocol::DigestRuleDraft;
+use postio_config::DigestRule;
 use postio_core::{CommandId, Keymap};
 use postio_model::listing::Cadence;
 use postio_model::{EmailAddress, MessageId};
+use postio_ui::rule_form::RuleForm;
 use postio_ui::{digest, hints};
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::{S1, S2, S3};
@@ -51,13 +52,7 @@ pub struct RuleDialog {
     error: gtk::Label,
     create_words: gtk::Box,
     keymap: RefCell<Keymap>,
-    name: RefCell<String>,
-    queries: RefCell<Vec<String>>,
-    replacing: RefCell<Option<String>>,
-    /// The message "Digest mail like this" would check other mail against,
-    /// when the user has brought a model with `like_this` on: `None` makes
-    /// the control absent (US14, FR-171).
-    like_this: RefCell<Option<MessageId>>,
+    form: RefCell<RuleForm>,
     generation: Cell<u64>,
     saved: RefCell<Option<Saved>>,
     me: RefCell<std::rc::Weak<RuleDialog>>,
@@ -227,10 +222,7 @@ impl RuleDialog {
             error,
             create_words,
             keymap: RefCell::new(keymap.clone()),
-            name: RefCell::default(),
-            queries: RefCell::default(),
-            replacing: RefCell::default(),
-            like_this: RefCell::default(),
+            form: RefCell::new(RuleForm::new_rule(&[], None)),
             generation: Cell::new(0),
             saved: RefCell::default(),
             me: RefCell::default(),
@@ -318,18 +310,12 @@ impl RuleDialog {
         senders: &[EmailAddress],
         like_this: Option<MessageId>,
     ) {
-        let names: Vec<String> = senders
-            .iter()
-            .map(|sender| sender.display().to_owned())
-            .collect();
-        self.name.replace(digest::rule_name(&names));
-        self.queries.replace(digest::sender_queries(senders));
-        self.replacing.replace(None);
-        self.like_this.replace(like_this);
-        self.heading
-            .set_text(digest::new_rule_heading(senders.len()));
-        self.show_senders(&digest::sender_line(senders));
-        self.note.set_text(digest::rule_note(senders.len()));
+        let form = RuleForm::new_rule(senders, like_this);
+        self.heading.set_text(form.heading());
+        self.note.set_text(form.note());
+        let line = form.senders().unwrap_or_default().to_owned();
+        self.form.replace(form);
+        self.show_senders(&line);
         self.show_schedule(&digest::Schedule::new_rule());
         self.open(parent);
     }
@@ -338,21 +324,24 @@ impl RuleDialog {
     /// "Digest mail like this" is never offered while editing (US14 is
     /// about a new rule from a selected message).
     pub fn open_edit(&self, parent: &impl IsA<gtk::Widget>, rule: &DigestRule) {
-        self.name.replace(rule.name.clone());
-        self.queries.replace(rule.queries.clone());
-        self.replacing.replace(Some(rule.name.clone()));
-        self.like_this.replace(None);
-        self.heading
-            .set_text(&digest::edit_rule_heading(&rule.name));
+        let form = RuleForm::edit(rule);
+        self.heading.set_text(form.heading());
+        self.note.set_text(form.note());
+        let shown = form
+            .senders()
+            .or(form.query())
+            .unwrap_or_default()
+            .to_owned();
+        let senders = !form.query_mode();
+        self.form.replace(form);
         // A rule whose every query is `from:` reads as senders, editable
         // through the plain label; anything else -- a `list:` or free
         // query -- opens straight into the query entry it was made with.
-        if digest::is_sender_rule(&rule.queries) {
-            self.show_senders(&rule.queries.join(", "));
+        if senders {
+            self.show_senders(&shown);
         } else {
-            self.enter_query_mode(&rule.queries.join(", "));
+            self.enter_query_mode(&shown);
         }
-        self.note.set_text(digest::rule_note(rule.queries.len()));
         if let Ok(due) = rule.due() {
             self.show_schedule(&digest::Schedule::of(&due));
         }
@@ -375,7 +364,7 @@ impl RuleDialog {
         self.query_entry.set_visible(false);
         self.match_instead.set_visible(true);
         self.like_this_button
-            .set_visible(self.like_this.borrow().is_some());
+            .set_visible(self.form.borrow().like_this().is_some());
     }
 
     /// "Match a list or a search instead…": swap the senders' label for a
@@ -395,12 +384,10 @@ impl RuleDialog {
     /// way a sender's `from:` is (US14 scenario 2, ADR 0008: the one query
     /// language).
     fn apply_query(&self, text: &str) {
-        let queries = digest::split_queries(text);
         // The entry filled with the queries the rule already has is not a
         // person typing: an edited rule keeps its own name.
-        if *self.queries.borrow() != queries {
-            self.name.replace(queries.join(", "));
-            self.queries.replace(queries);
+        if self.form.borrow().queries() != digest::split_queries(text) {
+            self.form.borrow_mut().set_query(text);
         }
         self.read_preview();
     }
@@ -422,7 +409,7 @@ impl RuleDialog {
     /// finds nothing alike, or answers with none, says so rather than
     /// entering query mode on nothing.
     pub fn like_this(&self) {
-        let Some(message) = *self.like_this.borrow() else {
+        let Some(message) = self.form.borrow().like_this() else {
             return;
         };
         let client = self.client.clone();
@@ -451,7 +438,7 @@ impl RuleDialog {
                 return;
             }
         };
-        let replacing = self.replacing.borrow().clone();
+        let replacing = self.form.borrow().replacing().map(str::to_owned);
         let client = self.client.clone();
         let weak = self.me.borrow().clone();
         let name = draft.name.clone();
@@ -523,7 +510,7 @@ impl RuleDialog {
         while let Some(child) = self.create_words.first_child() {
             self.create_words.remove(&child);
         }
-        let words = digest::create_words(self.replacing.borrow().is_some());
+        let words = digest::create_words(self.form.borrow().editing());
         self.create_words.append(&gtk::Label::new(Some(words)));
         if let Some(key) = hints::key(&self.keymap.borrow(), CommandId::PickerConfirm) {
             self.create_words.append(&keyhint::cap(&key));
@@ -537,32 +524,20 @@ impl RuleDialog {
 
     /// The rule as the dialog says it, or why it cannot be one.
     fn draft(&self) -> Result<DigestRuleDraft, String> {
-        let due = digest::Schedule {
+        let schedule = digest::Schedule {
             cadence: self.cadence.selected() as usize,
             weekday: self.weekday.selected() as usize,
             month_day: self.month_day.selected() as usize,
             at: self.at.text().to_string(),
-        }
-        .due()?;
-        let (cadence, day, at) = match due {
-            Due::Daily { at } => (Cadence::Daily, None, at),
-            Due::Weekly { day, at } => (Cadence::Weekly, Some(RuleDay::Weekday(day)), at),
-            Due::Monthly { day, at } => (Cadence::Monthly, Some(RuleDay::OfMonth(day)), at),
         };
-        Ok(DigestRuleDraft {
-            name: self.name.borrow().clone(),
-            queries: self.queries.borrow().clone(),
-            cadence,
-            day,
-            at,
-        })
+        DigestRuleDraft::from_form(&self.form.borrow(), &schedule)
     }
 
     /// What the rule would have caught over the last 90 days.
     fn read_preview(&self) {
         let generation = self.generation.get() + 1;
         self.generation.set(generation);
-        let queries = self.queries.borrow().clone();
+        let queries = self.form.borrow().queries().to_vec();
         let client = self.client.clone();
         let weak = self.me.borrow().clone();
         let since = postio_ui::clock::now().to_utc() - chrono::Duration::days(PREVIEW_DAYS);
