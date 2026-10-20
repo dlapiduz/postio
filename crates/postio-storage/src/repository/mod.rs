@@ -55,7 +55,10 @@ mod unsubscribe;
 
 pub use accounts::{AccountRepository, IdentityRepository, SignatureRepository};
 pub use contact_groups::ContactGroupRepository;
-pub use contacts::ContactRepository;
+#[cfg(feature = "test-support")]
+pub(crate) use contacts::list_statements as contact_list_statements;
+pub(crate) use contacts::release_own_address;
+pub use contacts::{ContactCursor, ContactRepository};
 pub use correspondents::{Correspondent, CorrespondentRepository};
 pub use cross_account::{
     CrossAccountMove, CrossAccountMoveRepository, MovePhase, NewCrossAccountMove,

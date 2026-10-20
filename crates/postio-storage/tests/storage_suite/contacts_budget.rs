@@ -184,3 +184,147 @@ async fn the_finders_load_is_one_statement_bounded_by_its_cap() {
         "one row per address, and the cap is the bound"
     );
 }
+
+/// The list read for one view's first page, as `ContactRepository::page`
+/// spells it -- the view's predicate, the own-address exclusion, the seek.
+async fn list_plans(connection: &Connection) -> Vec<(String, Vec<String>)> {
+    let mut plans = Vec::new();
+    for (name, sql) in postio_storage::test_support::contact_list_statements() {
+        plans.push((name.to_owned(), scans(connection, &sql).await));
+    }
+    plans
+}
+
+#[tokio::test]
+async fn a_contacts_page_is_one_statement_and_no_more_rows_than_it_shows() {
+    use postio_model::ContactView;
+    use postio_storage::repository::ContactCursor;
+
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let _account = test_support::account(&connection).await;
+    fill(&connection).await;
+    let contacts = ContactRepository::new(&connection);
+    let _ = contacts
+        .page(ContactView::Written, None, 50)
+        .await
+        .expect("warm");
+
+    for view in [
+        ContactView::Written,
+        ContactView::Everyone,
+        ContactView::Deleted,
+    ] {
+        let mut shown = Vec::new();
+        let first = counted_async(|| async {
+            shown = contacts.page(view, None, 50).await.expect("page");
+        })
+        .await;
+        assert_eq!(first.statements, 1, "{view:?}: one statement a page");
+        assert!(
+            first.rows <= 50,
+            "{view:?}: {} rows for a page of 50",
+            first.rows
+        );
+
+        if let Some(last) = shown.last() {
+            let cursor = ContactCursor::after(last);
+            let deep = counted_async(|| async {
+                contacts
+                    .page(view, Some(&cursor), 50)
+                    .await
+                    .expect("next page");
+            })
+            .await;
+            assert_eq!(
+                deep.statements, 1,
+                "{view:?}: the next page is one statement too"
+            );
+            assert!(deep.rows <= 50);
+        }
+    }
+
+    let filtered = counted_async(|| async {
+        contacts
+            .filtered(ContactView::Everyone, "pers", 500)
+            .await
+            .expect("filter");
+    })
+    .await;
+    assert_eq!(filtered.statements, 1, "a filtered page is one statement");
+    assert!(
+        filtered.rows <= 500,
+        "the cap bounds a filter: {} rows",
+        filtered.rows
+    );
+
+    // The planner's half. `accounts` and `identities` are the user's own
+    // addresses -- a handful of rows, read once per statement to keep them
+    // out of the list -- and scanning those is expected; scanning people is
+    // not.
+    for (name, scanned) in list_plans(&connection).await {
+        let people: Vec<&String> = scanned
+            .iter()
+            .filter(|step| !step.contains("accounts") && !step.contains("identities"))
+            .collect();
+        assert!(
+            people.is_empty(),
+            "{name} scans {people:?}: a keystroke or a scroll would walk everyone"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_cursor_page_seeks_past_the_cursor_instead_of_filtering_down_to_it() {
+    // docs/notes/2026-09-12-a-row-value-cursor-is-a-filter-not-a-seek.md:
+    // this engine seeks on a bare inequality on the sort column and filters
+    // on a row value, so the cursor carries the redundant `sort_key >= ?`.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    let cursors: Vec<(&str, String)> = postio_storage::test_support::contact_list_statements()
+        .into_iter()
+        .filter(|(name, _)| name.ends_with("after"))
+        .collect();
+    assert_eq!(
+        cursors.len(),
+        3,
+        "one cursor read per view; an empty list here would make this test vacuous"
+    );
+    for (name, sql) in cursors {
+        let plan = test_support::plan(&connection, &sql).await;
+        assert!(
+            plan.contains("sort_key>"),
+            "{name} does not seek on sort_key; every page walks from the top:\n{plan}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_persons_detail_is_four_statements_whatever_the_address_book_holds() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("a connection");
+    fill(&connection).await;
+    let contacts = ContactRepository::new(&connection);
+    let id = postio_model::ContactId::new(1234);
+
+    let mut messages = None;
+    let counts = counted_async(|| async {
+        messages = contacts
+            .detail(id)
+            .await
+            .expect("detail")
+            .map(|detail| detail.messages);
+    })
+    .await;
+
+    assert_eq!(messages, Some(0), "person 1234 exists and has no mail");
+    assert_eq!(
+        counts.statements, 4,
+        "the person, their addresses, their groups, the distinct-message count"
+    );
+    assert_eq!(
+        counts.rows,
+        1 + 1 + 1,
+        "one person, one address, one count row"
+    );
+}

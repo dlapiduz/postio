@@ -39,7 +39,8 @@ Replaces today's one-row-per-address table. `account_id`, `address`,
 | `seen_name` | The display name most recently seen on any of the person's addresses. |
 | `sort_key` | Case-folded displayed name: `name`, else `seen_name`, else the preferred address. Ordering key for the list (R5). |
 | `name_key` | Case-folded, whitespace-collapsed displayed name; join-suggestion key (R11). |
-| `times_seen`, `last_seen_at`, `written` | Aggregates over the person's sightings (R2). `written` = total `times_written`; > 0 puts the person in the default list (FR-005). |
+| `times_seen`, `last_seen_at`, `written` | Aggregates over the person's sightings (R2). `written` = total `times_written`. |
+| `listed` | 1 when the person belongs in the default view: source is not `mail`, or `written` > 0 (FR-005). Maintained, because that OR across two columns is not something an index can serve. |
 | `uid` | vCard `UID`; kept across export/import. |
 | `vcard` | The whole card as last imported, verbatim (R9). NULL for a person never imported. |
 | `created_at`, `updated_at` | Epoch millis; `updated_at` is the vCard `REV`. |
@@ -52,7 +53,7 @@ Replaces today's one-row-per-address table. `account_id`, `address`,
 - Displayed name: `name` → `seen_name` → preferred address (spec edge case
   "an empty name").
 
-**Indexes.** Default list `(state, written, sort_key, id)`; everyone and
+**Indexes.** Default list `(state, listed, sort_key, id)`; everyone and
 deleted `(state, sort_key, id)`; completion rank
 `(state, (source = 'mail'), last_seen_at DESC, times_seen DESC, id)`
 (the inherited Q6 bands); suggestions `(state, name_key)`.
@@ -68,6 +69,9 @@ Indexed on `contact_id`. The unique normalised index stays; it is what makes
 
 **Rules.**
 - At most one owner per address (FR-010) — a column, so nothing to enforce.
+- The user's own addresses (an account's, an identity's) have no owner:
+  sync skips them, and adding an identity or account releases the address
+  from whoever held it, so list reads need no per-row exclusion.
 - Sync assigns an owner to a newly seen, non-own address by creating a `mail`
   person for it (the spec's "every address starts as its own contact").
 - An address is **suppressed** iff its owner's `state` is not `live` (R4).
