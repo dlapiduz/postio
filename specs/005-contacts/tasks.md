@@ -217,7 +217,7 @@ member's preferred address; `group:` works through any member address.
 
 ### Tests first (observe each red)
 
-- [ ] T065 [P] [US5] `crates/postio-storage/tests/storage_suite/contact_groups.rs` (extend): create/rename/delete, add/remove members; a case-insensitive duplicate name is refused; expansion returns preferred addresses of live members only; deleting a person keeps its membership and restoring it returns
+- [X] T065 [P] [US5] `crates/postio-storage/tests/storage_suite/contact_groups.rs` (extend): create/rename/delete, add/remove members; a case-insensitive duplicate name is refused; expansion returns preferred addresses of live members only; deleting a person keeps its membership and restoring it returns
 - [ ] T066 [P] [US5] `crates/postio-app/tests/app_suite/contact_groups.rs`: create "Family" from the pane, add two people, pick the group in a new draft's To field — both preferred addresses fill in; edit the group afterwards and the draft does not change (FR-041); `group:family` in search finds mail through a member's non-preferred address
 
 ### Implementation

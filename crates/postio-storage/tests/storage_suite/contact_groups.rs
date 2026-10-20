@@ -180,3 +180,110 @@ async fn a_deleted_member_is_not_expanded_but_keeps_its_membership() {
         "restoring ada will return her to the group (FR-023a)"
     );
 }
+
+#[tokio::test]
+async fn a_name_already_taken_in_any_case_is_refused_with_the_reason() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let groups = ContactGroupRepository::new(&connection);
+    groups
+        .create(&mut ContactGroup::new("Family", at(0)))
+        .await
+        .expect("create");
+    let again = groups.create(&mut ContactGroup::new("family", at(0))).await;
+    assert!(
+        matches!(&again, Err(postio_storage::Error::ForbiddenTransition { reason, .. }) if reason.contains("Family")),
+        "refused, naming the group it clashes with: {again:?}"
+    );
+    let other = groups
+        .create(&mut ContactGroup::new("Friends", at(0)))
+        .await
+        .expect("create");
+    assert!(
+        groups.set_name(other, "FAMILY").await.is_err(),
+        "renaming into it too"
+    );
+}
+
+#[tokio::test]
+async fn a_deleted_group_comes_back_whole() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let groups = ContactGroupRepository::new(&connection);
+    let ada = person(&connection, "Ada", "ada@example.com").await;
+    let grace = person(&connection, "Grace", "grace@example.com").await;
+    let id = groups
+        .create(&mut ContactGroup::new("Family", at(0)))
+        .await
+        .expect("create");
+    assert_eq!(
+        groups
+            .add_members(id, &[ada, grace, ada])
+            .await
+            .expect("add"),
+        [ada, grace]
+    );
+    assert_eq!(
+        groups.add_members(id, &[ada]).await.expect("again"),
+        [],
+        "only the new ones are reported, which is what undo takes back"
+    );
+
+    let (group, members) = groups.remove(id).await.expect("delete").expect("there");
+    assert!(groups.get(id).await.expect("get").is_none());
+    groups.restore(&group, &members).await.expect("restore");
+    let back = groups.get(id).await.expect("get").expect("same id");
+    assert_eq!(back.name, "Family");
+    assert_eq!(
+        groups
+            .members(id)
+            .await
+            .expect("members")
+            .iter()
+            .map(|c| c.id)
+            .collect::<Vec<_>>(),
+        [ada, grace]
+    );
+
+    assert_eq!(
+        groups.remove_members(id, &[grace]).await.expect("remove"),
+        [grace]
+    );
+    assert_eq!(
+        groups.expand(id).await.expect("expand"),
+        [EmailAddress::new(Some("Ada"), "ada@example.com")],
+        "a member's preferred address, under their name"
+    );
+}
+
+#[tokio::test]
+async fn a_groups_live_members_list_as_rows_by_name() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let groups = ContactGroupRepository::new(&connection);
+    let grace = person(&connection, "Grace", "grace@example.com").await;
+    let ada = person(&connection, "Ada", "ada@example.com").await;
+    let gone = person(&connection, "Gone", "gone@example.com").await;
+    let id = groups
+        .create(&mut ContactGroup::new("Family", at(0)))
+        .await
+        .expect("create");
+    groups
+        .add_members(id, &[grace, ada, gone])
+        .await
+        .expect("add");
+    ContactRepository::new(&connection)
+        .delete(gone)
+        .await
+        .expect("delete");
+
+    let rows = ContactRepository::new(&connection)
+        .group_rows(id, 100)
+        .await
+        .expect("rows");
+    assert_eq!(
+        rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+        ["Ada", "Grace"],
+        "by name, live members only"
+    );
+}

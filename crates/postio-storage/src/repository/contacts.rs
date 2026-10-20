@@ -1143,6 +1143,28 @@ impl ContactRepository<'_> {
         .await
     }
 
+    /// A group's live members as list rows, by name, at most `cap` -- what
+    /// the list shows while the cursor is on the group (FR-040).
+    pub async fn group_rows(
+        &self,
+        group: postio_model::ContactGroupId,
+        cap: u32,
+    ) -> Result<Vec<ContactListRow>> {
+        sql::all_unbounded(
+            self.connection,
+            &format!(
+                "SELECT {LIST_COLUMNS} FROM contact_group_members m
+                   JOIN contacts c ON c.id = m.contact_id
+                   LEFT JOIN addresses pa ON pa.id = c.preferred_address
+                  WHERE m.group_id = ?1 AND c.state = 'live'
+                  ORDER BY c.sort_key, c.id LIMIT ?2"
+            ),
+            bind![group.get(), i64::from(cap)],
+            read_list_row,
+        )
+        .await
+    }
+
     /// Who might be the same person, with the evidence (FR-018, R11): at
     /// most `limit` pairs, an answered-from-another-address pair before a
     /// name match. Reads only; a suggestion joins nobody (FR-019).
