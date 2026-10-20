@@ -35,6 +35,7 @@ mod contacts_budget;
 mod contacts_catch_up;
 mod contacts_import;
 mod contacts_join;
+mod contacts_kind;
 mod contacts_lifecycle;
 mod contacts_list_views;
 mod content_membership;

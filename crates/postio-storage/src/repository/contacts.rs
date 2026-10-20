@@ -28,7 +28,8 @@ use postio_model::card::{ImportSummary, Member, ParsedCard, ParsedGroup, ParsedP
 use postio_model::{
     AddressId, AddressMove, Contact, ContactAddress, ContactDetail, ContactId, ContactKind,
     ContactListRow, ContactSource, ContactState, ContactView, EmailAddress, JoinReceipt,
-    JoinSuggestion, KindSource, Message, PersonEdit, PersonFields, ShowAs, SuggestionReason,
+    JoinSuggestion, KindSignals, KindSource, Message, PersonEdit, PersonFields, ShowAs,
+    SuggestionReason,
 };
 
 use super::{from_millis, to_millis};
@@ -57,6 +58,9 @@ pub(super) const PERSON_COLUMNS_C: &str = "c.id, c.name, c.organization, c.note,
 /// How many columns [`PERSON_COLUMNS`] is, so a joined row can find what
 /// follows it.
 const PERSON_WIDTH: usize = 18;
+
+/// How many of a sender's newest messages their kind is decided from.
+pub const KIND_WINDOW: i64 = 50;
 
 /// The completion order: the address book above the mail, then recency, then
 /// frequency (the address-book decision's Q6, inherited by specs/005-contacts).
@@ -418,6 +422,142 @@ impl<'a> ContactRepository<'a> {
                          WHERE r.address_id = a.id AND r.message_id IS NOT NULL)
           ORDER BY a.id DESC
           LIMIT ?2"
+    }
+
+    /// What the sender's mail says, for deciding their kind: counted over the
+    /// newest [`KIND_WINDOW`] messages their preferred address sent, so the
+    /// cost is the same for a sender of one message and of ten thousand.
+    /// `None` for someone who is not live.
+    ///
+    /// Three reads: the person, the window, and the people at their domain.
+    pub async fn kind_signals(&self, person: ContactId) -> Result<Option<KindSignals>> {
+        type Head = (Option<String>, Option<String>, Option<String>, i64, i64);
+        let head: Option<Head> = sql::first(
+            self.connection,
+            "SELECT a.address, c.name, c.seen_name, c.written, a.id
+               FROM contacts c JOIN addresses a ON a.id = c.preferred_address
+              WHERE c.id = ?1 AND c.state = 'live'",
+            [person.get()],
+            |row| {
+                Ok((
+                    row.col(0)?,
+                    row.col(1)?,
+                    row.col(2)?,
+                    row.col(3)?,
+                    row.col(4)?,
+                ))
+            },
+        )
+        .await?;
+        let Some((address, name, seen_name, written, preferred)) = head else {
+            return Ok(None);
+        };
+        let address = address.unwrap_or_default();
+        let window: (i64, i64, i64, i64, i64, i64, i64, i64) = sql::one(
+            self.connection,
+            Self::explain_kind_window(),
+            bind![preferred, KIND_WINDOW],
+            |row| {
+                Ok((
+                    row.col(0)?,
+                    row.col(1)?,
+                    row.col(2)?,
+                    row.col(3)?,
+                    row.col(4)?,
+                    row.col(5)?,
+                    row.col(6)?,
+                    row.col(7)?,
+                ))
+            },
+        )
+        .await?;
+        let domain = address.rsplit_once('@').map(|(_, d)| d.to_lowercase());
+        let people_at_domain =
+            match domain {
+                Some(domain) => sql::scalar(
+                    self.connection,
+                    "SELECT count(*) FROM contact_terms t JOIN contacts c ON c.id = t.contact_id
+                      WHERE t.term = ?1 AND c.state = 'live' AND c.kind = 'person' AND c.id <> ?2",
+                    bind![domain, person.get()],
+                )
+                .await?,
+                None => 0,
+            };
+        let count = |n: i64| u32::try_from(n.max(0)).unwrap_or(u32::MAX);
+        Ok(Some(KindSignals {
+            address,
+            name: name.or(seen_name),
+            messages: count(window.0),
+            with_list_id: count(window.1),
+            with_list_precedence: count(window.2),
+            with_unsubscribe: count(window.3),
+            with_bulk: count(window.4),
+            with_junk: count(window.5),
+            with_auto_generated: count(window.6),
+            with_auto_replied: count(window.7),
+            written_to: count(written),
+            people_at_domain: count(people_at_domain),
+        }))
+    }
+
+    /// The SQL [`Self::kind_signals`] counts the window with. `?1` is the
+    /// address, `?2` the window's size. Walks the address's rows newest first
+    /// along `idx_recipients_address`, so it reads the window and no more.
+    pub fn explain_kind_window() -> &'static str {
+        "SELECT count(*),
+                coalesce(sum(CASE WHEN m.list_id IS NOT NULL THEN 1 ELSE 0 END), 0),
+                coalesce(sum(CASE WHEN (m.automation & 2) <> 0 THEN 1 ELSE 0 END), 0),
+                coalesce(sum(CASE WHEN m.unsubscribe_offered = 1 THEN 1 ELSE 0 END), 0),
+                coalesce(sum(CASE WHEN (m.automation & 1) <> 0 THEN 1 ELSE 0 END), 0),
+                coalesce(sum(CASE WHEN (m.automation & 4) <> 0 THEN 1 ELSE 0 END), 0),
+                coalesce(sum(CASE WHEN (m.automation & 8) <> 0 THEN 1 ELSE 0 END), 0),
+                coalesce(sum(CASE WHEN (m.automation & 16) <> 0 THEN 1 ELSE 0 END), 0)
+           FROM (SELECT message_id FROM recipients
+                  WHERE address_id = ?1 AND kind = 'from' AND message_id IS NOT NULL
+                  ORDER BY id DESC LIMIT ?2) w
+           JOIN messages m ON m.id = w.message_id"
+    }
+
+    /// Up to `limit` live people, above `after`, whose kind the detector
+    /// decides and has not decided at `version` yet: the kind pass's walk. A
+    /// kind the user chose is not in it.
+    pub async fn pending_kinds(
+        &self,
+        version: u32,
+        after: Option<ContactId>,
+        limit: u32,
+    ) -> Result<Vec<ContactId>> {
+        sql::all(
+            self.connection,
+            "SELECT id FROM contacts
+              WHERE id > ?1 AND state = 'live' AND kind_source = 'detected' AND kind_version < ?2
+              ORDER BY id LIMIT ?3",
+            bind![
+                after.map_or(0, ContactId::get),
+                i64::from(version),
+                i64::from(limit)
+            ],
+            |row| Ok(ContactId::new(row.col(0)?)),
+        )
+        .await
+    }
+
+    /// Records what the detector decided, at `version`. Does nothing for a
+    /// person whose kind the user chose.
+    pub async fn set_detected_kind(
+        &self,
+        person: ContactId,
+        kind: ContactKind,
+        version: u32,
+    ) -> Result<()> {
+        sql::execute(
+            self.connection,
+            "UPDATE contacts SET kind = ?2, kind_version = ?3
+              WHERE id = ?1 AND kind_source = 'detected'",
+            bind![person.get(), kind.as_str(), i64::from(version)],
+        )
+        .await?;
+        Ok(())
     }
 
     /// Fills in each person's addresses, preferred first. One statement
