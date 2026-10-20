@@ -180,3 +180,26 @@ pub async fn set_flag(
     }
     Ok(siblings)
 }
+
+/// Delete `ids` from `mailbox` for good: hidden at once, and queued as a
+/// [`Operation::Purge`] each so the server catches up.
+///
+/// Nothing here is undoable and nothing offers to be: it is what auto-emptying
+/// Junk and Trash does (#1932), and the mail was already in the Trash or Junk
+/// a person put it in. Queue rows first, for the reason [`relocate`] gives:
+/// `enqueue_many` snapshots the server coordinate.
+pub async fn purge(
+    transaction: &Connection,
+    account: AccountId,
+    mailbox: MailboxId,
+    ids: &[MessageId],
+    at: DateTime<Utc>,
+) -> Result<()> {
+    OperationQueueRepository::new(transaction)
+        .enqueue_many(account, ids, &Operation::Purge { mailbox }, at)
+        .await?;
+    MessageRepository::new(transaction)
+        .set_deleted_locally(ids, true)
+        .await?;
+    Ok(())
+}
