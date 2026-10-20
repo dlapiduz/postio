@@ -194,6 +194,9 @@ INSERT INTO contact_groups (id, account_id, name, created_at)
 INSERT INTO contact_group_members (group_id, contact_id) VALUES (1, 1), (1, 3);
 ";
 
+/// An address, the name and source of its person, their state, count and uid.
+type Person = (String, Option<String>, String, String, i64, Option<String>);
+
 #[tokio::test]
 async fn the_contacts_of_the_build_before_become_people_who_own_addresses() {
     let before = recorded()
@@ -213,26 +216,25 @@ async fn the_contacts_of_the_build_before_become_people_who_own_addresses() {
 
     // One person per address the old table knew, with the name the person
     // gave, where it came from, and that bob was deleted.
-    let people: Vec<(String, Option<String>, String, String, i64, Option<String>)> =
-        sql::all_unbounded(
-            &connection,
-            "SELECT a.address_normalized, c.name, c.source, c.state, c.times_seen, c.uid
+    let people: Vec<Person> = sql::all_unbounded(
+        &connection,
+        "SELECT a.address_normalized, c.name, c.source, c.state, c.times_seen, c.uid
                FROM contacts c JOIN addresses a ON a.contact_id = c.id
               ORDER BY a.address_normalized",
-            (),
-            |row| {
-                Ok((
-                    row.text(0)?,
-                    row.opt_text(1)?,
-                    row.text(2)?,
-                    row.text(3)?,
-                    row.int(4)?,
-                    row.opt_text(5)?,
-                ))
-            },
-        )
-        .await
-        .unwrap();
+        (),
+        |row| {
+            Ok((
+                row.text(0)?,
+                row.opt_text(1)?,
+                row.text(2)?,
+                row.text(3)?,
+                row.int(4)?,
+                row.opt_text(5)?,
+            ))
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(
         people,
         [
@@ -244,8 +246,22 @@ async fn the_contacts_of_the_build_before_become_people_who_own_addresses() {
                 8,
                 Some("urn:uuid:ada".to_owned())
             ),
-            ("bob@example.org".to_owned(), None, "mail".to_owned(), "deleted".to_owned(), 1, None),
-            ("carol@example.org".to_owned(), None, "mail".to_owned(), "live".to_owned(), 2, None),
+            (
+                "bob@example.org".to_owned(),
+                None,
+                "mail".to_owned(),
+                "deleted".to_owned(),
+                1,
+                None
+            ),
+            (
+                "carol@example.org".to_owned(),
+                None,
+                "mail".to_owned(),
+                "live".to_owned(),
+                2,
+                None
+            ),
         ],
         "two rows for one address are one person, the user's name and source win, \
          and a suppressed address is a deleted person"
@@ -290,9 +306,13 @@ async fn the_contacts_of_the_build_before_become_people_who_own_addresses() {
         1
     );
     assert_eq!(
-        sql::scalar(&connection, "SELECT count(*) FROM contacts WHERE listed = 1", ())
-            .await
-            .unwrap(),
+        sql::scalar(
+            &connection,
+            "SELECT count(*) FROM contacts WHERE listed = 1",
+            ()
+        )
+        .await
+        .unwrap(),
         1
     );
     // Found by typing: a prefix of the address, of the name, of the domain.
@@ -322,9 +342,13 @@ async fn the_contacts_of_the_build_before_become_people_who_own_addresses() {
         1
     );
     assert_eq!(
-        sql::scalar(&connection, "SELECT count(*) FROM contact_group_members", ())
-            .await
-            .unwrap(),
+        sql::scalar(
+            &connection,
+            "SELECT count(*) FROM contact_group_members",
+            ()
+        )
+        .await
+        .unwrap(),
         2
     );
     // Every person has a preferred address, which is one of theirs.

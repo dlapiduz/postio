@@ -77,7 +77,10 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     (CommandId::ContactShowMail, "specs/011-focus-contacts"),
     (CommandId::ContactCompose, "specs/011-focus-contacts"),
     (CommandId::ContactsFilter, "specs/011-focus-contacts"),
-    (CommandId::ContactsToggleEveryone, "specs/011-focus-contacts"),
+    (
+        CommandId::ContactsToggleEveryone,
+        "specs/011-focus-contacts",
+    ),
     (CommandId::ContactsToggleDeleted, "specs/011-focus-contacts"),
     (CommandId::ContactsSuggestions, "specs/011-focus-contacts"),
     // The file panels, which the Mac presents and so intercepts (plan 011).

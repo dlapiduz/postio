@@ -80,10 +80,8 @@ impl Session {
                 .map(|address| {
                     // Lent for one keystroke and never stored, so the id is
                     // nobody's.
-                    let mut contact = Contact::new(ContactAddress::new(
-                        AddressId::UNASSIGNED,
-                        address,
-                    ));
+                    let mut contact =
+                        Contact::new(ContactAddress::new(AddressId::UNASSIGNED, address));
                     contact.source = ContactSource::Import;
                     Correspondent::from(contact)
                 }),

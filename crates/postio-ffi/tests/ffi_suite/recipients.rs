@@ -20,7 +20,7 @@ async fn directory() -> (std::sync::Arc<Session>, i64) {
         let contacts = ContactRepository::new(&connection);
         let at = Utc::now();
         let own = [];
-        let mut mail = |name: Option<&str>, address: &str| {
+        let mail = |name: Option<&str>, address: &str| {
             let mut message = Message::new(account.id, inbox, at);
             message.date = Some(at);
             message.from = vec![EmailAddress::new(name, address)];
@@ -62,8 +62,7 @@ async fn directory() -> (std::sync::Arc<Session>, i64) {
                 .expect("written to three times");
         }
         let groups = ContactGroupRepository::new(&connection);
-        let mut group =
-            postio_model::contact_group::ContactGroup::new("Adam crew", at);
+        let mut group = postio_model::contact_group::ContactGroup::new("Adam crew", at);
         let group = groups.create(&mut group).await.expect("a group");
         groups.add_member(group, member).await.expect("a member");
         account.id
