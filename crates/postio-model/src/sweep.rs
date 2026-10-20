@@ -49,13 +49,6 @@ pub enum FlagPass {
     Sweep,
 }
 
-impl FlagPass {
-    /// Whether this pass reads the whole folder's flags.
-    pub fn is_sweep(self) -> bool {
-        self == Self::Sweep
-    }
-}
-
 /// The thresholds of [`SweepPolicy::decide`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SweepPolicy {
@@ -113,6 +106,12 @@ mod tests {
     use super::*;
 
     const POLICY: SweepPolicy = SweepPolicy::DEFAULT;
+
+    impl FlagPass {
+        fn is_sweep(self) -> bool {
+            self == FlagPass::Sweep
+        }
+    }
 
     #[test]
     fn a_reliable_server_is_never_swept() {
