@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 chrono = { workspace = true }
 async-channel = { workspace = true }
+postio-config.workspace = true
 postio-core.workspace = true
 postio-model.workspace = true
 postio-search.workspace = true

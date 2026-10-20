@@ -7,11 +7,12 @@
 //! rules of the schedule are `postio_ui::digest`'s; the drawing is
 //! `view::rule_dialog`.
 
-use postio_client::protocol::{DigestPreview, DigestRuleDraft, RuleDay};
-use postio_config::{DigestRule, Due};
+use postio_client::protocol::{DigestPreview, DigestRuleDraft};
+use postio_config::DigestRule;
 use postio_model::listing::Cadence;
 use postio_model::{EmailAddress, MessageId};
 use postio_ui::digest::{self, Schedule};
+use postio_ui::rule_form::RuleForm;
 use postio_ui::terminal::SafeText;
 use tui_input::Input;
 
@@ -46,17 +47,10 @@ pub struct Preview {
 /// The form. See the module.
 #[derive(Debug, Clone)]
 pub struct Form {
-    replacing: Option<String>,
-    heading: String,
-    name: String,
-    queries: Vec<String>,
-    senders: String,
-    query_mode: bool,
+    rule: RuleForm,
     query: Input,
     schedule: Schedule,
     time: Input,
-    like_this: Option<MessageId>,
-    note: &'static str,
     preview: Option<Preview>,
     generation: u64,
     error: Option<String>,
@@ -68,25 +62,12 @@ impl Form {
     /// "Digest mail like this" would check other mail against, when the
     /// person has a model for it.
     pub fn new_rule(senders: &[EmailAddress], like_this: Option<MessageId>) -> Form {
-        let names: Vec<String> = senders
-            .iter()
-            .map(|sender| SafeText::new(sender.display()).as_str().to_owned())
-            .collect();
         let schedule = Schedule::new_rule();
         Form {
-            replacing: None,
-            heading: digest::new_rule_heading(senders.len()).to_owned(),
-            name: digest::rule_name(&names),
-            queries: digest::sender_queries(senders),
-            senders: SafeText::new(&digest::sender_line(senders))
-                .as_str()
-                .to_owned(),
-            query_mode: false,
+            rule: RuleForm::new_rule_clean(senders, like_this, clean),
             query: Input::default(),
             time: Input::new(schedule.at.clone()),
             schedule,
-            like_this,
-            note: digest::rule_note(senders.len()),
             preview: None,
             generation: 0,
             error: None,
@@ -96,32 +77,19 @@ impl Form {
 
     /// `rule` edited where it stands in `config.toml`.
     pub fn edit(rule: &DigestRule) -> Form {
-        let schedule = rule
-            .due()
-            .map(|due| Schedule::of(&due))
-            .unwrap_or_else(|_| Schedule::new_rule());
-        let senders = digest::is_sender_rule(&rule.queries);
-        let text = rule.queries.join(", ");
+        let schedule = Schedule::of_rule(rule);
+        let rule = RuleForm::edit_clean(rule, clean);
         let mut form = Form {
-            replacing: Some(rule.name.clone()),
-            heading: SafeText::new(&digest::edit_rule_heading(&rule.name))
-                .as_str()
-                .to_owned(),
-            name: rule.name.clone(),
-            queries: rule.queries.clone(),
-            senders: SafeText::new(&text).as_str().to_owned(),
-            query_mode: !senders,
-            query: Input::new(text),
+            query: Input::new(rule.query().unwrap_or_default().to_owned()),
+            rule,
             time: Input::new(schedule.at.clone()),
             schedule,
-            like_this: None,
-            note: digest::rule_note(rule.queries.len()),
             preview: None,
             generation: 0,
             error: None,
             field: Field::Cadence,
         };
-        if form.query_mode {
+        if form.query_mode() {
             form.field = Field::Query;
         }
         form
@@ -129,22 +97,22 @@ impl Form {
 
     /// The heading: "Digest this sender", or the rule's name.
     pub fn heading(&self) -> &str {
-        &self.heading
+        self.rule.heading()
     }
 
     /// Whether a rule is being edited rather than made.
     pub fn editing(&self) -> bool {
-        self.replacing.is_some()
+        self.rule.editing()
     }
 
     /// The senders, as one line.
     pub fn senders(&self) -> &str {
-        &self.senders
+        self.rule.senders().unwrap_or_default()
     }
 
     /// Whether the rule is typed queries rather than senders.
     pub fn query_mode(&self) -> bool {
-        self.query_mode
+        self.rule.query_mode()
     }
 
     /// The typed queries.
@@ -164,7 +132,7 @@ impl Form {
 
     /// The note under the preview.
     pub fn note(&self) -> &'static str {
-        self.note
+        self.rule.note()
     }
 
     /// What the rule would have caught, once read.
@@ -189,17 +157,17 @@ impl Form {
 
     /// The message "Digest mail like this" would check, when it is offered.
     pub fn like_this(&self) -> Option<MessageId> {
-        self.like_this.filter(|_| !self.query_mode)
+        self.rule.like_this()
     }
 
     /// The controls, in the order Tab walks them.
     pub fn fields(&self) -> Vec<Field> {
         let mut fields = vec![Field::Cadence];
-        if CadenceKind::of(&self.schedule) != CadenceKind::Daily {
+        if self.schedule.cadence_kind() != Cadence::Daily {
             fields.push(Field::Day);
         }
         fields.push(Field::Time);
-        if self.query_mode {
+        if self.query_mode() {
             fields.push(Field::Query);
         } else {
             fields.push(Field::MatchInstead);
@@ -238,7 +206,7 @@ impl Form {
                 let at = self.schedule.cadence as isize + by;
                 self.schedule.cadence = at.rem_euclid(digest::CADENCES.len() as isize) as usize;
             }
-            Field::Day if CadenceKind::of(&self.schedule) == CadenceKind::Weekly => {
+            Field::Day if self.schedule.cadence_kind() == Cadence::Weekly => {
                 let at = self.schedule.weekday as isize + by;
                 self.schedule.weekday = at.rem_euclid(digest::WEEKDAYS.len() as isize) as usize;
             }
@@ -254,7 +222,6 @@ impl Form {
     /// queries, starting from `text`. Answers whether the preview is to be
     /// read again.
     pub fn match_instead(&mut self, text: &str) {
-        self.query_mode = true;
         self.query = Input::new(text.to_owned());
         self.field = Field::Query;
         self.apply_query();
@@ -263,9 +230,7 @@ impl Form {
     /// What was typed into the query field: one query per comma-separated
     /// piece is the rule's `match`, and its name until it is given one.
     pub fn apply_query(&mut self) {
-        let queries = digest::split_queries(self.query.value());
-        self.name = queries.join(", ");
-        self.queries = queries;
+        self.rule.set_query(self.query.value());
     }
 
     /// The preview to ask for: the rule's queries over the last 90 days.
@@ -273,7 +238,7 @@ impl Form {
         self.generation += 1;
         crate::ask::Ask::Preview {
             generation: self.generation,
-            queries: self.queries.clone(),
+            queries: self.rule.queries().to_vec(),
             since: chrono::Utc::now() - chrono::Duration::days(digest::PREVIEW_DAYS),
         }
     }
@@ -303,28 +268,17 @@ impl Form {
     pub fn draft(&self) -> Result<DigestRuleDraft, String> {
         let mut schedule = self.schedule.clone();
         schedule.at = self.time.value().to_owned();
-        let (cadence, day, at) = match schedule.due()? {
-            Due::Daily { at } => (Cadence::Daily, None, at),
-            Due::Weekly { day, at } => (Cadence::Weekly, Some(RuleDay::Weekday(day)), at),
-            Due::Monthly { day, at } => (Cadence::Monthly, Some(RuleDay::OfMonth(day)), at),
-        };
-        Ok(DigestRuleDraft {
-            name: self.name.clone(),
-            queries: self.queries.clone(),
-            cadence,
-            day,
-            at,
-        })
+        DigestRuleDraft::from_form(&self.rule, &schedule)
     }
 
     /// The rule being edited, by the name it had.
     pub fn replacing(&self) -> Option<String> {
-        self.replacing.clone()
+        self.rule.replacing().map(str::to_owned)
     }
 
     /// The name the rule will have.
     pub fn name(&self) -> &str {
-        &self.name
+        self.rule.name()
     }
 
     /// The text inputs, for typing.
@@ -337,20 +291,7 @@ impl Form {
     }
 }
 
-/// Which of the three cadences the schedule says.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CadenceKind {
-    Daily,
-    Weekly,
-    Monthly,
-}
-
-impl CadenceKind {
-    fn of(schedule: &Schedule) -> CadenceKind {
-        match digest::CADENCES[schedule.cadence.min(2)].0 {
-            Cadence::Daily => CadenceKind::Daily,
-            Cadence::Weekly => CadenceKind::Weekly,
-            Cadence::Monthly => CadenceKind::Monthly,
-        }
-    }
+/// What the terminal shows of text that came from outside: no controls.
+fn clean(text: &str) -> String {
+    SafeText::new(text).as_str().to_owned()
 }

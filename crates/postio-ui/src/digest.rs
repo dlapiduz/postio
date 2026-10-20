@@ -509,13 +509,25 @@ impl Schedule {
         shown
     }
 
+    /// What editing `rule` shows: when it is due, or a new rule's start
+    /// when its schedule does not read.
+    pub fn of_rule(rule: &DigestRule) -> Self {
+        rule.due()
+            .map_or_else(|_| Schedule::new_rule(), |due| Schedule::of(&due))
+    }
+
+    /// Which cadence the controls say.
+    pub fn cadence_kind(&self) -> postio_model::listing::Cadence {
+        CADENCES[self.cadence.min(2)].0
+    }
+
     /// When the controls say the rule is due, or the sentence saying why
     /// they do not say it.
     pub fn due(&self) -> Result<postio_config::Due, String> {
         use postio_config::Due;
         let at = chrono::NaiveTime::parse_from_str(self.at.trim(), "%H:%M")
             .map_err(|_| TIME_ERROR.to_owned())?;
-        Ok(match CADENCES[self.cadence.min(2)].0 {
+        Ok(match self.cadence_kind() {
             postio_model::listing::Cadence::Daily => Due::Daily { at },
             postio_model::listing::Cadence::Weekly => Due::Weekly {
                 day: WEEKDAYS[self.weekday.min(6)],
