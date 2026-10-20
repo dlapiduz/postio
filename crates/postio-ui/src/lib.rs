@@ -56,6 +56,7 @@ pub mod privacy;
 pub mod reader;
 pub mod recipients;
 pub mod row;
+pub mod rule_form;
 pub mod saved_search;
 pub mod schedule;
 pub mod search;

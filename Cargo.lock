@@ -4847,6 +4847,7 @@ version = "0.4.2"
 dependencies = [
  "async-channel",
  "chrono",
+ "postio-config",
  "postio-core",
  "postio-model",
  "postio-search",

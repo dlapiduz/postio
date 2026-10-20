@@ -653,6 +653,32 @@ pub enum RuleDay {
     OfMonth(u32),
 }
 
+impl DigestRuleDraft {
+    /// The rule `form` holds, due as `schedule` says, or the sentence saying
+    /// why it cannot be written. The one place a schedule becomes a cadence,
+    /// a day and a time; the rule dialogs of every frontend end here.
+    pub fn from_form(
+        form: &postio_ui::rule_form::RuleForm,
+        schedule: &postio_ui::digest::Schedule,
+    ) -> Result<Self, String> {
+        use postio_config::Due;
+        use postio_model::listing::Cadence;
+        let (name, queries, due) = form.written(schedule)?;
+        let (cadence, day, at) = match due {
+            Due::Daily { at } => (Cadence::Daily, None, at),
+            Due::Weekly { day, at } => (Cadence::Weekly, Some(RuleDay::Weekday(day)), at),
+            Due::Monthly { day, at } => (Cadence::Monthly, Some(RuleDay::OfMonth(day)), at),
+        };
+        Ok(DigestRuleDraft {
+            name,
+            queries,
+            cadence,
+            day,
+            at,
+        })
+    }
+}
+
 /// The rule "Digest mail like this" proposes (spec 007 FR-171): queries in
 /// the one language, never text a model wrote, and what they would have
 /// caught.
@@ -1133,4 +1159,55 @@ pub struct VaultPicture {
     pub tasks_note: std::path::PathBuf,
     /// Every task Postio captured, in the tasks note and the projects'.
     pub tasks: Vec<postio_vault::CapturedTask>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use postio_model::EmailAddress;
+    use postio_ui::digest::Schedule;
+    use postio_ui::rule_form::RuleForm;
+
+    fn form() -> RuleForm {
+        let sender = EmailAddress {
+            address: "news@example.com".to_owned(),
+            name: None,
+        };
+        RuleForm::new_rule(&[sender], None)
+    }
+
+    #[test]
+    fn a_daily_rule_takes_no_day() {
+        let mut schedule = Schedule::new_rule();
+        schedule.cadence = 0;
+        schedule.at = "07:30".to_owned();
+        let draft = DigestRuleDraft::from_form(&form(), &schedule).expect("a draft");
+        assert_eq!(draft.cadence, postio_model::listing::Cadence::Daily);
+        assert_eq!(draft.day, None);
+        assert_eq!(draft.at.format("%H:%M").to_string(), "07:30");
+        assert_eq!(draft.queries, ["from:news@example.com"]);
+    }
+
+    #[test]
+    fn a_weekly_rule_names_its_weekday_and_a_monthly_one_its_date() {
+        let mut schedule = Schedule::new_rule();
+        schedule.cadence = 1;
+        schedule.weekday = 2;
+        let weekly = DigestRuleDraft::from_form(&form(), &schedule).expect("a draft");
+        assert_eq!(weekly.day, Some(RuleDay::Weekday(chrono::Weekday::Wed)));
+        schedule.cadence = 2;
+        schedule.month_day = 14;
+        let monthly = DigestRuleDraft::from_form(&form(), &schedule).expect("a draft");
+        assert_eq!(monthly.day, Some(RuleDay::OfMonth(15)));
+    }
+
+    #[test]
+    fn a_time_that_does_not_read_is_said_not_written() {
+        let mut schedule = Schedule::new_rule();
+        schedule.at = "soon".to_owned();
+        assert_eq!(
+            DigestRuleDraft::from_form(&form(), &schedule),
+            Err(postio_ui::digest::TIME_ERROR.to_owned())
+        );
+    }
 }

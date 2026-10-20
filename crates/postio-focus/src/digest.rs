@@ -17,8 +17,7 @@
 //! (M4); Linux's reading dialog stacks over the digest instead.
 
 use chrono::{DateTime, Utc};
-use postio_client::protocol::{DigestPreview, DigestRuleDraft, RuleDay};
-use postio_config::Due;
+use postio_client::protocol::{DigestPreview, DigestRuleDraft};
 use postio_core::{Command, CommandId, MessageTarget};
 use postio_model::listing::{Cadence, MessageSummary};
 use postio_model::summary::DigestSummary;
@@ -26,6 +25,7 @@ use postio_model::{DeliveryId, MessageId};
 use postio_ui::digest::{self as words, Page, Schedule};
 use postio_ui::focus_list::FocusRow;
 use postio_ui::hints;
+use postio_ui::rule_form::RuleForm;
 
 use crate::cursor::{RowFacts, Rows};
 use crate::feed::Step;
@@ -239,16 +239,7 @@ impl DigestWindow {
 /// What the controller keeps of the rule dialog.
 #[derive(Debug)]
 pub(crate) struct RuleDialog {
-    heading: String,
-    name: String,
-    queries: Vec<String>,
-    replacing: Option<String>,
-    like_this: Option<MessageId>,
-    /// The senders' line; `None` once the query entry is up.
-    from: Option<String>,
-    /// The query entry's text, once it is up.
-    query: Option<String>,
-    note: String,
+    form: RuleForm,
     schedule: Schedule,
     preview: Option<DigestPreview>,
     error: Option<String>,
@@ -813,20 +804,9 @@ impl FocusController {
                 .is_some(),
             cursor.as_ref(),
         );
-        let names: Vec<String> = senders
-            .iter()
-            .map(|sender| sender.display().to_owned())
-            .collect();
         let stamp = self.stamp();
         self.rule = Some(RuleDialog {
-            heading: words::new_rule_heading(senders.len()).to_owned(),
-            name: words::rule_name(&names),
-            queries: words::sender_queries(&senders),
-            replacing: None,
-            like_this,
-            from: Some(words::sender_line(&senders)),
-            query: None,
-            note: words::rule_note(senders.len()).to_owned(),
+            form: RuleForm::new_rule(&senders, like_this),
             schedule: Schedule::new_rule(),
             preview: None,
             error: None,
@@ -850,22 +830,10 @@ impl FocusController {
                 kind: ToastKind::Notice,
             })];
         };
-        let senders = words::is_sender_rule(&rule.queries);
-        let text = rule.queries.join(", ");
         let stamp = self.stamp();
         self.rule = Some(RuleDialog {
-            heading: words::edit_rule_heading(&rule.name),
-            name: rule.name.clone(),
-            queries: rule.queries.clone(),
-            replacing: Some(rule.name.clone()),
-            // Never while editing (US14).
-            like_this: None,
-            from: senders.then(|| text.clone()),
-            query: (!senders).then_some(text),
-            note: words::rule_note(rule.queries.len()).to_owned(),
-            schedule: rule
-                .due()
-                .map_or_else(|_| Schedule::new_rule(), |due| Schedule::of(&due)),
+            form: RuleForm::edit(&rule),
+            schedule: Schedule::of_rule(&rule),
             preview: None,
             error: None,
             stamp,
@@ -893,12 +861,12 @@ impl FocusController {
             return Vec::new();
         };
         rule.stamp = stamp;
-        if rule.queries.is_empty() {
+        if rule.form.queries().is_empty() {
             rule.preview = None;
             return Vec::new();
         }
         vec![Step::Ask(Request::DigestPreview {
-            queries: rule.queries.clone(),
+            queries: rule.form.queries().to_vec(),
             since,
             stamp,
         })]
@@ -913,7 +881,7 @@ impl FocusController {
         let mut steps = Vec::new();
         match input {
             Input::RuleQuery { text } => {
-                if rule.query.as_deref() == Some(text.as_str()) {
+                if rule.form.query() == Some(text.as_str()) {
                     return Vec::new();
                 }
                 set_query(rule, &text);
@@ -924,7 +892,7 @@ impl FocusController {
                 steps.extend(self.read_preview());
             }
             Input::RuleLikeThis => {
-                let Some(message) = rule.like_this else {
+                let Some(message) = rule.form.like_this() else {
                     return Vec::new();
                 };
                 let stamp = rule.stamp;
@@ -934,11 +902,11 @@ impl FocusController {
                 rule.schedule = schedule;
                 rule.error = None;
             }
-            Input::RuleCreate => match draft(rule) {
+            Input::RuleCreate => match DigestRuleDraft::from_form(&rule.form, &rule.schedule) {
                 Ok(draft) => {
                     rule.error = None;
                     return vec![Step::Ask(Request::SaveDigestRule {
-                        replacing: rule.replacing.clone(),
+                        replacing: rule.form.replacing().map(str::to_owned),
                         draft,
                         stamp: rule.stamp,
                     })];
@@ -983,7 +951,7 @@ impl FocusController {
             },
             Reply::RuleSaved { answer, .. } => match answer {
                 Ok(()) => {
-                    let name = rule.name.clone();
+                    let name = rule.form.name().to_owned();
                     self.rule = None;
                     self.surfaces.dismiss(SurfaceKind::Dialog);
                     let mut steps = vec![
@@ -1015,15 +983,15 @@ impl FocusController {
     pub(crate) fn rule_view(&self) -> Option<RuleView> {
         let rule = self.rule.as_ref()?;
         let now = self.now();
-        let senders = rule.query.is_none();
+        let senders = !rule.form.query_mode();
         Some(RuleView {
-            heading: rule.heading.clone(),
+            heading: rule.form.heading().to_owned(),
             from_label: words::FROM.to_owned(),
-            from: rule.from.clone().filter(|_| senders),
-            query: rule.query.clone(),
+            from: rule.form.senders().map(str::to_owned),
+            query: rule.form.query().map(str::to_owned),
             placeholder: words::QUERY_PLACEHOLDER.to_owned(),
             match_instead: senders.then(|| words::MATCH_INSTEAD.to_owned()),
-            like_this: (senders && rule.like_this.is_some()).then(|| words::LIKE_THIS.to_owned()),
+            like_this: rule.form.like_this().map(|_| words::LIKE_THIS.to_owned()),
             deliver_label: words::DELIVER.to_owned(),
             schedule: rule.schedule.clone(),
             cadences: words::CADENCES
@@ -1038,8 +1006,8 @@ impl FocusController {
                         .unwrap_or_default()
                 })
                 .collect(),
-            note: rule.note.clone(),
-            create: words::create_words(rule.replacing.is_some()).to_owned(),
+            note: rule.form.note().to_owned(),
+            create: words::create_words(rule.form.editing()).to_owned(),
             create_key: hints::key(self.keymap(), CommandId::PickerConfirm),
             preview_heading: rule
                 .preview
@@ -1071,28 +1039,8 @@ impl FocusController {
     }
 }
 
-/// The query entry up, holding `text`: one query per comma-separated piece
-/// becomes the rule's `match`, and its name (US14 scenario 2).
+/// The query entry up, holding `text` (US14 scenario 2).
 fn set_query(rule: &mut RuleDialog, text: &str) {
-    let queries = words::split_queries(text);
-    rule.name = queries.join(", ");
-    rule.queries = queries;
-    rule.query = Some(text.to_owned());
+    rule.form.set_query(text);
     rule.error = None;
-}
-
-/// The rule as the dialog says it, or why it cannot be one.
-fn draft(rule: &RuleDialog) -> Result<DigestRuleDraft, String> {
-    let (cadence, day, at) = match rule.schedule.due()? {
-        Due::Daily { at } => (Cadence::Daily, None, at),
-        Due::Weekly { day, at } => (Cadence::Weekly, Some(RuleDay::Weekday(day)), at),
-        Due::Monthly { day, at } => (Cadence::Monthly, Some(RuleDay::OfMonth(day)), at),
-    };
-    Ok(DigestRuleDraft {
-        name: rule.name.clone(),
-        queries: rule.queries.clone(),
-        cadence,
-        day,
-        at,
-    })
 }
