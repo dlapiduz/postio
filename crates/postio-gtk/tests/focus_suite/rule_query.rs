@@ -110,6 +110,58 @@ pub fn match_a_list_or_a_search_instead_previews_and_saves_the_typed_query() {
     });
 }
 
+/// Editing a list rule keeps the rule's own name: opening it fills the
+/// query entry, and that is not the person typing a query, so Create
+/// saves the rule under the name it had (the terminal and Focus agree).
+pub fn editing_a_list_rule_keeps_its_name_until_a_query_is_typed() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Ada Moreno", "ada@example.com"), "Atlas budget", "Numbers.", 5)
+            .await;
+        fixture.index().await;
+        let directory = tempfile::tempdir().expect("a config directory");
+        let path = directory.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[[focus.digests]]\nname = \"Weekly lists\"\nmatch = [\"list:weekly.example.org\"]\ncadence = \"daily\"\nat = \"08:00\"\n",
+        )
+        .expect("a config");
+        let config = postio_config::Config::load_from_path(&path).expect("it reads");
+        let rule = config.focus.digests[0].clone();
+        let window = postio_gtk::window::FocusWindow::new(None);
+        gtk::prelude::GtkWindowExt::present(&window);
+        support::keep(postio_gtk::startup::adopt_at(
+            &window,
+            fixture.host(),
+            &config,
+            Some(&path),
+        ));
+        assert!(
+            crate::settle_until(async || support::subjects(&window).len() == 1).await,
+            "the inbox never reached the screen"
+        );
+        support::keys(&window, &["j"]);
+        support::press(&window, "d", gdk::ModifierType::empty());
+        let dialog = window.rule_dialog().expect("d opened the rule dialog");
+        dialog.open_edit(&window, &rule);
+        support::keep(directory);
+        dialog.create();
+        assert!(
+            crate::settle_until(async || window.rule_dialog().is_none()).await,
+            "Create closed the dialog"
+        );
+        let written = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(
+            written.contains("name = \"Weekly lists\""),
+            "the edited rule lost its name:\n{written}"
+        );
+    });
+}
+
 /// FR-171: without a model, "Digest mail like this" is absent from the
 /// dialog `d` opens over an ordinary message.
 pub fn digest_mail_like_this_is_absent_with_no_model_configured() {

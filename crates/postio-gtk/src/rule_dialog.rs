@@ -396,8 +396,12 @@ impl RuleDialog {
     /// language).
     fn apply_query(&self, text: &str) {
         let queries = digest::split_queries(text);
-        self.name.replace(queries.join(", "));
-        self.queries.replace(queries);
+        // The entry filled with the queries the rule already has is not a
+        // person typing: an edited rule keeps its own name.
+        if *self.queries.borrow() != queries {
+            self.name.replace(queries.join(", "));
+            self.queries.replace(queries);
+        }
         self.read_preview();
     }
 

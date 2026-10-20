@@ -613,6 +613,10 @@ const CASES: &[(&str, fn())] = &[
         rule_query::match_a_list_or_a_search_instead_previews_and_saves_the_typed_query as fn(),
     ),
     (
+        "rule_query::editing_a_list_rule_keeps_its_name_until_a_query_is_typed",
+        rule_query::editing_a_list_rule_keeps_its_name_until_a_query_is_typed as fn(),
+    ),
+    (
         "rule_query::digest_mail_like_this_is_absent_with_no_model_configured",
         rule_query::digest_mail_like_this_is_absent_with_no_model_configured as fn(),
     ),
