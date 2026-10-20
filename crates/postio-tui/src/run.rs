@@ -1367,6 +1367,7 @@ fn perform(
                                         message,
                                         to: row.to,
                                         cc: row.cc,
+                                        warning: reading.sender_warning,
                                     })
                                     .await;
                             }

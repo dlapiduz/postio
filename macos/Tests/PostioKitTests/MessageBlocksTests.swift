@@ -34,10 +34,11 @@ import Testing
     }
 
     static func document(
-        unsubscribe: UnsubscribeOfferFfi? = nil, caveat: String? = nil
+        unsubscribe: UnsubscribeOfferFfi? = nil, caveat: String? = nil,
+        senderWarning: String? = nil
     ) -> FocusReaderDocumentFfi {
         FocusReaderDocumentFfi(
-            html: "<p>7</p>", notice: nil, caveat: caveat, unsubscribe: unsubscribe,
+            html: "<p>7</p>", notice: nil, caveat: caveat, senderWarning: senderWarning, unsubscribe: unsubscribe,
             treatmentShown: .appColours, treatmentClassified: .appColours, renderMode: nil,
             sender: "ada@example.com", senderChoice: nil, windowWidth: 720, columnWidth: 560,
             foldsIntoMore: false, paperFloor: 0.85)
@@ -92,6 +93,18 @@ import Testing
         #expect(caveat != nil, "\(lost)")
         if let caveat { #expect(caveat > lost.firstIndex(of: .body)!) }
         #expect(!Self.blocks(Self.document()).contains { if case .caveat = $0 { true } else { false } })
+    }
+
+    @Test func aDoubtedSenderGetsOneSentenceUnderTheirHeaderAndOrdinaryMailGetsNone() {
+        let said = "This message failed sender verification: it may not be from example.org."
+        let drawn = Self.blocks(Self.document(senderWarning: said))
+        let at = drawn.firstIndex(of: .senderWarning(said))
+        #expect(at != nil, "\(drawn)")
+        if let at {
+            #expect(at > drawn.firstIndex(of: .sender)!)
+            #expect(at < drawn.firstIndex(of: .body)!)
+        }
+        #expect(!Self.blocks(Self.document()).contains { if case .senderWarning = $0 { true } else { false } })
     }
 
     @Test func aMessageNotYetReadDrawsItsHeaderAndNoBody() {

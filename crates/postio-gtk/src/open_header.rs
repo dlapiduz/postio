@@ -24,6 +24,10 @@ pub struct HeaderCard {
     to: adw::WrapBox,
     cc_label: gtk::Label,
     cc: adw::WrapBox,
+    /// The quiet sender warning (#1928), under the recipients; hidden for
+    /// ordinary mail.
+    warning_row: gtk::Box,
+    warning: gtk::Label,
 }
 
 /// A field's name: small and dim, in a column of its own.
@@ -97,6 +101,20 @@ impl HeaderCard {
         root.attach(&to, 1, 1, 2, 1);
         root.attach(&cc_label, 0, 2, 1, 1);
         root.attach(&cc, 1, 2, 2, 1);
+        let warning_row = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+        warning_row.add_css_class("focus-open-warning");
+        warning_row.set_visible(false);
+        let icon = gtk::Image::from_icon_name("dialog-warning-symbolic");
+        icon.set_valign(gtk::Align::Start);
+        warning_row.append(&icon);
+        let warning = gtk::Label::new(None);
+        warning.set_xalign(0.0);
+        warning.set_hexpand(true);
+        warning.set_wrap(true);
+        warning.add_css_class("caption");
+        warning.add_css_class("warning");
+        warning_row.append(&warning);
+        root.attach(&warning_row, 1, 3, 2, 1);
         let card = HeaderCard {
             root,
             from,
@@ -105,6 +123,8 @@ impl HeaderCard {
             to,
             cc_label,
             cc,
+            warning_row,
+            warning,
         };
         card.clear();
         card
@@ -160,8 +180,24 @@ impl HeaderCard {
         recipients(&self.cc_label, &self.cc, cc);
     }
 
+    /// Says that the sender may not be who they claim, or hides the line
+    /// (#1928). The sentence is `postio_ui::reader::authenticity`'s.
+    pub fn set_warning(&self, line: Option<&str>) {
+        self.warning.set_text(line.unwrap_or(""));
+        self.warning_row.set_visible(line.is_some());
+    }
+
+    /// The warning line's text, or `None` when hidden. For tests.
+    #[doc(hidden)]
+    pub fn warning_text(&self) -> Option<String> {
+        self.warning_row
+            .is_visible()
+            .then(|| self.warning.text().to_string())
+    }
+
     /// Nothing drawn: no message yet.
     pub fn clear(&self) {
+        self.set_warning(None);
         clear(&self.from);
         self.date.set_text("");
         recipients(&self.to_label, &self.to, &[]);

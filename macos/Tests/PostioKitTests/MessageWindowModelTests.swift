@@ -83,7 +83,7 @@ struct MessageWindowModelTests {
 
     nonisolated static func document(shown: TreatmentFfi, of message: Int64 = 0) -> FocusReaderDocumentFfi {
         FocusReaderDocumentFfi(
-            html: "<p>\(message)</p>", notice: nil, caveat: nil, unsubscribe: nil,
+            html: "<p>\(message)</p>", notice: nil, caveat: nil, senderWarning: nil, unsubscribe: nil,
             treatmentShown: shown,
             treatmentClassified: .paper, renderMode: nil, sender: "news@example.com",
             senderChoice: nil, windowWidth: 720, columnWidth: shown == .paper ? 640 : 560,

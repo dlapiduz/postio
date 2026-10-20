@@ -110,7 +110,9 @@ use io_pim_discovery::autoconfig::config::{
     DiscoverySecurityType, DiscoveryServer, DiscoveryServerType,
 };
 
-pub use self::builtin::{Preset, preset_for_domain, preset_for_imap_host, presets};
+pub use self::builtin::{
+    Preset, authserv_ids_for_imap_host, preset_for_domain, preset_for_imap_host, presets,
+};
 pub use self::settings::{
     AccountSettings, Encryption, JmapOffer, OAuthOffer, ServerSettings, SettingsSource,
 };

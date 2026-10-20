@@ -60,6 +60,12 @@ pub struct ProviderRow {
     /// a whole host: providers hand out one inbound host per customer.
     #[serde(default)]
     pub mx_suffixes: Vec<String>,
+    /// The `Authentication-Results` authserv-ids this provider's servers
+    /// stamp on incoming mail (#1928), matched whole or as a label-bounded
+    /// suffix. The reader trusts a sender-authentication header only from
+    /// one of these. Leave empty when the provider stamps no authserv-id.
+    #[serde(default)]
+    pub authserv_ids: Vec<String>,
     pub imap_host: String,
     pub imap_port: u16,
     pub imap_security: Security,
@@ -327,6 +333,7 @@ mod tests {
             display_name: "Test".to_string(),
             domains: vec!["example.com".to_string()],
             mx_suffixes: Vec::new(),
+            authserv_ids: Vec::new(),
             imap_host: "imap.example.com".to_string(),
             imap_port: 993,
             imap_security: Security::Tls,

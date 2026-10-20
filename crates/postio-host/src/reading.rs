@@ -19,6 +19,7 @@ pub fn wire_body(stored: Stored) -> Body {
         Stored::Ready {
             body,
             encoding_problems,
+            ..
         } => Body::Ready {
             body,
             encoding_problems,
@@ -46,6 +47,10 @@ pub async fn load(
     // the row, so for that one the row is still read here.
     let (body, fetched) =
         postio_session::reading::load_with_row(connection, message, offline).await;
+    let headers = match &body {
+        Stored::Ready { headers, .. } => headers.clone(),
+        Stored::Absent(_) => None,
+    };
     let row = match fetched {
         Some(row) => Some(row),
         None => MessageRepository::new(connection)
@@ -53,6 +58,13 @@ pub async fn load(
             .await
             .ok()
             .flatten(),
+    };
+    // Judged from the block the body read already carried (#1928).
+    let sender_warning = match (&row, &body) {
+        (Some(row), Stored::Ready { .. }) => {
+            postio_session::reading::sender_warning(connection, row, headers.as_deref()).await
+        }
+        _ => None,
     };
     let send_state = MessageRepository::new(connection)
         .send_state(message)
@@ -63,6 +75,7 @@ pub async fn load(
         body: wire_body(body),
         row: row.map(Box::new),
         send_state,
+        sender_warning,
     }
 }
 
@@ -161,6 +174,7 @@ mod asked_tests {
             body,
             row: None,
             send_state: None,
+            sender_warning: None,
         }
     }
 

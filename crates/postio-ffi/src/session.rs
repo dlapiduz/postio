@@ -2219,6 +2219,7 @@ impl Session {
                 postio_session::reading::Body::Ready {
                     body,
                     encoding_problems,
+                    ..
                 } => (Some(body), encoding_problems),
                 _ => (None, false),
             };
@@ -4644,6 +4645,7 @@ impl Session {
             postio_session::reading::Body::Ready {
                 body,
                 encoding_problems,
+                ..
             } => {
                 // Every message opens as its sender built it (spec 006
                 // FR-031), the rule GTK and the shared thread page follow;

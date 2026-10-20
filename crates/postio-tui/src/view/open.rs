@@ -445,6 +445,24 @@ pub fn document(app: &App, theme: &Theme, width: u16, now: DateTime<Local>) -> D
             ),
         ]));
     }
+    // Who the sender may really be, only when the host doubts it (#1928):
+    // one sentence in the warning role, no box and no badge.
+    if let Some(warning) = &member.warning {
+        let style = theme.style(Role::Warning);
+        let said = Line::styled(warning.as_str().to_owned(), style);
+        for (at, wrapped) in wrap(&said, usize::from(width).saturating_sub(6))
+            .into_iter()
+            .enumerate()
+        {
+            let mut spans = vec![if at == 0 {
+                label("Note")
+            } else {
+                Span::raw("      ")
+            }];
+            spans.extend(wrapped.spans);
+            rows.plain(Line::from(spans));
+        }
+    }
     rows.hairline();
 
     // The action card, on the message the marker is about.
@@ -1190,6 +1208,11 @@ mod tests {
 
     /// The first message opened, its thread of six read, its body here.
     fn opened(size: (u16, u16)) -> App {
+        opened_warning(size, None)
+    }
+
+    /// [`opened`], its sender flagged by the host as `warning`.
+    fn opened_warning(size: (u16, u16), warning: Option<&str>) -> App {
         let mut app = inbox(size);
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         let members = (1..=6)
@@ -1223,6 +1246,7 @@ mod tests {
                     Some("Grace Oyelaran"),
                     "grace@example.com",
                 )],
+                warning: warning.map(str::to_owned),
             },
         );
         update(
@@ -1232,6 +1256,32 @@ mod tests {
             )),
         );
         app
+    }
+
+    #[test]
+    fn a_sender_warning_is_a_quiet_line_under_the_header_and_ordinary_mail_has_none() {
+        let said = "This message failed sender verification: it may not be from example.org.";
+        let ordinary = screen(120, 36, &opened((120, 36)));
+        assert!(
+            !ordinary.contains("sender verification"),
+            "nothing to say, nothing said:\n{ordinary}"
+        );
+        let drawn = screen(120, 36, &opened_warning((120, 36), Some(said)));
+        let lines = lines_of(&drawn);
+        let at = lines
+            .iter()
+            .position(|line| line.contains("failed sender verification"))
+            .unwrap_or_else(|| panic!("the warning is drawn:\n{drawn}"));
+        let cc = lines
+            .iter()
+            .position(|line| line.contains("Cc"))
+            .expect("the Cc line");
+        assert!(at > cc, "under the recipients, not above them:\n{drawn}");
+        assert!(drawn.contains("Uploaded v3"), "the body is still here:\n{drawn}");
+
+        // Narrow: it wraps rather than being cut off mid-sentence.
+        let narrow = screen(60, 36, &opened_warning((60, 36), Some(said)));
+        assert!(narrow.contains("example.org."), "the end of it:\n{narrow}");
     }
 
     fn lines_of(drawn: &str) -> Vec<&str> {

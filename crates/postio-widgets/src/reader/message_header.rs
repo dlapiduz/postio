@@ -52,6 +52,10 @@ pub struct MessageHeader {
     cc_toggle: gtk::ToggleButton,
     cc_revealer: gtk::Revealer,
     cc_label: gtk::Label,
+    /// The one quiet line about a sender who may not be who they say
+    /// (#1928): hidden for ordinary mail, which is nearly all of it.
+    warning_row: gtk::Box,
+    warning: gtk::Label,
 }
 
 impl MessageHeader {
@@ -156,6 +160,24 @@ impl MessageHeader {
         cc_revealer.set_child(Some(&cc_row));
         root.append(&cc_revealer);
 
+        // Under the recipients, where the eye already is after reading who
+        // it is from. Text and a symbolic icon, no badge and no colour fill:
+        // it is a sentence, and nothing at all on mail that raises nothing.
+        let warning_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        warning_row.add_css_class("postio-message-header-warning");
+        warning_row.set_visible(false);
+        let warning_icon = gtk::Image::from_icon_name("dialog-warning-symbolic");
+        warning_icon.set_valign(gtk::Align::Start);
+        warning_row.append(&warning_icon);
+        let warning = gtk::Label::new(None);
+        warning.set_xalign(0.0);
+        warning.set_hexpand(true);
+        warning.set_wrap(true);
+        warning.add_css_class("caption");
+        warning.add_css_class("warning");
+        warning_row.append(&warning);
+        root.append(&warning_row);
+
         let revealer_for_toggle = cc_revealer.clone();
         cc_toggle.connect_toggled(move |button| {
             revealer_for_toggle.set_reveal_child(button.is_active());
@@ -174,6 +196,8 @@ impl MessageHeader {
             cc_toggle,
             cc_revealer,
             cc_label,
+            warning_row,
+            warning,
         }
     }
 
@@ -202,6 +226,9 @@ impl MessageHeader {
     ) {
         let lines = HeaderLines::of(from, to, cc, subject, date, postio_ui::clock::now());
 
+        // Another message: the last one's warning was about its sender, not
+        // this one's. The caller sets it again once it has read the headers.
+        self.set_warning(None);
         self.subject.set_label(&lines.subject);
         self.set_sender_line(&lines.from, &lines.date);
         self.draw_recipients(&lines);
@@ -307,10 +334,38 @@ impl MessageHeader {
             .then(|| self.account_name.label().to_string())
     }
 
+    /// Shows the sender-authenticity warning, or hides the line (#1928).
+    ///
+    /// The sentence comes from [`postio_ui::reader::authenticity`], so the
+    /// frontends cannot word it differently. `None` is the ordinary case.
+    pub fn set_warning(&self, line: Option<&str>) {
+        match line {
+            Some(line) => {
+                self.warning.set_label(line);
+                self.warning_row.set_visible(true);
+                self.warning_row
+                    .update_property(&[gtk::accessible::Property::Label(line)]);
+            }
+            None => {
+                self.warning.set_label("");
+                self.warning_row.set_visible(false);
+            }
+        }
+    }
+
+    /// The warning line's text, or `None` when hidden. For tests.
+    #[doc(hidden)]
+    pub fn warning_label(&self) -> Option<String> {
+        self.warning_row
+            .is_visible()
+            .then(|| self.warning.label().to_string())
+    }
+
     /// Empties every field — the pane closed, or moved to a different
     /// message before this one finished loading.
     pub fn clear(&self) {
         self.account_row.set_visible(false);
+        self.set_warning(None);
         self.subject.set_label("");
         self.sender.set_label("");
         self.date.set_label("");

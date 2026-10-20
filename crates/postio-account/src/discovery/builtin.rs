@@ -113,6 +113,17 @@ impl Preset {
             .max()
     }
 
+    /// The `Authentication-Results` authserv-ids this provider's servers
+    /// stamp on mail they receive (#1928).
+    ///
+    /// The reader trusts an `Authentication-Results` header only when its
+    /// authserv-id is one of these (a hostname, matched whole or as a
+    /// label-bounded suffix): anything else was written by the sender or a
+    /// relay. Empty when the provider stamps none, or none we have seen.
+    pub fn authserv_ids(&self) -> &[String] {
+        &self.row.authserv_ids
+    }
+
     /// The provider's IMAP host.
     pub fn imap_host(&self) -> &str {
         &self.row.imap_host
@@ -368,6 +379,13 @@ pub fn preset_for_imap_host(host: &str) -> Option<&'static Preset> {
         .find(|preset| preset.imap_host().eq_ignore_ascii_case(host))
 }
 
+/// The authserv-ids to trust on mail an account reached through `imap_host`
+/// (#1928): its provider's, or none for a server Postio ships no row for --
+/// in which case no `Authentication-Results` is believed.
+pub fn authserv_ids_for_imap_host(imap_host: &str) -> &'static [String] {
+    preset_for_imap_host(imap_host).map_or(&[], Preset::authserv_ids)
+}
+
 /// Returns settings for `domain` when Postio ships them, without any I/O.
 ///
 /// `domain` is matched case-insensitively.
@@ -405,6 +423,15 @@ mod tests {
     /// "No personal data".
     fn address_in(domain: &str) -> String {
         format!("a@{domain}")
+    }
+
+    /// #1928: which servers' `Authentication-Results` an account believes is
+    /// the provider's row, found by the host the account talks to.
+    #[test]
+    fn an_account_trusts_the_authserv_ids_of_its_providers_row() {
+        let google = authserv_ids_for_imap_host("IMAP.gmail.com");
+        assert!(google.iter().any(|id| id == "mx.google.com"), "{google:?}");
+        assert!(authserv_ids_for_imap_host("imap.example.org").is_empty());
     }
 
     /// #954: a shipped row's stated refresh lifetime reaches the offer the

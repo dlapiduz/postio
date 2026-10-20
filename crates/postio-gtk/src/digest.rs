@@ -966,6 +966,9 @@ impl DigestWindow {
                     row.subject.as_deref(),
                     row.date.unwrap_or(row.received_at),
                 );
+                window
+                    .reader
+                    .set_sender_warning(reading.sender_warning.as_deref());
             }
             let sender = reading
                 .row

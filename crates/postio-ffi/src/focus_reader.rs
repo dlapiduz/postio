@@ -68,6 +68,12 @@ pub struct FocusReaderDocumentFfi {
     pub notice: Option<crate::ReaderNoticeFfi>,
     /// What to say about a body that lost something in decoding.
     pub caveat: Option<String>,
+    /// The one quiet sentence under the sender when they may not be who
+    /// they say -- failed authentication, or a display name that is another
+    /// address (#1928) -- or `None`, which is nearly all mail. Worded by
+    /// `postio_ui::reader::authenticity`, judged by the host with the
+    /// account's provider.
+    pub sender_warning: Option<String>,
     /// The unsubscribe banner over list mail, or `None`: GTK's notice band
     /// (`postio_ui::unsubscribe::banner`), which personal mail and mail on
     /// its way out never get. Reading it records nothing; only
@@ -230,6 +236,7 @@ impl Session {
                 html,
                 notice: None,
                 caveat: None,
+                sender_warning: None,
                 unsubscribe: None,
                 treatment_shown: shown.into(),
                 treatment_classified: treated
@@ -311,6 +318,7 @@ impl Session {
         FocusReaderDocumentFfi {
             notice,
             caveat: decode_caveat(encoding_problems).map(str::to_owned),
+            sender_warning: reading.sender_warning.clone(),
             unsubscribe,
             render_mode: treated
                 .and_then(|treated| render_mode_words(treated, remembered))

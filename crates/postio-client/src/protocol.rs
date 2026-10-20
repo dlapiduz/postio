@@ -907,6 +907,10 @@ pub struct Reading {
     /// Whether it is a message being sent, and in which state; `None` for
     /// ordinary mail.
     pub send_state: Option<postio_model::DraftState>,
+    /// The one quiet line the header shows when the sender may not be who
+    /// they say -- failed authentication, or a display name that names
+    /// another address (#1928). `None` for ordinary mail.
+    pub sender_warning: Option<String>,
 }
 
 /// What the settings' account commands do to an account.

@@ -127,6 +127,9 @@ pub enum Input {
         to: Vec<postio_model::EmailAddress>,
         /// Who was copied.
         cc: Vec<postio_model::EmailAddress>,
+        /// The one line about a sender who may not be who they say, if any
+        /// (#1928).
+        warning: Option<String>,
     },
     /// A body asked for by [`Effect::ReadBody`] arrived.
     Body {
@@ -4732,7 +4735,12 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             // The offer is a courtesy; the unsubscribe already said its piece.
             Err(_) => Vec::new(),
         },
-        Input::Addressed { message, to, cc } => {
+        Input::Addressed {
+            message,
+            to,
+            cc,
+            warning,
+        } => {
             let member = app.reading.as_mut().and_then(|reading| {
                 reading
                     .members
@@ -4750,6 +4758,7 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                     };
                     member.to = safe(&to);
                     member.cc = safe(&cc);
+                    member.warning = warning.as_deref().map(postio_ui::terminal::SafeText::new);
                     vec![Effect::Redraw]
                 }
                 None => Vec::new(),
@@ -7555,6 +7564,7 @@ pub(crate) mod tests {
                     "bea@example.com",
                 )],
                 cc: Vec::new(),
+                warning: None,
             },
         );
         assert!(
