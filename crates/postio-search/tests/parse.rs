@@ -5,7 +5,7 @@
 
 use chrono::NaiveDate;
 use postio_search::parse;
-use postio_search::query::{Field, Filter, ParsedQuery, State};
+use postio_search::query::{Field, Filter, ParsedQuery, State, TokenKind};
 
 /// Fixed reference date so every relative-date expectation is deterministic.
 /// 2026-08-22 is a Saturday.
@@ -186,6 +186,69 @@ fn group_composes_with_other_operators_and_with_negation() {
     let clause = parsed.filters().next().unwrap();
     assert!(clause.negated, "`-group:` means everyone outside the group");
     assert_eq!(clause.filter, Filter::Group("family".into()));
+}
+
+#[test]
+fn with_operator_lists_the_addresses_a_person_owns() {
+    // specs/005-contacts R6: "from, to, cc or bcc is any of these" -- what
+    // picking a person in the finder writes, since the language has no `or`.
+    // The addresses are the value, written out, never a person resolved later.
+    assert_eq!(
+        filters("with:ada@work.example,ada@home.example"),
+        vec![Filter::With(vec![
+            "ada@work.example".into(),
+            "ada@home.example".into()
+        ])]
+    );
+    assert_eq!(
+        filters("with:grace@example.org"),
+        vec![Filter::With(vec!["grace@example.org".into()])]
+    );
+}
+
+#[test]
+fn a_half_typed_with_is_never_an_error() {
+    // Every intermediate state of typing it is ordinary (Constitution III).
+    let parsed = q("with:");
+    assert!(
+        matches!(
+            parsed.tokens().first().map(|t| &t.kind),
+            Some(TokenKind::Partial(_))
+        ),
+        "an empty `with:` is a partial, not a filter that matches nothing"
+    );
+    assert!(
+        matches!(
+            q("with:,").tokens().first().map(|t| &t.kind),
+            Some(TokenKind::Partial(_))
+        ),
+        "nor is a value of nothing but separators"
+    );
+    assert_eq!(
+        filters("with:ada@example.com,"),
+        vec![Filter::With(vec!["ada@example.com".into()])],
+        "a trailing comma is someone about to type the next address"
+    );
+    assert_eq!(
+        filters("with:ada@"),
+        vec![Filter::With(vec!["ada@".into()])],
+        "half an address is still an address to look for, the way `group:fam` is"
+    );
+}
+
+#[test]
+fn with_composes_and_negates_like_any_other_filter() {
+    assert_eq!(
+        filters("with:ada@example.com is:unread"),
+        vec![
+            Filter::With(vec!["ada@example.com".into()]),
+            Filter::Is(State::Unread)
+        ]
+    );
+    let parsed = q("-with:ada@example.com");
+    let clause = parsed.filters().next().unwrap();
+    assert!(clause.negated, "`-with:` is mail not involving them");
+    assert_eq!(clause.filter.field(), Field::With);
 }
 
 #[test]

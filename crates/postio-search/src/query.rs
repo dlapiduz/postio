@@ -81,9 +81,12 @@ pub enum Field {
     /// it (#186): "this account's inbox" and "every account's inbox" are both
     /// things to be able to ask for, so account and role compose.
     Account,
+    /// `with:` — from, to, cc or bcc is exactly one of these addresses
+    /// (specs/005-contacts R6): what picking a person writes.
+    With,
     /// `group:` — a named contact group, by name.
     ///
-    /// ADR 0007 Q3: a group answers *which people*, not which messages, so
+    /// A group answers *which people*, not which messages, so
     /// unlike every other field here it cannot be expressed any other way
     /// in this language — it composes with the rest rather than replacing
     /// them, resolved by `postio-index` to the member address set.
@@ -120,6 +123,7 @@ impl Field {
         Field::Smaller,
         Field::List,
         Field::Account,
+        Field::With,
         Field::Group,
         Field::Label,
         // Last, because the popup is ordered by how often an operator is
@@ -144,6 +148,7 @@ impl Field {
             Field::Smaller => "smaller",
             Field::List => "list",
             Field::Account => "account",
+            Field::With => "with",
             Field::Group => "group",
             Field::Header => "header",
             Field::Label => "label",
@@ -167,6 +172,7 @@ impl Field {
             "smaller" => Some(Field::Smaller),
             "list" => Some(Field::List),
             "account" => Some(Field::Account),
+            "with" => Some(Field::With),
             "group" => Some(Field::Group),
             "header" => Some(Field::Header),
             "label" => Some(Field::Label),
@@ -187,6 +193,7 @@ impl Field {
                 | Field::Filename
                 | Field::List
                 | Field::Account
+                | Field::With
                 | Field::Group
                 | Field::Header
                 | Field::Label
@@ -248,6 +255,15 @@ pub enum Filter {
     /// meaning the same thing after an account is removed and re-added under
     /// a new id.
     Account(String),
+    /// `with:ada@work.example,ada@home.example` — any of these addresses, by
+    /// exact normalised address, in From, To, Cc or Bcc (specs/005-contacts
+    /// R6). Picking a person writes one with every address they own; the
+    /// language has no `or`, and this is the one place it needs "any of".
+    ///
+    /// Addresses, not a person: a search pinned from it names the addresses
+    /// as they were, and does not follow a later join (the maintainer's
+    /// choice, 2026-09-23).
+    With(Vec<String>),
     /// `group:family` — a contact group by name, unresolved.
     ///
     /// Stays text for the same reason `Account` does: resolving it to
@@ -345,6 +361,7 @@ impl Filter {
             Filter::Filename(_) => Field::Filename,
             Filter::List(_) => Field::List,
             Filter::Account(_) => Field::Account,
+            Filter::With(_) => Field::With,
             Filter::Group(_) => Field::Group,
             Filter::Header { .. } => Field::Header,
             Filter::HasAttachment => Field::Has,
@@ -649,6 +666,7 @@ fn spell_one(filter: &Filter) -> String {
             name,
             value: Some(value),
         } => format!("header:{name}={}", quoted(value)),
+        Filter::With(addresses) => format!("with:{}", quoted(&addresses.join(","))),
         Filter::HasAttachment => "has:attachment".to_owned(),
         Filter::HasAction => "has:action".to_owned(),
         Filter::Is(state) => format!(
@@ -812,6 +830,7 @@ mod tests {
             (Filter::Filename("a".into()), Field::Filename),
             (Filter::List("a".into()), Field::List),
             (Filter::Account("a".into()), Field::Account),
+            (Filter::With(vec!["a".into()]), Field::With),
             (Filter::Group("a".into()), Field::Group),
             (Filter::HasAttachment, Field::Has),
             (Filter::Label("a".into()), Field::Label),

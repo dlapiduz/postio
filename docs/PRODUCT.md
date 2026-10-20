@@ -292,13 +292,20 @@ subject:invoice -in:archive
 
 `from:` `to:` `subject:` `in:` `list:` `filename:` `has:attach` `is:unread`
 `is:read` `is:flagged` `is:bulk` `is:automated` `before:` `after:` `larger:`
-`smaller:` `account:` `group:` `header:`
+`smaller:` `account:` `with:` `group:` `header:`
 
 An operator that names something takes either of several values in braces:
 `from:{ada tomas}` is mail from Ada or from Tomás, `label:{"Q3 close" atlas}`
 either label, and `-from:{ada tomas}` mail from neither. Two clauses still
 mean both, as typed. It is what checking a second person in a filter popover
 writes ([spec 010](../specs/010-focus-search/spec.md), D26).
+
+`with:ada@work.example,ada@home.example` is mail from, to or copied to any of
+those addresses, matched exactly rather than as text — what picking a person
+in `@` or "show mail" in Contacts writes, since `{}` takes values of one
+operator and a person's mail is in three. It names addresses, not a person, so
+a search pinned from it keeps meaning the addresses it named
+(`specs/005-contacts`).
 
 `header:` reaches any RFC 5322 field the envelope does not carry:
 `header:x-mailer` asks whether a message has that field at all,

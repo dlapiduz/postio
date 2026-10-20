@@ -1075,17 +1075,22 @@ async fn hydrate(
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
+    // How often the person hears from the sender: this account's evidence
+    // about the address when scoped, the person's across accounts otherwise
+    // (specs/005-contacts R2).
     let affinity = match account.account() {
-        Some(_) => "AND (c.account_id = ? OR c.account_id IS NULL)",
-        None => "",
+        Some(_) => {
+            "(SELECT s.times_seen FROM contact_sightings s
+               WHERE s.address_id = a.id AND s.account_id = ?)"
+        }
+        None => "(SELECT c.times_seen FROM contacts c WHERE c.id = a.contact_id)",
     };
     let placeholders = std::iter::repeat_n("?", ids.len())
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
         "SELECT sub.id, sub.subject, sender.name, a.address,
-                (SELECT max(c.times_seen) FROM contacts c
-                  WHERE c.address_normalized = a.address_normalized {affinity}),
+                {affinity},
                 (SELECT w.sent_count FROM correspondents w WHERE w.address_id = a.id),
                 sub.thread_messages, sub.thread_unread, sub.thread_files, sub.files
            FROM (SELECT m.id, m.subject,

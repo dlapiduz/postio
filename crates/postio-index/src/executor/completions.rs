@@ -485,25 +485,30 @@ async fn people(
     let scope = match account.account() {
         Some(id) => {
             params.push(turso::Value::Integer(id.get()));
-            "AND (c.account_id = ?4 OR c.account_id IS NULL)"
+            "AND s.account_id = ?4"
         }
         None => "",
     };
+    // Evidence is per address and account (`contact_sightings`), and a person
+    // hides an address only by not being live: an address nobody owns yet is
+    // offered, as it was when every address had a row of its own.
     let sql = format!(
         "SELECT p.address, p.name, p.seen, coalesce(w.sent_count, 0), p.last_seen,
                 w.last_sent_at
-           FROM (SELECT c.address_normalized AS normalized, min(c.address) AS address,
-                        max(coalesce(c.name, c.address_name)) AS name,
-                        max(c.times_seen) AS seen, max(c.last_seen_at) AS last_seen
-                   FROM contacts c
-                  WHERE c.suppressed = 0 {scope}
-                    AND c.address_normalized NOT IN ({own})
-                    AND (c.address_normalized LIKE ?1 ESCAPE '\\'
-                         OR lower(coalesce(c.name, c.address_name, '')) LIKE ?1 ESCAPE '\\'
-                         OR lower(coalesce(c.name, c.address_name, '')) LIKE ?2 ESCAPE '\\')
-                  GROUP BY c.address_normalized) p
-           LEFT JOIN addresses a ON a.address_normalized = p.normalized
-           LEFT JOIN correspondents w ON w.address_id = a.id
+           FROM (SELECT a.id AS address_id, a.address_normalized AS normalized,
+                        a.address AS address,
+                        max(coalesce(nullif(c.name, ''), s.last_name)) AS name,
+                        sum(s.times_seen) AS seen, max(s.last_seen_at) AS last_seen
+                   FROM contact_sightings s
+                   JOIN addresses a ON a.id = s.address_id
+                   LEFT JOIN contacts c ON c.id = a.contact_id
+                  WHERE (c.id IS NULL OR c.state = 'live') {scope}
+                    AND a.address_normalized NOT IN ({own})
+                    AND (a.address_normalized LIKE ?1 ESCAPE '\\'
+                         OR lower(coalesce(nullif(c.name, ''), s.last_name, '')) LIKE ?1 ESCAPE '\\'
+                         OR lower(coalesce(nullif(c.name, ''), s.last_name, '')) LIKE ?2 ESCAPE '\\')
+                  GROUP BY a.id) p
+           LEFT JOIN correspondents w ON w.address_id = p.address_id
           ORDER BY p.seen + coalesce(w.sent_count, 0) DESC,
                    max(coalesce(p.last_seen, 0), coalesce(w.last_sent_at, 0)) DESC,
                    p.address

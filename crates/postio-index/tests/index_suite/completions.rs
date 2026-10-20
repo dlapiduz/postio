@@ -211,9 +211,62 @@ async fn bodies_are_read_only_when_the_metadata_says_fewer_than_three_words() {
     assert!(with_bodies.statements <= 4);
 }
 
+/// A person who owns `address` and has been seen `seen` times in `account`,
+/// last at `last_seen` (milliseconds), deleted when `deleted`: what sync and
+/// the address book leave in the store (specs/005-contacts).
+async fn person(
+    connection: &postio_storage::Checkout,
+    account: i64,
+    address: &str,
+    name: Option<&str>,
+    seen: i64,
+    last_seen: i64,
+    deleted: bool,
+) {
+    let state = if deleted { "deleted" } else { "live" };
+    for (statement, parameters) in [
+        (
+            "INSERT OR IGNORE INTO addresses (address, address_normalized) VALUES (?1, lower(?1))",
+            vec![turso::Value::Text(address.into())],
+        ),
+        (
+            "INSERT INTO contacts (name, state, times_seen, last_seen_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 0, 0)",
+            vec![
+                name.map_or(turso::Value::Null, |n| turso::Value::Text(n.into())),
+                turso::Value::Text(state.into()),
+                turso::Value::Integer(seen),
+                turso::Value::Integer(last_seen),
+            ],
+        ),
+        (
+            "UPDATE addresses SET contact_id = (SELECT max(id) FROM contacts)
+              WHERE address_normalized = lower(?1)",
+            vec![turso::Value::Text(address.into())],
+        ),
+        (
+            "INSERT INTO contact_sightings (address_id, account_id, times_seen, last_seen_at,
+                                            last_name)
+             SELECT id, ?2, ?3, ?4, ?5 FROM addresses WHERE address_normalized = lower(?1)",
+            vec![
+                turso::Value::Text(address.into()),
+                turso::Value::Integer(account),
+                turso::Value::Integer(seen),
+                turso::Value::Integer(last_seen),
+                name.map_or(turso::Value::Null, |n| turso::Value::Text(n.into())),
+            ],
+        ),
+    ] {
+        connection
+            .execute(statement, parameters)
+            .await
+            .expect("a person");
+    }
+}
+
 #[tokio::test]
 async fn from_offers_people_ranked_by_how_often_you_write_to_each_other() {
-    let (_database, connection, _account, _inbox) = store().await;
+    let (_database, connection, account, _inbox) = store().await;
     let at = |days: i64| (now() - Duration::days(days)).timestamp_millis();
     // (address, name, they wrote, you wrote, last either way in days ago)
     let people = [
@@ -225,25 +278,20 @@ async fn from_offers_people_ranked_by_how_often_you_write_to_each_other() {
         ("zed@example.com", Some("Zed"), 50, 50, 1),
     ];
     for (address, name, seen, sent, ago) in people {
-        connection
-            .execute(
-                "INSERT INTO contacts (account_id, name, address, address_normalized,
-                                       times_seen, last_seen_at, suppressed)
-                 VALUES (NULL, ?1, ?2, ?2, ?3, ?4, ?5)",
-                (
-                    name,
-                    address,
-                    seen,
-                    at(ago + 1),
-                    i64::from(address.starts_with("hidden")),
-                ),
-            )
-            .await
-            .expect("a contact");
+        person(
+            &connection,
+            account.id.get(),
+            address,
+            name,
+            seen,
+            at(ago + 1),
+            address.starts_with("hidden"),
+        )
+        .await;
         if sent > 0 {
             connection
                 .execute(
-                    "INSERT INTO addresses (address, address_normalized) VALUES (?1, ?1)",
+                    "INSERT OR IGNORE INTO addresses (address, address_normalized) VALUES (?1, ?1)",
                     [address],
                 )
                 .await
@@ -454,7 +502,7 @@ async fn from_never_offers_you_however_often_you_write() {
     // You are on every message you sent, so you write to "each other"
     // more than anyone: ranked so, you came first under `from:`. The
     // People tab leaves your own addresses out (T132); so does this.
-    let (_database, connection, _account, _inbox) = store().await;
+    let (_database, connection, account, _inbox) = store().await;
     let own: String = connection
         .query("SELECT address FROM accounts", ())
         .await
@@ -466,15 +514,16 @@ async fn from_never_offers_you_however_often_you_write() {
         .get(0)
         .expect("its address");
     for (address, seen) in [(own.as_str(), 400), ("ada@example.com", 5)] {
-        connection
-            .execute(
-                "INSERT INTO contacts (account_id, name, address, address_normalized,
-                                       times_seen, last_seen_at, suppressed)
-                 VALUES (NULL, NULL, ?1, lower(?1), ?2, ?3, 0)",
-                (address, seen, now().timestamp_millis()),
-            )
-            .await
-            .expect("a contact");
+        person(
+            &connection,
+            account.id.get(),
+            address,
+            None,
+            seen,
+            now().timestamp_millis(),
+            false,
+        )
+        .await;
     }
 
     let found = completions(&connection, AccountScope::Unified, "", Some(Field::From))
