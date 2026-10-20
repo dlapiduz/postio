@@ -253,6 +253,17 @@ pub fn personal_mail_has_no_unsubscribe_band_but_u_still_works() {
     });
 }
 
+/// The open message's dialog has finished opening, so a toast raised now is
+/// drawn over it (a toast raised during the opening is under the dialog).
+async fn the_dialog_is_open(reading: &postio_gtk::open::OpenMessage) {
+    use gtk::prelude::*;
+    assert!(
+        crate::settle_until(async || reading.is_open() && reading.dialog().is_mapped()).await,
+        "the message never finished opening"
+    );
+    crate::settle_for(std::time::Duration::from_millis(800)).await;
+}
+
 /// What the toast offers for the newsletter filed twice: the confirmation
 /// naming the sender's exact address, the count, and one button.
 async fn the_offer_is_up(window: &postio_gtk::window::FocusWindow, button: &str) {
@@ -267,6 +278,15 @@ async fn the_offer_is_up(window: &postio_gtk::window::FocusWindow, button: &str)
         "`M` offered no `{button}` toast (toast: {:?})",
         window.toast_showing()
     );
+    if let Some(reading) = window.reading().filter(|reading| reading.is_open()) {
+        use gtk::prelude::*;
+        assert!(
+            window
+                .toast_host()
+                .is_some_and(|host| host.is_ancestor(&reading.dialog())),
+            "the offer is drawn under the open message, out of reach"
+        );
+    }
     let said = window.toast_showing().expect("the toast's words");
     assert!(
         said.starts_with("Unsubscribed from weekly@news.example.org"),
@@ -300,7 +320,7 @@ pub fn leaving_a_list_offers_one_action_on_a_toast_and_ignoring_it_keeps_the_mai
         let (window, _client) = fixture.open().await;
         support::keys(&window, &["j", "Return"]);
         let reading = window.reading().expect("Return opened the message");
-        assert!(crate::settle_until(async || reading.is_open()).await);
+        the_dialog_is_open(&reading).await;
 
         support::keys(&window, &["M"]);
         the_offer_is_up(&window, "Archive 2").await;
@@ -322,7 +342,7 @@ pub fn leaving_a_list_offers_one_action_on_a_toast_and_ignoring_it_keeps_the_mai
         // Again, and take it up: the button does it as one command.
         support::keys(&window, &["Return"]);
         let reading = window.reading().expect("Return opened the message");
-        assert!(crate::settle_until(async || reading.is_open()).await);
+        the_dialog_is_open(&reading).await;
         support::keys(&window, &["M"]);
         the_offer_is_up(&window, "Archive 2").await;
         let archive = support::button_labelled(&window, "Archive 2");
@@ -361,7 +381,7 @@ pub fn the_setting_makes_the_one_action_delete() {
         });
         support::keys(&window, &["j", "Return"]);
         let reading = window.reading().expect("Return opened the message");
-        assert!(crate::settle_until(async || reading.is_open()).await);
+        the_dialog_is_open(&reading).await;
 
         support::keys(&window, &["M"]);
         the_offer_is_up(&window, "Delete 2").await;
