@@ -256,6 +256,19 @@ pub struct ContactDetail {
     pub messages: u64,
 }
 
+/// What the editor changes about a person (FR-021): their name,
+/// organisation and note. Addresses are changed one at a time, with their own
+/// verbs, because each is a claim about who owns what.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersonEdit {
+    /// The name the user gave them; `None` or blank leaves them unnamed.
+    pub name: Option<String>,
+    /// Their organisation.
+    pub organization: Option<String>,
+    /// The user's note.
+    pub note: Option<String>,
+}
+
 /// What moving an address did, precisely enough to put it back: who had it,
 /// and the state they were in if the move left them with no address at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
