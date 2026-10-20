@@ -276,6 +276,25 @@ async fn the_contacts_of_the_build_before_become_people_who_own_addresses() {
         .unwrap(),
         4
     );
+    // The default view lists who the user made, imported or wrote to: ada
+    // (named, and written to), not carol (mail only).
+    assert_eq!(
+        sql::scalar(
+            &connection,
+            "SELECT count(*) FROM contacts c JOIN addresses a ON a.contact_id = c.id
+              WHERE c.listed = 1 AND a.address_normalized = 'ada@example.org'",
+            ()
+        )
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        sql::scalar(&connection, "SELECT count(*) FROM contacts WHERE listed = 1", ())
+            .await
+            .unwrap(),
+        1
+    );
     // Found by typing: a prefix of the address, of the name, of the domain.
     for (term, people) in [
         ("ada@example.org", 1),

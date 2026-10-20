@@ -336,3 +336,38 @@ async fn the_detail_counts_messages_once_however_many_of_their_addresses_they_ca
     );
     assert_eq!(detail.groups, ["Analysts"]);
 }
+
+#[tokio::test]
+async fn a_page_can_start_part_way_past_a_cursor() {
+    // The app seeks to the nearest page boundary it has already read and
+    // skips the rest, the way the message list's marks do, so a jump deep
+    // into the list is one seek and a short skip rather than a walk.
+    let (_db, connection, _account, _inbox) = setup().await;
+    let contacts = ContactRepository::new(&connection);
+    for i in 0..30 {
+        contacts
+            .create(
+                Some(&format!("Person {i:02}")),
+                &[address(None, &format!("p{i}@example.com"))],
+            )
+            .await
+            .expect("create");
+    }
+    let first = contacts
+        .page(ContactView::Written, None, 10)
+        .await
+        .expect("first page");
+    let cursor = ContactCursor::after(first.last().expect("a row"));
+
+    let skipped = contacts
+        .page_from(ContactView::Written, Some(&cursor), 5, 3)
+        .await
+        .expect("a page after a skip");
+    assert_eq!(names(&skipped), ["Person 15", "Person 16", "Person 17"]);
+
+    let from_top = contacts
+        .page_from(ContactView::Written, None, 28, 10)
+        .await
+        .expect("a page with no cursor");
+    assert_eq!(names(&from_top), ["Person 28", "Person 29"]);
+}

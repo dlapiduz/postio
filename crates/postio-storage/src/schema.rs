@@ -385,6 +385,11 @@ CREATE TABLE contacts (
     times_seen          INTEGER NOT NULL DEFAULT 0,
     last_seen_at        INTEGER,
     written             INTEGER NOT NULL DEFAULT 0,
+    -- 1 when the person belongs in the Contacts list's default view: the user
+    -- made or imported them, or has written to them (FR-005). Kept rather
+    -- than derived because the view is an OR across two columns, which no
+    -- index serves; with this, the default view is a prefix of one.
+    listed              INTEGER NOT NULL DEFAULT 0,
     -- vCard identity, and the whole card as last imported, verbatim -- export
     -- edits the properties Postio models in place and leaves every other byte
     -- alone (R9). NULL for a person never imported.
@@ -445,15 +450,17 @@ CREATE TABLE contact_terms (
     PRIMARY KEY (term, contact_id)
 );
 
-CREATE UNIQUE INDEX idx_contact_groups_name ON contact_groups (name COLLATE NOCASE);
-
 CREATE INDEX idx_contact_group_members_contact ON contact_group_members (contact_id);
+
+CREATE UNIQUE INDEX idx_contact_groups_name ON contact_groups (name COLLATE NOCASE);
 
 CREATE INDEX idx_contact_terms_contact ON contact_terms (contact_id);
 
-CREATE INDEX idx_contacts_list_written ON contacts (state, written, sort_key, id);
-
 CREATE INDEX idx_contacts_list ON contacts (state, sort_key, id);
+
+CREATE INDEX idx_contacts_list_default ON contacts (state, listed, sort_key, id);
+
+CREATE INDEX idx_contacts_name_key ON contacts (state, name_key);
 
 CREATE INDEX idx_contacts_rank ON contacts (
     state,
@@ -462,8 +469,6 @@ CREATE INDEX idx_contacts_rank ON contacts (
     times_seen DESC,
     id
 );
-
-CREATE INDEX idx_contacts_name_key ON contacts (state, name_key);
 
 ALTER TABLE addresses ADD COLUMN contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL;
 CREATE INDEX idx_addresses_contact ON addresses (contact_id);
@@ -522,6 +527,8 @@ UPDATE contacts
                              FROM correspondents k
                              JOIN addresses a ON a.id = k.address_id
                             WHERE a.contact_id = contacts.id), 0);
+-- The default view's flag: made, imported, or written to (FR-005).
+UPDATE contacts SET listed = CASE WHEN source <> 'mail' OR written > 0 THEN 1 ELSE 0 END;
 
 -- 7. How a person is found by typing: the address whole, its local part and
 -- its domain, and the name the user set or the mail gave, whole and by its
