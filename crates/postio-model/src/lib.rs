@@ -44,6 +44,7 @@
 pub mod account;
 pub mod address;
 pub mod attachment;
+pub mod card;
 pub mod clock;
 pub mod contact;
 pub mod contact_group;
