@@ -69,6 +69,8 @@ type NotificationSink = Rc<dyn Fn(&postio_ui::notify::Notification)>;
 
 /// The stop-digesting confirmation (US10 scenario 5).
 const STOP_DIALOG: &str = "focus-stop-digesting";
+/// What answers the list-sweep offer: a response name in, the dialog closed.
+type SweepAnswer = std::rc::Rc<dyn Fn(&str)>;
 /// The widget name of the offer to clear what a list sent (#1931).
 const LIST_SWEEP_DIALOG: &str = "focus-sweep-list";
 
@@ -112,7 +114,7 @@ mod imp {
         pub on_screen: RefCell<Option<adw::Toast>>,
         /// The answer to the offer to clear what a list sent, while it is up:
         /// a button's response name, or a verb's key, both end here (#1931).
-        pub list_sweep: RefCell<Option<std::rc::Rc<dyn Fn(&str)>>>,
+        pub list_sweep: RefCell<Option<SweepAnswer>>,
         pub pane: RefCell<Option<ListPane>>,
         pub chrome: RefCell<Option<Rc<Chrome>>>,
         pub client: RefCell<Option<Client>>,
