@@ -22,6 +22,7 @@ mod accounts;
 mod actions;
 mod blob;
 mod blob_encryption;
+mod body_failures;
 mod bulk;
 mod cold_jump_cost;
 mod concurrent_open;

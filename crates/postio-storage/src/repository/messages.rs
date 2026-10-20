@@ -2045,7 +2045,60 @@ impl<'a> MessageRepository<'a> {
                 id: id.get(),
             });
         }
+        // A body that arrived settles any earlier refusal (#1918).
+        self.clear_body_failed(id).await?;
         Ok(())
+    }
+
+    /// Remembers that the server would not give up this message's body.
+    ///
+    /// Keyed to the message's `MODSEQ` as it is now, so a message the server
+    /// has since changed is no longer excluded (see
+    /// [`body_failed`](Self::body_failed)). Only for a refusal about the
+    /// message -- never for a connection that dropped or timed out, which says
+    /// nothing about it (#1918).
+    pub async fn mark_body_failed(&self, id: MessageId) -> Result<()> {
+        sql::execute(
+            self.connection,
+            "INSERT INTO body_failures (message_id, mod_seq, failed_at)
+             SELECT id, mod_seq, strftime('%s','now') * 1000 FROM messages WHERE id = ?1
+             ON CONFLICT (message_id) DO UPDATE
+                SET mod_seq = excluded.mod_seq, failed_at = excluded.failed_at",
+            bind![id.get()],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Forgets a refusal: the user opened the message, or its body arrived.
+    pub async fn clear_body_failed(&self, id: MessageId) -> Result<()> {
+        sql::execute(
+            self.connection,
+            "DELETE FROM body_failures WHERE message_id = ?1",
+            bind![id.get()],
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Whether the server refused this message's body and the message has not
+    /// changed since.
+    ///
+    /// A new `MODSEQ` is the server saying the message is different, which is
+    /// reason enough to ask again; no separate clearing is needed because the
+    /// stored one stops matching. The backfill's seeds skip such a message,
+    /// and the reader says it could not be downloaded rather than that it is
+    /// on its way.
+    pub async fn body_failed(&self, id: MessageId) -> Result<bool> {
+        sql::scalar(
+            self.connection,
+            "SELECT EXISTS (SELECT 1 FROM body_failures f
+                             JOIN messages m ON m.id = f.message_id
+                            WHERE f.message_id = ?1 AND f.mod_seq IS m.mod_seq)",
+            bind![id.get()],
+        )
+        .await
+        .map(|present| present != 0)
     }
 
     /// Whether a backend-identified immutable content body is already local.
@@ -2498,6 +2551,9 @@ fn backfill_arm(predicate: &str) -> String {
             AND messages.uid IS NOT NULL
             AND messages.remote_id IS NOT NULL
             AND messages.deleted_locally = 0
+            AND NOT EXISTS (SELECT 1 FROM body_failures f
+                             WHERE f.message_id = messages.id
+                               AND f.mod_seq IS messages.mod_seq)
           ORDER BY messages.sort_at DESC, messages.id DESC
           LIMIT ?2"
     )

@@ -539,6 +539,15 @@ pub enum UiEvent {
         /// The message whose body landed.
         message: i64,
     },
+    /// The server would not give up a message's body (#1918): if it is the
+    /// one a window shows, read its document again so the plate stops
+    /// saying it is downloading.
+    BodyFailed {
+        /// The account.
+        account: i64,
+        /// The message whose body will not come.
+        message: i64,
+    },
     /// `[sync] notify` or `[sync] badge` changed while the app ran: read
     /// `notices` again, and repaint the app icon's count.
     ///
@@ -685,6 +694,10 @@ impl From<postio_core::Event> for UiEvent {
                 total,
             },
             Event::BodyLoaded { account, message } => UiEvent::BodyLoaded {
+                account: account.into(),
+                message: message.into(),
+            },
+            Event::BodyFailed { account, message } => UiEvent::BodyFailed {
                 account: account.into(),
                 message: message.into(),
             },

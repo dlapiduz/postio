@@ -1344,10 +1344,11 @@ async fn searched(connection: &Connection, request: &ConversationRequest<'_>) ->
     let (total, owed, unread): (i64, i64, bool) = sql::one(
         connection,
         &format!(
-            "SELECT coalesce(sum(total_count), 0), coalesce(max(bodies_owed > 0), 0),
+            "SELECT coalesce(sum(total_count), 0), coalesce(max({owed} > 0), 0),
                     EXISTS (SELECT 1 FROM attachment_text_owed)
                FROM mailboxes WHERE {}",
-            conditions.join(" AND ")
+            conditions.join(" AND "),
+            owed = postio_storage::schema::BODIES_STILL_OWED
         ),
         params,
         |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?)),

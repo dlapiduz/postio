@@ -271,6 +271,10 @@ const CASES: &[(&str, fn())] = &[
         body_lands::a_body_that_lands_while_its_message_is_open_is_drawn_in_place as fn(),
     ),
     (
+        "body_lands::a_body_the_server_refuses_stops_saying_it_is_downloading",
+        body_lands::a_body_the_server_refuses_stops_saying_it_is_downloading as fn(),
+    ),
+    (
         "list_reload::a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone",
         list_reload::a_batch_arriving_mid_sync_leaves_the_cursor_and_the_selection_alone as fn(),
     ),

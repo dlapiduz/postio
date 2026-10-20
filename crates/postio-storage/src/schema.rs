@@ -292,7 +292,37 @@ SELECT a.id,
 ALTER TABLE sync_state ADD COLUMN passes_since_flag_sweep INTEGER NOT NULL DEFAULT 0;
 ",
     },
+    // A message whose body the server would not give up is remembered (#1918).
+    // A new table, so a store gains it empty and nothing is backfilled.
+    Migration {
+        from: stamp(0x069c_72b3),
+        to: stamp(0x84e7_72c0),
+        statements: "
+CREATE TABLE IF NOT EXISTS body_failures (
+    message_id  INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    mod_seq     INTEGER,
+    failed_at   INTEGER NOT NULL
+);
+",
+    },
 ];
+
+/// A mailbox's `bodies_owed` less the messages in it the server has refused
+/// (`body_failures`, still matching their `MODSEQ`): what is actually still
+/// to come (#1918). For a statement over `mailboxes`.
+///
+/// Written to be driven from `body_failures` and to reach `messages` only by
+/// primary key (`CROSS JOIN`, and the unary `+` that keeps the planner off
+/// the mailbox's message index): the other order walks every message in the
+/// folder, which is the scan #1612 removed.
+///
+/// Subtracted at read rather than kept by triggers: a refusal is rare, so the
+/// subquery walks a table that is nearly always empty, where a trigger would
+/// have to follow a message moving, being deleted or changing `MODSEQ`.
+pub const BODIES_STILL_OWED: &str = "(mailboxes.bodies_owed - (SELECT count(*) FROM body_failures f \
+    CROSS JOIN messages m ON m.id = f.message_id \
+    WHERE +m.mailbox_id = mailboxes.id AND m.deleted_locally = 0 \
+    AND m.body_state IN ('not_fetched', 'headers_only') AND f.mod_seq IS m.mod_seq))";
 
 /// The steps that carry a store stamped `found` to [`FINGERPRINT`], in the
 /// order they run: none for a store already there, and `None` when no
@@ -405,6 +435,18 @@ CREATE TABLE attachments (
     blob_id           TEXT,
     CHECK ((message_id IS NOT NULL) <> (draft_id IS NOT NULL)),
     CHECK (disposition <> 'other' OR disposition_raw IS NOT NULL)
+);
+
+-- A message whose body the server would not give up, remembered so a restart
+-- does not walk into the same refusal again (#1918). `mod_seq` is the
+-- message's as it stood: a row whose message has since changed no longer
+-- matches and is ignored, so the server changing a message is what asks
+-- again. The backfill's seeds skip a matching row; opening the message
+-- never does.
+CREATE TABLE body_failures (
+    message_id  INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    mod_seq     INTEGER,
+    failed_at   INTEGER NOT NULL
 );
 
 CREATE TABLE contact_group_members (

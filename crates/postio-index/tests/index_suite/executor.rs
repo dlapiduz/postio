@@ -1868,6 +1868,37 @@ async fn all_mail_leaves_out_drafts_junk_and_trash_unless_in_names_one() {
 }
 
 #[tokio::test]
+async fn a_body_the_server_refuses_does_not_keep_the_corpus_incomplete() {
+    // #1918: a message the server will not give a body for is owed one for
+    // ever, so the caveat "not every body has arrived" could never clear.
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    postio_index::index::ensure_schema(&connection)
+        .await
+        .expect("schema");
+    let (account, mailbox) = test_support::account_with_inbox(&connection).await;
+    let absent = message(&connection, &account, mailbox, "bob", "Quarterly", at(8)).await;
+    body_not_here(&connection, &absent).await;
+    assert!(
+        !search_for(&connection, &account, "quarterly")
+            .await
+            .corpus_complete
+    );
+
+    postio_storage::repository::MessageRepository::new(&connection)
+        .mark_body_failed(absent.id)
+        .await
+        .expect("mark");
+
+    assert!(
+        search_for(&connection, &account, "quarterly")
+            .await
+            .corpus_complete,
+        "nothing more is coming for it, so there is nothing left to wait for"
+    );
+}
+
+#[tokio::test]
 async fn whether_the_corpus_is_complete_is_read_off_the_folders_not_the_messages() {
     // #1612: on a store whose backfill had finished -- the steady state --
     // the completeness check walked every message in the account, reading
@@ -1897,10 +1928,25 @@ async fn whether_the_corpus_is_complete_is_read_off_the_folders_not_the_messages
     .await
     .expect("a plan");
     assert!(
-        !plan.iter().any(|step| step.contains("messages")),
-        "the completeness check reads the messages table:\n{}",
+        !plan
+            .iter()
+            .any(|step| step.contains("messages") || step.contains("idx_messages")),
+        "the completeness check walks the messages table:\n{}",
         plan.join("\n")
     );
+
+    // And it stays one statement, however many bodies the server refused
+    // (#1918): the subtraction is inside it, not a second read.
+    let (sql, params) = postio_index::executor::corpus_complete_sql(&request);
+    let counted = postio_storage::test_support::counting::counted_async(async || {
+        let _: bool = postio_storage::sql::one(&connection, &sql, params.clone(), |row| {
+            postio_storage::sql::RowExt::col(row, 0)
+        })
+        .await
+        .expect("the completeness check");
+    })
+    .await;
+    assert_eq!(counted.statements, 1);
 }
 
 #[tokio::test]

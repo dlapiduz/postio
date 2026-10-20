@@ -736,6 +736,15 @@ impl Fixture {
             .expect("a body");
     }
 
+    /// Record that the server refused `message`'s body, as the backfill does.
+    pub async fn refuse_body(&self, message: MessageId) {
+        let connection = self.database.connect().await.expect("a connection");
+        MessageRepository::new(&connection)
+            .mark_body_failed(message)
+            .await
+            .expect("a mark");
+    }
+
     /// [`Fixture::write_body`], and the body in the search index too, as the
     /// running app's body indexer would put it: what a search can find in it.
     pub async fn write_searchable_body(&self, message: MessageId, text: &str) {

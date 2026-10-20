@@ -965,6 +965,7 @@ fn full(shared: &Shared, row: &Message, reading: &Reading) -> Value {
         Body::Missing => ("missing", None),
         Body::Empty => ("empty", None),
         Body::ForeignDraft => ("draft", None),
+        Body::Failed => ("download_failed", None),
     };
     let truncated = body
         .as_ref()

@@ -1488,7 +1488,68 @@ fn pending_payloads(message: &postio_model::Message) -> Vec<String> {
 /// fetch. Slower and fatter, but a body that silently never arrives would be a
 /// hole in search, and guessing section `1` would be wrong for every multipart
 /// message.
+///
+/// # A refusal about the message is written down (#1918)
+///
+/// When the server answers that it has no such message, refuses the `FETCH`,
+/// or sends something unreadable, the message is marked
+/// ([`MessageRepository::mark_body_failed`]) and the outcome is
+/// [`Outcome::Failed`]. The seeds then leave it alone across restarts until
+/// the server reports a new `MODSEQ`; opening it asks again regardless.
+/// A dropped connection, a timeout or a cancel is not about the message and
+/// is returned as the error it is, unmarked: bytes that stop short say
+/// nothing about whether the rest would have come.
 pub async fn fetch_body(
+    connection: &Checkout,
+    blobs: &BlobStore,
+    backend: &dyn MailBackend,
+    request: &BodyRequest,
+    inline_cap: Option<u64>,
+    prefetched: Option<&mut Prefetched>,
+    cancel: &CancelToken,
+) -> Result<Outcome> {
+    let fetched = fetch_body_unmarked(
+        connection, blobs, backend, request, inline_cap, prefetched, cancel,
+    )
+    .await;
+    let Err(SyncError::Backend(error)) = &fetched else {
+        return fetched;
+    };
+    // The body is what failed; a payload or a header block that would not
+    // come leaves a perfectly good body behind it.
+    if !matches!(request.want, Want::Text | Want::Whole) || !refusal_about_the_message(error) {
+        return fetched;
+    }
+    let reason = error.to_string();
+    {
+        let _permit = connection
+            .write_gate()
+            .acquire(WritePriority::Background)
+            .await;
+        MessageRepository::new(connection)
+            .mark_body_failed(request.message)
+            .await?;
+    }
+    tracing::debug!(
+        message = request.message.get(),
+        "the server would not give up a body; it is marked until the message changes"
+    );
+    Ok(Outcome::Failed { reason })
+}
+
+/// Whether `error` is the server answering about *this message* -- as
+/// opposed to the link, the login or the caller's own cancel, none of which
+/// say anything about whether the message can be fetched.
+fn refusal_about_the_message(error: &BackendError) -> bool {
+    matches!(
+        error,
+        BackendError::NoSuchMessage { .. }
+            | BackendError::Rejected { .. }
+            | BackendError::Protocol { .. }
+    )
+}
+
+async fn fetch_body_unmarked(
     connection: &Checkout,
     blobs: &BlobStore,
     backend: &dyn MailBackend,

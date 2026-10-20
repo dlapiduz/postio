@@ -55,6 +55,13 @@ pub enum Absent {
     /// something to edit, so promising a retry would be a promise the reader
     /// cannot keep. See #175.
     ForeignDraft,
+    /// The server would not give this message's body up, and has not been
+    /// asked again since (#1918).
+    ///
+    /// Finished rather than a wait: the headers above are all there is until
+    /// the message changes or the person opens it once more, and a plate
+    /// that said "downloading" would be a spinner with nothing behind it.
+    Failed,
 }
 
 /// What the pane says for each [`Absent`], as the document's body.
@@ -100,6 +107,13 @@ pub fn absent_html(state: Absent) -> String {
             "This message has no body",
             "Nothing arrived with it but the headers — that is the whole \
              message, not a fault."
+                .to_owned(),
+        ),
+        Absent::Failed => (
+            "This message could not be downloaded",
+            "The server did not give up its body when Postio last asked. Its \
+             headers are shown above. Postio asks again each time the \
+             message is opened."
                 .to_owned(),
         ),
         Absent::ForeignDraft => (
@@ -2649,6 +2663,7 @@ mod tests {
             Absent::Missing,
             Absent::Empty,
             Absent::ForeignDraft,
+            Absent::Failed,
         ];
         let texts: Vec<String> = states.iter().map(|state| absent_html(*state)).collect();
         for (index, text) in texts.iter().enumerate() {
@@ -2661,6 +2676,11 @@ mod tests {
         assert!(absent_html(Absent::Offline).contains("<kbd>F5</kbd>"));
         assert!(absent_html(Absent::Missing).contains("<kbd>F5</kbd>"));
         assert!(!absent_html(Absent::ForeignDraft).contains("<kbd>"));
+        // A body the server would not give up says so, and does not promise
+        // that waiting will help (#1918).
+        let failed = absent_html(Absent::Failed);
+        assert!(failed.contains("could not be downloaded"), "{failed}");
+        assert!(!failed.contains("Downloading"), "{failed}");
     }
 
     #[test]
@@ -2681,6 +2701,7 @@ mod tests {
             Absent::Missing,
             Absent::Empty,
             Absent::ForeignDraft,
+            Absent::Failed,
         ] {
             let html = absent_html(state);
             assert!(

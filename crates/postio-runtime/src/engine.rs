@@ -2304,6 +2304,13 @@ async fn pump_body(
                 message,
             });
         }
+        // The open message reads again: a refusal changes its plate (#1918).
+        if matches!(outcome, Outcome::Failed { .. }) {
+            parts.events.emit(Event::BodyFailed {
+                account: parts.account,
+                message,
+            });
+        }
         state.backfill.finished(message, outcome);
         announce_backfill(parts, state, std::time::Instant::now()).await;
     }
@@ -3529,6 +3536,13 @@ async fn settle_bodies(
         });
         if matches!(outcome, Outcome::Stored { .. }) {
             parts.events.emit(Event::BodyLoaded {
+                account: parts.account,
+                message,
+            });
+        }
+        // The open message reads again: a refusal changes its plate (#1918).
+        if matches!(outcome, Outcome::Failed { .. }) {
+            parts.events.emit(Event::BodyFailed {
                 account: parts.account,
                 message,
             });

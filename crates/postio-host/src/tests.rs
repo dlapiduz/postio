@@ -2769,6 +2769,33 @@ fn a_posted_fetch_body_brings_the_opened_messages_body_and_says_so() {
 }
 
 #[test]
+fn a_body_the_server_refuses_is_announced_and_then_read_as_failed() {
+    // #1918: the plate said "Downloading this message" until something
+    // happened to read the message again, and nothing did. The refusal is an
+    // event, so the open message is read again the moment it is known.
+    let mock = server_with_one_message();
+    let world = syncing_world(mock.clone());
+    let (client, events) = world.frontend(ClientKind::Tui);
+    world.host().start_syncing();
+    let message = eventually(&world, || row_titled(&world, &client, "Tide gate"));
+
+    mock.fail_all(postio_account::backend::Fault::Rejected(
+        "no such body".to_owned(),
+    ));
+    client.fetch_body(message);
+
+    world.hear(
+        &events,
+        |event| matches!(event, Event::BodyFailed { message: failed, .. } if *failed == message),
+    );
+    assert_eq!(
+        world.rt.block_on(client.body(message)).expect("an answer"),
+        postio_client::protocol::Body::Failed,
+        "the plate stops promising a download"
+    );
+}
+
+#[test]
 fn reading_a_message_whose_body_is_not_here_asks_for_it_once() {
     // #1788: the reader said "Downloading this message" and nothing asked
     // for it. Opening it is the person asking; a repaint is not asking again.

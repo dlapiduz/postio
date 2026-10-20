@@ -1447,8 +1447,9 @@ final class Engine {
             // Read state, mail leaving, the folder tree: the settings
             // window's folders and the strip's counts move with them.
             mailMoved()
-        case let .bodyLoaded(_, message):
-            // The open message's words landed (#1788): drawn in place.
+        case let .bodyLoaded(_, message), let .bodyFailed(_, message):
+            // The open message's words landed (#1788), or will not come
+            // (#1918): either way it is read again, in place.
             messageWindow?.bodyLanded(message)
         case let .reindexProgress(_, done, total):
             // The settings window asked for this, and it is the only thing
