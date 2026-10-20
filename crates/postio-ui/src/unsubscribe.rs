@@ -252,9 +252,15 @@ mod sweep_tests {
             sweep_offer(&scope, 1, false).unwrap(),
             "Unsubscribed from news.example.org. 1 message from it is still here"
         );
-        assert!(sweep_offer(&scope, 14, false).unwrap().contains("14 messages"));
         assert!(
-            sweep_offer(&scope, 5000, true).unwrap().contains("5000+ messages"),
+            sweep_offer(&scope, 14, false)
+                .unwrap()
+                .contains("14 messages")
+        );
+        assert!(
+            sweep_offer(&scope, 5000, true)
+                .unwrap()
+                .contains("5000+ messages"),
             "a full page is a floor"
         );
     }

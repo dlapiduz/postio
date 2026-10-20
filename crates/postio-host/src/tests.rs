@@ -793,7 +793,11 @@ fn what_a_list_sent_is_deleted_as_one_undoable_command() {
     assert_eq!(found.name, "weekly.news.example.org");
     let mut ids = found.ids.clone();
     ids.sort();
-    assert_eq!(ids, vec![first, second], "not the flagged, not the other list");
+    assert_eq!(
+        ids,
+        vec![first, second],
+        "not the flagged, not the other list"
+    );
     assert!(!found.more);
 
     world.send(
@@ -802,15 +806,23 @@ fn what_a_list_sent_is_deleted_as_one_undoable_command() {
             target: MessageTarget::Messages(found.ids),
         },
     );
-    world.hear(&events, |event| matches!(event, Event::ActionCompleted { .. }));
+    world.hear(&events, |event| {
+        matches!(event, Event::ActionCompleted { .. })
+    });
     assert_eq!(world.inbox_rows(&client), before - 2);
     assert_eq!(
-        world.rt.block_on(client.undo_top()).expect("top").as_deref(),
+        world
+            .rt
+            .block_on(client.undo_top())
+            .expect("top")
+            .as_deref(),
         Some("Deleted 2 messages"),
         "one unit"
     );
     world.send(&client, Command::Undo);
-    world.hear(&events, |event| matches!(event, Event::UndoPerformed { .. }));
+    world.hear(&events, |event| {
+        matches!(event, Event::UndoPerformed { .. })
+    });
     assert_eq!(world.inbox_rows(&client), before);
 }
 

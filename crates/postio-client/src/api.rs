@@ -327,10 +327,14 @@ impl Client {
     /// reach: for the offer after [`Self::unsubscribe`], which then acts on
     /// `ids` with one ordinary `Archive` or `Delete` (#1931).
     pub async fn list_mail(&self, message: MessageId) -> Result<ListMailFound, StoreError> {
-        self.read(Req::ListMail(message), "a list's mail", |answer| match answer {
-            Resp::ListMail(found) => Some(found),
-            _ => None,
-        })
+        self.read(
+            Req::ListMail(message),
+            "a list's mail",
+            |answer| match answer {
+                Resp::ListMail(found) => Some(found),
+                _ => None,
+            },
+        )
         .await
     }
 

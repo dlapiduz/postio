@@ -7,8 +7,8 @@
 //! Neither ever returns a Flagged message: that is the one promise they share.
 
 use chrono::{DateTime, Utc};
-use postio_model::ids::{AccountId, MessageId};
 use postio_model::MailboxRole;
+use postio_model::ids::{AccountId, MessageId};
 
 use super::to_millis;
 use crate::error::Result;
@@ -85,7 +85,7 @@ impl<'a> SweepRepository<'a> {
             bind![account.get(), value, i64::from(limit) + 1].to_vec(),
             limit,
         )
-            .await
+        .await
     }
 
     /// Up to `limit` of `account`'s unflagged messages in folders of `role`

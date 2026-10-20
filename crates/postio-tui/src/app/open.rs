@@ -31,6 +31,8 @@ pub enum MenuAction {
     Link(String),
     /// Open a part of the message.
     Part(MessageId, AttachmentId),
+    /// Send a command aimed at exactly these messages, as its key would.
+    Send(postio_core::Command),
 }
 
 /// One row of a menu.
@@ -606,6 +608,52 @@ impl App {
         vec![Effect::Redraw]
     }
 
+    /// After an unsubscribe: offer to archive or delete the mail the list
+    /// left behind, over the message, as one command each (#1931). Nothing
+    /// to offer, or no message open to offer it over, says nothing.
+    pub(super) fn offer_sweep(
+        &mut self,
+        found: &postio_client::protocol::ListMailFound,
+    ) -> Vec<Effect> {
+        use postio_core::{Command, CommandId, MessageTarget};
+        use postio_ui::unsubscribe::{SWEEP_ARCHIVE, SWEEP_DELETE, SweepScope, sweep_offer};
+        if self.reading.is_none() {
+            return Vec::new();
+        }
+        let scope = SweepScope::ListId(found.name.clone());
+        let Some(title) = sweep_offer(&scope, found.ids.len(), found.more) else {
+            return Vec::new();
+        };
+        let count = found.ids.len();
+        let plus = if found.more { "+" } else { "" };
+        let target = || MessageTarget::Messages(found.ids.clone());
+        let item = |verb: &str, id: CommandId, command: Command| MenuItem {
+            words: format!("{verb} {count}{plus}"),
+            detail: self.hint(id).unwrap_or_default(),
+            action: MenuAction::Send(command),
+        };
+        let items = vec![
+            item(
+                SWEEP_ARCHIVE,
+                CommandId::Archive,
+                Command::Archive { target: target() },
+            ),
+            item(
+                SWEEP_DELETE,
+                CommandId::Delete,
+                Command::Delete { target: target() },
+            ),
+        ];
+        // The offer holds the keyboard, as any menu over the message does.
+        self.focus = Focus::Reader;
+        self.open.menu = Some(Menu {
+            title,
+            items,
+            at: 0,
+        });
+        vec![Effect::Redraw]
+    }
+
     /// `.`: the verbs the action row folded away, as a menu. Nothing when
     /// nothing is folded.
     pub(super) fn more_actions(&mut self) -> Vec<Effect> {
@@ -657,9 +705,11 @@ impl App {
                     return Vec::new();
                 };
                 let chosen = self.open.menu.as_ref().and_then(|menu| {
-                    menu.items.iter().position(
-                        |item| matches!(item.action, MenuAction::Command(own) if own == id),
-                    )
+                    menu.items.iter().position(|item| match &item.action {
+                        MenuAction::Command(own) => *own == id,
+                        MenuAction::Send(command) => command.id().as_str() == id,
+                        _ => false,
+                    })
                 });
                 return match chosen {
                     Some(at) => self.choose(at),
@@ -687,6 +737,7 @@ impl App {
                 effects.push(Effect::OpenLink(target));
                 effects
             }
+            MenuAction::Send(command) => vec![Effect::Send(command), Effect::Redraw],
             MenuAction::Part(message, attachment) => vec![
                 Effect::SavePart {
                     message,
