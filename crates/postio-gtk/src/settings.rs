@@ -437,6 +437,7 @@ impl crate::window::FocusWindow {
                 client: client.clone(),
             });
             let for_take_back = client.clone();
+            let runtime = self.imp().runtime.borrow().clone();
             let settings = Settings::new(client, outside);
             // A person's pin or marker is theirs, not the buffer's: the host
             // takes it back, and the window hears of it as of any change.
@@ -448,7 +449,11 @@ impl crate::window::FocusWindow {
                         (sender.clone(), Some(kind.clone()))
                     }
                 };
-                glib::spawn_future_local(async move {
+                // On the host's runtime, which the client's future needs.
+                let Some(runtime) = runtime.clone() else {
+                    return;
+                };
+                runtime.spawn(async move {
                     if let Err(error) = client.take_back_filter(&entry, kind.as_deref()).await {
                         tracing::warn!(%error, "could not take a filter entry back");
                     }
