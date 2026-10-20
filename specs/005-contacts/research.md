@@ -100,10 +100,18 @@ group memberships so the join can be undone exactly (R8), and is never shown.
 ## R5 — The Contacts list: windowed, keyset-paged, filtered by a term index
 
 **Decision.**
-- The list is windowed like the message list. `postio-ui::list::ListWindow`
-  is keyed by `MessageId` (`ListRow::id`, `list.rs:87`); it is generalised
-  over an associated key type rather than copied, and the message list's
-  existing tests are what prove the generalisation changed nothing.
+- The list is windowed like the message list. *Revised during
+  implementation:* `postio-ui::list::ListWindow` was to be generalised over
+  its key type, and reading it closely showed it carries message-only
+  meaning beyond the key — the thread a verb aims at (`ListRow::thread`,
+  the blanket `postio_core::aim::RowFacts`), the selection model built on
+  it. Bending that to hold people would have reached into `postio-core`
+  for nothing the contacts list needs. So the contacts list has a small
+  window of its own, `postio_ui::contacts::ContactsWindow` — pages,
+  generation, LRU bound, abandon, evictions — and `postio-gtk`'s
+  `ContactsModel` wraps it the way `MessageList` wraps `ListWindow`,
+  keeping GTK's two rules (one object per position, never change while
+  answering `item()`).
 - Pages are read by keyset on `(sort_key, id)` — never `OFFSET` — the way
   `read_page` seeks with marks (`postio-runtime/src/store/local.rs:303`).
 - `sort_key` is the person's displayed name, case-folded, maintained on

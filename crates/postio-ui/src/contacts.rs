@@ -184,3 +184,292 @@ mod tests {
         assert_eq!(last_in_touch(None, now()), None);
     }
 }
+
+/// The Contacts list's paging: which pages are resident, which are on their
+/// way, and which generation of the list a delivered page belongs to.
+///
+/// The message list's [`crate::list::ListWindow`] does this for messages, and
+/// carries message-only meaning with it -- threads, the aim a verb takes --
+/// so the contacts list has this smaller window of its own rather than a
+/// generic one bent to fit (specs/005-contacts research R5, as revised).
+/// Like that one, it owns the rows, so what the list holds is bounded by
+/// [`crate::list::CACHE_PAGES`] pages however long the list is.
+#[derive(Debug, Default)]
+pub struct ContactsWindow {
+    generation: u64,
+    total: u32,
+    pages: std::collections::HashMap<u32, Vec<ContactListRow>>,
+    /// Least-recently-used first.
+    order: std::collections::VecDeque<u32>,
+    pending: std::collections::HashSet<u32>,
+}
+
+/// What one position answers with.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Slot<'a> {
+    /// The row is here.
+    Row(&'a ContactListRow),
+    /// Not yet; `request` is the page to ask for, or `None` when it has been
+    /// asked for already.
+    Loading {
+        /// The page to request, the first time it is missed.
+        request: Option<u32>,
+    },
+}
+
+/// What a delivery changed.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Delivered {
+    /// For an older generation of the list; dropped.
+    Stale,
+    /// These positions now have rows, and the list is `total` long.
+    Filled {
+        /// The positions the page covers.
+        positions: std::ops::Range<u32>,
+        /// Whether the length moved, which a view must be told separately.
+        total_changed: bool,
+        /// Pages dropped to keep the bound; objects a view holds for their
+        /// positions stand for nothing now.
+        evicted: Vec<u32>,
+    },
+}
+
+impl ContactsWindow {
+    /// Starts the list over at `total` rows: a new view, a new filter, a
+    /// change to the people. Returns the new generation, which a request
+    /// carries so its answer can be told from one for the list as it was.
+    pub fn reset(&mut self, total: u32) -> u64 {
+        self.generation += 1;
+        self.total = total;
+        self.pages.clear();
+        self.order.clear();
+        self.pending.clear();
+        self.generation
+    }
+
+    /// How long the list is.
+    pub fn total(&self) -> u32 {
+        self.total
+    }
+
+    /// The generation requests are being made for.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// What position `index` holds.
+    pub fn row_at(&mut self, index: u32) -> Slot<'_> {
+        let page = index / crate::list::PAGE_SIZE;
+        if self.pages.contains_key(&page) {
+            self.touch(page);
+            let offset = (index % crate::list::PAGE_SIZE) as usize;
+            return match self.pages.get(&page).and_then(|rows| rows.get(offset)) {
+                Some(row) => Slot::Row(row),
+                // A short last page: the position is past what the store
+                // holds now, and the next delivery will say so.
+                None => Slot::Loading { request: None },
+            };
+        }
+        if self.pending.insert(page) {
+            Slot::Loading {
+                request: Some(page),
+            }
+        } else {
+            Slot::Loading { request: None }
+        }
+    }
+
+    /// A page arrived.
+    pub fn deliver(
+        &mut self,
+        generation: u64,
+        page: u32,
+        rows: Vec<ContactListRow>,
+        total: u32,
+    ) -> Delivered {
+        if generation != self.generation {
+            return Delivered::Stale;
+        }
+        self.pending.remove(&page);
+        let start = page * crate::list::PAGE_SIZE;
+        let positions = start..start + rows.len() as u32;
+        self.pages.insert(page, rows);
+        self.touch(page);
+        let mut evicted = Vec::new();
+        while self.order.len() > crate::list::CACHE_PAGES {
+            if let Some(dropped) = self.order.pop_front() {
+                self.pages.remove(&dropped);
+                evicted.push(dropped);
+            }
+        }
+        let total_changed = total != self.total;
+        self.total = total;
+        Delivered::Filled {
+            positions,
+            total_changed,
+            evicted,
+        }
+    }
+
+    /// Gives up on a page whose read failed, so the next miss asks again.
+    pub fn abandon(&mut self, generation: u64, page: u32) {
+        if generation == self.generation {
+            self.pending.remove(&page);
+        }
+    }
+
+    /// How many rows are held, for the bound this exists to keep.
+    pub fn resident_rows(&self) -> usize {
+        self.pages.values().map(Vec::len).sum()
+    }
+
+    /// Where a person sits, if their page is resident.
+    pub fn position_of(&self, id: postio_model::ContactId) -> Option<u32> {
+        self.pages.iter().find_map(|(page, rows)| {
+            rows.iter()
+                .position(|row| row.id == id)
+                .map(|offset| page * crate::list::PAGE_SIZE + offset as u32)
+        })
+    }
+
+    /// Marks `page` most recently used.
+    fn touch(&mut self, page: u32) {
+        self.order.retain(|held| *held != page);
+        self.order.push_back(page);
+    }
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+    use crate::list::{CACHE_PAGES, PAGE_SIZE};
+    use postio_model::{ContactId, ContactState};
+
+    fn page(page: u32, len: u32) -> Vec<ContactListRow> {
+        (0..len)
+            .map(|i| {
+                let n = page * PAGE_SIZE + i;
+                ContactListRow {
+                    id: ContactId::new(i64::from(n) + 1),
+                    name: format!("Person {n}"),
+                    preferred: None,
+                    address_count: 1,
+                    last_seen_at: None,
+                    source: ContactSource::Mail,
+                    state: ContactState::Live,
+                    sort_key: format!("person {n:06}"),
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_missed_position_asks_for_its_page_once() {
+        let mut window = ContactsWindow::default();
+        window.reset(500);
+        assert_eq!(window.total(), 500);
+        assert_eq!(window.row_at(120), Slot::Loading { request: Some(2) });
+        assert_eq!(
+            window.row_at(130),
+            Slot::Loading { request: None },
+            "the page is on its way; asking again would double the read"
+        );
+    }
+
+    #[test]
+    fn a_delivered_page_answers_its_positions() {
+        let mut window = ContactsWindow::default();
+        let generation = window.reset(120);
+        let _ = window.row_at(60);
+        assert_eq!(
+            window.deliver(generation, 1, page(1, 50), 120),
+            Delivered::Filled {
+                positions: 50..100,
+                total_changed: false,
+                evicted: vec![]
+            }
+        );
+        match window.row_at(60) {
+            Slot::Row(row) => assert_eq!(row.name, "Person 60"),
+            other => panic!("expected a row, got {other:?}"),
+        }
+        assert_eq!(window.position_of(ContactId::new(61)), Some(60));
+    }
+
+    #[test]
+    fn an_answer_for_an_older_list_is_dropped() {
+        let mut window = ContactsWindow::default();
+        let old = window.reset(120);
+        let _ = window.row_at(0);
+        let new = window.reset(3);
+        assert_ne!(old, new);
+        assert_eq!(window.deliver(old, 0, page(0, 50), 120), Delivered::Stale);
+        assert_eq!(window.row_at(0), Slot::Loading { request: Some(0) });
+    }
+
+    #[test]
+    fn a_delivery_that_moves_the_length_says_so() {
+        let mut window = ContactsWindow::default();
+        let generation = window.reset(120);
+        let _ = window.row_at(0);
+        assert_eq!(
+            window.deliver(generation, 0, page(0, 50), 121),
+            Delivered::Filled {
+                positions: 0..50,
+                total_changed: true,
+                evicted: vec![]
+            }
+        );
+        assert_eq!(window.total(), 121);
+    }
+
+    #[test]
+    fn an_abandoned_page_is_asked_for_again() {
+        let mut window = ContactsWindow::default();
+        let generation = window.reset(120);
+        let _ = window.row_at(0);
+        window.abandon(generation, 0);
+        assert_eq!(
+            window.row_at(0),
+            Slot::Loading { request: Some(0) },
+            "a failed read must not leave skeletons nothing can clear"
+        );
+    }
+
+    #[test]
+    fn a_delivery_names_the_pages_it_evicted() {
+        let mut window = ContactsWindow::default();
+        let generation = window.reset(20_000);
+        let mut evicted = Vec::new();
+        for p in 0..=(CACHE_PAGES as u32) {
+            let _ = window.row_at(p * PAGE_SIZE);
+            if let Delivered::Filled {
+                evicted: dropped, ..
+            } = window.deliver(generation, p, page(p, PAGE_SIZE), 20_000)
+            {
+                evicted.extend(dropped);
+            }
+        }
+        assert_eq!(evicted, [0], "the least recently used page goes first");
+    }
+
+    #[test]
+    fn scrolling_the_whole_list_holds_a_bounded_number_of_rows() {
+        let mut window = ContactsWindow::default();
+        let generation = window.reset(20_000);
+        for p in 0..(20_000 / PAGE_SIZE) {
+            let _ = window.row_at(p * PAGE_SIZE);
+            window.deliver(generation, p, page(p, PAGE_SIZE), 20_000);
+        }
+        assert!(
+            window.resident_rows() <= CACHE_PAGES * PAGE_SIZE as usize,
+            "{} rows held for 20,000 people",
+            window.resident_rows()
+        );
+        assert_eq!(
+            window.row_at(0),
+            Slot::Loading { request: Some(0) },
+            "the first page was evicted, and is asked for again"
+        );
+    }
+}
