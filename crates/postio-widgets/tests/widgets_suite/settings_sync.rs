@@ -83,7 +83,10 @@ pub fn emptying_junk_and_trash_is_off_and_chosen_per_folder() {
 
     let text = panel.text();
     assert!(text.contains("empty_trash_after_days = 30"), "{text}");
-    assert!(text.contains("empty_junk_after_days = 0"), "Junk stayed off: {text}");
+    assert!(
+        text.contains("empty_junk_after_days = 0"),
+        "Junk stayed off: {text}"
+    );
     assert!(
         text.contains("# a hand-written comment nobody wants to lose"),
         "{text}"
