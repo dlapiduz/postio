@@ -126,6 +126,7 @@ command from inside a text field.
 | `i i` | Show remote images | List, conversation, reader |  | `show_images` |
 | `i a` | Always show images from this sender | List, conversation, reader |  | `always_show_images` |
 | `M` | Unsubscribe from this list | List, conversation, reader, digest |  | `unsubscribe` |
+| `C` | Clear what the list sent | List, conversation, reader, digest | Undoable | `clear_list_mail` |
 | `g l` | Go to folders | List, conversation, reader, search |  | `go_to_folders` |
 | `g i` | Go to inbox | List, conversation, reader, search, folder list, digest, Filtered view |  | `go_to_inbox` |
 | `g d` | Go to drafts | List, conversation, reader, search, folder list |  | `go_to_drafts` |

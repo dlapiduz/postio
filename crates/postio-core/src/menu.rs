@@ -152,7 +152,7 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         C::Undo | C::SelectAll | C::ToggleSelection => Some(M::Edit),
         C::Search | C::SaveSearch => Some(M::Edit),
         C::Settings | C::EditConfig | C::AddAccount | C::Quit => Some(M::App),
-        C::ShowImages | C::AlwaysShowImages | C::Unsubscribe => Some(M::Message),
+        C::ShowImages | C::AlwaysShowImages | C::Unsubscribe | C::ClearListMail => Some(M::Message),
         // Settings surfaces act on the row the settings list has focus on.
         // They are commands so `[keys]` can reach them and so the palette
         // can offer them where they apply; a menu bar item for "remove the

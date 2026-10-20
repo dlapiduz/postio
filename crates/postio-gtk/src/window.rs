@@ -1756,6 +1756,11 @@ impl FocusWindow {
             CommandId::ViewSource => self.view_source(),
             CommandId::GoToFiltered => self.show_filtered(),
             CommandId::SweepInbox => self.ask_sweep(),
+            CommandId::ClearListMail => {
+                if !self.imp().toast.take_offer() {
+                    self.say(postio_ui::unsubscribe::NO_OFFER);
+                }
+            }
             CommandId::DismissMarker => self.dismiss_marker(),
             CommandId::MoreActions => {
                 if let Some(reading) = self.reading() {
@@ -3232,19 +3237,15 @@ impl FocusWindow {
             return;
         };
         let ids = found.ids;
+        let taken = notice.clone();
         self.imp().toast.show_offer(
             &notice.text,
             &notice.button,
+            postio_ui::hints::key(&self.keymap(), CommandId::ClearListMail),
             glib::clone!(
                 #[weak(rename_to = window)]
                 self,
-                move || {
-                    let target = MessageTarget::Messages(ids.clone());
-                    window.post(match notice.action {
-                        postio_config::AfterUnsubscribe::Archive => Command::Archive { target },
-                        postio_config::AfterUnsubscribe::Delete => Command::Delete { target },
-                    });
-                }
+                move || window.post(taken.command(ids.clone()))
             ),
         );
         self.follow_toast();

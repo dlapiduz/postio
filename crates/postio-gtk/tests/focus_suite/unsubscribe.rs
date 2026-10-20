@@ -404,3 +404,88 @@ pub fn the_setting_makes_the_one_action_delete() {
         );
     });
 }
+
+/// The cap drawn on the toast's button, if it has one.
+fn caps_on_the_toast(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
+    use gtk::prelude::*;
+    let Some(host) = window.toast_host() else {
+        return Vec::new();
+    };
+    support::descendants(&host)
+        .iter()
+        .filter(|widget| widget.type_().name() == "AdwToastWidget")
+        .flat_map(|toast| support::descendants(toast))
+        .filter(|widget| widget.has_css_class("postio-keyhint") && widget.is_mapped())
+        .filter_map(|widget| widget.downcast_ref::<gtk::Label>().map(|l| l.text().to_string()))
+        .collect()
+}
+
+/// The offer's one action has a key (#1953): `C` takes it up from the
+/// keyboard exactly as the button does, the button shows the key, and the
+/// same key with nothing on offer says so rather than doing nothing.
+pub fn the_offer_is_taken_up_from_the_keyboard() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        file_the_newsletter(&fixture).await;
+        file_the_newsletter(&fixture).await;
+        let (window, _client) = fixture.open().await;
+
+        // Nothing on offer: the key answers, in words.
+        support::keys(&window, &["C"]);
+        assert!(
+            crate::settle_until(async || {
+                window
+                    .toast_showing()
+                    .is_some_and(|said| said == postio_ui::unsubscribe::NO_OFFER)
+            })
+            .await,
+            "`C` with no offer on screen said nothing: {:?}",
+            window.toast_showing()
+        );
+        assert!(!inbox_is_empty(&fixture).await);
+
+        support::keys(&window, &["j", "Return"]);
+        let reading = window.reading().expect("Return opened the message");
+        the_dialog_is_open(&reading).await;
+        support::keys(&window, &["M"]);
+        the_offer_is_up(&window, "Archive 2").await;
+        assert!(
+            crate::settle_until(async || caps_on_the_toast(&window) == ["C"]).await,
+            "the button does not show its key: {:?}",
+            caps_on_the_toast(&window)
+        );
+
+        support::keys(&window, &["C"]);
+        assert!(
+            crate::settle_until(async || inbox_is_empty(&fixture).await).await,
+            "`C` archived nothing (toast {:?})",
+            window.toast_showing()
+        );
+        assert!(
+            crate::settle_until(async || {
+                window
+                    .toast()
+                    .is_some_and(|toast| toast.title().is_some_and(|t| t.starts_with("Archived 2")))
+            })
+            .await,
+            "the archive did not say it could be undone: {:?}",
+            window.toast_showing()
+        );
+        // Once taken the offer is spent: a second press has nothing to take.
+        support::keys(&window, &["C"]);
+        assert!(
+            crate::settle_until(async || {
+                window
+                    .toast_showing()
+                    .is_some_and(|said| said == postio_ui::unsubscribe::NO_OFFER)
+            })
+            .await,
+            "{:?}",
+            window.toast_showing()
+        );
+    });
+}
+

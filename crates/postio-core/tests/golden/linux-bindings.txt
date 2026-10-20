@@ -97,6 +97,7 @@ quit	ctrl+q | ctrl+w
 show_images	i i
 always_show_images	i a
 unsubscribe	M
+clear_list_mail	C
 go_to_folders	g l
 go_to_inbox	g i
 go_to_drafts	g d

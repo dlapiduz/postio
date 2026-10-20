@@ -30,11 +30,14 @@ public struct UnsubscribeBanner: View {
     /// The answer to the offer to clear what the list sent: `true` deletes,
     /// `false` archives, `nil` dismisses it and keeps it all.
     private let clear: (Bool?) -> Void
+    /// The key of `clear_list_mail`, drawn on the offer's button (#1953).
+    private let clearCap: String?
 
     public init(
         offer: UnsubscribeOfferFfi, state: Unsubscribing.State, leave: @escaping () -> Void,
-        clear: @escaping (Bool?) -> Void = { _ in }
+        clear: @escaping (Bool?) -> Void = { _ in }, clearCap: String? = nil
     ) {
+        self.clearCap = clearCap
         self.offer = offer
         self.state = state
         self.leave = leave
@@ -58,8 +61,15 @@ public struct UnsubscribeBanner: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Spacer(minLength: PostioTokens.space2)
-                        Button(sweep.button) { clear(sweep.delete) }
-                            .buttonStyle(ReaderButtonStyle(.secondary))
+                        Button {
+                            clear(sweep.delete)
+                        } label: {
+                            HStack(spacing: 6) {
+                                Text(sweep.button)
+                                if let clearCap { KeyCap(clearCap) }
+                            }
+                        }
+                        .buttonStyle(ReaderButtonStyle(.secondary))
                         Button("Dismiss") { clear(nil) }
                             .buttonStyle(ReaderButtonStyle(.secondary))
                             .keyboardShortcut(.cancelAction)

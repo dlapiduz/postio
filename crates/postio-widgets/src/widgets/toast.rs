@@ -61,6 +61,11 @@ pub struct Toast {
     /// the same one the button runs -- one behaviour with two ways in, not
     /// two implementations that have to agree.
     pending_undo: RefCell<Option<std::rc::Rc<dyn Fn()>>>,
+    /// The offer behind the toast now showing, if it makes one (#1953): the
+    /// button's action, held so its key reaches it as well as the pointer.
+    /// Gone with its toast -- dismissed, replaced or timed out -- so the key
+    /// never takes up an offer nobody can see.
+    pending_offer: Rc<RefCell<Option<(adw::Toast, Rc<dyn Fn()>)>>>,
     /// How the toast now showing reads, and whether it offers undo,
     /// recorded when it was shown rather than read back off its button
     /// (specs/008-storyboards research R6). Cleared when that toast is
@@ -83,6 +88,7 @@ impl Toast {
             host: RefCell::new(None),
             current: RefCell::new(None),
             pending_undo: RefCell::new(None),
+            pending_offer: Rc::new(RefCell::new(None)),
             shown: Rc::new(RefCell::new(None)),
             remake: RefCell::new(None),
             undo_key: RefCell::new(None),
@@ -294,8 +300,34 @@ impl Toast {
     /// (#1952): news, not a warning, and non-blocking -- ignoring it, or
     /// whatever else the person does next, leaves everything as it is, and
     /// the next toast replaces it. The button runs `on_click`; it is no undo.
-    pub fn show_offer(&self, sentence: &str, button_label: &str, on_click: impl Fn() + 'static) {
-        self.show_button(Tone::Info, sentence, button_label, None, on_click);
+    ///
+    /// `key` is the command's key, drawn on the button, and the offer is held
+    /// until its toast goes so [`Self::take_offer`] can run it from the
+    /// keyboard.
+    pub fn show_offer(
+        &self,
+        sentence: &str,
+        button_label: &str,
+        key: Option<String>,
+        on_click: impl Fn() + 'static,
+    ) {
+        let on_click: Rc<dyn Fn()> = Rc::new(on_click);
+        let again = Rc::clone(&on_click);
+        self.show_button(Tone::Info, sentence, button_label, key, move || again());
+        if let Some(toast) = self.current.borrow().clone() {
+            *self.pending_offer.borrow_mut() = Some((toast, on_click));
+        }
+    }
+
+    /// Take up the offer on screen, as its button does, and let its toast go.
+    /// Answers whether there was an offer to take.
+    pub fn take_offer(&self) -> bool {
+        let Some((toast, on_click)) = self.pending_offer.borrow_mut().take() else {
+            return false;
+        };
+        toast.dismiss();
+        on_click();
+        true
     }
 
     fn show_button(
@@ -357,13 +389,20 @@ impl Toast {
         // is gone is one the person can no longer see, and `u` must not
         // reach back past what is on screen.
         self.pending_undo.borrow_mut().take();
+        self.pending_offer.borrow_mut().take();
         if let Some(previous) = self.current.borrow_mut().take() {
             previous.dismiss();
         }
         *self.shown.borrow_mut() = Some((toast.clone(), tone, offers_undo));
         toast.connect_dismissed({
             let shown = Rc::clone(&self.shown);
+            let offer = Rc::clone(&self.pending_offer);
             move |gone| {
+                let mut offer = offer.borrow_mut();
+                if offer.as_ref().is_some_and(|(toast, _)| toast == gone) {
+                    *offer = None;
+                }
+                drop(offer);
                 let mut shown = shown.borrow_mut();
                 if shown.as_ref().is_some_and(|(toast, _, _)| toast == gone) {
                     *shown = None;
@@ -409,11 +448,27 @@ impl Toast {
         let Some((make, key)) = self.remake.borrow().clone() else {
             return false;
         };
-        // The undo `u` reaches belongs to the toast, and survives it.
-        let pending = self.pending_undo.borrow().clone();
-        self.show_in(self.overlay.clone(), make, tone, offers_undo, key);
-        *self.pending_undo.borrow_mut() = pending;
+        self.move_to(self.overlay.clone(), make, tone, offers_undo, key);
         true
+    }
+
+    /// Show the toast on screen again in `host`, keeping what its keys reach:
+    /// the undo `u` takes and the offer `C` takes belong to the toast.
+    fn move_to(
+        &self,
+        host: adw::ToastOverlay,
+        make: Remake,
+        tone: Tone,
+        offers_undo: bool,
+        key: Option<String>,
+    ) {
+        let pending = self.pending_undo.borrow().clone();
+        let offer = self.pending_offer.borrow().clone();
+        self.show_in(host, make, tone, offers_undo, key);
+        *self.pending_undo.borrow_mut() = pending;
+        if let (Some((_, on_click)), Some(toast)) = (offer, self.current.borrow().clone()) {
+            *self.pending_offer.borrow_mut() = Some((toast, on_click));
+        }
     }
 }
 

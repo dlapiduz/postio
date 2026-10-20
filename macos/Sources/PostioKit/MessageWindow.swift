@@ -259,6 +259,16 @@ public final class MessageWindowModel {
             Task.detached { _ = source.clearListMail(message, delete) })
     }
 
+    /// `clear_list_mail`: the banner's one button, from the keyboard and the
+    /// palette (#1953). The verb is the setting's, carried by the offer on
+    /// screen; with no offer up there is nothing to take and nothing happens.
+    public func takeUpOffer() {
+        guard let message = displayed,
+            case .clearing(let sweep) = unsubscribing.state(of: message)
+        else { return }
+        clearListMail(delete: sweep.delete)
+    }
+
     /// `FocusReader`: what the open message does as its own.
     public func apply(_ verb: ReaderVerbFfi) {
         guard place != nil else { return }

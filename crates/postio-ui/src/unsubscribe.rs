@@ -245,6 +245,23 @@ pub struct SweepNotice {
     pub action: AfterUnsubscribe,
 }
 
+impl SweepNotice {
+    /// The one command the button runs, on exactly the messages the notice
+    /// counted: one bulk archive or delete, so one undo. The button, the
+    /// registry's `clear_list_mail` key and the palette row all run this.
+    pub fn command(&self, ids: Vec<postio_model::MessageId>) -> postio_core::Command {
+        let target = postio_core::MessageTarget::Messages(ids);
+        match self.action {
+            AfterUnsubscribe::Archive => postio_core::Command::Archive { target },
+            AfterUnsubscribe::Delete => postio_core::Command::Delete { target },
+        }
+    }
+}
+
+/// What `clear_list_mail` says when no notice is offering anything: the key
+/// is never silent (#1953).
+pub const NO_OFFER: &str = "No unsubscribe offer to take up";
+
 /// The notice for a list that left `count` messages behind, or `None` when
 /// nothing is left (the plain confirmation then says all there is to say).
 pub fn sweep_notice(
@@ -350,6 +367,37 @@ mod sweep_tests {
             None,
             "nothing left, nothing to offer"
         );
+    }
+
+    #[test]
+    fn the_notice_command_acts_on_exactly_the_counted_messages() {
+        use postio_core::{Command, MessageTarget};
+        use postio_model::MessageId;
+        let scope = SweepScope::ListId("news.example.org".into());
+        let ids = vec![MessageId::new(4), MessageId::new(9)];
+        let archive = sweep_notice(&scope, 2, false, AfterUnsubscribe::Archive).unwrap();
+        assert_eq!(
+            archive.command(ids.clone()),
+            Command::Archive {
+                target: MessageTarget::Messages(ids.clone())
+            }
+        );
+        let delete = sweep_notice(&scope, 2, false, AfterUnsubscribe::Delete).unwrap();
+        assert_eq!(
+            delete.command(ids.clone()),
+            Command::Delete {
+                target: MessageTarget::Messages(ids)
+            }
+        );
+    }
+
+    #[test]
+    fn clear_list_mail_is_a_bound_undoable_registry_command() {
+        use postio_core::{CommandId, Recovery, registry};
+        let spec = registry::get(CommandId::ClearListMail);
+        assert_eq!(spec.default_binding, "C");
+        assert_eq!(spec.recovery, Recovery::Undo);
+        assert!(!NO_OFFER.is_empty());
     }
 
     #[test]
