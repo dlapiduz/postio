@@ -284,6 +284,29 @@ pub struct ContactStats {
     pub recent: Vec<RecentMessage>,
 }
 
+/// Whose move it is on something open between the user and a person.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OpenSide {
+    /// The person is waiting on the user: an action marker on their mail that
+    /// the user has not dismissed.
+    WaitingOnYou,
+    /// The user is waiting on the person: a sent message with a reminder
+    /// that no reply has settled.
+    WaitingOnThem,
+}
+
+/// One thing open between the user and a person, with the message behind it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenItem {
+    /// Whose move.
+    pub side: OpenSide,
+    /// What it is: the sentence a marker called out, or the sent message's
+    /// subject.
+    pub text: String,
+    /// The message it hangs on.
+    pub message: crate::MessageId,
+}
+
 /// How many recent messages an address keeps, and a person's stats show.
 pub const RECENT: usize = 50;
 

@@ -500,6 +500,92 @@ impl<'a> ContactRepository<'a> {
         ]
     }
 
+    /// What is open between the user and `person`, at most `limit` things,
+    /// the ones waiting on the user first: undismissed markers on their mail
+    /// and unsettled reminders on what was sent to them, both found through
+    /// the ring of each address's newest messages, so what it reads is
+    /// bounded by that and never by the person's mail.
+    pub async fn open_items(
+        &self,
+        person: ContactId,
+        limit: u32,
+    ) -> Result<Vec<postio_model::OpenItem>> {
+        use postio_model::{OpenItem, OpenSide};
+        let owned: Vec<i64> = sql::all(
+            self.connection,
+            &Self::explain_stats(1)[0],
+            [person.get()],
+            |row| row.col(0),
+        )
+        .await?;
+        if owned.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let queries = Self::explain_open_items(owned.len());
+        let mut bound: Vec<turso::Value> =
+            owned.iter().map(|id| turso::Value::Integer(*id)).collect();
+        bound.push(turso::Value::Integer(i64::from(limit)));
+        let you: Vec<(i64, String)> =
+            sql::all_unbounded(self.connection, &queries[0], bound.clone(), |row| {
+                Ok((row.col(0)?, row.col(1)?))
+            })
+            .await?;
+        let them: Vec<(i64, String)> =
+            sql::all_unbounded(self.connection, &queries[1], bound, |row| {
+                Ok((row.col(0)?, row.col(1)?))
+            })
+            .await?;
+        let item = |side, (message, text): (i64, String)| OpenItem {
+            side,
+            text,
+            message: postio_model::MessageId::new(message),
+        };
+        // One of each first, so neither side crowds the other out.
+        let (mut you, mut them) = (you.into_iter(), them.into_iter());
+        let mut items = Vec::new();
+        while items.len() < limit as usize {
+            let before = items.len();
+            if let Some(next) = you.next() {
+                items.push(item(OpenSide::WaitingOnYou, next));
+            }
+            if items.len() < limit as usize
+                && let Some(next) = them.next()
+            {
+                items.push(item(OpenSide::WaitingOnThem, next));
+            }
+            if items.len() == before {
+                break;
+            }
+        }
+        Ok(items)
+    }
+
+    /// The SQL [`Self::open_items`] runs for a person with `addresses`
+    /// addresses: what waits on the user, then what the user waits on.
+    pub fn explain_open_items(addresses: usize) -> [String; 2] {
+        let ids = (1..=addresses.max(1))
+            .map(|n| format!("?{n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let limit = addresses.max(1) + 1;
+        [
+            format!(
+                "SELECT r.message_id, coalesce(k.excerpt, 'An invitation') FROM address_recent r
+                   JOIN markers k ON k.message_id = r.message_id AND k.dismissed_at IS NULL
+                  WHERE r.address_id IN ({ids}) AND r.direction = 'in'
+                  ORDER BY r.at DESC, r.message_id DESC LIMIT ?{limit}"
+            ),
+            format!(
+                "SELECT r.message_id, coalesce(m.subject, '(no subject)') FROM address_recent r
+                   JOIN reminders d ON d.anchor_message_id = r.message_id
+                    AND d.cancelled_at IS NULL AND d.settled_at IS NULL
+                   JOIN messages m ON m.id = r.message_id
+                  WHERE r.address_id IN ({ids}) AND r.direction = 'out'
+                  ORDER BY r.at DESC, r.message_id DESC LIMIT ?{limit}"
+            ),
+        ]
+    }
+
     /// How many live people of each kind there are and how many of those are
     /// saved: the Contacts tabs' counts, read from a handful of rows the
     /// triggers keep.

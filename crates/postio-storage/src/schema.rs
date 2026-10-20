@@ -635,7 +635,7 @@ CREATE TABLE contact_settings (
     // for the mail that predates contacts, and recording writes it from now.
     Migration {
         from: stamp(0x7c07_02d9),
-        to: FINGERPRINT,
+        to: stamp(0x81b8_027c),
         statements: r#"
 ALTER TABLE contact_sightings ADD COLUMN seen_count INTEGER NOT NULL DEFAULT 0;
 CREATE TABLE address_months (
@@ -697,6 +697,16 @@ BEGIN
        AND address_id IN (SELECT address_id FROM recipients
                            WHERE message_id = new.id AND kind = 'from');
 END;
+"#,
+    },
+    // `feature/focus-contacts`: what is open between the user and a person is
+    // read over the ring of an address's newest messages, and a reminder is
+    // found by the message it hangs on (specs/011-focus-contacts S6).
+    Migration {
+        from: stamp(0x81b8_027c),
+        to: FINGERPRINT,
+        statements: r#"
+CREATE INDEX idx_reminders_anchor ON reminders (anchor_message_id);
 "#,
     },
 ];
@@ -1909,6 +1919,8 @@ CREATE INDEX idx_recipients_message ON recipients (message_id, kind, position);
 -- columns every read of them asks `IS NULL` of, because the planner seeks
 -- an equality and will not seek `fired_at IS NOT NULL` from the front of
 -- an index. The due timer's read and the surfaced rows' both seek it.
+CREATE INDEX idx_reminders_anchor ON reminders (anchor_message_id);
+
 CREATE INDEX idx_reminders_standing ON reminders (settled_at, cancelled_at, fired_at);
 
 CREATE INDEX idx_reminders_thread ON reminders (thread_id);

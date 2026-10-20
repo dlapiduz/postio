@@ -400,3 +400,113 @@ async fn a_card_costs_the_statements_and_rows_of_the_addresses_not_of_the_mail()
         );
     }
 }
+
+#[tokio::test]
+async fn what_is_open_between_you_is_read_from_the_ring_whoever_sent_it() {
+    use postio_model::OpenSide;
+    let (_database, connection, account, inbox) = setup().await;
+    let me = account.address.address.clone();
+    let asked = mail(
+        &connection,
+        &account,
+        inbox,
+        at(2026, 2, 1),
+        "ada@example.org",
+        &me,
+        true,
+    )
+    .await;
+    let dismissed = mail(
+        &connection,
+        &account,
+        inbox,
+        at(2026, 2, 2),
+        "ada@example.org",
+        &me,
+        true,
+    )
+    .await;
+    let sent = mail(
+        &connection,
+        &account,
+        inbox,
+        at(2026, 2, 3),
+        &me,
+        "ada@example.org",
+        true,
+    )
+    .await;
+    let answered = mail(
+        &connection,
+        &account,
+        inbox,
+        at(2026, 2, 4),
+        &me,
+        "ada@example.org",
+        true,
+    )
+    .await;
+    for (id, text, dismissed_at) in [
+        (asked, "Approve the Q3 numbers by Friday", None),
+        (dismissed, "Old question", Some(5)),
+    ] {
+        postio_storage::sql::execute(
+            &connection,
+            "INSERT INTO markers (message_id, kind, source, excerpt, dismissed_at)
+             VALUES (?1, 'question', 'detector', ?2, ?3)",
+            postio_storage::sql::bind![id.get(), text, dismissed_at],
+        )
+        .await
+        .unwrap();
+    }
+    postio_storage::sql::execute(
+        &connection,
+        "UPDATE messages SET subject = 'Q4 headcount numbers' WHERE id = ?1",
+        [sent.get()],
+    )
+    .await
+    .unwrap();
+    for (id, settled) in [(sent, None), (answered, Some(9))] {
+        postio_storage::sql::execute(
+            &connection,
+            "INSERT INTO reminders (thread_id, anchor_message_id, set_at, due_at, settled_at)
+             VALUES (1, ?1, 1, 2, ?2)",
+            postio_storage::sql::bind![id.get(), settled],
+        )
+        .await
+        .unwrap();
+    }
+    let contacts = ContactRepository::new(&connection);
+    let ada = person(&connection, "ada@example.org").await;
+
+    let items = contacts.open_items(ada, 2).await.unwrap();
+
+    assert_eq!(
+        items
+            .iter()
+            .map(|i| (i.side, i.text.as_str(), i.message))
+            .collect::<Vec<_>>(),
+        [
+            (
+                OpenSide::WaitingOnYou,
+                "Approve the Q3 numbers by Friday",
+                asked
+            ),
+            (OpenSide::WaitingOnThem, "Q4 headcount numbers", sent),
+        ],
+        "one each, a dismissed marker and a settled reminder are not open"
+    );
+    assert_eq!(contacts.open_items(ada, 1).await.unwrap().len(), 1);
+    for sql in ContactRepository::explain_open_items(1) {
+        assert_eq!(
+            unbounded(
+                &connection,
+                &sql,
+                &["markers", "reminders", "address_recent", "messages"]
+            )
+            .await,
+            Vec::<String>::new(),
+            "bounded by the ring: {sql}"
+        );
+    }
+}
