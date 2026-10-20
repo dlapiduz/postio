@@ -117,6 +117,7 @@ pub fn the_open_message_s_unsubscribe_notice_logs_it_and_the_privacy_section_lis
             "no List-Id on this message, so the sender's domain is the list"
         );
 
+        decline_the_offer(&window).await;
         support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
         crate::settle();
         privacy_lists_an_activation(&window).await;
