@@ -41,3 +41,4 @@ leaves this list. Traps worth knowing before you start are in
 - 2026-10-09 — [Focus search, final: the bench, and what the common word costs](2026-10-09-focus-search-final.md)
 - 2026-10-05 — [Architecture inventory: Postio, Flectar and Letter](2026-10-05-reference-codebase-architecture-inventory.md)
 - 2026-10-19 — [What five other mail clients know](2026-10-19-what-five-other-mail-clients-know.md)
+- 2026-10-20 — [What recording a contact costs a synced message](2026-10-20-what-recording-a-contact-costs-a-synced-message.md)
