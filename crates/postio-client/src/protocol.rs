@@ -222,6 +222,10 @@ pub enum Req {
     /// The person at an address, made now from the stored mail when the
     /// catch-up has not reached them (specs/011-focus-contacts).
     ContactForAddress(String),
+    /// What the known-sender popover shows for an address: the person, their
+    /// counts, what is open between them and the user, and where their mail
+    /// arrives (specs/011-focus-contacts S6).
+    ContactGlance(String),
     /// Everything recipient completion can offer for an account, read once
     /// so each keystroke is answered from memory rather than by a query.
     RecipientDirectory(AccountId),
@@ -786,6 +790,8 @@ pub enum Resp {
     Correspondents(Vec<postio_model::Contact>),
     /// The person at an address, if the store knows one.
     ContactFor(Option<Box<postio_model::Contact>>),
+    /// The answer to [`Req::ContactGlance`].
+    ContactGlance(Option<Box<postio_model::ContactGlance>>),
     /// Each sender's remembered treatment.
     Treatments(Vec<(String, String)>),
     /// What recipient completion can offer.

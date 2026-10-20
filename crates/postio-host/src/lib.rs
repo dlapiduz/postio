@@ -1042,6 +1042,11 @@ impl Inner {
                     .await
                     .map(Box::new),
             ),
+            Req::ContactGlance(address) => Resp::ContactGlance(
+                contacts::contact_glance(&self.wiring.database, &address, chrono::Utc::now())
+                    .await
+                    .map(Box::new),
+            ),
             Req::RecipientDirectory(account) => Resp::RecipientDirectory(
                 compose::recipient_directory(&self.wiring.database, account).await,
             ),

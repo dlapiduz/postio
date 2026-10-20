@@ -137,6 +137,43 @@ pub async fn contact_for_address(database: &Store, address: &str) -> Option<post
     contacts.get(person).await.ok()?
 }
 
+/// What the known-sender popover shows for `address`: the person (made now if
+/// the catch-up has not reached them), their counts, up to two things open
+/// between them and the user, and where their mail arrives. `None` for an
+/// address the store never saw.
+///
+/// One read over maintained tables: it costs the person's addresses, never
+/// their mail.
+pub async fn contact_glance(
+    database: &Store,
+    address: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<postio_model::ContactGlance> {
+    use postio_storage::repository::ContactSettingsRepository;
+    let person = contact_for_address(database, address).await?;
+    let reader = database.read().await.ok()?;
+    let contacts = ContactRepository::new(&reader);
+    let stats = contacts
+        .stats(person.id, postio_model::month_key(now))
+        .await
+        .ok()?;
+    let open = contacts
+        .open_items(person.id, postio_model::contact::GLANCE_OPEN)
+        .await
+        .ok()?;
+    let arrival = ContactSettingsRepository::new(&reader)
+        .get(person.id)
+        .await
+        .ok()?
+        .arrival;
+    Some(postio_model::ContactGlance {
+        person,
+        stats,
+        open,
+        arrival,
+    })
+}
+
 /// How far the catch-up has got: "Building contacts, n of m".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CatchUpProgress {
@@ -410,6 +447,43 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
             .await
             .expect("and found again");
         assert_eq!(again.id, made.id, "one person, however often it is asked");
+    }
+
+    #[tokio::test]
+    async fn a_glance_at_a_sender_is_the_person_their_counts_and_where_mail_arrives() {
+        let database = test_support::memory().await;
+        old_mail(&database, "friend@example.org", 1).await;
+        use chrono::TimeZone as _;
+        let now = chrono::Utc.with_ymd_and_hms(2026, 3, 9, 12, 0, 0).unwrap();
+
+        assert!(
+            contact_glance(&database, "nobody@example.org", now)
+                .await
+                .is_none()
+        );
+        let glance = contact_glance(&database, "Friend@Example.org", now)
+            .await
+            .expect("a glance at someone the mail knows");
+        assert_eq!(glance.person.display_name(), "Old Friend");
+        assert_eq!(glance.stats.messages, 1);
+        assert_eq!(glance.arrival, None);
+        assert!(glance.open.is_empty());
+
+        let connection = database.connect().await.unwrap();
+        postio_storage::repository::ContactSettingsRepository::new(&connection)
+            .put(
+                glance.person.id,
+                &postio_model::ContactSettings {
+                    arrival: Some(postio_model::ContactArrival::Digest),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let again = contact_glance(&database, "friend@example.org", now)
+            .await
+            .unwrap();
+        assert_eq!(again.arrival, Some(postio_model::ContactArrival::Digest));
     }
 
     #[tokio::test]

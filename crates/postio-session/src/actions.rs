@@ -506,6 +506,12 @@ impl Actions {
                 vec![applied]
             }
             Command::ContactEdit { action } => vec![self.edit_contact(action).await?],
+            Command::ContactSetArrival { address, arrival } => {
+                let applied = self.set_arrival(address, *arrival).await?;
+                // The engine's rules read where a person's mail arrives.
+                self.rules_follow_people().await;
+                vec![applied]
+            }
             Command::ContactDelete { person, group } => match (person, group) {
                 (Some(person), _) => {
                     let applied = self.delete_contact(*person).await?;
@@ -2442,6 +2448,36 @@ impl Actions {
                 Ok(contacts_applied(UndoKind::EditContact, true, Vec::new()))
             }
         }
+    }
+
+    /// Say where a person's mail arrives (the popover's segmented control),
+    /// or put the earlier choice back. The person is the one who owns
+    /// `address`; their other settings are left as they are.
+    async fn set_arrival(
+        &self,
+        address: &str,
+        arrival: Option<postio_model::ContactArrival>,
+    ) -> Result<Applied, CommandError> {
+        use postio_storage::repository::ContactSettingsRepository;
+        let (connection, _permit) = self.connect().await?;
+        let person = ContactRepository::new(&connection)
+            .by_address(address.trim())
+            .await
+            .map_err(contact_failure)?
+            .ok_or_else(|| CommandError::rejected("That is not someone in your mail"))?
+            .id;
+        let settings = ContactSettingsRepository::new(&connection);
+        let mut held = settings.get(person).await.map_err(contact_failure)?;
+        let prior = std::mem::replace(&mut held.arrival, arrival);
+        settings.put(person, &held).await.map_err(contact_failure)?;
+        Ok(contacts_applied(
+            UndoKind::ContactArrival,
+            false,
+            vec![Command::ContactSetArrival {
+                address: address.to_owned(),
+                arrival: prior,
+            }],
+        ))
     }
 
     /// Delete a person (FR-023); undo restores them in the state they had.
@@ -6903,6 +6939,59 @@ mod tests {
             );
             world.run(Command::Undo).await.expect("undo");
             assert_eq!(get(&world, ada).await, before);
+        }
+
+        #[tokio::test]
+        async fn a_change_of_arrival_applies_at_once_and_undoes_to_what_was_there() {
+            use postio_model::ContactArrival;
+            let world = world().await;
+            let ada = person(&world, "Ada", &["ada@example.com"]).await;
+            let arrival = |world: &World| {
+                let database = world.database.clone();
+                async move {
+                    let reader = database.read().await.expect("a reader");
+                    postio_storage::repository::ContactSettingsRepository::new(&reader)
+                        .get(ada)
+                        .await
+                        .expect("settings")
+                        .arrival
+                }
+            };
+            assert_eq!(arrival(&world).await, None);
+
+            world
+                .run(Command::ContactSetArrival {
+                    address: "Ada@Example.com".into(),
+                    arrival: Some(ContactArrival::Digest),
+                })
+                .await
+                .expect("set");
+            let events = world.drained().await;
+            assert_eq!(arrival(&world).await, Some(ContactArrival::Digest));
+            assert!(events.contains(&Event::ActionCompleted {
+                description: "Changed where mail arrives".into(),
+                undoable: true,
+            }));
+
+            world
+                .run(Command::ContactSetArrival {
+                    address: "ada@example.com".into(),
+                    arrival: Some(ContactArrival::Filtered),
+                })
+                .await
+                .expect("set again");
+            world.run(Command::Undo).await.expect("undo");
+            assert_eq!(arrival(&world).await, Some(ContactArrival::Digest));
+            world.run(Command::Undo).await.expect("undo the first");
+            assert_eq!(arrival(&world).await, None);
+
+            let stranger = world
+                .run(Command::ContactSetArrival {
+                    address: "nobody@example.org".into(),
+                    arrival: Some(ContactArrival::Inbox),
+                })
+                .await;
+            assert!(stranger.is_err(), "an address the mail never saw is no one");
         }
 
         #[tokio::test]

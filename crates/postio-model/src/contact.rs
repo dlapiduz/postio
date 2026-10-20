@@ -307,6 +307,25 @@ pub struct OpenItem {
     pub message: crate::MessageId,
 }
 
+/// What the known-sender popover is read from: the person at an address, what
+/// the mail says about them, what is open between them and the user, and
+/// where their mail arrives (specs/011-focus-contacts S6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContactGlance {
+    /// The person, made from the stored mail if the catch-up had not reached
+    /// them.
+    pub person: Contact,
+    /// Their counts.
+    pub stats: ContactStats,
+    /// Up to two things open between them and the user.
+    pub open: Vec<OpenItem>,
+    /// Where their mail arrives; `None` for by the default rules.
+    pub arrival: Option<crate::ContactArrival>,
+}
+
+/// How many open things the popover shows.
+pub const GLANCE_OPEN: u32 = 2;
+
 /// How many recent messages an address keeps, and a person's stats show.
 pub const RECENT: usize = 50;
 

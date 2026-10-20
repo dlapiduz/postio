@@ -115,6 +115,7 @@ impl Req {
             Req::Recipients { .. } => "Recipients",
             Req::Correspondents(_) => "Correspondents",
             Req::ContactForAddress(_) => "ContactForAddress",
+            Req::ContactGlance(_) => "ContactGlance",
             Req::RecipientDirectory(_) => "RecipientDirectory",
             Req::Labels(_) => "Labels",
             Req::LabelCounts(_) => "LabelCounts",
@@ -608,6 +609,23 @@ impl Client {
             "the person at an address",
             |answer| match answer {
                 Resp::ContactFor(found) => Some(found.map(|person| *person)),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// What the known-sender popover shows for `address`; `None` for an
+    /// address the store never saw.
+    pub async fn contact_glance(
+        &self,
+        address: &str,
+    ) -> Result<Option<postio_model::ContactGlance>, StoreError> {
+        self.read(
+            Req::ContactGlance(address.to_owned()),
+            "the person at an address, at a glance",
+            |answer| match answer {
+                Resp::ContactGlance(found) => Some(found.map(|glance| *glance)),
                 _ => None,
             },
         )
