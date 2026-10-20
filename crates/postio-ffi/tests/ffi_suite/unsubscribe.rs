@@ -629,5 +629,9 @@ async fn the_notice_offers_the_configured_action() {
         .expect("two messages are still here");
     assert_eq!(offer.button, "Delete 2");
     assert!(offer.delete, "the boundary says which verb the button is");
-    assert!(offer.summary.starts_with("Unsubscribed from weekly.example.org"));
+    assert!(
+        offer
+            .summary
+            .starts_with("Unsubscribed from weekly.example.org")
+    );
 }

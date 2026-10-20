@@ -267,6 +267,18 @@ pub fn confirmation_name(list_id: Option<&str>, from: &[EmailAddress]) -> Option
     sweep_scope(list_id, from).map(|scope| scope.name().to_owned())
 }
 
+/// The setting's heading in a settings pane (#1952).
+pub const SETTING_HEADING: &str = "After you unsubscribe";
+
+/// What the setting does, said plainly because it is the one place a person
+/// learns that the notice never acts by itself.
+pub const SETTING_NOTE: &str = "The notice after you unsubscribe offers this for the mail the list \
+     already sent. Nothing moves unless you press it, and Undo takes it back.";
+
+/// The choices a settings pane offers, the default first.
+pub const SETTING_CHOICES: [AfterUnsubscribe; 2] =
+    [AfterUnsubscribe::Archive, AfterUnsubscribe::Delete];
+
 /// What a declined offer, or a finished one, leaves on screen is the
 /// command's own notice ("Archived 14 messages"), so there is no wording here
 /// for it: the verb is one the registry already says.
@@ -353,6 +365,14 @@ mod sweep_tests {
             Some("news.example.org")
         );
         assert_eq!(confirmation_name(None, &[]), None);
+    }
+
+    #[test]
+    fn the_setting_offers_archive_first_and_says_nothing_moves_by_itself() {
+        assert_eq!(SETTING_CHOICES[0], AfterUnsubscribe::default());
+        let named: Vec<&str> = SETTING_CHOICES.iter().map(|a| sweep_verb(*a)).collect();
+        assert_eq!(named, ["Archive", "Delete"]);
+        assert!(SETTING_NOTE.contains("Nothing moves") && SETTING_NOTE.contains("Undo"));
     }
 
     #[test]

@@ -358,6 +358,54 @@ pub fn settings_humanize_interval(seconds: u64) -> String {
     postio_ui::settings::humanize_interval(seconds)
 }
 
+/// The "After you unsubscribe" control of the Filtering pane (#1952).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AfterUnsubscribeFfi {
+    /// The control's heading.
+    pub heading: String,
+    /// The sentence under it.
+    pub note: String,
+    /// The choices' labels, the default first: `Archive`, `Delete`.
+    pub choices: Vec<String>,
+    /// Whether `[focus] after_unsubscribe` is `delete` (else archive).
+    pub delete: bool,
+}
+
+/// The control's words and what `text` chooses, or `None` when the file will
+/// not parse -- for the reason [`settings_appearance`] gives.
+#[uniffi::export]
+pub fn settings_after_unsubscribe(text: String) -> Option<AfterUnsubscribeFfi> {
+    use postio_ui::unsubscribe as words;
+    let config = Config::from_toml_str(&text).ok()?;
+    Some(AfterUnsubscribeFfi {
+        heading: words::SETTING_HEADING.to_owned(),
+        note: words::SETTING_NOTE.to_owned(),
+        choices: words::SETTING_CHOICES
+            .iter()
+            .map(|action| words::sweep_verb(*action).to_owned())
+            .collect(),
+        delete: config.focus.after_unsubscribe == postio_config::AfterUnsubscribe::Delete,
+    })
+}
+
+/// Set `[focus] after_unsubscribe` in `text`, the rest verbatim: what the
+/// control writes, through the same edit GTK's makes.
+#[uniffi::export]
+pub fn settings_patch_after_unsubscribe(
+    text: String,
+    delete: bool,
+) -> Result<String, SettingsError> {
+    let action = if delete {
+        postio_config::AfterUnsubscribe::Delete
+    } else {
+        postio_config::AfterUnsubscribe::Archive
+    };
+    written(
+        postio_config::focus_edit::set_after_unsubscribe(&text, action),
+        text,
+    )
+}
+
 /// Validate `text` and describe it the way the footer shows it.
 #[uniffi::export]
 pub fn settings_status(text: String) -> SettingsStatusFfi {

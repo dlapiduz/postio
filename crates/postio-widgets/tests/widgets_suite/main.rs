@@ -95,6 +95,7 @@ mod settings_frame;
 mod settings_keys;
 mod settings_privacy;
 mod settings_sync;
+mod settings_unsubscribe;
 mod small_widgets;
 mod storyboard_chain_delivery;
 mod storyboard_outline;
@@ -740,6 +741,15 @@ const CASES: &[(&str, fn())] = &[
     (
         "settings_sync::the_local_store_box_follows_the_accounts_and_their_weights",
         settings_sync::the_local_store_box_follows_the_accounts_and_their_weights as fn(),
+    ),
+    (
+        "settings_unsubscribe::the_control_defaults_to_archive_and_choosing_delete_writes_one_key",
+        settings_unsubscribe::the_control_defaults_to_archive_and_choosing_delete_writes_one_key
+            as fn(),
+    ),
+    (
+        "settings_unsubscribe::a_file_that_says_delete_shows_delete",
+        settings_unsubscribe::a_file_that_says_delete_shows_delete as fn(),
     ),
     (
         "settings_sync::the_pane_shows_the_files_values",

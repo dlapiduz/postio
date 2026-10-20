@@ -214,6 +214,32 @@ fn filtering_off_and_an_entry_taken_back_leave_the_rest_of_the_file_alone() {
 }
 
 #[test]
+fn the_after_unsubscribe_control_says_the_shared_words_and_writes_one_key() {
+    let control = postio_ffi::settings_after_unsubscribe(FILTERING.to_owned()).expect("it parses");
+    assert_eq!(control.heading, postio_ui::unsubscribe::SETTING_HEADING);
+    assert_eq!(control.note, postio_ui::unsubscribe::SETTING_NOTE);
+    assert_eq!(control.choices, ["Archive", "Delete"]);
+    assert!(!control.delete, "archive is the default");
+
+    let deleting =
+        postio_ffi::settings_patch_after_unsubscribe(FILTERING.to_owned(), true).expect("written");
+    assert!(deleting.starts_with("# mine\n"), "{deleting}");
+    assert!(deleting.contains("density = \"compact\""), "{deleting}");
+    assert!(
+        postio_ffi::settings_after_unsubscribe(deleting.clone())
+            .expect("it parses")
+            .delete
+    );
+    let back = postio_ffi::settings_patch_after_unsubscribe(deleting, false).expect("written");
+    assert!(
+        !postio_ffi::settings_after_unsubscribe(back)
+            .expect("it parses")
+            .delete
+    );
+    assert!(postio_ffi::settings_after_unsubscribe("[focus\n".to_owned()).is_none());
+}
+
+#[test]
 fn a_pane_names_the_table_it_writes_and_the_two_that_own_none_say_so() {
     // The footer under every structured pane reads `[sync] in config.toml`, so
     // the table is the pane's, not a string the frontend keeps beside it.

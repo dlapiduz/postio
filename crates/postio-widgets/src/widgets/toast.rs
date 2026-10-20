@@ -294,12 +294,7 @@ impl Toast {
     /// (#1952): news, not a warning, and non-blocking -- ignoring it, or
     /// whatever else the person does next, leaves everything as it is, and
     /// the next toast replaces it. The button runs `on_click`; it is no undo.
-    pub fn show_offer(
-        &self,
-        sentence: &str,
-        button_label: &str,
-        on_click: impl Fn() + 'static,
-    ) {
+    pub fn show_offer(&self, sentence: &str, button_label: &str, on_click: impl Fn() + 'static) {
         self.show_button(Tone::Info, sentence, button_label, None, on_click);
     }
 
