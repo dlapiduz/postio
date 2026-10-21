@@ -206,7 +206,7 @@ fn adopt(
     engine: postio_runtime::Engine,
 ) {
     postio_runtime::retain(engine.clone());
-    wiring.engine.fill(engine.clone());
+    wiring.engine.fill(account, engine.clone());
     engines
         .running
         .lock()
@@ -348,7 +348,13 @@ fn actions_for(wiring: &Wiring, state: &SharedState) -> Actions {
 /// [`verbs`], over `actions` the caller keeps a handle to.
 fn verbs_over(wiring: &Wiring, state: &SharedState, actions: Actions) -> Dispatcher {
     let builder = actions::wire(Dispatcher::builder(), actions);
-    refresh::wire(builder, wiring.engine.clone(), state.clone()).build()
+    refresh::wire(
+        builder,
+        wiring.engine.clone(),
+        wiring.database.clone(),
+        state.clone(),
+    )
+    .build()
 }
 
 impl Host {
@@ -371,6 +377,7 @@ impl Host {
                 Actions::new(database.clone(), host_state.clone()),
             ),
             engine.clone(),
+            database.clone(),
             host_state,
         )
         .build();
@@ -1587,7 +1594,7 @@ impl Inner {
         if engines.is_empty() {
             // A caller may supply its own engine through Wiring instead of
             // asking the host to start sync.
-            self.wiring.engine.get().cloned()
+            self.wiring.engine.get(account)
         } else {
             engines.get(&account).cloned()
         }

@@ -329,7 +329,7 @@ pub struct Wiring {
     pub events: EventSink,
     /// The command bus.
     pub commands: postio_core::bridge::CommandSender,
-    /// Where the engine goes once it is running, so `Refresh` can find it.
+    /// Where each account's engine goes once it is running, so `Refresh` can find it.
     pub engine: refresh::EngineSlot,
     /// Where every outbound connection is recorded (#151).
     ///
