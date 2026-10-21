@@ -303,6 +303,36 @@ impl ViewScope {
     }
 }
 
+/// What a refresh of a view should sync.
+///
+/// The rule lives beside [`ViewScope`] rather than in the handler so every
+/// frontend that asks the same question gets the same answer, and so it is
+/// red in a second when it is wrong.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefreshTarget {
+    /// The one folder the view is.
+    Folder(MailboxId),
+    /// The inbox of each of these accounts: the view draws from all of them.
+    Inboxes(Vec<AccountId>),
+}
+
+impl ViewScope {
+    /// Which mailboxes a refresh from this view brings in line with the
+    /// server.
+    ///
+    /// A folder is itself. Every aggregate (Focus, unified, flagged) shows
+    /// mail from several folders but is *fed* by its accounts' inboxes, so
+    /// that is what refreshing it syncs.
+    pub fn refresh_target(&self) -> RefreshTarget {
+        match self {
+            ViewScope::Mailbox(mailbox) => RefreshTarget::Folder(*mailbox),
+            ViewScope::Flagged(_) | ViewScope::Unified { .. } | ViewScope::Focus { .. } => {
+                RefreshTarget::Inboxes(self.accounts().to_vec())
+            }
+        }
+    }
+}
+
 /// One step of the back stack: where the user was, and where they were in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Frame {
@@ -760,6 +790,32 @@ impl SharedState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refreshing_an_aggregate_view_targets_every_account_it_draws_from() {
+        let accounts = vec![AccountId::new(1), AccountId::new(2)];
+        for scope in [
+            ViewScope::Focus {
+                accounts: accounts.clone(),
+            },
+            ViewScope::Unified {
+                accounts: accounts.clone(),
+            },
+        ] {
+            assert_eq!(
+                scope.refresh_target(),
+                RefreshTarget::Inboxes(accounts.clone())
+            );
+        }
+        assert_eq!(
+            ViewScope::Flagged(AccountId::new(3)).refresh_target(),
+            RefreshTarget::Inboxes(vec![AccountId::new(3)])
+        );
+        assert_eq!(
+            ViewScope::Mailbox(MailboxId::new(9)).refresh_target(),
+            RefreshTarget::Folder(MailboxId::new(9))
+        );
+    }
 
     #[test]
     fn an_empty_selection_means_the_row_the_cursor_is_on() {

@@ -410,3 +410,34 @@ pub async fn read_message(
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "That message is no longer here".into())
 }
+
+/// Where a part opened by the system is written: a directory of its own under
+/// `base`, readable by this user alone, and the file named as the sender
+/// named it -- but only the file name, so a hostile name cannot write
+/// anywhere else. Creates the directory.
+pub fn private_copy_path(
+    base: &std::path::Path,
+    message: MessageId,
+    attachment: AttachmentId,
+    filename: Option<&str>,
+) -> Result<std::path::PathBuf, String> {
+    use std::os::unix::fs::DirBuilderExt;
+    let name = filename
+        .and_then(|name| {
+            std::path::Path::new(name)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .filter(|name| !name.is_empty() && name != "." && name != "..")
+        .unwrap_or_else(|| "part".to_owned());
+    let dir =
+        base.join("postio")
+            .join("parts")
+            .join(format!("{}-{}", message.get(), attachment.get()));
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir)
+        .map_err(|error| error.to_string())?;
+    Ok(dir.join(name))
+}

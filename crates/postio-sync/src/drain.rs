@@ -66,7 +66,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use postio_account::backend::{BackendError, Capabilities, Capability, FlagChange, MailBackend};
-use postio_model::{AccountId, MailboxId, Operation, OperationId, OperationTarget};
+use postio_model::{AccountId, Flag, FlagSet, MailboxId, Operation, OperationId, OperationTarget};
 use postio_storage::BlobStore;
 use postio_storage::Connection;
 use postio_storage::repository::{MailboxRepository, MessageRepository, OperationQueueRepository};
@@ -120,6 +120,7 @@ impl FailedOperation {
             "move" => "Not moved",
             "delete" => "Not deleted",
             "expunge" => "Not expunged",
+            "purge" => "Not deleted for good",
             "append" => "Not uploaded",
             "set_flags" | "clear_flags" => "Flags not changed",
             "save_draft" => "Draft not saved",
@@ -426,6 +427,20 @@ impl<'a> Drainer<'a> {
                 .expunge(&context.path, None)
                 .await
                 .map(|_| Outcome::Applied),
+            // Mark, then expunge only these: the server never removes mail
+            // this step did not name (a backend without a targeted expunge
+            // leaves it marked, which is the safe half).
+            Operation::Purge { .. } => {
+                let deleted: FlagSet = std::iter::once(Flag::Deleted).collect();
+                match self.store(context, FlagChange::Add(deleted)).await {
+                    Ok(_) => self
+                        .backend
+                        .expunge(&context.path, Some(&context.ids))
+                        .await
+                        .map(|_| Outcome::Applied),
+                    Err(error) => Err(error),
+                }
+            }
             Operation::Append { .. } => {
                 return Outcome::Failed {
                     reason: format!(
@@ -607,7 +622,7 @@ impl<'a> Drainer<'a> {
         let (mailbox, destination) = match &step.operation {
             Operation::Move { from, to } => (*from, Some(*to)),
             Operation::Delete { from, trash } => (*from, Some(*trash)),
-            Operation::Expunge { mailbox } => (*mailbox, None),
+            Operation::Expunge { mailbox } | Operation::Purge { mailbox } => (*mailbox, None),
             Operation::SetFlags { .. } | Operation::ClearFlags { .. } => match &message {
                 Some(message) => (message.mailbox_id, None),
                 None => {

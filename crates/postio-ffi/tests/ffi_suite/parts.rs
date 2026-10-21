@@ -133,3 +133,123 @@ async fn a_part_that_is_not_on_this_machine_and_cannot_be_fetched_says_so() {
     );
     session.shutdown();
 }
+
+// -- opening ------------------------------------------------------------------
+
+/// What `o` offers for `message`, as the Mac asks for it.
+fn offered(session: &Session, message: i64) -> postio_ffi::OpenChoicesFfi {
+    session.open_choices(message)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_with_attachments_offers_them_by_name_and_size() {
+    let (session, message) = with_parts(
+        "multipart/mixed",
+        &[
+            Seed::new("1", "text/plain").downloaded(b"words"),
+            Seed::new("2", "application/pdf")
+                .named("report.pdf")
+                .downloaded(b"%PDF-1.4"),
+        ],
+    )
+    .await;
+
+    let choices = offered(&session, message);
+    let names: Vec<&str> = choices
+        .parts
+        .iter()
+        .map(|part| part.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        ["report.pdf"],
+        "the body's own text part is not a chip"
+    );
+    assert_eq!(choices.nothing, None, "there is something to open");
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_with_nothing_to_open_says_so_in_the_shared_words() {
+    let (session, message) = with_parts(
+        "multipart/mixed",
+        &[Seed::new("1", "text/plain").downloaded(b"hi")],
+    )
+    .await;
+
+    let choices = offered(&session, message);
+    assert!(choices.parts.is_empty());
+    assert_eq!(
+        choices.nothing.as_deref(),
+        Some(postio_ui::focus_target::NOTHING_TO_OPEN)
+    );
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn opening_a_downloaded_part_writes_a_private_copy_under_its_name() {
+    use std::os::unix::fs::PermissionsExt;
+    let (session, message) = with_parts(
+        "multipart/mixed",
+        &[Seed::new("2", "application/pdf")
+            .named("report.pdf")
+            .downloaded(b"%PDF-1.4")],
+    )
+    .await;
+    let part = offered(&session, message).parts[0].id;
+
+    let path = session
+        .open_attachment(message, part)
+        .await
+        .expect("a part that is here opens");
+    let path = std::path::PathBuf::from(path);
+    assert_eq!(
+        path.file_name().and_then(|n| n.to_str()),
+        Some("report.pdf")
+    );
+    assert_eq!(std::fs::read(&path).expect("the copy"), b"%PDF-1.4");
+    let mode = std::fs::metadata(path.parent().expect("a directory"))
+        .expect("its directory")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o077, 0, "nobody but this user can read the copy");
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hostile_file_name_cannot_write_outside_the_copy_s_directory() {
+    let (session, message) = with_parts(
+        "multipart/mixed",
+        &[Seed::new("2", "text/plain")
+            .named("../../evil.txt")
+            .downloaded(b"x")],
+    )
+    .await;
+    let part = offered(&session, message).parts[0].id;
+    let path = std::path::PathBuf::from(
+        session
+            .open_attachment(message, part)
+            .await
+            .expect("it opens under a safe name"),
+    );
+    assert_eq!(path.file_name().and_then(|n| n.to_str()), Some("evil.txt"));
+    assert!(!path.to_string_lossy().contains(".."));
+    session.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_part_that_cannot_be_fetched_opens_nothing_and_says_why() {
+    let (session, message) = with_parts(
+        "multipart/mixed",
+        &[Seed::new("1", "application/zip").named("archive.zip")],
+    )
+    .await;
+    let part = offered(&session, message).parts[0].id;
+    let refused = session
+        .open_attachment(message, part)
+        .await
+        .expect_err("no bytes, no file")
+        .to_string();
+    assert!(refused.contains("syncing"), "got {refused:?}");
+    session.shutdown();
+}

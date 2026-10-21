@@ -38,6 +38,7 @@ mod cross_account;
 mod digests;
 mod drafts;
 mod egress;
+mod expiry;
 mod filter_decisions;
 mod focus_classified;
 mod labels;
@@ -63,6 +64,7 @@ pub use cross_account::{
 pub use digests::{DigestRepository, OpenDelivery};
 pub use drafts::{CancelSendOutcome, DraftRepository, ServerCopyLocation};
 pub use egress::EgressLogRepository;
+pub use expiry::{Expired, ExpiryRepository};
 pub use filter_decisions::{FilterDecision, FilterDecisionRepository, FilterLayer, FilterReason};
 pub use focus_classified::{FocusClassifiedRepository, FocusStage};
 pub use labels::LabelRepository;

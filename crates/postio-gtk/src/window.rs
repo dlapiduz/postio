@@ -4769,7 +4769,8 @@ impl FocusWindow {
     /// window: the chrome and its menu, the bulk bar, the banner's button,
     /// the empty inbox's shortcuts, the toast's Undo, and the toast that
     /// offers to add an account when compose has none to write from
-    /// (T172). Each is read from the table that builds it.
+    /// (T172), and the sweep button of the toast after an unsubscribe. Each
+    /// is read from the table that builds it.
     pub fn controls(&self) -> Vec<CommandId> {
         let mut commands = Chrome::commands();
         commands.extend(Bulk::commands());
@@ -4813,6 +4814,9 @@ impl FocusWindow {
         commands.extend([CommandId::GoToFiltered, CommandId::GoToDigestRules]);
         commands.push(CommandId::Undo);
         commands.push(CommandId::AddAccount);
+        // The toast after an unsubscribe: its sweep button (`Archive 14`)
+        // runs exactly what the key does (#1953).
+        commands.push(CommandId::ClearListMail);
         commands.extend(crate::settings::Settings::controls());
         commands.extend(crate::compose::Compose::controls());
         commands.extend(crate::capture::CaptureSheet::controls());

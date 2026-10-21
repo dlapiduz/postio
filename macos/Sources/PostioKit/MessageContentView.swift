@@ -184,6 +184,7 @@ public struct MessageContentView<BodyView: View>: View {
     let alwaysForSender: () -> Void
     let leave: () -> Void
     let clear: (Bool?) -> Void
+    let openAttachment: (Int64) -> Void
     let bodyView: (FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
 
     /// `unsubscribe` is where this message's banner has got to, and `leave`
@@ -197,6 +198,7 @@ public struct MessageContentView<BodyView: View>: View {
         alwaysForSender: @escaping () -> Void,
         leave: @escaping () -> Void = {},
         clear: @escaping (Bool?) -> Void = { _ in },
+        openAttachment: @escaping (Int64) -> Void = { _ in },
         @ViewBuilder body: @escaping (FocusReaderDocumentFfi, MessageHeaderWords.Card?) -> BodyView
     ) {
         self.words = words
@@ -207,6 +209,7 @@ public struct MessageContentView<BodyView: View>: View {
         self.alwaysForSender = alwaysForSender
         self.leave = leave
         self.clear = clear
+        self.openAttachment = openAttachment
         bodyView = body
     }
 
@@ -283,7 +286,7 @@ public struct MessageContentView<BodyView: View>: View {
                 .font(.system(size: 12.5))
                 .foregroundStyle(.tertiary)
         case .attachments:
-            MessageAttachments(attachments: words.attachments)
+            MessageAttachments(attachments: words.attachments, open: openAttachment)
         }
     }
 }
@@ -608,31 +611,37 @@ struct MessageRenderModeLine: View {
 /// The attachments: a hairline, then the chips, 8 apart, wrapping.
 struct MessageAttachments: View {
     let attachments: [FocusAttachmentFfi]
+    /// A click on a chip: open that part.
+    var open: (Int64) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Rectangle().fill(.separator).frame(height: 1)
             MessageFlow(spacing: MessageRhythm.chipGap) {
                 ForEach(attachments, id: \.id) { part in
-                    HStack(spacing: 8) {
-                        Image(systemName: "doc")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.secondary)
-                        Text(part.name)
-                            .font(.system(size: 13.5))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Text(part.size)
-                            .font(.system(size: 11.5, design: .monospaced))
-                            .foregroundStyle(.secondary)
+                    Button { open(part.id) } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "doc")
+                                .font(.system(size: 14))
+                                .foregroundStyle(.secondary)
+                            Text(part.name)
+                                .font(.system(size: 13.5))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Text(part.size)
+                                .font(.system(size: 11.5, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(height: MessageRhythm.chipHeight)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: MessageRhythm.chipRadius)
+                                .strokeBorder(.separator, lineWidth: 1))
+                        .accessibilityElement(children: .combine)
                     }
-                    .padding(.horizontal, 12)
-                    .frame(height: MessageRhythm.chipHeight)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: MessageRhythm.chipRadius)
-                            .strokeBorder(.separator, lineWidth: 1))
-                    .accessibilityElement(children: .combine)
+                    .buttonStyle(.plain)
+                    .contentShape(Rectangle())
                 }
             }
             .padding(.top, MessageRhythm.attachmentsRuleToChips)

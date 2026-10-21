@@ -108,6 +108,15 @@ impl Session {
             .input(postio_focus::Input::Point(position));
     }
 
+    /// A double-click on `position`: the cursor goes to the row and its
+    /// message opens, as Return does there. GTK's `activate` on its list is
+    /// the same two steps.
+    pub fn focus_activate(&self, position: u32) {
+        let driver = self.focus_driver();
+        driver.input(postio_focus::Input::Point(position));
+        driver.command(postio_core::CommandId::OpenMessage);
+    }
+
     /// A modified click on `position`: `range` when Shift was held, a
     /// toggle when the platform's toggle modifier was (Command on the Mac).
     pub fn focus_pick(&self, position: u32, range: bool) {
