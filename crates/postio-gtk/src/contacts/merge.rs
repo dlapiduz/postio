@@ -97,7 +97,7 @@ fn sheet_plate(sheet: &MergeSheetView, hooks: &MergeHooks) -> gtk::Box {
     let result = gtk::Box::new(gtk::Orientation::Horizontal, S3);
     result.add_css_class("focus-merge-result");
     result.append(&super::avatar::widget(&sheet.result.avatar, 40));
-    let words = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    let words = gtk::Box::new(gtk::Orientation::Vertical, S1);
     words.set_hexpand(true);
     let name = gtk::Label::new(None);
     name.set_xalign(0.0);
@@ -151,7 +151,7 @@ fn card_button(index: usize, card: &MergeCard, hooks: &MergeHooks) -> gtk::Butto
     if card.kept {
         one.add_css_class("focus-merge-card-kept");
     }
-    let column = gtk::Box::new(gtk::Orientation::Vertical, S1 + 2);
+    let column = gtk::Box::new(gtk::Orientation::Vertical, S2);
     let head = gtk::Box::new(gtk::Orientation::Horizontal, S2);
     head.append(&super::avatar::widget(&card.avatar, 30));
     let names = gtk::Box::new(gtk::Orientation::Vertical, 0);

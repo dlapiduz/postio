@@ -1928,7 +1928,7 @@ impl SettingsPanel {
         for (index, row) in view.rows.iter().enumerate() {
             let line = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
             line.add_css_class("postio-settings-switch-row");
-            let words = gtk::Box::new(gtk::Orientation::Vertical, 1);
+            let words = gtk::Box::new(gtk::Orientation::Vertical, space::S1);
             words.set_hexpand(true);
             let title = gtk::Label::new(Some(&row.title));
             title.add_css_class("postio-settings-switch-title");

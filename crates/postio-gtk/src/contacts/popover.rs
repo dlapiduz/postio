@@ -41,7 +41,7 @@ pub fn build(view: &PopoverView, hooks: &PopoverHooks) -> gtk::Box {
     let head = gtk::Box::new(gtk::Orientation::Horizontal, S3 + 2);
     head.add_css_class("focus-contact-popover-head");
     head.append(&super::avatar::widget(&view.avatar, 44));
-    let names = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    let names = gtk::Box::new(gtk::Orientation::Vertical, S1);
     names.set_valign(gtk::Align::Center);
     let name = gtk::Label::new(Some(&view.name));
     name.add_css_class("focus-contact-popover-name");
@@ -87,7 +87,7 @@ fn introduction(intro: &IntroView) -> gtk::Box {
     status.set_wrap(true);
     column.append(&status);
     if let Some(title) = &intro.signature_title {
-        let signature = gtk::Box::new(gtk::Orientation::Vertical, S1 + 1);
+        let signature = gtk::Box::new(gtk::Orientation::Vertical, S1);
         signature.add_css_class("focus-contact-note");
         let heading = gtk::Label::new(Some(title));
         heading.add_css_class("focus-contact-heading");
@@ -116,7 +116,7 @@ fn introduction(intro: &IntroView) -> gtk::Box {
 }
 
 fn tiles(view: &PopoverView) -> gtk::Box {
-    let tiles = gtk::Box::new(gtk::Orientation::Horizontal, S1 + 2);
+    let tiles = gtk::Box::new(gtk::Orientation::Horizontal, S2);
     tiles.add_css_class("focus-contact-popover-body");
     tiles.set_homogeneous(true);
     for tile in &view.tiles {
@@ -138,7 +138,7 @@ fn tiles(view: &PopoverView) -> gtk::Box {
 }
 
 fn open_lines(view: &PopoverView) -> gtk::Box {
-    let column = gtk::Box::new(gtk::Orientation::Vertical, S1 + 1);
+    let column = gtk::Box::new(gtk::Orientation::Vertical, S1);
     column.add_css_class("focus-contact-popover-body");
     for line in &view.open {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, S2);
@@ -195,7 +195,7 @@ fn arrival(view: &PopoverView, hooks: &PopoverHooks) -> gtk::Box {
 }
 
 fn actions(view: &PopoverView, hooks: &PopoverHooks) -> gtk::Box {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, S2 - 1);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, S2);
     row.add_css_class("focus-contact-popover-actions");
     for action in &view.actions {
         let one = button::button(

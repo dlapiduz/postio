@@ -6,7 +6,7 @@
 //! and turns a field both sides changed into a question; it never says delete
 //! and never overwrites. [`dry_run`] reads a snapshot and returns the plan;
 //! that is all this crate does with an address book unless two keys are turned,
-//! and [`write`] says which: the build's [`CONTACT_SYNC_WRITES`] and the
+//! and [`write()`](fn@write) says which: the build's [`CONTACT_SYNC_WRITES`] and the
 //! person's confirmation of this very plan.
 //!
 //! No I/O, no database, no toolkit: the boundary check holds it there, and
@@ -647,7 +647,7 @@ pub trait ExternalAddressBook {
     fn request_access(&mut self) -> Authorization;
     /// Every record, for the sync scope.
     fn snapshot(&mut self) -> Result<Vec<ExternalRecord>, SyncError>;
-    /// Writes `plan`. Called only by [`write`], behind two keys.
+    /// Writes `plan`. Called only by [`write()`](fn@write), behind two keys.
     fn apply(&mut self, plan: &Plan) -> Result<(), SyncError>;
 }
 

@@ -84,7 +84,7 @@ impl ContactsView {
         let total = gtk::Label::new(None);
         total.add_css_class("dim-label");
         total.add_css_class("focus-contacts-total");
-        let tabs = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        let tabs = gtk::Box::new(gtk::Orientation::Horizontal, S1);
         tabs.add_css_class("focus-contacts-tabs");
         let filter = gtk::Entry::new();
         filter.add_css_class("focus-contacts-filter");
@@ -360,7 +360,7 @@ impl ContactsView {
             if tab.on {
                 one.add_css_class("focus-contacts-tab-on");
             }
-            let words = gtk::Box::new(gtk::Orientation::Horizontal, S1 + 2);
+            let words = gtk::Box::new(gtk::Orientation::Horizontal, S2);
             words.append(&gtk::Label::new(Some(&tab.title)));
             if let Some(count) = &tab.count {
                 let count = gtk::Label::new(Some(count));
@@ -791,7 +791,7 @@ fn row_widget(row: Option<&RowView>) -> gtk::Box {
     } else {
         line.append(&avatar);
     }
-    let words = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    let words = gtk::Box::new(gtk::Orientation::Vertical, S1);
     words.set_hexpand(true);
     words.set_valign(gtk::Align::Center);
     let top = gtk::Box::new(gtk::Orientation::Horizontal, S2);
@@ -813,7 +813,7 @@ fn row_widget(row: Option<&RowView>) -> gtk::Box {
     words.append(&top);
     words.append(&address);
     line.append(&words);
-    let right = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    let right = gtk::Box::new(gtk::Orientation::Vertical, S1);
     right.set_valign(gtk::Align::Center);
     let when = gtk::Label::new(Some(&row.when));
     when.set_xalign(1.0);

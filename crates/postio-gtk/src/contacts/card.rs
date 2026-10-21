@@ -246,7 +246,7 @@ fn notes(card: &CardView) -> gtk::Box {
 
 fn stats(card: &CardView) -> gtk::Box {
     let column = gtk::Box::new(gtk::Orientation::Vertical, S2);
-    let tiles = gtk::Box::new(gtk::Orientation::Horizontal, S1 + 2);
+    let tiles = gtk::Box::new(gtk::Orientation::Horizontal, S2);
     tiles.set_homogeneous(true);
     for tile in &card.tiles {
         let one = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -319,7 +319,7 @@ fn months(strip: &MonthStrip) -> gtk::Box {
 }
 
 fn lines(card: &CardView) -> gtk::Box {
-    let column = gtk::Box::new(gtk::Orientation::Vertical, S1 + 2);
+    let column = gtk::Box::new(gtk::Orientation::Vertical, S2);
     for line in &card.lines {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, S3);
         row.add_css_class("focus-contact-line");
@@ -353,7 +353,7 @@ fn files(card: &CardView) -> gtk::FlowBox {
     flow.set_row_spacing(S2 as u32);
     flow.set_homogeneous(false);
     for file in &card.files {
-        let chip = gtk::Box::new(gtk::Orientation::Horizontal, S1 + 2);
+        let chip = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         chip.add_css_class("focus-contact-file");
         let kind = gtk::Label::new(Some(&file.kind));
         kind.add_css_class("focus-contact-file-kind");

@@ -19,7 +19,7 @@ use postio_ui::contact_edit::{EditButton, EditView, FormField, Segment};
 use postio_widgets::widgets::button::{self, Kind, Size};
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::segmented::SegmentedControl;
-use postio_widgets::widgets::space::{S2, S3, S4, S6};
+use postio_widgets::widgets::space::{S2, S3, S4};
 
 /// What a change in the form does.
 #[derive(Clone)]
@@ -254,7 +254,7 @@ fn bar_button(
 }
 
 fn row(label: &str, content: &impl IsA<gtk::Widget>) -> gtk::Box {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, S6 - S2);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, S4);
     let name = gtk::Label::new(Some(label));
     name.add_css_class("dim-label");
     name.add_css_class("focus-contact-form-label");
@@ -324,7 +324,7 @@ fn field(
 }
 
 fn addresses(fields: &mut Vec<(Slot, gtk::Entry)>, view: &EditView, hooks: &FormHooks) -> gtk::Box {
-    let column = gtk::Box::new(gtk::Orientation::Vertical, S2 - 1);
+    let column = gtk::Box::new(gtk::Orientation::Vertical, S2);
     for (index, address) in view.addresses.iter().enumerate() {
         let line = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         let primary = gtk::CheckButton::new();
@@ -412,7 +412,7 @@ fn label_menu(index: usize, current: &str, hooks: &FormHooks) -> gtk::MenuButton
 }
 
 fn seen(view: &EditView, hooks: &FormHooks) -> gtk::Box {
-    let column = gtk::Box::new(gtk::Orientation::Vertical, S2 - 1);
+    let column = gtk::Box::new(gtk::Orientation::Vertical, S2);
     for (index, line) in view.seen.iter().enumerate() {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, S3);
         row.add_css_class("focus-contact-seen");
@@ -451,7 +451,7 @@ fn seen(view: &EditView, hooks: &FormHooks) -> gtk::Box {
 }
 
 fn groups(fields: &mut Vec<(Slot, gtk::Entry)>, view: &EditView, hooks: &FormHooks) -> gtk::Box {
-    let column = gtk::Box::new(gtk::Orientation::Vertical, S2 - 1);
+    let column = gtk::Box::new(gtk::Orientation::Vertical, S2);
     let chips = gtk::FlowBox::new();
     chips.set_selection_mode(gtk::SelectionMode::None);
     chips.set_column_spacing(S2 as u32 - 1);

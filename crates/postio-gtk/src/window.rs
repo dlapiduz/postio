@@ -3888,10 +3888,10 @@ impl FocusWindow {
         };
         let weak = self.downgrade();
         glib::spawn_future_local(async move {
-            // POSTIO-GLIB-SAFE: one client call, a oneshot receive.
             let Some(window) = weak.upgrade() else {
                 return;
             };
+            // POSTIO-GLIB-SAFE: one client call, a oneshot receive.
             let (text, count) = match client.export_contacts().await {
                 Ok(done) => done,
                 Err(error) => {

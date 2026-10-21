@@ -18,14 +18,13 @@ public final class AppleAddressBook: SyncAddressBook {
     public init() {}
 
     /// Whether this process must not touch the real store: a demo (which
-    /// invents everything) or a test run (which uses fakes).
+    /// invents everything), or anything that is not the application itself.
+    /// A test runner, a command-line tool and a preview all run outside
+    /// `Postio.app`, and the real address book is the application's alone, so
+    /// this asks the one question that cannot be fooled by how a runner names
+    /// itself.
     public static var refusesHere: Bool {
-        if DemoMode.seed != nil { return true }
-        let environment = ProcessInfo.processInfo.environment
-        return environment["XCTestConfigurationFilePath"] != nil
-            || environment["XCTestBundlePath"] != nil
-            || environment["SWIFT_TESTING_ENABLED"] != nil
-            || NSClassFromString("XCTestCase") != nil
+        DemoMode.seed != nil || !Bundle.main.bundlePath.hasSuffix(".app")
     }
 
     public var access: SyncAccess {
