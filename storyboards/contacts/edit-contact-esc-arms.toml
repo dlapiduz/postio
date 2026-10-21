@@ -2,7 +2,7 @@
 # the form over the card with the first name in the caret; an edit and a first
 # Escape arm instead of discarding, and the second Escape discards and puts
 # the card back. An untouched form closes on the first Escape.
-apps   = ["macos"]
+apps   = ["focus", "macos"]
 source = { kind = "spec", ref = "specs/011-focus-contacts S8" }
 seed   = "small"
 design = "06-edit-contact"

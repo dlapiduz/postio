@@ -2,7 +2,7 @@
 # / puts the keyboard in the field, typing narrows the list to the people
 # the words name within the tab, and Escape clears the words first and only
 # then leaves Contacts.
-apps   = ["macos"]
+apps   = ["focus", "macos"]
 source = { kind = "spec", ref = "specs/011-focus-contacts S7" }
 seed   = "small"
 design = "01-contacts-list-and-card"

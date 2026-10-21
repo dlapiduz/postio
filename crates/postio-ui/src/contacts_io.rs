@@ -123,7 +123,10 @@ pub fn export_sheet(count_of: usize, keymap: &Keymap) -> IoSheetView {
         title: format!("Exported {}", count(count_of, "contact", "contacts")),
         lines: vec![
             "Written to the file you named, with their groups.".to_owned(),
-            "Nothing else leaves this Mac.".to_owned(),
+            format!(
+                "Nothing else leaves {}.",
+                crate::contacts_view::this_computer(keymap)
+            ),
         ],
         review: None,
         done: EditButton {

@@ -4,7 +4,7 @@
 # are kept; n says they are two people and moves on; Escape is Later; Return
 # merges, and the next group follows. Every line under "Why we think so" is
 # one the scorer (`postio-classify` duplicates::score) said.
-apps   = ["macos"]
+apps   = ["focus", "macos"]
 source = { kind = "spec", ref = "specs/011-focus-contacts S10" }
 seed   = "small"
 design = "07-merge-duplicates"

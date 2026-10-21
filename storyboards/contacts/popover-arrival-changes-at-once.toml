@@ -2,7 +2,7 @@
 # screen 04): → and ← move along Inbox, Digest and Filtered out and stop at
 # the ends; the choice applies at once, with a toast and its Undo; and ⌘Z
 # puts the earlier choice back, drawn in the popover if it is still up.
-apps   = ["macos"]
+apps   = ["focus", "macos"]
 source = { kind = "spec", ref = "specs/011-focus-contacts S6" }
 seed   = "small"
 design = "04-popover-known-sender"

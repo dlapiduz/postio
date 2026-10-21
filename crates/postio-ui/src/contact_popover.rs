@@ -326,7 +326,7 @@ pub fn view(facts: &Facts<'_>, keymap: &Keymap, now: DateTime<Local>) -> Popover
     };
     let intro = facts
         .introduction
-        .map(|introduction| intro_view(introduction, facts.stats, now));
+        .map(|introduction| intro_view(introduction, facts.stats, keymap, now));
     let actions = if intro.is_some() {
         vec![
             action("Add contact", CommandId::ContactAdd, true, true),
@@ -383,6 +383,7 @@ pub fn view(facts: &Facts<'_>, keymap: &Keymap, now: DateTime<Local>) -> Popover
 pub fn intro_view(
     introduction: &postio_model::Introduction,
     stats: &ContactStats,
+    keymap: &Keymap,
     now: DateTime<Local>,
 ) -> IntroView {
     let when = introduction.last_at.map(|at| {
@@ -431,7 +432,12 @@ pub fn intro_view(
         status: format!("Not saved yet. {first}{with}."),
         signature_title: said.then(|| "From their signature".to_owned()),
         signature_lines,
-        signature_foot: said.then(|| "Read on this Mac. Added only if you save.".to_owned()),
+        signature_foot: said.then(|| {
+            format!(
+                "Read on {}. Added only if you save.",
+                crate::contacts_view::this_computer(keymap)
+            )
+        }),
     }
 }
 
@@ -689,7 +695,7 @@ mod tests {
             messages: 3,
             ..stats()
         };
-        let intro = intro_view(&introduction, &stats, now());
+        let intro = intro_view(&introduction, &stats, &keymap(), now());
         assert_eq!(intro.signature_title, None);
         assert!(intro.signature_lines.is_empty() && intro.signature_foot.is_none());
         assert_eq!(intro.status, "Not saved yet. 3 emails so far.");

@@ -353,6 +353,16 @@ pub struct FileChipView {
     pub name: String,
 }
 
+/// What the words call this machine: "this Mac" where the keys are the
+/// Mac's, "this computer" elsewhere.
+pub fn this_computer(keymap: &Keymap) -> &'static str {
+    if keymap.platform() == Some(postio_config::paths::Platform::Apple) {
+        "this Mac"
+    } else {
+        "this computer"
+    }
+}
+
 /// A person's or a newsletter's card, drawn whole.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CardView {
@@ -851,7 +861,7 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
             .map(str::trim)
             .filter(|note| !note.is_empty())
             .map(str::to_owned),
-        notes_foot: "Kept on this Mac.".to_owned(),
+        notes_foot: format!("Kept on {}.", this_computer(keymap)),
         stats_title: if correspondent {
             "Your mail together"
         } else {
@@ -932,6 +942,14 @@ pub fn footer(overview: &ContactsOverview, keymap: &Keymap) -> FooterView {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_words_name_this_machine_as_the_keys_do() {
+        use postio_config::paths::Platform;
+        let on = |platform| Keymap::resolve_on(&postio_config::KeyBindings::default(), platform);
+        assert_eq!(this_computer(&on(Platform::Apple)), "this Mac");
+        assert_eq!(this_computer(&on(Platform::Freedesktop)), "this computer");
+    }
     use chrono::TimeZone;
     use postio_model::{
         AddressId, Contact, ContactAddress, ContactId, ContactSettings, ContactSource,

@@ -8,7 +8,7 @@
 # The controller's half is postio-focus tests/contact_popover.rs; the words
 # are postio-ui's contact_popover; what the host answers is postio-host's
 # contact_glance.
-apps   = ["macos"]
+apps   = ["focus", "macos"]
 source = { kind = "spec", ref = "specs/011-focus-contacts S6" }
 seed   = "small"
 design = "04-popover-known-sender"

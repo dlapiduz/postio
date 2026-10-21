@@ -64,6 +64,11 @@ pub struct Keymap {
 }
 
 impl Keymap {
+    /// The platform this was resolved for; `None` for an empty keymap.
+    pub fn platform(&self) -> Option<Platform> {
+        self.platform
+    }
+
     /// Resolve `[keys]` onto the command registry.
     ///
     /// An override that cannot be used — an unusable binding, a command this

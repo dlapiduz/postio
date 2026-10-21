@@ -2,7 +2,7 @@
 # x marks the person under the cursor, a tick on the avatar says so, and m
 # opens the same sheet on the marked, with "You chose these records." where
 # the scorer has nothing to add. Split takes an address off a merged person.
-apps   = ["macos"]
+apps   = ["focus", "macos"]
 source = { kind = "spec", ref = "specs/011-focus-contacts S10" }
 seed   = "small"
 design = "07-merge-duplicates"

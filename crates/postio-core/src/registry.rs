@@ -1660,7 +1660,10 @@ static SPECS: &[CommandSpec] = &[
             .with(Context::Accounts)
             .with(Context::Digest)
             .with(Context::Filtered)
-            .with(Context::Contacts),
+            .with(Context::Contacts)
+            // And the popover over a sender: choosing where their mail
+            // arrives is undoable at once, with its toast (S6).
+            .with(Context::ContactPopover),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,

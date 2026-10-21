@@ -9,7 +9,7 @@
 # The controller's half is postio-focus tests/contacts.rs; the words are
 # postio-ui's contacts_view; the reads are postio-storage's contacts_view
 # suite.
-apps   = ["macos"]
+apps   = ["focus", "macos"]
 source = { kind = "spec", ref = "specs/011-focus-contacts S7" }
 seed   = "small"
 design = "01-contacts-list-and-card"
