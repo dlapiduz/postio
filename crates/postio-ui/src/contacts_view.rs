@@ -564,11 +564,14 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
         } else {
             "All messages"
         };
-        vec![
-            button(all, CommandId::ContactShowMail, true, true),
-            button("Unsubscribe", CommandId::Unsubscribe, false, false),
-            button("Edit", CommandId::ContactEdit, false, false),
-        ]
+        // Unsubscribing acts on their newest message, so with none there is
+        // nothing to press and no button to leave dead.
+        let mut buttons = vec![button(all, CommandId::ContactShowMail, true, true)];
+        if !card.issues.is_empty() {
+            buttons.push(button("Unsubscribe", CommandId::Unsubscribe, false, true));
+        }
+        buttons.push(button("Edit", CommandId::ContactEdit, false, true));
+        buttons
     };
     let preferred = person.preferred_address().map(|owned| owned.id);
     let mut addresses: Vec<AddressLine> = person
@@ -1260,6 +1263,37 @@ mod tests {
         assert_eq!(view.lines[1].label, "Waiting on Ada");
         assert_eq!(view.files_title.as_deref(), Some("Recent files from Ada"));
         assert_eq!(view.files[0].kind, "XLSX");
+    }
+
+    #[test]
+    fn every_button_on_a_lists_card_works_and_unsubscribe_is_there_only_with_mail_to_act_on() {
+        let mut list = ada_card();
+        list.person.kind = ContactKind::List;
+        list.issues = vec![IssueRead {
+            message: MessageId::new(9),
+            subject: "Minutes".into(),
+            at: Utc.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap(),
+            opened: false,
+        }];
+        let view = card(&list, &keymap(), now());
+        let buttons: Vec<_> = view
+            .buttons
+            .iter()
+            .map(|b| (b.label.as_str(), b.enabled))
+            .collect();
+        assert_eq!(
+            buttons,
+            [("All messages", true), ("Unsubscribe", true), ("Edit", true)]
+        );
+        // No message to unsubscribe through: no button that cannot be pressed.
+        list.issues.clear();
+        let view = card(&list, &keymap(), now());
+        assert!(
+            view.buttons.iter().all(|b| b.enabled),
+            "{:?}",
+            view.buttons
+        );
+        assert!(view.buttons.iter().all(|b| b.label != "Unsubscribe"));
     }
 
     #[test]

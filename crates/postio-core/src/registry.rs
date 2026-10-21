@@ -1777,7 +1777,9 @@ static SPECS: &[CommandSpec] = &[
         // unread (docs/PRODUCT.md §8). In a digest too.
         default_binding: "M",
         alternate_bindings: &[],
-        contexts: ctx(MESSAGE_SURFACES).with(Context::Digest),
+        contexts: ctx(MESSAGE_SURFACES)
+            .with(Context::Digest)
+            .with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: MAIL,

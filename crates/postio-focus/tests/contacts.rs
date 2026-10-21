@@ -496,3 +496,40 @@ fn other_keys_do_nothing_under_the_view() {
     }
     let _ = Command::Undo;
 }
+
+/// Unsubscribe on a list's card unsubscribes through the list's newest
+/// message.
+#[test]
+fn unsubscribe_on_a_lists_card_acts_on_its_newest_message() {
+    let mut focus = mac();
+    let effects = open(&mut focus);
+    let [(ticket, Request::ContactCard { stamp, .. })] = asks(&effects)[..] else {
+        panic!("the card is read: {effects:?}");
+    };
+    let mut list = card(1, "Announcements");
+    list.person.kind = ContactKind::List;
+    list.issues = vec![postio_model::IssueRead {
+        message: postio_model::MessageId::new(77),
+        subject: "Minutes".into(),
+        at: Utc.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap(),
+        opened: false,
+    }];
+    focus.handle_on(
+        Input::Reply(
+            ticket,
+            Reply::ContactCard {
+                stamp,
+                answer: Ok(Some(Box::new(list))),
+            },
+        ),
+        &NoRows,
+    );
+    let effects = run(&mut focus, CommandId::Unsubscribe);
+    assert!(
+        matches!(
+            asks(&effects)[..],
+            [(_, Request::Unsubscribe(message))] if message.get() == 77
+        ),
+        "{effects:?}"
+    );
+}

@@ -176,6 +176,7 @@ impl FocusController {
                 | CommandId::ContactCompose
                 | CommandId::ContactPopover
                 | CommandId::ContactEdit
+                | CommandId::Unsubscribe
                 | CommandId::ContactNew
                 | CommandId::ContactSave
                 | CommandId::ToggleSelection
@@ -216,6 +217,15 @@ impl FocusController {
             CommandId::ContactJoin => Some(self.contacts_merge_marked()),
             CommandId::ContactsSuggestions => Some(self.contacts_review_ask()),
             CommandId::ContactEdit => Some(self.contact_edit_open()),
+            // Through their newest message, the way the reader does it.
+            CommandId::Unsubscribe => Some(
+                contacts
+                    .card
+                    .as_ref()
+                    .and_then(|card| card.issues.first())
+                    .map(|issue| vec![Step::Ask(Request::Unsubscribe(issue.message))])
+                    .unwrap_or_default(),
+            ),
             CommandId::ContactNew => Some(self.contact_new_open()),
             CommandId::Back => {
                 if contacts.filter.is_empty() {
