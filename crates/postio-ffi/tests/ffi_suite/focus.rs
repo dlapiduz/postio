@@ -441,6 +441,31 @@ async fn the_open_message_is_the_controllers() {
     session.shutdown();
 }
 
+/// A double-click is a click and then Return on the row: the cursor goes to
+/// the row clicked, wherever it stood, and its message opens (GTK's `activate`
+/// on the list does the same, window.rs).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_double_click_opens_the_row_clicked() {
+    use postio_ffi::UiEvent;
+    let session = inbox_of(&["First", "Second", "Third"]).await;
+    cursor_on_the_first_row(&session).await;
+
+    session.focus_activate(2);
+    assert!(
+        heard(&session, 5, |event| matches!(
+            event,
+            UiEvent::FocusOpenMessage {
+                index: 2,
+                total: 3,
+                ..
+            }
+        ))
+        .await,
+        "the third row's message opens, not the cursor's old row"
+    );
+    session.shutdown();
+}
+
 /// `!` narrows the list through the controller, and a verb the host aims
 /// resolves against the narrowed list, not the inbox it came from.
 #[tokio::test(flavor = "multi_thread")]

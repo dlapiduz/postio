@@ -31,6 +31,8 @@ public final class FocusListTable: NSObject {
     /// A plain click on a row: `focusPoint`. The ring moves when the
     /// controller's `FocusCursor` comes back, never here.
     public var onPoint: ((Int) -> Void)?
+    /// A double-click on a row.
+    public var onActivate: ((Int) -> Void)?
 
     /// A modified click on a row: `focusPick`, with `range` for ⇧ and a
     /// toggle for ⌘.
@@ -98,6 +100,10 @@ public final class FocusListTable: NSObject {
         // its own selection is off, so this is the only thing a click does.
         tableView.target = self
         tableView.action = #selector(rowClicked)
+        // A double-click opens the row, as Return does: the second click's
+        // `action` has already pointed the cursor, and this tells the
+        // controller to open what it points at.
+        tableView.doubleAction = #selector(rowDoubleClicked)
 
         scrollView.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(
@@ -107,6 +113,16 @@ public final class FocusListTable: NSObject {
 
     @objc private func rowClicked() {
         clicked(row: tableView.clickedRow, modifiers: NSApp.currentEvent?.modifierFlags ?? [])
+    }
+
+    @objc private func rowDoubleClicked() {
+        activated(row: tableView.clickedRow)
+    }
+
+    /// A double-click on `row`: the controller points at it and opens it.
+    public func activated(row: Int) {
+        guard row >= 0, row < model.count else { return }
+        onActivate?(row)
     }
 
     @objc private func boundsChanged() {

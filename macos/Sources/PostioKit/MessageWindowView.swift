@@ -315,6 +315,19 @@ public struct MessageWindowView<BodyView: View>: View {
         // focus ring on the first button would claim a focus nobody moved
         // there, and the accent is for the list's cursor (FR-017).
         .focusEffectDisabled()
+        .overlay(alignment: .bottom) {
+            // What was asked of an attachment, said quietly for a moment.
+            if let notice = model.notice {
+                Text(notice)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    .padding(.bottom, 16)
+                    .accessibilityAddTraits(.updatesFrequently)
+            }
+        }
         .coordinateSpace(name: MessageVerbFrames.space)
         .onPreferenceChange(MessageVerbFrames.self) { frames in verbFrames(frames) }
     }
@@ -343,6 +356,7 @@ public struct MessageWindowView<BodyView: View>: View {
                         // list, whichever was pressed.
                         leave: { run(Intercepted.unsubscribe) },
                         clear: { model.clearListMail(delete: $0) },
+                        openAttachment: { model.openAttachment($0) },
                         body: { document, card in bodyView(layer.message, document, card) })
                         .environment(\.messageBodyDrawn) { model.bodyDrawn(layer.message) }
                         .opacity(front ? 1 : 0)
