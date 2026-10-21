@@ -853,8 +853,6 @@ mod tests {
                 case.rows
                     .iter()
                     .copied()
-                    .collect::<Vec<_>>()
-                    .into_iter()
                     .map(|(message, kind)| (message.get(), kind))
                     .collect(),
             );
