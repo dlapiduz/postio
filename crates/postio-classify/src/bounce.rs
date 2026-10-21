@@ -39,13 +39,11 @@ pub fn detect(content_type: Option<&str>, sender: Option<&str>, body: &str) -> O
                     status = Some(value.split_whitespace().next().unwrap_or("").to_owned());
                 }
             }
-            "final-recipient" => {
-                if address.is_none() {
-                    // `rfc822; a.moreno@example.net`
-                    let who = value.rsplit_once(';').map_or(value, |(_, who)| who).trim();
-                    if is_address(who) {
-                        address = Some(who.to_ascii_lowercase());
-                    }
+            // `rfc822; a.moreno@example.net`
+            "final-recipient" if address.is_none() => {
+                let who = value.rsplit_once(';').map_or(value, |(_, who)| who).trim();
+                if is_address(who) {
+                    address = Some(who.to_ascii_lowercase());
                 }
             }
             _ => {}

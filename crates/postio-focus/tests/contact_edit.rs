@@ -7,15 +7,14 @@ use chrono::{TimeZone, Utc};
 use postio_config::paths::Platform;
 use postio_core::{Command, CommandId};
 use postio_focus::{
-    ContactsView, EditChange, Effect, FocusController, Input, Intent, NoRows, Policy, Reply,
-    Request, SurfaceKind, Ticket,
+    EditChange, Effect, FocusController, Input, Intent, NoRows, Policy, Reply, Request,
+    SurfaceKind, Ticket,
 };
 use postio_model::{
     AddressId, Contact, ContactAddress, ContactArrival, ContactCardRead, ContactId, ContactKind,
     ContactListRow, ContactSettings, ContactSource, ContactState, ContactStats, ContactTab,
     ContactsOverview, ContactsPageRead, EmailAddress, ReviewSummary,
 };
-use postio_ui::keymap::KeyContext;
 
 fn mac() -> FocusController {
     let mut focus = FocusController::new(Policy::for_platform(Platform::Apple));
@@ -44,16 +43,6 @@ fn asks(effects: &[Effect]) -> Vec<(Ticket, Request)> {
             _ => None,
         })
         .collect()
-}
-
-fn frame(effects: &[Effect]) -> Option<ContactsView> {
-    shown(effects)
-        .into_iter()
-        .rev()
-        .find_map(|intent| match intent {
-            Intent::Contacts(view) => Some(*view),
-            _ => None,
-        })
 }
 
 fn run(focus: &mut FocusController, command: CommandId) -> Vec<Effect> {

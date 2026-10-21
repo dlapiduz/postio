@@ -168,6 +168,7 @@ mod tests {
                 }],
                 offered_merges: 0,
                 look_alikes: 1,
+                ..ImportSummary::default()
             },
             &keymap(),
         );

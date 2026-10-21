@@ -754,6 +754,7 @@ mod join_tests {
                 index: 3,
                 reason: "it has no email address".into(),
             }],
+            ..ImportSummary::default()
         };
         assert_eq!(
             import_summary_line(&summary),
