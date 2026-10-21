@@ -13,6 +13,8 @@
 //! notify = true            # desktop notifications for new mail
 //! notify_roles = ["inbox"] # which mailboxes' arrivals notify
 //! badge = true             # unread count on the app's icon
+//! empty_junk_after_days = 0  # permanently delete Junk older than this; 0 = never
+//! empty_trash_after_days = 0 # the same for Trash
 //! ```
 
 use serde::{Deserialize, Deserializer, Serialize};
@@ -191,6 +193,11 @@ pub struct SyncConfig {
     /// waits quietly is what somebody who turned the interruptions off may
     /// still want.
     pub badge: bool,
+    /// Permanently delete Junk older than this many days, on this machine and
+    /// on the server (#1932); `0`, the default, never. Flagged mail is kept.
+    pub empty_junk_after_days: u32,
+    /// The same for Trash.
+    pub empty_trash_after_days: u32,
     /// Keys this version of Postio does not know, preserved verbatim.
     #[serde(flatten)]
     pub extra: Extras,
@@ -231,6 +238,10 @@ struct RawSyncConfig {
     notify_roles: Vec<String>,
     #[serde(default = "crate::yes")]
     badge: bool,
+    #[serde(default)]
+    empty_junk_after_days: u32,
+    #[serde(default)]
+    empty_trash_after_days: u32,
     #[serde(flatten)]
     extra: Extras,
 }
@@ -261,6 +272,8 @@ impl<'de> Deserialize<'de> for SyncConfig {
             notify: raw.notify,
             notify_roles: raw.notify_roles,
             badge: raw.badge,
+            empty_junk_after_days: raw.empty_junk_after_days,
+            empty_trash_after_days: raw.empty_trash_after_days,
             extra: raw.extra,
         })
     }
@@ -280,6 +293,8 @@ impl Default for SyncConfig {
             notify: true,
             notify_roles: notify_roles(),
             badge: true,
+            empty_junk_after_days: 0,
+            empty_trash_after_days: 0,
             extra: Extras::new(),
         }
     }
@@ -332,6 +347,24 @@ mod tests {
             toml::from_str("initial_sync_messages = 500\n").expect("a count still parses");
         assert_eq!(counted.initial_sync_messages, 500);
         assert!(toml::from_str::<SyncConfig>("initial_sync_messages = \"some\"\n").is_err());
+    }
+
+    #[test]
+    fn emptying_junk_and_trash_is_off_until_asked_for_and_round_trips() {
+        let off = SyncConfig::default();
+        assert_eq!(
+            (off.empty_junk_after_days, off.empty_trash_after_days),
+            (0, 0)
+        );
+        let on = SyncConfig {
+            empty_junk_after_days: 30,
+            empty_trash_after_days: 7,
+            ..SyncConfig::default()
+        };
+        let written = patch_sync("", &on).expect("patch");
+        assert!(written.contains("empty_junk_after_days = 30"), "{written}");
+        let read: SyncOnlyOwned = toml::from_str(&written).expect("parse");
+        assert_eq!(read.sync.empty_trash_after_days, 7);
     }
 
     #[derive(Deserialize)]

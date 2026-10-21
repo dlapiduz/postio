@@ -56,11 +56,6 @@ const KNOWN_ORPHANS: &[(CommandId, &str)] = &[
     (CommandId::SwitchTreatment, "specs/009-focus-macos T070"),
     // The message window's More menu.
     (CommandId::MoreActions, "specs/009-focus-macos T067"),
-    // The message window's attachments and links.
-    (
-        CommandId::OpenAttachmentOrLink,
-        "specs/009-focus-macos T068",
-    ),
     (
         CommandId::ToggleReadingPane,
         "specs/009-focus-macos M4 (the reading pane beside the list comes after parity)",
@@ -165,6 +160,7 @@ async fn wired() -> Vec<CommandId> {
     let builder = postio_session::refresh::wire(
         builder,
         postio_session::refresh::EngineSlot::default(),
+        database,
         state,
     );
     builder.build().wired().collect()

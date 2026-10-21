@@ -62,6 +62,7 @@ pub mod invocation;
 pub mod menu;
 pub mod perf_budget;
 pub mod registry;
+pub mod retention;
 pub mod state;
 pub mod test_support;
 pub mod undo;

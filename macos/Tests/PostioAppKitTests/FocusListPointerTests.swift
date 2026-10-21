@@ -47,6 +47,17 @@ struct FocusListPointerTests {
         #expect(table.selected.isEmpty, "the boxes wait for FocusSelection")
     }
 
+    @Test func aDoubleClickOnARowIsReportedAsActivation() {
+        let table = Self.table(5)
+        var activated: [Int] = []
+        table.onActivate = { activated.append($0) }
+        #expect(table.tableView.doubleAction != nil, "the table listens for a double-click")
+        table.activated(row: 3)
+        table.activated(row: -1)
+        table.activated(row: 9)
+        #expect(activated == [3], "a row, and only a row that is there")
+    }
+
     @Test func aClickOutsideTheRowsIsNotReported() {
         let table = Self.table(2)
         var pointed: [Int] = []
@@ -117,5 +128,22 @@ struct FocusListPointerTests {
         table.scrollView.contentView.scroll(to: NSPoint(x: 0, y: 400))
         table.apply(.listToTop)
         #expect(table.scrollView.contentView.bounds.origin.y == 0)
+    }
+}
+
+/// The menu `o` shows over the open message.
+@MainActor
+struct AttachmentMenuTests {
+    @Test func theMenuListsEachPartByNameAndSizeAndChoosingOneSaysWhich() {
+        var chosen: [Int64] = []
+        let menu = AttachmentMenu { chosen.append($0) }
+        let built = menu.menu(for: [
+            FocusAttachmentFfi(id: 41, name: "report.pdf", size: "48 KB"),
+            FocusAttachmentFfi(id: 42, name: "photo.png", size: "2 MB"),
+        ])
+        #expect(built.items.map(\.title) == ["report.pdf  48 KB", "photo.png  2 MB"])
+        let second = built.items[1]
+        _ = second.target?.perform(second.action, with: second)
+        #expect(chosen == [42])
     }
 }

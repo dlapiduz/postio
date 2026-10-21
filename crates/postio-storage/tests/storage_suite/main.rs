@@ -43,6 +43,7 @@ mod digests;
 mod draft_indexes;
 mod drafts;
 mod encryption;
+mod expiry;
 mod filter_decisions;
 mod focus_classified;
 mod focus_inbox;

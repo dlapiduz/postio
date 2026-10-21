@@ -267,25 +267,11 @@ impl Session {
                 envelope.date.unwrap_or(envelope.received_at),
                 postio_ui::clock::now(),
             );
-            let root = postio_ui::reader::parts::root_type(
+            attachments = chips(
                 envelope.content_type.as_deref(),
                 &envelope.body,
                 &envelope.attachments,
             );
-            attachments = postio_ui::reader::parts::tree(&root, &envelope.attachments)
-                .into_iter()
-                .filter(postio_ui::reader::parts::Node::is_leaf)
-                // As the reader's chips (`postio_widgets::reader::chips`):
-                // the body's own text parts are already on screen.
-                .filter(|node| !(node.mime.starts_with("text/") && node.filename.is_none()))
-                .filter_map(|node| {
-                    Some(FocusAttachmentFfi {
-                        id: node.attachment?.get(),
-                        name: node.label().to_owned(),
-                        size: postio_ui::format::human_size(node.size),
-                    })
-                })
-                .collect();
         }
 
         let (actions, more) = match focus_dialog::send_verbs(send_state) {
@@ -336,6 +322,39 @@ impl Session {
             attachments,
         }
     }
+}
+
+/// The chips under a message's body, which are also what `o` offers: its
+/// leaf parts, less the body's own text.
+pub(crate) fn chips(
+    content_type: Option<&str>,
+    body: &postio_model::MessageBody,
+    attachments: &[postio_model::Attachment],
+) -> Vec<FocusAttachmentFfi> {
+    let root = postio_ui::reader::parts::root_type(content_type, body, attachments);
+    postio_ui::reader::parts::tree(&root, attachments)
+        .into_iter()
+        .filter(postio_ui::reader::parts::Node::is_leaf)
+        // As the reader's chips (`postio_widgets::reader::chips`):
+        // the body's own text parts are already on screen.
+        .filter(|node| !(node.mime.starts_with("text/") && node.filename.is_none()))
+        .filter_map(|node| {
+            Some(FocusAttachmentFfi {
+                id: node.attachment?.get(),
+                name: node.label().to_owned(),
+                size: postio_ui::format::human_size(node.size),
+            })
+        })
+        .collect()
+}
+
+/// What `o` offers for the message on screen.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct OpenChoicesFfi {
+    /// The parts to choose from, as the chips list them.
+    pub parts: Vec<FocusAttachmentFfi>,
+    /// What to say instead when there is nothing to choose from.
+    pub nothing: Option<String>,
 }
 
 /// A command and the words on its button.

@@ -123,6 +123,13 @@ public final class PostioSession {
         inner.focusPoint(position: row)
     }
 
+    /// A double-click on `position`: the cursor goes there and its message
+    /// opens, as Return does. The controller decides both.
+    public func focusActivate(_ position: Int) {
+        guard let row = UInt32(exactly: position) else { return }
+        inner.focusActivate(position: row)
+    }
+
     /// A modified click on `position`: `range` for ⇧ (from the anchor), a
     /// toggle for ⌘. Answered with `FocusSelection` and `FocusCursor`.
     public func focusPick(_ position: Int, range: Bool) {
@@ -468,6 +475,19 @@ public final class PostioSession {
 
     public nonisolated func clearListMail(_ message: Int64, _ delete: Bool) -> String? {
         inner.clearListMail(message: message, delete: delete)
+    }
+
+    /// What `o` offers for `message`: its attachments, or the shared words
+    /// for there being none. A local read.
+    public nonisolated func openChoices(_ message: Int64) -> OpenChoicesFfi {
+        inner.openChoices(message: message)
+    }
+
+    /// A private copy of one attachment, fetched first if it was never
+    /// downloaded: the file's path. **Never on the main actor**; it may
+    /// reach the server for bytes the person asked for by name.
+    public nonisolated func openAttachment(_ message: Int64, _ attachment: Int64) throws -> String {
+        try inner.openAttachment(message: message, attachment: attachment)
     }
 
     public nonisolated func activateUnsubscribe(_ message: Int64) -> String? {

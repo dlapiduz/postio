@@ -17,6 +17,10 @@ public protocol MessageWindowSource: AnyObject, Sendable {
     ) -> FocusReaderDocumentFfi
     /// The message as it came off the wire, for `v`.
     func rawSource(_ message: Int64) throws -> Data
+    /// What `o` offers for `message`.
+    func openChoices(_ message: Int64) -> OpenChoicesFfi
+    /// A private copy of one attachment, fetched first if need be: its path.
+    func openAttachment(_ message: Int64, _ attachment: Int64) throws -> String
     /// Leave the list `message` came from: `nil` when the activation was
     /// recorded, else why not. Writes, so never on the main actor.
     func activateUnsubscribe(_ message: Int64) -> String?
@@ -112,6 +116,13 @@ public final class MessageWindowModel {
     @ObservationIgnored private var dwell: DwellClock?
     /// Called with a message the read clock ran out on.
     @ObservationIgnored private let markRead: (Int64) -> Void
+    /// Hand a file to the system to open: the one place a chosen
+    /// attachment leaves Postio. Nothing calls it but a person's choice.
+    @ObservationIgnored private let handOff: (URL) -> Void
+    /// A quiet sentence about what was asked of an attachment, for a few
+    /// seconds; `nil` when there is none.
+    public private(set) var notice: String?
+    @ObservationIgnored private var noticeTask: Task<Void, Never>?
     /// Whether Postio is in the background, where nothing is being read.
     @ObservationIgnored private var away = false
     /// The message the read clock has finished with: run out on, or read
@@ -127,12 +138,14 @@ public final class MessageWindowModel {
         source: any MessageWindowSource,
         report: @escaping (Bool, Bool) -> Void,
         markRead: @escaping (Int64) -> Void = { _ in },
+        handOff: @escaping (URL) -> Void = { _ in },
         schedule: @escaping @MainActor (TimeInterval, @escaping () -> Void) -> DwellClock.Cancellable =
             DwellClock.afterOnMain
     ) {
         engine = source
         self.report = report
         self.markRead = markRead
+        self.handOff = handOff
         dwell = DwellClock(schedule: schedule) { [weak self] message in
             self?.dwellRanOut(message)
         }
@@ -213,6 +226,8 @@ public final class MessageWindowModel {
         moreOpen = false
         find.close()
         unsubscribing.clear()
+        notice = nil
+        noticeTask?.cancel()
         if wasOpen != (false, false) { tell() }
     }
 
@@ -267,6 +282,61 @@ public final class MessageWindowModel {
             case .clearing(let sweep) = unsubscribing.state(of: message)
         else { return }
         clearListMail(delete: sweep.delete)
+    }
+
+    /// A chip was clicked, or chosen from the menu `o` offers: write the
+    /// attachment to a private file, fetching it first if it was never
+    /// downloaded, and hand it to the system. A failure is a sentence, never
+    /// an empty file. Off the main actor: it may reach the server.
+    public func openAttachment(_ attachment: Int64) {
+        guard let message = displayed else { return }
+        let source = engine
+        pending.append(
+            Task { [weak self] in
+                let opened = await Task.detached { () -> Result<String, Error> in
+                    Result { try source.openAttachment(message, attachment) }
+                }.value
+                guard let self, self.place != nil else { return }
+                switch opened {
+                case let .success(path):
+                    self.handOff(URL(fileURLWithPath: path))
+                case let .failure(error):
+                    if case let PartsError.Refused(message) = error {
+                        self.say(message)
+                    } else {
+                        self.say(String(describing: error))
+                    }
+                }
+            })
+    }
+
+    /// `o`: what the open message offers. Nothing to choose from is said in
+    /// the shared words; otherwise `present` gets the parts, to be shown as
+    /// a menu. Nothing opens until one is chosen.
+    public func offerAttachments(present: @escaping ([FocusAttachmentFfi]) -> Void) {
+        guard let message = displayed else { return }
+        let source = engine
+        pending.append(
+            Task { [weak self] in
+                let choices = await Task.detached { source.openChoices(message) }.value
+                guard let self, self.displayed == message else { return }
+                if let nothing = choices.nothing {
+                    self.say(nothing)
+                } else {
+                    present(choices.parts)
+                }
+            })
+    }
+
+    /// Say `words` quietly for a few seconds.
+    private func say(_ words: String) {
+        notice = words
+        noticeTask?.cancel()
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled else { return }
+            self?.notice = nil
+        }
     }
 
     /// `FocusReader`: what the open message does as its own.

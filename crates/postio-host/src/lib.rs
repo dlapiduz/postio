@@ -206,7 +206,7 @@ fn adopt(
     engine: postio_runtime::Engine,
 ) {
     postio_runtime::retain(engine.clone());
-    wiring.engine.fill(engine.clone());
+    wiring.engine.fill(account, engine.clone());
     engines
         .running
         .lock()
@@ -348,7 +348,13 @@ fn actions_for(wiring: &Wiring, state: &SharedState) -> Actions {
 /// [`verbs`], over `actions` the caller keeps a handle to.
 fn verbs_over(wiring: &Wiring, state: &SharedState, actions: Actions) -> Dispatcher {
     let builder = actions::wire(Dispatcher::builder(), actions);
-    refresh::wire(builder, wiring.engine.clone(), state.clone()).build()
+    refresh::wire(
+        builder,
+        wiring.engine.clone(),
+        wiring.database.clone(),
+        state.clone(),
+    )
+    .build()
 }
 
 impl Host {
@@ -371,6 +377,7 @@ impl Host {
                 Actions::new(database.clone(), host_state.clone()),
             ),
             engine.clone(),
+            database.clone(),
             host_state,
         )
         .build();
@@ -473,6 +480,10 @@ impl Host {
                 .with_backfill(postio_session::backfill_policy(&sync_config))
                 .with_watch(postio_session::watch_policy(&sync_config))
                 .with_storage_ceiling(storage_ceiling)
+                .with_auto_empty(postio_core::retention::AutoEmpty {
+                    junk_days: sync_config.empty_junk_after_days,
+                    trash_days: sync_config.empty_trash_after_days,
+                })
                 .with_secrets(secrets)
         })
         .map_err(Refusal::try_again)?;
@@ -1587,7 +1598,7 @@ impl Inner {
         if engines.is_empty() {
             // A caller may supply its own engine through Wiring instead of
             // asking the host to start sync.
-            self.wiring.engine.get().cloned()
+            self.wiring.engine.get(account)
         } else {
             engines.get(&account).cloned()
         }
@@ -2118,35 +2129,17 @@ impl Inner {
         message: postio_model::MessageId,
         attachment: postio_model::ids::AttachmentId,
     ) -> Result<std::path::PathBuf, String> {
-        use std::os::unix::fs::DirBuilderExt;
         let found = parts::read_message(&self.wiring.database, message).await?;
         let name = found
             .attachments
             .iter()
             .find(|part| part.id == attachment)
-            .and_then(|part| part.filename.clone())
-            .and_then(|name| {
-                std::path::Path::new(&name)
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-            })
-            .filter(|name| !name.is_empty() && name != "." && name != "..")
-            .unwrap_or_else(|| "part".to_owned());
+            .and_then(|part| part.filename.clone());
         let base = std::env::var_os("XDG_RUNTIME_DIR")
             .filter(|dir| !dir.is_empty())
             .map(std::path::PathBuf::from)
             .unwrap_or_else(std::env::temp_dir);
-        let dir = base.join("postio").join("parts").join(format!(
-            "{}-{}",
-            message.get(),
-            attachment.get()
-        ));
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(&dir)
-            .map_err(|error| error.to_string())?;
-        Ok(dir.join(name))
+        parts::private_copy_path(&base, message, attachment, name.as_deref())
     }
 
     /// Put a command on the one queue. Never waits.

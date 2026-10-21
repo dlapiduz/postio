@@ -159,6 +159,9 @@ pub async fn seed_small_downloaded(database: &Store, seed: u64) -> SeedReport {
 /// a parser test goes here; one that belongs in the demo is added to the seed
 /// together with the storyboards' counts (`seed_is_honest.rs` says when).
 const UNSEEDED: &[&str] = &[
+    "auth-results-forged-lower",
+    "auth-results-verified",
+    "display-name-impersonation",
     "encoded-word-control-chars-in-header",
     "hostile-remote-attribute-variants",
     "hostile-remote-css-obfuscated",
