@@ -258,6 +258,7 @@ const OURS: &[&str] = &[
     "postio_classify",
     "postio_client",
     "postio_config",
+    "postio_contact_sync",
     "postio_core",
     "postio_demo",
     "postio_extract",
