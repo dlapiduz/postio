@@ -94,6 +94,47 @@ impl StoppedMarker {
     }
 }
 
+/// A switch on a contact's card: one thing the user decides about them with
+/// a click (specs/011-focus-contacts S8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CardSwitch {
+    /// A message from them notifies.
+    Notify,
+    /// Their HTML mail is always drawn as sent.
+    HtmlAsSent,
+    /// Remind after a few days without a reply, from the start.
+    Remind,
+    /// Archive their newsletters after a month.
+    Archive,
+}
+
+impl CardSwitch {
+    /// How many days "remind by default" waits.
+    pub const REMIND_DAYS: u32 = 3;
+    /// How many days "archive issues" keeps them in the inbox.
+    pub const ARCHIVE_DAYS: u32 = 30;
+
+    /// Whether `settings` have this switch on.
+    pub fn is_on(self, settings: &ContactSettings) -> bool {
+        match self {
+            Self::Notify => settings.notify,
+            Self::HtmlAsSent => settings.html_treatment.as_deref() == Some("paper"),
+            Self::Remind => settings.remind_days.is_some(),
+            Self::Archive => settings.archive_after_days.is_some(),
+        }
+    }
+
+    /// Turns this switch on or off in `settings`.
+    pub fn set(self, settings: &mut ContactSettings, on: bool) {
+        match self {
+            Self::Notify => settings.notify = on,
+            Self::HtmlAsSent => settings.html_treatment = on.then(|| "paper".to_owned()),
+            Self::Remind => settings.remind_days = on.then_some(Self::REMIND_DAYS),
+            Self::Archive => settings.archive_after_days = on.then_some(Self::ARCHIVE_DAYS),
+        }
+    }
+}
+
 /// Everything decided about one correspondent. The default is "nothing", and
 /// a correspondent with nothing decided has no row.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -267,5 +308,32 @@ mod tests {
         settings.set_stop(StoppedMarker::Todo, false);
         settings.set_stop(StoppedMarker::Question, false);
         assert!(settings.is_default(), "a row with nothing in it is no row");
+    }
+}
+
+#[cfg(test)]
+mod switch_tests {
+    use super::*;
+
+    #[test]
+    fn each_switch_turns_on_and_back_off_and_leaves_the_others_alone() {
+        for switch in [
+            CardSwitch::Notify,
+            CardSwitch::HtmlAsSent,
+            CardSwitch::Remind,
+            CardSwitch::Archive,
+        ] {
+            let mut settings = ContactSettings::default();
+            assert!(!switch.is_on(&settings));
+            switch.set(&mut settings, true);
+            assert!(switch.is_on(&settings), "{switch:?}");
+            for other in [CardSwitch::Notify, CardSwitch::HtmlAsSent] {
+                if other != switch {
+                    assert!(!other.is_on(&settings));
+                }
+            }
+            switch.set(&mut settings, false);
+            assert!(settings.is_default(), "{switch:?} leaves nothing behind");
+        }
     }
 }

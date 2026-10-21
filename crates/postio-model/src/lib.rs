@@ -100,7 +100,9 @@ pub use contact_form::{
     AddressLabel, AddressNote, ContactForm, FormAddress, FormProblem, split_name,
 };
 pub use contact_group::ContactGroup;
-pub use contact_settings::{ContactArrival, ContactSettings, DigestSetting, StoppedMarker};
+pub use contact_settings::{
+    CardSwitch, ContactArrival, ContactSettings, DigestSetting, StoppedMarker,
+};
 pub use draft::{Draft, DraftKind, DraftState};
 pub use flag::{Flag, FlagSet};
 pub use headers::{Header, Headers};

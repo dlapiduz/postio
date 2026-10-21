@@ -1104,6 +1104,25 @@ pub enum ContactEditAction {
         /// What they were.
         fields: PersonFields,
     },
+    /// Turn one of a card's switches on or off for the person at `address`;
+    /// undo puts the switch back.
+    Switch {
+        /// Any of the person's addresses.
+        address: String,
+        /// Which switch.
+        switch: postio_model::CardSwitch,
+        /// What it becomes.
+        on: bool,
+    },
+    /// Save the Edit form (specs/011-focus-contacts S8): make a person, or
+    /// make `person` what the form says, names, kind, addresses, groups and
+    /// all, as one undoable step.
+    Save {
+        /// Whose; `None` makes a new person.
+        person: Option<ContactId>,
+        /// What the form holds.
+        form: Box<postio_model::ContactForm>,
+    },
 }
 
 /// What a [`Command::ContactGroupNew`] asks for.

@@ -2440,6 +2440,62 @@ impl Actions {
                     }],
                 ))
             }
+            ContactEditAction::Switch {
+                address,
+                switch,
+                on,
+            } => {
+                use postio_storage::repository::ContactSettingsRepository;
+                let person = contacts
+                    .by_address(address.trim())
+                    .await
+                    .map_err(contact_failure)?
+                    .ok_or_else(|| CommandError::rejected("That is not someone in your mail"))?
+                    .id;
+                let settings = ContactSettingsRepository::new(&connection);
+                let mut held = settings.get(person).await.map_err(contact_failure)?;
+                let was = switch.is_on(&held);
+                switch.set(&mut held, *on);
+                settings.put(person, &held).await.map_err(contact_failure)?;
+                Ok(contacts_applied(
+                    UndoKind::ContactArrival,
+                    false,
+                    vec![Command::ContactEdit {
+                        action: ContactEditAction::Switch {
+                            address: address.clone(),
+                            switch: *switch,
+                            on: was,
+                        },
+                    }],
+                ))
+            }
+            ContactEditAction::Save { person, form } => {
+                let saved = contacts
+                    .save_form(*person, form)
+                    .await
+                    .map_err(contact_failure)?;
+                // A saved form puts back the form it found; a person just
+                // made is put back by deleting them.
+                let (kind, inverse) = match saved.prior {
+                    Some(prior) => (
+                        UndoKind::EditContact,
+                        Command::ContactEdit {
+                            action: ContactEditAction::Save {
+                                person: Some(saved.person),
+                                form: Box::new(prior),
+                            },
+                        },
+                    ),
+                    None => (
+                        UndoKind::CreateContact,
+                        Command::ContactDelete {
+                            person: Some(saved.person),
+                            group: None,
+                        },
+                    ),
+                };
+                Ok(contacts_applied(kind, true, vec![inverse]))
+            }
             ContactEditAction::Put { person, fields } => {
                 contacts
                     .put_fields(*person, fields)
@@ -6940,6 +6996,98 @@ mod tests {
             );
             world.run(Command::Undo).await.expect("undo");
             assert_eq!(get(&world, ada).await, before);
+        }
+
+        #[tokio::test]
+        async fn a_card_switch_applies_at_once_and_undoes() {
+            use postio_core::ContactEditAction;
+            use postio_model::CardSwitch;
+            let world = world().await;
+            let ada = person(&world, "Ada", &["ada@example.com"]).await;
+            let notifies = |world: &World| {
+                let database = world.database.clone();
+                async move {
+                    let reader = database.read().await.expect("a reader");
+                    postio_storage::repository::ContactSettingsRepository::new(&reader)
+                        .get(ada)
+                        .await
+                        .expect("settings")
+                        .notify
+                }
+            };
+            assert!(!notifies(&world).await);
+            world
+                .run(Command::ContactEdit {
+                    action: ContactEditAction::Switch {
+                        address: "ADA@example.com".into(),
+                        switch: CardSwitch::Notify,
+                        on: true,
+                    },
+                })
+                .await
+                .expect("a switch");
+            assert!(notifies(&world).await);
+            world.run(Command::Undo).await.expect("undo");
+            assert!(!notifies(&world).await);
+        }
+
+        #[tokio::test]
+        async fn a_saved_form_makes_a_person_and_each_edit_undoes_in_turn() {
+            use postio_core::ContactEditAction;
+            use postio_model::{ContactForm, ContactKind, FormAddress};
+            let world = world().await;
+            let mut form = ContactForm::blank();
+            form.given = "Grace".into();
+            form.family = "Oyelaran".into();
+            form.addresses = vec![FormAddress {
+                address: "grace@example.org".into(),
+                ..FormAddress::blank()
+            }];
+            world
+                .run(Command::ContactEdit {
+                    action: ContactEditAction::Save {
+                        person: None,
+                        form: Box::new(form.clone()),
+                    },
+                })
+                .await
+                .expect("a new contact");
+            assert_eq!(changed(&world.drained().await), Some(true));
+            let database = world.database.clone();
+            let connection = database.connect().await.expect("a connection");
+            let contacts = ContactRepository::new(&connection);
+            let grace = contacts
+                .by_address("grace@example.org")
+                .await
+                .expect("lookup")
+                .expect("made");
+            assert_eq!(grace.display_name(), "Grace Oyelaran");
+
+            form.kind = ContactKind::Company;
+            form.title = "Founder".into();
+            world
+                .run(Command::ContactEdit {
+                    action: ContactEditAction::Save {
+                        person: Some(grace.id),
+                        form: Box::new(form),
+                    },
+                })
+                .await
+                .expect("an edit");
+            let edited = get(&world, grace.id).await.expect("grace");
+            assert_eq!(edited.kind, ContactKind::Company);
+            assert_eq!(edited.title.as_deref(), Some("Founder"));
+
+            world.run(Command::Undo).await.expect("undo the edit");
+            let undone = get(&world, grace.id).await.expect("grace");
+            assert_eq!(undone.kind, ContactKind::Person);
+            assert_eq!(undone.title, None);
+
+            world.run(Command::Undo).await.expect("undo the making");
+            assert_eq!(
+                get(&world, grace.id).await.expect("kept").state,
+                ContactState::Deleted
+            );
         }
 
         #[tokio::test]
