@@ -544,8 +544,12 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .map_err(|error| error.to_string()),
         },
-        Request::ContactReview => {
-            Reply::ContactReview(client.contact_review().await.unwrap_or_default())
+        Request::ContactPosition { person, tab } => Reply::ContactPosition {
+            person,
+            at: client.contact_position(person, tab).await.ok().flatten(),
+        },
+        Request::ContactReview { first } => {
+            Reply::ContactReview(client.contact_review(first).await.unwrap_or_default())
         }
         Request::ContactMergeOf(ids) => Reply::ContactMergeOf(
             client

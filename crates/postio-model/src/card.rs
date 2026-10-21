@@ -93,6 +93,11 @@ pub struct ImportSummary {
     /// People made from a card who look like someone you already had (the
     /// same name): offered as a merge too, never a silent duplicate.
     pub look_alikes: usize,
+    /// The people the import made, in file order.
+    pub made: Vec<crate::ids::ContactId>,
+    /// Everyone the import made or matched, or whose addresses a card
+    /// listed: who the review looks at first.
+    pub touched: Vec<crate::ids::ContactId>,
     /// Groups made.
     pub groups_created: usize,
     /// Cards whose name lost to one the user had set.

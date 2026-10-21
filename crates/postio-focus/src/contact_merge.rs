@@ -44,10 +44,58 @@ impl MergeSheet {
 impl FocusController {
     /// `g w`: the queue is read.
     pub(crate) fn contacts_review_ask(&mut self) -> Vec<Step> {
-        if self.contacts.is_none() {
+        // What an import found leads the review, once.
+        let first = std::mem::take(&mut self.import_found);
+        vec![Step::Ask(Request::ContactReview { first })]
+    }
+
+    /// An import ran. The cursor goes to the first new person (now, if the
+    /// view is up, else when it opens) and the next review looks at what the
+    /// import found before anything else.
+    pub(crate) fn contacts_imported(
+        &mut self,
+        made: Vec<ContactId>,
+        touched: Vec<ContactId>,
+    ) -> Vec<Step> {
+        self.import_found = touched;
+        self.import_cursor = made.first().copied();
+        self.contacts_go_to_import()
+    }
+
+    /// Asks where the import's first new person is, when the view is up.
+    pub(crate) fn contacts_go_to_import(&mut self) -> Vec<Step> {
+        let Some(contacts) = self.contacts.as_ref() else {
+            return Vec::new();
+        };
+        let Some(person) = self.import_cursor else {
+            return Vec::new();
+        };
+        vec![Step::Ask(Request::ContactPosition {
+            person,
+            tab: contacts.tab_now(),
+        })]
+    }
+
+    /// The place of the person an import made, answered.
+    pub(crate) fn contacts_position_read(
+        &mut self,
+        person: ContactId,
+        at: Option<u32>,
+    ) -> Vec<Step> {
+        if self.import_cursor != Some(person) {
             return Vec::new();
         }
-        vec![Step::Ask(Request::ContactReview)]
+        self.import_cursor = None;
+        let (Some(at), Some(contacts)) = (at, self.contacts.as_mut()) else {
+            return Vec::new();
+        };
+        contacts.cursor = Some(at);
+        let mut steps = vec![
+            Step::Show(Intent::ContactsRows { first: 0, count: 0 }),
+            Step::Show(Intent::ContactsCursor(Some(at))),
+        ];
+        steps.extend(self.contacts_card_asked());
+        steps
     }
 
     /// "Split" on one of the card's addresses: it becomes a person of its

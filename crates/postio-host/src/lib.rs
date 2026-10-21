@@ -1099,9 +1099,12 @@ impl Inner {
                 Ok((text, count)) => Resp::ContactsExported(text, count),
                 Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
             },
-            Req::ContactReview => {
-                Resp::ContactReview(contacts::contact_review(&self.wiring.database).await)
+            Req::ContactReview(first) => {
+                Resp::ContactReview(contacts::contact_review(&self.wiring.database, &first).await)
             }
+            Req::ContactPosition(person, tab) => Resp::ContactPosition(
+                contacts::contact_position(&self.wiring.database, person, tab).await,
+            ),
             Req::ContactMergeOf(ids) => Resp::ContactMergeOf(
                 contacts::contact_merge_of(&self.wiring.database, &ids)
                     .await

@@ -232,11 +232,29 @@ pub async fn contact_seen(
     items
 }
 
+/// Where `person` is in `tab`'s list: what a cursor moves to after an import
+/// made them.
+pub async fn contact_position(
+    database: &Store,
+    person: postio_model::ContactId,
+    tab: postio_model::ContactTab,
+) -> Option<u32> {
+    let reader = database.read().await.ok()?;
+    ContactRepository::new(&reader)
+        .position_in(tab.kinds(), person)
+        .await
+        .ok()
+        .flatten()
+}
+
 /// What the review offers to merge: the pairs the store suggests, scored with
 /// the evidence a person can read, joined into groups of people who look like
 /// one, the strongest first (specs/011-focus-contacts S10). A pair with no
 /// evidence is no candidate.
-pub async fn contact_review(database: &Store) -> Vec<postio_model::MergeGroup> {
+pub async fn contact_review(
+    database: &Store,
+    first: &[postio_model::ContactId],
+) -> Vec<postio_model::MergeGroup> {
     let Ok(reader) = database.read().await else {
         return Vec::new();
     };
@@ -263,7 +281,10 @@ pub async fn contact_review(database: &Store) -> Vec<postio_model::MergeGroup> {
             scored.push((a, b, evidence, score));
         }
     }
-    groups_of(scored)
+    let mut groups = groups_of(scored);
+    // What an import just found first; the rest in their own order.
+    groups.sort_by_key(|group| !group.people.iter().any(|p| first.contains(&p.id)));
+    groups
 }
 
 /// The group the user chose by marking `ids`: whatever evidence there is is
@@ -1000,7 +1021,7 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
                 make("Ben Adeyemi", "ben@example.net").await,
             )
         };
-        let groups = contact_review(&database).await;
+        let groups = contact_review(&database, &[]).await;
         assert_eq!(groups.len(), 1, "Ben matches nobody: {groups:?}");
         let ids: Vec<_> = groups[0].people.iter().map(|p| p.id).collect();
         assert!(ids.contains(&ada) && ids.contains(&a_moreno) && !ids.contains(&ben));
@@ -1079,7 +1100,7 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
                         .unwrap();
                 }
             }
-            let groups = contact_review(&database).await;
+            let groups = contact_review(&database, &[]).await;
             assert_eq!(groups.len(), 1, "{kind:?}: {groups:?}");
             assert!(
                 groups[0].evidence.iter().any(|line| line.contains(expect)),
@@ -1100,7 +1121,7 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
                 .await
                 .unwrap();
         }
-        let groups = contact_review(&database).await;
+        let groups = contact_review(&database, &[]).await;
         assert_eq!(groups.len(), 1);
         assert_eq!(
             groups[0].evidence,
@@ -1121,7 +1142,7 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
             .expect("a first import");
         assert_eq!((first.people_created, first.look_alikes), (1, 0));
         assert!(
-            contact_review(&database).await.is_empty(),
+            contact_review(&database, &[]).await.is_empty(),
             "one Ada is no review"
         );
 
@@ -1132,7 +1153,7 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         .await
         .expect("a second import, another address");
         assert_eq!((second.people_created, second.look_alikes), (1, 1));
-        let groups = contact_review(&database).await;
+        let groups = contact_review(&database, &[]).await;
         assert_eq!(groups.len(), 1, "never a silent duplicate: {groups:?}");
         assert!(
             groups[0]
@@ -1142,6 +1163,36 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
             "{:?}",
             groups[0].evidence
         );
+    }
+
+    #[tokio::test]
+    async fn the_review_after_an_import_looks_at_what_the_import_found_first() {
+        let (database, _) = postio_demo::demo().await;
+        let summary = import_vcards(&database, postio_demo::IMPORT_VCF.as_bytes())
+            .await
+            .expect("the demo's file imports");
+        let plain = contact_review(&database, &[]).await;
+        assert!(
+            plain[0]
+                .people
+                .iter()
+                .any(|p| p.display_name() == "Ada Moreno"),
+            "left to its own order the three Adas lead"
+        );
+        let first = contact_review(&database, &summary.touched).await;
+        assert!(
+            first[0].people.iter().any(|p| p
+                .addresses
+                .iter()
+                .any(|a| a.address.address == "ben@adeyemi.example")),
+            "the import's own look-alike leads: {:?}",
+            first[0]
+                .people
+                .iter()
+                .map(|p| p.display_name().to_owned())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(first.len(), plain.len(), "the rest still follow");
     }
 
     #[tokio::test]
@@ -1161,10 +1212,75 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         );
     }
 
+    /// The list's count and the card's tiles are one number: whatever a
+    /// person's row says about their mail, their card says too.
+    async fn assert_rows_and_cards_agree(database: &Store) {
+        let page = contacts_page(database, postio_model::ContactTab::All, None, 0, 500)
+            .await
+            .expect("a page");
+        assert!(!page.rows.is_empty());
+        for row in &page.rows {
+            let card = contact_card(database, row.id, chrono::Utc::now())
+                .await
+                .expect("a card")
+                .expect("a person");
+            assert_eq!(
+                card.stats.messages, row.messages,
+                "{}: the card says {} messages and the list {}",
+                row.name, card.stats.messages, row.messages
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn every_card_in_the_demo_reads_the_numbers_its_row_does() {
+        let (database, _) = postio_demo::demo().await;
+        assert_rows_and_cards_agree(&database).await;
+    }
+
+    #[tokio::test]
+    async fn a_merge_and_an_import_leave_the_card_and_the_row_agreeing() {
+        let database = test_support::memory().await;
+        old_mail(&database, "ada@example.org", 1).await;
+        {
+            let connection = database.connect().await.unwrap();
+            let contacts = ContactRepository::new(&connection);
+            let account = test_support::account_with_inbox(&connection).await;
+            let _ = account;
+            contacts.catch_up_batch(None, 100).await.unwrap();
+        }
+        let card = |uid: &str, address: &str| {
+            format!(
+                "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:{uid}\r\nFN:Ada Old\r\nEMAIL:{address}\r\nEND:VCARD\r\n"
+            )
+        };
+        import_vcards(&database, card("urn:uuid:a", "ada@example.org").as_bytes())
+            .await
+            .unwrap();
+        import_vcards(
+            &database,
+            card("urn:uuid:b", "other@example.net").as_bytes(),
+        )
+        .await
+        .unwrap();
+        assert_rows_and_cards_agree(&database).await;
+        // And after they are merged into one.
+        let groups = contact_review(&database, &[]).await;
+        if let Some(group) = groups.first() {
+            let connection = database.connect().await.unwrap();
+            let ids: Vec<_> = group.people.iter().map(|p| p.id).collect();
+            ContactRepository::new(&connection)
+                .join(ids[0], &ids[1..], "Ada Old", None)
+                .await
+                .unwrap();
+        }
+        assert_rows_and_cards_agree(&database).await;
+    }
+
     #[tokio::test]
     async fn the_demo_has_three_records_of_one_person_for_screen_07() {
         let (database, _) = postio_demo::demo().await;
-        let groups = contact_review(&database).await;
+        let groups = contact_review(&database, &[]).await;
         let ada = groups.first().expect("the demo has a review queue");
         assert!(
             ada.people.iter().any(|p| p.display_name() == "Ada Moreno"),

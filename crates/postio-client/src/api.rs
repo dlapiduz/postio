@@ -124,7 +124,8 @@ impl Req {
             Req::ContactsImport(_) => "ContactsImport",
             Req::ContactsExport => "ContactsExport",
             Req::ContactSeen(_) => "ContactSeen",
-            Req::ContactReview => "ContactReview",
+            Req::ContactReview(_) => "ContactReview",
+            Req::ContactPosition(..) => "ContactPosition",
             Req::ContactMergeOf(_) => "ContactMergeOf",
             Req::RecipientDirectory(_) => "RecipientDirectory",
             Req::Labels(_) => "Labels",
@@ -743,11 +744,35 @@ impl Client {
     }
 
     /// The groups of records that look like one person.
-    pub async fn contact_review(&self) -> Result<Vec<postio_model::MergeGroup>, StoreError> {
-        self.read(Req::ContactReview, "the review", |answer| match answer {
-            Resp::ContactReview(groups) => Some(groups),
-            _ => None,
-        })
+    pub async fn contact_review(
+        &self,
+        first: Vec<postio_model::ContactId>,
+    ) -> Result<Vec<postio_model::MergeGroup>, StoreError> {
+        self.read(
+            Req::ContactReview(first),
+            "the review",
+            |answer| match answer {
+                Resp::ContactReview(groups) => Some(groups),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Where `person` is in `tab`'s list, or `None` when they are not in it.
+    pub async fn contact_position(
+        &self,
+        person: postio_model::ContactId,
+        tab: postio_model::ContactTab,
+    ) -> Result<Option<u32>, StoreError> {
+        self.read(
+            Req::ContactPosition(person, tab),
+            "a person's place in the list",
+            |answer| match answer {
+                Resp::ContactPosition(at) => Some(at),
+                _ => None,
+            },
+        )
         .await
     }
 

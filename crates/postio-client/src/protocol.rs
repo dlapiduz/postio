@@ -259,8 +259,11 @@ pub enum Req {
     ContactsExport,
     /// What the mail says about a person that the Edit form can keep.
     ContactSeen(postio_model::ContactId),
-    /// The groups of records that look like one person, with the evidence.
-    ContactReview,
+    /// The groups of records that look like one person, with the evidence;
+    /// those holding any of these people first.
+    ContactReview(Vec<postio_model::ContactId>),
+    /// Where a person is in a tab's list, or `None`.
+    ContactPosition(postio_model::ContactId, postio_model::ContactTab),
     /// The group these records make, with whatever evidence there is.
     ContactMergeOf(Vec<postio_model::ContactId>),
     /// Everything recipient completion can offer for an account, read once
@@ -846,6 +849,8 @@ pub enum Resp {
     ContactsExported(String, usize),
     /// The answer to [`Req::ContactSeen`].
     ContactSeen(Vec<postio_model::SeenItem>),
+    /// The answer to [`Req::ContactPosition`].
+    ContactPosition(Option<u32>),
     /// The answer to [`Req::ContactReview`].
     ContactReview(Vec<postio_model::MergeGroup>),
     /// The answer to [`Req::ContactMergeOf`].

@@ -349,6 +349,13 @@ pub enum Input {
     ContactEditChange(contact_edit::EditChange),
     /// A click on the card's switch at this index.
     ContactCardSwitch(u32),
+    /// An import ran: the people it made, and everyone it touched.
+    ContactsImported {
+        /// New people, in file order.
+        made: Vec<postio_model::ContactId>,
+        /// Everyone made or matched, for the review.
+        touched: Vec<postio_model::ContactId>,
+    },
     /// Something was written in the open composer: a recipient, the
     /// subject, a word of the body. What its autosave waits out.
     ComposerEdited,
@@ -1024,8 +1031,19 @@ pub enum Request {
         /// The filter's stamp, echoed in the answer.
         stamp: u64,
     },
-    /// The groups of records that look like one person.
-    ContactReview,
+    /// The groups of records that look like one person; those holding any
+    /// of `first` lead.
+    ContactReview {
+        /// Who an import just found.
+        first: Vec<postio_model::ContactId>,
+    },
+    /// Where a person is in a tab's list.
+    ContactPosition {
+        /// Who.
+        person: postio_model::ContactId,
+        /// Which tab's list.
+        tab: postio_model::ContactTab,
+    },
     /// The group these records make, whatever evidence there is.
     ContactMergeOf(Vec<postio_model::ContactId>),
     /// The name of every contact group.
@@ -1343,6 +1361,13 @@ pub enum Reply {
         /// The people, or why not.
         answer: Result<Vec<postio_model::ContactListRow>, String>,
     },
+    /// The answer to [`Request::ContactPosition`].
+    ContactPosition {
+        /// Who was asked about.
+        person: postio_model::ContactId,
+        /// Their place, or `None` when they are not in the list.
+        at: Option<u32>,
+    },
     /// The answer to [`Request::ContactReview`].
     ContactReview(Vec<postio_model::MergeGroup>),
     /// The answer to [`Request::ContactMergeOf`].
@@ -1412,6 +1437,11 @@ pub struct FocusController {
     capture: Option<capture::Capture>,
     contact_popover: Option<contact_popover::ContactPopover>,
     contacts: Option<contacts::Contacts>,
+    /// Who the last import made or matched: the review's first look.
+    import_found: Vec<postio_model::ContactId>,
+    /// The first person the last import made, until the cursor has gone to
+    /// them.
+    import_cursor: Option<postio_model::ContactId>,
     confirm: Option<confirm::Asked>,
     /// The composer, and the composition in it.
     compose: compose::Compose,
@@ -1452,6 +1482,8 @@ impl FocusController {
             capture: None,
             contact_popover: None,
             contacts: None,
+            import_found: Vec::new(),
+            import_cursor: None,
             confirm: None,
             compose: compose::Compose::default(),
             stamps: 0,
@@ -1619,6 +1651,7 @@ impl FocusController {
                 | Reply::ContactCard { .. }
                 | Reply::ContactGroups(_)
                 | Reply::ContactReview(_)
+                | Reply::ContactPosition { .. }
                 | Reply::ContactMergeOf(_)
                 | Reply::ContactSeen(_)
                 | Reply::FoundMessage { .. }
@@ -1829,6 +1862,10 @@ impl FocusController {
                 let steps = self.contact_merge_keep(index as usize);
                 self.effects(steps)
             }
+            Input::ContactsImported { made, touched } => {
+                let steps = self.contacts_imported(made, touched);
+                self.effects(steps)
+            }
             Input::ContactCardSwitch(index) => {
                 let steps = self.contact_card_switch(index);
                 self.effects(steps)
@@ -2013,12 +2050,17 @@ impl FocusController {
             }
             CommandId::DigestRule => return self.new_rule(rows),
             CommandId::ContactPopover => return self.open_contact_popover(None, rows),
-            CommandId::OpenContacts => return self.open_contacts(),
+            CommandId::OpenContacts => {
+                let mut steps = self.open_contacts();
+                steps.extend(self.contacts_go_to_import());
+                return steps;
+            }
             // `g w` from anywhere: Contacts, and the queue read once its
             // counts are asked for.
             CommandId::ContactsSuggestions if self.policy.caps.contacts_view => {
                 let mut steps = self.open_contacts();
-                steps.push(feed::Step::Ask(Request::ContactReview));
+                steps.extend(self.contacts_review_ask());
+                steps.extend(self.contacts_go_to_import());
                 return steps;
             }
             _ => {}
@@ -2533,6 +2575,7 @@ impl FocusController {
             | Reply::ContactCard { .. }
             | Reply::ContactGroups(_)
             | Reply::ContactReview(_)
+            | Reply::ContactPosition { .. }
             | Reply::ContactMergeOf(_)
             | Reply::ContactSeen(_)) => self.contacts_reply(reply),
             Reply::FoundMessage { message, row } => self.link_found(message, row, rows),

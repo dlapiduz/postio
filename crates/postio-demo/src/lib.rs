@@ -1474,6 +1474,18 @@ async fn people(connection: &postio_storage::Connection) {
                 )
                 .await
                 .expect("a record");
+            // What the card's tiles read: the address's sightings. The row's
+            // count is their sum, so the two say one number.
+            postio_storage::sql::execute(
+                connection,
+                "INSERT OR REPLACE INTO contact_sightings
+                     (address_id, account_id, times_seen, last_seen_at, last_name)
+                 SELECT a.id, (SELECT id FROM accounts LIMIT 1), ?2, ?3, ?4
+                   FROM addresses a WHERE a.contact_id = ?1",
+                postio_storage::sql::bind![person.get(), seen, 1_790_000_000_000_i64, name],
+            )
+            .await
+            .expect("their sightings");
             postio_storage::sql::execute(
                 connection,
                 "UPDATE contacts SET times_seen = ?2, last_seen_at = ?3, source = ?4,

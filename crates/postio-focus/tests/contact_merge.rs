@@ -208,7 +208,9 @@ fn review(focus: &mut FocusController) -> Vec<Effect> {
     let effects = run(focus, CommandId::ContactsSuggestions);
     let ticket = asks(&effects)
         .into_iter()
-        .find_map(|(ticket, request)| matches!(request, Request::ContactReview).then_some(ticket))
+        .find_map(|(ticket, request)| {
+            matches!(request, Request::ContactReview { .. }).then_some(ticket)
+        })
         .expect("the queue is read");
     focus.handle_on(Input::Reply(ticket, Reply::ContactReview(queue())), &NoRows)
 }
@@ -231,7 +233,9 @@ fn an_empty_queue_opens_nothing() {
     let effects = run(&mut focus, CommandId::ContactsSuggestions);
     let ticket = asks(&effects)
         .into_iter()
-        .find_map(|(ticket, request)| matches!(request, Request::ContactReview).then_some(ticket))
+        .find_map(|(ticket, request)| {
+            matches!(request, Request::ContactReview { .. }).then_some(ticket)
+        })
         .unwrap();
     let effects = focus.handle_on(
         Input::Reply(ticket, Reply::ContactReview(Vec::new())),
@@ -385,7 +389,7 @@ fn g_w_from_the_inbox_opens_contacts_and_reads_the_queue() {
     assert!(
         asks(&effects)
             .iter()
-            .any(|(_, request)| matches!(request, Request::ContactReview))
+            .any(|(_, request)| matches!(request, Request::ContactReview { .. }))
     );
 }
 
@@ -437,4 +441,86 @@ fn split_takes_an_address_off_a_merged_person_and_a_lone_address_stays() {
         panic!("a split is one command: {effects:?}");
     };
     assert_eq!(id.get(), 9);
+}
+
+#[test]
+fn after_an_import_the_cursor_goes_to_the_first_new_person_and_the_review_looks_at_what_it_found() {
+    let mut focus = mac();
+    open(&mut focus);
+    let effects = focus.handle_on(
+        Input::ContactsImported {
+            made: vec![ContactId::new(3)],
+            touched: vec![ContactId::new(3), ContactId::new(1)],
+        },
+        &NoRows,
+    );
+    let (ticket, person) = asks(&effects)
+        .into_iter()
+        .find_map(|(ticket, request)| match request {
+            Request::ContactPosition { person, .. } => Some((ticket, person)),
+            _ => None,
+        })
+        .expect("where the first new person is, is asked");
+    assert_eq!(person, ContactId::new(3));
+    let effects = focus.handle_on(
+        Input::Reply(
+            ticket,
+            Reply::ContactPosition {
+                person,
+                at: Some(2),
+            },
+        ),
+        &NoRows,
+    );
+    assert!(
+        shown(&effects)
+            .iter()
+            .any(|intent| matches!(intent, Intent::ContactsCursor(Some(2)))),
+        "the cursor is on the new person: {effects:?}"
+    );
+    assert_eq!(focus.contacts_cursor(), Some(2));
+
+    // The review looks at what the import found, once.
+    let effects = run(&mut focus, CommandId::ContactsSuggestions);
+    let first = asks(&effects)
+        .into_iter()
+        .find_map(|(_, request)| match request {
+            Request::ContactReview { first } => Some(first),
+            _ => None,
+        })
+        .expect("the review is asked for");
+    assert_eq!(first, [ContactId::new(3), ContactId::new(1)]);
+    let again = run(&mut focus, CommandId::ContactsSuggestions);
+    let first = asks(&again)
+        .into_iter()
+        .find_map(|(_, request)| match request {
+            Request::ContactReview { first } => Some(first),
+            _ => None,
+        })
+        .expect("asked again");
+    assert!(
+        first.is_empty(),
+        "an import's candidates lead the review once"
+    );
+}
+
+#[test]
+fn an_import_with_contacts_closed_remembers_where_to_go_and_what_to_review() {
+    let mut focus = mac();
+    let effects = focus.handle_on(
+        Input::ContactsImported {
+            made: vec![ContactId::new(3)],
+            touched: vec![ContactId::new(3)],
+        },
+        &NoRows,
+    );
+    assert!(asks(&effects).is_empty(), "nothing to move yet");
+    let effects = run(&mut focus, CommandId::ContactsSuggestions);
+    assert!(
+        asks(&effects).iter().any(|(_, request)| matches!(
+            request,
+            Request::ContactReview { first } if first == &[ContactId::new(3)]
+        )),
+        "{effects:?}"
+    );
 }

@@ -97,10 +97,21 @@ impl Session {
             };
         };
         match crate::session::blocking(client.import_contacts(bytes)) {
-            Ok(summary) => ContactsImportResultFfi {
-                sheet: Some(postio_ui::contacts_io::import_sheet(&summary, &self.keymap()).into()),
-                error: None,
-            },
+            Ok(summary) => {
+                // The cursor goes to the first new person, and the review
+                // looks at what the import found before anything else.
+                self.focus_driver()
+                    .input(postio_focus::Input::ContactsImported {
+                        made: summary.made.clone(),
+                        touched: summary.touched.clone(),
+                    });
+                ContactsImportResultFfi {
+                    sheet: Some(
+                        postio_ui::contacts_io::import_sheet(&summary, &self.keymap()).into(),
+                    ),
+                    error: None,
+                }
+            }
             Err(error) => ContactsImportResultFfi {
                 sheet: None,
                 error: Some(error.to_string()),

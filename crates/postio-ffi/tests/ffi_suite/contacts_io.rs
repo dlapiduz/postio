@@ -72,3 +72,58 @@ async fn the_panels_say_where_the_file_goes() {
     assert!(words.import_message.contains("uploads nothing"));
     session.shutdown();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn review_after_an_import_opens_what_the_import_found_not_the_strongest_old_group() {
+    use postio_ffi::UiEvent;
+
+    use crate::focus::heard;
+
+    let session = session().await;
+    // An older pair of Adas the review already had.
+    for (uid, address) in [
+        ("urn:uuid:a1", "ada@example.org"),
+        ("urn:uuid:a2", "a.m@example.net"),
+    ] {
+        let s = session.clone();
+        tokio::task::spawn_blocking(move || {
+            s.contacts_import(card(uid, "Ada Moreno", address).into_bytes())
+        })
+        .await
+        .expect("imported");
+    }
+    // Then an import that finds a Ben who looks like one it already has.
+    for (uid, address) in [
+        ("urn:uuid:b1", "ben@example.org"),
+        ("urn:uuid:b2", "ben@adeyemi.example"),
+    ] {
+        let s = session.clone();
+        tokio::task::spawn_blocking(move || {
+            s.contacts_import(card(uid, "Ben Adeyemi", address).into_bytes())
+        })
+        .await
+        .expect("imported");
+    }
+    let s = session.clone();
+    tokio::task::spawn_blocking(move || s.invoke("contacts_suggestions"))
+        .await
+        .expect("g w");
+    let mut first = None;
+    assert!(
+        heard(&session, 20, |event| match event {
+            UiEvent::FocusContactMerge { view: Some(view) } => {
+                first = Some(view.cards[0].name.clone());
+                true
+            }
+            _ => false,
+        })
+        .await,
+        "the sheet opens"
+    );
+    assert_eq!(
+        first.as_deref(),
+        Some("Ben Adeyemi"),
+        "the import's own Ben leads"
+    );
+    session.shutdown();
+}

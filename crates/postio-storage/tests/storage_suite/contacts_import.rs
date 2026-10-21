@@ -155,6 +155,20 @@ async fn a_card_with_the_name_of_someone_you_have_and_another_address_is_offered
         summary.look_alikes, 1,
         "she looks like someone you have: {summary:?}"
     );
+    let made = contacts
+        .by_address("ada@elsewhere.example")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        summary.made,
+        [made.id],
+        "who the import made, for the cursor"
+    );
+    assert!(
+        summary.touched.contains(&made.id),
+        "and who it touched, for the review"
+    );
     let suggestions = contacts.suggestion_pairs(10).await.unwrap();
     assert_eq!(suggestions.len(), 1, "and the review offers the merge");
 }

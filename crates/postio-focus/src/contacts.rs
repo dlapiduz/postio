@@ -59,7 +59,7 @@ pub(crate) struct Contacts {
     /// The people the filter found; the list while it is typed.
     filtered: Option<Vec<ContactListRow>>,
     filter_stamp: u64,
-    cursor: Option<u32>,
+    pub(crate) cursor: Option<u32>,
     pub(crate) card: Option<ContactCardRead>,
     card_for: Option<ContactId>,
     card_stamp: u64,
@@ -122,6 +122,11 @@ impl Contacts {
             .is_multiple_of(PAGE_SIZE)
             .then(|| self.befores.get(&(index / PAGE_SIZE)).cloned().flatten())
             .flatten()
+    }
+
+    /// The tab chosen.
+    pub(crate) fn tab_now(&self) -> ContactTab {
+        self.tab
     }
 
     /// The tab's count, from the overview.
@@ -410,7 +415,7 @@ impl FocusController {
     }
 
     /// The card of the person under the cursor is wanted: asked, once.
-    fn contacts_card_asked(&mut self) -> Vec<Step> {
+    pub(crate) fn contacts_card_asked(&mut self) -> Vec<Step> {
         let stamp = self.stamp();
         let Some(contacts) = self.contacts.as_mut() else {
             return Vec::new();
@@ -500,6 +505,7 @@ impl FocusController {
             } => self.contacts_page_read(stamp, page, answer),
             Reply::ContactsFiltered { stamp, answer } => self.contacts_filtered_read(stamp, answer),
             Reply::ContactCard { stamp, answer } => self.contacts_card_read(stamp, answer),
+            Reply::ContactPosition { person, at } => self.contacts_position_read(person, at),
             Reply::ContactReview(groups) => self.contacts_review_read(groups),
             Reply::ContactMergeOf(group) => self.contacts_merge_of_read(group.map(|g| *g)),
             Reply::ContactSeen(items) => {
@@ -528,7 +534,11 @@ impl FocusController {
         contacts.overview = overview;
         contacts.loaded = true;
         if first || contacts.filtered.is_none() && contacts.window.total() != contacts.tab_total() {
-            return self.contacts_restart();
+            // The restart puts the cursor on the first row; an import's new
+            // person is where it goes instead.
+            let mut steps = self.contacts_restart();
+            steps.extend(self.contacts_go_to_import());
+            return steps;
         }
         self.draw_contacts()
     }

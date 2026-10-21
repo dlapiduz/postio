@@ -962,6 +962,41 @@ impl ContactRepository<'_> {
             .collect())
     }
 
+    /// Where `person` is in the list of `kinds`: how many live people of
+    /// those kinds come before them by name. `None` for someone not in the
+    /// list (another kind, deleted, or no one). One seek per kind.
+    pub async fn position_in(
+        &self,
+        kinds: &[ContactKind],
+        person: ContactId,
+    ) -> Result<Option<u32>> {
+        let found: Option<(String, String)> = sql::first(
+            self.connection,
+            "SELECT sort_key, kind FROM contacts WHERE id = ?1 AND state = 'live'",
+            [person.get()],
+            |row| Ok((row.col(0)?, row.col(1)?)),
+        )
+        .await?;
+        let Some((key, kind)) = found else {
+            return Ok(None);
+        };
+        if !kinds.iter().any(|k| k.as_str() == kind) {
+            return Ok(None);
+        }
+        let mut before = 0_i64;
+        for kind in kinds {
+            before += sql::scalar(
+                self.connection,
+                "SELECT count(*) FROM contacts
+                  WHERE state = 'live' AND kind = ?1
+                    AND (sort_key < ?2 OR (sort_key = ?2 AND id < ?3))",
+                bind![kind.as_str(), key.clone(), person.get()],
+            )
+            .await?;
+        }
+        Ok(Some(u32::try_from(before).unwrap_or(u32::MAX)))
+    }
+
     /// The people of `kinds` matching every word of `text`, by name, at most
     /// `cap` of them: [`filtered`](Self::filtered) within a tab.
     pub async fn filtered_kinds(
@@ -2222,7 +2257,9 @@ impl ContactRepository<'_> {
         let person = match owners.as_slice() {
             [] => {
                 summary.people_created += 1;
-                self.create(card_name, &addresses).await?
+                let made = self.create(card_name, &addresses).await?;
+                summary.made.push(made);
+                made
             }
             [first, rest @ ..] => {
                 summary.people_updated += 1;
@@ -2267,6 +2304,12 @@ impl ContactRepository<'_> {
                 first.id
             }
         };
+        summary.touched.push(person);
+        for owner in &owners {
+            if !summary.touched.contains(&owner.id) {
+                summary.touched.push(owner.id);
+            }
+        }
         // Which of the card's addresses it prefers.
         if let Some((preferred, _)) = card.emails.iter().find(|(_, p)| *p)
             && let Some(owned) = self.get(person).await?.and_then(|p| {

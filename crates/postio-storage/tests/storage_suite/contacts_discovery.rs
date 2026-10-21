@@ -225,3 +225,42 @@ async fn evidence_is_kept_once_however_often_the_mail_says_it() {
             .unwrap();
     assert_eq!(count, 1);
 }
+
+#[tokio::test]
+async fn a_persons_place_in_a_tab_is_how_many_rows_come_before_them() {
+    use postio_model::{ContactTab, EmailAddress};
+    let database = postio_storage::test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let contacts = ContactRepository::new(&connection);
+    let mut made = Vec::new();
+    for (name, address) in [
+        ("Ada", "ada@example.org"),
+        ("Ben", "ben@example.org"),
+        ("Cleo", "cleo@example.org"),
+    ] {
+        made.push(
+            contacts
+                .create(Some(name), &[EmailAddress::new(None::<String>, address)])
+                .await
+                .unwrap(),
+        );
+    }
+    let all = ContactTab::All.kinds();
+    assert_eq!(contacts.position_in(all, made[0]).await.unwrap(), Some(0));
+    assert_eq!(contacts.position_in(all, made[2]).await.unwrap(), Some(2));
+    assert_eq!(
+        contacts
+            .position_in(ContactTab::Companies.kinds(), made[2])
+            .await
+            .unwrap(),
+        None,
+        "not in a tab of another kind"
+    );
+    assert_eq!(
+        contacts
+            .position_in(all, postio_model::ContactId::new(9999))
+            .await
+            .unwrap(),
+        None
+    );
+}
