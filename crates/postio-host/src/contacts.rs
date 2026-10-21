@@ -737,8 +737,9 @@ pub async fn contacts_overview(
     };
     if duplicates {
         let groups = contact_review(database, &[]).await.len();
-        overview.review.duplicates =
-            u32::try_from(groups).map_or(postio_model::REVIEW_CAP, |n| n.min(postio_model::REVIEW_CAP));
+        overview.review.duplicates = u32::try_from(groups).map_or(postio_model::REVIEW_CAP, |n| {
+            n.min(postio_model::REVIEW_CAP)
+        });
     }
     Ok(overview)
 }
@@ -1359,7 +1360,11 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         let groups = contact_review(&database, &[]).await;
         assert_eq!(groups.len(), 2, "{groups:?}");
         assert_eq!(
-            contacts_overview(&database).await.unwrap().review.duplicates,
+            contacts_overview(&database)
+                .await
+                .unwrap()
+                .review
+                .duplicates,
             2,
             "the strip counts what the sheet pages through, not suggested pairs"
         );
@@ -1375,7 +1380,11 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
             }
         }
         assert_eq!(
-            contacts_overview(&database).await.unwrap().review.duplicates,
+            contacts_overview(&database)
+                .await
+                .unwrap()
+                .review
+                .duplicates,
             1
         );
     }

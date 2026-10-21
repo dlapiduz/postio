@@ -1283,16 +1283,16 @@ mod tests {
             .collect();
         assert_eq!(
             buttons,
-            [("All messages", true), ("Unsubscribe", true), ("Edit", true)]
+            [
+                ("All messages", true),
+                ("Unsubscribe", true),
+                ("Edit", true)
+            ]
         );
         // No message to unsubscribe through: no button that cannot be pressed.
         list.issues.clear();
         let view = card(&list, &keymap(), now());
-        assert!(
-            view.buttons.iter().all(|b| b.enabled),
-            "{:?}",
-            view.buttons
-        );
+        assert!(view.buttons.iter().all(|b| b.enabled), "{:?}", view.buttons);
         assert!(view.buttons.iter().all(|b| b.label != "Unsubscribe"));
     }
 
