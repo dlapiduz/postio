@@ -26,7 +26,6 @@ check_budget                      # crates/postio-core/src/perf_budget.rs:65
 closing_after                     # crates/postio-account/src/imap/transport.rs:634
 conformance_cases                 # crates/postio-core/src/aim.rs:346
 dispatch_ext                      # crates/postio-core/src/dispatch.rs:458
-export_vcards                     # crates/postio-host/src/contacts.rs:54 -- the Contacts surface's save panel (specs/011-focus-contacts)
 extend_selection_to               # crates/postio-core/src/state.rs:562
 extensions_to_enable              # crates/postio-account/src/imap/dispatch.rs:197
 failing_tls                       # crates/postio-account/src/imap/transport.rs:618
@@ -38,7 +37,6 @@ has_pending                       # crates/postio-storage/src/repository/operati
 idles                             # crates/postio-sync/src/watch.rs:290
 immediate                         # crates/postio-storage/src/blob.rs:551
 import_summary_line               # crates/postio-ui/src/contacts.rs:125 -- the Contacts surface for Focus (specs/011-focus-contacts) is its caller
-import_vcards                     # crates/postio-host/src/contacts.rs:26 -- the Contacts surface's open panel (specs/011-focus-contacts)
 interactive_is_waiting            # crates/postio-storage/src/db.rs:469
 into_mailbox                      # crates/postio-account/src/backend/message.rs:156
 invocation_id                     # crates/postio-core/src/dispatch.rs:152
