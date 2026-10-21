@@ -338,7 +338,7 @@ impl ContactsView {
             self.typing_echo.set(false);
         }
         self.frame_hints.replace(view.footer.hints.clone());
-        if self.form.borrow().is_none() {
+        if self.form.borrow().is_none() && self.merge.borrow().is_none() {
             self.footer.set(&view.footer.hints);
         }
         self.status.set_text(&view.footer.status);
