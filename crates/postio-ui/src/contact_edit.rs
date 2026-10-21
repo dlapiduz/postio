@@ -350,14 +350,18 @@ pub fn view(ctx: &EditContext<'_>, keymap: &Keymap) -> EditView {
         work_company: form.company.clone(),
         addresses,
         add_address: "+ Add address".to_owned(),
-        address_note: format!(
-            "The filled circle is where replies and new mail go. Mail from any of them counts as {}.",
-            if form.given.trim().is_empty() {
+        address_note: {
+            let who = if form.given.trim().is_empty() {
                 "this contact"
             } else {
                 form.given.trim()
-            }
-        ),
+            };
+            // A name that ends in a full stop ("A.") ends the sentence too.
+            format!(
+                "The filled circle is where replies and new mail go. Mail from any of them counts as {who}{}",
+                if who.ends_with('.') { "" } else { "." }
+            )
+        },
         seen: ctx.seen.iter().map(seen_row).collect(),
         groups: form.groups.clone(),
         add_group: "+ Add to group".to_owned(),
@@ -623,6 +627,13 @@ mod tests {
         let shown = view(&context, &keymap());
         assert_eq!(shown.problem.as_deref(), Some("Add at least one address."));
         assert!(shown.armed.unwrap().contains("Esc again"));
+        let mut initial = ContactForm::blank();
+        initial.given = "A.".into();
+        assert!(
+            view(&ctx(&initial), &keymap())
+                .address_note
+                .ends_with("counts as A.")
+        );
         // Where the key is spelled out on its cap, the sentence spells it
         // the same way.
         let linux = Keymap::resolve_on(
