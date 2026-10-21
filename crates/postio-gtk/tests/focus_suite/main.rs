@@ -171,6 +171,10 @@ const CASES: &[(&str, fn())] = &[
         contacts::a_sender_not_yet_saved_is_introduced_and_offered_add_contact as fn(),
     ),
     (
+        "contacts::v_i_imports_a_chosen_file_and_v_x_exports_one",
+        contacts::v_i_imports_a_chosen_file_and_v_x_exports_one as fn(),
+    ),
+    (
         "contacts::slash_filters_the_list_and_escape_clears_before_it_closes",
         contacts::slash_filters_the_list_and_escape_clears_before_it_closes as fn(),
     ),

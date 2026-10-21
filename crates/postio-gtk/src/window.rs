@@ -81,6 +81,9 @@ const REMOVE_RULE_DIALOG: &str = "focus-remove-rule";
 
 /// The Filtered view's page (screen 21).
 const FILTERED: &str = "filtered";
+/// The sheet after importing or exporting contacts.
+const CONTACTS_IO_DIALOG: &str = "focus-contacts-io";
+
 /// The Contacts view, in the inbox's body (specs/011-focus-contacts,
 /// screens 01 to 03), and the mail it stands in for.
 const CONTACTS: &str = "contacts";
@@ -237,6 +240,8 @@ mod imp {
         pub filtered: RefCell<Option<Rc<crate::filtered::FilteredView>>>,
         /// The Contacts view, built the first time `g c` opens it.
         pub contacts: RefCell<Option<Rc<crate::contacts::ContactsView>>>,
+        /// What the import or export sheet says, while it is up.
+        pub contacts_io: RefCell<Option<postio_ui::contacts_io::IoSheetView>>,
         /// The contact popover, while one is up, and what it says.
         pub contact_popover: RefCell<Option<(gtk::Widget, postio_ui::contact_popover::PopoverView)>>,
         /// A `postio://` link that arrived before the store was open.
@@ -346,6 +351,7 @@ mod imp {
                 warm: Cell::default(),
                 filtered: RefCell::default(),
                 contacts: RefCell::default(),
+                contacts_io: RefCell::default(),
                 contact_popover: RefCell::default(),
                 digest_window: RefCell::default(),
                 rule_dialog: RefCell::default(),
@@ -894,6 +900,12 @@ impl FocusWindow {
         // message's own, though the list's `Down` and `Up` are the same
         // chords, and the list is not what is being read.
         if top == Some(SurfaceKind::Message) && self.scroll_reading(key, state) {
+            return glib::Propagation::Stop;
+        }
+        // Reading and writing a file are the window's, whatever surface is on
+        // top: the controller has no file to give (specs/011 S11).
+        if let Some(command @ (CommandId::ContactsImport | CommandId::ContactsExport)) = command {
+            self.act(command);
             return glib::Propagation::Stop;
         }
         if let Some(command) = command {
@@ -1780,6 +1792,8 @@ impl FocusWindow {
             | CommandId::ContactPopover => {
                 self.run_in_controller(id);
             }
+            CommandId::ContactsImport => self.contacts_import(),
+            CommandId::ContactsExport => self.contacts_export(),
             CommandId::SweepInbox => self.ask_sweep(),
             CommandId::ClearListMail => {
                 if !self.imp().toast.take_offer() {
@@ -3771,6 +3785,143 @@ impl FocusWindow {
         }
     }
 
+    /// File > Import Contacts (`v i`): the person picks a `.vcf`, Rust reads
+    /// and applies it, and a sheet says what happened. Nothing is merged: the
+    /// look-alikes wait in the review.
+    fn contacts_import(&self) {
+        let weak = self.downgrade();
+        // POSTIO-CONSENT: a file is read only because somebody chose it in
+        // the file chooser; it is parsed on this computer and nothing is
+        // uploaded.
+        self.pick_place(crate::chooser::SavePick::Cards, move |path| {
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            let Some(client) = window.imp().client.borrow().clone() else {
+                return;
+            };
+            let Ok(bytes) = std::fs::read(&path) else {
+                window.show_toast(
+                    "Postio could not read that file.",
+                    &postio_focus::ToastKind::Notice,
+                );
+                return;
+            };
+            glib::spawn_future_local(async move {
+                // POSTIO-GLIB-SAFE: one client call, a oneshot receive.
+                match client.import_contacts(bytes).await {
+                    Ok(summary) => {
+                        if let Some(pane) = window.pane() {
+                            // The cursor goes to the first new person and the
+                            // review looks at what the import found first.
+                            pane.feed().input(postio_focus::Input::ContactsImported {
+                                made: summary.made.clone(),
+                                touched: summary.touched.clone(),
+                            });
+                        }
+                        let sheet =
+                            postio_ui::contacts_io::import_sheet(&summary, &window.keymap());
+                        window.show_contacts_io(sheet);
+                    }
+                    Err(error) => window.show_toast(
+                        &error.to_string(),
+                        &postio_focus::ToastKind::Notice,
+                    ),
+                }
+            });
+        });
+    }
+
+    /// File > Export Contacts (`v x`): the people the list holds, as one
+    /// `.vcf` at a place the person names.
+    fn contacts_export(&self) {
+        let words = postio_ui::contacts_io::panel_words();
+        let Some(client) = self.imp().client.borrow().clone() else {
+            return;
+        };
+        let weak = self.downgrade();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: one client call, a oneshot receive.
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            let (text, count) = match client.export_contacts().await {
+                Ok(done) => done,
+                Err(error) => {
+                    window.show_toast(&error.to_string(), &postio_focus::ToastKind::Notice);
+                    return;
+                }
+            };
+            let keymap = window.keymap();
+            let again = weak.clone();
+            // POSTIO-CONSENT: a file is written only to the name and place
+            // somebody chose in the file chooser.
+            window.pick_place(
+                crate::chooser::SavePick::CardsFile {
+                    suggested: words.export_name.clone(),
+                },
+                move |path| {
+                    let Some(window) = again.upgrade() else {
+                        return;
+                    };
+                    match std::fs::write(&path, text.as_bytes()) {
+                        Ok(()) => window.show_contacts_io(postio_ui::contacts_io::export_sheet(
+                            count, &keymap,
+                        )),
+                        Err(_) => window.show_toast(
+                            "Postio could not write that file.",
+                            &postio_focus::ToastKind::Notice,
+                        ),
+                    }
+                },
+            );
+        });
+    }
+
+    /// The sheet after an import or an export: what happened, and Review
+    /// when the import left people to look at.
+    fn show_contacts_io(&self, sheet: postio_ui::contacts_io::IoSheetView) {
+        let dialog = adw::AlertDialog::new(Some(&sheet.title), Some(&sheet.lines.join("\n\n")));
+        dialog.set_widget_name(CONTACTS_IO_DIALOG);
+        dialog.add_response("done", &sheet.done.label);
+        dialog.set_close_response("done");
+        dialog.set_default_response(Some("done"));
+        if let Some(review) = &sheet.review {
+            dialog.add_response("review", &review.label);
+            dialog.set_response_appearance("review", adw::ResponseAppearance::Suggested);
+            dialog.set_default_response(Some("review"));
+        }
+        self.imp().contacts_io.replace(Some(sheet));
+        dialog.connect_response(
+            None,
+            glib::clone!(
+                #[weak(rename_to = window)]
+                self,
+                move |_, response| {
+                    window.imp().contacts_io.take();
+                    if response == "review" {
+                        window.press_command(CommandId::ContactsSuggestions);
+                    }
+                }
+            ),
+        );
+        dialog.present(Some(self));
+    }
+
+    /// Close whatever dialog is up, as Escape does: a case that has read a
+    /// sheet goes on to the next thing.
+    pub fn close_dialogs_for_test(&self) {
+        if let Some(dialog) = self.visible_dialog() {
+            dialog.close();
+        }
+        self.imp().contacts_io.take();
+    }
+
+    /// What the import or export sheet says, while it is up.
+    pub fn contacts_io_sheet(&self) -> Option<postio_ui::contacts_io::IoSheetView> {
+        self.imp().contacts_io.borrow().clone()
+    }
+
     /// What the contact popover says, while one is up: what a test reads.
     pub fn contact_popover(&self) -> Option<postio_ui::contact_popover::PopoverView> {
         self.imp()
@@ -4530,6 +4681,15 @@ impl FocusWindow {
             crate::chooser::SavePick::Folder => {
                 dialog.set_title("Save attachments to");
                 dialog.select_folder(Some(self), None::<&gio::Cancellable>, done);
+            }
+            crate::chooser::SavePick::Cards => {
+                dialog.set_title(&postio_ui::contacts_io::panel_words().import_title);
+                dialog.open(Some(self), None::<&gio::Cancellable>, done);
+            }
+            crate::chooser::SavePick::CardsFile { suggested } => {
+                dialog.set_title(&postio_ui::contacts_io::panel_words().export_title);
+                dialog.set_initial_name(Some(&suggested));
+                dialog.save(Some(self), None::<&gio::Cancellable>, done);
             }
         }
     }

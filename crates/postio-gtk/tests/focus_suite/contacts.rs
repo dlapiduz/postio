@@ -375,3 +375,79 @@ pub fn a_sender_not_yet_saved_is_introduced_and_offered_add_contact() {
         );
     });
 }
+
+/// `v i` asks for a `.vcf`, reads the one it is given, says what it did,
+/// merges nothing, and puts the cursor on the first person it made; `v x`
+/// writes one file of the people the list holds and says how many.
+pub fn v_i_imports_a_chosen_file_and_v_x_exports_one() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        use postio_gtk::chooser::SavePick;
+        let fixture = fixture().await;
+        let (window, _client) = fixture.open().await;
+        let directory = tempfile::tempdir().expect("a directory");
+        let cards = directory.path().join("cards.vcf");
+        std::fs::write(
+            &cards,
+            "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:urn:uuid:zed\r\nFN:Zed Quinn\r\nEMAIL:zed@example.test\r\nEND:VCARD\r\n",
+        )
+        .expect("a card");
+        let exported = directory.path().join("Contacts.vcf");
+        {
+            let (cards, exported) = (cards.clone(), exported.clone());
+            window.set_file_picker(move |pick, answer| match pick {
+                SavePick::Cards => answer(Some(cards.clone())),
+                SavePick::CardsFile { .. } => answer(Some(exported.clone())),
+                _ => answer(None),
+            });
+        }
+        support::keys(&window, &["g", "c"]);
+        assert!(
+            crate::settle_until(async || window.contacts().is_some_and(|view| view.total() == 3))
+                .await
+        );
+        support::keys(&window, &["v", "i"]);
+        assert!(
+            crate::settle_until(async || window
+                .contacts_io_sheet()
+                .is_some_and(|sheet| sheet.title == "Imported 1 contact"))
+            .await,
+            "v i reads the chosen file and says so"
+        );
+        let sheet = window.contacts_io_sheet().expect("a sheet");
+        assert!(
+            sheet.lines.last().is_some_and(|line| line.contains("cannot be undone")),
+            "{:?}",
+            sheet.lines
+        );
+        let view = window.contacts().expect("the view");
+        assert!(
+            crate::settle_until(async || view.total() == 4
+                && view
+                    .cursor()
+                    .and_then(|at| view.name_at(at))
+                    .as_deref()
+                    == Some("Zed Quinn"))
+            .await,
+            "the cursor is on the first person the import made"
+        );
+        window.close_dialogs_for_test();
+
+        support::keys(&window, &["v", "x"]);
+        assert!(
+            crate::settle_until(async || exported.exists()
+                && window
+                    .contacts_io_sheet()
+                    .is_some_and(|sheet| sheet.title.starts_with("Exported")))
+            .await,
+            "v x writes the file and says how many"
+        );
+        let written = std::fs::read_to_string(&exported).expect("the file");
+        assert!(
+            written.contains("BEGIN:VCARD") && written.contains("zed@example.test"),
+            "{written}"
+        );
+    });
+}
