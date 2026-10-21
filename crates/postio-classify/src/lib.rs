@@ -35,6 +35,7 @@ mod outcome;
 mod pipeline;
 mod rules;
 mod senders;
+pub mod signature;
 
 pub use digests::Digests;
 pub use facts::Facts;

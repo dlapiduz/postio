@@ -102,6 +102,30 @@ impl FormAddress {
     }
 }
 
+/// What a person's signature says about them, read on this machine from the
+/// newest mail they sent (specs/011-focus-contacts S9).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignatureDetails {
+    /// "Partnerships".
+    pub title: Option<String>,
+    /// "Harbor Data Co.".
+    pub company: Option<String>,
+    /// "+1 555 0142", as written.
+    pub phones: Vec<String>,
+    /// "harbordata.example", as written, without a scheme.
+    pub websites: Vec<String>,
+}
+
+impl SignatureDetails {
+    /// Whether the signature said nothing worth showing.
+    pub fn is_empty(&self) -> bool {
+        self.title.is_none()
+            && self.company.is_none()
+            && self.phones.is_empty()
+            && self.websites.is_empty()
+    }
+}
+
 /// Why a form cannot be saved yet, in words for the person.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FormProblem {

@@ -97,7 +97,7 @@ pub use contact::{
     REVIEW_CAP, RecentMessage, ReviewSummary, ShowAs, SuggestionReason, month_key,
 };
 pub use contact_form::{
-    AddressLabel, AddressNote, ContactForm, FormAddress, FormProblem, split_name,
+    AddressLabel, AddressNote, ContactForm, FormAddress, FormProblem, SignatureDetails, split_name,
 };
 pub use contact_group::ContactGroup;
 pub use contact_settings::{
