@@ -117,6 +117,16 @@ pub enum EditChangeFfi {
         /// Its name.
         name: String,
     },
+    /// The group picker opened with what is typed, or put away.
+    GroupQuery {
+        /// What is typed; none puts it away.
+        query: Option<String>,
+    },
+    /// An option of the picker chosen.
+    GroupPick {
+        /// Which.
+        index: u32,
+    },
     /// A chip's cross.
     RemoveGroup {
         /// The chip.
@@ -143,6 +153,8 @@ impl From<EditChangeFfi> for EditChange {
             EditChangeFfi::RemoveAddress { index } => Self::RemoveAddress(index),
             EditChangeFfi::AddGroup { name } => Self::AddGroup(name),
             EditChangeFfi::RemoveGroup { index } => Self::RemoveGroup(index),
+            EditChangeFfi::GroupQuery { query } => Self::GroupQuery(query),
+            EditChangeFfi::GroupPick { index } => Self::GroupPick(index),
         }
     }
 }
@@ -212,6 +224,24 @@ pub enum FormFieldFfi {
     Group,
 }
 
+/// A line of the group picker.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct GroupOptionFfi {
+    /// What it says.
+    pub label: String,
+    /// Whether it makes the group.
+    pub is_new: bool,
+}
+
+/// The group picker.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct GroupPickerFfi {
+    /// What is typed.
+    pub query: String,
+    /// The lines.
+    pub options: Vec<GroupOptionFfi>,
+}
+
 /// The form, drawn whole.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ContactEditViewFfi {
@@ -255,6 +285,8 @@ pub struct ContactEditViewFfi {
     pub groups: Vec<String>,
     /// "+ Add to group".
     pub add_group: String,
+    /// The picker, while open.
+    pub group_picker: Option<GroupPickerFfi>,
     /// The groups' note.
     pub group_note: String,
     /// Why Save was refused.
@@ -320,6 +352,17 @@ impl From<EditView> for ContactEditViewFfi {
                 .collect(),
             groups: view.groups,
             add_group: view.add_group,
+            group_picker: view.group_picker.map(|picker| GroupPickerFfi {
+                query: picker.query,
+                options: picker
+                    .options
+                    .into_iter()
+                    .map(|option| GroupOptionFfi {
+                        label: option.label,
+                        is_new: option.is_new,
+                    })
+                    .collect(),
+            }),
             group_note: view.group_note,
             problem: view.problem,
             armed: view.armed,

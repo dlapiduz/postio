@@ -426,3 +426,35 @@ fn a_card_switch_is_one_undoable_command_and_draws_at_once() {
         "drawn at once"
     );
 }
+
+#[test]
+fn the_group_picker_offers_what_exists_filtered_and_picks_by_index() {
+    let mut focus = mac();
+    open_with_card(&mut focus);
+    let effects = run(&mut focus, CommandId::ContactEdit);
+    let [(ticket, Request::ContactGroups)] = asks(&effects)[..] else {
+        panic!("the groups are read when the form opens: {effects:?}");
+    };
+    focus.handle_on(
+        Input::Reply(
+            ticket,
+            Reply::ContactGroups(Ok(vec!["Atlas core".into(), "Finance".into()])),
+        ),
+        &NoRows,
+    );
+    let effects = change(&mut focus, EditChange::GroupQuery(Some("fin".into())));
+    let picker = form(&effects).unwrap().group_picker.expect("open");
+    let labels: Vec<&str> = picker.options.iter().map(|o| o.label.as_str()).collect();
+    assert_eq!(labels, ["Finance", "New group fin"]);
+
+    let effects = change(&mut focus, EditChange::GroupPick(0));
+    let view = form(&effects).unwrap();
+    assert_eq!(view.groups, ["Finance"]);
+    assert!(view.group_picker.is_none(), "picking puts the picker away");
+
+    let effects = change(&mut focus, EditChange::GroupQuery(Some("Book club".into())));
+    let options = form(&effects).unwrap().group_picker.unwrap().options;
+    assert_eq!(options.last().unwrap().label, "New group Book club");
+    let effects = change(&mut focus, EditChange::GroupPick(options.len() as u32 - 1));
+    assert_eq!(form(&effects).unwrap().groups, ["Finance", "Book club"]);
+}

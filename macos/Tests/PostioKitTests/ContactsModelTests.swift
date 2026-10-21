@@ -136,7 +136,7 @@ struct ContactsModelTests {
                 EditAddressFfi(text: "ada@example.org", label: "Work", primary: true, bounced: false)
             ],
             addAddress: "+ Add address", addressNote: "Primary", seen: [], groups: [],
-            addGroup: "+ Add to group", groupNote: "Groups", problem: nil, armed: armed, hints: [],
+            addGroup: "+ Add to group", groupPicker: nil, groupNote: "Groups", problem: nil, armed: armed, hints: [],
             focus: .given)
     }
 

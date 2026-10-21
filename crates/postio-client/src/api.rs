@@ -120,6 +120,7 @@ impl Req {
             Req::ContactsFiltered { .. } => "ContactsFiltered",
             Req::ContactsOverview => "ContactsOverview",
             Req::ContactCard(_) => "ContactCard",
+            Req::ContactGroups => "ContactGroups",
             Req::RecipientDirectory(_) => "RecipientDirectory",
             Req::Labels(_) => "Labels",
             Req::LabelCounts(_) => "LabelCounts",
@@ -705,6 +706,19 @@ impl Client {
             "a contact's card",
             |answer| match answer {
                 Resp::ContactCard(card) => Some(card.map(|card| *card)),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// The name of every contact group.
+    pub async fn contact_groups(&self) -> Result<Vec<String>, StoreError> {
+        self.read(
+            Req::ContactGroups,
+            "the contact groups",
+            |answer| match answer {
+                Resp::ContactGroups(names) => Some(names),
                 _ => None,
             },
         )

@@ -17,8 +17,6 @@ struct ContactEditFormView: View {
     }
 
     @FocusState private var focused: Field?
-    @State private var adding = false
-    @State private var groupText = ""
 
     static let labelWidth: CGFloat = 110
     static let fieldWidth: CGFloat = 560
@@ -66,7 +64,6 @@ struct ContactEditFormView: View {
         case .given: focused = .given
         case let .address(index): focused = .address(Int(index))
         case .group:
-            adding = true
             focused = .group
         }
     }
@@ -218,7 +215,7 @@ struct ContactEditFormView: View {
                                 model.change(.label(index: UInt32(index), label: label))
                             }
                         }
-                        Button("None") { model.change(.label(index: UInt32(index), label: nil)) }
+                        Button("Other") { model.change(.label(index: UInt32(index), label: nil)) }
                     } label: {
                         HStack {
                             Text(address.label).font(.system(size: 12.5))
@@ -282,24 +279,42 @@ struct ContactEditFormView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("\(name), remove from group")
                 }
-                if adding {
-                    TextField("Group name", text: $groupText)
-                        .textFieldStyle(.plain).font(.system(size: 12.5))
-                        .focused($focused, equals: .group)
-                        .padding(.horizontal, 10).frame(width: 150, height: 26)
-                        .overlay(Capsule().strokeBorder(Color.accentColor))
-                        .onSubmit {
-                            model.change(.addGroup(name: groupText))
-                            groupText = ""
-                            adding = false
-                        }
+                if let picker = edit.groupPicker {
+                    TextField(
+                        "Group name",
+                        text: Binding(
+                            get: { picker.query },
+                            set: { model.change(.groupQuery(query: $0)) })
+                    )
+                    .textFieldStyle(.plain).font(.system(size: 12.5))
+                    .focused($focused, equals: .group)
+                    .padding(.horizontal, 10).frame(width: 170, height: 26)
+                    .overlay(Capsule().strokeBorder(Color.accentColor))
+                    .onSubmit {
+                        if !picker.options.isEmpty { model.change(.groupPick(index: 0)) }
+                    }
                 } else {
-                    Button { adding = true; focused = .group } label: {
+                    Button { model.change(.groupQuery(query: "")); focused = .group } label: {
                         Text(edit.addGroup).font(.system(size: 12.5, weight: .semibold))
                             .foregroundStyle(.secondary).padding(.leading, 4)
                     }
                     .buttonStyle(.plain)
                 }
+            }
+            if let picker = edit.groupPicker, !picker.options.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(picker.options.enumerated()), id: \.offset) { index, option in
+                        Button { model.change(.groupPick(index: UInt32(index))) } label: {
+                            Text(option.label)
+                                .font(.system(size: 12.5, weight: option.isNew ? .semibold : .regular))
+                                .padding(.horizontal, 10).frame(maxWidth: .infinity, minHeight: 26, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .frame(width: 220)
+                .background(RoundedRectangle(cornerRadius: 7).fill(Color(nsColor: .controlBackgroundColor)))
+                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(.separator))
             }
             Text(edit.groupNote).font(.system(size: 11.5)).foregroundStyle(.tertiary)
         }

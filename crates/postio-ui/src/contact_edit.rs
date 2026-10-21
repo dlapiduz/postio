@@ -66,6 +66,57 @@ pub enum FormField {
     Group,
 }
 
+/// One line of the "+ Add to group" picker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupOption {
+    /// What the line says: a group's name, or `New group <name>`.
+    pub label: String,
+    /// The name it adds.
+    pub name: String,
+    /// Whether it makes the group.
+    pub is_new: bool,
+}
+
+/// The picker under "+ Add to group": what is typed, and the groups it
+/// matches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupPicker {
+    /// What is typed.
+    pub query: String,
+    /// The matching groups, then `New group <query>`.
+    pub options: Vec<GroupOption>,
+}
+
+/// The groups `query` offers: those that exist, are not already on the form
+/// and contain what is typed, in the order given; and `New group <query>`
+/// last unless a group already has exactly that name.
+pub fn group_options(known: &[String], chosen: &[String], query: &str) -> Vec<GroupOption> {
+    let query = query.trim();
+    let wanted = query.to_lowercase();
+    let mut options: Vec<GroupOption> = known
+        .iter()
+        .filter(|name| !chosen.iter().any(|c| c.eq_ignore_ascii_case(name)))
+        .filter(|name| name.to_lowercase().contains(&wanted))
+        .map(|name| GroupOption {
+            label: name.clone(),
+            name: name.clone(),
+            is_new: false,
+        })
+        .collect();
+    let exists = known
+        .iter()
+        .chain(chosen.iter())
+        .any(|name| name.eq_ignore_ascii_case(query));
+    if !query.is_empty() && !exists {
+        options.push(GroupOption {
+            label: format!("New group {query}"),
+            name: query.to_owned(),
+            is_new: true,
+        });
+    }
+    options
+}
+
 /// What the form draws.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditView {
@@ -109,6 +160,8 @@ pub struct EditView {
     pub groups: Vec<String>,
     /// "+ Add to group".
     pub add_group: String,
+    /// The picker, while one is open.
+    pub group_picker: Option<GroupPicker>,
     /// "Groups work as recipients ..."
     pub group_note: String,
     /// Why Save would be refused, said once the person asks it.
@@ -138,6 +191,10 @@ pub struct EditContext<'a> {
     pub show_problem: bool,
     /// Who has the keyboard.
     pub focus: FormField,
+    /// Every group that exists.
+    pub known_groups: &'a [String],
+    /// What is typed in the group picker, while it is open.
+    pub group_query: Option<&'a str>,
 }
 
 /// The kind's words in the segmented control.
@@ -263,6 +320,10 @@ pub fn view(ctx: &EditContext<'_>, keymap: &Keymap) -> EditView {
         seen: Vec::new(),
         groups: form.groups.clone(),
         add_group: "+ Add to group".to_owned(),
+        group_picker: ctx.group_query.map(|query| GroupPicker {
+            query: query.to_owned(),
+            options: group_options(ctx.known_groups, &form.groups, query),
+        }),
         group_note:
             "Groups work as recipients (to:Atlas core) and as search filters (from:@Finance)."
                 .to_owned(),
@@ -319,6 +380,8 @@ mod tests {
             armed: false,
             show_problem: false,
             focus: FormField::Given,
+            known_groups: &[],
+            group_query: None,
         }
     }
 
@@ -413,6 +476,56 @@ mod tests {
                 ("Escape".to_owned(), "cancel".to_owned())
             ]
         );
+    }
+
+    fn names(options: &[GroupOption]) -> Vec<&str> {
+        options.iter().map(|o| o.label.as_str()).collect()
+    }
+
+    #[test]
+    fn the_picker_filters_the_existing_groups_as_you_type_and_offers_a_new_one_last() {
+        let known: Vec<String> = ["Atlas core", "Finance", "Quarry crew"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        let chosen = vec!["Finance".to_owned()];
+        assert_eq!(
+            names(&group_options(&known, &chosen, "")),
+            ["Atlas core", "Quarry crew"],
+            "nothing typed: what exists, minus what is on the form, no New group"
+        );
+        assert_eq!(
+            names(&group_options(&known, &chosen, "ar")),
+            ["Quarry crew", "New group ar"]
+        );
+        assert_eq!(
+            names(&group_options(&known, &chosen, "atlas CORE")),
+            ["Atlas core"],
+            "a name that exists is not offered again as new"
+        );
+        assert_eq!(
+            names(&group_options(&known, &chosen, "Finance")),
+            Vec::<&str>::new(),
+            "one already on the form offers nothing"
+        );
+        let new = group_options(&known, &chosen, " Book club ");
+        assert_eq!(
+            new.last().map(|o| (o.name.as_str(), o.is_new)),
+            Some(("Book club", true))
+        );
+    }
+
+    #[test]
+    fn the_picker_is_in_the_view_only_while_it_is_open() {
+        let form = ada();
+        let known = vec!["Atlas core".to_owned(), "Zeta".to_owned()];
+        let mut context = ctx(&form);
+        context.known_groups = &known;
+        assert!(view(&context, &keymap()).group_picker.is_none());
+        context.group_query = Some("z");
+        let picker = view(&context, &keymap()).group_picker.expect("open");
+        assert_eq!(picker.query, "z");
+        assert_eq!(names(&picker.options), ["Zeta", "New group z"]);
     }
 
     #[test]

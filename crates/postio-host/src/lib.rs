@@ -1052,11 +1052,13 @@ impl Inner {
                 after,
                 skip,
                 limit,
-            } => match contacts::contacts_page(&self.wiring.database, tab, after, skip, limit).await
-            {
-                Ok(page) => Resp::ContactsPage(page),
-                Err(error) => Resp::Failed(error),
-            },
+            } => {
+                match contacts::contacts_page(&self.wiring.database, tab, after, skip, limit).await
+                {
+                    Ok(page) => Resp::ContactsPage(page),
+                    Err(error) => Resp::Failed(error),
+                }
+            }
             Req::ContactsFiltered { tab, text, cap } => {
                 match contacts::contacts_filtered(&self.wiring.database, tab, &text, cap).await {
                     Ok(rows) => Resp::ContactsFiltered(rows),
@@ -1073,6 +1075,12 @@ impl Inner {
                     .await
                 {
                     Ok(card) => Resp::ContactCard(card.map(Box::new)),
+                    Err(error) => Resp::Failed(error),
+                }
+            }
+            Req::ContactGroups => {
+                match contacts::contact_group_names(&self.wiring.database).await {
+                    Ok(names) => Resp::ContactGroups(names),
                     Err(error) => Resp::Failed(error),
                 }
             }

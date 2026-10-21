@@ -544,6 +544,12 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .map_err(|error| error.to_string()),
         },
+        Request::ContactGroups => Reply::ContactGroups(
+            client
+                .contact_groups()
+                .await
+                .map_err(|error| error.to_string()),
+        ),
         Request::ContactCard { person, stamp } => Reply::ContactCard {
             stamp,
             answer: client

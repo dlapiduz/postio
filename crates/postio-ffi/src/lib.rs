@@ -106,7 +106,7 @@ pub use focus_bar::{
 pub use focus_compose::ComposerKindFfi;
 pub use focus_contact_edit::{
     AddressLabelFfi, ContactEditViewFfi, EditAddressFfi, EditButtonFfi, EditChangeFfi, EditHintFfi,
-    EditSeenFfi, EditSegmentFfi, FormFieldFfi, ShowAsFfi,
+    EditSeenFfi, EditSegmentFfi, FormFieldFfi, GroupOptionFfi, GroupPickerFfi, ShowAsFfi,
 };
 pub use focus_contacts::{
     ArrivalOptionFfi, AvatarFfi, CardAddressFfi, CardButtonFfi, CardFileFfi, CardLineFfi,

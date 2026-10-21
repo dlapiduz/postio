@@ -257,6 +257,18 @@ pub async fn contact_card(
         .map_err(store_error)
 }
 
+/// The name of every contact group, by name: what "+ Add to group" offers.
+pub async fn contact_group_names(
+    database: &Store,
+) -> Result<Vec<String>, postio_model::listing::StoreError> {
+    let reader = database.read().await?;
+    postio_storage::repository::ContactGroupRepository::new(&reader)
+        .list()
+        .await
+        .map(|groups| groups.into_iter().map(|group| group.name).collect())
+        .map_err(store_error)
+}
+
 /// How far the catch-up has got: "Building contacts, n of m".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CatchUpProgress {

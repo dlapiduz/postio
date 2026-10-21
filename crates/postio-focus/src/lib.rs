@@ -1017,6 +1017,8 @@ pub enum Request {
         /// The filter's stamp, echoed in the answer.
         stamp: u64,
     },
+    /// The name of every contact group.
+    ContactGroups,
     /// A person's card.
     ContactCard {
         /// Whose.
@@ -1328,6 +1330,8 @@ pub enum Reply {
         /// The people, or why not.
         answer: Result<Vec<postio_model::ContactListRow>, String>,
     },
+    /// The answer to [`Request::ContactGroups`].
+    ContactGroups(Result<Vec<String>, String>),
     /// The answer to [`Request::ContactCard`].
     ContactCard {
         /// The stamp it was asked under.
@@ -1594,6 +1598,7 @@ impl FocusController {
                 | Reply::ContactsPage { .. }
                 | Reply::ContactsFiltered { .. }
                 | Reply::ContactCard { .. }
+                | Reply::ContactGroups(_)
                 | Reply::FoundMessage { .. }
                 | Reply::DraftBehind { .. }),
             ) => {
@@ -2487,7 +2492,8 @@ impl FocusController {
             reply @ (Reply::ContactsOverview(_)
             | Reply::ContactsPage { .. }
             | Reply::ContactsFiltered { .. }
-            | Reply::ContactCard { .. }) => self.contacts_reply(reply),
+            | Reply::ContactCard { .. }
+            | Reply::ContactGroups(_)) => self.contacts_reply(reply),
             Reply::FoundMessage { message, row } => self.link_found(message, row, rows),
             Reply::DraftBehind { command, draft, .. } => self.draft_behind(command, draft),
             _ => Vec::new(),

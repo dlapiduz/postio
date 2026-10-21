@@ -1376,12 +1376,15 @@ async fn people(connection: &postio_storage::Connection) {
     for hostile in HOSTILE_SENDERS {
         postio_storage::sql::execute(
             connection,
-            "DELETE FROM contacts
+            // Deleted, as a person would: the address keeps its owner, so
+            // nothing is left "waiting" for the catch-up, and no list shows
+            // them.
+            "UPDATE contacts SET state = 'deleted'
               WHERE id IN (SELECT contact_id FROM addresses WHERE address_normalized = ?1)",
             postio_storage::sql::bind![*hostile],
         )
         .await
-        .expect("a hostile sender left out");
+        .expect("a hostile sender put away");
     }
     sort_by_kind(connection).await;
     let mut kinds: Vec<(&str, String)> = NEWSLETTERS
@@ -1629,7 +1632,7 @@ mod tests {
                 scalar(
                     connection,
                     "SELECT count(*) FROM contacts c JOIN addresses a ON a.contact_id = c.id
-                      WHERE a.address_normalized = ?1",
+                      WHERE a.address_normalized = ?1 AND c.state = 'live'",
                     postio_storage::sql::bind![address],
                 )
                 .await
@@ -1668,6 +1671,14 @@ mod tests {
             .expect("a count"),
             1,
             "the school's office is a company"
+        );
+        let waiting = ContactRepository::new(&connection)
+            .unowned_count()
+            .await
+            .expect("a count");
+        assert_eq!(
+            waiting, 0,
+            "every address with mail has a person, so the footer never says Building contacts"
         );
         for hostile in [
             "mallory@sender.invalid",

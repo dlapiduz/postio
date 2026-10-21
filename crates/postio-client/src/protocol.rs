@@ -251,6 +251,8 @@ pub enum Req {
     ContactsOverview,
     /// Everything a person's card shows.
     ContactCard(postio_model::ContactId),
+    /// The name of every contact group, by name.
+    ContactGroups,
     /// Everything recipient completion can offer for an account, read once
     /// so each keystroke is answered from memory rather than by a query.
     RecipientDirectory(AccountId),
@@ -825,6 +827,8 @@ pub enum Resp {
     ContactsOverview(postio_model::ContactsOverview),
     /// The answer to [`Req::ContactCard`].
     ContactCard(Option<Box<postio_model::ContactCardRead>>),
+    /// The answer to [`Req::ContactGroups`].
+    ContactGroups(Vec<String>),
     /// Each sender's remembered treatment.
     Treatments(Vec<(String, String)>),
     /// What recipient completion can offer.

@@ -88,12 +88,12 @@ impl FormAddress {
         }
     }
 
-    /// What the type menu says for this row.
+    /// What the type menu says for this row: `Other` until one is chosen.
     pub fn label_text(&self) -> String {
         match (self.label, self.bounced) {
             (_, true) => "Old \u{b7} bounced".to_owned(),
             (Some(label), _) => label.title().to_owned(),
-            (None, false) => String::new(),
+            (None, false) => "Other".to_owned(),
         }
     }
 
@@ -398,6 +398,11 @@ mod tests {
         assert_eq!(address.label_text(), "Work");
         address.bounced = true;
         assert_eq!(address.label_text(), "Old \u{b7} bounced");
+        assert_eq!(
+            FormAddress::blank().label_text(),
+            "Other",
+            "an untyped address"
+        );
     }
 
     #[test]

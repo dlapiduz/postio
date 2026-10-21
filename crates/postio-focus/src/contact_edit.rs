@@ -53,8 +53,13 @@ pub enum EditChange {
     AddAddress,
     /// The minus beside this row.
     RemoveAddress(u32),
-    /// A group typed or picked, "+ Add to group".
+    /// A group named, "+ Add to group", by a name already complete.
     AddGroup(String),
+    /// The group picker opened (`Some`, with what is typed so far) or put
+    /// away (`None`).
+    GroupQuery(Option<String>),
+    /// The picker's option at this index chosen.
+    GroupPick(u32),
     /// The cross on this group chip.
     RemoveGroup(u32),
 }
@@ -78,6 +83,10 @@ pub(crate) struct ContactEdit {
     focus: FormField,
     /// The avatar's seed.
     id: i64,
+    /// Every group that exists, once read.
+    pub(crate) known_groups: Vec<String>,
+    /// What is typed in the group picker while it is open.
+    group_query: Option<String>,
 }
 
 impl ContactEdit {
@@ -91,6 +100,8 @@ impl ContactEdit {
             show_problem: false,
             focus: FormField::Given,
             id: person.get(),
+            known_groups: Vec::new(),
+            group_query: None,
         }
     }
 
@@ -105,6 +116,8 @@ impl ContactEdit {
             show_problem: false,
             focus: FormField::Given,
             id: 0,
+            known_groups: Vec::new(),
+            group_query: None,
         }
     }
 
@@ -122,6 +135,8 @@ impl ContactEdit {
                 armed: self.armed,
                 show_problem: self.show_problem,
                 focus: self.focus,
+                known_groups: &self.known_groups,
+                group_query: self.group_query.as_deref(),
             },
             keymap,
         )
@@ -179,6 +194,27 @@ impl ContactEdit {
                 if !name.is_empty() && !form.groups.iter().any(|g| g.eq_ignore_ascii_case(name)) {
                     form.groups.push(name.to_owned());
                 }
+                self.group_query = None;
+            }
+            EditChange::GroupQuery(query) => {
+                if query.is_some() {
+                    self.focus = FormField::Group;
+                }
+                self.group_query = query;
+            }
+            EditChange::GroupPick(index) => {
+                let options = postio_ui::contact_edit::group_options(
+                    &self.known_groups,
+                    &form.groups,
+                    self.group_query.as_deref().unwrap_or(""),
+                );
+                if let Some(option) = options.get(index as usize) {
+                    form.groups.push(option.name.clone());
+                    if option.is_new {
+                        self.known_groups.push(option.name.clone());
+                    }
+                }
+                self.group_query = None;
             }
             EditChange::RemoveGroup(index) => {
                 if (index as usize) < form.groups.len() {
@@ -204,7 +240,9 @@ impl FocusController {
         let form = ContactForm::of(card, &card.address_notes);
         let detected = card.person.kind_source == postio_model::KindSource::Detected;
         contacts.edit = Some(ContactEdit::editing(card.person.id, form, detected));
-        self.draw_contact_edit()
+        let mut steps = self.draw_contact_edit();
+        steps.push(Step::Ask(crate::Request::ContactGroups));
+        steps
     }
 
     /// ⌘⇧N: an empty form for a new person.
@@ -216,7 +254,9 @@ impl FocusController {
             return Vec::new();
         }
         contacts.edit = Some(ContactEdit::new_person());
-        self.draw_contact_edit()
+        let mut steps = self.draw_contact_edit();
+        steps.push(Step::Ask(crate::Request::ContactGroups));
+        steps
     }
 
     /// The form's frame, whole.
