@@ -403,6 +403,8 @@ pub struct ContactRowViewFfi {
     pub count_line: String,
     /// The letter heading above this row, when it starts one.
     pub letter: Option<String>,
+    /// Whether the person is marked for a merge.
+    pub marked: bool,
 }
 
 impl From<postio_ui::contacts_view::RowView> for ContactRowViewFfi {
@@ -416,6 +418,7 @@ impl From<postio_ui::contacts_view::RowView> for ContactRowViewFfi {
             when: row.when,
             count_line: row.count_line,
             letter: row.letter.map(|letter| letter.to_string()),
+            marked: row.marked,
         }
     }
 }
@@ -456,6 +459,8 @@ pub struct CardAddressFfi {
     pub note: String,
     /// "bounced 2 Sep".
     pub bounced: Option<String>,
+    /// Whether it can be split off into a person of its own.
+    pub can_split: bool,
 }
 
 /// One switch.
@@ -581,6 +586,7 @@ impl From<postio_ui::contacts_view::CardView> for ContactCardViewFfi {
                     primary: line.primary,
                     note: line.note,
                     bounced: line.bounced,
+                    can_split: line.can_split,
                 })
                 .collect(),
             also_seen: card.also_seen,

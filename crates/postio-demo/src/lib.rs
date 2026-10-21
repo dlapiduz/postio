@@ -1444,6 +1444,45 @@ async fn people(connection: &postio_storage::Connection) {
             .expect("a digest setting");
         }
     }
+    // Three records of one person, as the merge sheet shows them (handoff
+    // screen 07): the saved one, and two that only the mail knows.
+    {
+        let contacts = ContactRepository::new(connection);
+        for (name, address, seen, saved) in [
+            ("Ada Moreno", "ada.moreno@northwind.example", 412, true),
+            ("ada  moreno", "a.moreno@example.net", 14, false),
+            ("Ada Moreno", "ada.m@example.org", 6, false),
+        ] {
+            let person = contacts
+                .create(
+                    Some(name),
+                    &[postio_model::EmailAddress::new(None::<String>, address)],
+                )
+                .await
+                .expect("a record");
+            postio_storage::sql::execute(
+                connection,
+                "UPDATE contacts SET times_seen = ?2, last_seen_at = ?3, source = ?4,
+                        saved_at = ?5, title = ?6, organization = ?7
+                  WHERE id = ?1",
+                postio_storage::sql::bind![
+                    person.get(),
+                    seen,
+                    1_790_000_000_000_i64,
+                    if saved { "user" } else { "mail" },
+                    if saved { Some(1_i64) } else { None },
+                    if saved { Some("Finance lead") } else { None },
+                    if saved {
+                        Some("Northwind Partners")
+                    } else {
+                        None
+                    }
+                ],
+            )
+            .await
+            .expect("their counts");
+        }
+    }
     // Ben is someone the user saved, so he is who is "on copy" with the new
     // sender (handoff screen 05); and Hollis, whom the first row is from, is
     // a colleague, so `i` on that row is the known-sender popover (screen 04).

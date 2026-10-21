@@ -1078,6 +1078,14 @@ impl Inner {
                     Err(error) => Resp::Failed(error),
                 }
             }
+            Req::ContactReview => {
+                Resp::ContactReview(contacts::contact_review(&self.wiring.database).await)
+            }
+            Req::ContactMergeOf(ids) => Resp::ContactMergeOf(
+                contacts::contact_merge_of(&self.wiring.database, &ids)
+                    .await
+                    .map(Box::new),
+            ),
             Req::ContactSeen(person) => {
                 Resp::ContactSeen(contacts::contact_seen(&self.wiring.database, person).await)
             }

@@ -11,6 +11,7 @@ struct ContactCardView: View {
     let card: ContactCardViewFfi?
     let run: (CardButtonFfi) -> Void
     let toggle: (Int) -> Void
+    let split: (String) -> Void
 
     var body: some View {
         if let card {
@@ -89,6 +90,12 @@ struct ContactCardView: View {
                             Spacer(minLength: 0)
                             if let bounced = line.bounced {
                                 Text(bounced).font(.system(size: 11.5)).foregroundStyle(.orange)
+                            }
+                            if line.canSplit {
+                                Button("Split") { split(line.address) }
+                                    .buttonStyle(.plain).font(.system(size: 11.5, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                    .accessibilityLabel("Split \(line.address) into its own contact")
                             }
                         }
                     }

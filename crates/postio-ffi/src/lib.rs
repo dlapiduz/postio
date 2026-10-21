@@ -49,6 +49,7 @@ mod focus;
 mod focus_bar;
 mod focus_compose;
 mod focus_contact_edit;
+mod focus_contact_merge;
 mod focus_contacts;
 mod focus_keymap;
 mod focus_list;
@@ -108,6 +109,7 @@ pub use focus_contact_edit::{
     AddressLabelFfi, ContactEditViewFfi, EditAddressFfi, EditButtonFfi, EditChangeFfi, EditHintFfi,
     EditSeenFfi, EditSegmentFfi, FormFieldFfi, GroupOptionFfi, GroupPickerFfi, ShowAsFfi,
 };
+pub use focus_contact_merge::{MergeCardFfi, MergeResultFfi, MergeSheetViewFfi};
 pub use focus_contacts::{
     ArrivalOptionFfi, AvatarFfi, CardAddressFfi, CardButtonFfi, CardFileFfi, CardLineFfi,
     CardMonthsFfi, CardSwitchFfi, ContactArrivalFfi, ContactCardViewFfi, ContactPopoverViewFfi,

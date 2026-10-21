@@ -255,6 +255,10 @@ pub enum Req {
     ContactGroups,
     /// What the mail says about a person that the Edit form can keep.
     ContactSeen(postio_model::ContactId),
+    /// The groups of records that look like one person, with the evidence.
+    ContactReview,
+    /// The group these records make, with whatever evidence there is.
+    ContactMergeOf(Vec<postio_model::ContactId>),
     /// Everything recipient completion can offer for an account, read once
     /// so each keystroke is answered from memory rather than by a query.
     RecipientDirectory(AccountId),
@@ -833,6 +837,10 @@ pub enum Resp {
     ContactGroups(Vec<String>),
     /// The answer to [`Req::ContactSeen`].
     ContactSeen(Vec<postio_model::SeenItem>),
+    /// The answer to [`Req::ContactReview`].
+    ContactReview(Vec<postio_model::MergeGroup>),
+    /// The answer to [`Req::ContactMergeOf`].
+    ContactMergeOf(Option<Box<postio_model::MergeGroup>>),
     /// Each sender's remembered treatment.
     Treatments(Vec<(String, String)>),
     /// What recipient completion can offer.

@@ -1012,6 +1012,9 @@ impl FocusDriver {
             Intent::ContactsCard(card) => self.say(UiEvent::FocusContactsCard {
                 card: card.map(|card| (*card).into()),
             }),
+            Intent::ContactMerge(view) => self.say(UiEvent::FocusContactMerge {
+                view: view.map(|view| (*view).into()),
+            }),
             Intent::ContactEdit(view) => self.say(UiEvent::FocusContactEdit {
                 view: view.map(|view| (*view).into()),
             }),

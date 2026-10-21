@@ -231,6 +231,171 @@ pub async fn contact_seen(
     items
 }
 
+/// What the review offers to merge: the pairs the store suggests, scored with
+/// the evidence a person can read, joined into groups of people who look like
+/// one, the strongest first (specs/011-focus-contacts S10). A pair with no
+/// evidence is no candidate.
+pub async fn contact_review(database: &Store) -> Vec<postio_model::MergeGroup> {
+    let Ok(reader) = database.read().await else {
+        return Vec::new();
+    };
+    let contacts = ContactRepository::new(&reader);
+    let Ok(pairs) = contacts.suggestion_pairs(40).await else {
+        return Vec::new();
+    };
+    let mut scored = Vec::new();
+    for (a, b, replies) in pairs {
+        if let Some((evidence, score)) = evidence_of(database, &contacts, &a, &b, replies).await {
+            scored.push((a, b, evidence, score));
+        }
+    }
+    groups_of(scored)
+}
+
+/// The group the user chose by marking `ids`: whatever evidence there is is
+/// said, and when there is none the user's own choice is.
+pub async fn contact_merge_of(
+    database: &Store,
+    ids: &[postio_model::ContactId],
+) -> Option<postio_model::MergeGroup> {
+    let reader = database.read().await.ok()?;
+    let contacts = ContactRepository::new(&reader);
+    let mut people = Vec::new();
+    for id in ids {
+        people.push(contacts.get(*id).await.ok()??);
+    }
+    if people.len() < 2 {
+        return None;
+    }
+    let mut lists = Vec::new();
+    for (i, a) in people.iter().enumerate() {
+        for b in &people[i + 1..] {
+            if let Some((evidence, _)) = evidence_of(database, &contacts, a, b, 0).await {
+                lists.push(evidence);
+            }
+        }
+    }
+    people.sort_by_key(|p| {
+        (
+            std::cmp::Reverse(p.is_saved()),
+            std::cmp::Reverse(p.times_seen),
+        )
+    });
+    let mut lines =
+        postio_classify::duplicates::describe(people.len(), &lists, people[0].shown_as().as_ref());
+    if lines.is_empty() {
+        lines.push("You chose these records.".to_owned());
+    }
+    Some(postio_model::MergeGroup {
+        people,
+        evidence: lines,
+    })
+}
+
+/// What two records have in common that says they may be one person, and how
+/// much it counts for.
+async fn evidence_of(
+    database: &Store,
+    contacts: &ContactRepository<'_>,
+    a: &postio_model::Contact,
+    b: &postio_model::Contact,
+    replies: u32,
+) -> Option<(Vec<postio_classify::duplicates::Evidence>, u32)> {
+    use postio_classify::duplicates::{Pair, Side, score};
+    let side = |person: &postio_model::Contact, signature: &postio_model::SignatureDetails| Side {
+        name: person.shown_as().into_owned(),
+        addresses: person
+            .addresses
+            .iter()
+            .map(|owned| owned.address.address.clone())
+            .collect(),
+        title: person.title.clone().or_else(|| signature.title.clone()),
+        company: person
+            .organization
+            .clone()
+            .or_else(|| signature.company.clone()),
+    };
+    let (sig_a, sig_b) = (
+        signature_of(database, contacts, a).await,
+        signature_of(database, contacts, b).await,
+    );
+    let took = contacts.took_over(a, b).await.ok().flatten();
+    let pair = Pair {
+        took_over_in_threads: took.as_ref().map_or(0, |(_, _, n)| *n),
+        took_over: took.map(|(old, new, _)| (old, new)),
+        replies,
+        ..Pair::default()
+    };
+    let scored = score(&side(a, &sig_a), &side(b, &sig_b), &pair)?;
+    Some((scored.evidence, scored.score))
+}
+
+/// What the newest mail from `person` signs with.
+async fn signature_of(
+    database: &Store,
+    contacts: &ContactRepository<'_>,
+    person: &postio_model::Contact,
+) -> postio_model::SignatureDetails {
+    let Ok(Some((message, _, _))) = contacts.introduction_facts(person).await else {
+        return postio_model::SignatureDetails::default();
+    };
+    let body = crate::search::stored_body(database, message).await;
+    postio_classify::signature::parse(body.text.as_deref().unwrap_or(""))
+}
+
+/// Joins scored pairs that share a person into groups: the best record to
+/// keep first (saved, then the most mail), and the group's evidence in words.
+fn groups_of(
+    scored: Vec<(
+        postio_model::Contact,
+        postio_model::Contact,
+        Vec<postio_classify::duplicates::Evidence>,
+        u32,
+    )>,
+) -> Vec<postio_model::MergeGroup> {
+    let mut groups: Vec<(
+        Vec<postio_model::Contact>,
+        Vec<Vec<postio_classify::duplicates::Evidence>>,
+        u32,
+    )> = Vec::new();
+    for (a, b, evidence, score) in scored {
+        let at = groups
+            .iter()
+            .position(|(people, _, _)| people.iter().any(|p| p.id == a.id || p.id == b.id));
+        match at {
+            Some(at) => {
+                let (people, lists, total) = &mut groups[at];
+                for person in [a, b] {
+                    if !people.iter().any(|p| p.id == person.id) {
+                        people.push(person);
+                    }
+                }
+                lists.push(evidence);
+                *total = (*total).max(score);
+            }
+            None => groups.push((vec![a, b], vec![evidence], score)),
+        }
+    }
+    groups.sort_by_key(|(_, _, score)| std::cmp::Reverse(*score));
+    groups
+        .into_iter()
+        .map(|(mut people, lists, _)| {
+            people.sort_by_key(|p| {
+                (
+                    std::cmp::Reverse(p.is_saved()),
+                    std::cmp::Reverse(p.times_seen),
+                )
+            });
+            let evidence = postio_classify::duplicates::describe(
+                people.len(),
+                &lists,
+                people[0].shown_as().as_ref(),
+            );
+            postio_model::MergeGroup { people, evidence }
+        })
+        .collect()
+}
+
 /// How a sender not yet saved reached the user: when their newest message
 /// came, who else was on it that the user knows, and what its signature says.
 ///
@@ -758,6 +923,73 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         assert_eq!(intro.details.title.as_deref(), Some("Partnerships"));
         assert_eq!(intro.details.company.as_deref(), Some("Harbor Data Co."));
         assert_eq!(intro.with, ["Ben Adeyemi"]);
+    }
+
+    #[tokio::test]
+    async fn the_review_offers_look_alikes_with_their_evidence_and_nothing_without_any() {
+        let database = test_support::memory().await;
+        let (ada, a_moreno, ben) = {
+            let connection = database.connect().await.unwrap();
+            let contacts = ContactRepository::new(&connection);
+            let make = |name: &'static str, address: &'static str| {
+                let contacts = &contacts;
+                async move {
+                    contacts
+                        .create(
+                            Some(name),
+                            &[postio_model::EmailAddress::new(None::<String>, address)],
+                        )
+                        .await
+                        .unwrap()
+                }
+            };
+            (
+                make("Ada Moreno", "ada@example.org").await,
+                make("ada  moreno", "a.moreno@example.net").await,
+                make("Ben Adeyemi", "ben@example.net").await,
+            )
+        };
+        let groups = contact_review(&database).await;
+        assert_eq!(groups.len(), 1, "Ben matches nobody: {groups:?}");
+        let ids: Vec<_> = groups[0].people.iter().map(|p| p.id).collect();
+        assert!(ids.contains(&ada) && ids.contains(&a_moreno) && !ids.contains(&ben));
+        assert_eq!(groups[0].evidence.len(), 1);
+        assert!(
+            groups[0].evidence[0].contains("Ada Moreno"),
+            "{:?}",
+            groups[0].evidence
+        );
+
+        // Chosen by hand, with nothing in common, the choice is the evidence.
+        let chosen = contact_merge_of(&database, &[ada, ben])
+            .await
+            .expect("a group");
+        assert_eq!(chosen.evidence, ["You chose these records."]);
+        assert!(
+            contact_merge_of(&database, &[ada]).await.is_none(),
+            "one is not a merge"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_demo_has_three_records_of_one_person_for_screen_07() {
+        let (database, _) = postio_demo::demo().await;
+        let groups = contact_review(&database).await;
+        let ada = groups
+            .iter()
+            .find(|group| {
+                group
+                    .people
+                    .iter()
+                    .any(|p| p.display_name() == "Ada Moreno")
+            })
+            .expect("a group of Adas");
+        assert_eq!(ada.people.len(), 3);
+        assert!(
+            ada.people[0].is_saved(),
+            "the saved record comes first, to be kept"
+        );
+        assert!(ada.evidence[0].contains("Ada Moreno"), "{:?}", ada.evidence);
     }
 
     #[tokio::test]

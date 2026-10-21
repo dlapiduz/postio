@@ -1,0 +1,35 @@
+# Marking people and merging them by hand (specs/011-focus-contacts S10):
+# x marks the person under the cursor, a tick on the avatar says so, and m
+# opens the same sheet on the marked, with "You chose these records." where
+# the scorer has nothing to add. Split takes an address off a merged person.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/011-focus-contacts S10" }
+seed   = "small"
+design = "07-merge-duplicates"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "open_contacts"
+
+[[step]]
+id      = "mark"
+command = "toggle_selection"
+expect  = "The first row has a tick on its avatar."
+
+[[step]]
+command = "next_message"
+
+[[step]]
+command = "toggle_selection"
+expect  = "Two rows carry a tick."
+
+[[step]]
+id      = "merge-marked"
+command = "contact_join"
+expect  = "The merge sheet opens on the two marked people, with no “1 of N”, and the evidence says what the scorer found or “You chose these records.”"
+
+[[step]]
+command = "back"
+expect  = "Later: the sheet goes; the two stay marked."

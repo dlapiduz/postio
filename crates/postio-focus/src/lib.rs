@@ -26,6 +26,7 @@ mod capture;
 mod compose;
 mod confirm;
 mod contact_edit;
+mod contact_merge;
 mod contact_popover;
 mod contacts;
 mod cursor;
@@ -340,6 +341,10 @@ pub enum Input {
     ContactsFilterTyped(String),
     /// A click on the Contacts row at this index.
     ContactsPoint(u32),
+    /// "Split" on the card's address: it becomes a person of its own.
+    ContactSplit(String),
+    /// The merge sheet's record at this index chosen to keep its name.
+    ContactMergeKeep(u32),
     /// A change to the open Edit contact form.
     ContactEditChange(contact_edit::EditChange),
     /// A click on the card's switch at this index.
@@ -660,6 +665,8 @@ pub enum Intent {
     ContactsCursor(Option<u32>),
     /// The card beside the list, whole; `None` while it is being read.
     ContactsCard(Option<Box<postio_ui::contacts_view::CardView>>),
+    /// Draw the merge sheet over the Contacts view, or put it away.
+    ContactMerge(Option<Box<postio_ui::contact_merge::MergeSheetView>>),
     /// Draw the Edit contact form over the card, or put it away.
     ContactEdit(Option<Box<postio_ui::contact_edit::EditView>>),
     /// Put the keyboard in the Contacts filter.
@@ -1017,6 +1024,10 @@ pub enum Request {
         /// The filter's stamp, echoed in the answer.
         stamp: u64,
     },
+    /// The groups of records that look like one person.
+    ContactReview,
+    /// The group these records make, whatever evidence there is.
+    ContactMergeOf(Vec<postio_model::ContactId>),
     /// The name of every contact group.
     ContactGroups,
     /// What the mail says about a person that the Edit form can keep.
@@ -1332,6 +1343,10 @@ pub enum Reply {
         /// The people, or why not.
         answer: Result<Vec<postio_model::ContactListRow>, String>,
     },
+    /// The answer to [`Request::ContactReview`].
+    ContactReview(Vec<postio_model::MergeGroup>),
+    /// The answer to [`Request::ContactMergeOf`].
+    ContactMergeOf(Option<Box<postio_model::MergeGroup>>),
     /// The answer to [`Request::ContactGroups`].
     ContactGroups(Result<Vec<String>, String>),
     /// The answer to [`Request::ContactSeen`].
@@ -1603,6 +1618,8 @@ impl FocusController {
                 | Reply::ContactsFiltered { .. }
                 | Reply::ContactCard { .. }
                 | Reply::ContactGroups(_)
+                | Reply::ContactReview(_)
+                | Reply::ContactMergeOf(_)
                 | Reply::ContactSeen(_)
                 | Reply::FoundMessage { .. }
                 | Reply::DraftBehind { .. }),
@@ -1804,6 +1821,14 @@ impl FocusController {
                 let steps = self.contact_edit_changed(change);
                 self.effects(steps)
             }
+            Input::ContactSplit(address) => {
+                let steps = self.contact_split(&address);
+                self.effects(steps)
+            }
+            Input::ContactMergeKeep(index) => {
+                let steps = self.contact_merge_keep(index as usize);
+                self.effects(steps)
+            }
             Input::ContactCardSwitch(index) => {
                 let steps = self.contact_card_switch(index);
                 self.effects(steps)
@@ -1989,6 +2014,13 @@ impl FocusController {
             CommandId::DigestRule => return self.new_rule(rows),
             CommandId::ContactPopover => return self.open_contact_popover(None, rows),
             CommandId::OpenContacts => return self.open_contacts(),
+            // `g w` from anywhere: Contacts, and the queue read once its
+            // counts are asked for.
+            CommandId::ContactsSuggestions if self.policy.caps.contacts_view => {
+                let mut steps = self.open_contacts();
+                steps.push(feed::Step::Ask(Request::ContactReview));
+                return steps;
+            }
             _ => {}
         }
         // A message open that is on no cursor row -- a search hit, a digest's
@@ -2305,6 +2337,7 @@ impl FocusController {
                 | CommandId::DigestRule
                 | CommandId::ContactPopover
                 | CommandId::OpenContacts
+                | CommandId::ContactsSuggestions
         ) || bar::goes(id)
             || compose::compose_key(id)
             || pickers::opens_picker(id)
@@ -2499,6 +2532,8 @@ impl FocusController {
             | Reply::ContactsFiltered { .. }
             | Reply::ContactCard { .. }
             | Reply::ContactGroups(_)
+            | Reply::ContactReview(_)
+            | Reply::ContactMergeOf(_)
             | Reply::ContactSeen(_)) => self.contacts_reply(reply),
             Reply::FoundMessage { message, row } => self.link_found(message, row, rows),
             Reply::DraftBehind { command, draft, .. } => self.draft_behind(command, draft),

@@ -122,6 +122,8 @@ impl Req {
             Req::ContactCard(_) => "ContactCard",
             Req::ContactGroups => "ContactGroups",
             Req::ContactSeen(_) => "ContactSeen",
+            Req::ContactReview => "ContactReview",
+            Req::ContactMergeOf(_) => "ContactMergeOf",
             Req::RecipientDirectory(_) => "RecipientDirectory",
             Req::Labels(_) => "Labels",
             Req::LabelCounts(_) => "LabelCounts",
@@ -707,6 +709,31 @@ impl Client {
             "a contact's card",
             |answer| match answer {
                 Resp::ContactCard(card) => Some(card.map(|card| *card)),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// The groups of records that look like one person.
+    pub async fn contact_review(&self) -> Result<Vec<postio_model::MergeGroup>, StoreError> {
+        self.read(Req::ContactReview, "the review", |answer| match answer {
+            Resp::ContactReview(groups) => Some(groups),
+            _ => None,
+        })
+        .await
+    }
+
+    /// The group `ids` make, with whatever evidence there is.
+    pub async fn contact_merge_of(
+        &self,
+        ids: Vec<postio_model::ContactId>,
+    ) -> Result<Option<postio_model::MergeGroup>, StoreError> {
+        self.read(
+            Req::ContactMergeOf(ids),
+            "the records to merge",
+            |answer| match answer {
+                Resp::ContactMergeOf(group) => Some(group.map(|group| *group)),
                 _ => None,
             },
         )

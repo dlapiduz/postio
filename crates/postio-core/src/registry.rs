@@ -2781,8 +2781,9 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::SuggestionDismiss,
         title: "Not the same person",
         // 005 bound `X`, which is also Select all's alternate and so a second
-        // meaning in Contacts; `N` for "not": free here.
-        default_binding: "N",
+        // meaning in Contacts; `n` for "not", as the handoff's sheet says
+        // (screen 07): the reader's `n` is another context's.
+        default_binding: "n",
         alternate_bindings: &[],
         contexts: ctx(CONTACTS),
         // It hides a suggestion and nothing else: the two people, their

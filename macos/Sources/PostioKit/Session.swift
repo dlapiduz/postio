@@ -350,6 +350,12 @@ public final class PostioSession {
     /// A click on the Contacts row at `index`.
     public func focusContactsPoint(_ index: UInt32) { inner.focusContactsPoint(index: index) }
 
+    /// A click on the merge sheet's card at `index`: its name is kept.
+    public func focusContactMergeKeep(_ index: UInt32) { inner.focusContactMergeKeep(index: index) }
+
+    /// "Split" on the card's address.
+    public func focusContactSplit(_ address: String) { inner.focusContactSplit(address: address) }
+
     /// The Edit contact form, while one is open.
     public func focusContactEdit() -> ContactEditViewFfi? { inner.focusContactEdit() }
 

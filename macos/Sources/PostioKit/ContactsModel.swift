@@ -19,6 +19,10 @@ public protocol ContactsEngine: AnyObject {
     func focusContactsFilter(_ text: String)
     /// A click on a row.
     func focusContactsPoint(_ index: UInt32)
+    /// A click on the merge sheet's card at `index`.
+    func focusContactMergeKeep(_ index: UInt32)
+    /// "Split" on the card's address.
+    func focusContactSplit(_ address: String)
     /// The Edit contact form, while one is open.
     func focusContactEdit() -> ContactEditViewFfi?
     /// A change a person made to the open form.
@@ -56,6 +60,8 @@ public final class ContactsModel {
     public private(set) var view: ContactsViewFfi?
     /// The card beside the list; `nil` while it is read.
     public private(set) var card: ContactCardViewFfi?
+    /// The merge sheet over the view; `nil` while there is none.
+    public private(set) var merge: MergeSheetViewFfi?
     /// The Edit contact form over the card; `nil` while there is none.
     public private(set) var edit: ContactEditViewFfi?
     /// The row the keyboard is on.
@@ -103,6 +109,9 @@ public final class ContactsModel {
         case let .focusContactsCard(next):
             card = next
             return view == nil ? nil : .redraw
+        case let .focusContactMerge(next):
+            merge = next
+            return view == nil ? nil : .redraw
         case let .focusContactEdit(next):
             edit = next
             return view == nil ? nil : .redraw
@@ -114,6 +123,7 @@ public final class ContactsModel {
             view = nil
             card = nil
             edit = nil
+            merge = nil
             cursor = nil
             filter = ""
             return .close
@@ -191,5 +201,27 @@ extension ContactsModel {
             card.switches[index].canToggle
         else { return }
         engine.focusContactCardSwitch(UInt32(index))
+    }
+}
+
+// MARK: the merge sheet (specs/011-focus-contacts S10)
+
+extension ContactsModel {
+    /// A click on a card of the sheet: its name and photo are kept.
+    public func keep(cardAt index: Int) {
+        guard merge != nil, index >= 0 else { return }
+        engine.focusContactMergeKeep(UInt32(index))
+    }
+
+    /// A click on Merge, Not the same or Later: the command its key sends.
+    public func choose(_ button: EditButtonFfi, command: String) {
+        guard merge != nil else { return }
+        engine.invoke(command)
+    }
+
+    /// "Split" on the card's address.
+    public func split(_ address: String) {
+        guard view != nil, edit == nil, merge == nil else { return }
+        engine.focusContactSplit(address)
     }
 }

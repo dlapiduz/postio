@@ -228,6 +228,8 @@ pub fn count_line(row: &ContactListRow) -> String {
 /// One row of the list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RowView {
+    /// Whether the person is marked for a merge.
+    pub marked: bool,
     /// The person.
     pub id: postio_model::ContactId,
     /// The avatar.
@@ -256,6 +258,7 @@ pub fn row(row: &ContactListRow, before: Option<&str>, now: DateTime<Local>) -> 
         (None, _) => String::new(),
     };
     RowView {
+        marked: false,
         id: row.id,
         avatar: avatar(row.id, &row.name, row.kind),
         name: row.name.clone(),
@@ -296,6 +299,9 @@ pub struct AddressLine {
     pub note: String,
     /// "bounced 2 Sep", drawn in orange.
     pub bounced: Option<String>,
+    /// Whether it can be split off into a person of its own: the person has
+    /// more than one address.
+    pub can_split: bool,
 }
 
 /// One switch under "How mail from X arrives".
@@ -585,6 +591,7 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
                             at.with_timezone(&now.timezone()).format("%-d %b")
                         )
                     }),
+                can_split: person.addresses.len() > 1,
             }
         })
         .collect();

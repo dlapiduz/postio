@@ -35,7 +35,8 @@ public struct ContactsScreen: View {
                     } else {
                         ContactCardView(
                             card: model.card, run: { model.run($0) },
-                            toggle: { model.toggle(switchAt: $0) }
+                            toggle: { model.toggle(switchAt: $0) },
+                            split: { model.split($0) }
                         )
                         .frame(maxWidth: .infinity)
                     }
@@ -44,6 +45,11 @@ public struct ContactsScreen: View {
                 footer(view.footer)
             }
             .background(Color(nsColor: .textBackgroundColor))
+            .overlay(alignment: .top) {
+                if let sheet = model.merge {
+                    MergeSheetView(sheet: sheet, model: model)
+                }
+            }
             .accessibilityElement(children: .contain)
             .accessibilityLabel(view.strip.title)
             .onChange(of: model.filterRequest) { _, _ in filtering = true }
@@ -213,6 +219,15 @@ struct ContactRowView: View {
                 if let row {
                     HStack(spacing: 10) {
                         ContactAvatarView(avatar: row.avatar, size: 32, radius: 8)
+                            .overlay(alignment: .bottomTrailing) {
+                                if row.marked {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.system(size: 13)).foregroundStyle(Color.accentColor)
+                                        .background(Circle().fill(Color(nsColor: .textBackgroundColor)))
+                                        .offset(x: 4, y: 4)
+                                        .accessibilityLabel("Marked")
+                                }
+                            }
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
                                 Text(row.name).font(.system(size: 13.5, weight: .semibold)).lineLimit(1)

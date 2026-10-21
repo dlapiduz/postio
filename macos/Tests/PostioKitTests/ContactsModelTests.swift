@@ -22,6 +22,10 @@ struct ContactsModelTests {
         var edit: ContactEditViewFfi?
         var changes: [EditChangeFfi] = []
         var switches: [UInt32] = []
+        var kept: [UInt32] = []
+        var splits: [String] = []
+        func focusContactMergeKeep(_ index: UInt32) { kept.append(index) }
+        func focusContactSplit(_ address: String) { splits.append(address) }
         func focusContactEdit() -> ContactEditViewFfi? { edit }
         func focusContactEditChange(_ change: EditChangeFfi) { changes.append(change) }
         func focusContactCardSwitch(_ index: UInt32) { switches.append(index) }
@@ -55,7 +59,8 @@ struct ContactsModelTests {
     nonisolated static func row(_ name: String, letter: String? = nil) -> ContactRowViewFfi {
         ContactRowViewFfi(
             id: 1, avatar: AvatarFfi(text: "AM", rgb: 0xb0624a, round: true), name: name, tag: nil,
-            address: "ada@example.org", when: "today", countLine: "431 messages", letter: letter)
+            address: "ada@example.org", when: "today", countLine: "431 messages", letter: letter,
+            marked: false)
     }
 
     nonisolated static func button(enabled: Bool) -> CardButtonFfi {
@@ -186,5 +191,57 @@ struct ContactsModelTests {
         #expect(engine.invoked == ["contact_new"], "not over a form already open")
         model.apply(.focusCloseSurface(kind: .contacts))
         #expect(model.edit == nil)
+    }
+
+    // MARK: the merge sheet (specs/011-focus-contacts S10)
+
+    nonisolated static func sheet(kept: Int = 0) -> MergeSheetViewFfi {
+        let avatar = AvatarFfi(text: "AM", rgb: 0xb0624a, round: true)
+        func card(_ name: String, kept: Bool) -> MergeCardFfi {
+            MergeCardFfi(
+                avatar: avatar, name: name, source: "saved", address: "ada@example.org",
+                stats: "412 messages, last today", keep: kept ? "Keep this name and photo" : "Address kept",
+                kept: kept)
+        }
+        return MergeSheetViewFfi(
+            title: "These 2 look like the same person", subtitle: "Merging keeps every address",
+            position: "1 of 2", cards: [card("Ada Moreno", kept: kept == 0), card("A. Moreno", kept: kept == 1)],
+            whyTitle: "Why we think so", evidence: ["Both are called Ada Moreno"],
+            result: MergeResultFfi(
+                avatar: avatar, name: "Ada Moreno", role: "", addresses: "ada@example.org",
+                line: "Result"),
+            foot: "Undo with ⌘Z.",
+            notSame: EditButtonFfi(label: "Not the same", key: "n"),
+            later: EditButtonFfi(label: "Later", key: "Escape"),
+            merge: EditButtonFfi(label: "Merge", key: "Return"))
+    }
+
+    @Test func theSheetOpensOnTheControllersWordAndItsButtonsSendTheKeys() {
+        let engine = Engine()
+        let model = ContactsModel(engine: engine)
+        model.keep(cardAt: 1)
+        #expect(engine.kept.isEmpty, "nothing without a sheet")
+        model.apply(.focusContacts(view: Self.frame()))
+        #expect(model.apply(.focusContactMerge(view: Self.sheet())) == .redraw)
+        #expect(model.merge?.title == "These 2 look like the same person")
+        model.keep(cardAt: 1)
+        model.choose(Self.sheet().merge, command: "contact_show_mail")
+        model.choose(Self.sheet().notSame, command: "suggestion_dismiss")
+        model.choose(Self.sheet().later, command: "back")
+        #expect(engine.kept == [1])
+        #expect(engine.invoked == ["contact_show_mail", "suggestion_dismiss", "back"])
+        model.apply(.focusContactMerge(view: nil))
+        #expect(model.merge == nil)
+    }
+
+    @Test func splitIsAClickOnAnAddressAndOnlyWithoutASheetOrForm() {
+        let engine = Engine()
+        let model = ContactsModel(engine: engine)
+        model.apply(.focusContacts(view: Self.frame()))
+        model.split("a.moreno@example.net")
+        #expect(engine.splits == ["a.moreno@example.net"])
+        model.apply(.focusContactMerge(view: Self.sheet()))
+        model.split("again@example.net")
+        #expect(engine.splits.count == 1, "not over the sheet")
     }
 }

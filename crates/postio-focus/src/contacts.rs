@@ -65,6 +65,10 @@ pub(crate) struct Contacts {
     card_stamp: u64,
     /// The Edit form, while one is open over the card.
     pub(crate) edit: Option<crate::contact_edit::ContactEdit>,
+    /// The people marked for a merge, in the order they were marked.
+    pub(crate) marks: Vec<ContactId>,
+    /// The merge sheet, while one is open over the list.
+    pub(crate) merge: Option<crate::contact_merge::MergeSheet>,
 }
 
 impl Contacts {
@@ -83,6 +87,8 @@ impl Contacts {
             card_for: None,
             card_stamp: 0,
             edit: None,
+            marks: Vec::new(),
+            merge: None,
         }
     }
 
@@ -128,7 +134,7 @@ impl Contacts {
     }
 
     /// The person under the cursor.
-    fn person(&self) -> Option<&ContactListRow> {
+    pub(crate) fn person(&self) -> Option<&ContactListRow> {
         self.row(self.cursor?)
     }
 }
@@ -167,6 +173,10 @@ impl FocusController {
                 | CommandId::ContactEdit
                 | CommandId::ContactNew
                 | CommandId::ContactSave
+                | CommandId::ToggleSelection
+                | CommandId::ContactJoin
+                | CommandId::ContactsSuggestions
+                | CommandId::SuggestionDismiss
         )
     }
 
@@ -174,6 +184,18 @@ impl FocusController {
     /// what is not its own does nothing, but the key map and Quit.
     pub(crate) fn contacts_command(&mut self, id: CommandId, rows: &dyn Rows) -> Option<Vec<Step>> {
         let contacts = self.contacts.as_mut()?;
+        // The merge sheet holds the keyboard the same way.
+        if contacts.merge.is_some() {
+            return match id {
+                CommandId::Back => Some(self.contact_merge_later()),
+                CommandId::ContactShowMail => Some(self.contact_merge_now()),
+                CommandId::SuggestionDismiss => Some(self.contact_merge_not_the_same()),
+                CommandId::NextMessage => Some(self.contact_merge_step(1)),
+                CommandId::PrevMessage => Some(self.contact_merge_step(-1)),
+                CommandId::CheatSheet => None,
+                _ => Some(Vec::new()),
+            };
+        }
         // A form open in front of the list holds the keyboard: what is not
         // its own does nothing, but the key map.
         if contacts.edit.is_some() {
@@ -185,6 +207,9 @@ impl FocusController {
             };
         }
         match id {
+            CommandId::ToggleSelection => Some(self.contacts_mark()),
+            CommandId::ContactJoin => Some(self.contacts_merge_marked()),
+            CommandId::ContactsSuggestions => Some(self.contacts_review_ask()),
             CommandId::ContactEdit => Some(self.contact_edit_open()),
             CommandId::ContactNew => Some(self.contact_new_open()),
             CommandId::Back => {
@@ -410,7 +435,9 @@ impl FocusController {
         let contacts = self.contacts.as_ref()?;
         let row = contacts.row(index)?;
         let before = contacts.before(index);
-        Some(words::row(row, before.as_deref(), self.bar.now()))
+        let mut view = words::row(row, before.as_deref(), self.bar.now());
+        view.marked = contacts.marks.contains(&row.id);
+        Some(view)
     }
 
     /// The rows the frontend can see at `index`: reads the page they are on
@@ -473,6 +500,8 @@ impl FocusController {
             } => self.contacts_page_read(stamp, page, answer),
             Reply::ContactsFiltered { stamp, answer } => self.contacts_filtered_read(stamp, answer),
             Reply::ContactCard { stamp, answer } => self.contacts_card_read(stamp, answer),
+            Reply::ContactReview(groups) => self.contacts_review_read(groups),
+            Reply::ContactMergeOf(group) => self.contacts_merge_of_read(group.map(|g| *g)),
             Reply::ContactSeen(items) => {
                 if let Some(edit) = self.contacts.as_mut().and_then(|c| c.edit.as_mut()) {
                     edit.seen = items;

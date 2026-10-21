@@ -308,6 +308,11 @@ pub enum UiEvent {
         /// The card.
         card: Option<crate::focus_contacts::ContactCardViewFfi>,
     },
+    /// The merge sheet: draw it over the Contacts view, or put it away.
+    FocusContactMerge {
+        /// The sheet, or `None` when it is gone.
+        view: Option<crate::focus_contact_merge::MergeSheetViewFfi>,
+    },
     /// The Edit contact form: draw it over the card, or put it away.
     FocusContactEdit {
         /// The form, or `None` when it is gone.
