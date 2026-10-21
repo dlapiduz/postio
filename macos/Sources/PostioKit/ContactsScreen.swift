@@ -174,7 +174,11 @@ public struct ContactsScreen: View {
 
     private func footer(_ footer: ContactsFooterFfi) -> some View {
         HStack(spacing: 14) {
-            FocusHintRow(footer.hints.map { FocusHintRow.Hint(cap: KeyCapSpelling.cap($0.key) ?? $0.key, label: $0.label) })
+            // Over the form, the footer teaches the form's keys.
+            FocusHintRow(
+                model.edit.map { form in
+                    form.hints.map { FocusHintRow.Hint(cap: KeyCapSpelling.cap($0.key) ?? $0.key, label: $0.label) }
+                } ?? footer.hints.map { FocusHintRow.Hint(cap: KeyCapSpelling.cap($0.key) ?? $0.key, label: $0.label) })
             Spacer(minLength: 0)
             Text(footer.status).font(.system(size: 12)).foregroundStyle(.secondary)
         }
