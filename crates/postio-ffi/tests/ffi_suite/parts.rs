@@ -253,3 +253,124 @@ async fn a_part_that_cannot_be_fetched_opens_nothing_and_says_why() {
     assert!(refused.contains("syncing"), "got {refused:?}");
     session.shutdown();
 }
+
+// -- two accounts -------------------------------------------------------------
+
+/// A server holding one inbox message with a PDF attachment whose bytes are
+/// `payload`, so which server answered is readable from the bytes.
+fn server_with_report(payload: &str) -> postio_account::backend::MockBackend {
+    use postio_account::backend::{BodyStructure, MockBackend, MockMailbox, MockMessage, PartNode};
+    let text = format!("See attached: {payload}");
+    let raw = format!(
+        "Message-ID: <report@example.com>\r\nFrom: ada@example.com\r\n\
+         Subject: Report\r\nContent-Type: multipart/mixed; boundary=parts\r\n\r\n\
+         --parts\r\nContent-Type: text/plain\r\n\r\n{text}\r\n\
+         --parts\r\nContent-Type: application/pdf\r\n\
+         Content-Disposition: attachment; filename=report.pdf\r\n\
+         Content-Transfer-Encoding: 7bit\r\n\r\n{payload}\r\n--parts--\r\n"
+    );
+    MockBackend::builder()
+        .mailbox(
+            MockMailbox::new("INBOX").message(
+                MockMessage::new(raw.into_bytes())
+                    .with_structure(BodyStructure::from_parts(
+                        "multipart/mixed",
+                        [
+                            PartNode::new("1", "text/plain", text.len() as u64)
+                                .with_encoding("7bit"),
+                            PartNode::new("2", "application/pdf", payload.len() as u64)
+                                .with_encoding("7bit")
+                                .with_filename("report.pdf"),
+                        ],
+                    ))
+                    .with_part("1", text.as_bytes())
+                    .with_part("2", payload.as_bytes()),
+            ),
+        )
+        .build()
+}
+
+/// A session with two syncing accounts, each over its own server. Returns the
+/// session, and the id and attachment of the message that lives on the
+/// second account's server; the first account's server holds a message of its
+/// own, so that an engine asked for the wrong message has something to
+/// answer with.
+async fn two_accounts() -> (std::sync::Arc<Session>, i64, i64) {
+    use postio_model::{Account, EmailAddress};
+    use postio_storage::repository::AccountRepository;
+    let database = test_support::memory().await;
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let blobs =
+        postio_storage::BlobStore::open(scratch.path(), &postio_storage::test_support::blob_keys())
+            .expect("a blob store");
+    let mut accounts = Vec::new();
+    {
+        let connection = database.connect().await.expect("a connection");
+        for name in ["first", "second"] {
+            let mut account = Account::new(
+                name,
+                EmailAddress::new(None::<String>, format!("{name}@example.com")),
+            );
+            AccountRepository::new(&connection)
+                .create(&mut account)
+                .await
+                .expect("an account");
+            accounts.push(account.id);
+        }
+    }
+    let session = Session::open(
+        SessionOptions::in_memory_with(database.clone()).with_blobs_for_test(blobs, scratch),
+    )
+    .expect("a session");
+    session.adopt_mock_engine_for(
+        accounts[0],
+        std::sync::Arc::new(server_with_report("%PDF first account")),
+    );
+    session.adopt_mock_engine_for(
+        accounts[1],
+        std::sync::Arc::new(server_with_report("%PDF second account")),
+    );
+    // Wait for the second account's sync to bring its message in.
+    let deadline = std::time::Instant::now() + postio_test_support::patience();
+    let message = loop {
+        let connection = database.read().await.expect("a read connection");
+        let found = postio_storage::sql::first(
+            &connection,
+            "SELECT id FROM messages WHERE account_id = ?1",
+            [accounts[1].get()],
+            |row| postio_storage::sql::RowExt::col::<i64>(row, 0),
+        )
+        .await
+        .expect("a query");
+        if let Some(id) = found {
+            break id;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the second account never synced its message"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    };
+    let part = offered(&session, message).parts[0].id;
+    (session, message, part)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_part_of_the_second_account_comes_from_the_second_accounts_server() {
+    let (session, message, part) = two_accounts().await;
+    let bytes = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        session.part_bytes(message, "2".to_string()),
+    )
+    .await
+    .expect("the fetch asked the engine that can answer it")
+    .expect("the part's bytes");
+    assert_eq!(bytes, b"%PDF second account");
+
+    let path = session
+        .open_attachment(message, part)
+        .await
+        .expect("an attachment of the second account opens");
+    assert_eq!(std::fs::read(path).unwrap(), b"%PDF second account");
+    session.shutdown();
+}

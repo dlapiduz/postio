@@ -63,16 +63,6 @@ impl EngineSlot {
             .cloned()
     }
 
-    /// Some engine, for callers that have no account to ask by.
-    pub fn first(&self) -> Option<Engine> {
-        self.0
-            .lock()
-            .expect("never poisoned")
-            .values()
-            .next()
-            .cloned()
-    }
-
     /// Whether no engine has been started at all.
     pub fn is_empty(&self) -> bool {
         self.0.lock().expect("never poisoned").is_empty()

@@ -1733,15 +1733,7 @@ impl Inner {
         &self,
         message: postio_model::MessageId,
     ) -> Option<postio_runtime::Engine> {
-        let connection = self.wiring.database.read().await.ok()?;
-        let account = postio_storage::sql::first(
-            &connection,
-            "SELECT account_id FROM messages WHERE id = ?1",
-            [message.get()],
-            |row| postio_storage::sql::RowExt::col::<i64>(row, 0).map(postio_model::AccountId::new),
-        )
-        .await
-        .ok()??;
+        let account = parts::account_of(&self.wiring.database, message).await?;
         let engines = self.engines.running.lock().expect("never poisoned");
         if engines.is_empty() {
             // A caller may supply its own engine through Wiring instead of
