@@ -9,12 +9,6 @@
 
 use postio_model::SignatureDetails;
 
-
-
-
-
-
-
 /// The words a signature is read by, from `data/signature.toml`.
 #[derive(serde::Deserialize)]
 struct Words {

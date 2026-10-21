@@ -263,6 +263,16 @@ async fn classify(
     let mut people: HashMap<AccountId, Arc<Vec<Identity>>> = HashMap::new();
     let mut invited = Vec::new();
     let mut asks = Vec::new();
+    // A delivery failure names an address that did not work: it is marked
+    // beside the rest of the batch (specs/011-focus-contacts S10).
+    let mut bounced = Vec::new();
+    for &message in batch {
+        if let Ok(Some(row)) = MessageRepository::new(connection).get(message).await
+            && let Some(bounce) = bounce_of(blobs, &row).await
+        {
+            bounced.push((bounce, row.received_at));
+        }
+    }
     for &message in batch {
         match found_in(connection, blobs, message, &mut people, corrections).await {
             Ok(Some(Found::Invitation(invitation))) => invited.push((message, invitation)),
@@ -298,11 +308,47 @@ async fn classify(
             // Filing held it on its headers alone; its body says otherwise.
             digests.release_waiting(marker.message).await?;
         }
+        for (bounce, at) in &bounced {
+            postio_storage::repository::ContactRepository::new(&transaction)
+                .mark_bounced(&bounce.address, *at)
+                .await?;
+        }
         FocusClassifiedRepository::new(&transaction)
             .record(batch, FocusStage::Body, version)
             .await
     })
     .await
+}
+
+/// The delivery failure `row`'s report part names, when the part is on this
+/// machine: a `message/delivery-status` with a permanent status.
+async fn bounce_of(blobs: &BlobStore, row: &Message) -> Option<postio_classify::bounce::Bounce> {
+    let parts: Vec<_> = row
+        .attachments
+        .iter()
+        .filter(|part| {
+            part.mime_type
+                .eq_ignore_ascii_case("message/delivery-status")
+        })
+        .filter_map(|part| part.blob_id.clone())
+        .collect();
+    if parts.is_empty() {
+        return None;
+    }
+    let blobs = blobs.clone();
+    tokio::task::spawn_blocking(move || {
+        parts.iter().find_map(|part| {
+            let status = blobs.get(part).ok()?;
+            postio_classify::bounce::detect(
+                Some("multipart/report; report-type=delivery-status"),
+                None,
+                &String::from_utf8_lossy(&status),
+            )
+        })
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// What `message` calls out, if anything: its invitation, when its calendar

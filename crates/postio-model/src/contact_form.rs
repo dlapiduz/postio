@@ -62,6 +62,8 @@ pub struct AddressNote {
     pub label: Option<AddressLabel>,
     /// Whether a bounce named it.
     pub bounced: bool,
+    /// When the bounce was.
+    pub bounced_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// One address row of the form.

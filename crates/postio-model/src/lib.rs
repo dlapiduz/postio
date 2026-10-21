@@ -93,8 +93,9 @@ pub use contact::{
     AddressMove, CARD_RECENT, Contact, ContactAddress, ContactCardRead, ContactDetail,
     ContactGlance, ContactKind, ContactListRow, ContactSource, ContactState, ContactStats,
     ContactTab, ContactView, ContactsOverview, ContactsPageRead, FileChip, IssueRead, JoinReceipt,
-    JoinSuggestion, KindSignals, KindSource, OpenItem, OpenSide, PersonEdit, PersonFields, RECENT,
-    REVIEW_CAP, RecentMessage, ReviewSummary, ShowAs, SuggestionReason, month_key,
+    JoinSuggestion, KindSignals, KindSource, MergeGroup, OpenItem, OpenSide, PersonEdit,
+    PersonFields, RECENT, REVIEW_CAP, RecentMessage, ReviewSummary, ShowAs, SuggestionReason,
+    month_key,
 };
 pub use contact_form::{
     AddressLabel, AddressNote, ContactForm, DetailKind, FormAddress, FormProblem, Introduction,

@@ -137,3 +137,143 @@ async fn ignore_sender_is_a_setting_that_survives_being_the_only_one() {
     settings.put(person, &ignored).await.unwrap();
     assert!(settings.get(person).await.unwrap().ignored);
 }
+
+#[tokio::test]
+async fn one_address_that_stopped_as_another_began_in_the_same_threads_is_found() {
+    use super::contact_stats::{at, mail, person, setup};
+    let (_database, connection, account, inbox) = setup().await;
+    let me = account.address.address.clone();
+    for n in 0..3u32 {
+        let old = mail(
+            &connection,
+            &account,
+            inbox,
+            at(2026, 1, 1 + n),
+            "a.moreno@example.net",
+            &me,
+            true,
+        )
+        .await;
+        let new = mail(
+            &connection,
+            &account,
+            inbox,
+            at(2026, 2, 1 + n),
+            "ada@example.org",
+            &me,
+            true,
+        )
+        .await;
+        postio_storage::sql::execute(
+            &connection,
+            "INSERT INTO threads (account_id, subject) VALUES (?1, ?2)",
+            postio_storage::sql::bind![account.id.get(), format!("t{n}")],
+        )
+        .await
+        .unwrap();
+        let thread = connection.last_insert_rowid();
+        for id in [old, new] {
+            postio_storage::sql::execute(
+                &connection,
+                "UPDATE messages SET thread_id = ?2 WHERE id = ?1",
+                postio_storage::sql::bind![id.get(), thread],
+            )
+            .await
+            .unwrap();
+        }
+    }
+    let contacts = ContactRepository::new(&connection);
+    let old = contacts
+        .get(person(&connection, "a.moreno@example.net").await)
+        .await
+        .unwrap()
+        .unwrap();
+    let new = contacts
+        .get(person(&connection, "ada@example.org").await)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        contacts.took_over(&new, &old).await.unwrap(),
+        Some((
+            "a.moreno@example.net".to_owned(),
+            "ada@example.org".to_owned(),
+            3
+        )),
+        "whichever order they are asked in"
+    );
+    let stranger = mail(
+        &connection,
+        &account,
+        inbox,
+        at(2026, 3, 1),
+        "ben@example.net",
+        &me,
+        true,
+    )
+    .await;
+    let _ = stranger;
+    let ben = contacts
+        .get(person(&connection, "ben@example.net").await)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(contacts.took_over(&ben, &new).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn a_bounce_marks_the_address_counts_in_the_review_and_shows_on_the_card() {
+    use super::contact_stats::{at, mail, person, setup};
+    let (_database, connection, account, inbox) = setup().await;
+    let me = account.address.address.clone();
+    mail(
+        &connection,
+        &account,
+        inbox,
+        at(2026, 1, 1),
+        "a.moreno@example.net",
+        &me,
+        true,
+    )
+    .await;
+    let contacts = ContactRepository::new(&connection);
+    assert_eq!(contacts.overview().await.unwrap().review.bounced, 0);
+
+    let when = chrono::Utc::now() - chrono::Duration::days(2);
+    assert!(
+        contacts
+            .mark_bounced("A.Moreno@Example.NET", when)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !contacts
+            .mark_bounced("nobody@example.net", when)
+            .await
+            .unwrap(),
+        "an address the store never saw is not marked"
+    );
+    assert_eq!(contacts.overview().await.unwrap().review.bounced, 1);
+
+    let ada = person(&connection, "a.moreno@example.net").await;
+    let notes = contacts.address_notes(ada).await.unwrap();
+    assert!(notes[0].bounced && notes[0].bounced_at.is_some());
+
+    // A report older than one already known changes nothing.
+    contacts
+        .mark_bounced("a.moreno@example.net", when - chrono::Duration::days(9))
+        .await
+        .unwrap();
+    let again = contacts.address_notes(ada).await.unwrap();
+    assert_eq!(again[0].bounced_at, notes[0].bounced_at);
+
+    // Long ago is not "recently".
+    contacts
+        .mark_bounced(
+            "a.moreno@example.net",
+            chrono::Utc::now() - chrono::Duration::days(200),
+        )
+        .await
+        .unwrap();
+    assert_eq!(contacts.overview().await.unwrap().review.bounced, 1);
+}

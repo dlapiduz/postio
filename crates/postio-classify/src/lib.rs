@@ -24,7 +24,9 @@
 /// and the catch-up at Focus's start takes it (FR-141).
 pub const VERSION: u32 = 1;
 
+pub mod bounce;
 mod digests;
+pub mod duplicates;
 mod facts;
 mod filters;
 mod guards;

@@ -768,6 +768,17 @@ pub struct JoinSuggestion {
     pub reason: SuggestionReason,
 }
 
+/// People who look like one, with the evidence a person can read
+/// (specs/011-focus-contacts S10): a card of the merge sheet is one of
+/// [`MergeGroup::people`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergeGroup {
+    /// Two or more records, the best one to keep first.
+    pub people: Vec<Contact>,
+    /// "Why we think so", one line each, from the scorer.
+    pub evidence: Vec<String>,
+}
+
 /// What the editor changes about a person (FR-021): their name,
 /// organisation and note. Addresses are changed one at a time, with their own
 /// verbs, because each is a claim about who owns what.

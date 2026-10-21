@@ -1021,10 +1021,18 @@ impl ContactRepository<'_> {
                 .collect(),
             review: ReviewSummary {
                 duplicates,
-                // Bounces are recorded once DSN detection lands (S10); until
-                // then nothing sets `bounced_at`, and counting it would walk
-                // every address for a zero.
-                bounced: 0,
+                bounced: capped(
+                    sql::scalar(
+                        self.connection,
+                        "SELECT count(*) FROM (SELECT 1 FROM addresses
+                          WHERE bounced_at > ?1 AND contact_id IS NOT NULL LIMIT ?2)",
+                        bind![
+                            to_millis(Utc::now() - chrono::Duration::days(BOUNCE_RECENT_DAYS)),
+                            i64::from(REVIEW_CAP)
+                        ],
+                    )
+                    .await?,
+                ),
                 frequent_unsaved: capped(frequent),
             },
             building: (waiting > 0).then(|| {
@@ -3460,7 +3468,7 @@ impl ContactRepository<'_> {
     pub async fn address_notes(&self, person: ContactId) -> Result<Vec<postio_model::AddressNote>> {
         sql::all(
             self.connection,
-            "SELECT id, label, bounced_at IS NOT NULL FROM addresses WHERE contact_id = ?1 ORDER BY id",
+            "SELECT id, label, bounced_at FROM addresses WHERE contact_id = ?1 ORDER BY id",
             [person.get()],
             |row| {
                 Ok(postio_model::AddressNote {
@@ -3469,7 +3477,8 @@ impl ContactRepository<'_> {
                         .col::<Option<String>>(1)?
                         .as_deref()
                         .and_then(postio_model::AddressLabel::from_name),
-                    bounced: row.col::<i64>(2)? != 0,
+                    bounced: row.col::<Option<i64>>(2)?.is_some(),
+                    bounced_at: row.col::<Option<i64>>(2)?.map(from_millis),
                 })
             },
         )
@@ -3915,6 +3924,121 @@ impl ContactRepository<'_> {
         Ok(())
     }
 }
+
+impl ContactRepository<'_> {
+    /// A delivery failure named `address`: it is marked, at the time of the
+    /// report, unless a later failure already is. Returns whether the address
+    /// is one the store knows.
+    pub async fn mark_bounced(&self, address: &str, at: chrono::DateTime<Utc>) -> Result<bool> {
+        let at = to_millis(at);
+        let found = sql::first(
+            self.connection,
+            "SELECT id FROM addresses WHERE address_normalized = ?1",
+            [address.to_lowercase()],
+            |row| row.col::<i64>(0),
+        )
+        .await?;
+        let Some(id) = found else {
+            return Ok(false);
+        };
+        sql::execute(
+            self.connection,
+            "UPDATE addresses SET bounced_at = ?2 WHERE id = ?1 AND (bounced_at IS NULL OR bounced_at < ?2)",
+            bind![id, at],
+        )
+        .await?;
+        Ok(true)
+    }
+
+    /// Whether one of two people stopped writing as the other began, in the
+    /// same threads: the address that stopped, the one that began, and in how
+    /// many threads. `None` when it did not happen in at least one.
+    pub async fn took_over(
+        &self,
+        a: &postio_model::Contact,
+        b: &postio_model::Contact,
+    ) -> Result<Option<(String, String, u32)>> {
+        for (old, new) in [(a, b), (b, a)] {
+            let (olds, news) = (
+                old.addresses.iter().map(|x| x.id.get()).collect::<Vec<_>>(),
+                new.addresses.iter().map(|x| x.id.get()).collect::<Vec<_>>(),
+            );
+            if olds.is_empty() || news.is_empty() {
+                continue;
+            }
+            let marks = |from: usize, n: usize| {
+                (from..from + n)
+                    .map(|i| format!("?{}", i + 1))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            let params: Vec<turso::Value> = olds
+                .iter()
+                .chain(news.iter())
+                .map(|id| turso::Value::Integer(*id))
+                .collect();
+            let threads = sql::scalar(
+                self.connection,
+                &format!(
+                    "SELECT count(*) FROM (
+                       SELECT m.thread_id AS t, max(m.received_at) AS last
+                         FROM recipients r JOIN messages m ON m.id = r.message_id
+                        WHERE r.kind = 'from' AND m.thread_id IS NOT NULL
+                          AND r.address_id IN ({})
+                        GROUP BY m.thread_id) x
+                     JOIN (
+                       SELECT m.thread_id AS t, min(m.received_at) AS first
+                         FROM recipients r JOIN messages m ON m.id = r.message_id
+                        WHERE r.kind = 'from' AND m.thread_id IS NOT NULL
+                          AND r.address_id IN ({})
+                        GROUP BY m.thread_id) y ON y.t = x.t
+                     WHERE x.last < y.first",
+                    marks(0, olds.len()),
+                    marks(olds.len(), news.len())
+                ),
+                params,
+            )
+            .await?;
+            if threads > 0 {
+                let first = |p: &postio_model::Contact| {
+                    p.addresses
+                        .first()
+                        .map(|x| x.address.address.clone())
+                        .unwrap_or_default()
+                };
+                return Ok(Some((
+                    first(old),
+                    first(new),
+                    u32::try_from(threads).unwrap_or(u32::MAX),
+                )));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The suggestions as pairs with the answers that crossed, the
+    /// strongest first, for the review.
+    pub async fn suggestion_pairs(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<(postio_model::Contact, postio_model::Contact, u32)>> {
+        let suggestions = self.suggestions(limit).await?;
+        Ok(suggestions
+            .into_iter()
+            .map(|suggestion| {
+                let replies = match suggestion.reason {
+                    SuggestionReason::Replied { replies } => replies,
+                    SuggestionReason::SameName => 0,
+                };
+                let [a, b] = suggestion.people;
+                (a, b, replies)
+            })
+            .collect())
+    }
+}
+
+/// How long a bounce counts as recent in the review.
+const BOUNCE_RECENT_DAYS: i64 = 30;
 
 /// A person, without addresses — [`ContactRepository::with_addresses`] adds
 /// them.

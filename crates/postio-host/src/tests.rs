@@ -3858,6 +3858,95 @@ pub(crate) fn ahead() -> chrono::DateTime<Utc> {
 }
 
 #[test]
+fn a_delivery_failure_in_the_inbox_marks_the_address_it_names() {
+    // Specs/011-focus-contacts S10: a permanent failure in a delivery report
+    // that has landed marks the address it names, so the review can say
+    // which addresses bounced recently. A delay marks nothing.
+    let world = World::new();
+    let status = "Reporting-MTA: dns; mx4.example.net\r\n\r\nFinal-Recipient: rfc822; a.moreno@example.net\r\nAction: failed\r\nStatus: 5.1.1\r\n";
+    let inbox = folder(&world, postio_model::MailboxRole::Inbox);
+    let blob = world
+        .host()
+        .wiring()
+        .blobs
+        .put(status.as_bytes())
+        .expect("the part stored");
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        // The mail the failure is about, so the address is known.
+        let mut sent = Message::new(
+            world.account,
+            inbox,
+            Utc::now() - chrono::TimeDelta::days(3),
+        );
+        sent.from = vec![postio_model::EmailAddress::new(
+            None::<String>,
+            "a.moreno@example.net",
+        )];
+        sent.to = vec![postio_model::EmailAddress::new(
+            None::<String>,
+            "test@example.com",
+        )];
+        let repository = MessageRepository::new(&connection);
+        repository.create(&mut sent).await.expect("known address");
+        let mut report = Message::new(
+            world.account,
+            inbox,
+            Utc::now() - chrono::TimeDelta::hours(1),
+        );
+        report.subject = Some("Undelivered Mail Returned to Sender".to_owned());
+        report.from = vec![postio_model::EmailAddress::new(
+            Some("Mail Delivery Subsystem"),
+            "MAILER-DAEMON@mx4.example.net",
+        )];
+        report.to = vec![postio_model::EmailAddress::new(
+            None::<String>,
+            "test@example.com",
+        )];
+        let mut part = postio_model::Attachment::new(
+            MessageId::UNASSIGNED,
+            "message/delivery-status",
+            status.len() as u64,
+        );
+        part.part_id = Some("2".to_owned());
+        report.attachments = vec![part];
+        let id = repository.create(&mut report).await.expect("the report");
+        repository
+            .set_attachment_blob(id, "2", &blob)
+            .await
+            .expect("linked");
+        repository
+            .set_body(
+                id,
+                &postio_storage::repository::StoredBody {
+                    text: Some("Delivery failed.".to_owned()),
+                    html: None,
+                    headers: None,
+                    headers_truncated: false,
+                    encoding_problems: false,
+                },
+                postio_model::BodyState::Full,
+            )
+            .await
+            .expect("its body");
+    });
+
+    focus_caught_up(&world);
+
+    let marked = world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::sql::scalar(
+            &connection,
+            "SELECT count(*) FROM addresses WHERE address_normalized = 'a.moreno@example.net' AND bounced_at IS NOT NULL",
+            (),
+        )
+        .await
+        .expect("a count")
+    });
+    assert_eq!(marked, 1, "the address the report names is marked bounced");
+}
+
+#[test]
 fn an_invitation_is_marked_with_its_event_and_can_be_answered() {
     // US8 scenario 1: a calendar request's row shows Invite with the
     // event's times, computed when the part arrived, not when the row is

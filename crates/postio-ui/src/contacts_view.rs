@@ -574,7 +574,17 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
                 address: owned.address.address.clone(),
                 primary,
                 note,
-                bounced: None,
+                bounced: card
+                    .address_notes
+                    .iter()
+                    .find(|note| note.address == owned.id)
+                    .and_then(|note| note.bounced_at)
+                    .map(|at| {
+                        format!(
+                            "bounced {}",
+                            at.with_timezone(&now.timezone()).format("%-d %b")
+                        )
+                    }),
             }
         })
         .collect();
