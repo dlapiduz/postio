@@ -86,9 +86,9 @@ use postio_smtp::transport::SmtpConnector;
 use postio_storage::BlobStore;
 use postio_storage::Connection;
 use postio_storage::repository::{
-    AccountRepository, CorrespondentRepository, DraftRepository, FlagSource, LabelRepository,
-    MailboxRepository, MessageRepository, OperationQueueRepository, StoredBody, ThreadRepository,
-    ThreadingRepository,
+    AccountRepository, ContactRepository, ContactSuggestionRepository, CorrespondentRepository,
+    DraftRepository, FlagSource, LabelRepository, MailboxRepository, MessageRepository,
+    OperationQueueRepository, StoredBody, ThreadRepository, ThreadingRepository,
 };
 use secrecy::SecretString;
 use std::collections::BTreeSet;
@@ -377,6 +377,13 @@ pub(crate) async fn send(
     // and a Sent row is the honest thing to show for both.
     if matches!(outcome, Outcome::Failed { .. }) {
         unfile_sent_copy(connection, filed.as_ref()).await;
+    }
+    // Delivered: the people it went to are contacts now, the moment it is,
+    // for every app, if the user asked for that.
+    if matches!(outcome, Outcome::Applied)
+        && let Some(copy) = filed.as_ref()
+    {
+        save_who_was_written_to(connection, job.account, copy).await;
     }
     outcome
 }
@@ -735,6 +742,38 @@ async fn record_correspondents(connection: &Connection, account: AccountId, mess
         .await
     {
         tracing::warn!(%error, "could not record who a sent message went to");
+    }
+}
+
+/// With "Save people I write to, automatically" on, saves everyone `copy`
+/// went to -- To, Cc and Bcc, as the addresses it was sent to, which is
+/// what a group has become by then -- as contacts. Off, it does nothing at
+/// all, not even a count. The same switch gates the pass at start and when
+/// it is turned on, for the mail sent before.
+///
+/// Logged and not returned, like [`record_correspondents`].
+async fn save_who_was_written_to(connection: &Connection, account: AccountId, copy: &Message) {
+    let on = match ContactSuggestionRepository::new(connection).get().await {
+        Ok(suggestions) => suggestions.is_on(postio_model::Suggestion::SaveAutomatically),
+        Err(error) => {
+            tracing::warn!(%error, "could not read the contact switches");
+            return;
+        }
+    };
+    if !on {
+        return;
+    }
+    let Ok(Some(account)) = AccountRepository::new(connection).get(account).await else {
+        return;
+    };
+    if let Err(error) = crate::contacts::record(connection, &account, copy).await {
+        tracing::warn!(%error, "could not record the people a send wrote to");
+        return;
+    }
+    match ContactRepository::new(connection).save_written_to().await {
+        Ok(saved) if saved > 0 => tracing::info!(saved, "saved the people a send wrote to"),
+        Ok(_) => {}
+        Err(error) => tracing::warn!(%error, "could not save the people a send wrote to"),
     }
 }
 

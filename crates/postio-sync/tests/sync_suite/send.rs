@@ -2077,6 +2077,58 @@ async fn sending_to_three_addresses_adds_one_to_each_correspondent() {
     );
 }
 
+/// Whether the person with `address` is saved as a contact.
+async fn saved(connection: &Connection, address: &str) -> bool {
+    postio_storage::repository::ContactRepository::new(connection)
+        .by_address(address)
+        .await
+        .expect("a read")
+        .is_some_and(|person| person.is_saved())
+}
+
+async fn turn_saving_on(connection: &Connection, on: bool) {
+    postio_storage::repository::ContactSuggestionRepository::new(connection)
+        .set(postio_model::Suggestion::SaveAutomatically, on)
+        .await
+        .expect("the switch");
+}
+
+#[tokio::test]
+async fn with_save_people_i_write_to_on_a_send_saves_to_cc_and_bcc_at_once() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _sent) = account_with_sent(&connection).await;
+    turn_saving_on(&connection, true).await;
+    let mut draft = a_draft(&account, "grace@example.net");
+    draft.cc = vec![EmailAddress::new(None::<String>, "quinn@example.com")];
+    draft.bcc = vec![EmailAddress::new(None::<String>, "tove@example.org")];
+
+    let report = send_one(&connection, &account, draft, accepting_script()).await;
+    assert_eq!(report.applied, 1, "{report:?}");
+
+    for who in ["grace@example.net", "quinn@example.com", "tove@example.org"] {
+        assert!(saved(&connection, who).await, "{who} is saved by the send");
+    }
+}
+
+#[tokio::test]
+async fn with_it_off_a_send_saves_nobody() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _sent) = account_with_sent(&connection).await;
+    turn_saving_on(&connection, false).await;
+
+    let report = send_one(
+        &connection,
+        &account,
+        a_draft(&account, "grace@example.net"),
+        accepting_script(),
+    )
+    .await;
+    assert_eq!(report.applied, 1, "{report:?}");
+    assert!(!saved(&connection, "grace@example.net").await);
+}
+
 #[tokio::test]
 async fn a_send_the_server_refused_wrote_to_nobody() {
     let database = test_support::memory().await;
