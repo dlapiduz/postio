@@ -107,16 +107,9 @@ pub mod gate_log;
 ///
 /// If the directory or the database cannot be created or migrated.
 pub async fn memory() -> Store {
-    let shm = Path::new("/dev/shm");
-    let directory = if shm.is_dir() {
-        sweep_orphaned_scratch_dirs(shm);
-        tempfile::Builder::new()
-            .prefix(SWEEP_PREFIX)
-            .tempdir_in(shm)
-    } else {
-        tempfile::tempdir()
-    }
-    .expect("a scratch directory must always open");
+    let root = scratch_root();
+    sweep_orphaned_scratch_dirs(&root);
+    let directory = new_scratch_dir(&root).expect("a scratch directory must always open");
     let path = directory.path().join("postio.db");
     let store = Store::open(&path, &key())
         .await
@@ -127,6 +120,29 @@ pub async fn memory() -> Store {
     // makes that affordable rather than a leak that accumulates across runs.
     std::mem::forget(directory);
     store
+}
+
+/// Where [`memory`] puts its scratch directories: `/dev/shm` where that
+/// exists, so they cost RAM rather than disk, and the system temporary
+/// directory everywhere else.
+///
+/// Both are swept. The sweep once ran only on `/dev/shm`, so on a Mac every
+/// leaked directory stayed in `$TMPDIR` for good: a week of test runs left
+/// 62,514 of them, 148 GB, and filled the disk.
+fn scratch_root() -> std::path::PathBuf {
+    let shm = Path::new("/dev/shm");
+    if shm.is_dir() {
+        shm.to_path_buf()
+    } else {
+        std::env::temp_dir()
+    }
+}
+
+/// A scratch directory under `root`, named so [`sweep_now`] knows it is ours.
+fn new_scratch_dir(root: &Path) -> std::io::Result<tempfile::TempDir> {
+    tempfile::Builder::new()
+        .prefix(SWEEP_PREFIX)
+        .tempdir_in(root)
 }
 
 /// Every directory [`memory`] creates today carries this prefix. The sweep
@@ -454,6 +470,34 @@ mod sweep_tests {
         assert!(
             young.is_dir(),
             "a directory inside the grace period must survive regardless of the count cap"
+        );
+    }
+
+    #[test]
+    fn every_platform_sweeps_where_its_scratch_directories_go() {
+        let root = scratch_root();
+        let expected = if Path::new("/dev/shm").is_dir() {
+            std::path::PathBuf::from("/dev/shm")
+        } else {
+            std::env::temp_dir()
+        };
+        assert_eq!(root, expected, "memory() must sweep the root it writes to");
+
+        let probe = tempfile::tempdir().expect("tempdir");
+        let leaked = new_scratch_dir(probe.path()).expect("scratch dir").keep();
+        let stamp = SystemTime::now()
+            .checked_sub(SWEEP_MIN_AGE + Duration::from_secs(1))
+            .expect("age fits before now");
+        std::fs::File::open(&leaked)
+            .expect("open dir")
+            .set_modified(stamp)
+            .expect("backdate mtime");
+
+        sweep_now(probe.path());
+
+        assert!(
+            !leaked.exists(),
+            "a leaked scratch directory, wherever it was made, must be one the sweep reclaims"
         );
     }
 
