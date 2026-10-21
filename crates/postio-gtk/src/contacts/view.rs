@@ -107,7 +107,13 @@ impl ContactsView {
         }
         let strip = gtk::Box::new(gtk::Orientation::Horizontal, S3);
         strip.add_css_class("focus-contacts-strip");
+        // The chevron the handoff draws after the title: it says this is a
+        // place, as the Inbox's does. It is a mark, not a control.
+        let chevron = gtk::Image::from_icon_name("pan-down-symbolic");
+        chevron.set_accessible_role(gtk::AccessibleRole::Presentation);
+        chevron.set_valign(gtk::Align::Center);
         strip.append(&title);
+        strip.append(&chevron);
         strip.append(&title_key);
         strip.append(&total);
         strip.append(&tabs);

@@ -237,6 +237,18 @@ fn seen_row(item: &postio_model::SeenItem) -> SeenRow {
     }
 }
 
+/// The key that backs out of the form, as this keyboard spells its cap:
+/// `Esc` on a Mac, the keymap's own spelling elsewhere.
+fn escape_key(keymap: &Keymap) -> String {
+    if keymap.platform() == Some(postio_config::paths::Platform::Apple) {
+        "Esc".to_owned()
+    } else {
+        keymap
+            .binding(CommandId::Back)
+            .map_or_else(|| "Esc".to_owned(), str::to_owned)
+    }
+}
+
 /// The form in words.
 pub fn view(ctx: &EditContext<'_>, keymap: &Keymap) -> EditView {
     let form = ctx.form;
@@ -357,9 +369,12 @@ pub fn view(ctx: &EditContext<'_>, keymap: &Keymap) -> EditView {
             "Groups work as recipients (to:Atlas core) and as search filters (from:@Finance)."
                 .to_owned(),
         problem,
-        armed: ctx
-            .armed
-            .then(|| "Press Esc again to discard your changes.".to_owned()),
+        armed: ctx.armed.then(|| {
+            format!(
+                "Press {} again to discard your changes.",
+                escape_key(keymap)
+            )
+        }),
         hints,
         focus: ctx.focus,
     }
@@ -608,5 +623,15 @@ mod tests {
         let shown = view(&context, &keymap());
         assert_eq!(shown.problem.as_deref(), Some("Add at least one address."));
         assert!(shown.armed.unwrap().contains("Esc again"));
+        // Where the key is spelled out on its cap, the sentence spells it
+        // the same way.
+        let linux = Keymap::resolve_on(
+            &postio_config::KeyBindings::default(),
+            postio_config::paths::Platform::Freedesktop,
+        );
+        assert_eq!(
+            view(&context, &linux).armed.as_deref(),
+            Some("Press Escape again to discard your changes.")
+        );
     }
 }

@@ -325,9 +325,17 @@ fn field(
 
 fn addresses(fields: &mut Vec<(Slot, gtk::Entry)>, view: &EditView, hooks: &FormHooks) -> gtk::Box {
     let column = gtk::Box::new(gtk::Orientation::Vertical, S2);
+    // The primary address is one of a group, drawn as the filled circle the
+    // handoff names: a check button that joins the first one's group is a
+    // radio button.
+    let mut first: Option<gtk::CheckButton> = None;
     for (index, address) in view.addresses.iter().enumerate() {
         let line = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         let primary = gtk::CheckButton::new();
+        match &first {
+            Some(leader) => primary.set_group(Some(leader)),
+            None => first = Some(primary.clone()),
+        }
         primary.set_active(address.primary);
         primary.add_css_class("focus-contact-primary");
         primary.update_property(&[gtk::accessible::Property::Label(if address.primary {
@@ -337,8 +345,8 @@ fn addresses(fields: &mut Vec<(Slot, gtk::Entry)>, view: &EditView, hooks: &Form
         })]);
         let change = Rc::clone(&hooks.change);
         let was = address.primary;
-        primary.connect_toggled(move |_| {
-            if !was {
+        primary.connect_toggled(move |button| {
+            if !was && button.is_active() {
                 change(EditChange::Primary(index as u32));
             }
         });

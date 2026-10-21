@@ -201,7 +201,7 @@ pub fn ctrl_e_edits_escape_arms_before_it_discards_and_ctrl_s_saves() {
             crate::settle_until(async || view
                 .form_texts()
                 .iter()
-                .any(|line| line.contains("Esc again")))
+                .any(|line| line.contains("Escape again")))
             .await,
             "{:?}",
             view.form_texts()
