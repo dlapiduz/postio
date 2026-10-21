@@ -11,7 +11,9 @@ mod card;
 mod form;
 mod list;
 mod merge;
+pub mod popover;
 mod view;
 
 pub use form::Slot;
+pub(crate) use view::texts_of;
 pub use view::ContactsView;

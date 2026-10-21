@@ -144,6 +144,10 @@ const SCREENS: &[(&str, &str)] = &[
         "52",
         "Contacts: the Edit form in the card's place (handoff 06)",
     ),
+    (
+        "53",
+        "the contact popover at the cursor's sender (handoff 04, 05)",
+    ),
 ];
 
 /// The screens drawn with messages opening beside the list (T232).
@@ -757,6 +761,15 @@ fn stage(
             }
             let shown = Instant::now();
             settle_until(|| shown.elapsed() > Duration::from_millis(400));
+        }
+        "53" => {
+            pick_three();
+            window.press_command(CommandId::ContactPopover);
+            if !settle_until(|| window.contact_popover().is_some()) {
+                return Err("the popover never opened".into());
+            }
+            let shown = Instant::now();
+            settle_until(|| shown.elapsed() > Duration::from_millis(500));
         }
         "51" | "52" => {
             window.act(CommandId::OpenContacts);

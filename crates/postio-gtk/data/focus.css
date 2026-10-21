@@ -1592,6 +1592,34 @@ button.focus-compose-detach {
   padding: 14px 24px 4px 24px;
 }
 
+.focus-contact-popover {
+  background-color: var(--postio-surface);
+}
+
+.focus-contact-popover-head {
+  padding: 16px 16px 12px 16px;
+}
+
+.focus-contact-popover-name {
+  font-weight: bold;
+  font-size: var(--postio-text-reading);
+}
+
+.focus-contact-popover-body {
+  padding: 0 16px 12px 16px;
+}
+
+.focus-contact-popover-arrival {
+  padding: 10px 16px 12px 16px;
+  border-top: 1px solid var(--postio-hairline);
+}
+
+.focus-contact-popover-actions {
+  padding: 10px 12px 12px 12px;
+  border-top: 1px solid var(--postio-hairline);
+  background-color: var(--postio-ground);
+}
+
 /* ── The digest rules list (g d; C15): 21's frame ───────────────────── */
 .focus-rules-name {
   font-weight: bold;

@@ -287,3 +287,91 @@ pub fn g_w_offers_the_look_alikes_return_merges_and_escape_is_later() {
         );
     });
 }
+
+/// `i` on a row opens the popover at the sender: who they are, the arrows
+/// choose where their mail arrives, and Escape puts it away (handoff 04).
+pub fn i_opens_the_popover_the_arrows_choose_where_mail_arrives_and_escape_closes() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .correspondent("Ada Moreno", "ada@example.test")
+            .await;
+        fixture
+            .file(("Ada Moreno", "ada@example.test"), "Atlas budget", "Numbers.", 5)
+            .await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || !support::subjects(&window).is_empty()).await
+        );
+        support::keys(&window, &["i"]);
+        assert!(
+            crate::settle_until(async || window.contact_popover().is_some()).await,
+            "i opens the popover"
+        );
+        let view = window.contact_popover().expect("a popover");
+        assert_eq!(view.name, "Ada Moreno");
+        assert_eq!(view.address, "ada@example.test");
+        assert!(
+            window
+                .contact_popover_texts()
+                .iter()
+                .any(|line| line == "Ada Moreno"),
+            "{:?}",
+            window.contact_popover_texts()
+        );
+        let on = |window: &postio_gtk::window::FocusWindow| {
+            window
+                .contact_popover()
+                .and_then(|view| view.arrival.iter().find(|option| option.on).map(|o| o.label.clone()))
+        };
+        assert_eq!(on(&window).as_deref(), Some("Inbox"));
+        support::keys(&window, &["Right"]);
+        assert!(
+            crate::settle_until(async || on(&window).as_deref() == Some("Digest")).await,
+            "the right arrow chooses the next place mail arrives"
+        );
+        support::keys(&window, &["Escape"]);
+        assert!(
+            crate::settle_until(async || window.contact_popover().is_none()).await,
+            "Escape puts it away"
+        );
+        assert!(!support::subjects(&window).is_empty(), "the list is as it was");
+    });
+}
+
+/// A sender nobody has saved gets the popover that says how they reached
+/// you, with Add contact as its main action (handoff 05).
+pub fn a_sender_not_yet_saved_is_introduced_and_offered_add_contact() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .file(("Jonas Weber", "jonas@harbor.test"), "Intro", "Hello.", 5)
+            .await;
+        let (window, _client) = fixture.open().await;
+        assert!(
+            crate::settle_until(async || !support::subjects(&window).is_empty()).await
+        );
+        support::keys(&window, &["i"]);
+        assert!(
+            crate::settle_until(async || window
+                .contact_popover()
+                .is_some_and(|view| view.intro.is_some()))
+            .await,
+            "a new sender is introduced"
+        );
+        let view = window.contact_popover().expect("a popover");
+        assert!(
+            view.actions
+                .iter()
+                .any(|action| action.label.starts_with("Add") && action.primary),
+            "{:?}",
+            view.actions
+        );
+    });
+}

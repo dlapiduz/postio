@@ -237,6 +237,8 @@ mod imp {
         pub filtered: RefCell<Option<Rc<crate::filtered::FilteredView>>>,
         /// The Contacts view, built the first time `g c` opens it.
         pub contacts: RefCell<Option<Rc<crate::contacts::ContactsView>>>,
+        /// The contact popover, while one is up, and what it says.
+        pub contact_popover: RefCell<Option<(gtk::Widget, postio_ui::contact_popover::PopoverView)>>,
         /// A `postio://` link that arrived before the store was open.
         pub pending_link: RefCell<Option<String>>,
         /// A `mailto:` link that arrived before the composer was mounted.
@@ -344,6 +346,7 @@ mod imp {
                 warm: Cell::default(),
                 filtered: RefCell::default(),
                 contacts: RefCell::default(),
+                contact_popover: RefCell::default(),
                 digest_window: RefCell::default(),
                 rule_dialog: RefCell::default(),
                 rules_view: RefCell::default(),
@@ -1086,6 +1089,7 @@ impl FocusWindow {
             }
             SurfaceKind::Filtered => self.leave_filtered(),
             SurfaceKind::Contacts => self.leave_contacts(),
+            SurfaceKind::ContactPopover => self.close_contact_popover(),
             _ => {}
         }
     }
@@ -1771,7 +1775,9 @@ impl FocusWindow {
             CommandId::ViewSource => self.view_source(),
             CommandId::GoToFiltered => self.show_filtered(),
             // Contacts: the controller opens it and says what to draw.
-            CommandId::OpenContacts | CommandId::ContactsSuggestions => {
+            CommandId::OpenContacts
+            | CommandId::ContactsSuggestions
+            | CommandId::ContactPopover => {
                 self.run_in_controller(id);
             }
             CommandId::SweepInbox => self.ask_sweep(),
@@ -2112,6 +2118,7 @@ impl FocusWindow {
                     view.show_card(card.as_deref().cloned());
                 }
             }
+            Intent::ContactPopover(view) => self.show_contact_popover(view),
             Intent::ContactEdit(edit) => {
                 if let Some(view) = self.contacts() {
                     view.show_edit(edit.as_deref().cloned());
@@ -3761,6 +3768,105 @@ impl FocusWindow {
         if imp.body.visible_child_name().as_deref() != Some(CONTACTS) {
             imp.body.set_visible_child_name(CONTACTS);
             view.focus_list();
+        }
+    }
+
+    /// What the contact popover says, while one is up: what a test reads.
+    pub fn contact_popover(&self) -> Option<postio_ui::contact_popover::PopoverView> {
+        self.imp()
+            .contact_popover
+            .borrow()
+            .as_ref()
+            .map(|(_, view)| view.clone())
+    }
+
+    /// Every text the contact popover shows, while one is up.
+    pub fn contact_popover_texts(&self) -> Vec<String> {
+        self.imp()
+            .contact_popover
+            .borrow()
+            .as_ref()
+            .map(|(widget, _)| crate::contacts::texts_of(widget))
+            .unwrap_or_default()
+    }
+
+    /// The contact popover, at the sender's name on the cursor's row (or
+    /// where it already was, when it is only redrawn).
+    fn show_contact_popover(&self, view: &postio_ui::contact_popover::PopoverView) {
+        use crate::contacts::popover;
+        let imp = self.imp();
+        let Some(pane) = self.pane() else {
+            return;
+        };
+        let (start, top) = match imp.contact_popover.take() {
+            Some((old, _)) => {
+                let at = (old.margin_start(), old.margin_top());
+                imp.stage.remove_overlay(&old);
+                at
+            }
+            None => self.popover_anchor(&pane),
+        };
+        let weak = self.downgrade();
+        let hooks = popover::PopoverHooks {
+            command: Rc::new({
+                let weak = weak.clone();
+                move |command| {
+                    if let Some(window) = weak.upgrade() {
+                        window.press_command(command);
+                    }
+                }
+            }),
+            arrival: Rc::new(move |arrival| {
+                if let Some(window) = weak.upgrade()
+                    && let Some(pane) = window.pane()
+                {
+                    pane.feed()
+                        .input(postio_focus::Input::ContactArrival(arrival));
+                }
+            }),
+        };
+        let card = popover::build(view, &hooks);
+        card.set_margin_start(start);
+        card.set_margin_top(top);
+        imp.stage.add_overlay(&card);
+        imp.contact_popover
+            .replace(Some((card.upcast(), view.clone())));
+    }
+
+    /// Where the popover goes: under the cursor's row, a little in from the
+    /// left where the sender's name is; over the middle when the cursor is
+    /// not on a row that can be seen.
+    fn popover_anchor(&self, pane: &ListPane) -> (i32, i32) {
+        let stage = &self.imp().stage;
+        let (width, height) = (stage.width(), stage.height());
+        let centre = ((width - 400) / 2, 90);
+        let Some(cursor) = self.cursor_row() else {
+            return centre;
+        };
+        let Some(row) = pane
+            .rows_on_screen()
+            .into_iter()
+            .find(|row| row.item().is_some_and(|item| item.id() == cursor.id()))
+        else {
+            return centre;
+        };
+        let Some(at) = row.compute_point(stage, &gtk::graphene::Point::new(0.0, 0.0)) else {
+            return centre;
+        };
+        let below = at.y() as i32 + row.height();
+        let tall = 300;
+        let top = if below + tall > height {
+            (at.y() as i32 - tall).max(8)
+        } else {
+            below
+        };
+        (((at.x() as i32) + 56).clamp(8, (width - 408).max(8)), top)
+    }
+
+    fn close_contact_popover(&self) {
+        let imp = self.imp();
+        if let Some((card, _)) = imp.contact_popover.take() {
+            imp.stage.remove_overlay(&card);
         }
     }
 
