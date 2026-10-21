@@ -180,6 +180,7 @@ fn seeded_corpus() -> impl Iterator<Item = &'static test_corpus::Fixture> {
 async fn seed_corpus(database: &Store, seed: u64, downloaded: bool) -> SeedReport {
     let connection = database.connect().await.expect("a checked-out connection");
     let account = seeded_account(&connection).await;
+    let own = own_addresses(&account);
     let folders = create_folders(&connection, &account).await;
     let mut rng = Rng::new(seed);
 
@@ -197,7 +198,7 @@ async fn seed_corpus(database: &Store, seed: u64, downloaded: bool) -> SeedRepor
         message.sync.body_state = BodyState::NotFetched;
         let body = message.body.clone();
 
-        let id = file_message(&connection, account.id, message).await;
+        let id = file_message(&connection, account.id, &own, message).await;
         if downloaded && !body.is_empty() {
             MessageRepository::new(&connection)
                 .set_body(
@@ -298,6 +299,7 @@ pub async fn seed_extra_account(
         .expect("create a seeded account");
 
     let folders = create_folders(&connection, &account).await;
+    let own = own_addresses(&account);
     let mut rng = Rng::new(seed);
     let mut message_count = 0;
     for fixture in seeded_corpus() {
@@ -310,7 +312,7 @@ pub async fn seed_extra_account(
         message.date = Some(received_at);
         message.flags = assign_flags(&mut rng, mailbox.role);
         message.sync.body_state = BodyState::NotFetched;
-        file_message(&connection, account.id, message).await;
+        file_message(&connection, account.id, &own, message).await;
         message_count += 1;
     }
 
@@ -521,6 +523,7 @@ pub async fn seed_recent_with_bodies(
         .expect("the seed made an inbox")
         .clone();
     let account = report.account.clone();
+    let own = own_addresses(&account);
     let connection = database.connect().await.expect("a checked-out connection");
     let mut rng = Rng::new(seed);
     let mut ids = Vec::with_capacity(count);
@@ -530,10 +533,11 @@ pub async fn seed_recent_with_bodies(
         let batch: Vec<_> = (made..end)
             .map(|n| recent_message(n, &account, &inbox, now, &mut rng))
             .collect();
+        let own = own.clone();
         let written = sql::in_scope(&connection, move |scope| async move {
             let mut written = Vec::with_capacity(batch.len());
             for (message, body) in batch {
-                let id = file_message(&scope, message.account_id, message).await;
+                let id = file_message(&scope, message.account_id, &own, message).await;
                 write_body(&scope, id, &body).await;
                 written.push(id);
             }
@@ -839,6 +843,7 @@ async fn write_body(connection: &Connection, id: MessageId, body: &postio_model:
 async fn file_message(
     connection: &Connection,
     account_id: postio_model::AccountId,
+    own: &[postio_model::EmailAddress],
     mut message: Message,
 ) -> MessageId {
     MessageRepository::new(connection)
@@ -849,14 +854,7 @@ async fn file_message(
         .thread(&message)
         .await
         .expect("thread a seeded message");
-    let own = match crate::repository::AccountRepository::new(connection)
-        .get(account_id)
-        .await
-    {
-        Ok(Some(account)) => own_addresses(&account),
-        _ => Vec::new(),
-    };
-    record_correspondents(connection, &message, &own).await;
+    record_correspondents(connection, &message, own).await;
     message.id
 }
 
