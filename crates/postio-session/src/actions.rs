@@ -6840,7 +6840,7 @@ mod tests {
                 "a join changes whose name mail shows"
             );
             assert!(events.contains(&Event::ActionCompleted {
-                description: "Joined contacts".into(),
+                description: "Merged contacts".into(),
                 undoable: true,
             }));
             let joined = get(&world, work).await.expect("ada");

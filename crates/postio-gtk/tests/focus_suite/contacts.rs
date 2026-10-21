@@ -339,6 +339,19 @@ pub fn i_opens_the_popover_the_arrows_choose_where_mail_arrives_and_escape_close
             crate::settle_until(async || on(&window).as_deref() == Some("Digest")).await,
             "the right arrow chooses the next place mail arrives"
         );
+        // z is the toast's Undo and takes the choice back, in the popover too.
+        assert!(
+            crate::settle_until(async || window
+                .toast_showing()
+                .is_some_and(|said| said.contains("arrives")))
+            .await,
+            "the change is said, with its Undo"
+        );
+        support::keys(&window, &["z"]);
+        assert!(
+            crate::settle_until(async || on(&window).as_deref() == Some("Inbox")).await,
+            "undo puts the earlier arrival back and the popover says so"
+        );
         support::keys(&window, &["Escape"]);
         assert!(
             crate::settle_until(async || window.contact_popover().is_none()).await,

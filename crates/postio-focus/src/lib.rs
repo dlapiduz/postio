@@ -1767,6 +1767,7 @@ impl FocusController {
                 steps.extend(self.hear_sync(&event));
                 steps.extend(self.filtered_event(&event));
                 steps.extend(self.contacts_heard(&event));
+                steps.extend(self.contact_popover_heard(&event));
                 self.effects(steps)
             }
             Input::Config(config) => {

@@ -53,6 +53,21 @@ impl FocusController {
         steps
     }
 
+    /// The people changed while the popover is up -- an undo of the arrival
+    /// just chosen, say: ask about the sender again, so it says what is true.
+    pub(crate) fn contact_popover_heard(&mut self, event: &postio_core::Event) -> Vec<Step> {
+        if !matches!(event, postio_core::Event::ContactsChanged { .. }) {
+            return Vec::new();
+        }
+        match &self.contact_popover {
+            Some(popover) => vec![Step::Ask(Request::ContactGlance {
+                address: popover.address.clone(),
+                stamp: popover.stamp,
+            })],
+            None => Vec::new(),
+        }
+    }
+
     /// Whose name `i` means: the sender of the message on screen, else of the
     /// cursor's row.
     fn popover_sender(&self, rows: &dyn Rows) -> Option<String> {
@@ -100,11 +115,13 @@ impl FocusController {
         let Some(glance) = popover.glance.as_ref() else {
             return match id {
                 CommandId::Back => Some(self.close_contact_popover()),
-                CommandId::CheatSheet => None,
+                // The app's Undo stays the app's wherever it is.
+                CommandId::CheatSheet | CommandId::Undo => None,
                 _ => Some(Vec::new()),
             };
         };
         match id {
+            CommandId::Undo => None,
             CommandId::Back => Some(self.close_contact_popover()),
             CommandId::ContactArrivalPrev | CommandId::ContactArrivalNext => {
                 let by = if id == CommandId::ContactArrivalNext {

@@ -152,7 +152,7 @@ impl UndoKind {
             // Never counted either: it is about a folder, not about messages.
             UndoKind::MapMailboxRole => "Changed a folder's role".to_owned(),
             // About people, not messages, so never counted in messages.
-            UndoKind::JoinContacts => "Joined contacts".to_owned(),
+            UndoKind::JoinContacts => "Merged contacts".to_owned(),
             UndoKind::ContactArrival => "Changed where mail arrives".to_owned(),
             UndoKind::ContactAddress => "Added an address".to_owned(),
             UndoKind::DetachAddress => "Detached an address".to_owned(),

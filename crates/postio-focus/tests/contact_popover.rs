@@ -525,3 +525,36 @@ fn add_contact_on_a_saved_person_does_nothing() {
     let effects = run(&mut focus, CommandId::ContactAdd);
     assert!(asks(&effects).is_empty(), "{effects:?}");
 }
+
+#[test]
+fn a_change_to_the_people_while_it_is_up_asks_about_the_sender_again() {
+    // An undo of the arrival just chosen reaches the people as a change; the
+    // popover must say what is true now (screen 04, "drawn in the popover if
+    // it is still up").
+    let mut focus = ready();
+    let _ = open(&mut focus, None);
+    let effects = focus.handle(Input::Event(postio_core::Event::ContactsChanged {
+        names_changed: false,
+    }));
+    assert!(
+        asks(&effects)
+            .iter()
+            .any(|(_, request)| matches!(request, Request::ContactGlance { address, .. } if address == "ada@example.com")),
+        "{effects:?}"
+    );
+}
+
+#[test]
+fn undo_over_the_popover_is_the_apps_undo_and_not_swallowed() {
+    // The arrival just chosen has a toast whose Undo is this key; the popover
+    // is not what undoes it, the app's stack is.
+    let mut focus = ready();
+    let _ = open(&mut focus, None);
+    let effects = run(&mut focus, CommandId::Undo);
+    assert!(
+        asks(&effects)
+            .iter()
+            .any(|(_, request)| matches!(request, Request::Post(Command::Undo))),
+        "{effects:?}"
+    );
+}

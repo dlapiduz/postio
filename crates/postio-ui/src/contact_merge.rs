@@ -98,6 +98,17 @@ fn first_address(person: &Contact) -> String {
         .unwrap_or_default()
 }
 
+/// The key that takes a merge back, as this keyboard spells it.
+fn undo_key(keymap: &Keymap) -> String {
+    if keymap.platform() == Some(postio_config::paths::Platform::Apple) {
+        "\u{2318}Z".to_owned()
+    } else {
+        keymap
+            .binding(CommandId::Undo)
+            .map_or_else(|| "Undo".to_owned(), str::to_owned)
+    }
+}
+
 /// The sheet for `group`, with the record at `kept` keeping its name and
 /// photo.
 pub fn view(
@@ -206,7 +217,10 @@ pub fn view(
             addresses: shown,
             line,
         },
-        foot: "Undo with \u{2318}Z. Merged records can be split again from the card.".to_owned(),
+        foot: format!(
+            "Undo with {}. Merged records can be split again from the card.",
+            undo_key(keymap)
+        ),
         not_same: button("Not the same", CommandId::SuggestionDismiss),
         later: button("Later", CommandId::Back),
         merge: button("Merge", CommandId::ContactShowMail),

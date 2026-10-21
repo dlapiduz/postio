@@ -534,8 +534,22 @@ impl ContactsView {
             self.shell.remove_overlay(&old);
         }
         let Some(sheet) = sheet else {
+            if self.form.borrow().is_none() {
+                self.footer.set(&self.frame_hints.borrow().clone());
+            }
             return;
         };
+        // Under the sheet the footer teaches the sheet's keys, not the list's.
+        let hints: Vec<postio_ui::hints::Hint> = [&sheet.merge, &sheet.later, &sheet.not_same]
+            .into_iter()
+            .filter_map(|button| {
+                button.key.as_ref().map(|key| postio_ui::hints::Hint {
+                    key: key.clone(),
+                    label: button.label.to_lowercase(),
+                })
+            })
+            .collect();
+        self.footer.set(&hints);
         let weak = self.weak();
         let hooks = MergeHooks {
             keep: Rc::new({

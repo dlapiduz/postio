@@ -158,7 +158,9 @@ pub fn strip(overview: &ContactsOverview, tab: ContactTab, keymap: &Keymap) -> S
             key: keymap
                 .binding(CommandId::ContactsSuggestions)
                 .map(str::to_owned),
-            enabled: false,
+            // The review can be asked for at any time: the queue is read
+            // when it is opened.
+            enabled: true,
         }),
     }
 }
@@ -554,7 +556,7 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
         vec![
             button("Write", CommandId::ContactCompose, true, true),
             button("All mail", CommandId::ContactShowMail, false, true),
-            button("Edit", CommandId::ContactEdit, false, false),
+            button("Edit", CommandId::ContactEdit, false, true),
         ]
     } else {
         let all = if person.kind == ContactKind::Newsletter {
@@ -1189,7 +1191,7 @@ mod tests {
             [
                 ("Write", true, true),
                 ("All mail", false, true),
-                ("Edit", false, false)
+                ("Edit", false, true)
             ]
         );
         assert_eq!(view.addresses[0].address, "ada@example.org");

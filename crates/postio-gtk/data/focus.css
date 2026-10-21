@@ -1540,7 +1540,7 @@ button.focus-compose-detach {
 }
 
 .focus-merge {
-  margin-top: var(--postio-space-6);
+  margin-top: 56px;
   padding-bottom: var(--postio-space-4);
 }
 
