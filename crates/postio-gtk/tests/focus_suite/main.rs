@@ -38,6 +38,7 @@ mod compose;
 mod compose_counts;
 mod compose_detach;
 mod compose_layout;
+mod contacts;
 mod corrections;
 mod cursor;
 mod desktop;
@@ -143,6 +144,19 @@ const IGNORED: &[&str] = &[
 ];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "contacts::g_c_opens_the_people_j_k_walk_them_the_card_follows_and_escape_goes_home",
+        contacts::g_c_opens_the_people_j_k_walk_them_the_card_follows_and_escape_goes_home
+            as fn(),
+    ),
+    (
+        "contacts::the_strip_says_its_tabs_and_a_click_on_one_is_the_key",
+        contacts::the_strip_says_its_tabs_and_a_click_on_one_is_the_key as fn(),
+    ),
+    (
+        "contacts::slash_filters_the_list_and_escape_clears_before_it_closes",
+        contacts::slash_filters_the_list_and_escape_clears_before_it_closes as fn(),
+    ),
     (
         "compose_counts::autosave_writes_off_the_main_thread_and_keeps_one_row",
         compose_counts::autosave_writes_off_the_main_thread_and_keeps_one_row as fn(),

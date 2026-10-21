@@ -306,5 +306,9 @@ async fn a_person_put_away_is_in_no_tab_and_no_count() {
         .unwrap();
     let ids: Vec<_> = page.iter().map(|row| row.id).collect();
     assert_eq!(ids, [kept], "only the live person is listed");
-    assert_eq!(contacts.overview(true).await.unwrap().total, 1, "and counted");
+    assert_eq!(
+        contacts.overview(true).await.unwrap().total,
+        1,
+        "and counted"
+    );
 }

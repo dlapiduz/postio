@@ -1257,6 +1257,226 @@ button.focus-compose-detach {
   background-color: var(--postio-ground);
 }
 
+/* ── Contacts (specs/011-focus-contacts S13; handoff screens 01 to 03) ── */
+.focus-contacts-root {
+  background-color: var(--postio-surface);
+}
+
+.focus-contacts-strip {
+  min-height: 46px;
+  padding: 0 var(--postio-space-6);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-contacts-title {
+  font-weight: bold;
+  font-size: var(--postio-text-reading);
+}
+
+.focus-contacts-total {
+  font-size: var(--postio-text-ui);
+}
+
+.focus-contacts-tabs {
+  padding: 2px;
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-raised-bg);
+}
+
+.focus-contacts-tab {
+  min-height: 0;
+  padding: var(--postio-space-1) var(--postio-space-3);
+  border-radius: var(--postio-radius-md);
+  font-size: var(--postio-text-ui);
+  font-weight: 500;
+}
+
+.focus-contacts-tab-on {
+  background-color: var(--postio-surface);
+  font-weight: bold;
+  box-shadow: 0 1px 1px var(--shade-color);
+}
+
+.focus-contacts-filter {
+  min-height: 0;
+  padding: var(--postio-space-1) var(--postio-space-2);
+  font-size: var(--postio-text-ui);
+}
+
+.focus-contacts-review {
+  min-height: 36px;
+  padding: 0 var(--postio-space-6);
+  background-color: var(--postio-ground);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-contacts-review-lead {
+  font-weight: bold;
+  font-size: var(--postio-text-ui);
+}
+
+.focus-contacts-list {
+  background-color: var(--postio-surface);
+}
+
+.focus-contacts-list > row {
+  padding: 0;
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-contacts-list > row:selected {
+  background-color: var(--postio-selected-bg);
+  color: var(--postio-selected-fg);
+  box-shadow: inset 0 0 0 2px var(--postio-accent);
+}
+
+.focus-contacts-letter {
+  min-height: 26px;
+  padding: 0 var(--postio-space-6);
+  background-color: var(--postio-ground);
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-contacts-row {
+  padding: 0 var(--postio-space-4);
+}
+
+.focus-contacts-name {
+  font-weight: 600;
+  font-size: var(--postio-text-body);
+}
+
+.focus-contacts-tag {
+  padding: 0 var(--postio-space-2);
+  border: 1px solid var(--postio-hairline-strong);
+  border-radius: 999px;
+  font-size: var(--postio-text-micro);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-contacts-mark {
+  min-width: 14px;
+  min-height: 14px;
+  border-radius: 999px;
+  background-color: var(--postio-surface);
+}
+
+.focus-contact-mono {
+  font-family: var(--postio-font-mono);
+  font-size: var(--postio-text-label);
+}
+
+.focus-contact-small {
+  font-size: var(--postio-text-label);
+}
+
+.focus-contact-avatar-text {
+  color: white;
+  font-weight: bold;
+  font-size: var(--postio-text-ui);
+}
+
+.focus-contact-avatar-large .focus-contact-avatar-text {
+  font-size: var(--postio-text-title);
+}
+
+.focus-contacts-card-host {
+  background-color: var(--postio-surface);
+}
+
+.focus-contact-card {
+  padding: 26px 36px;
+}
+
+.focus-contact-name {
+  font-weight: bold;
+  font-size: var(--postio-text-title);
+}
+
+.focus-contact-role {
+  font-size: var(--postio-text-ui);
+}
+
+.focus-contact-heading {
+  font-weight: bold;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-contact-bounced {
+  font-size: var(--postio-text-label);
+  color: var(--postio-error);
+}
+
+.focus-contact-switch-title {
+  font-weight: 600;
+}
+
+.focus-contact-note {
+  padding: var(--postio-space-3);
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-ground);
+}
+
+.focus-contact-tile {
+  min-height: 52px;
+  padding: var(--postio-space-2) var(--postio-space-3);
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-ground);
+}
+
+.focus-contact-tile-value {
+  font-weight: bold;
+  font-size: var(--postio-text-reading);
+}
+
+.focus-contact-months {
+  color: var(--postio-ink);
+}
+
+.focus-contact-line {
+  min-height: 34px;
+  padding: 0 var(--postio-space-3);
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-lg);
+}
+
+.focus-contact-line-label {
+  font-weight: 600;
+  font-size: var(--postio-text-label);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-contact-line-yours {
+  color: var(--postio-ink);
+}
+
+.focus-contact-file {
+  padding: var(--postio-space-1) var(--postio-space-2);
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-md);
+  background-color: var(--postio-ground);
+}
+
+.focus-contact-file-kind {
+  font-family: var(--postio-font-mono);
+  font-weight: bold;
+  font-size: var(--postio-text-micro);
+  color: var(--postio-ink-secondary);
+}
+
+.focus-contacts-footer {
+  padding: var(--postio-space-2) var(--postio-space-6);
+  border-top: 1px solid var(--postio-hairline);
+  background-color: var(--postio-header);
+}
+
+.focus-contacts-status {
+  font-size: var(--postio-text-label);
+}
+
 /* ── The digest rules list (g d; C15): 21's frame ───────────────────── */
 .focus-rules-name {
   font-weight: bold;

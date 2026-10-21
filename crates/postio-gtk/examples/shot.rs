@@ -132,6 +132,10 @@ const SCREENS: &[(&str, &str)] = &[
     ("41", "Settings: Sync & storage, each folder's backfill"),
     ("42", "Settings: Keyboard"),
     ("43", "Settings: Privacy"),
+    (
+        "50",
+        "Contacts: the people, a card beside them (handoff 01, 02)",
+    ),
 ];
 
 /// The screens drawn with messages opening beside the list (T232).
@@ -732,6 +736,19 @@ fn stage(
             }) {
                 return Err("Filtered never listed the demo's filtered mail".into());
             }
+        }
+        "50" => {
+            window.act(CommandId::OpenContacts);
+            let ready = || {
+                window
+                    .contacts()
+                    .is_some_and(|view| view.total() > 0 && view.card_name().is_some())
+            };
+            if !settle_until(ready) {
+                return Err("the Contacts view never listed anyone".into());
+            }
+            let shown = Instant::now();
+            settle_until(|| shown.elapsed() > Duration::from_millis(400));
         }
         "40" | "41" | "42" | "43" => {
             pick_three();

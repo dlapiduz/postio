@@ -138,6 +138,41 @@ impl Feed {
         Rc::clone(&self.inner).apply(effects);
     }
 
+    /// The Contacts list's row at `index`, or `None` while its page is on its
+    /// way: a miss asks the store for it, and `ContactsRows` says when to
+    /// draw again.
+    pub fn contacts_row(&self, index: u32) -> Option<postio_ui::contacts_view::RowView> {
+        let effects = {
+            let mut focus = self.inner.focus.borrow_mut();
+            if let Some(row) = focus.contacts_row(index) {
+                return Some(row);
+            }
+            focus.contacts_wanted(index)
+        };
+        Rc::clone(&self.inner).apply(effects);
+        None
+    }
+
+    /// How many people the Contacts list holds.
+    pub fn contacts_total(&self) -> u32 {
+        self.inner.focus.borrow().contacts_total()
+    }
+
+    /// Where the Contacts cursor is.
+    pub fn contacts_cursor(&self) -> Option<u32> {
+        self.inner.focus.borrow().contacts_cursor()
+    }
+
+    /// The card beside the Contacts list, once it has been read.
+    pub fn contacts_card(&self) -> Option<postio_ui::contacts_view::CardView> {
+        self.inner.focus.borrow().contacts_card()
+    }
+
+    /// The Edit contact form, while one is open.
+    pub fn contact_edit(&self) -> Option<postio_ui::contact_edit::EditView> {
+        self.inner.focus.borrow().contact_edit()
+    }
+
     /// The message the open message surface shows, while it is on top.
     pub fn reading(&self) -> Option<MessageId> {
         self.inner.focus.borrow().reading()

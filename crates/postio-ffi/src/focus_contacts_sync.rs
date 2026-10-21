@@ -215,7 +215,11 @@ impl Session {
         };
         let records: Vec<ExternalRecord> = records.into_iter().map(Into::into).collect();
         let scope: ScopeChoice = scope.into();
-        match crate::session::blocking(client.contacts_sync_plan(records, Scope::from(scope), mode.into())) {
+        match crate::session::blocking(client.contacts_sync_plan(
+            records,
+            Scope::from(scope),
+            mode.into(),
+        )) {
             Ok(plan) => SyncResultFfi {
                 sheet: Some(postio_ui::contacts_sync::plan_sheet(&plan, &self.keymap()).into()),
                 error: None,

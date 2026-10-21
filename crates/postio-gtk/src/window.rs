@@ -81,6 +81,10 @@ const REMOVE_RULE_DIALOG: &str = "focus-remove-rule";
 
 /// The Filtered view's page (screen 21).
 const FILTERED: &str = "filtered";
+/// The Contacts view, in the inbox's body (specs/011-focus-contacts,
+/// screens 01 to 03), and the mail it stands in for.
+const CONTACTS: &str = "contacts";
+const MAIL: &str = "mail";
 /// The inbox's list, and the empty inbox in its place.
 const LIST: &str = "list";
 /// The key map dialog's name, so it can be told from another dialog.
@@ -102,6 +106,11 @@ mod imp {
         /// bar takes over once there is mail.
         pub bar_before_mail: gtk::WindowHandle,
         pub inbox: gtk::Box,
+        /// Under the top bar: the mail (the strip, the list and the reading
+        /// pane) or the Contacts view in its place.
+        pub body: gtk::Stack,
+        /// The mail's half of [`Self::body`].
+        pub mail: gtk::Box,
         /// The undo toast, and the overlay it appears over: the shared one
         /// both desktop apps say "Archived 3 messages" with.
         pub toast: postio_widgets::widgets::toast::Toast,
@@ -226,6 +235,8 @@ mod imp {
         pub digest_window: RefCell<Option<Rc<crate::digest::DigestWindow>>>,
         /// The Filtered view, built the first time `g f` opens it.
         pub filtered: RefCell<Option<Rc<crate::filtered::FilteredView>>>,
+        /// The Contacts view, built the first time `g c` opens it.
+        pub contacts: RefCell<Option<Rc<crate::contacts::ContactsView>>>,
         /// A `postio://` link that arrived before the store was open.
         pub pending_link: RefCell<Option<String>>,
         /// A `mailto:` link that arrived before the composer was mounted.
@@ -279,6 +290,8 @@ mod imp {
                 retry: gtk::Button::with_label("Try again"),
                 bar_before_mail: gtk::WindowHandle::new(),
                 inbox: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                body: gtk::Stack::new(),
+                mail: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 toast: postio_widgets::widgets::toast::Toast::new(),
                 on_screen: RefCell::default(),
                 pane: RefCell::default(),
@@ -330,6 +343,7 @@ mod imp {
                 compose: RefCell::default(),
                 warm: Cell::default(),
                 filtered: RefCell::default(),
+                contacts: RefCell::default(),
                 digest_window: RefCell::default(),
                 rule_dialog: RefCell::default(),
                 rules_view: RefCell::default(),
@@ -1071,6 +1085,7 @@ impl FocusWindow {
                 }
             }
             SurfaceKind::Filtered => self.leave_filtered(),
+            SurfaceKind::Contacts => self.leave_contacts(),
             _ => {}
         }
     }
@@ -1755,6 +1770,10 @@ impl FocusWindow {
             CommandId::NextScope => self.next_scope(),
             CommandId::ViewSource => self.view_source(),
             CommandId::GoToFiltered => self.show_filtered(),
+            // Contacts: the controller opens it and says what to draw.
+            CommandId::OpenContacts | CommandId::ContactsSuggestions => {
+                self.run_in_controller(id);
+            }
             CommandId::SweepInbox => self.ask_sweep(),
             CommandId::ClearListMail => {
                 if !self.imp().toast.take_offer() {
@@ -2075,6 +2094,35 @@ impl FocusWindow {
                 message: Some(message),
             } => self.open_draft(*message),
             Intent::CloseSurface(kind) => self.close_surface(*kind),
+            // The Contacts view and what lies over it: the controller keeps
+            // the state, this draws it (specs/011-focus-contacts S13).
+            Intent::Contacts(view) => self.show_contacts(view),
+            Intent::ContactsRows { .. } => {
+                if let Some(view) = self.contacts() {
+                    view.show_rows();
+                }
+            }
+            Intent::ContactsCursor(index) => {
+                if let Some(view) = self.contacts() {
+                    view.show_cursor(*index);
+                }
+            }
+            Intent::ContactsCard(card) => {
+                if let Some(view) = self.contacts() {
+                    view.show_card(card.as_deref().cloned());
+                }
+            }
+            Intent::ContactsFocusFilter => {
+                if let Some(view) = self.contacts() {
+                    view.focus_filter();
+                }
+            }
+            Intent::WriteTo(address) => {
+                self.open_mailto(postio_model::mailto::Mailto {
+                    to: vec![postio_model::EmailAddress::new(None::<String>, address)],
+                    ..Default::default()
+                });
+            }
             _ => {}
         }
     }
@@ -2374,7 +2422,14 @@ impl FocusWindow {
         titlebar.set_child(Some(chrome.top_bar()));
         self.follow_maximized(chrome.maximize());
         imp.inbox.append(&titlebar);
-        imp.inbox.append(chrome.strip());
+        // Under the top bar, the mail or the Contacts view in its place: the
+        // bar (Compose, the box, the window's buttons) stays through both.
+        imp.mail.set_vexpand(true);
+        imp.body.set_vexpand(true);
+        imp.body.set_transition_type(gtk::StackTransitionType::None);
+        imp.body.add_named(&imp.mail, Some(MAIL));
+        imp.inbox.append(&imp.body);
+        imp.mail.append(chrome.strip());
         imp.chrome.replace(Some(Rc::clone(&chrome)));
         let state_banner = crate::banner::StateBanner::new();
         state_banner.connect_action(glib::clone!(
@@ -2382,7 +2437,7 @@ impl FocusWindow {
             self,
             move |action| window.act(banner_command(action))
         ));
-        imp.inbox.append(state_banner.widget());
+        imp.mail.append(state_banner.widget());
         imp.state_banner.replace(Some(state_banner));
         self.show_state();
         self.set_keymap(keymap);
@@ -2508,7 +2563,7 @@ impl FocusWindow {
         reading_pane.widget().set_visible(false);
         let split = self.split(&list_column, &reading_pane.widget());
         split.set_vexpand(true);
-        imp.inbox.append(&split);
+        imp.mail.append(&split);
         imp.split.replace(Some(split));
         imp.reading_pane.replace(Some(reading_pane));
         imp.bar.replace(Some(bar));
@@ -2522,7 +2577,7 @@ impl FocusWindow {
         ));
         // At the window's foot, under the list and the pane alike: its verbs
         // want the window's width, not the list's.
-        imp.inbox.append(bulk.widget());
+        imp.mail.append(bulk.widget());
         imp.bulk.replace(Some(Rc::clone(&bulk)));
         // The accounts a whole-view selection spans.
         self.refresh_accounts(client.clone());
@@ -3660,6 +3715,58 @@ impl FocusWindow {
         view.open();
         imp.pages.set_visible_child_name(FILTERED);
         view.focus_list();
+    }
+
+    /// The Contacts view, while it is the page on screen.
+    pub fn contacts(&self) -> Option<Rc<crate::contacts::ContactsView>> {
+        let imp = self.imp();
+        if imp.body.visible_child_name().as_deref() != Some(CONTACTS) {
+            return None;
+        }
+        imp.contacts.borrow().clone()
+    }
+
+    /// `g c`: the Contacts view in place of the inbox. The controller opened
+    /// it and says what to draw; the first frame builds the page.
+    fn show_contacts(&self, frame: &postio_focus::ContactsView) {
+        let imp = self.imp();
+        let Some(pane) = self.pane() else {
+            return;
+        };
+        let view = imp.contacts.borrow().clone();
+        let view = view.unwrap_or_else(|| {
+            let view = crate::contacts::ContactsView::new(
+                pane.feed().clone(),
+                glib::clone!(
+                    #[weak(rename_to = window)]
+                    self,
+                    move |command| window.press_command(command)
+                ),
+            );
+            imp.body.add_named(view.widget(), Some(CONTACTS));
+            imp.contacts.replace(Some(Rc::clone(&view)));
+            view
+        });
+        view.show_frame(frame);
+        if imp.body.visible_child_name().as_deref() != Some(CONTACTS) {
+            imp.body.set_visible_child_name(CONTACTS);
+            view.focus_list();
+        }
+    }
+
+    /// A control drawn for a command does what its key does: the
+    /// controller's when it owns the command over what is on screen.
+    pub(crate) fn press_command(&self, command: CommandId) {
+        match self.route(command) {
+            Route::Controller => self.run_in_controller(command),
+            _ => self.act(command),
+        }
+    }
+
+    /// Back from Contacts to the inbox, as it was.
+    fn leave_contacts(&self) {
+        self.imp().body.set_visible_child_name(MAIL);
+        self.focus_list();
     }
 
     /// Back from Filtered to the inbox, as it was.

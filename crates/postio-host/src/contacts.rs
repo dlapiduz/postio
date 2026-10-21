@@ -1697,7 +1697,12 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         let two_way = contacts_sync_plan(&database, &externals, Scope::People, Mode::TwoWay)
             .await
             .unwrap();
-        assert_eq!(two_way.counts().0, 1, "Grace would be added: {}", two_way.summary());
+        assert_eq!(
+            two_way.counts().0,
+            1,
+            "Grace would be added: {}",
+            two_way.summary()
+        );
         let read_only = contacts_sync_plan(&database, &externals, Scope::People, Mode::ReadOnly)
             .await
             .unwrap();
