@@ -123,6 +123,7 @@ fn the_nav_is_focus_s_filtering_in_and_appearance_out() {
         labels,
         [
             "Accounts",
+            "Contacts",
             "Filtering",
             "Saved searches",
             "Composing",
@@ -144,7 +145,13 @@ fn the_nav_is_focus_s_filtering_in_and_appearance_out() {
         .collect();
     assert_eq!(
         mail,
-        ["Accounts", "Filtering", "Saved searches", "Composing"]
+        [
+            "Accounts",
+            "Contacts",
+            "Filtering",
+            "Saved searches",
+            "Composing"
+        ]
     );
     assert_eq!(settings_group_label(GroupFfi::Application), "APPLICATION");
 }

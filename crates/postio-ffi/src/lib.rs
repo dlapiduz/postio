@@ -52,6 +52,7 @@ mod focus_contact_edit;
 mod focus_contact_merge;
 mod focus_contacts;
 mod focus_contacts_io;
+mod focus_contacts_settings;
 mod focus_contacts_sync;
 mod focus_keymap;
 mod focus_list;
@@ -120,6 +121,10 @@ pub use focus_contacts::{
 };
 pub use focus_contacts_io::{
     ContactsExportResultFfi, ContactsImportResultFfi, ContactsIoSheetFfi, ContactsPanelWordsFfi,
+};
+pub use focus_contacts_settings::{
+    ContactsPaneFfi, SuggestionRowFfi, SuggestionsViewFfi, SyncModeFfi, SyncModeOptionFfi,
+    SyncSectionFfi, SyncStatusFfi,
 };
 pub use focus_contacts_sync::{
     ExternalRecordFfi, SyncAccountFfi, SyncPlanFfi, SyncResultFfi, SyncScopeFfi,

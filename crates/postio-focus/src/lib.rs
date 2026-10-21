@@ -29,6 +29,7 @@ mod contact_edit;
 mod contact_merge;
 mod contact_popover;
 mod contacts;
+mod contacts_settings;
 mod cursor;
 mod digest;
 mod dropdown;
@@ -349,6 +350,10 @@ pub enum Input {
     ContactEditChange(contact_edit::EditChange),
     /// A click on the card's switch at this index.
     ContactCardSwitch(u32),
+    /// Settings > Contacts appeared: which Suggestions switches are on?
+    ContactsSettingsOpened,
+    /// A click on the Suggestions switch at this index.
+    ContactsSuggestion(u32),
     /// An import ran: the people it made, and everyone it touched.
     ContactsImported {
         /// New people, in file order.
@@ -676,6 +681,8 @@ pub enum Intent {
     ContactMerge(Option<Box<postio_ui::contact_merge::MergeSheetView>>),
     /// Draw the Edit contact form over the card, or put it away.
     ContactEdit(Option<Box<postio_ui::contact_edit::EditView>>),
+    /// Draw Settings > Contacts' Suggestions section.
+    ContactsSettings(Box<postio_ui::contacts_settings::SuggestionsView>),
     /// Put the keyboard in the Contacts filter.
     ContactsFocusFilter,
 }
@@ -1050,6 +1057,15 @@ pub enum Request {
     ContactGroups,
     /// What the mail says about a person that the Edit form can keep.
     ContactSeen(postio_model::ContactId),
+    /// Which Suggestions switches are on.
+    ContactSuggestions,
+    /// Turn a Suggestions switch on or off.
+    ContactSuggestionSet {
+        /// Which.
+        which: postio_model::Suggestion,
+        /// To what.
+        on: bool,
+    },
     /// A person's card.
     ContactCard {
         /// Whose.
@@ -1376,6 +1392,9 @@ pub enum Reply {
     ContactGroups(Result<Vec<String>, String>),
     /// The answer to [`Request::ContactSeen`].
     ContactSeen(Vec<postio_model::SeenItem>),
+    /// The answer to [`Request::ContactSuggestions`] and
+    /// [`Request::ContactSuggestionSet`]: all four, or why not.
+    ContactSuggestions(Result<postio_model::ContactSuggestions, String>),
     /// The answer to [`Request::ContactCard`].
     ContactCard {
         /// The stamp it was asked under.
@@ -1437,6 +1456,8 @@ pub struct FocusController {
     capture: Option<capture::Capture>,
     contact_popover: Option<contact_popover::ContactPopover>,
     contacts: Option<contacts::Contacts>,
+    /// Settings > Contacts' Suggestions switches, once the pane has asked.
+    contacts_settings: Option<contacts_settings::Settings>,
     /// Who the last import made or matched: the review's first look.
     import_found: Vec<postio_model::ContactId>,
     /// The first person the last import made, until the cursor has gone to
@@ -1482,6 +1503,7 @@ impl FocusController {
             capture: None,
             contact_popover: None,
             contacts: None,
+            contacts_settings: None,
             import_found: Vec::new(),
             import_cursor: None,
             confirm: None,
@@ -1654,6 +1676,7 @@ impl FocusController {
                 | Reply::ContactPosition { .. }
                 | Reply::ContactMergeOf(_)
                 | Reply::ContactSeen(_)
+                | Reply::ContactSuggestions(_)
                 | Reply::FoundMessage { .. }
                 | Reply::DraftBehind { .. }),
             ) => {
@@ -1868,6 +1891,14 @@ impl FocusController {
             }
             Input::ContactCardSwitch(index) => {
                 let steps = self.contact_card_switch(index);
+                self.effects(steps)
+            }
+            Input::ContactsSettingsOpened => {
+                let steps = self.contacts_settings_opened();
+                self.effects(steps)
+            }
+            Input::ContactsSuggestion(index) => {
+                let steps = self.contacts_suggestion_clicked(index);
                 self.effects(steps)
             }
             Input::ContactArrival(arrival) => {
@@ -2578,6 +2609,7 @@ impl FocusController {
             | Reply::ContactPosition { .. }
             | Reply::ContactMergeOf(_)
             | Reply::ContactSeen(_)) => self.contacts_reply(reply),
+            Reply::ContactSuggestions(answer) => self.contacts_suggestions_read(answer),
             Reply::FoundMessage { message, row } => self.link_found(message, row, rows),
             Reply::DraftBehind { command, draft, .. } => self.draft_behind(command, draft),
             _ => Vec::new(),

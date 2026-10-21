@@ -318,6 +318,11 @@ pub enum UiEvent {
         /// The form, or `None` when it is gone.
         view: Option<crate::focus_contact_edit::ContactEditViewFfi>,
     },
+    /// Settings > Contacts' Suggestions section, read or changed.
+    FocusContactsSettings {
+        /// The section.
+        view: crate::focus_contacts_settings::SuggestionsViewFfi,
+    },
     /// Put the keyboard in the Contacts filter field.
     FocusContactsFocusFilter,
     /// Open a composer to this address, as a `mailto:` link would, and say

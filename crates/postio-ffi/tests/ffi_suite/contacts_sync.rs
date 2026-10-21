@@ -54,6 +54,7 @@ async fn the_intro_asks_nothing_and_the_plan_says_what_would_happen() {
         s.contacts_sync_plan(
             vec![theirs("x1", "Ada", "ada@example.org")],
             SyncScopeFfi::PeopleAndCompanies,
+            postio_ffi::SyncModeFfi::TwoWay,
         )
     })
     .await
@@ -82,6 +83,7 @@ async fn a_dry_run_changes_nothing_in_postio() {
                 theirs("x2", "Zed", "zed@example.org"),
             ],
             SyncScopeFfi::Everything,
+            postio_ffi::SyncModeFfi::TwoWay,
         )
     })
     .await

@@ -343,6 +343,21 @@ pub fn settings_sections() -> Vec<SettingsSectionFfi> {
         .position(|section| section.key.is_empty())
         .unwrap_or(sections.len());
     sections.insert(at, agents);
+    // Contacts (specs/011-focus-contacts D7) is the same: Focus's, until the
+    // GTK and terminal panes adopt it at S13. It follows Accounts.
+    let contacts = SettingsSectionFfi {
+        key: "contacts".to_owned(),
+        label: postio_ui::contacts_settings::TITLE.to_owned(),
+        group: GroupFfi::Mail,
+        description: postio_ui::contacts_settings::DESCRIPTION.to_owned(),
+        table: None,
+        stored_in: postio_ui::contacts_settings::STORED_IN.to_owned(),
+    };
+    let after_accounts = sections
+        .iter()
+        .position(|section| section.key == "accounts")
+        .map_or(0, |at| at + 1);
+    sections.insert(after_accounts, contacts);
     sections
 }
 

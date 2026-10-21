@@ -648,6 +648,13 @@ impl FocusDriver {
         self.focus.lock().expect("focus lock").contacts_card()
     }
 
+    /// Settings > Contacts' Suggestions section, once it has been read.
+    pub(crate) fn contacts_settings(
+        &self,
+    ) -> Option<postio_ui::contacts_settings::SuggestionsView> {
+        self.focus.lock().expect("focus lock").contacts_settings()
+    }
+
     /// The Edit contact form, while one is open.
     pub(crate) fn contact_edit(&self) -> Option<postio_ui::contact_edit::EditView> {
         self.focus.lock().expect("focus lock").contact_edit()
@@ -1017,6 +1024,9 @@ impl FocusDriver {
             }),
             Intent::ContactEdit(view) => self.say(UiEvent::FocusContactEdit {
                 view: view.map(|view| (*view).into()),
+            }),
+            Intent::ContactsSettings(view) => self.say(UiEvent::FocusContactsSettings {
+                view: (*view).into(),
             }),
             Intent::ContactsFocusFilter => self.say(UiEvent::FocusContactsFocusFilter),
             Intent::Composer { kind, message } => {

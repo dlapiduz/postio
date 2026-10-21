@@ -1078,8 +1078,14 @@ impl Inner {
                     Err(error) => Resp::Failed(error),
                 }
             }
-            Req::ContactsSyncPlan { records, scope } => {
-                match contacts::contacts_sync_plan(&self.wiring.database, &records, scope).await {
+            Req::ContactsSyncPlan {
+                records,
+                scope,
+                mode,
+            } => {
+                match contacts::contacts_sync_plan(&self.wiring.database, &records, scope, mode)
+                    .await
+                {
                     Ok(plan) => Resp::ContactsSyncPlan(Box::new(plan)),
                     Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
                 }
@@ -1116,6 +1122,22 @@ impl Inner {
                     .await
                     .map(Box::new),
             ),
+            Req::ContactSuggestions => {
+                Resp::ContactSuggestions(contacts::contact_suggestions(&self.wiring.database).await)
+            }
+            Req::ContactSuggestionSet(which, on) => {
+                match contacts::set_contact_suggestion(&self.wiring.database, which, on).await {
+                    Ok(switches) => {
+                        // The review's count and the kinds in the lists move
+                        // with the switches.
+                        self.hub.emit(Event::ContactsChanged {
+                            names_changed: false,
+                        });
+                        Resp::ContactSuggestions(switches)
+                    }
+                    Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+                }
+            }
             Req::ContactSeen(person) => {
                 Resp::ContactSeen(contacts::contact_seen(&self.wiring.database, person).await)
             }

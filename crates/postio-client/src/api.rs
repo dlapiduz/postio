@@ -125,6 +125,8 @@ impl Req {
             Req::ContactsSyncPlan { .. } => "ContactsSyncPlan",
             Req::ContactsExport => "ContactsExport",
             Req::ContactSeen(_) => "ContactSeen",
+            Req::ContactSuggestions => "ContactSuggestions",
+            Req::ContactSuggestionSet(..) => "ContactSuggestionSet",
             Req::ContactReview(_) => "ContactReview",
             Req::ContactPosition(..) => "ContactPosition",
             Req::ContactMergeOf(_) => "ContactMergeOf",
@@ -725,9 +727,14 @@ impl Client {
         &self,
         records: Vec<postio_contact_sync::ExternalRecord>,
         scope: postio_contact_sync::Scope,
+        mode: postio_contact_sync::Mode,
     ) -> Result<postio_contact_sync::Plan, StoreError> {
         self.read(
-            Req::ContactsSyncPlan { records, scope },
+            Req::ContactsSyncPlan {
+                records,
+                scope,
+                mode,
+            },
             "the sync plan",
             |answer| match answer {
                 Resp::ContactsSyncPlan(plan) => Some(*plan),
@@ -805,6 +812,38 @@ impl Client {
             "the records to merge",
             |answer| match answer {
                 Resp::ContactMergeOf(group) => Some(group.map(|group| *group)),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Which Suggestions switches are on.
+    pub async fn contact_suggestions(
+        &self,
+    ) -> Result<postio_model::ContactSuggestions, StoreError> {
+        self.read(
+            Req::ContactSuggestions,
+            "the Suggestions switches",
+            |answer| match answer {
+                Resp::ContactSuggestions(switches) => Some(switches),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// Turns one Suggestions switch on or off, and says where all four are.
+    pub async fn set_contact_suggestion(
+        &self,
+        which: postio_model::Suggestion,
+        on: bool,
+    ) -> Result<postio_model::ContactSuggestions, StoreError> {
+        self.read(
+            Req::ContactSuggestionSet(which, on),
+            "a Suggestions switch",
+            |answer| match answer {
+                Resp::ContactSuggestions(switches) => Some(switches),
                 _ => None,
             },
         )

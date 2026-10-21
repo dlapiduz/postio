@@ -260,6 +260,8 @@ pub enum Req {
         records: Vec<postio_contact_sync::ExternalRecord>,
         /// What syncs.
         scope: postio_contact_sync::Scope,
+        /// Whether the plan may ask their side to change.
+        mode: postio_contact_sync::Mode,
     },
     /// Read the cards in a `.vcf` the user chose and apply them.
     ContactsImport(Vec<u8>),
@@ -267,6 +269,10 @@ pub enum Req {
     ContactsExport,
     /// What the mail says about a person that the Edit form can keep.
     ContactSeen(postio_model::ContactId),
+    /// Which Settings > Contacts Suggestions switches are on.
+    ContactSuggestions,
+    /// Turn one of them on or off; answers with all four.
+    ContactSuggestionSet(postio_model::Suggestion, bool),
     /// The groups of records that look like one person, with the evidence;
     /// those holding any of these people first.
     ContactReview(Vec<postio_model::ContactId>),
@@ -859,6 +865,9 @@ pub enum Resp {
     ContactsExported(String, usize),
     /// The answer to [`Req::ContactSeen`].
     ContactSeen(Vec<postio_model::SeenItem>),
+    /// The answer to [`Req::ContactSuggestions`] and
+    /// [`Req::ContactSuggestionSet`].
+    ContactSuggestions(postio_model::ContactSuggestions),
     /// The answer to [`Req::ContactPosition`].
     ContactPosition(Option<u32>),
     /// The answer to [`Req::ContactReview`].

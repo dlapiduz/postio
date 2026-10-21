@@ -318,8 +318,9 @@ pub async fn contacts_sync_plan(
     database: &Store,
     externals: &[postio_contact_sync::ExternalRecord],
     scope: postio_contact_sync::Scope,
+    mode: postio_contact_sync::Mode,
 ) -> Result<postio_contact_sync::Plan, String> {
-    use postio_contact_sync::{Fields, LocalRecord, Mode, plan};
+    use postio_contact_sync::{Fields, LocalRecord, plan};
     let failed = |error: postio_storage::Error| {
         tracing::warn!(%error, "could not read contacts to plan a sync");
         "Could not read your contacts".to_owned()
@@ -364,7 +365,7 @@ pub async fn contacts_sync_plan(
         .collect();
     // The dry run is what a two-way sync would do; nothing is written either
     // way, and the gate (`postio_contact_sync::write`) is not called.
-    let plan = plan(&locals, externals, &[], scope, Mode::TwoWay);
+    let plan = plan(&locals, externals, &[], scope, mode);
     let (add, update, ask, delete) = plan.counts();
     tracing::info!(add, update, ask, delete, "planned a contacts sync, dry run");
     Ok(plan)
@@ -1623,9 +1624,14 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
             theirs("x9", "Zed", "Zimmer", "zed@example.org", ""),
         ];
         let before = fingerprint(&database).await;
-        let plan = contacts_sync_plan(&database, &externals, Scope::PeopleAndCompanies)
-            .await
-            .expect("a plan");
+        let plan = contacts_sync_plan(
+            &database,
+            &externals,
+            Scope::PeopleAndCompanies,
+            postio_contact_sync::Mode::TwoWay,
+        )
+        .await
+        .expect("a plan");
         assert_eq!(
             fingerprint(&database).await,
             before,
@@ -1656,6 +1662,50 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         assert!(
             plan.updates.iter().any(|c| c.field == "organization"),
             "the organisation only Postio has would go across: {plan:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_read_only_plan_asks_nothing_of_their_side() {
+        use postio_contact_sync::{ExternalRecord, Fields, Mode, Scope};
+        let database = test_support::memory().await;
+        let mut form = postio_model::ContactForm::blank();
+        form.given = "Grace".into();
+        form.addresses = vec![postio_model::FormAddress {
+            address: "grace@example.org".into(),
+            ..postio_model::FormAddress::blank()
+        }];
+        {
+            let connection = database.connect().await.unwrap();
+            ContactRepository::new(&connection)
+                .save_form(None, &form)
+                .await
+                .unwrap();
+        }
+        let externals: Vec<ExternalRecord> = vec![ExternalRecord {
+            id: "x1".into(),
+            label: "Zed".into(),
+            fields: Fields {
+                given: "Zed".into(),
+                family: String::new(),
+                emails: ["zed@example.org".to_owned()].into_iter().collect(),
+                phones: Vec::new(),
+                organization: String::new(),
+                title: String::new(),
+            },
+        }];
+        let two_way = contacts_sync_plan(&database, &externals, Scope::People, Mode::TwoWay)
+            .await
+            .unwrap();
+        assert_eq!(two_way.counts().0, 1, "Grace would be added: {}", two_way.summary());
+        let read_only = contacts_sync_plan(&database, &externals, Scope::People, Mode::ReadOnly)
+            .await
+            .unwrap();
+        assert_eq!(
+            read_only.counts().0,
+            0,
+            "read only adds nothing to their side: {}",
+            read_only.summary()
         );
     }
 
