@@ -356,6 +356,20 @@ public final class PostioSession {
     /// "Split" on the card's address.
     public func focusContactSplit(_ address: String) { inner.focusContactSplit(address: address) }
 
+    /// What the open and save panels for a vCard say.
+    public func contactsPanelWords() -> ContactsPanelWordsFfi { inner.contactsPanelWords() }
+
+    /// Reads and applies the cards in a file the user chose.
+    public func contactsImport(_ bytes: Data) -> ContactsImportResultFfi {
+        inner.contactsImport(bytes: bytes)
+    }
+
+    /// One `.vcf` of the people the Contacts list holds.
+    public func contactsExport() -> ContactsExportResultFfi { inner.contactsExport() }
+
+    /// The file a demo imports from in place of the open panel.
+    public func demoContactsFile() -> Data { inner.demoContactsFile() }
+
     /// The Edit contact form, while one is open.
     public func focusContactEdit() -> ContactEditViewFfi? { inner.focusContactEdit() }
 

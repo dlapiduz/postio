@@ -75,6 +75,11 @@ public enum Intercepted {
     /// The reader's `alt+I`: the blocked-images notice's "Always allow", for
     /// the sender the notice names, and only where the notice is.
     public static let alwaysShowImages = "always_show_images"
+    /// File ▸ Import Contacts and Export Contacts: the panels are this
+    /// frontend's, because a file is read or written only through a panel the
+    /// user used (specs/011-focus-contacts S11).
+    public static let contactsImport = "contacts_import"
+    public static let contactsExport = "contacts_export"
     /// The settings window's account verbs. Every one acts on the row the
     /// keyboard is on, which is `SettingsAccounts`'s cursor and this side's
     /// alone; two of them need a sheet on top of that.
@@ -100,6 +105,6 @@ public enum Intercepted {
         addAccount, editConfig, toggleAccountEnabled, removeAccount,
         updateCredential, rebuildAccountIndex, setDefaultAccount,
         showImages,
-        quit, unsubscribe, clearListMail, alwaysShowImages,
+        quit, unsubscribe, clearListMail, alwaysShowImages, contactsImport, contactsExport,
     ] + composeVerbs
 }

@@ -129,6 +129,8 @@ final class Engine {
             capture = CaptureModel(engine: session)
             makeContactPopover(session)
             contactsView = ContactsModel(engine: session)
+            contactsIo = ContactsIoModel(
+                engine: session, panels: ContactsPanels(), demo: DemoMode.seed != nil)
             composer = ComposerWindow(engine: session)
             // The toolbar was built before there were bindings to spell.
             keycapsChanged?()
@@ -787,6 +789,11 @@ final class Engine {
             ruleSheetWindow.close()
         }
     }
+
+    // MARK: contacts import and export (specs/011-focus-contacts S11)
+
+    /// File ▸ Import Contacts and Export Contacts, and the sheet after them.
+    @ObservationIgnored private(set) var contactsIo: ContactsIoModel?
 
     // MARK: the Contacts view (specs/011-focus-contacts S7)
 
@@ -1823,6 +1830,16 @@ final class Engine {
         // its field and its buttons -- Return saves, Escape cancels --
         // rather than the list behind it.
         if bannerRepair.asking != nil { return false }
+        // The sheet after an import or an export holds the keyboard: Escape
+        // is Done, `g w` is Review, and nothing else reaches the list.
+        if let io = contactsIo, io.isOpen {
+            switch id {
+            case Intercepted.back: io.done()
+            case "contacts_suggestions": io.review()
+            default: return true
+            }
+            return true
+        }
         // A question's alert is up: Return and Escape are its buttons'.
         if asking != nil { return false }
         // The Save popover has the keyboard: Return saves, Escape cancels,
@@ -1879,6 +1896,10 @@ final class Engine {
             // The folders popover is not a surface the controller keeps:
             // Escape closes it here, and the keyboard goes home.
             placesPopover?.close()
+        case Intercepted.contactsImport:
+            contactsIo?.runImport()
+        case Intercepted.contactsExport:
+            contactsIo?.runExport()
         case Intercepted.settings:
             // A request the main window turns into `openWindow(id:)`,
             // because only a view can open a window (#1261).

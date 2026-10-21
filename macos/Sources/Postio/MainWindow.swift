@@ -76,6 +76,10 @@ struct MainWindow: View {
             if let contacts = engine.contactsView, contacts.isOpen {
                 ContactsScreen(model: contacts)
             }
+            // What an import or an export did, over whatever is showing.
+            if let io = engine.contactsIo, let sheet = io.sheet {
+                ContactsIoSheetView(sheet: sheet, model: io)
+            }
         }
         .animation(nil, value: engine.filtered?.isOpen)
         .animation(nil, value: engine.results?.isOpen)
