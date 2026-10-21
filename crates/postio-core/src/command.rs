@@ -1084,4 +1084,25 @@ mod tests {
     fn the_default_target_is_the_selection() {
         assert_eq!(MessageTarget::default(), MessageTarget::Selection);
     }
+
+    #[test]
+    fn every_verb_that_acts_on_messages_reports_and_takes_a_target() {
+        // `target` and `with_target` list the same verbs by hand; a verb
+        // added to one and not the other would be readable but not aimable
+        // (or the reverse), so every default invocation goes through both.
+        let aimed = MessageTarget::Thread(ThreadId::new(5));
+        let mut aimable = 0;
+        for id in CommandId::ALL {
+            let verb = Command::default_for(*id);
+            let moved = verb.clone().with_target(aimed.clone());
+            assert_eq!(moved.id(), verb.id(), "retargeting keeps the verb");
+            if verb.target().is_some() {
+                aimable += 1;
+                assert_eq!(moved.target(), Some(&aimed), "{id} took the target");
+            } else {
+                assert_eq!(moved, verb, "{id} acts on no messages, so it is unchanged");
+            }
+        }
+        assert!(aimable >= 13, "only {aimable} verbs take a target");
+    }
 }

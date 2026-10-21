@@ -330,8 +330,22 @@ pub fn leaving_a_list_offers_one_action_on_a_toast_and_ignoring_it_keeps_the_mai
         crate::settle();
         window.dismiss_toast();
         // The dismissed toast animates out, still mapped, for a moment: the
-        // next offer's button is the one to press, not the leaving one.
-        crate::settle_for(std::time::Duration::from_millis(800)).await;
+        // next offer's button is the one to press, not the leaving one. Wait
+        // for it to be gone, not for a time a loaded machine can outrun.
+        assert!(
+            crate::settle_until(async || {
+                !support::descendants(&window).iter().any(|widget| {
+                    use gtk::prelude::*;
+                    widget.is::<gtk::Button>()
+                        && widget.is_mapped()
+                        && support::texts(widget)
+                            .iter()
+                            .any(|text| text == "Archive 2")
+                })
+            })
+            .await,
+            "the declined offer's button never left the window"
+        );
         assert!(!inbox_is_empty(&fixture).await, "declining archived them");
         assert_ne!(
             window.toast_showing().as_deref(),

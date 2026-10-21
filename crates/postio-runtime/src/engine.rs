@@ -1427,9 +1427,18 @@ fn nothing_asked(inbox: &async_channel::Receiver<Job>) -> bool {
 /// observes.
 async fn wait_for_close(inbox: &async_channel::Receiver<Job>) {
     while !inbox.is_closed() {
-        tokio::time::sleep(CLOSE_CHECK).await;
+        tokio::time::sleep(CLOSE_POLL).await;
     }
 }
+
+/// How often a fetch in flight looks for the inbox closing.
+///
+/// Much tighter than [`CLOSE_CHECK`], which is an idle wait's tick: this one
+/// is the part of `Engine::stop` that falls between the stop and the token
+/// firing, and at a second it was half the shutdown budget, with the tail of
+/// the call still to come (#1941). An `is_closed` read every 50 ms costs
+/// nothing next to a wire fetch.
+const CLOSE_POLL: Duration = Duration::from_millis(50);
 
 /// Resolve once the account's queue has something due, without draining it.
 ///
@@ -2218,7 +2227,7 @@ async fn pump_body(
     // still holds -- a job, a queued operation, going offline and the end of
     // the slice all stop it, and a claim taken for a batch that then does not
     // start goes back to the queue it came from.
-    let mut ready = prefetch_batch(parts, store, first).await;
+    let mut ready = prefetch_watched(parts, store, inbox, first).await;
     let mut done = 0;
     loop {
         done += 1;
@@ -2234,7 +2243,7 @@ async fn pump_body(
             Vec::new()
         };
         let mut ahead = (!ahead_claims.is_empty())
-            .then(|| Box::pin(prefetch_batch(parts, store, ahead_claims)));
+            .then(|| Box::pin(prefetch_watched(parts, store, inbox, ahead_claims)));
         let mut arrived = None;
 
         state.busy.set(match claims.as_slice() {
@@ -2360,6 +2369,33 @@ type Batch = (
     Option<Rc<RefCell<postio_sync::backfill::Prefetched>>>,
 );
 
+/// [`prefetch_batch`], with the shutdown heard while it is on the wire.
+///
+/// The prefetch is awaited outside the drain loop's `select!` -- before the
+/// first batch starts and after the last body settles -- where nothing
+/// watched the inbox, so a stop landing there waited out the whole command
+/// (#1941). Closing the channel fires the claims' token; the prefetch then
+/// unwinds cooperatively and returns what it had, so the claims come back to
+/// be released and nothing is half-written.
+async fn prefetch_watched(
+    parts: &EngineParts,
+    store: &Store,
+    inbox: &async_channel::Receiver<Job>,
+    claims: Vec<postio_sync::backfill::Claim>,
+) -> Batch {
+    let cancel = claims.first().map(|claim| claim.cancel.clone());
+    let mut fetching = std::pin::pin!(prefetch_batch(parts, store, claims));
+    tokio::select! {
+        batch = &mut fetching => batch,
+        () = wait_for_close(inbox) => {
+            if let Some(cancel) = &cancel {
+                cancel.cancel();
+            }
+            fetching.await
+        }
+    }
+}
+
 /// The wire half of a batch: the text sections and header blocks of every
 /// claim in it, a command each for as many as share a section path (#1551).
 ///
@@ -2419,6 +2455,12 @@ async fn fetch_one_body(
     claim: postio_sync::backfill::Claim,
 ) -> (MessageId, Result<Outcome, SyncError>) {
     let message = claim.request.message;
+    // A body queued behind the write gate when the shutdown fired has not
+    // started, and its text may already be in the prefetch, so nothing below
+    // would hear the token. Writes already begun finish; this one has not.
+    if claim.cancel.is_cancelled() {
+        return (message, Err(SyncError::Backend(BackendError::Cancelled)));
+    }
     let connection = match store.connect_background().await {
         Ok(connection) => connection,
         // Reported settled rather than left in flight for ever: a claim
@@ -3558,9 +3600,13 @@ async fn fetch_bodies(
     if claims.is_empty() {
         return fetched;
     }
-    let (claims, prefetched) = prefetch_batch(parts, store, claims).await;
+    let (claims, prefetched) = prefetch_watched(parts, store, inbox, claims).await;
+    // Every claim carries the backfill's one token, so firing it unwinds every
+    // fetch in the batch (see [`pump_body`]).
+    let cancel = claims.first().map(|claim| claim.cancel.clone());
     let mut waiting: std::collections::VecDeque<_> = claims.into();
     let mut running = FuturesUnordered::new();
+    let mut cancelled = false;
     loop {
         // A job that arrives while the batch is out waits for the bodies on
         // the wire and no more: what has not started goes back to the queue.
@@ -3576,7 +3622,23 @@ async fn fetch_bodies(
                 claim,
             ));
         }
-        let Some(settled) = running.next().await else {
+        // Shutdown must not wait for the bodies on the wire: they unwind on
+        // the token instead of running out the batch, which with a window this
+        // wide was seconds of the shutdown grace. What they leave unfetched
+        // stays `body_state <> 'full'`, and a write already started finishes,
+        // so no body is half-stored.
+        let settled = tokio::select! {
+            biased;
+            next = running.next() => next,
+            () = wait_for_close(inbox), if !cancelled => {
+                if let Some(cancel) = &cancel {
+                    cancel.cancel();
+                }
+                cancelled = true;
+                continue;
+            }
+        };
+        let Some(settled) = settled else {
             break;
         };
         fetched.results.push(settled);

@@ -840,4 +840,34 @@ mod tests {
             None,
         );
     }
+    /// The table frontends run against their own adapters is only worth
+    /// anything if the rule itself satisfies it first: every row, aimed
+    /// through [`command_for`] with a list filled from the row's own rows,
+    /// yields the command the row says it must.
+    #[test]
+    fn the_conformance_table_is_what_command_for_does() {
+        let cases = conformance_cases();
+        assert!(!cases.is_empty());
+        for case in cases {
+            let rows = FakeRows(
+                case.rows
+                    .iter()
+                    .copied()
+                    .map(|(message, kind)| (message.get(), kind))
+                    .collect(),
+            );
+            let aim = Aim {
+                scope: None,
+                selection: &case.selection,
+                cursor: case.cursor,
+                rows: &rows,
+            };
+            assert_eq!(
+                command_for(case.id, &aim),
+                case.expected,
+                "{}",
+                case.because
+            );
+        }
+    }
 }
