@@ -189,3 +189,14 @@ fn a_person_with_no_card_gets_a_fresh_4_0_one() {
     assert_eq!(back.name.as_deref(), Some("Grace Hopper, Rear Admiral"));
     assert_eq!(back.note.as_deref(), Some("line one\nline two"));
 }
+
+#[test]
+fn a_cards_phones_and_title_are_read_for_matching_and_stay_in_the_card() {
+    let card = "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:urn:uuid:x\r\nFN:Ada Moreno\r\nEMAIL:ada@example.org\r\nTEL;TYPE=cell:+1 555 0119\r\nTEL:(555) 010-0100\r\nTITLE:Finance lead\r\nORG:Northwind Partners;Finance\r\nEND:VCARD\r\n";
+    let parsed = person(card);
+    assert_eq!(parsed.phones, ["+1 555 0119", "(555) 010-0100"]);
+    assert_eq!(parsed.title.as_deref(), Some("Finance lead"));
+    assert_eq!(parsed.organization.as_deref(), Some("Northwind Partners"));
+    // Read, not rewritten: the lines go back out as they came.
+    assert_eq!(unmodelled(&round_trip(card)), unmodelled(card));
+}

@@ -134,9 +134,6 @@ pub fn import_summary_line(summary: &postio_model::card::ImportSummary) -> Strin
             done.push(format!("updated {updated}"));
         }
     }
-    for join in &summary.joins {
-        done.push(format!("joined {}", and_list(join)));
-    }
     match summary.groups_created {
         0 => {}
         1 => done.push("made 1 group".to_owned()),
@@ -145,6 +142,13 @@ pub fn import_summary_line(summary: &postio_model::card::ImportSummary) -> Strin
     let mut notes: Vec<String> = Vec::new();
     if summary.name_conflicts > 0 {
         notes.push(format!("kept your name for {}", summary.name_conflicts));
+    }
+    let offered = summary.look_alikes + summary.offered_merges;
+    if offered > 0 {
+        notes.push(format!(
+            "{offered} may be {} you already have, to review",
+            if offered == 1 { "someone" } else { "people" }
+        ));
     }
     for skip in &summary.skipped {
         notes.push(format!("skipped card {} ({})", skip.index + 1, skip.reason));
@@ -162,15 +166,6 @@ pub fn import_summary_line(summary: &postio_model::card::ImportSummary) -> Strin
         line.push_str(&notes.join("; "));
     }
     line
-}
-
-/// `a`, `a and b`, `a, b and c`.
-fn and_list(names: &[String]) -> String {
-    match names {
-        [] => String::new(),
-        [one] => one.clone(),
-        [init @ .., last] => format!("{} and {last}", init.join(", ")),
-    }
 }
 
 /// What joining these people offers to call them (specs/005-contacts
@@ -751,7 +746,8 @@ mod join_tests {
         let summary = ImportSummary {
             people_created: 2,
             people_updated: 1,
-            joins: vec![vec!["Ada".into(), "A. L.".into()]],
+            offered_merges: 1,
+            look_alikes: 1,
             groups_created: 1,
             name_conflicts: 1,
             skipped: vec![Skip {
@@ -761,8 +757,9 @@ mod join_tests {
         };
         assert_eq!(
             import_summary_line(&summary),
-            "Imported 2 new people, updated 1, joined Ada and A. L., made 1 group; \
-             kept your name for 1; skipped card 4 (it has no email address)"
+            "Imported 2 new people, updated 1, made 1 group; \
+             kept your name for 1; 2 may be people you already have, to review; \
+             skipped card 4 (it has no email address)"
         );
         assert_eq!(
             import_summary_line(&ImportSummary {

@@ -2234,15 +2234,15 @@ impl ContactRepository<'_> {
                     summary.name_conflicts += 1;
                 }
                 if !rest.is_empty() {
-                    let name = chosen
-                        .clone()
-                        .or(card_name.map(str::to_owned))
-                        .unwrap_or_else(|| first.display_name().to_owned());
-                    let others: Vec<ContactId> = rest.iter().map(|o| o.id).collect();
-                    self.join(first.id, &others, &name, None).await?;
-                    summary
-                        .joins
-                        .push(owners.iter().map(|o| o.display_name().to_owned()).collect());
+                    // The card lists the addresses of several people you
+                    // have. An import never merges people behind your back:
+                    // the card is the evidence the review shows.
+                    summary.offered_merges += 1;
+                    let key = card.uid.clone().unwrap_or_else(|| card.raw.clone());
+                    for owner in &owners {
+                        self.note_evidence(owner.id, postio_model::EvidenceKind::Card, &key)
+                            .await?;
+                    }
                 } else if chosen.is_none()
                     && let Some(card_name) = card_name
                 {
@@ -2254,6 +2254,14 @@ impl ContactRepository<'_> {
                     .await?;
                 }
                 for address in &addresses {
+                    // An address another person has stays theirs: moving it
+                    // is the merge the user is offered, not the import's.
+                    if let Some(owner) = self.by_address(&address.address).await?
+                        && owner.state == ContactState::Live
+                        && owner.id != first.id
+                    {
+                        continue;
+                    }
                     self.add_address(first.id, address).await?;
                 }
                 first.id
@@ -2289,6 +2297,37 @@ impl ContactRepository<'_> {
         )
         .await?;
         refresh(self.connection, person.get()).await?;
+        // What the card says, noted as the body stage notes a sender, so the
+        // review finds a second record with the same phone or signature.
+        for phone in &card.phones {
+            self.note_evidence(person, postio_model::EvidenceKind::Phone, phone)
+                .await?;
+        }
+        let signature = postio_model::SignatureDetails {
+            name: card_name.map(str::to_owned),
+            title: card.title.clone(),
+            company: card.organization.clone(),
+            ..postio_model::SignatureDetails::default()
+        };
+        if let Some(key) = signature.key() {
+            self.note_evidence(person, postio_model::EvidenceKind::Signature, &key)
+                .await?;
+        }
+        // A new person who has the name of someone you already have is
+        // counted, and the review offers the merge.
+        if owners.is_empty() {
+            let same = sql::scalar(
+                self.connection,
+                "SELECT count(*) FROM contacts o JOIN contacts n ON n.id = ?1
+                  WHERE o.id <> n.id AND o.state = 'live' AND n.name_key <> ''
+                    AND o.name_key = n.name_key",
+                [person.get()],
+            )
+            .await?;
+            if same > 0 {
+                summary.look_alikes += 1;
+            }
+        }
         Ok(person)
     }
 
@@ -3926,6 +3965,23 @@ impl ContactRepository<'_> {
 }
 
 impl ContactRepository<'_> {
+    /// Notes a fact about `person` the way the body stage does for a sender:
+    /// what an import read from their card.
+    pub async fn note_evidence(
+        &self,
+        person: ContactId,
+        kind: postio_model::EvidenceKind,
+        value: &str,
+    ) -> Result<()> {
+        sql::execute(
+            self.connection,
+            "INSERT OR IGNORE INTO contact_evidence (contact_id, kind, value) VALUES (?1, ?2, ?3)",
+            bind![person.get(), kind.as_str(), value],
+        )
+        .await?;
+        Ok(())
+    }
+
     /// Notes what a message said about its sender (specs/011-focus-contacts
     /// S10): a signature, a phone, a `Resent-From`. Kept against the sender's
     /// person, once however often the mail says it; what is noted is a fact
@@ -3977,7 +4033,7 @@ impl ContactRepository<'_> {
                  ON e2.kind = e1.kind AND e2.value = e1.value AND e2.contact_id > e1.contact_id
                JOIN contacts c1 ON c1.id = e1.contact_id AND c1.state = 'live'
                JOIN contacts c2 ON c2.id = e2.contact_id AND c2.state = 'live'
-              WHERE e1.kind IN ('signature', 'phone') LIMIT ?1",
+              WHERE e1.kind IN ('signature', 'phone', 'card') LIMIT ?1",
             [cap],
             |row| Ok((row.col(0)?, row.col(1)?)),
         )
@@ -4056,6 +4112,7 @@ impl ContactRepository<'_> {
             }
         };
         let signature = shared("signature").await?;
+        let card = shared("card").await?;
         let phone = shared("phone").await?;
         let mut resent = None;
         for (sender, other) in [(a, b), (b, a)] {
@@ -4085,6 +4142,7 @@ impl ContactRepository<'_> {
             signature,
             phone,
             resent,
+            card,
         })
     }
 

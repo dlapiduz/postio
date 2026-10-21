@@ -736,7 +736,7 @@ CREATE TABLE contact_details (
 CREATE TABLE contact_evidence (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-    kind       TEXT    NOT NULL CHECK (kind IN ('signature', 'phone', 'resent')),
+    kind       TEXT    NOT NULL CHECK (kind IN ('signature', 'phone', 'resent', 'card')),
     value      TEXT    NOT NULL,
     UNIQUE (contact_id, kind, value)
 );
@@ -1006,11 +1006,11 @@ CREATE TABLE contact_evidence (
     -- What the body stage noticed in mail a person sent, kept so the review
     -- can find records that look like one person without reading mail again
     -- (specs/011-focus-contacts S10): the same signature (name, title and
-    -- company, folded), a phone number, or the address a `Resent-From`
-    -- header named. A fact about the sender, never message content.
+    -- company, folded), a phone number, the address a `Resent-From`
+    -- header named, or the card an import found them on together. A fact about the sender, never message content.
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-    kind       TEXT    NOT NULL CHECK (kind IN ('signature', 'phone', 'resent')),
+    kind       TEXT    NOT NULL CHECK (kind IN ('signature', 'phone', 'resent', 'card')),
     value      TEXT    NOT NULL,
     UNIQUE (contact_id, kind, value)
 );

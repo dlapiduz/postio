@@ -40,7 +40,8 @@ pub async fn import_vcards(database: &Store, bytes: &[u8]) -> Result<ImportSumma
     tracing::info!(
         created = summary.people_created,
         updated = summary.people_updated,
-        joined = summary.joins.len(),
+        offered_merges = summary.offered_merges,
+        look_alikes = summary.look_alikes,
         groups = summary.groups_created,
         name_conflicts = summary.name_conflicts,
         skipped = summary.skipped.len(),
@@ -339,6 +340,7 @@ async fn evidence_of(
         took_over: took.map(|(old, new, _)| (old, new)),
         replies,
         shared_phone: noted.phone,
+        same_card: noted.card,
         signature: noted.signature.and_then(|key| {
             let mut parts = key.split('|').skip(1);
             // The spelling a record already has, else the folded words said
@@ -1103,6 +1105,42 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         assert_eq!(
             groups[0].evidence,
             ["ada@example.org forwards from a.moreno@example.net (Resent-From header)"]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_imported_card_that_looks_like_someone_you_have_is_offered_in_the_review() {
+        let database = test_support::memory().await;
+        let card = |uid: &str, address: &str| {
+            format!(
+                "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:{uid}\r\nFN:Ada Moreno\r\nEMAIL:{address}\r\nTEL:+1 555 0119\r\nEND:VCARD\r\n"
+            )
+        };
+        let first = import_vcards(&database, card("urn:uuid:a", "ada@example.org").as_bytes())
+            .await
+            .expect("a first import");
+        assert_eq!((first.people_created, first.look_alikes), (1, 0));
+        assert!(
+            contact_review(&database).await.is_empty(),
+            "one Ada is no review"
+        );
+
+        let second = import_vcards(
+            &database,
+            card("urn:uuid:b", "a.moreno@example.net").as_bytes(),
+        )
+        .await
+        .expect("a second import, another address");
+        assert_eq!((second.people_created, second.look_alikes), (1, 1));
+        let groups = contact_review(&database).await;
+        assert_eq!(groups.len(), 1, "never a silent duplicate: {groups:?}");
+        assert!(
+            groups[0]
+                .evidence
+                .iter()
+                .any(|line| line.contains("phone number")),
+            "{:?}",
+            groups[0].evidence
         );
     }
 

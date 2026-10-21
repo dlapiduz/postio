@@ -163,6 +163,9 @@ pub enum EvidenceKind {
     Phone,
     /// The address a `Resent-From` header named.
     Resent,
+    /// A contact card an import read that listed more than one person's
+    /// addresses: the card's identity.
+    Card,
 }
 
 impl EvidenceKind {
@@ -172,6 +175,7 @@ impl EvidenceKind {
             Self::Signature => "signature",
             Self::Phone => "phone",
             Self::Resent => "resent",
+            Self::Card => "card",
         }
     }
 }
@@ -187,6 +191,8 @@ pub struct PairEvidence {
     /// A `Resent-From` naming one record's address on the other's mail:
     /// the address it forwards from, and the address that forwards.
     pub resent: Option<(String, String)>,
+    /// One imported contact card that lists both.
+    pub card: Option<String>,
 }
 
 /// A phone number or website kept for a person, or refused.

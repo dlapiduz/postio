@@ -120,6 +120,8 @@ fn split_cards(text: &str) -> Vec<String> {
 fn parse_card(chunk: &str) -> Result<ParsedCard, String> {
     let card = VcardCst::parse(chunk).map_err(|error| error.to_string())?;
     let (mut uid, mut name, mut organization, mut note) = (None, None, None, None);
+    let mut title = None;
+    let mut phones: Vec<String> = Vec::new();
     let mut structured_name = None;
     let mut group = false;
     let mut emails: Vec<(EmailAddress, bool)> = Vec::new();
@@ -148,6 +150,19 @@ fn parse_card(chunk: &str) -> Result<ParsedCard, String> {
                 }
             }
             "NOTE" => note = note.or_else(text),
+            "TITLE" => title = title.or_else(text),
+            "TEL" => {
+                if let Some(value) = text() {
+                    let phone = value
+                        .strip_prefix("tel:")
+                        .unwrap_or(&value)
+                        .trim()
+                        .to_owned();
+                    if !phone.is_empty() && !phones.contains(&phone) {
+                        phones.push(phone);
+                    }
+                }
+            }
             "KIND" => group = text().is_some_and(|kind| kind.eq_ignore_ascii_case("group")),
             "EMAIL" => {
                 if let Some(value) = text() {
@@ -201,6 +216,8 @@ fn parse_card(chunk: &str) -> Result<ParsedCard, String> {
         name,
         emails,
         organization,
+        title,
+        phones,
         note,
         raw,
     }))

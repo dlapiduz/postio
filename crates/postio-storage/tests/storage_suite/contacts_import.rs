@@ -54,6 +54,8 @@ fn card(uid: &str, name: &str, emails: &[&str]) -> ParsedCard {
             .map(|(i, e)| (EmailAddress::new(None::<String>, *e), i == 0))
             .collect(),
         organization: Some("Analytical Engines".into()),
+        title: None,
+        phones: Vec::new(),
         note: None,
         raw: format!(
             "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:{uid}\r\nFN:{name}\r\nX-KEPT:yes\r\nEND:VCARD\r\n"
@@ -96,7 +98,10 @@ async fn a_card_for_an_address_the_mail_knows_is_that_person() {
 }
 
 #[tokio::test]
-async fn a_card_spanning_two_people_joins_them_and_says_so() {
+async fn a_card_spanning_two_people_offers_the_merge_and_changes_nobody() {
+    // Specs/011-focus-contacts S11: an import never merges people behind the
+    // user's back. A card that lists two people's addresses is the evidence
+    // the review shows; the people stay as they are until they say so.
     let (_db, connection, account, inbox) = setup().await;
     from(&connection, &account, inbox, "ada@work.example", 2).await;
     from(&connection, &account, inbox, "ada@home.example", 1).await;
@@ -109,28 +114,69 @@ async fn a_card_spanning_two_people_joins_them_and_says_so() {
         )])
         .await
         .expect("import");
-    assert_eq!(summary.joins.len(), 1, "{summary:?}");
+    assert_eq!(summary.offered_merges, 1, "{summary:?}");
     let work = contacts
         .by_address("ada@work.example")
         .await
-        .expect("lookup")
-        .expect("ada");
+        .unwrap()
+        .unwrap();
     let home = contacts
         .by_address("ada@home.example")
         .await
-        .expect("lookup")
-        .expect("ada");
-    let new = contacts
-        .by_address("ada@new.example")
+        .unwrap()
+        .unwrap();
+    assert_ne!(work.id, home.id, "still two people");
+    let found = contacts.discovered_pairs(10).await.unwrap();
+    assert_eq!(found, [(work.id.min(home.id), work.id.max(home.id))]);
+    let evidence = contacts.pair_evidence(&work, &home).await.unwrap();
+    assert!(evidence.card.is_some(), "the card is the evidence");
+}
+
+#[tokio::test]
+async fn a_card_with_the_name_of_someone_you_have_and_another_address_is_offered_not_duplicated_silently()
+ {
+    let (_db, connection, account, inbox) = setup().await;
+    from(&connection, &account, inbox, "ada@work.example", 2).await;
+    let contacts = ContactRepository::new(&connection);
+    contacts
+        .apply_import(&[card("urn:uuid:a", "Ada Lovelace", &["ada@work.example"])])
         .await
-        .expect("lookup")
-        .expect("ada");
+        .expect("a first import names her");
+    let summary = contacts
+        .apply_import(&[card(
+            "urn:uuid:b",
+            "Ada Lovelace",
+            &["ada@elsewhere.example"],
+        )])
+        .await
+        .expect("a second card, another address");
+    assert_eq!(summary.people_created, 1);
     assert_eq!(
-        (work.id, home.id),
-        (new.id, new.id),
-        "one person, every address"
+        summary.look_alikes, 1,
+        "she looks like someone you have: {summary:?}"
     );
-    assert_eq!(work.times_seen, 3);
+    let suggestions = contacts.suggestion_pairs(10).await.unwrap();
+    assert_eq!(suggestions.len(), 1, "and the review offers the merge");
+}
+
+#[tokio::test]
+async fn a_cards_phone_is_noted_so_a_second_record_with_it_is_found() {
+    let (_db, connection, account, inbox) = setup().await;
+    from(&connection, &account, inbox, "ada@work.example", 1).await;
+    let contacts = ContactRepository::new(&connection);
+    let mut first = card("urn:uuid:a", "Ada L", &["ada@work.example"]);
+    let mut second = card("urn:uuid:b", "A. Lovelace", &["al@elsewhere.example"]);
+    for (card, phone) in [(&mut first, "+1 555 0119"), (&mut second, "+1 555 0119")] {
+        if let ParsedCard::Person(person) = card {
+            person.phones = vec![phone.to_owned()];
+        }
+    }
+    contacts
+        .apply_import(&[first, second])
+        .await
+        .expect("import");
+    let found = contacts.discovered_pairs(10).await.unwrap();
+    assert_eq!(found.len(), 1, "one pair, found by the phone they share");
 }
 
 #[tokio::test]

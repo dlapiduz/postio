@@ -36,6 +36,8 @@ pub struct Pair {
     pub replies: u32,
     /// A phone number both give.
     pub shared_phone: Option<String>,
+    /// One contact card an import read that lists both.
+    pub same_card: Option<String>,
     /// The title and company both sign with, when the signatures were noted
     /// as the same.
     pub signature: Option<(String, String)>,
@@ -71,6 +73,8 @@ pub enum Evidence {
     },
     /// Both give the same phone number.
     SamePhone(String),
+    /// One contact card an import read lists both.
+    SameCard,
     /// Mail sent to one was answered from the other.
     Replied {
         /// How many answers.
@@ -87,6 +91,7 @@ impl Evidence {
             Self::TookOver { threads, .. } => 3 + (*threads).min(5) / 2,
             Self::Forwards { .. } => 4,
             Self::SamePhone(_) => 4,
+            Self::SameCard => 5,
             Self::Replied { answers } => 2 + (*answers).min(4) / 2,
         }
     }
@@ -165,6 +170,9 @@ pub fn score(a: &Side, b: &Side, pair: &Pair) -> Option<Scored> {
                 .unwrap_or_default(),
         });
     }
+    if pair.same_card.is_some() {
+        evidence.push(Evidence::SameCard);
+    }
     if let Some(phone) = &pair.shared_phone {
         evidence.push(Evidence::SamePhone(phone.clone()));
     }
@@ -227,6 +235,18 @@ pub fn describe(size: usize, pairs: &[Vec<Evidence>], name: &str) -> Vec<String>
                 lines.push(line);
             }
         }
+    }
+    if pairs
+        .iter()
+        .flatten()
+        .any(|evidence| matches!(evidence, Evidence::SameCard))
+    {
+        let on = if size == 2 {
+            "both".to_owned()
+        } else {
+            everyone.clone()
+        };
+        lines.push(format!("One contact card you imported lists {on}"));
     }
     let mut seen_took = Vec::new();
     let mut seen_forwards = Vec::new();

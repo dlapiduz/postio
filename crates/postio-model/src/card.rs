@@ -47,6 +47,10 @@ pub struct ParsedPerson {
     pub emails: Vec<(EmailAddress, bool)>,
     /// `ORG`.
     pub organization: Option<String>,
+    /// `TITLE`.
+    pub title: Option<String>,
+    /// Every `TEL`, as written.
+    pub phones: Vec<String>,
     /// `NOTE`.
     pub note: Option<String>,
     /// The card as it arrived, for `contacts.vcard`.
@@ -83,8 +87,12 @@ pub struct ImportSummary {
     pub people_created: usize,
     /// People a card was matched to by address.
     pub people_updated: usize,
-    /// People a card's addresses spanned, joined into one: their names.
-    pub joins: Vec<Vec<String>>,
+    /// Cards that listed the addresses of more than one person you have:
+    /// offered as a merge in the review, never joined by the import.
+    pub offered_merges: usize,
+    /// People made from a card who look like someone you already had (the
+    /// same name): offered as a merge too, never a silent duplicate.
+    pub look_alikes: usize,
     /// Groups made.
     pub groups_created: usize,
     /// Cards whose name lost to one the user had set.

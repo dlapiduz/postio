@@ -240,3 +240,19 @@ fn what_a_body_notes_about_its_sender_is_the_signature_the_phones_and_the_resent
         [(EvidenceKind::Resent, "a.moreno@example.net".to_owned())]
     );
 }
+
+#[test]
+fn one_imported_card_listing_both_is_evidence() {
+    let a = side("Ada", &["ada@work.example"], "", "");
+    let b = side("A. L.", &["ada@home.example"], "", "");
+    let pair = Pair {
+        same_card: Some("urn:uuid:a".to_owned()),
+        ..Pair::default()
+    };
+    let scored = score(&a, &b, &pair).expect("a candidate");
+    assert_eq!(scored.evidence, [Evidence::SameCard]);
+    assert_eq!(
+        describe(2, &[scored.evidence], "Ada")[0],
+        "One contact card you imported lists both"
+    );
+}
