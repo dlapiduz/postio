@@ -350,6 +350,19 @@ public final class PostioSession {
     /// A click on the Contacts row at `index`.
     public func focusContactsPoint(_ index: UInt32) { inner.focusContactsPoint(index: index) }
 
+    /// The Edit contact form, while one is open.
+    public func focusContactEdit() -> ContactEditViewFfi? { inner.focusContactEdit() }
+
+    /// A change a person made to the open Edit contact form.
+    public func focusContactEditChange(_ change: EditChangeFfi) {
+        inner.focusContactEditChange(change: change)
+    }
+
+    /// A click on the card's switch at `index`.
+    public func focusContactCardSwitch(_ index: UInt32) {
+        inner.focusContactCardSwitch(index: index)
+    }
+
     /// A click on a sender's name: the known-sender popover for `address`.
     public func focusContactPopoverAt(_ address: String) {
         inner.focusContactPopoverAt(address: address)

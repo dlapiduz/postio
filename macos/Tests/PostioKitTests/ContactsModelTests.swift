@@ -19,6 +19,12 @@ struct ContactsModelTests {
         var invoked: [String] = []
         var cursor: UInt32? = 0
         var card: ContactCardViewFfi?
+        var edit: ContactEditViewFfi?
+        var changes: [EditChangeFfi] = []
+        var switches: [UInt32] = []
+        func focusContactEdit() -> ContactEditViewFfi? { edit }
+        func focusContactEditChange(_ change: EditChangeFfi) { changes.append(change) }
+        func focusContactCardSwitch(_ index: UInt32) { switches.append(index) }
         func focusContactsRow(_ index: UInt32) -> ContactRowViewFfi? {
             asked.append(index)
             return rows[index]
@@ -112,5 +118,73 @@ struct ContactsModelTests {
         let asked = model.filterRequest
         model.apply(.focusContactsFocusFilter)
         #expect(model.filterRequest == asked + 1)
+    }
+
+    // MARK: the Edit contact form (specs/011-focus-contacts S8)
+
+    nonisolated static func form(given: String = "Ada", armed: String? = nil) -> ContactEditViewFfi {
+        ContactEditViewFfi(
+            title: "Editing Ada Moreno", note: "saved in Postio",
+            cancel: EditButtonFfi(label: "Cancel", key: "Escape"),
+            save: EditButtonFfi(label: "Save", key: "cmd+s"),
+            avatar: AvatarFfi(text: "AM", rgb: 0xb0624a, round: true), photoNote: "Initials",
+            kinds: [EditSegmentFfi(label: "Person", on: true)], kindNote: "Detected",
+            given: given, family: "Moreno",
+            showAs: [EditSegmentFfi(label: "Ada Moreno", on: true)], showNote: "Inbox",
+            workTitle: "", workCompany: "",
+            addresses: [
+                EditAddressFfi(text: "ada@example.org", label: "Work", primary: true, bounced: false)
+            ],
+            addAddress: "+ Add address", addressNote: "Primary", seen: [], groups: [],
+            addGroup: "+ Add to group", groupNote: "Groups", problem: nil, armed: armed, hints: [],
+            focus: .given)
+    }
+
+    @Test func theFormOpensOnTheControllersWordAndAChangeIsReadBackAtOnce() {
+        let engine = Engine()
+        let model = ContactsModel(engine: engine)
+        model.apply(.focusContacts(view: Self.frame()))
+        #expect(model.edit == nil)
+        #expect(model.apply(.focusContactEdit(view: Self.form())) == .redraw)
+        #expect(model.edit?.given == "Ada")
+
+        engine.edit = Self.form(given: "Adele")
+        model.change(.given(text: "Adele"))
+        #expect(engine.changes == [.given(text: "Adele")])
+        #expect(model.edit?.given == "Adele", "read back, not waited for")
+
+        model.apply(.focusContactEdit(view: nil))
+        #expect(model.edit == nil)
+    }
+
+    @Test func saveAndCancelSendTheKeysAndNothingIsSentWithoutAForm() {
+        let engine = Engine()
+        let model = ContactsModel(engine: engine)
+        model.apply(.focusContacts(view: Self.frame()))
+        model.save()
+        model.cancel()
+        model.change(.addAddress)
+        #expect(engine.invoked.isEmpty && engine.changes.isEmpty, "no form, no command")
+        model.apply(.focusContactEdit(view: Self.form()))
+        model.save()
+        engine.edit = Self.form(armed: "Press Esc again to discard your changes.")
+        model.cancel()
+        #expect(engine.invoked == ["contact_save", "back"])
+        #expect(model.edit?.armed != nil, "an armed Esc is the controller's, drawn")
+    }
+
+    @Test func closingTheViewPutsTheFormAwayAndNewContactSendsItsKey() {
+        let engine = Engine()
+        let model = ContactsModel(engine: engine)
+        model.startNew()
+        #expect(engine.invoked.isEmpty, "closed")
+        model.apply(.focusContacts(view: Self.frame()))
+        model.startNew()
+        #expect(engine.invoked == ["contact_new"])
+        model.apply(.focusContactEdit(view: Self.form()))
+        model.startNew()
+        #expect(engine.invoked == ["contact_new"], "not over a form already open")
+        model.apply(.focusCloseSurface(kind: .contacts))
+        #expect(model.edit == nil)
     }
 }

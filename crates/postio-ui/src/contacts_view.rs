@@ -150,7 +150,7 @@ pub fn strip(overview: &ContactsOverview, tab: ContactTab, keymap: &Keymap) -> S
         filter_key: keymap.binding(CommandId::ContactsFilter).map(str::to_owned),
         new_label: "New contact".to_owned(),
         new_key: keymap.binding(CommandId::ContactNew).map(str::to_owned),
-        new_enabled: false,
+        new_enabled: true,
         review: (!review_words.is_empty()).then(|| ReviewLine {
             lead: "Worth a look:".to_owned(),
             text: review_words,

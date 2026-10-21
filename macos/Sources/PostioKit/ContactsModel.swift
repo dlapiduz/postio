@@ -19,6 +19,12 @@ public protocol ContactsEngine: AnyObject {
     func focusContactsFilter(_ text: String)
     /// A click on a row.
     func focusContactsPoint(_ index: UInt32)
+    /// The Edit contact form, while one is open.
+    func focusContactEdit() -> ContactEditViewFfi?
+    /// A change a person made to the open form.
+    func focusContactEditChange(_ change: EditChangeFfi)
+    /// A click on the card's switch at `index`.
+    func focusContactCardSwitch(_ index: UInt32)
     /// A registry command, as a key press would send it.
     func invoke(_ id: String)
 }
@@ -50,6 +56,8 @@ public final class ContactsModel {
     public private(set) var view: ContactsViewFfi?
     /// The card beside the list; `nil` while it is read.
     public private(set) var card: ContactCardViewFfi?
+    /// The Edit contact form over the card; `nil` while there is none.
+    public private(set) var edit: ContactEditViewFfi?
     /// The row the keyboard is on.
     public private(set) var cursor: Int?
     /// Bumped when rows landed or the list started over, so the rows drawn
@@ -95,6 +103,9 @@ public final class ContactsModel {
         case let .focusContactsCard(next):
             card = next
             return view == nil ? nil : .redraw
+        case let .focusContactEdit(next):
+            edit = next
+            return view == nil ? nil : .redraw
         case .focusContactsFocusFilter:
             filterRequest += 1
             return view == nil ? nil : .redraw
@@ -102,6 +113,7 @@ public final class ContactsModel {
             guard view != nil else { return nil }
             view = nil
             card = nil
+            edit = nil
             cursor = nil
             filter = ""
             return .close
@@ -138,5 +150,46 @@ public final class ContactsModel {
     public func run(_ button: CardButtonFfi) {
         guard view != nil, button.enabled else { return }
         engine.invoke(button.command)
+    }
+}
+
+// MARK: the Edit contact form (specs/011-focus-contacts S8)
+
+extension ContactsModel {
+    /// A field of the form changed. The controller owns the form, so what is
+    /// drawn is read back from it at once rather than waiting for the event:
+    /// a typed letter must not reach the field a beat after its cursor.
+    public func change(_ change: EditChangeFfi) {
+        guard view != nil, edit != nil else { return }
+        engine.focusContactEditChange(change)
+        edit = engine.focusContactEdit()
+    }
+
+    /// A click on Save: the command Cmd-S sends.
+    public func save() {
+        guard edit != nil else { return }
+        engine.invoke("contact_save")
+    }
+
+    /// A click on Cancel: the key Escape sends, so a form with changes arms
+    /// before it discards, here as with the keyboard.
+    public func cancel() {
+        guard edit != nil else { return }
+        engine.invoke("back")
+        edit = engine.focusContactEdit()
+    }
+
+    /// A click on "New contact": the command Cmd-Shift-N sends.
+    public func startNew() {
+        guard view != nil, edit == nil else { return }
+        engine.invoke("contact_new")
+    }
+
+    /// A click on the card's switch at `index`, when it is one a click turns.
+    public func toggle(switchAt index: Int) {
+        guard view != nil, edit == nil, let card, index >= 0, index < card.switches.count,
+            card.switches[index].canToggle
+        else { return }
+        engine.focusContactCardSwitch(UInt32(index))
     }
 }

@@ -10,6 +10,7 @@ import SwiftUI
 struct ContactCardView: View {
     let card: ContactCardViewFfi?
     let run: (CardButtonFfi) -> Void
+    let toggle: (Int) -> Void
 
     var body: some View {
         if let card {
@@ -112,14 +113,16 @@ struct ContactCardView: View {
                     }
                     .padding(2)
                     .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary))
-                    ForEach(Array(card.switches.enumerated()), id: \.offset) { _, line in
+                    ForEach(Array(card.switches.enumerated()), id: \.offset) { index, line in
                         HStack(alignment: .center, spacing: 12) {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(line.title).font(.system(size: 13, weight: .semibold))
                                 Text(line.note).font(.system(size: 12)).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 0)
-                            SwitchTrack(on: line.on)
+                            Button { toggle(index) } label: { SwitchTrack(on: line.on) }
+                                .buttonStyle(.plain)
+                                .disabled(!line.canToggle)
                         }
                         .accessibilityElement(children: .combine)
                     }
@@ -237,8 +240,8 @@ private struct MonthStrip: View {
 }
 
 /// A switch drawn, for what the card says: dark track with a light knob when
-/// on, light track with a white knob when off. Read-only until the card's
-/// settings are editable.
+/// on, light track with a white knob when off. A click is the card's
+/// (`toggle`), sent to the engine as a command.
 private struct SwitchTrack: View {
     let on: Bool
 

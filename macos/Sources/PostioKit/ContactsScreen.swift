@@ -29,8 +29,16 @@ public struct ContactsScreen: View {
                     list(view)
                         .frame(width: Self.listWidth)
                     Divider()
-                    ContactCardView(card: model.card, run: { model.run($0) })
+                    if let edit = model.edit {
+                        ContactEditFormView(edit: edit, model: model)
+                            .frame(maxWidth: .infinity)
+                    } else {
+                        ContactCardView(
+                            card: model.card, run: { model.run($0) },
+                            toggle: { model.toggle(switchAt: $0) }
+                        )
                         .frame(maxWidth: .infinity)
+                    }
                 }
                 Divider()
                 footer(view.footer)
@@ -103,6 +111,12 @@ public struct ContactsScreen: View {
     }
 
     private func newContact(_ strip: ContactsStripFfi) -> some View {
+        Button { model.startNew() } label: { newContactLabel(strip) }
+            .buttonStyle(.plain)
+            .disabled(!strip.newEnabled)
+    }
+
+    private func newContactLabel(_ strip: ContactsStripFfi) -> some View {
         HStack(spacing: 6) {
             Text(strip.newLabel).font(.system(size: 12.5, weight: .semibold))
             if let cap = KeyCapSpelling.cap(strip.newKey) { KeyCap(cap) }
