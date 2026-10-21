@@ -143,6 +143,14 @@ pub fn a_selected_marked_row_shows_its_check_not_its_dot() {
             crate::settle_until(async || row.drawn().picked).await,
             "`x` never selected the marked row"
         );
+        // The row says it is picked a beat before the gutter has repainted
+        // its box, and under load the beat is long: wait for the paint, then
+        // judge it.
+        crate::settle_until(async || {
+            row.queue_draw();
+            gutter_marks(&row) == 1
+        })
+        .await;
         assert_eq!(
             gutter_marks(&row),
             1,
