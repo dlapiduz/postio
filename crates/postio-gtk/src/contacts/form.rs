@@ -326,16 +326,17 @@ fn field(
 fn addresses(fields: &mut Vec<(Slot, gtk::Entry)>, view: &EditView, hooks: &FormHooks) -> gtk::Box {
     let column = gtk::Box::new(gtk::Orientation::Vertical, S2);
     // The primary address is one of a group, drawn as the filled circle the
-    // handoff names: a check button that joins the first one's group is a
-    // radio button.
-    let mut first: Option<gtk::CheckButton> = None;
+    // handoff names. GTK draws a check button as a radio only while it has a
+    // group, so even a lone address joins one, led by a button nobody sees
+    // that lives in the column as long as the form does.
+    let leader = gtk::CheckButton::new();
+    leader.set_visible(false);
+    leader.set_accessible_role(gtk::AccessibleRole::Presentation);
+    column.append(&leader);
     for (index, address) in view.addresses.iter().enumerate() {
         let line = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         let primary = gtk::CheckButton::new();
-        match &first {
-            Some(leader) => primary.set_group(Some(leader)),
-            None => first = Some(primary.clone()),
-        }
+        primary.set_group(Some(&leader));
         primary.set_active(address.primary);
         primary.add_css_class("focus-contact-primary");
         primary.update_property(&[gtk::accessible::Property::Label(if address.primary {
