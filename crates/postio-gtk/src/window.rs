@@ -243,7 +243,8 @@ mod imp {
         /// What the import or export sheet says, while it is up.
         pub contacts_io: RefCell<Option<postio_ui::contacts_io::IoSheetView>>,
         /// The contact popover, while one is up, and what it says.
-        pub contact_popover: RefCell<Option<(gtk::Widget, postio_ui::contact_popover::PopoverView)>>,
+        pub contact_popover:
+            RefCell<Option<(gtk::Widget, postio_ui::contact_popover::PopoverView)>>,
         /// A `postio://` link that arrived before the store was open.
         pub pending_link: RefCell<Option<String>>,
         /// A `mailto:` link that arrived before the composer was mounted.
@@ -1792,6 +1793,36 @@ impl FocusWindow {
             | CommandId::ContactPopover => {
                 self.run_in_controller(id);
             }
+            // The Contacts view's, and the popover's and the form's over it:
+            // the controller owns what each does where it applies, and
+            // nothing where it does not.
+            CommandId::ContactOpenCard
+            | CommandId::ContactAdd
+            | CommandId::ContactIgnore
+            | CommandId::ContactArrivalPrev
+            | CommandId::ContactArrivalNext
+            | CommandId::ContactSetArrival
+            | CommandId::ContactShowMail
+            | CommandId::ContactCompose
+            | CommandId::ContactsFilter
+            | CommandId::ContactsTabPrevious
+            | CommandId::ContactsTabNext
+            | CommandId::ContactsToggleEveryone
+            | CommandId::ContactJoin
+            | CommandId::ContactAddAddress
+            | CommandId::ContactDetachAddress
+            | CommandId::ContactSetPreferred
+            | CommandId::ContactNew
+            | CommandId::ContactEdit
+            | CommandId::ContactSave
+            | CommandId::ContactDelete
+            | CommandId::ContactRestore
+            | CommandId::ContactsToggleDeleted
+            | CommandId::SuggestionDismiss
+            | CommandId::ContactGroupNew
+            | CommandId::ContactGroupRename
+            | CommandId::ContactGroupAdd
+            | CommandId::ContactGroupRemove => self.run_in_controller(id),
             CommandId::ContactsImport => self.contacts_import(),
             CommandId::ContactsExport => self.contacts_export(),
             CommandId::SweepInbox => self.ask_sweep(),
@@ -2133,6 +2164,11 @@ impl FocusWindow {
                 }
             }
             Intent::ContactPopover(view) => self.show_contact_popover(view),
+            Intent::ContactsSettings(view) => {
+                if let Some(settings) = self.settings() {
+                    settings.panel().show_suggestions(view);
+                }
+            }
             Intent::ContactEdit(edit) => {
                 if let Some(view) = self.contacts() {
                     view.show_edit(edit.as_deref().cloned());
@@ -3823,10 +3859,9 @@ impl FocusWindow {
                             postio_ui::contacts_io::import_sheet(&summary, &window.keymap());
                         window.show_contacts_io(sheet);
                     }
-                    Err(error) => window.show_toast(
-                        &error.to_string(),
-                        &postio_focus::ToastKind::Notice,
-                    ),
+                    Err(error) => {
+                        window.show_toast(&error.to_string(), &postio_focus::ToastKind::Notice)
+                    }
                 }
             });
         });
@@ -3865,9 +3900,8 @@ impl FocusWindow {
                         return;
                     };
                     match std::fs::write(&path, text.as_bytes()) {
-                        Ok(()) => window.show_contacts_io(postio_ui::contacts_io::export_sheet(
-                            count, &keymap,
-                        )),
+                        Ok(()) => window
+                            .show_contacts_io(postio_ui::contacts_io::export_sheet(count, &keymap)),
                         Err(_) => window.show_toast(
                             "Postio could not write that file.",
                             &postio_focus::ToastKind::Notice,
@@ -5195,6 +5229,7 @@ impl FocusWindow {
         commands.extend(crate::row_menu::RowMenu::commands());
         commands.extend(crate::bar::Bar::controls());
         commands.extend(crate::filtered::FilteredView::controls());
+        commands.extend(crate::contacts::ContactsView::controls());
         commands.extend(crate::digest::DigestWindow::controls());
         // The strip's counts are ways there: "186 filtered today g f" and
         // "4 digest rules g d".

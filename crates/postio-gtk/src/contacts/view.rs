@@ -289,6 +289,23 @@ impl ContactsView {
         });
     }
 
+    /// The commands the view, its card, its form, its sheet and its popover
+    /// have a control for.
+    pub fn controls() -> Vec<CommandId> {
+        vec![
+            CommandId::ContactNew,
+            CommandId::ContactsSuggestions,
+            CommandId::ContactShowMail,
+            CommandId::ContactCompose,
+            CommandId::ContactEdit,
+            CommandId::ContactSave,
+            CommandId::SuggestionDismiss,
+            CommandId::ContactOpenCard,
+            CommandId::ContactAdd,
+            CommandId::Back,
+        ]
+    }
+
     /// The view, for the window's pages.
     pub fn widget(&self) -> &gtk::Box {
         &self.root

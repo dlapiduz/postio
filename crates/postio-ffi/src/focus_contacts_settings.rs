@@ -206,7 +206,7 @@ impl Session {
             lines: plan.lines,
             foot: plan.foot,
         });
-        let words = intro(Device::Mac);
+        let words = intro(Device::Mac, true);
         ContactsPaneFfi {
             intro_lead: words.lead,
             intro_rest: words.rest,

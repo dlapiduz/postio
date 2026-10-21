@@ -79,10 +79,15 @@ pub fn suggestions(
             let (title, detail) = match which {
                 Suggestion::SaveAutomatically => (
                     "Save people I write to, automatically",
-                    if on {
-                        "On: people you write to are saved, so they can sync"
-                    } else {
-                        "Off: they still get a card, but aren't saved or synced until you add them"
+                    match (on, with_sync) {
+                        (true, true) => "On: people you write to are saved, so they can sync",
+                        (true, false) => "On: people you write to are saved without being asked",
+                        (false, true) => {
+                            "Off: they still get a card, but aren't saved or synced until you add them"
+                        }
+                        (false, false) => {
+                            "Off: they still get a card, but aren't saved until you add them"
+                        }
                     },
                 ),
                 Suggestion::RecogniseKinds => (
@@ -131,12 +136,18 @@ pub struct Intro {
     pub rest: String,
 }
 
-/// The paragraph at the top of the pane.
-pub fn intro(device: Device) -> Intro {
+/// The paragraph at the top of the pane; where there is nothing to sync with
+/// it says nothing of sync.
+pub fn intro(device: Device, with_sync: bool) -> Intro {
+    let sync = if with_sync {
+        " Sync is optional and keeps other apps and your phone up to date."
+    } else {
+        ""
+    };
     Intro {
         lead: "Your contacts live in Postio,".to_owned(),
         rest: format!(
-            " on {} next to your mail, so every sender has a card with stats from day one, with or without any account. Sync is optional and keeps other apps and your phone up to date.",
+            " on {} next to your mail, so every sender has a card with stats from day one, with or without any account.{sync}",
             device.phrase()
         ),
     }
@@ -284,8 +295,9 @@ mod tests {
         let view = suggestions(&ContactSuggestions::default(), Device::Computer, false);
         assert!(!view.footer.contains("sync"), "{}", view.footer);
         assert!(view.footer.contains("this computer"));
-        let words = intro(Device::Computer);
-        assert!(!words.rest.contains("Mac"));
+        let words = intro(Device::Computer, false);
+        assert!(!words.rest.contains("Mac") && !words.rest.contains("Sync"));
+        assert!(intro(Device::Mac, true).rest.contains("Sync is optional"));
         assert_eq!(words.lead, "Your contacts live in Postio,");
     }
 

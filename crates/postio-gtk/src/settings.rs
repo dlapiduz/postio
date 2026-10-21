@@ -475,6 +475,33 @@ impl crate::window::FocusWindow {
                     window.act(id);
                 }
             });
+            // Contacts' Suggestions are the controller's: the pane asks
+            // which are on when it is looked at, a flip is the click it
+            // is, and the answer redraws it (`Intent::ContactsSettings`).
+            settings.panel().connect_contacts(
+                {
+                    let window = self.downgrade();
+                    move || {
+                        if let Some(window) = window.upgrade()
+                            && let Some(pane) = window.pane()
+                        {
+                            pane.feed()
+                                .input(postio_focus::Input::ContactsSettingsOpened);
+                        }
+                    }
+                },
+                {
+                    let window = self.downgrade();
+                    move |index| {
+                        if let Some(window) = window.upgrade()
+                            && let Some(pane) = window.pane()
+                        {
+                            pane.feed()
+                                .input(postio_focus::Input::ContactsSuggestion(index));
+                        }
+                    }
+                },
+            );
             if let Some(path) = self.config_path() {
                 settings.panel().load(&path);
             }

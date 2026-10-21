@@ -11,6 +11,20 @@
 use postio_model::{AccountId, SignatureId};
 use postio_ui::settings::Section;
 
+/// The sections the terminal shows: the desktop's, less Contacts, which has
+/// no commands in a terminal (the registry offers it none) and so no pane.
+const SECTIONS: [Section; 9] = [
+    Section::Accounts,
+    Section::Filtering,
+    Section::Filters,
+    Section::Composing,
+    Section::Appearance,
+    Section::Keyboard,
+    Section::Sync,
+    Section::Privacy,
+    Section::ConfigFile,
+];
+
 /// The settings screen, while it is open.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Settings {
@@ -31,17 +45,17 @@ pub struct Settings {
 impl Settings {
     /// Every section, in the desktop's order.
     pub fn sections(&self) -> &'static [Section] {
-        &Section::ALL
+        &SECTIONS
     }
 
     /// The section the cursor is on.
     pub fn current(&self) -> Section {
-        Section::ALL[self.section]
+        SECTIONS[self.section]
     }
 
     /// Move the section cursor by `step`.
     pub fn step(&mut self, step: isize) {
-        let last = Section::ALL.len() - 1;
+        let last = SECTIONS.len() - 1;
         self.section = self.section.saturating_add_signed(step).min(last);
         self.in_list = false;
     }
@@ -120,5 +134,19 @@ impl Settings {
     /// The removal `undo` takes back, once.
     pub fn take_removed(&mut self) -> Option<AccountId> {
         self.removed.take()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_terminal_shows_every_section_that_is_shown_to_it() {
+        let shown: Vec<Section> = Section::ALL
+            .into_iter()
+            .filter(|section| section.shown_in(postio_core::Frontend::Terminal))
+            .collect();
+        assert_eq!(shown, SECTIONS);
     }
 }

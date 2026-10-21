@@ -90,6 +90,40 @@ const NOT_YET: &[&str] = &[
     "capture_change_project",
     "capture_use_subject",
     "capture_write",
+    // The Contacts view's own (specs/011-focus-contacts S13): each has its
+    // key, and most have a control in the view, its card, its form, its sheet
+    // or the popover over it -- but the command bar lists what the list
+    // reaches, and these are reached from the view, as the pickers' are.
+    "contact_popover",
+    "contact_open_card",
+    "contact_add",
+    "contact_ignore",
+    "contact_arrival_prev",
+    "contact_arrival_next",
+    "contact_set_arrival",
+    "contact_show_mail",
+    "contact_compose",
+    "contacts_filter",
+    "contacts_tab_previous",
+    "contacts_tab_next",
+    "contacts_toggle_everyone",
+    "contact_join",
+    "contact_add_address",
+    "contact_detach_address",
+    "contact_set_preferred",
+    "contact_new",
+    "contact_edit",
+    "contact_save",
+    "contact_delete",
+    "contact_restore",
+    "contacts_toggle_deleted",
+    "suggestion_dismiss",
+    "contact_group_new",
+    "contact_group_rename",
+    "contact_group_add",
+    "contact_group_remove",
+    "contacts_import",
+    "contacts_export",
 ];
 
 /// What Focus offers on Linux: less what the registry keeps off it

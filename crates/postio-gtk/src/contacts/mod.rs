@@ -15,5 +15,5 @@ pub mod popover;
 mod view;
 
 pub use form::Slot;
-pub(crate) use view::texts_of;
 pub use view::ContactsView;
+pub(crate) use view::texts_of;

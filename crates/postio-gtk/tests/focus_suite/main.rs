@@ -175,6 +175,10 @@ const CASES: &[(&str, fn())] = &[
         contacts::v_i_imports_a_chosen_file_and_v_x_exports_one as fn(),
     ),
     (
+        "contacts::settings_contacts_flips_the_suggestions_and_says_nothing_of_sync",
+        contacts::settings_contacts_flips_the_suggestions_and_says_nothing_of_sync as fn(),
+    ),
+    (
         "contacts::slash_filters_the_list_and_escape_clears_before_it_closes",
         contacts::slash_filters_the_list_and_escape_clears_before_it_closes as fn(),
     ),

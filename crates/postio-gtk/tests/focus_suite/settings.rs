@@ -251,6 +251,7 @@ pub fn every_section_focus_shows_is_reachable_and_appearance_is_not() {
         };
         let shown = [
             "Accounts",
+            "Contacts",
             "Filtering",
             "Saved searches",
             "Composing",

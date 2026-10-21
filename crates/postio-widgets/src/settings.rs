@@ -70,6 +70,7 @@
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::Duration;
 
 use adw::prelude::*;
@@ -317,6 +318,15 @@ impl ConnectionStatus {
 // so every reference in this crate still reads as it did.
 pub use postio_ui::settings::{Group, Section, find_section, humanize_interval, section_at_line};
 
+/// What Contacts' pane asks of whoever owns the controller.
+#[derive(Clone)]
+pub struct ContactsHooks {
+    /// The pane was looked at.
+    pub opened: Rc<dyn Fn()>,
+    /// The switch at this index was flipped.
+    pub toggle: Rc<dyn Fn(u32)>,
+}
+
 /// The muted leading icon an unselected row wears.
 ///
 /// A free function rather than a method: `Section` is `postio_ui`'s now, and a
@@ -325,6 +335,7 @@ pub use postio_ui::settings::{Group, Section, find_section, humanize_interval, s
 pub fn icon(section: Section) -> &'static str {
     match section {
         Section::Accounts => "avatar-default-symbolic",
+        Section::Contacts => "system-users-symbolic",
         Section::Filtering => "mail-mark-junk-symbolic",
         Section::Filters => "view-list-symbolic",
         Section::Composing => "document-edit-symbolic",
@@ -710,6 +721,10 @@ mod imp {
         pub keyboard_pane: gtk::Box,
         pub sync_pane: gtk::Box,
         pub privacy_pane: gtk::Box,
+        /// Contacts' Suggestions switches (specs/011-focus-contacts D7).
+        pub contacts_pane: gtk::Box,
+        pub contacts_hooks: RefCell<Option<ContactsHooks>>,
+        pub contacts_view: RefCell<Option<postio_ui::contacts_settings::SuggestionsView>>,
         pub config_pane: gtk::Box,
         /// Sync & storage's controls, built on first draw and updated after
         /// — never rebuilt. Rebuilding was the old panel's way around a
@@ -966,6 +981,9 @@ mod imp {
                 keyboard_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 sync_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 privacy_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                contacts_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
+                contacts_hooks: RefCell::default(),
+                contacts_view: RefCell::default(),
                 config_pane: gtk::Box::new(gtk::Orientation::Vertical, 0),
                 sync_controls: OnceCell::new(),
                 composing_controls: OnceCell::new(),
@@ -1873,6 +1891,127 @@ impl SettingsPanel {
             return None;
         }
         None
+    }
+
+    /// Contacts' Suggestions: `opened` when the pane is looked at (the
+    /// controller is asked which switches are on), `toggle` with the index of
+    /// a switch the person flipped. What is drawn comes back through
+    /// [`Self::show_suggestions`], so a switch that did not turn goes back to
+    /// what it said.
+    pub fn connect_contacts(&self, opened: impl Fn() + 'static, toggle: impl Fn(u32) + 'static) {
+        self.imp().contacts_hooks.replace(Some(ContactsHooks {
+            opened: Rc::new(opened),
+            toggle: Rc::new(toggle),
+        }));
+    }
+
+    /// Draw the Suggestions section the controller sent: the explainer, the
+    /// four switches with what each does, and where the work runs.
+    pub fn show_suggestions(&self, view: &postio_ui::contacts_settings::SuggestionsView) {
+        let imp = self.imp();
+        imp.contacts_view.replace(Some(view.clone()));
+        let pane = &imp.contacts_pane;
+        while let Some(child) = pane.first_child() {
+            pane.remove(&child);
+        }
+        let group = SettingsGroup::on(pane);
+        let intro = postio_ui::contacts_settings::intro(
+            postio_ui::contacts_settings::Device::Computer,
+            false,
+        );
+        let said = gtk::Label::new(Some(&format!("{}{}", intro.lead, intro.rest)));
+        said.add_css_class("postio-settings-note");
+        said.set_xalign(0.0);
+        said.set_wrap(true);
+        group.append(&said);
+        group.section(&view.heading);
+        for (index, row) in view.rows.iter().enumerate() {
+            let line = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
+            line.add_css_class("postio-settings-switch-row");
+            let words = gtk::Box::new(gtk::Orientation::Vertical, 1);
+            words.set_hexpand(true);
+            let title = gtk::Label::new(Some(&row.title));
+            title.add_css_class("postio-settings-switch-title");
+            title.set_xalign(0.0);
+            title.set_wrap(true);
+            let detail = gtk::Label::new(Some(&row.detail));
+            detail.add_css_class("dim-label");
+            detail.set_xalign(0.0);
+            detail.set_wrap(true);
+            words.append(&title);
+            words.append(&detail);
+            line.append(&words);
+            // A switch acts when flipped: the work starts or stops.
+            let switch = gtk::Switch::new();
+            switch.set_active(row.on);
+            switch.set_valign(gtk::Align::Center);
+            switch.update_property(&[gtk::accessible::Property::Label(&row.title)]);
+            let toggle = imp
+                .contacts_hooks
+                .borrow()
+                .as_ref()
+                .map(|hooks| Rc::clone(&hooks.toggle));
+            let on = row.on;
+            switch.connect_state_set(move |switch, wanted| {
+                if wanted != on
+                    && let Some(toggle) = &toggle
+                {
+                    toggle(index as u32);
+                }
+                switch.set_state(on);
+                glib::Propagation::Stop
+            });
+            line.append(&switch);
+            group.control(&line);
+        }
+        if let Some(error) = &view.error {
+            let said = gtk::Label::new(Some(error));
+            said.add_css_class("postio-settings-error");
+            said.set_xalign(0.0);
+            group.note(&said);
+        }
+        let foot = gtk::Label::new(Some(&view.footer));
+        foot.add_css_class("dim-label");
+        foot.set_xalign(0.0);
+        foot.set_wrap(true);
+        group.note(&foot);
+    }
+
+    /// Every text the Contacts pane shows, in order: what a test reads.
+    pub fn contacts_texts(&self) -> Vec<String> {
+        let mut said = Vec::new();
+        let mut stack = vec![self.imp().contacts_pane.clone().upcast::<gtk::Widget>()];
+        while let Some(widget) = stack.pop() {
+            if let Some(label) = widget.downcast_ref::<gtk::Label>()
+                && !label.text().is_empty()
+            {
+                said.push(label.text().to_string());
+            }
+            let mut child = widget.last_child();
+            while let Some(previous) = child {
+                child = previous.prev_sibling();
+                stack.push(previous);
+            }
+        }
+        said
+    }
+
+    /// The Suggestions section as last drawn.
+    pub fn suggestions_shown(&self) -> Option<postio_ui::contacts_settings::SuggestionsView> {
+        self.imp().contacts_view.borrow().clone()
+    }
+
+    /// Flip the Suggestions switch at `index`, as a click does.
+    pub fn test_flip_suggestion(&self, index: usize) {
+        let toggle = self
+            .imp()
+            .contacts_hooks
+            .borrow()
+            .as_ref()
+            .map(|hooks| Rc::clone(&hooks.toggle));
+        if let Some(toggle) = toggle {
+            toggle(index as u32);
+        }
     }
 
     /// Runs `handler` when an account row's menu, or a key aimed at the
@@ -4096,6 +4235,16 @@ impl SettingsPanel {
         // Panes that build their controls on first draw (#873) draw here,
         // which is the first moment one of them is actually looked at.
         match section {
+            Section::Contacts => {
+                let opened = imp
+                    .contacts_hooks
+                    .borrow()
+                    .as_ref()
+                    .map(|hooks| Rc::clone(&hooks.opened));
+                if let Some(opened) = opened {
+                    opened();
+                }
+            }
             Section::Filtering => self.redraw_filtering(),
             Section::Sync => self.redraw_sync(),
             Section::Composing => self.redraw_compose(),
@@ -4898,6 +5047,7 @@ impl SettingsPanel {
         imp.stack.set_vexpand(true);
         for (section, pane) in [
             (Section::Accounts, &imp.accounts_pane),
+            (Section::Contacts, &imp.contacts_pane),
             (Section::Filtering, &imp.filtering_pane),
             (Section::Filters, &imp.filters_pane),
             (Section::Composing, &imp.composing_pane),

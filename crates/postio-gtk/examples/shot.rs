@@ -148,6 +148,10 @@ const SCREENS: &[(&str, &str)] = &[
         "53",
         "the contact popover at the cursor's sender (handoff 04, 05)",
     ),
+    (
+        "54",
+        "Settings: Contacts, the Suggestions switches (handoff 08, less sync)",
+    ),
 ];
 
 /// The screens drawn with messages opening beside the list (T232).
@@ -761,6 +765,25 @@ fn stage(
             }
             let shown = Instant::now();
             settle_until(|| shown.elapsed() > Duration::from_millis(400));
+        }
+        "54" => {
+            pick_three();
+            window.act(CommandId::Settings);
+            let settings = || window.settings().filter(|settings| settings.is_open());
+            if !settle_until(|| {
+                settings().is_some_and(|settings| {
+                    settings.panel().is_mapped() && settings.panel().width() > 0
+                })
+            }) {
+                return Err("Settings never opened".into());
+            }
+            let panel = settings().ok_or("Settings closed")?.panel().clone();
+            panel.show_section(postio_ui::settings::Section::Contacts);
+            if !settle_until(|| panel.suggestions_shown().is_some()) {
+                return Err("the Suggestions never landed".into());
+            }
+            let shown = Instant::now();
+            settle_until(|| shown.elapsed() > Duration::from_millis(500));
         }
         "53" => {
             pick_three();

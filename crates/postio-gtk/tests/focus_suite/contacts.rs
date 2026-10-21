@@ -300,12 +300,15 @@ pub fn i_opens_the_popover_the_arrows_choose_where_mail_arrives_and_escape_close
             .correspondent("Ada Moreno", "ada@example.test")
             .await;
         fixture
-            .file(("Ada Moreno", "ada@example.test"), "Atlas budget", "Numbers.", 5)
+            .file(
+                ("Ada Moreno", "ada@example.test"),
+                "Atlas budget",
+                "Numbers.",
+                5,
+            )
             .await;
         let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || !support::subjects(&window).is_empty()).await
-        );
+        assert!(crate::settle_until(async || !support::subjects(&window).is_empty()).await);
         support::keys(&window, &["i"]);
         assert!(
             crate::settle_until(async || window.contact_popover().is_some()).await,
@@ -323,9 +326,12 @@ pub fn i_opens_the_popover_the_arrows_choose_where_mail_arrives_and_escape_close
             window.contact_popover_texts()
         );
         let on = |window: &postio_gtk::window::FocusWindow| {
-            window
-                .contact_popover()
-                .and_then(|view| view.arrival.iter().find(|option| option.on).map(|o| o.label.clone()))
+            window.contact_popover().and_then(|view| {
+                view.arrival
+                    .iter()
+                    .find(|option| option.on)
+                    .map(|o| o.label.clone())
+            })
         };
         assert_eq!(on(&window).as_deref(), Some("Inbox"));
         support::keys(&window, &["Right"]);
@@ -338,7 +344,10 @@ pub fn i_opens_the_popover_the_arrows_choose_where_mail_arrives_and_escape_close
             crate::settle_until(async || window.contact_popover().is_none()).await,
             "Escape puts it away"
         );
-        assert!(!support::subjects(&window).is_empty(), "the list is as it was");
+        assert!(
+            !support::subjects(&window).is_empty(),
+            "the list is as it was"
+        );
     });
 }
 
@@ -354,9 +363,7 @@ pub fn a_sender_not_yet_saved_is_introduced_and_offered_add_contact() {
             .file(("Jonas Weber", "jonas@harbor.test"), "Intro", "Hello.", 5)
             .await;
         let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || !support::subjects(&window).is_empty()).await
-        );
+        assert!(crate::settle_until(async || !support::subjects(&window).is_empty()).await);
         support::keys(&window, &["i"]);
         assert!(
             crate::settle_until(async || window
@@ -418,18 +425,17 @@ pub fn v_i_imports_a_chosen_file_and_v_x_exports_one() {
         );
         let sheet = window.contacts_io_sheet().expect("a sheet");
         assert!(
-            sheet.lines.last().is_some_and(|line| line.contains("cannot be undone")),
+            sheet
+                .lines
+                .last()
+                .is_some_and(|line| line.contains("cannot be undone")),
             "{:?}",
             sheet.lines
         );
         let view = window.contacts().expect("the view");
         assert!(
             crate::settle_until(async || view.total() == 4
-                && view
-                    .cursor()
-                    .and_then(|at| view.name_at(at))
-                    .as_deref()
-                    == Some("Zed Quinn"))
+                && view.cursor().and_then(|at| view.name_at(at)).as_deref() == Some("Zed Quinn"))
             .await,
             "the cursor is on the first person the import made"
         );
@@ -448,6 +454,73 @@ pub fn v_i_imports_a_chosen_file_and_v_x_exports_one() {
         assert!(
             written.contains("BEGIN:VCARD") && written.contains("zed@example.test"),
             "{written}"
+        );
+    });
+}
+
+/// Settings > Contacts: the four Suggestions switches, in the controller's
+/// words, each turning its work off at the source -- a flip reaches the
+/// store and comes back as the redrawn pane (handoff screen 08, less sync,
+/// which is the Mac's).
+pub fn settings_contacts_flips_the_suggestions_and_says_nothing_of_sync() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        use postio_model::Suggestion;
+        use postio_ui::settings::Section;
+        let fixture = fixture().await;
+        let (window, client) = fixture.open().await;
+        window.act(postio_core::CommandId::Settings);
+        assert!(
+            crate::settle_until(async || window
+                .settings()
+                .is_some_and(|settings| settings.is_open()))
+            .await
+        );
+        let panel = window.settings().expect("settings").panel().clone();
+        panel.show_section(Section::Contacts);
+        assert!(
+            crate::settle_until(async || panel.suggestions_shown().is_some()).await,
+            "the pane asks which switches are on"
+        );
+        let view = panel.suggestions_shown().expect("the section");
+        let on: Vec<bool> = view.rows.iter().map(|row| row.on).collect();
+        assert_eq!(on, [false, true, true, true]);
+        let said = panel.contacts_texts();
+        assert!(
+            said.iter()
+                .any(|line| line == "Save people I write to, automatically"),
+            "{said:?}"
+        );
+        assert!(
+            said.iter()
+                .any(|line| line.contains("run on this computer")),
+            "{said:?}"
+        );
+        assert!(
+            !said.iter().any(|line| line.to_lowercase().contains("sync")),
+            "sync is the Mac's: {said:?}"
+        );
+
+        // "Read signatures for details" off: the store says so and the pane
+        // is drawn from the answer.
+        panel.test_flip_suggestion(2);
+        assert!(
+            crate::settle_until(async || !client
+                .contact_suggestions()
+                .await
+                .expect("the switches")
+                .is_on(Suggestion::ReadSignatures))
+            .await,
+            "the flip reached the store"
+        );
+        assert!(
+            crate::settle_until(async || panel
+                .suggestions_shown()
+                .is_some_and(|view| !view.rows[2].on))
+            .await,
+            "the pane is redrawn from the host's answer"
         );
     });
 }

@@ -6876,6 +6876,7 @@ pub(crate) mod tests {
             .collect();
         let expected: Vec<&str> = postio_ui::settings::Section::ALL
             .iter()
+            .filter(|section| section.shown_in(postio_core::Frontend::Terminal))
             .map(|section| section.label())
             .collect();
         assert_eq!(shown, expected);
