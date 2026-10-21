@@ -31,6 +31,7 @@ mod contact_groups;
 mod contact_rank_index;
 mod contact_settings;
 mod contact_stats;
+mod contacts_form;
 mod contacts_view;
 mod contact_suggestions;
 mod contacts;

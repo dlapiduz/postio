@@ -47,6 +47,7 @@ pub mod attachment;
 pub mod card;
 pub mod clock;
 pub mod contact;
+pub mod contact_form;
 pub mod contact_group;
 pub mod contact_settings;
 pub mod draft;
@@ -94,6 +95,9 @@ pub use contact::{
     ContactTab, ContactView, ContactsOverview, ContactsPageRead, FileChip, IssueRead, JoinReceipt, JoinSuggestion,
     KindSignals, KindSource, OpenItem, OpenSide, PersonEdit, PersonFields, RECENT, REVIEW_CAP,
     RecentMessage, ReviewSummary, ShowAs, SuggestionReason, month_key,
+};
+pub use contact_form::{
+    AddressLabel, AddressNote, ContactForm, FormAddress, FormProblem, split_name,
 };
 pub use contact_group::ContactGroup;
 pub use contact_settings::{ContactArrival, ContactSettings, DigestSetting, StoppedMarker};

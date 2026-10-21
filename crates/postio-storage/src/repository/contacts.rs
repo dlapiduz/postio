@@ -1101,6 +1101,7 @@ impl ContactRepository<'_> {
             default_arrival,
             files,
             issues,
+            address_notes: self.address_notes(person).await?,
         }))
     }
 
@@ -3441,6 +3442,266 @@ fn put_preferred_first(person: &mut Contact) {
     {
         let preferred = person.addresses.remove(at);
         person.addresses.insert(0, preferred);
+    }
+}
+
+/// What saving the Edit form did, and what puts it back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedForm {
+    /// Who was made or changed.
+    pub person: ContactId,
+    /// The form as it was before, for an existing person; `None` for one just
+    /// made, whom undo deletes.
+    pub prior: Option<postio_model::ContactForm>,
+}
+
+impl ContactRepository<'_> {
+    /// The label and bounce mark of each of `person`'s addresses.
+    pub async fn address_notes(&self, person: ContactId) -> Result<Vec<postio_model::AddressNote>> {
+        sql::all(
+            self.connection,
+            "SELECT id, label, bounced_at IS NOT NULL FROM addresses WHERE contact_id = ?1 ORDER BY id",
+            [person.get()],
+            |row| {
+                Ok(postio_model::AddressNote {
+                    address: AddressId::new(row.col(0)?),
+                    label: row
+                        .col::<Option<String>>(1)?
+                        .as_deref()
+                        .and_then(postio_model::AddressLabel::from_name),
+                    bounced: row.col::<i64>(2)? != 0,
+                })
+            },
+        )
+        .await
+    }
+
+    /// The Edit form for `person`, as the card would fill it.
+    pub async fn form_of(&self, person: ContactId) -> Result<Option<postio_model::ContactForm>> {
+        let Some(detail) = self.detail(person).await? else {
+            return Ok(None);
+        };
+        let notes = self.address_notes(person).await?;
+        let card = postio_model::ContactCardRead {
+            person: detail.person,
+            groups: detail.groups,
+            stats: postio_model::ContactStats::default(),
+            open: Vec::new(),
+            settings: postio_model::ContactSettings::default(),
+            default_arrival: postio_model::ContactArrival::Inbox,
+            files: Vec::new(),
+            issues: Vec::new(),
+            address_notes: notes.clone(),
+        };
+        Ok(Some(postio_model::ContactForm::of(&card, &notes)))
+    }
+
+    /// Makes a person from the Edit form, or changes `person` to be what the
+    /// form says (specs/011-focus-contacts S8), and hands back what puts it
+    /// back.
+    ///
+    /// Everything the form holds is checked before anything is written: an
+    /// address a live person owns is refused whole, naming no half-saved
+    /// state. Names, kind (the user's from now on), style, work, addresses,
+    /// which one is primary, their labels and their groups all land; an
+    /// address the form no longer lists is let go, never deleted from the mail.
+    pub async fn save_form(
+        &self,
+        person: Option<ContactId>,
+        form: &postio_model::ContactForm,
+    ) -> Result<SavedForm> {
+        let form = form.tidy();
+        if let Some(problem) = form.problem() {
+            return Err(Error::ForbiddenTransition {
+                what: "contact",
+                reason: problem.text(),
+            });
+        }
+        let wanted: Vec<EmailAddress> = form
+            .addresses
+            .iter()
+            .map(|row| EmailAddress::new(None::<String>, row.address.clone()))
+            .collect();
+        let prior = match person {
+            Some(person) => Some(self.form_of(person).await?.ok_or(Error::NotFound {
+                entity: "contact",
+                id: person.get(),
+            })?),
+            None => None,
+        };
+        let keeps = |address: &EmailAddress| {
+            prior.as_ref().is_some_and(|prior| {
+                prior
+                    .addresses
+                    .iter()
+                    .any(|old| old.address.eq_ignore_ascii_case(&address.address))
+            })
+        };
+        // Every address the form adds must be one nobody live owns.
+        for address in wanted.iter().filter(|address| !keeps(address)) {
+            if let Some(owner) = self.by_address(&address.address).await?
+                && owner.state == ContactState::Live
+                && Some(owner.id) != person
+            {
+                return Err(Error::AddressOwned {
+                    address: owner
+                        .addresses
+                        .iter()
+                        .find(|owned| owned.address.same_address(address))
+                        .map_or(0, |owned| owned.id.get()),
+                    owner: owner.id.get(),
+                });
+            }
+        }
+        let id = match person {
+            Some(person) => {
+                let held = self.get(person).await?.ok_or(Error::NotFound {
+                    entity: "contact",
+                    id: person.get(),
+                })?;
+                for owned in &held.addresses {
+                    if !wanted
+                        .iter()
+                        .any(|address| address.same_address(&owned.address))
+                    {
+                        self.release_address(owned.id).await?;
+                    }
+                }
+                for address in &wanted {
+                    if !held
+                        .addresses
+                        .iter()
+                        .any(|owned| owned.address.same_address(address))
+                    {
+                        self.add_address(person, address).await?;
+                    }
+                }
+                person
+            }
+            None => self.create(Some(&form.full_name()), &wanted).await?,
+        };
+        let styled = form.shown_as(form.show_as);
+        let now = to_millis(Utc::now());
+        let primary = wanted.get(form.primary).cloned();
+        let labels: Vec<(String, Option<&'static str>)> = form
+            .addresses
+            .iter()
+            .map(|row| (row.address.clone(), row.label.map(postio_model::AddressLabel::as_str)))
+            .collect();
+        sql::in_scope(self.connection, |transaction| async move {
+            let filled = |text: &str| {
+                let text = text.trim();
+                (!text.is_empty()).then(|| text.to_owned())
+            };
+            sql::execute(
+                &transaction,
+                "UPDATE contacts
+                    SET name = ?2, given_name = ?3, family_name = ?4, show_as = ?5,
+                        title = ?6, organization = ?7, updated_at = ?8
+                  WHERE id = ?1",
+                bind![
+                    id.get(),
+                    filled(&styled),
+                    filled(&form.given),
+                    filled(&form.family),
+                    form.show_as.as_str(),
+                    filled(&form.title),
+                    filled(&form.company),
+                    now
+                ],
+            )
+            .await?;
+            // The user's word on the kind wins from here on.
+            sql::execute(
+                &transaction,
+                "UPDATE contacts SET kind = ?2, kind_source = 'user'
+                  WHERE id = ?1 AND (kind <> ?2 OR kind_source <> 'user')",
+                bind![id.get(), form.kind.as_str()],
+            )
+            .await?;
+            for (address, label) in &labels {
+                sql::execute(
+                    &transaction,
+                    "UPDATE addresses SET label = ?3
+                      WHERE contact_id = ?1 AND address_normalized = ?2",
+                    bind![id.get(), address.to_lowercase(), *label],
+                )
+                .await?;
+            }
+            if let Some(primary) = &primary {
+                sql::execute(
+                    &transaction,
+                    "UPDATE contacts SET preferred_address =
+                        (SELECT id FROM addresses
+                          WHERE contact_id = ?1 AND address_normalized = ?2)
+                      WHERE id = ?1
+                        AND EXISTS (SELECT 1 FROM addresses
+                                     WHERE contact_id = ?1 AND address_normalized = ?2)",
+                    bind![id.get(), primary.normalized()],
+                )
+                .await?;
+            }
+            promote(&transaction, id).await?;
+            sql::execute(
+                &transaction,
+                "UPDATE contacts SET saved_at = coalesce(saved_at, ?2) WHERE id = ?1",
+                bind![id.get(), now],
+            )
+            .await?;
+            // Groups: by name, made when new, shared across people.
+            let held: Vec<(i64, String)> = sql::all(
+                &transaction,
+                "SELECT g.id, g.name FROM contact_group_members m
+                   JOIN contact_groups g ON g.id = m.group_id WHERE m.contact_id = ?1",
+                [id.get()],
+                |row| Ok((row.col(0)?, row.col(1)?)),
+            )
+            .await?;
+            for (group, name) in &held {
+                if !form.groups.iter().any(|wanted| wanted.eq_ignore_ascii_case(name)) {
+                    sql::execute(
+                        &transaction,
+                        "DELETE FROM contact_group_members WHERE group_id = ?1 AND contact_id = ?2",
+                        bind![*group, id.get()],
+                    )
+                    .await?;
+                }
+            }
+            for name in &form.groups {
+                if held.iter().any(|(_, held)| held.eq_ignore_ascii_case(name)) {
+                    continue;
+                }
+                let existing: Option<i64> = sql::first(
+                    &transaction,
+                    "SELECT id FROM contact_groups WHERE name = ?1 COLLATE NOCASE",
+                    [name.clone()],
+                    |row| row.col(0),
+                )
+                .await?;
+                let group = match existing {
+                    Some(group) => group,
+                    None => {
+                        sql::execute(
+                            &transaction,
+                            "INSERT INTO contact_groups (name, created_at) VALUES (?1, ?2)",
+                            bind![name.clone(), now],
+                        )
+                        .await?;
+                        transaction.last_insert_rowid()
+                    }
+                };
+                sql::execute(
+                    &transaction,
+                    "INSERT OR IGNORE INTO contact_group_members (group_id, contact_id)
+                     VALUES (?1, ?2)",
+                    bind![group, id.get()],
+                )
+                .await?;
+            }
+            refresh(&transaction, id.get()).await
+        })
+        .await?;
+        Ok(SavedForm { person: id, prior })
     }
 }
 

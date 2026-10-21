@@ -699,6 +699,9 @@ pub struct ContactCardRead {
     pub files: Vec<FileChip>,
     /// Their recent messages, newest first: a newsletter's issues.
     pub issues: Vec<IssueRead>,
+    /// What the user calls each address, and which a bounce named: what the
+    /// Edit form fills its type menus from.
+    pub address_notes: Vec<crate::contact_form::AddressNote>,
 }
 
 /// A page of the Contacts list: its rows, and the sort key of the row just
