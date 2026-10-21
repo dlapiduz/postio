@@ -359,6 +359,10 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         // window holds until it is saved (specs/009-focus-macos T079). On
         // the list and the open message `h` is the controller's picker.
         C::RemindIfNoReply,
+        // The panels for a vCard: a file is read or written only through a
+        // panel the user used, which this frontend presents (spec 011 S11).
+        C::ContactsImport,
+        C::ContactsExport,
         C::ExpandAll,
         C::ToggleFold,
         C::NextInConversation,

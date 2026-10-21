@@ -1343,6 +1343,14 @@ pub async fn demo() -> (Store, AccountId) {
 /// people say what they are -- the newsletters of the digest, a list, a
 /// builder -- as the kind detector would have decided, so Contacts has its
 /// tabs to show (specs/011-focus-contacts S7).
+/// The file File \u{25b8} Import Contacts reads in a demo, in place of the open
+/// panel: three invented cards, one for a person the demo has (matched by
+/// address), one for a name the demo has under another address (offered in
+/// the review, never merged), and one nobody has.
+pub const IMPORT_VCF: &str = "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:urn:uuid:demo-ada\r\nFN:Ada Example\r\nEMAIL:ada@example.org\r\nORG:Example Labs\r\nEND:VCARD\r\n\
+BEGIN:VCARD\r\nVERSION:4.0\r\nUID:urn:uuid:demo-ben\r\nFN:Ben Adeyemi\r\nEMAIL:ben@adeyemi.example\r\nTEL:+1 555 0188\r\nEND:VCARD\r\n\
+BEGIN:VCARD\r\nVERSION:4.0\r\nUID:urn:uuid:demo-tove\r\nFN:Tove Larsson\r\nEMAIL:tove.larsson@example.net\r\nORG:Larsson Studio\r\nEND:VCARD\r\n";
+
 /// The corpus's hostile-markup fixtures all send from here: Beacon Works,
 /// Big Pictures, Account Desk and the rest. Mail from it is in the demo; none
 /// of it is a person a screenshot should show.

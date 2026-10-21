@@ -2837,7 +2837,7 @@ static SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId::ContactsImport,
-        title: "Import vCard",
+        title: "Import contacts",
         // Provisional, as 005 had it: `v` is the list's family of views and
         // the Contacts design's planning pass settles the rest.
         default_binding: "v i",
@@ -2851,7 +2851,7 @@ static SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId::ContactsExport,
-        title: "Export vCard",
+        title: "Export contacts",
         default_binding: "v x",
         alternate_bindings: &[],
         contexts: ctx(CONTACTS),

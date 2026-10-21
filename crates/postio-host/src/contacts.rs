@@ -1145,6 +1145,23 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
     }
 
     #[tokio::test]
+    async fn the_demos_import_file_updates_one_offers_one_and_adds_one() {
+        let (database, _) = postio_demo::demo().await;
+        let summary = import_vcards(&database, postio_demo::IMPORT_VCF.as_bytes())
+            .await
+            .expect("the demo's file imports");
+        assert_eq!(
+            (
+                summary.people_created,
+                summary.people_updated,
+                summary.look_alikes
+            ),
+            (2, 1, 1),
+            "{summary:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn the_demo_has_three_records_of_one_person_for_screen_07() {
         let (database, _) = postio_demo::demo().await;
         let groups = contact_review(&database).await;

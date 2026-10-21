@@ -150,6 +150,8 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
             Some(M::File)
         }
         C::Refresh => Some(M::File),
+        // The Mac presents the panels; the file is the user's.
+        C::ContactsImport | C::ContactsExport => Some(M::File),
 
         // ── Edit ─────────────────────────────────────────────────────────
         C::Undo | C::SelectAll | C::ToggleSelection => Some(M::Edit),
@@ -275,8 +277,6 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::ContactGroupRename
         | C::ContactGroupAdd
         | C::ContactGroupRemove
-        | C::ContactsImport
-        | C::ContactsExport
         | C::GoToFiltered
         | C::GoToDigestRules
         | C::ToggleHasAction

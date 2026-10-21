@@ -51,6 +51,7 @@ mod focus_compose;
 mod focus_contact_edit;
 mod focus_contact_merge;
 mod focus_contacts;
+mod focus_contacts_io;
 mod focus_keymap;
 mod focus_list;
 mod focus_message;
@@ -115,6 +116,9 @@ pub use focus_contacts::{
     CardMonthsFfi, CardSwitchFfi, ContactArrivalFfi, ContactCardViewFfi, ContactPopoverViewFfi,
     ContactReviewLineFfi, ContactRowViewFfi, ContactTabFfi, ContactTabViewFfi, ContactsFooterFfi,
     ContactsStripFfi, ContactsViewFfi, OpenLineFfi, PopoverActionFfi, PopoverTileFfi,
+};
+pub use focus_contacts_io::{
+    ContactsExportResultFfi, ContactsImportResultFfi, ContactsIoSheetFfi, ContactsPanelWordsFfi,
 };
 pub use focus_keymap::{KeyMapGroupFfi, KeyMapRowFfi, KeyMapSheetFfi};
 pub use focus_list::{

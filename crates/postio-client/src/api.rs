@@ -121,6 +121,8 @@ impl Req {
             Req::ContactsOverview => "ContactsOverview",
             Req::ContactCard(_) => "ContactCard",
             Req::ContactGroups => "ContactGroups",
+            Req::ContactsImport(_) => "ContactsImport",
+            Req::ContactsExport => "ContactsExport",
             Req::ContactSeen(_) => "ContactSeen",
             Req::ContactReview => "ContactReview",
             Req::ContactMergeOf(_) => "ContactMergeOf",
@@ -712,6 +714,31 @@ impl Client {
                 _ => None,
             },
         )
+        .await
+    }
+
+    /// Reads the cards in `bytes`, a `.vcf` the user chose, and applies them.
+    pub async fn import_contacts(
+        &self,
+        bytes: Vec<u8>,
+    ) -> Result<postio_model::card::ImportSummary, StoreError> {
+        self.read(
+            Req::ContactsImport(bytes),
+            "an import",
+            |answer| match answer {
+                Resp::ContactsImported(summary) => Some(*summary),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// One `.vcf` of the people the Contacts list holds, and how many.
+    pub async fn export_contacts(&self) -> Result<(String, usize), StoreError> {
+        self.read(Req::ContactsExport, "an export", |answer| match answer {
+            Resp::ContactsExported(text, count) => Some((text, count)),
+            _ => None,
+        })
         .await
     }
 

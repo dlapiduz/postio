@@ -253,6 +253,10 @@ pub enum Req {
     ContactCard(postio_model::ContactId),
     /// The name of every contact group, by name.
     ContactGroups,
+    /// Read the cards in a `.vcf` the user chose and apply them.
+    ContactsImport(Vec<u8>),
+    /// One `.vcf` of the people the Contacts list holds.
+    ContactsExport,
     /// What the mail says about a person that the Edit form can keep.
     ContactSeen(postio_model::ContactId),
     /// The groups of records that look like one person, with the evidence.
@@ -835,6 +839,11 @@ pub enum Resp {
     ContactCard(Option<Box<postio_model::ContactCardRead>>),
     /// The answer to [`Req::ContactGroups`].
     ContactGroups(Vec<String>),
+    /// The answer to [`Req::ContactsImport`].
+    ContactsImported(Box<postio_model::card::ImportSummary>),
+    /// The answer to [`Req::ContactsExport`]: the file's text and how many
+    /// people it holds.
+    ContactsExported(String, usize),
     /// The answer to [`Req::ContactSeen`].
     ContactSeen(Vec<postio_model::SeenItem>),
     /// The answer to [`Req::ContactReview`].

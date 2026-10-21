@@ -23,6 +23,7 @@ pub mod contact_edit;
 pub mod contact_merge;
 pub mod contact_popover;
 pub mod contacts;
+pub mod contacts_io;
 pub mod contacts_view;
 pub mod conversation;
 pub mod digest;

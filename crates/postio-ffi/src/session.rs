@@ -4390,7 +4390,7 @@ impl Session {
     /// of the main thread per move (sampled in the running app). `[keys]`
     /// does not change while a session is open; the registry can, when an
     /// extension registers, and the cache is keyed by its size for that.
-    fn keymap(&self) -> postio_core::Keymap {
+    pub(crate) fn keymap(&self) -> postio_core::Keymap {
         let commands = postio_core::registry::every_action().count();
         let mut cached = self.keymap.lock().expect("keymap lock");
         match &*cached {

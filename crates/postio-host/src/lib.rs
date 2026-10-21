@@ -1078,6 +1078,27 @@ impl Inner {
                     Err(error) => Resp::Failed(error),
                 }
             }
+            Req::ContactsImport(bytes) => {
+                match contacts::import_vcards(&self.wiring.database, &bytes).await {
+                    Ok(summary) => {
+                        // The lists and counts read the people again.
+                        self.hub.emit(Event::ContactsChanged {
+                            names_changed: true,
+                        });
+                        Resp::ContactsImported(Box::new(summary))
+                    }
+                    Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+                }
+            }
+            Req::ContactsExport => match contacts::export_vcards(
+                &self.wiring.database,
+                contacts::ExportScope::View(postio_model::ContactView::Written),
+            )
+            .await
+            {
+                Ok((text, count)) => Resp::ContactsExported(text, count),
+                Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+            },
             Req::ContactReview => {
                 Resp::ContactReview(contacts::contact_review(&self.wiring.database).await)
             }
