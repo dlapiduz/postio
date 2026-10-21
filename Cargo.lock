@@ -4896,6 +4896,7 @@ name = "postio-demo"
 version = "0.4.2"
 dependencies = [
  "chrono",
+ "postio-classify",
  "postio-index",
  "postio-model",
  "postio-storage",

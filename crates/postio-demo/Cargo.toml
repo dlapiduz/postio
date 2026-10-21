@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 chrono = { workspace = true }
+postio-classify = { workspace = true }
 postio-index = { workspace = true }
 postio-model = { workspace = true }
 postio-storage = { workspace = true, features = ["test-support"] }

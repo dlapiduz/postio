@@ -1329,11 +1329,61 @@ pub async fn demo() -> (Store, AccountId) {
 /// people say what they are -- the newsletters of the digest, a list, a
 /// builder -- as the kind detector would have decided, so Contacts has its
 /// tabs to show (specs/011-focus-contacts S7).
+/// Senders whose names or addresses exist to attack the header parsers
+/// (`encoded-word-*` in the corpus). Their mail is in the demo; they are not
+/// among its people.
+const HOSTILE_SENDERS: &[&str] = &[
+    "mallory@sender.invalid",
+    "billing@sender.invalid",
+    "broken.from@example.com",
+];
+
+/// What the app's own catch-up does after it makes people: decide each one's
+/// kind from the counts over their mail.
+async fn sort_by_kind(connection: &postio_storage::Connection) {
+    let contacts = ContactRepository::new(connection);
+    let rules = postio_classify::kind::KindRules::shipped();
+    let version = postio_classify::kind::KIND_VERSION;
+    loop {
+        let people = contacts
+            .pending_kinds(version, 500)
+            .await
+            .expect("people to sort");
+        for person in &people {
+            let kind = match contacts.kind_signals(*person).await.expect("signals") {
+                Some(signals) => postio_classify::kind::detect(&signals, rules).kind,
+                None => postio_model::ContactKind::Person,
+            };
+            contacts
+                .set_detected_kind(*person, kind, version)
+                .await
+                .expect("a detected kind");
+        }
+        if people.len() < 500 {
+            break;
+        }
+    }
+}
+
 async fn people(connection: &postio_storage::Connection) {
     ContactRepository::new(connection)
         .catch_up_batch(None, 100_000)
         .await
         .expect("a person for every address");
+    // The corpus's attack senders stay in the corpus: a screenshot shows
+    // what a person would see, and nobody has a contact named by a header
+    // injection.
+    for hostile in HOSTILE_SENDERS {
+        postio_storage::sql::execute(
+            connection,
+            "DELETE FROM contacts
+              WHERE id IN (SELECT contact_id FROM addresses WHERE address_normalized = ?1)",
+            postio_storage::sql::bind![*hostile],
+        )
+        .await
+        .expect("a hostile sender left out");
+    }
+    sort_by_kind(connection).await;
     let mut kinds: Vec<(&str, String)> = NEWSLETTERS
         .iter()
         .map(|((_, address), _, _)| ("newsletter", (*address).to_owned()))
@@ -1345,6 +1395,10 @@ async fn people(connection: &postio_storage::Connection) {
         ("automated", "reports@builds.example.com"),
         ("automated", "receipts@shop.example"),
         ("automated", "no-reply@city.example"),
+        // Detection calls a role mailbox a company only where the user knows
+        // two of its people, which this small mailbox does not; the demo
+        // says what a fuller one would.
+        ("company", "office@northfield.example"),
     ] {
         kinds.push((kind, address.to_owned()));
     }
@@ -1558,6 +1612,67 @@ mod tests {
             .to_lowercase();
         let config = super::config();
         assert!(config.contains(&format!("day = \"{day}\"")), "{config}");
+    }
+
+    /// A contact the demo shows is sorted by what its mail says, as it is in
+    /// the app, not left a person by default; and the senders that exist to
+    /// attack the parsers are in the corpus, not in the demo's people.
+    #[tokio::test]
+    async fn the_demo_sorts_its_people_and_keeps_the_hostile_senders_out() {
+        use postio_storage::sql::scalar;
+
+        let (database, _) = super::demo().await;
+        let connection = database.connect().await.expect("a connection");
+        let of = |address: &'static str| {
+            let connection = &connection;
+            async move {
+                scalar(
+                    connection,
+                    "SELECT count(*) FROM contacts c JOIN addresses a ON a.contact_id = c.id
+                      WHERE a.address_normalized = ?1",
+                    postio_storage::sql::bind![address],
+                )
+                .await
+                .expect("a count")
+            }
+        };
+        let automated = scalar(
+            &connection,
+            "SELECT count(*) FROM contacts c JOIN addresses a ON a.contact_id = c.id
+              WHERE a.address_normalized = 'mailer-daemon@mx4.example.net'
+                AND c.kind = 'automated'",
+            (),
+        )
+        .await
+        .expect("a count");
+        assert_eq!(automated, 1, "the bounce sender is automated");
+        let companies = scalar(
+            &connection,
+            "SELECT count(*) FROM contacts WHERE kind = 'company' AND state = 'live'",
+            (),
+        )
+        .await
+        .expect("a count");
+        assert!(companies >= 1, "the Companies tab is not empty: {companies}");
+        assert_eq!(
+            scalar(
+                &connection,
+                "SELECT count(*) FROM contacts c JOIN addresses a ON a.contact_id = c.id
+                  WHERE a.address_normalized = 'office@northfield.example' AND c.kind = 'company'",
+                (),
+            )
+            .await
+            .expect("a count"),
+            1,
+            "the school's office is a company"
+        );
+        for hostile in [
+            "mallory@sender.invalid",
+            "billing@sender.invalid",
+            "broken.from@example.com",
+        ] {
+            assert_eq!(of(hostile).await, 0, "{hostile} is not a demo contact");
+        }
     }
 
     /// Spec 010 T001: the search seed is a two-year mailbox in the shape of
