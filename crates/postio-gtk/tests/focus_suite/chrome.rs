@@ -64,6 +64,7 @@ pub fn the_top_bar_and_the_header_strip_carry_each_control_and_its_key() {
         assert_eq!(
             items,
             [
+                "Contacts",
                 "Settings",
                 "Read beside the list",
                 "Keyboard shortcuts",

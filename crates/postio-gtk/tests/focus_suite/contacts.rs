@@ -524,3 +524,31 @@ pub fn settings_contacts_flips_the_suggestions_and_says_nothing_of_sync() {
         );
     });
 }
+
+/// Return on a person is "all mail with them": the view goes home and the
+/// box is open on a search for their addresses.
+pub fn return_searches_the_mail_of_the_person_under_the_cursor() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = fixture().await;
+        let (window, _client) = fixture.open().await;
+        support::keys(&window, &["g", "c"]);
+        assert!(
+            crate::settle_until(async || window
+                .contacts()
+                .is_some_and(|view| view.card_name().as_deref() == Some("Ada Moreno")))
+            .await
+        );
+        support::keys(&window, &["Return"]);
+        assert!(
+            crate::settle_until(async || window.contacts().is_none()
+                && window
+                    .bar()
+                    .is_some_and(|bar| bar.is_open() && bar.query().contains("ada@example.test")))
+            .await,
+            "Return closes Contacts and opens the box on their address"
+        );
+    });
+}

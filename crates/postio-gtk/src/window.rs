@@ -2163,6 +2163,18 @@ impl FocusWindow {
                     view.show_card(card.as_deref().cloned());
                 }
             }
+            // "All mail with them" from Contacts: the controller has closed the
+            // view and says what to search; the box is GTK's.
+            Intent::OpenBar {
+                mode: postio_focus::BarMode::Search,
+                text,
+                ..
+            } => {
+                if let Some(bar) = self.bar() {
+                    bar.open();
+                    bar.set_text(text);
+                }
+            }
             Intent::ContactPopover(view) => self.show_contact_popover(view),
             Intent::ContactsSettings(view) => {
                 if let Some(settings) = self.settings() {
