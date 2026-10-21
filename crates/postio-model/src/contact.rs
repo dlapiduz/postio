@@ -839,6 +839,20 @@ pub struct JoinReceipt {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_tabs_walk_and_stop_at_the_ends_and_each_holds_its_kinds() {
+        assert_eq!(ContactTab::All.previous(), ContactTab::All);
+        assert_eq!(ContactTab::All.next(), ContactTab::People);
+        assert_eq!(ContactTab::Automated.next(), ContactTab::Automated);
+        for tab in ContactTab::ALL {
+            assert!(!tab.kinds().is_empty());
+        }
+        assert_eq!(ContactTab::Lists.kinds().len(), 2);
+        let none = ReviewSummary::default();
+        assert!(none.is_empty());
+        assert!(!ReviewSummary { bounced: 1, ..none }.is_empty());
+    }
     use super::*;
 
     fn address(id: i64, name: Option<&str>, addr: &str) -> ContactAddress {

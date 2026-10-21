@@ -482,6 +482,108 @@ pub fn split_name(name: &str) -> (String, String) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn stored_words_round_trip_and_unknown_ones_are_refused() {
+        for label in AddressLabel::ALL {
+            assert_eq!(AddressLabel::from_name(label.as_str()), Some(label));
+            assert!(!label.title().is_empty());
+        }
+        assert_eq!(AddressLabel::from_name("home"), None);
+        for kind in [DetailKind::Phone, DetailKind::Url] {
+            assert_eq!(DetailKind::from_name(kind.as_str()), Some(kind));
+        }
+        assert_eq!(DetailKind::from_name("fax"), None);
+        let words: Vec<&str> = [
+            EvidenceKind::Signature,
+            EvidenceKind::Phone,
+            EvidenceKind::Resent,
+            EvidenceKind::Card,
+        ]
+        .into_iter()
+        .map(EvidenceKind::as_str)
+        .collect();
+        assert_eq!(words, ["signature", "phone", "resent", "card"]);
+    }
+
+    #[test]
+    fn a_signature_key_needs_all_three_and_folds_spacing_and_case() {
+        let said =
+            |name: Option<&str>, title: Option<&str>, company: Option<&str>| SignatureDetails {
+                name: name.map(str::to_owned),
+                title: title.map(str::to_owned),
+                company: company.map(str::to_owned),
+                ..SignatureDetails::default()
+            };
+        assert_eq!(
+            said(Some("Ada  Moreno"), Some("Finance Lead"), Some("Northwind")).key(),
+            Some("ada moreno|finance lead|northwind".to_owned())
+        );
+        assert_eq!(said(Some("Ada"), Some("Lead"), None).key(), None);
+        assert_eq!(said(Some("Ada"), Some("  "), Some("X")).key(), None);
+        assert!(said(Some("Ada"), None, None).is_empty());
+        assert!(
+            !SignatureDetails {
+                phones: vec!["+1 555 0119".into()],
+                ..SignatureDetails::default()
+            }
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn the_form_of_a_card_starts_from_what_the_person_is_called_and_their_addresses() {
+        use crate::{
+            AddressId, ContactAddress, ContactArrival, ContactCardRead, ContactId, ContactSettings,
+            ContactStats, EmailAddress,
+        };
+        let mut person = crate::Contact::new(ContactAddress::new(
+            AddressId::new(7),
+            EmailAddress::new(Some("Ada Moreno"), "ada@example.org"),
+        ));
+        person.id = ContactId::new(3);
+        person.title = Some("Finance lead".into());
+        let card = ContactCardRead {
+            person,
+            groups: vec!["Atlas core".into()],
+            stats: ContactStats::default(),
+            open: Vec::new(),
+            settings: ContactSettings::default(),
+            default_arrival: ContactArrival::Inbox,
+            files: Vec::new(),
+            issues: Vec::new(),
+            address_notes: Vec::new(),
+        };
+        let note = AddressNote {
+            address: AddressId::new(7),
+            label: Some(AddressLabel::Work),
+            bounced: true,
+            bounced_at: None,
+        };
+        let form = ContactForm::of(&card, &[note]);
+        assert_eq!(
+            (form.given.as_str(), form.family.as_str()),
+            ("Ada", "Moreno")
+        );
+        assert_eq!(form.title, "Finance lead");
+        assert_eq!(form.groups, ["Atlas core"]);
+        assert_eq!(form.addresses.len(), 1);
+        assert_eq!(form.addresses[0].label, Some(AddressLabel::Work));
+        assert!(form.addresses[0].bounced);
+        assert_eq!(form.primary, 0);
+    }
+
+    #[test]
+    fn every_problem_says_what_to_do() {
+        assert_eq!(FormProblem::NoAddress.text(), "Add at least one address.");
+        assert!(
+            FormProblem::NotAnAddress("x".into())
+                .text()
+                .contains("not an email")
+        );
+        assert!(FormProblem::Twice("a@b.c".into()).text().contains("twice"));
+        assert_eq!(FormProblem::NoName.text(), "Give them a name.");
+    }
+
     fn row(address: &str) -> FormAddress {
         FormAddress {
             address: address.to_owned(),
