@@ -398,6 +398,23 @@ pub async fn local_copy(
     }
 }
 
+/// The account a message belongs to: the one engine that can fetch its
+/// bytes. UIDs and mailbox paths are scoped to an account, so another
+/// account's engine would fetch unrelated bytes under the same identity, or
+/// leave the request waiting forever. One indexed read of the account key,
+/// never the message or its parts.
+pub async fn account_of(database: &Store, message: MessageId) -> Option<postio_model::AccountId> {
+    let connection = database.read().await.ok()?;
+    postio_storage::sql::first(
+        &connection,
+        "SELECT account_id FROM messages WHERE id = ?1",
+        [message.get()],
+        |row| postio_storage::sql::RowExt::col::<i64>(row, 0).map(postio_model::AccountId::new),
+    )
+    .await
+    .ok()?
+}
+
 /// A message's row, or a sentence saying it is gone.
 pub async fn read_message(
     database: &Store,
