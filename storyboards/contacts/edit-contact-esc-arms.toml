@@ -1,0 +1,40 @@
+# Edit contact (specs/011-focus-contacts S8, handoff screen 06): Cmd-E opens
+# the form over the card with the first name in the caret; an edit and a first
+# Escape arm instead of discarding, and the second Escape discards and puts
+# the card back. An untouched form closes on the first Escape.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/011-focus-contacts S8" }
+seed   = "small"
+design = "06-edit-contact"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "open_contacts"
+
+[[step]]
+id      = "edit"
+command = "contact_edit"
+expect  = "An accent-tinted bar reads “Editing <name>” and “saved in Postio” with Cancel Esc and Save ⌘S. Under it the form: the avatar and photo note, Kind with the person's kind chosen and its note, First and last name with the first in the caret, Show as with three styles, Work, Addresses with the primary's filled circle, Seen in mail, and Groups. The footer says Tab next field, ⌘S save, Esc cancel."
+
+[[step]]
+type    = "x"
+expect  = "The first name has the letter, and nothing else on screen moved."
+
+[[step]]
+id      = "armed"
+command = "back"
+expect  = "The form is still up and the bar says Esc again discards the changes; nothing was discarded."
+
+[[step]]
+command = "back"
+expect  = "The form is gone and the person's card is back, unchanged."
+
+[[step]]
+command = "contact_edit"
+
+[[step]]
+id      = "untouched"
+command = "back"
+expect  = "A form nobody changed closes on the first Escape, with no arming."
