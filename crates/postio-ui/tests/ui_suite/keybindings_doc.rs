@@ -35,7 +35,11 @@ fn document_path() -> PathBuf {
 fn where_available(contexts: ContextSet) -> String {
     // Contacts is the Mac's, and this file documents Linux: a command that is
     // everywhere but there is everywhere here.
-    if contexts.with(Context::Contacts).with(Context::ContactPopover) == ContextSet::ANY {
+    if contexts
+        .with(Context::Contacts)
+        .with(Context::ContactPopover)
+        == ContextSet::ANY
+    {
         return "Everywhere".to_owned();
     }
     let names: Vec<&str> = contexts
