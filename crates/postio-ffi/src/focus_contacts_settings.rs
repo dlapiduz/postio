@@ -139,8 +139,10 @@ impl From<SyncSection> for SyncSectionFfi {
 /// sync section.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ContactsPaneFfi {
-    /// The paragraph at the top.
-    pub intro: String,
+    /// The first clause of the paragraph at the top, drawn bold.
+    pub intro_lead: String,
+    /// The rest of that paragraph.
+    pub intro_rest: String,
     /// "Sync with" and "What syncs"; `None` where there is nothing to sync
     /// with.
     pub sync: Option<SyncSectionFfi>,
@@ -204,8 +206,10 @@ impl Session {
             lines: plan.lines,
             foot: plan.foot,
         });
+        let words = intro(Device::Mac);
         ContactsPaneFfi {
-            intro: intro(Device::Mac),
+            intro_lead: words.lead,
+            intro_rest: words.rest,
             sync: Some(sync_section(scope.into(), mode.into(), &status.into(), plan).into()),
         }
     }

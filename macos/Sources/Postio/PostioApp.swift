@@ -128,6 +128,8 @@ private struct SettingsWindow: View {
             repair: engine.accountRepair,
             reloadAccounts: { engine.refreshAccounts() },
             session: engine.session,
+            contacts: engine.contactsSettings,
+            section: engine.settingsSection,
             run: engine.session == nil ? nil : { command in engine.runFromSettings(command) }
         )
         .preferredColorScheme(engine.colorScheme)

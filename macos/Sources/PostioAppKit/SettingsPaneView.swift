@@ -35,6 +35,11 @@ public struct SettingsPaneView: View {
     /// mail is not being unable to configure it.
     private let session: PostioSession?
 
+    /// Settings > Contacts: the pane's model. `nil` with no session.
+    private let contacts: ContactsSettingsModel?
+    /// A command's request to open on one section (`v y`).
+    private let section: SettingsSectionRequest
+
     /// Which account's form is open, if any.
     /// Which account row is open, held outside this view.
     ///
@@ -84,6 +89,8 @@ public struct SettingsPaneView: View {
         repair: AccountRepair = AccountRepair(),
         reloadAccounts: (() -> Void)? = nil,
         session: PostioSession? = nil,
+        contacts: ContactsSettingsModel? = nil,
+        section: SettingsSectionRequest = SettingsSectionRequest(),
         run: ((String) -> Void)? = nil
     ) {
         self.store = store
@@ -94,6 +101,8 @@ public struct SettingsPaneView: View {
         self.repair = repair
         self.reloadAccounts = reloadAccounts
         self.session = session
+        self.contacts = contacts
+        self.section = section
         self.run = run
     }
 
@@ -104,7 +113,13 @@ public struct SettingsPaneView: View {
             // first.
             .onChange(of: accountCursor.wishToken) { _, _ in grant(accountCursor.take()) }
             // A command that opened this window asked before the pane existed.
-            .onAppear { grant(accountCursor.take()) }
+            .onAppear {
+                grant(accountCursor.take())
+                if let key = section.take() { store.selected = key }
+            }
+            .onChange(of: section.token) { _, _ in
+                if let key = section.take() { store.selected = key }
+            }
             // Never pre-filled, and never with the old one: the old one is
             // what stopped working, and Postio does not have it to offer.
             .alert(
@@ -229,6 +244,7 @@ public struct SettingsPaneView: View {
         case "sync": return "arrow.triangle.2.circlepath"
         case "privacy": return "lock.shield"
         case "mcp": return "terminal"
+        case "contacts": return "person.2"
         default: return "doc.plaintext"
         }
     }
@@ -252,6 +268,15 @@ public struct SettingsPaneView: View {
         }
     }
 
+    /// Settings > Contacts: every word and every switch is Rust's.
+    @ViewBuilder private var contactsPane: some View {
+        if let contacts {
+            ContactsSettingsView(model: contacts)
+        } else {
+            unbuilt
+        }
+    }
+
     @ViewBuilder private var pane: some View {
         switch store.selected {
         case "focus": filteringPane
@@ -261,6 +286,7 @@ public struct SettingsPaneView: View {
         case "keys": keyboard
         case "privacy": privacy
         case "mcp": agents
+        case "contacts": contactsPane
         case "saved_searches": filters
         case "": configFile
         default: unbuilt

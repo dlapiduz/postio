@@ -370,18 +370,28 @@ public final class PostioSession {
     /// The file a demo imports from in place of the open panel.
     public func demoContactsFile() -> Data { inner.demoContactsFile() }
 
-    /// The sync sheet before anything is asked of the Mac.
-    public func contactsSyncIntro(_ scope: SyncScopeFfi) -> SyncSheetFfi {
-        inner.contactsSyncIntro(scope: scope)
+    /// Settings > Contacts' words and sync section, for the state sync is in.
+    public func contactsPane(
+        _ scope: SyncScopeFfi, _ mode: SyncModeFfi, _ status: SyncStatusFfi, _ plan: SyncPlanFfi?
+    ) -> ContactsPaneFfi {
+        inner.contactsPane(scope: scope, mode: mode, status: status, plan: plan)
     }
-
-    /// The sync sheet when the Mac said no.
-    public func contactsSyncDenied() -> SyncSheetFfi { inner.contactsSyncDenied() }
 
     /// What a sync would do, from a snapshot of the Mac's side. A dry run.
-    public func contactsSyncPlan(_ records: [ExternalRecordFfi], _ scope: SyncScopeFfi) -> SyncResultFfi {
-        inner.contactsSyncPlan(records: records, scope: scope)
+    public func contactsSyncPlan(
+        _ records: [ExternalRecordFfi], _ scope: SyncScopeFfi, _ mode: SyncModeFfi
+    ) -> SyncResultFfi {
+        inner.contactsSyncPlan(records: records, scope: scope, mode: mode)
     }
+
+    /// Settings > Contacts appeared: read the Suggestions switches.
+    public func focusContactsSettingsOpened() { inner.focusContactsSettingsOpened() }
+
+    /// A click on the Suggestions switch at `index`.
+    public func focusContactsSuggestion(_ index: UInt32) { inner.focusContactsSuggestion(index: index) }
+
+    /// The Suggestions section, once read.
+    public func focusContactsSettings() -> SuggestionsViewFfi? { inner.focusContactsSettings() }
 
     /// The Edit contact form, while one is open.
     public func focusContactEdit() -> ContactEditViewFfi? { inner.focusContactEdit() }

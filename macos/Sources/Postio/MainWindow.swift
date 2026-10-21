@@ -80,11 +80,6 @@ struct MainWindow: View {
             if let io = engine.contactsIo, let sheet = io.sheet {
                 ContactsIoSheetView(sheet: sheet, model: io)
             }
-            // Sync with Contacts, as a dry run: the explainer, then what
-            // would happen. Nothing is written.
-            if let sync = engine.contactsSync, let sheet = sync.sheet {
-                ContactsSyncSheetView(sheet: sheet, model: sync)
-            }
         }
         .animation(nil, value: engine.filtered?.isOpen)
         .animation(nil, value: engine.results?.isOpen)

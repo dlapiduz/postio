@@ -129,7 +129,7 @@ final class Engine {
             capture = CaptureModel(engine: session)
             makeContactPopover(session)
             contactsView = ContactsModel(engine: session)
-            contactsSync = ContactsSyncModel(
+            contactsSettings = ContactsSettingsModel(
                 engine: session,
                 makeBook: {
                     // The real store is constructed here, when the person
@@ -799,8 +799,13 @@ final class Engine {
 
     // MARK: contacts import and export (specs/011-focus-contacts S11)
 
-    /// File ▸ Sync Contacts: the dry-run sheet (specs/011-focus-contacts S12).
-    @ObservationIgnored private(set) var contactsSync: ContactsSyncModel?
+    /// Settings ▸ Contacts: the pane, its Suggestions switches and the sync
+    /// dry run (specs/011-focus-contacts D7).
+    @ObservationIgnored private(set) var contactsSettings: ContactsSettingsModel?
+
+    /// A section the settings window was asked to open on: `v y` opens it on
+    /// Contacts. Taken by the window when it appears.
+    let settingsSection = SettingsSectionRequest()
 
     /// The demo's address book: in memory, invented, authorized. The real
     /// store is never constructed in a demo.
@@ -1444,6 +1449,7 @@ final class Engine {
             return
         }
         // The Contacts view (S7): the frame, its rows, the cursor and the card.
+        if contactsSettings?.apply(event) == true { return }
         if contactsView?.apply(event) != nil { return }
         if case let .focusWriteTo(address) = event {
             if let encoded = address.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
@@ -1859,17 +1865,6 @@ final class Engine {
         // its field and its buttons -- Return saves, Escape cancels --
         // rather than the list behind it.
         if bannerRepair.asking != nil { return false }
-        // The sync sheet holds the keyboard: Return is its main button
-        // (Turn on and preview, or Done), Escape is Not now or Done.
-        if let sync = contactsSync, sync.isOpen {
-            switch id {
-            case Intercepted.back: sync.done()
-            case "contact_show_mail", "open_message", "picker_confirm":
-                Task { await sync.primary() }
-            default: break
-            }
-            return true
-        }
         // The sheet after an import or an export holds the keyboard: Escape
         // is Done, `g w` is Review, and nothing else reaches the list.
         if let io = contactsIo, io.isOpen {
@@ -1937,7 +1932,9 @@ final class Engine {
             // Escape closes it here, and the keyboard goes home.
             placesPopover?.close()
         case Intercepted.contactsSync:
-            contactsSync?.open()
+            // `v y`: the Contacts pane of the settings window.
+            settingsSection.ask("contacts")
+            settingsWindow.raise()
         case Intercepted.contactsImport:
             contactsIo?.runImport()
         case Intercepted.contactsExport:

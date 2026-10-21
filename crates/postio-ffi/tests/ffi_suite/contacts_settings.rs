@@ -38,10 +38,11 @@ async fn the_pane_has_its_words_and_a_sync_section_on_the_mac() {
         SyncStatusFfi::NotOn,
         None,
     );
+    assert_eq!(pane.intro_lead, "Your contacts live in Postio,");
     assert!(
-        pane.intro.contains("on this Mac next to your mail"),
+        pane.intro_rest.contains("on this Mac next to your mail"),
         "{}",
-        pane.intro
+        pane.intro_rest
     );
     let sync = pane.sync.expect("the Mac has a Sync with section");
     assert_eq!(sync.heading, "Sync with");

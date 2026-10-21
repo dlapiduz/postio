@@ -44,6 +44,11 @@ struct WindowConfigurator: NSViewRepresentable {
             // Only the main window's frame is worth restoring, and only it
             // wants an empty title bar: a compose window says who it is
             // writing to, and the settings window says "Settings".
+            // A demo photographs Settings > Contacts whole: it is taller than
+            // the settings window's default.
+            if role == .settings, DemoMode.seed != nil {
+                window.setContentSize(CGSize(width: 900, height: 760))
+            }
             guard role == .main else { return }
             hideTitle(of: window)
             // A demo is photographed at a size it was told, not one a

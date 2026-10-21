@@ -3,6 +3,8 @@
 #
 #   scripts/macos-shot.sh <name> [--seed small] [--light|--dark|--both]
 #                          [--size 1440x900] [--wait 6] [--no-build]
+#                          [--window <title>]   shoot the window of that name
+#                          ("Settings") instead of the largest
 #
 # Builds the FFI with its `demo` feature and bundles the app (ad hoc: an
 # in-memory demo reads no Keychain), launches it over the seed with
@@ -33,6 +35,7 @@ appearances=(light dark)
 size="1440x900"
 wait_for=6
 build=1
+window_title=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --seed) seed="$2"; shift 2 ;;
@@ -42,6 +45,7 @@ while [ $# -gt 0 ]; do
         --size) size="$2"; shift 2 ;;
         --wait) wait_for="$2"; shift 2 ;;
         --no-build) build=0; shift ;;
+        --window) window_title="$2"; shift 2 ;;
         -h|--help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) echo "unknown option: $1" >&2; exit 2 ;;
         *) name="$1"; shift ;;
@@ -69,7 +73,7 @@ for appearance in "${appearances[@]}"; do
     window=""
     for _ in $(seq 1 40); do
         sleep 0.25
-        window=$(swift scripts/macos-window-id.swift "$pid" 2>/dev/null || true)
+        window=$(swift scripts/macos-window-id.swift "$pid" $window_title 2>/dev/null || true)
         [ -n "$window" ] && break
     done
     if [ -z "$window" ]; then

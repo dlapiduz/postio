@@ -122,13 +122,24 @@ pub fn suggestions(
     }
 }
 
+/// The paragraph at the top of the pane: its first clause is drawn bold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Intro {
+    /// "Your contacts live in Postio,".
+    pub lead: String,
+    /// The rest of the paragraph.
+    pub rest: String,
+}
+
 /// The paragraph at the top of the pane.
-pub fn intro(device: Device) -> String {
-    format!(
-        "Your contacts live in Postio, on {} next to your mail, so every sender has a card with stats from day one, with or without any account.{}",
-        device.phrase(),
-        " Sync is optional and keeps other apps and your phone up to date."
-    )
+pub fn intro(device: Device) -> Intro {
+    Intro {
+        lead: "Your contacts live in Postio,".to_owned(),
+        rest: format!(
+            " on {} next to your mail, so every sender has a card with stats from day one, with or without any account. Sync is optional and keeps other apps and your phone up to date.",
+            device.phrase()
+        ),
+    }
 }
 
 /// How a sync would treat the two sides.
@@ -273,7 +284,9 @@ mod tests {
         let view = suggestions(&ContactSuggestions::default(), Device::Computer, false);
         assert!(!view.footer.contains("sync"), "{}", view.footer);
         assert!(view.footer.contains("this computer"));
-        assert!(!intro(Device::Computer).contains("Mac"));
+        let words = intro(Device::Computer);
+        assert!(!words.rest.contains("Mac"));
+        assert_eq!(words.lead, "Your contacts live in Postio,");
     }
 
     #[test]
