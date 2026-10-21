@@ -376,7 +376,8 @@ fn groups_of(
             None => groups.push((vec![a, b], vec![evidence], score)),
         }
     }
-    groups.sort_by_key(|(_, _, score)| std::cmp::Reverse(*score));
+    // The strongest evidence first, and among equals the most records.
+    groups.sort_by_key(|(people, _, score)| std::cmp::Reverse((*score, people.len())));
     groups
         .into_iter()
         .map(|(mut people, lists, _)| {
@@ -975,15 +976,11 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
     async fn the_demo_has_three_records_of_one_person_for_screen_07() {
         let (database, _) = postio_demo::demo().await;
         let groups = contact_review(&database).await;
-        let ada = groups
-            .iter()
-            .find(|group| {
-                group
-                    .people
-                    .iter()
-                    .any(|p| p.display_name() == "Ada Moreno")
-            })
-            .expect("a group of Adas");
+        let ada = groups.first().expect("the demo has a review queue");
+        assert!(
+            ada.people.iter().any(|p| p.display_name() == "Ada Moreno"),
+            "three records outrank two: {ada:?}"
+        );
         assert_eq!(ada.people.len(), 3);
         assert!(
             ada.people[0].is_saved(),
