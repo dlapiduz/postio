@@ -18,8 +18,12 @@ public struct ContactPopoverView: View {
         if let view = model.view {
             VStack(alignment: .leading, spacing: 0) {
                 header(view)
-                tiles(view)
-                if !view.open.isEmpty { openLines(view) }
+                if let intro = view.intro {
+                    introduction(intro)
+                } else {
+                    tiles(view)
+                    if !view.open.isEmpty { openLines(view) }
+                }
                 arrival(view)
                 actions(view)
             }
@@ -47,12 +51,37 @@ public struct ContactPopoverView: View {
                 Text(view.name).font(.system(size: 15, weight: .bold))
                 Text(view.subline).font(.system(size: 11.5, design: .monospaced))
                     .foregroundStyle(.tertiary)
-                Text(view.role).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(view.intro?.sent ?? view.role).font(.system(size: 12)).foregroundStyle(.secondary)
             }
             .lineLimit(1)
             Spacer(minLength: 0)
         }
         .padding(.init(top: 16, leading: 16, bottom: 12, trailing: 16))
+    }
+
+    /// A sender not yet saved (handoff screen 05): how they reached you, and
+    /// what their signature said, read on this Mac and kept only on Add.
+    private func introduction(_ intro: PopoverIntroFfi) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(intro.status).font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true)
+            if let title = intro.signatureTitle {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(.system(size: 11.5, weight: .bold)).foregroundStyle(.secondary)
+                    ForEach(Array(intro.signatureLines.enumerated()), id: \.offset) { index, line in
+                        Text(line)
+                            .font(.system(size: 12.5, design: index == 0 ? .default : .monospaced))
+                    }
+                    if let foot = intro.signatureFoot {
+                        Text(foot).font(.system(size: 11)).foregroundStyle(.tertiary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .windowBackgroundColor)))
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .padding(.init(top: 0, leading: 16, bottom: 12, trailing: 16))
     }
 
     private func tiles(_ view: ContactPopoverViewFfi) -> some View {

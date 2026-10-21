@@ -41,6 +41,7 @@ mod contacts_join;
 mod contacts_kind;
 mod contacts_lifecycle;
 mod contacts_list_views;
+mod contacts_sender;
 mod contacts_view;
 mod content_membership;
 mod content_migration;

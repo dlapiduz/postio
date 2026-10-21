@@ -126,6 +126,82 @@ impl SignatureDetails {
     }
 }
 
+/// A phone number or website kept for a person, or refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptDetail {
+    /// `phone` or `url`.
+    pub kind: DetailKind,
+    /// As written.
+    pub value: String,
+    /// Whether the user added it or ignored it.
+    pub added: bool,
+}
+
+/// What a [`KeptDetail`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DetailKind {
+    /// A phone number.
+    Phone,
+    /// A website.
+    Url,
+}
+
+impl DetailKind {
+    /// The stored word.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Phone => "phone",
+            Self::Url => "url",
+        }
+    }
+
+    /// The inverse of [`DetailKind::as_str`].
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "phone" => Some(Self::Phone),
+            "url" => Some(Self::Url),
+            _ => None,
+        }
+    }
+}
+
+/// One thing the mail says about a person that the Edit form can keep.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeenItem {
+    /// A phone or a website.
+    pub kind: DetailKind,
+    /// As written.
+    pub value: String,
+    /// Whether it is kept already, rather than offered.
+    pub kept: bool,
+}
+
+/// How a first message from someone reached the user, for the new-sender
+/// popover: what a person would want to know before saving them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Introduction {
+    /// What their signature says, read on this machine; empty when it said
+    /// nothing.
+    pub details: SignatureDetails,
+    /// When their newest message arrived.
+    pub last_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Who else was on that message and is someone the user knows.
+    pub with: Vec<String>,
+}
+
+/// What saving a sender from the popover changed, so undo can put it back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SenderPrior {
+    /// When they were saved before, if they were.
+    pub saved_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Their title before.
+    pub title: Option<String>,
+    /// Their organisation before.
+    pub organization: Option<String>,
+    /// The details the save added, which undo removes.
+    pub added: Vec<(DetailKind, String)>,
+}
+
 /// Why a form cannot be saved yet, in words for the person.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FormProblem {

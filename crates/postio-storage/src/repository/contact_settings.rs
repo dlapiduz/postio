@@ -33,7 +33,7 @@ pub struct ContactSettingsRepository<'a> {
 }
 
 const COLUMNS: &str = "arrival, digest_name, digest_cadence, digest_day, digest_at, \
-     stop_markers, notify, html_treatment, remind_days, archive_after_days";
+     stop_markers, notify, html_treatment, remind_days, archive_after_days, ignored";
 
 impl<'a> ContactSettingsRepository<'a> {
     /// Borrows a connection.
@@ -70,15 +70,16 @@ impl<'a> ContactSettingsRepository<'a> {
             self.connection,
             "INSERT INTO contact_settings
                  (contact_id, arrival, digest_name, digest_cadence, digest_day, digest_at,
-                  stop_markers, notify, html_treatment, remind_days, archive_after_days)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                  stop_markers, notify, html_treatment, remind_days, archive_after_days, ignored)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              ON CONFLICT (contact_id) DO UPDATE SET
                  arrival = excluded.arrival, digest_name = excluded.digest_name,
                  digest_cadence = excluded.digest_cadence, digest_day = excluded.digest_day,
                  digest_at = excluded.digest_at, stop_markers = excluded.stop_markers,
                  notify = excluded.notify, html_treatment = excluded.html_treatment,
                  remind_days = excluded.remind_days,
-                 archive_after_days = excluded.archive_after_days",
+                 archive_after_days = excluded.archive_after_days,
+                 ignored = excluded.ignored",
             bind![
                 contact.get(),
                 settings.arrival.map(ContactArrival::as_str),
@@ -91,6 +92,7 @@ impl<'a> ContactSettingsRepository<'a> {
                 settings.html_treatment.clone(),
                 settings.remind_days.map(i64::from),
                 settings.archive_after_days.map(i64::from),
+                i64::from(settings.ignored),
             ],
         )
         .await?;
@@ -209,5 +211,7 @@ fn read(row: &turso::Row, at: usize) -> Result<ContactSettings> {
         html_treatment: row.col(at + 7)?,
         remind_days: count(row.col(at + 8)?),
         archive_after_days: count(row.col(at + 9)?),
+        // Not every read of the row asks for it.
+        ignored: row.col::<i64>(at + 10).is_ok_and(|n| n != 0),
     })
 }

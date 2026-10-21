@@ -41,8 +41,10 @@ pub struct SeenRow {
     pub what: String,
     /// "phone number in her signature since August".
     pub from: String,
-    /// "Ignore" or "Add phone".
+    /// "Add phone", "Add website", or "Remove" for one already kept.
     pub action: String,
+    /// "Ignore", for one only offered.
+    pub secondary: Option<String>,
 }
 
 /// A button with its key.
@@ -193,6 +195,8 @@ pub struct EditContext<'a> {
     pub focus: FormField,
     /// Every group that exists.
     pub known_groups: &'a [String],
+    /// What the mail says that can be kept, and what is kept.
+    pub seen: &'a [postio_model::SeenItem],
     /// What is typed in the group picker, while it is open.
     pub group_query: Option<&'a str>,
 }
@@ -205,6 +209,29 @@ pub fn kind_title(kind: ContactKind) -> &'static str {
         ContactKind::List => "List",
         ContactKind::Newsletter => "Newsletter",
         ContactKind::Automated => "Automated",
+    }
+}
+
+fn seen_row(item: &postio_model::SeenItem) -> SeenRow {
+    use postio_model::DetailKind;
+    let (noun, add) = match item.kind {
+        DetailKind::Phone => ("phone number", "Add phone"),
+        DetailKind::Url => ("website", "Add website"),
+    };
+    if item.kept {
+        SeenRow {
+            what: item.value.clone(),
+            from: format!("{noun}, kept"),
+            action: "Remove".to_owned(),
+            secondary: None,
+        }
+    } else {
+        SeenRow {
+            what: item.value.clone(),
+            from: format!("{noun} in their signature"),
+            action: add.to_owned(),
+            secondary: Some("Ignore".to_owned()),
+        }
     }
 }
 
@@ -317,7 +344,7 @@ pub fn view(ctx: &EditContext<'_>, keymap: &Keymap) -> EditView {
                 form.given.trim()
             }
         ),
-        seen: Vec::new(),
+        seen: ctx.seen.iter().map(seen_row).collect(),
         groups: form.groups.clone(),
         add_group: "+ Add to group".to_owned(),
         group_picker: ctx.group_query.map(|query| GroupPicker {
@@ -381,6 +408,7 @@ mod tests {
             show_problem: false,
             focus: FormField::Given,
             known_groups: &[],
+            seen: &[],
             group_query: None,
         }
     }
@@ -526,6 +554,33 @@ mod tests {
         let picker = view(&context, &keymap()).group_picker.expect("open");
         assert_eq!(picker.query, "z");
         assert_eq!(names(&picker.options), ["Zeta", "New group z"]);
+    }
+
+    #[test]
+    fn what_the_mail_says_is_offered_with_add_and_ignore_and_what_is_kept_can_go() {
+        use postio_model::{DetailKind, SeenItem};
+        let form = ada();
+        let seen = [
+            SeenItem {
+                kind: DetailKind::Phone,
+                value: "+1 555 0119".into(),
+                kept: false,
+            },
+            SeenItem {
+                kind: DetailKind::Url,
+                value: "northwind.example".into(),
+                kept: true,
+            },
+        ];
+        let mut context = ctx(&form);
+        context.seen = &seen;
+        let rows = view(&context, &keymap()).seen;
+        assert_eq!(rows[0].what, "+1 555 0119");
+        assert_eq!(rows[0].from, "phone number in their signature");
+        assert_eq!(rows[0].action, "Add phone");
+        assert_eq!(rows[0].secondary.as_deref(), Some("Ignore"));
+        assert_eq!(rows[1].action, "Remove");
+        assert_eq!(rows[1].secondary, None);
     }
 
     #[test]

@@ -3714,6 +3714,208 @@ impl ContactRepository<'_> {
     }
 }
 
+impl ContactRepository<'_> {
+    /// The phones and websites kept for `person`, or refused.
+    pub async fn details(&self, person: ContactId) -> Result<Vec<postio_model::KeptDetail>> {
+        sql::all(
+            self.connection,
+            "SELECT kind, value, state FROM contact_details WHERE contact_id = ?1 ORDER BY id",
+            [person.get()],
+            |row| {
+                let kind: String = row.col(0)?;
+                Ok(postio_model::KeptDetail {
+                    kind: postio_model::DetailKind::from_name(&kind).ok_or_else(|| {
+                        Error::UnknownEnum {
+                            column: "contact_details.kind",
+                            value: kind.clone(),
+                        }
+                    })?,
+                    value: row.col(1)?,
+                    added: row.col::<String>(2)? == "added",
+                })
+            },
+        )
+        .await
+    }
+
+    /// Keeps a detail (`Some(true)`), refuses it so it is not offered again
+    /// (`Some(false)`), or forgets it (`None`).
+    pub async fn set_detail(
+        &self,
+        person: ContactId,
+        kind: postio_model::DetailKind,
+        value: &str,
+        keep: Option<bool>,
+    ) -> Result<()> {
+        match keep {
+            None => {
+                sql::execute(
+                    self.connection,
+                    "DELETE FROM contact_details WHERE contact_id = ?1 AND kind = ?2 AND value = ?3",
+                    bind![person.get(), kind.as_str(), value],
+                )
+                .await?;
+            }
+            Some(added) => {
+                sql::execute(
+                    self.connection,
+                    "INSERT INTO contact_details (contact_id, kind, value, state)
+                     VALUES (?1, ?2, ?3, ?4)
+                     ON CONFLICT (contact_id, kind, value) DO UPDATE SET state = excluded.state",
+                    bind![
+                        person.get(),
+                        kind.as_str(),
+                        value,
+                        if added { "added" } else { "ignored" }
+                    ],
+                )
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// For the new-sender popover: the newest message `person` sent, when it
+    /// arrived, and the names of up to three saved people who were also on
+    /// it. `None` when they have sent nothing that is still here.
+    pub async fn introduction_facts(
+        &self,
+        person: &postio_model::Contact,
+    ) -> Result<Option<(postio_model::MessageId, chrono::DateTime<Utc>, Vec<String>)>> {
+        let ids: Vec<i64> = person.addresses.iter().map(|a| a.id.get()).collect();
+        if ids.is_empty() {
+            return Ok(None);
+        }
+        let marks = vec!["?"; ids.len()].join(", ");
+        let newest: Option<(i64, i64)> = sql::first(
+            self.connection,
+            &format!(
+                "SELECT m.id, m.received_at FROM recipients r
+                   JOIN messages m ON m.id = r.message_id
+                  WHERE r.kind = 'from' AND r.address_id IN ({marks}) AND m.deleted_locally = 0
+                  ORDER BY m.received_at DESC, m.id DESC LIMIT 1"
+            ),
+            ids.iter()
+                .map(|id| turso::Value::Integer(*id))
+                .collect::<Vec<_>>(),
+            |row| Ok((row.col::<i64>(0)?, row.col::<i64>(1)?)),
+        )
+        .await?;
+        let Some((message, received)) = newest else {
+            return Ok(None);
+        };
+        let with: Vec<String> = sql::all(
+            self.connection,
+            "SELECT DISTINCT coalesce(c.name, c.seen_name, a.address) FROM recipients r
+               JOIN addresses a ON a.id = r.address_id
+               JOIN contacts c ON c.id = a.contact_id AND c.state = 'live'
+              WHERE r.message_id = ?1 AND r.kind IN ('to', 'cc')
+                AND c.id <> ?2 AND (c.saved_at IS NOT NULL OR c.source <> 'mail')
+              LIMIT 3",
+            [message, person.id.get()],
+            |row| row.col::<String>(0),
+        )
+        .await?;
+        Ok(Some((
+            postio_model::MessageId::new(message),
+            from_millis(received),
+            with,
+        )))
+    }
+
+    /// "Add contact" in the new-sender popover: the person is saved, and what
+    /// their signature said becomes theirs -- title and company where they
+    /// had none, phones and websites as details. Hands back what undo needs.
+    pub async fn add_sender(
+        &self,
+        person: ContactId,
+        details: &postio_model::SignatureDetails,
+    ) -> Result<postio_model::SenderPrior> {
+        use postio_model::DetailKind;
+        let now = to_millis(Utc::now());
+        type Held = (Option<i64>, Option<String>, Option<String>);
+        let held: Held = sql::first(
+            self.connection,
+            "SELECT saved_at, title, organization FROM contacts WHERE id = ?1",
+            [person.get()],
+            |row| Ok((row.col(0)?, row.col(1)?, row.col(2)?)),
+        )
+        .await?
+        .ok_or(Error::NotFound {
+            entity: "contact",
+            id: person.get(),
+        })?;
+        let mut added = Vec::new();
+        for (kind, value) in details
+            .phones
+            .iter()
+            .map(|v| (DetailKind::Phone, v))
+            .chain(details.websites.iter().map(|v| (DetailKind::Url, v)))
+        {
+            let known = self
+                .details(person)
+                .await?
+                .iter()
+                .any(|d| d.kind == kind && &d.value == value);
+            if !known {
+                self.set_detail(person, kind, value, Some(true)).await?;
+                added.push((kind, value.clone()));
+            }
+        }
+        sql::in_scope(self.connection, |transaction| async move {
+            sql::execute(
+                &transaction,
+                "UPDATE contacts
+                    SET saved_at = coalesce(saved_at, ?2),
+                        title = coalesce(title, ?3),
+                        organization = coalesce(organization, ?4),
+                        listed = 1, updated_at = ?2
+                  WHERE id = ?1",
+                bind![
+                    person.get(),
+                    now,
+                    details.title.clone(),
+                    details.company.clone()
+                ],
+            )
+            .await?;
+            promote(&transaction, person).await
+        })
+        .await?;
+        Ok(postio_model::SenderPrior {
+            saved_at: held.0.map(from_millis),
+            title: held.1,
+            organization: held.2,
+            added,
+        })
+    }
+
+    /// Puts a person back as they were before [`add_sender`](Self::add_sender).
+    pub async fn restore_sender(
+        &self,
+        person: ContactId,
+        prior: &postio_model::SenderPrior,
+    ) -> Result<()> {
+        for (kind, value) in &prior.added {
+            self.set_detail(person, *kind, value, None).await?;
+        }
+        sql::execute(
+            self.connection,
+            "UPDATE contacts SET saved_at = ?2, title = ?3, organization = ?4, updated_at = ?5
+              WHERE id = ?1",
+            bind![
+                person.get(),
+                prior.saved_at.map(to_millis),
+                prior.title.clone(),
+                prior.organization.clone(),
+                to_millis(Utc::now())
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+}
+
 /// A person, without addresses — [`ContactRepository::with_addresses`] adds
 /// them.
 pub(super) fn read_person(row: &Row) -> Result<Contact> {

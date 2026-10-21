@@ -141,10 +141,28 @@ pub struct PopoverView {
     pub arrival: Vec<ArrivalOption>,
     /// All mail, Write, Open card.
     pub actions: Vec<Action>,
+    /// For a sender not yet saved, what the popover says in place of the
+    /// tiles and open lines (specs/011-focus-contacts S9, handoff screen 05).
+    pub intro: Option<IntroView>,
     /// The arrival control's own keys, as the keymap binds them: `←→
     /// choose`, `0 default rules`. Drawn beside its title, so `0` is not a
     /// hidden key.
     pub hints: Vec<crate::hints::Hint>,
+}
+
+/// What the new-sender popover says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IntroView {
+    /// "Sent 1 message \u{b7} today 13:47".
+    pub sent: String,
+    /// "Not saved yet. First email today; Ben Adeyemi is on copy."
+    pub status: String,
+    /// "From their signature"; `None` when the signature said nothing.
+    pub signature_title: Option<String>,
+    /// "Partnerships \u{b7} Harbor Data Co.", "+1 555 0142 \u{b7} harbordata.example".
+    pub signature_lines: Vec<String>,
+    /// "Read on this Mac. Added only if you save."
+    pub signature_foot: Option<String>,
 }
 
 /// The most open lines the popover shows.
@@ -167,6 +185,9 @@ pub struct Facts<'a> {
     pub default_arrival: ContactArrival,
     /// Whether the person's card can be opened (the Contacts mode exists).
     pub card: bool,
+    /// For a sender not yet saved: how they reached the user and what their
+    /// signature said.
+    pub introduction: Option<&'a postio_model::Introduction>,
 }
 
 /// The first name: the given name, else the first word of the shown name.
@@ -303,7 +324,24 @@ pub fn view(facts: &Facts<'_>, keymap: &Keymap, now: DateTime<Local>) -> Popover
         primary,
         enabled,
     };
+    let intro = facts
+        .introduction
+        .map(|introduction| intro_view(introduction, facts.stats, now));
+    let actions = if intro.is_some() {
+        vec![
+            action("Add contact", CommandId::ContactAdd, true, true),
+            action("Not now", CommandId::Back, false, true),
+            action("Ignore sender", CommandId::ContactIgnore, false, true),
+        ]
+    } else {
+        vec![
+            action("All mail", CommandId::ContactShowMail, true, true),
+            action("Write", CommandId::ContactCompose, false, true),
+            action("Open card", CommandId::ContactOpenCard, false, facts.card),
+        ]
+    };
     PopoverView {
+        intro,
         address: facts.address.to_owned(),
         avatar: avatar(person.id, &name, person.kind),
         name,
@@ -337,11 +375,63 @@ pub fn view(facts: &Facts<'_>, keymap: &Keymap, now: DateTime<Local>) -> Popover
         .collect(),
         arrival_title: format!("Mail from {first} arrives in"),
         arrival,
-        actions: vec![
-            action("All mail", CommandId::ContactShowMail, true, true),
-            action("Write", CommandId::ContactCompose, false, true),
-            action("Open card", CommandId::ContactOpenCard, false, facts.card),
-        ],
+        actions,
+    }
+}
+
+/// How a sender not yet saved is introduced.
+pub fn intro_view(
+    introduction: &postio_model::Introduction,
+    stats: &ContactStats,
+    now: DateTime<Local>,
+) -> IntroView {
+    let when = introduction.last_at.map(|at| {
+        let local = at.with_timezone(&now.timezone());
+        format!("{} {}", last_word(Some(at), now), local.format("%H:%M"))
+    });
+    let sent = match (stats.messages, when) {
+        (1, Some(when)) => format!("Sent 1 message \u{b7} {when}"),
+        (n, Some(when)) => format!("Sent {n} messages \u{b7} last {when}"),
+        (1, None) => "Sent 1 message".to_owned(),
+        (n, None) => format!("Sent {n} messages"),
+    };
+    let first = if stats.messages <= 1 {
+        let day = introduction
+            .last_at
+            .map_or_else(|| "today".to_owned(), |at| last_word(Some(at), now));
+        format!("First email {day}")
+    } else {
+        format!("{} emails so far", stats.messages)
+    };
+    let with = match introduction.with.as_slice() {
+        [] => String::new(),
+        [one] => format!("; {one} is on copy"),
+        [one, two] => format!("; {one} and {two} are on copy"),
+        [one, two, more @ ..] => format!("; {one}, {two} and {} more are on copy", more.len()),
+    };
+    let details = &introduction.details;
+    let work: Vec<&str> = [details.title.as_deref(), details.company.as_deref()]
+        .into_iter()
+        .flatten()
+        .collect();
+    let reach: Vec<&str> = details
+        .phones
+        .first()
+        .map(String::as_str)
+        .into_iter()
+        .chain(details.websites.first().map(String::as_str))
+        .collect();
+    let signature_lines: Vec<String> = [work.join(" \u{b7} "), reach.join(" \u{b7} ")]
+        .into_iter()
+        .filter(|line| !line.is_empty())
+        .collect();
+    let said = !signature_lines.is_empty();
+    IntroView {
+        sent,
+        status: format!("Not saved yet. {first}{with}."),
+        signature_title: said.then(|| "From their signature".to_owned()),
+        signature_lines,
+        signature_foot: said.then(|| "Read on this Mac. Added only if you save.".to_owned()),
     }
 }
 
@@ -470,6 +560,7 @@ mod tests {
                 open: &open,
                 arrival: None,
                 default_arrival: ContactArrival::Inbox,
+                introduction: None,
                 card: false,
             },
             &keymap(),
@@ -485,6 +576,7 @@ mod tests {
                 open: &[],
                 arrival: None,
                 default_arrival: ContactArrival::Inbox,
+                introduction: None,
                 card: false,
             },
             &keymap(),
@@ -517,6 +609,92 @@ mod tests {
     }
 
     #[test]
+    fn a_sender_not_yet_saved_is_introduced_by_how_they_reached_you_and_their_signature() {
+        let mut person = ada();
+        person.saved_at = None;
+        let stats = ContactStats {
+            messages: 1,
+            ..stats()
+        };
+        let introduction = postio_model::Introduction {
+            details: postio_model::SignatureDetails {
+                title: Some("Partnerships".into()),
+                company: Some("Harbor Data Co.".into()),
+                phones: vec!["+1 555 0142".into()],
+                websites: vec!["harbordata.example".into()],
+            },
+            last_at: Some(now().with_timezone(&Utc)),
+            with: vec!["Ben Adeyemi".into()],
+        };
+        let popover = view(
+            &Facts {
+                person: &person,
+                address: "ada@example.org",
+                stats: &stats,
+                open: &[],
+                arrival: None,
+                default_arrival: ContactArrival::Inbox,
+                card: true,
+                introduction: Some(&introduction),
+            },
+            &keymap(),
+            now(),
+        );
+        let intro = popover.intro.expect("an introduction");
+        assert_eq!(intro.sent, "Sent 1 message \u{b7} today 16:05");
+        assert_eq!(
+            intro.status,
+            "Not saved yet. First email today; Ben Adeyemi is on copy."
+        );
+        assert_eq!(
+            intro.signature_title.as_deref(),
+            Some("From their signature")
+        );
+        assert_eq!(
+            intro.signature_lines,
+            [
+                "Partnerships \u{b7} Harbor Data Co.",
+                "+1 555 0142 \u{b7} harbordata.example"
+            ]
+        );
+        assert_eq!(
+            intro.signature_foot.as_deref(),
+            Some("Read on this Mac. Added only if you save.")
+        );
+        let actions: Vec<(&str, Option<&str>)> = popover
+            .actions
+            .iter()
+            .map(|a| (a.label.as_str(), a.key.as_deref()))
+            .collect();
+        assert_eq!(
+            actions,
+            [
+                ("Add contact", Some("cmd+Return")),
+                ("Not now", Some("Escape")),
+                ("Ignore sender", Some("cmd+BackSpace"))
+            ]
+        );
+        assert!(popover.actions[0].primary);
+    }
+
+    #[test]
+    fn a_signature_that_said_nothing_leaves_the_card_out() {
+        let introduction = postio_model::Introduction {
+            details: postio_model::SignatureDetails::default(),
+            last_at: None,
+            with: Vec::new(),
+        };
+        let stats = ContactStats {
+            messages: 3,
+            ..stats()
+        };
+        let intro = intro_view(&introduction, &stats, now());
+        assert_eq!(intro.signature_title, None);
+        assert!(intro.signature_lines.is_empty() && intro.signature_foot.is_none());
+        assert_eq!(intro.status, "Not saved yet. 3 emails so far.");
+    }
+
+    #[test]
     fn the_arrival_control_shows_the_one_in_force_and_inbox_for_none() {
         let person = ada();
         let stats = stats();
@@ -528,6 +706,7 @@ mod tests {
                 open: &[],
                 arrival,
                 default_arrival: ContactArrival::Inbox,
+                introduction: None,
                 card: false,
             };
             view(&facts, &keymap(), now())
@@ -555,6 +734,7 @@ mod tests {
                     open: &[],
                     arrival,
                     default_arrival,
+                    introduction: None,
                     card: false,
                 },
                 &keymap(),
@@ -587,6 +767,7 @@ mod tests {
                 open: &[],
                 arrival: None,
                 default_arrival: ContactArrival::Inbox,
+                introduction: None,
                 card: false,
             },
             &keymap(),
@@ -612,6 +793,7 @@ mod tests {
                 open: &[],
                 arrival: None,
                 default_arrival: ContactArrival::Inbox,
+                introduction: None,
                 card: false,
             },
             &keymap(),

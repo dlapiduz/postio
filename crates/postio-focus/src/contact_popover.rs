@@ -82,6 +82,8 @@ impl FocusController {
                 | CommandId::ContactSetArrival
                 | CommandId::ContactShowMail
                 | CommandId::ContactCompose
+                | CommandId::ContactAdd
+                | CommandId::ContactIgnore
         )
     }
 
@@ -115,6 +117,27 @@ impl FocusController {
                 Some(self.set_contact_arrival(Some(to)))
             }
             CommandId::ContactSetArrival => Some(self.set_contact_arrival(None)),
+            // Only for a sender not yet saved: the introduction is what makes
+            // these the popover's.
+            CommandId::ContactAdd | CommandId::ContactIgnore => {
+                let Some(introduction) = glance.introduction.as_ref() else {
+                    return Some(Vec::new());
+                };
+                let action = if id == CommandId::ContactAdd {
+                    postio_core::ContactEditAction::AddSender {
+                        address,
+                        details: introduction.details.clone(),
+                    }
+                } else {
+                    postio_core::ContactEditAction::Ignore {
+                        address,
+                        ignored: true,
+                    }
+                };
+                let mut steps = self.close_contact_popover();
+                steps.extend(self.verbs.post(Command::ContactEdit { action }));
+                Some(steps)
+            }
             CommandId::ContactShowMail => {
                 let addresses: Vec<String> = glance
                     .person
@@ -239,6 +262,7 @@ impl FocusController {
             default_arrival: glance.default_arrival,
             // The card is the Contacts view's, where there is one.
             card: self.policy.caps.contacts_view,
+            introduction: glance.introduction.as_ref(),
         };
         let view = words::view(&facts, self.bar.keymap(), self.bar.now());
         vec![Step::Show(Intent::ContactPopover(Box::new(view)))]

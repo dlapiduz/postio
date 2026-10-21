@@ -140,6 +140,7 @@ fn ada(arrival: Option<ContactArrival>) -> ContactGlance {
         }],
         arrival,
         default_arrival: ContactArrival::Inbox,
+        introduction: None,
     }
 }
 
@@ -423,4 +424,103 @@ fn open_card_is_enabled_and_opens_the_contacts_view_on_the_person() {
         )),
         "the list is found down to them: {asked:?}"
     );
+}
+
+/// Jonas, a sender not yet saved, whose signature said what it said.
+fn jonas() -> ContactGlance {
+    let mut glance = ada(None);
+    glance.person.saved_at = None;
+    glance.introduction = Some(postio_model::Introduction {
+        details: postio_model::SignatureDetails {
+            title: Some("Partnerships".into()),
+            company: Some("Harbor Data Co.".into()),
+            phones: vec!["+1 555 0142".into()],
+            websites: Vec::new(),
+        },
+        last_at: Some(Utc::now()),
+        with: vec!["Ben Adeyemi".into()],
+    });
+    glance
+}
+
+fn open_jonas(focus: &mut FocusController) -> PopoverView {
+    let effects = run(focus, CommandId::ContactPopover);
+    let [(ticket, Request::ContactGlance { stamp, .. })] = asks(&effects)[..] else {
+        panic!("the host is asked: {effects:?}");
+    };
+    let effects = focus.handle_on(
+        Input::Reply(
+            ticket,
+            Reply::ContactGlance {
+                stamp,
+                glance: Ok(Some(Box::new(jonas()))),
+            },
+        ),
+        &List,
+    );
+    drawn(&effects).expect("the popover is drawn")
+}
+
+#[test]
+fn a_sender_not_yet_saved_gets_the_introduction_and_its_three_actions() {
+    let mut focus = ready();
+    let view = open_jonas(&mut focus);
+    let intro = view.intro.expect("an introduction");
+    assert!(intro.status.starts_with("Not saved yet."));
+    assert_eq!(
+        view.actions
+            .iter()
+            .map(|a| a.label.as_str())
+            .collect::<Vec<_>>(),
+        ["Add contact", "Not now", "Ignore sender"]
+    );
+}
+
+#[test]
+fn add_contact_saves_the_sender_with_their_signature_and_closes() {
+    let mut focus = ready();
+    open_jonas(&mut focus);
+    let effects = run(&mut focus, CommandId::ContactAdd);
+    let [
+        (
+            _,
+            Request::Post(Command::ContactEdit {
+                action: postio_core::ContactEditAction::AddSender { address, details },
+            }),
+        ),
+    ] = &asks(&effects)[..]
+    else {
+        panic!("one add is posted: {effects:?}");
+    };
+    assert_eq!(address, "ada@example.com");
+    assert_eq!(details.title.as_deref(), Some("Partnerships"));
+    assert!(focus.top_surface().is_none(), "the popover is put away");
+}
+
+#[test]
+fn ignore_sender_is_a_command_and_not_now_is_escape() {
+    let mut focus = ready();
+    open_jonas(&mut focus);
+    let effects = run(&mut focus, CommandId::ContactIgnore);
+    assert!(matches!(
+        &asks(&effects)[..],
+        [(
+            _,
+            Request::Post(Command::ContactEdit {
+                action: postio_core::ContactEditAction::Ignore { ignored: true, .. }
+            })
+        )]
+    ));
+    open_jonas(&mut focus);
+    let effects = run(&mut focus, CommandId::Back);
+    assert!(asks(&effects).is_empty(), "Not now sends nothing");
+    assert!(focus.top_surface().is_none());
+}
+
+#[test]
+fn add_contact_on_a_saved_person_does_nothing() {
+    let mut focus = ready();
+    let _ = open(&mut focus, None);
+    let effects = run(&mut focus, CommandId::ContactAdd);
+    assert!(asks(&effects).is_empty(), "{effects:?}");
 }

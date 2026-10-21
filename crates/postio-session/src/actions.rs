@@ -2469,6 +2469,91 @@ impl Actions {
                     }],
                 ))
             }
+            ContactEditAction::AddSender { address, details } => {
+                let person = contacts
+                    .by_address(address.trim())
+                    .await
+                    .map_err(contact_failure)?
+                    .ok_or_else(|| CommandError::rejected("That is not someone in your mail"))?
+                    .id;
+                let prior = contacts
+                    .add_sender(person, details)
+                    .await
+                    .map_err(contact_failure)?;
+                Ok(contacts_applied(
+                    UndoKind::CreateContact,
+                    true,
+                    vec![Command::ContactEdit {
+                        action: ContactEditAction::RestoreSender { person, prior },
+                    }],
+                ))
+            }
+            ContactEditAction::RestoreSender { person, prior } => {
+                contacts
+                    .restore_sender(*person, prior)
+                    .await
+                    .map_err(contact_failure)?;
+                Ok(contacts_applied(UndoKind::EditContact, true, Vec::new()))
+            }
+            ContactEditAction::Detail {
+                address,
+                kind,
+                value,
+                keep,
+            } => {
+                let person = contacts
+                    .by_address(address.trim())
+                    .await
+                    .map_err(contact_failure)?
+                    .ok_or_else(|| CommandError::rejected("That is not someone in your mail"))?
+                    .id;
+                let was = contacts
+                    .details(person)
+                    .await
+                    .map_err(contact_failure)?
+                    .into_iter()
+                    .find(|d| d.kind == *kind && &d.value == value)
+                    .map(|d| d.added);
+                contacts
+                    .set_detail(person, *kind, value, *keep)
+                    .await
+                    .map_err(contact_failure)?;
+                Ok(contacts_applied(
+                    UndoKind::EditContact,
+                    false,
+                    vec![Command::ContactEdit {
+                        action: ContactEditAction::Detail {
+                            address: address.clone(),
+                            kind: *kind,
+                            value: value.clone(),
+                            keep: was,
+                        },
+                    }],
+                ))
+            }
+            ContactEditAction::Ignore { address, ignored } => {
+                use postio_storage::repository::ContactSettingsRepository;
+                let person = contacts
+                    .by_address(address.trim())
+                    .await
+                    .map_err(contact_failure)?
+                    .ok_or_else(|| CommandError::rejected("That is not someone in your mail"))?
+                    .id;
+                let settings = ContactSettingsRepository::new(&connection);
+                let mut held = settings.get(person).await.map_err(contact_failure)?;
+                let was = std::mem::replace(&mut held.ignored, *ignored);
+                settings.put(person, &held).await.map_err(contact_failure)?;
+                Ok(contacts_applied(
+                    UndoKind::ContactArrival,
+                    false,
+                    vec![Command::ContactEdit {
+                        action: ContactEditAction::Ignore {
+                            address: address.clone(),
+                            ignored: was,
+                        },
+                    }],
+                ))
+            }
             ContactEditAction::Save { person, form } => {
                 let saved = contacts
                     .save_form(*person, form)
@@ -7029,6 +7114,64 @@ mod tests {
             assert!(notifies(&world).await);
             world.run(Command::Undo).await.expect("undo");
             assert!(!notifies(&world).await);
+        }
+
+        #[tokio::test]
+        async fn adding_a_sender_keeps_the_signature_and_undo_puts_it_all_back() {
+            use postio_core::ContactEditAction;
+            use postio_model::SignatureDetails;
+            let world = world().await;
+            let jonas = person(&world, "Jonas", &["jonas@harbordata.example"]).await;
+            world
+                .run(Command::ContactEdit {
+                    action: ContactEditAction::AddSender {
+                        address: "JONAS@harbordata.example".into(),
+                        details: SignatureDetails {
+                            title: Some("Partnerships".into()),
+                            company: Some("Harbor Data Co.".into()),
+                            phones: vec!["+1 555 0142".into()],
+                            websites: Vec::new(),
+                        },
+                    },
+                })
+                .await
+                .expect("added");
+            let added = get(&world, jonas).await.expect("jonas");
+            assert_eq!(added.title.as_deref(), Some("Partnerships"));
+            world.run(Command::Undo).await.expect("undo");
+            let undone = get(&world, jonas).await.expect("jonas");
+            assert_eq!(undone.title, None);
+            assert_eq!(undone.organization, None);
+        }
+
+        #[tokio::test]
+        async fn ignoring_a_sender_is_a_setting_and_undo_offers_them_again() {
+            use postio_core::ContactEditAction;
+            let world = world().await;
+            let jonas = person(&world, "Jonas", &["jonas@harbordata.example"]).await;
+            let ignored = |world: &World| {
+                let database = world.database.clone();
+                async move {
+                    let reader = database.read().await.expect("a reader");
+                    postio_storage::repository::ContactSettingsRepository::new(&reader)
+                        .get(jonas)
+                        .await
+                        .expect("settings")
+                        .ignored
+                }
+            };
+            world
+                .run(Command::ContactEdit {
+                    action: ContactEditAction::Ignore {
+                        address: "jonas@harbordata.example".into(),
+                        ignored: true,
+                    },
+                })
+                .await
+                .expect("ignored");
+            assert!(ignored(&world).await);
+            world.run(Command::Undo).await.expect("undo");
+            assert!(!ignored(&world).await);
         }
 
         #[tokio::test]

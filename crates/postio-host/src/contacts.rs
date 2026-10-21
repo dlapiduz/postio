@@ -161,18 +161,97 @@ pub async fn contact_glance(
         .open_items(person.id, postio_model::contact::GLANCE_OPEN)
         .await
         .ok()?;
-    let arrival = ContactSettingsRepository::new(&reader)
+    let settings = ContactSettingsRepository::new(&reader)
         .get(person.id)
         .await
-        .ok()?
-        .arrival;
+        .ok()?;
     let default_arrival = contacts.default_arrival(person.id).await.ok()?;
+    // Someone only the mail knows gets introduced, unless the user said
+    // never to.
+    let introduction = if !person.is_saved()
+        && person.source == postio_model::ContactSource::Mail
+        && person.kind == postio_model::ContactKind::Person
+        && !settings.ignored
+    {
+        introduction(database, &reader, &person).await
+    } else {
+        None
+    };
     Some(postio_model::ContactGlance {
         person,
         stats,
         open,
-        arrival,
+        arrival: settings.arrival,
         default_arrival,
+        introduction,
+    })
+}
+
+/// What the newest mail from `person` says that the Edit form can keep: the
+/// phones and websites in its signature that are neither kept nor refused,
+/// then the ones kept. Empty when there is nothing, which is also what a
+/// failed read says: the form simply has no "Seen in mail".
+pub async fn contact_seen(
+    database: &Store,
+    person: postio_model::ContactId,
+) -> Vec<postio_model::SeenItem> {
+    use postio_model::{DetailKind, SeenItem};
+    let Ok(reader) = database.read().await else {
+        return Vec::new();
+    };
+    let contacts = ContactRepository::new(&reader);
+    let Ok(Some(held)) = contacts.get(person).await else {
+        return Vec::new();
+    };
+    let known = contacts.details(person).await.unwrap_or_default();
+    let mut items = Vec::new();
+    if let Ok(Some((message, _, _))) = contacts.introduction_facts(&held).await {
+        let body = crate::search::stored_body(database, message).await;
+        let parsed = postio_classify::signature::parse(body.text.as_deref().unwrap_or(""));
+        for (kind, value) in parsed
+            .phones
+            .into_iter()
+            .map(|v| (DetailKind::Phone, v))
+            .chain(parsed.websites.into_iter().map(|v| (DetailKind::Url, v)))
+        {
+            if !known.iter().any(|d| d.kind == kind && d.value == value) {
+                items.push(SeenItem {
+                    kind,
+                    value,
+                    kept: false,
+                });
+            }
+        }
+    }
+    items.extend(known.into_iter().filter(|d| d.added).map(|d| SeenItem {
+        kind: d.kind,
+        value: d.value,
+        kept: true,
+    }));
+    items
+}
+
+/// How a sender not yet saved reached the user: when their newest message
+/// came, who else was on it that the user knows, and what its signature says.
+///
+/// The body is read from the store, never fetched, and parsed on this
+/// machine; what it said is kept nowhere until the user adds the contact.
+async fn introduction(
+    database: &Store,
+    reader: &postio_storage::Checkout,
+    person: &postio_model::Contact,
+) -> Option<postio_model::Introduction> {
+    let (message, received, with) = ContactRepository::new(reader)
+        .introduction_facts(person)
+        .await
+        .ok()
+        .flatten()?;
+    let body = crate::search::stored_body(database, message).await;
+    let details = postio_classify::signature::parse(body.text.as_deref().unwrap_or(""));
+    Some(postio_model::Introduction {
+        details,
+        last_at: Some(received),
+        with,
     })
 }
 
@@ -580,6 +659,105 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
             .await
             .unwrap();
         assert_eq!(again.arrival, Some(postio_model::ContactArrival::Digest));
+    }
+
+    /// A first message from `from`, copied to someone the user saved, with
+    /// `body` stored beside it.
+    async fn first_mail(database: &Store, from: &str, body: &str) {
+        use chrono::TimeZone as _;
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let ben = postio_model::EmailAddress::new(Some("Ben Adeyemi"), "ben@example.net");
+        ContactRepository::new(&connection)
+            .create(Some("Ben Adeyemi"), std::slice::from_ref(&ben))
+            .await
+            .expect("a saved contact");
+        let mut message = postio_model::Message::new(
+            account.id,
+            inbox,
+            chrono::Utc.with_ymd_and_hms(2026, 3, 9, 9, 0, 0).unwrap(),
+        );
+        message.from = vec![postio_model::EmailAddress::new(Some("Jonas Weber"), from)];
+        message.to = vec![account.address.clone()];
+        message.cc = vec![ben];
+        let repository = postio_storage::repository::MessageRepository::new(&connection);
+        repository.create(&mut message).await.expect("store mail");
+        repository
+            .set_body(
+                message.id,
+                &postio_storage::repository::StoredBody {
+                    text: Some(body.to_owned()),
+                    html: None,
+                    headers: None,
+                    headers_truncated: false,
+                    encoding_problems: false,
+                },
+                postio_model::BodyState::Full,
+            )
+            .await
+            .expect("a body");
+        test_support::mark_contacts_history(&connection).await;
+    }
+
+    #[tokio::test]
+    async fn a_sender_not_yet_saved_is_introduced_by_their_signature_and_who_was_on_copy() {
+        use chrono::TimeZone as _;
+        let database = test_support::memory().await;
+        first_mail(
+            &database,
+            "jonas@harbordata.example",
+            "Hi, I help teams move analytics off the warehouse.\n\nBest,\nJonas Weber\nPartnerships \u{b7} Harbor Data Co.\n+1 555 0142\nharbordata.example\n",
+        )
+        .await;
+        let now = chrono::Utc.with_ymd_and_hms(2026, 3, 9, 12, 0, 0).unwrap();
+        let glance = contact_glance(&database, "jonas@harbordata.example", now)
+            .await
+            .expect("a glance");
+        let intro = glance.introduction.expect("not saved, so introduced");
+        assert_eq!(intro.details.title.as_deref(), Some("Partnerships"));
+        assert_eq!(intro.details.company.as_deref(), Some("Harbor Data Co."));
+        assert_eq!(intro.details.phones, ["+1 555 0142"]);
+        assert_eq!(intro.with, ["Ben Adeyemi"]);
+        assert!(intro.last_at.is_some());
+
+        // Someone saved is a known sender; so is someone told to be ignored.
+        let ben = contact_glance(&database, "ben@example.net", now)
+            .await
+            .expect("ben");
+        assert!(
+            ben.introduction.is_none(),
+            "saved people are not introduced"
+        );
+
+        let connection = database.connect().await.unwrap();
+        postio_storage::repository::ContactSettingsRepository::new(&connection)
+            .put(
+                glance.person.id,
+                &postio_model::ContactSettings {
+                    ignored: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let again = contact_glance(&database, "jonas@harbordata.example", now)
+            .await
+            .unwrap();
+        assert!(again.introduction.is_none(), "ignored, so never offered");
+    }
+
+    #[tokio::test]
+    async fn the_demos_new_sender_is_introduced_the_way_screen_05_draws_it() {
+        use chrono::TimeZone as _;
+        let (database, _) = postio_demo::demo().await;
+        let now = chrono::Utc.with_ymd_and_hms(2026, 3, 9, 12, 0, 0).unwrap();
+        let glance = contact_glance(&database, postio_demo::NEW_SENDER, now)
+            .await
+            .expect("the demo's new sender");
+        let intro = glance.introduction.expect("not saved, so introduced");
+        assert_eq!(intro.details.title.as_deref(), Some("Partnerships"));
+        assert_eq!(intro.details.company.as_deref(), Some("Harbor Data Co."));
+        assert_eq!(intro.with, ["Ben Adeyemi"]);
     }
 
     #[tokio::test]

@@ -1019,6 +1019,8 @@ pub enum Request {
     },
     /// The name of every contact group.
     ContactGroups,
+    /// What the mail says about a person that the Edit form can keep.
+    ContactSeen(postio_model::ContactId),
     /// A person's card.
     ContactCard {
         /// Whose.
@@ -1332,6 +1334,8 @@ pub enum Reply {
     },
     /// The answer to [`Request::ContactGroups`].
     ContactGroups(Result<Vec<String>, String>),
+    /// The answer to [`Request::ContactSeen`].
+    ContactSeen(Vec<postio_model::SeenItem>),
     /// The answer to [`Request::ContactCard`].
     ContactCard {
         /// The stamp it was asked under.
@@ -1599,6 +1603,7 @@ impl FocusController {
                 | Reply::ContactsFiltered { .. }
                 | Reply::ContactCard { .. }
                 | Reply::ContactGroups(_)
+                | Reply::ContactSeen(_)
                 | Reply::FoundMessage { .. }
                 | Reply::DraftBehind { .. }),
             ) => {
@@ -2493,7 +2498,8 @@ impl FocusController {
             | Reply::ContactsPage { .. }
             | Reply::ContactsFiltered { .. }
             | Reply::ContactCard { .. }
-            | Reply::ContactGroups(_)) => self.contacts_reply(reply),
+            | Reply::ContactGroups(_)
+            | Reply::ContactSeen(_)) => self.contacts_reply(reply),
             Reply::FoundMessage { message, row } => self.link_found(message, row, rows),
             Reply::DraftBehind { command, draft, .. } => self.draft_behind(command, draft),
             _ => Vec::new(),

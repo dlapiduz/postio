@@ -248,6 +248,8 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::SaveFile
         | C::ContactPopover
         | C::ContactOpenCard
+        | C::ContactAdd
+        | C::ContactIgnore
         | C::ContactArrivalPrev
         | C::ContactArrivalNext
         | C::ContactSetArrival

@@ -67,8 +67,14 @@ async fn a_click_on_a_name_draws_the_popover_and_a_segment_changes_arrival_for_g
             .iter()
             .map(|a| (a.label.as_str(), a.enabled))
             .collect::<Vec<_>>(),
-        [("All mail", true), ("Write", true), ("Open card", true)]
+        [
+            ("Add contact", true),
+            ("Not now", true),
+            ("Ignore sender", true)
+        ],
+        "mail nobody saved is a new sender: introduced, with the arrival control too"
     );
+    assert!(view.intro.is_some());
 
     let s = session.clone();
     tokio::task::spawn_blocking(move || s.focus_contact_arrival(ContactArrivalFfi::Digest))

@@ -100,6 +100,21 @@ pub struct PopoverActionFfi {
     pub enabled: bool,
 }
 
+/// How a sender not yet saved is introduced (handoff screen 05).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PopoverIntroFfi {
+    /// "Sent 1 message, today 13:47".
+    pub sent: String,
+    /// "Not saved yet. First email today; Ben Adeyemi is on copy."
+    pub status: String,
+    /// "From their signature"; none when the signature said nothing.
+    pub signature_title: Option<String>,
+    /// The signature's lines.
+    pub signature_lines: Vec<String>,
+    /// "Read on this Mac. Added only if you save."
+    pub signature_foot: Option<String>,
+}
+
 /// The known-sender popover, drawn whole.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ContactPopoverViewFfi {
@@ -121,8 +136,10 @@ pub struct ContactPopoverViewFfi {
     pub arrival_title: String,
     /// Inbox, Digest, Filtered out.
     pub arrival: Vec<ArrivalOptionFfi>,
-    /// All mail, Write, Open card.
+    /// All mail, Write, Open card; or Add contact, Not now, Ignore sender.
     pub actions: Vec<PopoverActionFfi>,
+    /// For a sender not yet saved: in place of the tiles and open lines.
+    pub intro: Option<PopoverIntroFfi>,
     /// The arrival control's own keys: "Left/Right" choose, "0" default
     /// rules.
     pub hints: Vec<crate::focus_surfaces::FocusHintFfi>,
@@ -179,6 +196,13 @@ impl From<postio_ui::contact_popover::PopoverView> for ContactPopoverViewFfi {
                     enabled: action.enabled,
                 })
                 .collect(),
+            intro: view.intro.map(|intro| PopoverIntroFfi {
+                sent: intro.sent,
+                status: intro.status,
+                signature_title: intro.signature_title,
+                signature_lines: intro.signature_lines,
+                signature_foot: intro.signature_foot,
+            }),
             hints: view.hints.into_iter().map(Into::into).collect(),
         }
     }

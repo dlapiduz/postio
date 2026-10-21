@@ -60,6 +60,13 @@ pub enum EditChange {
     GroupQuery(Option<String>),
     /// The picker's option at this index chosen.
     GroupPick(u32),
+    /// A "Seen in mail" row's action: the main one, or Ignore.
+    Seen {
+        /// Which row.
+        index: u32,
+        /// Whether it is the secondary action (Ignore).
+        secondary: bool,
+    },
     /// The cross on this group chip.
     RemoveGroup(u32),
 }
@@ -85,6 +92,10 @@ pub(crate) struct ContactEdit {
     id: i64,
     /// Every group that exists, once read.
     pub(crate) known_groups: Vec<String>,
+    /// What the mail says that can be kept, once read.
+    pub(crate) seen: Vec<postio_model::SeenItem>,
+    /// A detail changed, to be sent as a command by the controller.
+    pending_detail: Option<(postio_model::DetailKind, String, Option<bool>)>,
     /// What is typed in the group picker while it is open.
     group_query: Option<String>,
 }
@@ -101,6 +112,8 @@ impl ContactEdit {
             focus: FormField::Given,
             id: person.get(),
             known_groups: Vec::new(),
+            seen: Vec::new(),
+            pending_detail: None,
             group_query: None,
         }
     }
@@ -117,6 +130,8 @@ impl ContactEdit {
             focus: FormField::Given,
             id: 0,
             known_groups: Vec::new(),
+            seen: Vec::new(),
+            pending_detail: None,
             group_query: None,
         }
     }
@@ -136,6 +151,7 @@ impl ContactEdit {
                 show_problem: self.show_problem,
                 focus: self.focus,
                 known_groups: &self.known_groups,
+                seen: &self.seen,
                 group_query: self.group_query.as_deref(),
             },
             keymap,
@@ -196,6 +212,23 @@ impl ContactEdit {
                 }
                 self.group_query = None;
             }
+            EditChange::Seen { index, secondary } => {
+                if (index as usize) < self.seen.len() {
+                    let item = self.seen.remove(index as usize);
+                    let keep = match (item.kept, secondary) {
+                        (false, false) => Some(true),
+                        (false, true) => Some(false),
+                        (true, _) => None,
+                    };
+                    if keep == Some(true) {
+                        self.seen.push(postio_model::SeenItem {
+                            kept: true,
+                            ..item.clone()
+                        });
+                    }
+                    self.pending_detail = Some((item.kind, item.value, keep));
+                }
+            }
             EditChange::GroupQuery(query) => {
                 if query.is_some() {
                     self.focus = FormField::Group;
@@ -239,9 +272,11 @@ impl FocusController {
         };
         let form = ContactForm::of(card, &card.address_notes);
         let detected = card.person.kind_source == postio_model::KindSource::Detected;
-        contacts.edit = Some(ContactEdit::editing(card.person.id, form, detected));
+        let person = card.person.id;
+        contacts.edit = Some(ContactEdit::editing(person, form, detected));
         let mut steps = self.draw_contact_edit();
         steps.push(Step::Ask(crate::Request::ContactGroups));
+        steps.push(Step::Ask(crate::Request::ContactSeen(person)));
         steps
     }
 
@@ -284,12 +319,35 @@ impl FocusController {
         else {
             return Vec::new();
         };
+        let is_seen = matches!(change, EditChange::Seen { .. });
         edit.apply(change);
-        // Anything typed puts the discard back out of reach, and a refusal
-        // is said again only if Save is asked again.
-        edit.armed = false;
-        edit.show_problem = false;
-        self.draw_contact_edit()
+        // A detail kept or refused is its own command, undoable apart from
+        // the form; it is not a change the form must be saved for.
+        let detail = edit.pending_detail.take();
+        let address = edit
+            .form
+            .addresses
+            .get(edit.form.primary)
+            .map(|row| row.address.clone())
+            .filter(|address| !address.trim().is_empty());
+        if !is_seen {
+            // Anything typed puts the discard back out of reach, and a refusal
+            // is said again only if Save is asked again.
+            edit.armed = false;
+            edit.show_problem = false;
+        }
+        let mut steps = self.draw_contact_edit();
+        if let (Some((kind, value, keep)), Some(address)) = (detail, address) {
+            steps.extend(self.verbs.post(Command::ContactEdit {
+                action: ContactEditAction::Detail {
+                    address,
+                    kind,
+                    value,
+                    keep,
+                },
+            }));
+        }
+        steps
     }
 
     /// Escape in the form: arm when something changed, then discard.

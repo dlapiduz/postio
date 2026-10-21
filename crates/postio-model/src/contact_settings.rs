@@ -153,6 +153,9 @@ pub struct ContactSettings {
     pub remind_days: Option<u32>,
     /// Archive their newsletters after this many days.
     pub archive_after_days: Option<u32>,
+    /// "Ignore sender": the new-sender popover is never offered for them
+    /// again (specs/011-focus-contacts S9).
+    pub ignored: bool,
 }
 
 impl ContactSettings {

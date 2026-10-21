@@ -327,6 +327,10 @@ pub struct Row {
 }
 
 /// Today's inbox, top to bottom, in the references' shape.
+/// The sender the new-sender popover is for: a first email, signed, copied
+/// to someone the user saved (handoff screen 05).
+pub const NEW_SENDER: &str = "caspian@example.com";
+
 pub const TODAY: &[Row] = &[
     Row {
         name: "Hollis Varga",
@@ -1026,6 +1030,11 @@ pub async fn demo() -> (Store, AccountId) {
                     "harbor-api@example.org",
                 )];
             }
+            // A first email from someone new, copied to someone the user
+            // knows: what the new-sender popover is introduced by.
+            if newest && row.address == NEW_SENDER {
+                message.cc = vec![EmailAddress::new(Some("Ben Adeyemi"), "ben@example.net")];
+            }
             let id = RfcMessageId::new(format!("<demo.{index}.{step}@example.test>"));
             message.rfc_message_id = Some(id.clone());
             if let Some(parent) = previous.replace(id) {
@@ -1049,6 +1058,11 @@ pub async fn demo() -> (Store, AccountId) {
         }
         let body = if index == OPENED {
             OPENED_BODY.to_owned()
+        } else if row.address == NEW_SENDER {
+            format!(
+                "{}\n\nBest,\nCaspian Holt\nPartnerships \u{b7} Harbor Data Co.\n+1 555 0142\nharbordata.example\n",
+                row.preview
+            )
         } else {
             format!("{}\n", row.preview)
         };
@@ -1429,6 +1443,19 @@ async fn people(connection: &postio_storage::Connection) {
             .await
             .expect("a digest setting");
         }
+    }
+    // Ben is someone the user saved, so he is who is "on copy" with the new
+    // sender (handoff screen 05); and Hollis, whom the first row is from, is
+    // a colleague, so `i` on that row is the known-sender popover (screen 04).
+    for address in ["ben@example.net", "hollis@example.com"] {
+        postio_storage::sql::execute(
+            connection,
+            "UPDATE contacts SET saved_at = 1, source = 'user', listed = 1
+              WHERE id = (SELECT contact_id FROM addresses WHERE address_normalized = ?1)",
+            postio_storage::sql::bind![address],
+        )
+        .await
+        .expect("a saved person");
     }
     // Marisol is saved, notifies, is reminded about, and has a note.
     for statement in [

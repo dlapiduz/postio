@@ -473,6 +473,12 @@ impl FocusController {
             } => self.contacts_page_read(stamp, page, answer),
             Reply::ContactsFiltered { stamp, answer } => self.contacts_filtered_read(stamp, answer),
             Reply::ContactCard { stamp, answer } => self.contacts_card_read(stamp, answer),
+            Reply::ContactSeen(items) => {
+                if let Some(edit) = self.contacts.as_mut().and_then(|c| c.edit.as_mut()) {
+                    edit.seen = items;
+                }
+                self.draw_contact_edit()
+            }
             Reply::ContactGroups(Ok(names)) => {
                 if let Some(edit) = self.contacts.as_mut().and_then(|c| c.edit.as_mut()) {
                     edit.known_groups = names;

@@ -704,9 +704,27 @@ END;
     // found by the message it hangs on (specs/011-focus-contacts S6).
     Migration {
         from: stamp(0x81b8_027c),
-        to: FINGERPRINT,
+        to: stamp(0xb926_0dd0),
         statements: r#"
 CREATE INDEX idx_reminders_anchor ON reminders (anchor_message_id);
+"#,
+    },
+    // `feature/focus-contacts`: "Ignore sender" is a mark on the person's
+    // settings, and the phones and websites a person keeps (or was offered
+    // and refused) have a table (specs/011-focus-contacts S9).
+    Migration {
+        from: stamp(0xb926_0dd0),
+        to: FINGERPRINT,
+        statements: r#"
+ALTER TABLE contact_settings ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE contact_details (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    kind       TEXT    NOT NULL CHECK (kind IN ('phone', 'url')),
+    value      TEXT    NOT NULL,
+    state      TEXT    NOT NULL CHECK (state IN ('added', 'ignored')),
+    UNIQUE (contact_id, kind, value)
+);
 "#,
     },
 ];
@@ -950,7 +968,22 @@ CREATE TABLE contact_settings (
     -- How their HTML mail is always drawn: `app` or `paper`.
     html_treatment     TEXT    CHECK (html_treatment IN ('app', 'paper')),
     remind_days        INTEGER,
-    archive_after_days INTEGER
+    archive_after_days INTEGER,
+    -- "Ignore sender" (specs/011-focus-contacts S9): the new-sender popover is
+    -- never offered for them again.
+    ignored            INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE contact_details (
+    -- A phone number or website of a person: one the signature parser found
+    -- and the user added, or one they ignored so it is not offered again
+    -- (specs/011-focus-contacts S9). What is merely seen in mail is not kept.
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    kind       TEXT    NOT NULL CHECK (kind IN ('phone', 'url')),
+    value      TEXT    NOT NULL,
+    state      TEXT    NOT NULL CHECK (state IN ('added', 'ignored')),
+    UNIQUE (contact_id, kind, value)
 );
 
 CREATE TABLE contact_sightings (
@@ -2147,6 +2180,7 @@ fn declared() -> std::collections::BTreeSet<&'static str> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     /// Every object the twenty migrations built, minus the ones this engine

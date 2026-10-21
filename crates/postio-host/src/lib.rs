@@ -1078,6 +1078,9 @@ impl Inner {
                     Err(error) => Resp::Failed(error),
                 }
             }
+            Req::ContactSeen(person) => {
+                Resp::ContactSeen(contacts::contact_seen(&self.wiring.database, person).await)
+            }
             Req::ContactGroups => {
                 match contacts::contact_group_names(&self.wiring.database).await {
                     Ok(names) => Resp::ContactGroups(names),

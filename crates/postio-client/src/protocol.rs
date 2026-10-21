@@ -253,6 +253,8 @@ pub enum Req {
     ContactCard(postio_model::ContactId),
     /// The name of every contact group, by name.
     ContactGroups,
+    /// What the mail says about a person that the Edit form can keep.
+    ContactSeen(postio_model::ContactId),
     /// Everything recipient completion can offer for an account, read once
     /// so each keystroke is answered from memory rather than by a query.
     RecipientDirectory(AccountId),
@@ -829,6 +831,8 @@ pub enum Resp {
     ContactCard(Option<Box<postio_model::ContactCardRead>>),
     /// The answer to [`Req::ContactGroups`].
     ContactGroups(Vec<String>),
+    /// The answer to [`Req::ContactSeen`].
+    ContactSeen(Vec<postio_model::SeenItem>),
     /// Each sender's remembered treatment.
     Treatments(Vec<(String, String)>),
     /// What recipient completion can offer.

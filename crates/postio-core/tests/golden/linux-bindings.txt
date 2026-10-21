@@ -153,6 +153,8 @@ digest_like_this	L
 open_contacts	
 contact_popover	
 contact_open_card	
+contact_add	
+contact_ignore	
 contact_arrival_prev	
 contact_arrival_next	
 contact_set_arrival	

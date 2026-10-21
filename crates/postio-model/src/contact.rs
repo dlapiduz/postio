@@ -359,6 +359,10 @@ pub struct ContactGlance {
     /// Where the default rules put it, as the engine last decided for their
     /// newest mail: what [`ContactGlance::arrival`] of `None` means.
     pub default_arrival: crate::ContactArrival,
+    /// For a sender not yet saved: how they reached the user and what their
+    /// signature says (specs/011-focus-contacts S9). `None` for someone
+    /// saved, ignored or not a person.
+    pub introduction: Option<crate::contact_form::Introduction>,
 }
 
 /// How many open things the popover shows.

@@ -544,6 +544,9 @@ pub async fn perform(client: &Client, request: Request) -> Reply {
                 .await
                 .map_err(|error| error.to_string()),
         },
+        Request::ContactSeen(person) => {
+            Reply::ContactSeen(client.contact_seen(person).await.unwrap_or_default())
+        }
         Request::ContactGroups => Reply::ContactGroups(
             client
                 .contact_groups()

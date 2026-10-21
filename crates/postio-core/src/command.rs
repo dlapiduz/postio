@@ -766,6 +766,11 @@ commands! {
     } => "contact_popover",
     /// Open the contact's card from the popover. Held until the card exists.
     ContactOpenCard => "contact_open_card",
+    /// Save the person the new-sender popover is about, keeping what their
+    /// signature said.
+    ContactAdd => "contact_add",
+    /// Never offer the new-sender popover for this sender again.
+    ContactIgnore => "contact_ignore",
     /// Step the popover's arrival control to the segment before.
     ContactArrivalPrev => "contact_arrival_prev",
     /// Step the popover's arrival control to the segment after.
@@ -1116,6 +1121,43 @@ pub enum ContactEditAction {
         switch: postio_model::CardSwitch,
         /// What it becomes.
         on: bool,
+    },
+    /// "Add contact" in the new-sender popover: save the person who owns
+    /// `address`, keeping what their signature said (specs/011-focus-contacts
+    /// S9).
+    AddSender {
+        /// Any of the person's addresses.
+        address: String,
+        /// What the signature said.
+        details: postio_model::SignatureDetails,
+    },
+    /// Put a person back as they were before [`ContactEditAction::AddSender`]
+    /// -- undo's half.
+    RestoreSender {
+        /// Whose.
+        person: ContactId,
+        /// What they were.
+        prior: postio_model::SenderPrior,
+    },
+    /// Keep (`Some(true)`), refuse (`Some(false)`) or forget (`None`) a phone
+    /// or website of the person at `address`; undo puts it back.
+    Detail {
+        /// Any of the person's addresses.
+        address: String,
+        /// Phone or website.
+        kind: postio_model::DetailKind,
+        /// As written.
+        value: String,
+        /// What it becomes.
+        keep: Option<bool>,
+    },
+    /// "Ignore sender": never offer the new-sender popover for them again,
+    /// or put the choice back.
+    Ignore {
+        /// Any of the person's addresses.
+        address: String,
+        /// What it becomes.
+        ignored: bool,
     },
     /// Save the Edit form (specs/011-focus-contacts S8): make a person, or
     /// make `person` what the form says, names, kind, addresses, groups and

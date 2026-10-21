@@ -121,6 +121,7 @@ impl Req {
             Req::ContactsOverview => "ContactsOverview",
             Req::ContactCard(_) => "ContactCard",
             Req::ContactGroups => "ContactGroups",
+            Req::ContactSeen(_) => "ContactSeen",
             Req::RecipientDirectory(_) => "RecipientDirectory",
             Req::Labels(_) => "Labels",
             Req::LabelCounts(_) => "LabelCounts",
@@ -706,6 +707,22 @@ impl Client {
             "a contact's card",
             |answer| match answer {
                 Resp::ContactCard(card) => Some(card.map(|card| *card)),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// What the mail says about `person` that the Edit form can keep.
+    pub async fn contact_seen(
+        &self,
+        person: postio_model::ContactId,
+    ) -> Result<Vec<postio_model::SeenItem>, StoreError> {
+        self.read(
+            Req::ContactSeen(person),
+            "what the mail says",
+            |answer| match answer {
+                Resp::ContactSeen(items) => Some(items),
                 _ => None,
             },
         )

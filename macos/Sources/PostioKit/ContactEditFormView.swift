@@ -254,12 +254,19 @@ struct ContactEditFormView: View {
 
     private var seen: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(edit.seen.enumerated()), id: \.offset) { _, line in
+            ForEach(Array(edit.seen.enumerated()), id: \.offset) { index, line in
                 HStack(spacing: 10) {
                     (Text(line.what).font(.system(size: 13))
                         + Text("  " + line.from).font(.system(size: 11.5)).foregroundColor(.secondary))
                     Spacer(minLength: 0)
-                    Text(line.action).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                    if let secondary = line.secondary {
+                        Button(secondary) { model.change(.seen(index: UInt32(index), secondary: true)) }
+                            .buttonStyle(.plain).font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    Button(line.action) { model.change(.seen(index: UInt32(index), secondary: false)) }
+                        .buttonStyle(.plain).font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 10).frame(minHeight: 30)
                 .background(RoundedRectangle(cornerRadius: 7).fill(Color(nsColor: .windowBackgroundColor)))

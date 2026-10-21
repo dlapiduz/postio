@@ -258,6 +258,8 @@ pub fn group(command: CommandId) -> Option<Group> {
         // and 011): its key map group arrives with it. `OpenContacts`, a
         // destination, is in Go and find above.
         C::ContactOpenCard
+        | C::ContactAdd
+        | C::ContactIgnore
         | C::ContactArrivalPrev
         | C::ContactArrivalNext
         | C::ContactSetArrival

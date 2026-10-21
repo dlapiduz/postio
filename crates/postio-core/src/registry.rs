@@ -2530,6 +2530,26 @@ static SPECS: &[CommandSpec] = &[
         requires: FOCUS_GRAPHICAL_MAIL,
     },
     CommandSpec {
+        id: CommandId::ContactAdd,
+        title: "Add contact",
+        default_binding: "mod+Return",
+        alternate_bindings: &[],
+        contexts: Context::ContactPopover.as_set(),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactIgnore,
+        title: "Ignore sender",
+        default_binding: "mod+BackSpace",
+        alternate_bindings: &[],
+        contexts: Context::ContactPopover.as_set(),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
         id: CommandId::ContactArrivalPrev,
         title: "Arrival: previous",
         default_binding: "Left",
@@ -3241,6 +3261,8 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             | (ActionId::Builtin(C::OpenContacts), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactPopover), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactOpenCard), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactAdd), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactIgnore), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactArrivalPrev), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactArrivalNext), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactSetArrival), Platform::Freedesktop)
@@ -3344,7 +3366,7 @@ mod tests {
 
     /// What only the Mac draws, until Linux adopts it: the search dropdown
     /// and results view (spec 010 D23, D25) and Contacts (specs/005).
-    const NOT_ON_LINUX_YET: [CommandId; 48] = [
+    const NOT_ON_LINUX_YET: [CommandId; 50] = [
         CommandId::ShowAllResults,
         CommandId::ForgetRecent,
         CommandId::ExcludeSuggestion,
@@ -3366,6 +3388,8 @@ mod tests {
         CommandId::OpenContacts,
         CommandId::ContactPopover,
         CommandId::ContactOpenCard,
+        CommandId::ContactAdd,
+        CommandId::ContactIgnore,
         CommandId::ContactArrivalPrev,
         CommandId::ContactArrivalNext,
         CommandId::ContactSetArrival,

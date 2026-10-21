@@ -432,9 +432,10 @@ fn the_group_picker_offers_what_exists_filtered_and_picks_by_index() {
     let mut focus = mac();
     open_with_card(&mut focus);
     let effects = run(&mut focus, CommandId::ContactEdit);
-    let [(ticket, Request::ContactGroups)] = asks(&effects)[..] else {
-        panic!("the groups are read when the form opens: {effects:?}");
-    };
+    let ticket = asks(&effects)
+        .into_iter()
+        .find_map(|(ticket, request)| matches!(request, Request::ContactGroups).then_some(ticket))
+        .expect("the groups are read when the form opens");
     focus.handle_on(
         Input::Reply(
             ticket,
@@ -457,4 +458,89 @@ fn the_group_picker_offers_what_exists_filtered_and_picks_by_index() {
     assert_eq!(options.last().unwrap().label, "New group Book club");
     let effects = change(&mut focus, EditChange::GroupPick(options.len() as u32 - 1));
     assert_eq!(form(&effects).unwrap().groups, ["Finance", "Book club"]);
+}
+
+#[test]
+fn seen_in_mail_is_read_when_the_form_opens_and_add_and_ignore_are_commands() {
+    use postio_model::{DetailKind, SeenItem};
+    let mut focus = mac();
+    open_with_card(&mut focus);
+    let effects = run(&mut focus, CommandId::ContactEdit);
+    let seen_ticket = asks(&effects)
+        .into_iter()
+        .find_map(|(ticket, request)| match request {
+            Request::ContactSeen(person) if person == ContactId::new(1) => Some(ticket),
+            _ => None,
+        })
+        .expect("the mail's details are read for the person");
+    let effects = focus.handle_on(
+        Input::Reply(
+            seen_ticket,
+            Reply::ContactSeen(vec![
+                SeenItem {
+                    kind: DetailKind::Phone,
+                    value: "+1 555 0119".into(),
+                    kept: false,
+                },
+                SeenItem {
+                    kind: DetailKind::Url,
+                    value: "northwind.example".into(),
+                    kept: false,
+                },
+            ]),
+        ),
+        &NoRows,
+    );
+    let rows = form(&effects).unwrap().seen;
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].action, "Add phone");
+
+    let effects = change(
+        &mut focus,
+        EditChange::Seen {
+            index: 0,
+            secondary: false,
+        },
+    );
+    let [
+        Command::ContactEdit {
+            action:
+                postio_core::ContactEditAction::Detail {
+                    kind,
+                    value,
+                    keep: Some(true),
+                    ..
+                },
+        },
+    ] = &posted(&effects)[..]
+    else {
+        panic!("a kept phone is a command: {effects:?}");
+    };
+    assert_eq!((*kind, value.as_str()), (DetailKind::Phone, "+1 555 0119"));
+    let rows = form(&effects).unwrap().seen;
+    assert_eq!(
+        rows.iter().filter(|r| r.action == "Remove").count(),
+        1,
+        "kept, so it can be removed"
+    );
+
+    let effects = change(
+        &mut focus,
+        EditChange::Seen {
+            index: 0,
+            secondary: true,
+        },
+    );
+    assert!(matches!(
+        &posted(&effects)[..],
+        [Command::ContactEdit {
+            action: postio_core::ContactEditAction::Detail {
+                keep: Some(false),
+                ..
+            }
+        }]
+    ));
+    // The form is not made dirty by keeping a detail: Esc closes at once.
+    let effects = run(&mut focus, CommandId::Back);
+    assert!(focus.contact_edit().is_none(), "{effects:?}");
 }

@@ -127,6 +127,13 @@ pub enum EditChangeFfi {
         /// Which.
         index: u32,
     },
+    /// A "Seen in mail" row's action.
+    Seen {
+        /// The row.
+        index: u32,
+        /// Whether it is Ignore rather than the main action.
+        secondary: bool,
+    },
     /// A chip's cross.
     RemoveGroup {
         /// The chip.
@@ -155,6 +162,7 @@ impl From<EditChangeFfi> for EditChange {
             EditChangeFfi::RemoveGroup { index } => Self::RemoveGroup(index),
             EditChangeFfi::GroupQuery { query } => Self::GroupQuery(query),
             EditChangeFfi::GroupPick { index } => Self::GroupPick(index),
+            EditChangeFfi::Seen { index, secondary } => Self::Seen { index, secondary },
         }
     }
 }
@@ -188,8 +196,10 @@ pub struct EditSeenFfi {
     pub what: String,
     /// Where it was seen.
     pub from: String,
-    /// "Ignore" or "Add phone".
+    /// "Add phone", "Add website" or "Remove".
     pub action: String,
+    /// "Ignore", for one only offered.
+    pub secondary: Option<String>,
 }
 
 /// A button with its key.
@@ -348,6 +358,7 @@ impl From<EditView> for ContactEditViewFfi {
                     what: row.what,
                     from: row.from,
                     action: row.action,
+                    secondary: row.secondary,
                 })
                 .collect(),
             groups: view.groups,
