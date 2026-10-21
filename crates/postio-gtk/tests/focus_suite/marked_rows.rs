@@ -146,15 +146,25 @@ pub fn a_selected_marked_row_shows_its_check_not_its_dot() {
         // The row says it is picked a beat before the gutter has repainted
         // its box, and under load the beat is long: wait for the paint, then
         // judge it.
+        // The row is found again each time: a loaded runner can hand the
+        // list's widget to another item between two looks.
         crate::settle_until(async || {
-            row.queue_draw();
-            gutter_marks(&row) == 1
+            marked().is_some_and(|row| {
+                row.queue_draw();
+                gutter_marks(&row) == 1
+            })
         })
         .await;
+        let row = marked().expect("the marked row is still there");
         assert_eq!(
             gutter_marks(&row),
             1,
-            "selected, the gutter holds the checked box alone, not the box over the dot"
+            "selected, the gutter holds the checked box alone, not the box over the dot \
+             ({}x{}, picked {}, {:?})",
+            row.width(),
+            row.height(),
+            row.drawn().picked,
+            row.drawn().texts
         );
         assert!(
             row.drawn().texts.iter().any(|text| text == "Question"),
