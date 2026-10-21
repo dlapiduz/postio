@@ -2486,6 +2486,12 @@ fn people_addresses(value: &str) -> Option<(String, Vec<turso::Value>)> {
     ))
 }
 
+/// Whether `value` is `@Group`: explicit syntax, never a word a header holds,
+/// so it means the group whether or not the search knows people.
+fn names_a_group(value: &str) -> bool {
+    value.trim_start().starts_with('@')
+}
+
 /// `header` or, when the search knows people, the mail whose `kinds` header
 /// names an address `value` means.
 fn with_people(
@@ -2494,7 +2500,10 @@ fn with_people(
     kinds: &str,
     people: bool,
 ) -> (String, Vec<turso::Value>) {
-    let Some((addresses, mut more)) = people.then(|| people_addresses(value)).flatten() else {
+    let Some((addresses, mut more)) = (people || names_a_group(value))
+        .then(|| people_addresses(value))
+        .flatten()
+    else {
         return (header, values);
     };
     let by_person = format!(
@@ -2516,7 +2525,10 @@ fn set_with_people(
     kinds: &str,
     people: bool,
 ) -> (String, Vec<turso::Value>) {
-    let Some((addresses, mut more)) = people.then(|| people_addresses(value)).flatten() else {
+    let Some((addresses, mut more)) = (people || names_a_group(value))
+        .then(|| people_addresses(value))
+        .flatten()
+    else {
         return (header, values);
     };
     let by_person = format!(

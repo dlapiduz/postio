@@ -68,6 +68,7 @@ pub async fn queue_send(
     at: Option<DateTime<Utc>>,
 ) -> postio_storage::Result<()> {
     let (connection, _permit) = database.interactive_write().await?;
+    expand_groups(&connection, draft).await?;
     let drafts = DraftRepository::new(&connection);
     match at {
         Some(at) => {
@@ -76,6 +77,67 @@ pub async fn queue_send(
         None => {
             drafts.queue_send(draft, now()).await?;
         }
+    }
+    Ok(())
+}
+
+/// A group named in To, Cc or Bcc becomes its members (specs/011-focus-contacts
+/// S8). `Quarry crew`, or `to:Quarry crew`, stands for each live member's
+/// primary address, so the same words send the same way from every frontend.
+///
+/// An entry that is already an address is left alone, a group nobody made is
+/// left for the send to refuse as it always has, and an address the draft
+/// already names is not added twice.
+async fn expand_groups(
+    connection: &postio_storage::Connection,
+    draft: &mut Draft,
+) -> postio_storage::Result<()> {
+    use postio_storage::repository::ContactGroupRepository;
+    let names_a_group = |entry: &postio_model::EmailAddress| {
+        !entry.address.contains('@') && !entry.address.trim().is_empty()
+    };
+    if ![&draft.to, &draft.cc, &draft.bcc]
+        .iter()
+        .any(|list| list.iter().any(names_a_group))
+    {
+        return Ok(());
+    }
+    let groups = ContactGroupRepository::new(connection);
+    let known = groups.list().await?;
+    let mut already: std::collections::HashSet<String> = [&draft.to, &draft.cc, &draft.bcc]
+        .iter()
+        .flat_map(|list| list.iter())
+        .filter(|entry| !names_a_group(entry))
+        .map(postio_model::EmailAddress::normalized)
+        .collect();
+    for list in [&mut draft.to, &mut draft.cc, &mut draft.bcc] {
+        let mut expanded = Vec::with_capacity(list.len());
+        for entry in std::mem::take(list) {
+            if !names_a_group(&entry) {
+                expanded.push(entry);
+                continue;
+            }
+            let typed = entry.address.trim();
+            let name = typed
+                .strip_prefix("to:")
+                .or_else(|| typed.strip_prefix("TO:"))
+                .unwrap_or(typed)
+                .trim();
+            match known
+                .iter()
+                .find(|group| group.name.eq_ignore_ascii_case(name))
+            {
+                Some(group) => {
+                    for member in groups.expand(group.id).await? {
+                        if already.insert(member.normalized()) {
+                            expanded.push(member);
+                        }
+                    }
+                }
+                None => expanded.push(entry),
+            }
+        }
+        *list = expanded;
     }
     Ok(())
 }

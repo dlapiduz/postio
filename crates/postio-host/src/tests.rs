@@ -1230,6 +1230,63 @@ fn a_draft_sent_from_a_frontend_is_queued_and_a_discard_after_it_keeps_it() {
 }
 
 #[test]
+fn a_group_in_the_to_field_is_sent_to_its_members_preferred_addresses() {
+    // Specs/011-focus-contacts S8: `Quarry crew` in To (or `to:Quarry crew`)
+    // is a name for people. It expands when the draft is queued, on every
+    // frontend, to each live member's primary address, and what is already
+    // addressed to is not addressed twice.
+    let world = World::new();
+    let (client, _) = world.frontend(ClientKind::Tui);
+    let account = world.rt.block_on(client.accounts()).expect("accounts")[0].id;
+    world.rt.block_on(async {
+        use postio_model::{ContactForm, FormAddress};
+        use postio_storage::repository::ContactRepository;
+        let connection = world.database.connect().await.expect("a connection");
+        let contacts = ContactRepository::new(&connection);
+        for (given, address) in [
+            ("Ines", "ines@example.net"),
+            ("Tobias", "tobias@example.net"),
+        ] {
+            let mut form = ContactForm::blank();
+            form.given = given.into();
+            form.addresses = vec![FormAddress {
+                address: address.into(),
+                ..FormAddress::blank()
+            }];
+            form.groups = vec!["Quarry crew".into()];
+            contacts.save_form(None, &form).await.expect("a member");
+        }
+    });
+    let mut draft = a_draft(account, "Ready.");
+    draft.to = vec![
+        postio_model::EmailAddress::new(None::<String>, "to:quarry crew"),
+        postio_model::EmailAddress::new(None::<String>, "ines@example.net"),
+    ];
+    draft.cc = vec![postio_model::EmailAddress::new(
+        None::<String>,
+        "Quarry crew",
+    )];
+    world.rt.block_on(async {
+        client.queue_send(7, draft, None).await.expect("queued");
+    });
+    let sent = &drafts_in(&world, account)[0];
+    let addresses = |list: &[postio_model::EmailAddress]| {
+        let mut found: Vec<String> = list.iter().map(|a| a.address.clone()).collect();
+        found.sort();
+        found
+    };
+    assert_eq!(
+        addresses(&sent.to),
+        ["ines@example.net", "tobias@example.net"],
+        "each member once, and the one already there not again"
+    );
+    assert!(
+        addresses(&sent.cc).is_empty(),
+        "Cc names the group too, but its members are already addressed in To"
+    );
+}
+
+#[test]
 fn a_queued_send_names_the_draft_so_it_can_be_taken_back() {
     let world = World::new();
     let (client, _) = world.frontend(ClientKind::Tui);

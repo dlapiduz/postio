@@ -126,10 +126,33 @@ async fn off_from_means_the_words_in_the_header_and_nothing_more() {
             .await
             .is_empty()
     );
+}
+
+/// A group named with `@` is explicit syntax, not a word a header might hold,
+/// so it means the group whether or not the frontend has adopted people
+/// (specs/011-focus-contacts S8): Linux has `from:@Group` too.
+#[tokio::test]
+async fn off_from_at_a_group_still_means_the_group() {
+    let world = world().await;
+    assert_eq!(
+        run(&world.connection, "from:@Analysts", false).await,
+        sorted(vec![world.from_work, world.from_home, world.from_grace])
+    );
+    assert_eq!(
+        run(&world.connection, "to:@Analysts", false).await,
+        vec![world.to_work]
+    );
     assert!(
-        run(&world.connection, "from:@Analysts", false)
+        run(&world.connection, "from:@Nobody", false)
             .await
-            .is_empty()
+            .is_empty(),
+        "a group nobody made matches nothing, never everything"
+    );
+    assert!(
+        run(&world.connection, "from:lovelace", false)
+            .await
+            .is_empty(),
+        "a plain word is still only the header's"
     );
 }
 
