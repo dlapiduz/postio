@@ -370,6 +370,19 @@ public final class PostioSession {
     /// The file a demo imports from in place of the open panel.
     public func demoContactsFile() -> Data { inner.demoContactsFile() }
 
+    /// The sync sheet before anything is asked of the Mac.
+    public func contactsSyncIntro(_ scope: SyncScopeFfi) -> SyncSheetFfi {
+        inner.contactsSyncIntro(scope: scope)
+    }
+
+    /// The sync sheet when the Mac said no.
+    public func contactsSyncDenied() -> SyncSheetFfi { inner.contactsSyncDenied() }
+
+    /// What a sync would do, from a snapshot of the Mac's side. A dry run.
+    public func contactsSyncPlan(_ records: [ExternalRecordFfi], _ scope: SyncScopeFfi) -> SyncResultFfi {
+        inner.contactsSyncPlan(records: records, scope: scope)
+    }
+
     /// The Edit contact form, while one is open.
     public func focusContactEdit() -> ContactEditViewFfi? { inner.focusContactEdit() }
 

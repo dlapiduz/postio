@@ -129,6 +129,13 @@ final class Engine {
             capture = CaptureModel(engine: session)
             makeContactPopover(session)
             contactsView = ContactsModel(engine: session)
+            contactsSync = ContactsSyncModel(
+                engine: session,
+                makeBook: {
+                    // The real store is constructed here, when the person
+                    // presses Turn on and preview, and never in a demo.
+                    DemoMode.seed != nil ? Self.demoBook() : AppleAddressBook()
+                })
             contactsIo = ContactsIoModel(
                 engine: session, panels: ContactsPanels(), demo: DemoMode.seed != nil)
             composer = ComposerWindow(engine: session)
@@ -791,6 +798,28 @@ final class Engine {
     }
 
     // MARK: contacts import and export (specs/011-focus-contacts S11)
+
+    /// File ▸ Sync Contacts: the dry-run sheet (specs/011-focus-contacts S12).
+    @ObservationIgnored private(set) var contactsSync: ContactsSyncModel?
+
+    /// The demo's address book: in memory, invented, authorized. The real
+    /// store is never constructed in a demo.
+    @MainActor static func demoBook() -> SyncAddressBook {
+        func record(_ id: String, _ given: String, _ family: String, _ email: String, _ title: String)
+            -> ExternalRecordFfi
+        {
+            ExternalRecordFfi(
+                id: id, given: given, family: family, emails: [email], phones: [],
+                organization: "", title: title)
+        }
+        return FakeSyncAddressBook(
+            access: .authorized,
+            records: [
+                record("demo-1", "Marisol", "Quint", "marisol@example.com", "Head of finance"),
+                record("demo-2", "Ben", "Adeyemi", "ben@example.net", ""),
+                record("demo-3", "Zed", "Zimmer", "zed@example.org", "Surveyor"),
+            ])
+    }
 
     /// File ▸ Import Contacts and Export Contacts, and the sheet after them.
     @ObservationIgnored private(set) var contactsIo: ContactsIoModel?
@@ -1830,6 +1859,17 @@ final class Engine {
         // its field and its buttons -- Return saves, Escape cancels --
         // rather than the list behind it.
         if bannerRepair.asking != nil { return false }
+        // The sync sheet holds the keyboard: Return is its main button
+        // (Turn on and preview, or Done), Escape is Not now or Done.
+        if let sync = contactsSync, sync.isOpen {
+            switch id {
+            case Intercepted.back: sync.done()
+            case "contact_show_mail", "open_message", "picker_confirm":
+                Task { await sync.primary() }
+            default: break
+            }
+            return true
+        }
         // The sheet after an import or an export holds the keyboard: Escape
         // is Done, `g w` is Review, and nothing else reaches the list.
         if let io = contactsIo, io.isOpen {
@@ -1896,6 +1936,8 @@ final class Engine {
             // The folders popover is not a surface the controller keeps:
             // Escape closes it here, and the keyboard goes home.
             placesPopover?.close()
+        case Intercepted.contactsSync:
+            contactsSync?.open()
         case Intercepted.contactsImport:
             contactsIo?.runImport()
         case Intercepted.contactsExport:
