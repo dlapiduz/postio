@@ -48,6 +48,7 @@ mod finder;
 mod focus;
 mod focus_bar;
 mod focus_compose;
+mod focus_contact_edit;
 mod focus_contacts;
 mod focus_keymap;
 mod focus_list;
@@ -103,12 +104,15 @@ pub use focus_bar::{
     BarLineFfi, BarLineKindFfi, BarModeFfi, BarSelectFfi, BarViewFfi, PlaceEntryFfi, PlaceMarkFfi,
 };
 pub use focus_compose::ComposerKindFfi;
+pub use focus_contact_edit::{
+    AddressLabelFfi, ContactEditViewFfi, EditAddressFfi, EditButtonFfi, EditChangeFfi, EditHintFfi,
+    EditSeenFfi, EditSegmentFfi, FormFieldFfi, ShowAsFfi,
+};
 pub use focus_contacts::{
     ArrivalOptionFfi, AvatarFfi, CardAddressFfi, CardButtonFfi, CardFileFfi, CardLineFfi,
     CardMonthsFfi, CardSwitchFfi, ContactArrivalFfi, ContactCardViewFfi, ContactPopoverViewFfi,
-    ContactReviewLineFfi, ContactRowViewFfi, ContactTabFfi, ContactTabViewFfi,
-    ContactsFooterFfi, ContactsStripFfi, ContactsViewFfi, OpenLineFfi, PopoverActionFfi,
-    PopoverTileFfi,
+    ContactReviewLineFfi, ContactRowViewFfi, ContactTabFfi, ContactTabViewFfi, ContactsFooterFfi,
+    ContactsStripFfi, ContactsViewFfi, OpenLineFfi, PopoverActionFfi, PopoverTileFfi,
 };
 pub use focus_keymap::{KeyMapGroupFfi, KeyMapRowFfi, KeyMapSheetFfi};
 pub use focus_list::{

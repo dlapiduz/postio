@@ -308,6 +308,11 @@ pub enum UiEvent {
         /// The card.
         card: Option<crate::focus_contacts::ContactCardViewFfi>,
     },
+    /// The Edit contact form: draw it over the card, or put it away.
+    FocusContactEdit {
+        /// The form, or `None` when it is gone.
+        view: Option<crate::focus_contact_edit::ContactEditViewFfi>,
+    },
     /// Put the keyboard in the Contacts filter field.
     FocusContactsFocusFilter,
     /// Open a composer to this address, as a `mailto:` link would, and say

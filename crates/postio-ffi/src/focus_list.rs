@@ -648,6 +648,11 @@ impl FocusDriver {
         self.focus.lock().expect("focus lock").contacts_card()
     }
 
+    /// The Edit contact form, while one is open.
+    pub(crate) fn contact_edit(&self) -> Option<postio_ui::contact_edit::EditView> {
+        self.focus.lock().expect("focus lock").contact_edit()
+    }
+
     /// The message under the cursor, once its page has landed: what a verb
     /// that is not the list's own aims at.
     pub(crate) fn cursor_message(&self) -> Option<postio_model::MessageId> {
@@ -1006,6 +1011,9 @@ impl FocusDriver {
             Intent::ContactsCursor(index) => self.say(UiEvent::FocusContactsCursor { index }),
             Intent::ContactsCard(card) => self.say(UiEvent::FocusContactsCard {
                 card: card.map(|card| (*card).into()),
+            }),
+            Intent::ContactEdit(view) => self.say(UiEvent::FocusContactEdit {
+                view: view.map(|view| (*view).into()),
             }),
             Intent::ContactsFocusFilter => self.say(UiEvent::FocusContactsFocusFilter),
             Intent::Composer { kind, message } => {

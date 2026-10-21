@@ -62,6 +62,18 @@ impl From<postio_model::ContactKind> for ContactKindFfi {
     }
 }
 
+impl From<ContactKindFfi> for postio_model::ContactKind {
+    fn from(kind: ContactKindFfi) -> Self {
+        match kind {
+            ContactKindFfi::Person => Self::Person,
+            ContactKindFfi::Company => Self::Company,
+            ContactKindFfi::List => Self::List,
+            ContactKindFfi::Newsletter => Self::Newsletter,
+            ContactKindFfi::Automated => Self::Automated,
+        }
+    }
+}
+
 /// A person, as the card and the popover draw them. Every word and choice is
 /// made in Rust (`Contact::shown_as`); Swift paints it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]

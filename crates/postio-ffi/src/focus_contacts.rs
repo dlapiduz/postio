@@ -443,6 +443,8 @@ pub struct CardSwitchFfi {
     pub note: String,
     /// Whether it is on.
     pub on: bool,
+    /// Whether a click turns it on or off.
+    pub can_toggle: bool,
 }
 
 /// The twelve-month strip.
@@ -575,6 +577,7 @@ impl From<postio_ui::contacts_view::CardView> for ContactCardViewFfi {
                     title: line.title,
                     note: line.note,
                     on: line.on,
+                    can_toggle: line.switch.is_some(),
                 })
                 .collect(),
             notes_title: card.notes_title,
