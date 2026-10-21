@@ -310,6 +310,9 @@ pub fn x_marks_a_row_without_moving_the_list() {
                 .correspondent(&format!("Person {n:02}"), &format!("p{n:02}@example.test"))
                 .await;
         }
+        fixture
+            .file(("Person 00", "p00@example.test"), "Hello", "Hi.", 5)
+            .await;
         let (window, _client) = fixture.open().await;
         support::keys(&window, &["g", "c"]);
         assert!(
