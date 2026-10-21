@@ -133,6 +133,10 @@ pub fn build_contacts(wiring: &Wiring) {
         if let Err(error) = crate::contacts::detect_kinds(&database, 200).await {
             tracing::warn!(%error, "could not sort contacts by kind");
         }
+        // And, when the person asked for it, the people they write to.
+        if let Err(error) = crate::contacts::save_people_written_to(&database).await {
+            tracing::warn!(%error, "could not save the people written to");
+        }
     });
 }
 

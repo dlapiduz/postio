@@ -1013,7 +1013,13 @@ impl ContactRepository<'_> {
     /// from `contact_counts`, the review queue, and how many addresses with
     /// mail still wait for a person. A handful of rows and three capped
     /// counts, whatever the number of people.
-    pub async fn overview(&self) -> Result<postio_model::ContactsOverview> {
+    ///
+    /// With `look_for_duplicates` false the pairs are not counted at all
+    /// (Settings > Contacts, "Suggest merging duplicates").
+    pub async fn overview(
+        &self,
+        look_for_duplicates: bool,
+    ) -> Result<postio_model::ContactsOverview> {
         use postio_model::{ContactTab, ContactsOverview, REVIEW_CAP, ReviewSummary};
         let counts = self.kind_counts().await?;
         let of = |kinds: &[ContactKind]| -> u32 {
@@ -1029,7 +1035,9 @@ impl ContactRepository<'_> {
                 .unwrap_or(u32::MAX)
                 .min(REVIEW_CAP)
         };
-        let duplicates = {
+        let duplicates = if !look_for_duplicates {
+            0
+        } else {
             let pairs: Vec<i64> = sql::all_unbounded(
                 self.connection,
                 &format!("SELECT count(*) FROM ({SUGGESTION_PAIRS})"),
@@ -4008,6 +4016,21 @@ impl ContactRepository<'_> {
 }
 
 impl ContactRepository<'_> {
+    /// Saves every live person the user has written to and not yet saved or
+    /// put away. Returns how many. People only: a list, a company or an
+    /// automated sender is not saved by being written to.
+    pub async fn save_written_to(&self) -> Result<usize> {
+        let changed = sql::execute(
+            self.connection,
+            "UPDATE contacts SET saved_at = ?1
+              WHERE saved_at IS NULL AND state = 'live' AND kind = 'person'
+                AND written > 0 AND ignored_at IS NULL",
+            bind![to_millis(Utc::now())],
+        )
+        .await?;
+        Ok(usize::try_from(changed).unwrap_or(usize::MAX))
+    }
+
     /// Everyone sync would consider: live people the user saved, with their
     /// addresses, and the phones they kept. Read only.
     pub async fn saved_for_sync(&self) -> Result<Vec<(Contact, Vec<String>)>> {

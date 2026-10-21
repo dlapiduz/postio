@@ -731,7 +731,7 @@ CREATE TABLE contact_details (
     // for the review to find records that look like one person.
     Migration {
         from: stamp(0x06ab_fba2),
-        to: FINGERPRINT,
+        to: stamp(0x9fae_5a6c),
         statements: r#"
 CREATE TABLE contact_evidence (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -741,6 +741,19 @@ CREATE TABLE contact_evidence (
     UNIQUE (contact_id, kind, value)
 );
 CREATE INDEX idx_contact_evidence_value ON contact_evidence (kind, value);
+"#,
+    },
+    // `feature/focus-contacts`: the four Suggestions switches in Settings >
+    // Contacts (specs/011-focus-contacts D7).
+    Migration {
+        from: stamp(0x9fae_5a6c),
+        to: FINGERPRINT,
+        statements: r#"
+CREATE TABLE contact_suggestions (
+    name    TEXT PRIMARY KEY CHECK (name IN
+              ('save_automatically', 'recognise_kinds', 'read_signatures', 'suggest_merges')),
+    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1))
+);
 "#,
     },
 ];
@@ -1039,6 +1052,15 @@ CREATE TABLE contact_sightings (
     -- (`threading_lookup_cost.rs`); deleting an account, its only reader, is
     -- rare enough to scan.
     PRIMARY KEY (address_id, account_id)
+);
+
+CREATE TABLE contact_suggestions (
+    -- The four Suggestions switches (specs/011-focus-contacts D7). A switch
+    -- with no row is at its own default, so a store that never touched
+    -- Settings keeps none.
+    name    TEXT PRIMARY KEY CHECK (name IN
+              ('save_automatically', 'recognise_kinds', 'read_signatures', 'suggest_merges')),
+    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1))
 );
 
 CREATE TABLE contact_terms (

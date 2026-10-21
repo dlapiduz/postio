@@ -212,7 +212,7 @@ async fn the_strip_counts_come_from_the_counts_table_and_the_queue_is_capped() {
     }
     kind_of(&connection, "c@example.org", "company").await;
     let contacts = ContactRepository::new(&connection);
-    let overview = contacts.overview().await.unwrap();
+    let overview = contacts.overview(true).await.unwrap();
     assert_eq!(overview.total, 3);
     assert_eq!(overview.saved, 0);
     assert_eq!(
@@ -245,7 +245,7 @@ async fn the_strip_counts_come_from_the_counts_table_and_the_queue_is_capped() {
         )
         .await;
     }
-    let overview = contacts.overview().await.unwrap();
+    let overview = contacts.overview(true).await.unwrap();
     assert_eq!(overview.review.frequent_unsaved, 1);
     assert!(!overview.review.is_empty());
 }

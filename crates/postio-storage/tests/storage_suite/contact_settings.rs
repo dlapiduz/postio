@@ -248,3 +248,32 @@ async fn a_merge_carries_the_absorbed_persons_decisions_and_an_unjoin_takes_them
         "and the absorbed"
     );
 }
+
+#[tokio::test]
+async fn the_suggestion_switches_start_as_the_spec_says_and_each_survives_a_reopen() {
+    use postio_model::{ContactSuggestions, Suggestion};
+    use postio_storage::repository::ContactSuggestionRepository;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.unwrap();
+    let switches = ContactSuggestionRepository::new(&connection);
+    assert_eq!(
+        switches.get().await.unwrap(),
+        ContactSuggestions::default(),
+        "nothing stored reads as each switch's own default"
+    );
+    for which in Suggestion::ALL {
+        let flipped = !ContactSuggestions::default().is_on(which);
+        switches.set(which, flipped).await.unwrap();
+        assert_eq!(
+            switches.get().await.unwrap().is_on(which),
+            flipped,
+            "{which:?}"
+        );
+        // Setting it again is not a second row.
+        switches.set(which, flipped).await.unwrap();
+    }
+    let all = switches.get().await.unwrap();
+    for which in Suggestion::ALL {
+        assert_eq!(all.is_on(which), !which.default_on());
+    }
+}

@@ -5430,8 +5430,9 @@ fn an_agent_with_no_window_to_stand_beside_keeps_its_own_undo() {
     assert_eq!(world.inbox_rows(&agent), 0);
 }
 
-#[test]
-fn a_body_that_lands_notes_what_it_says_about_its_sender_for_the_review() {
+/// What the body stage noted about a sender once their mail landed, with
+/// the given Suggestions switches turned off first.
+fn noted_with_switches_off(off: &[postio_model::Suggestion]) -> Vec<String> {
     // Specs/011-focus-contacts S10: the body stage notes the signature, a
     // phone and a Resent-From against the sender, so the review can find a
     // second record of the same person without reading mail.
@@ -5439,6 +5440,12 @@ fn a_body_that_lands_notes_what_it_says_about_its_sender_for_the_review() {
     let inbox = folder(&world, postio_model::MailboxRole::Inbox);
     world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
+        for which in off {
+            postio_storage::repository::ContactSuggestionRepository::new(&connection)
+                .set(*which, false)
+                .await
+                .expect("a switch");
+        }
         let repository = MessageRepository::new(&connection);
         let mut message = Message::new(world.account, inbox, Utc::now() - chrono::TimeDelta::hours(2));
         message.from = vec![postio_model::EmailAddress::new(None::<String>, "ada@example.org")];
@@ -5470,7 +5477,7 @@ fn a_body_that_lands_notes_what_it_says_about_its_sender_for_the_review() {
 
     focus_caught_up(&world);
 
-    let kinds = world.rt.block_on(async {
+    world.rt.block_on(async {
         let connection = world.database.connect().await.expect("a connection");
         postio_storage::sql::all(
             &connection,
@@ -5480,6 +5487,35 @@ fn a_body_that_lands_notes_what_it_says_about_its_sender_for_the_review() {
         )
         .await
         .expect("kinds")
-    });
-    assert_eq!(kinds, ["phone", "resent", "signature"]);
+    })
+}
+
+#[test]
+fn a_body_that_lands_notes_what_it_says_about_its_sender_for_the_review() {
+    // Specs/011-focus-contacts S10: the body stage notes the signature, a
+    // phone and a Resent-From against the sender, so the review can find a
+    // second record of the same person without reading mail.
+    assert_eq!(
+        noted_with_switches_off(&[]),
+        ["phone", "resent", "signature"]
+    );
+}
+
+#[test]
+fn with_read_signatures_off_the_body_stage_never_parses_a_signature() {
+    // D7: the switch stops the work, not the result's display. What a
+    // signature would have said (a title, a company, a phone) is not noted;
+    // a forwarding header is not a signature and still is.
+    assert_eq!(
+        noted_with_switches_off(&[postio_model::Suggestion::ReadSignatures]),
+        ["resent"]
+    );
+}
+
+#[test]
+fn with_suggest_merging_off_the_body_stage_notes_nothing_for_the_review() {
+    assert_eq!(
+        noted_with_switches_off(&[postio_model::Suggestion::SuggestMerges]),
+        Vec::<String>::new()
+    );
 }

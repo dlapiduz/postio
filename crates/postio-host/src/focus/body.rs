@@ -267,6 +267,12 @@ async fn classify(
     // beside the rest of the batch (specs/011-focus-contacts S10).
     let mut bounced = Vec::new();
     let mut noticed = Vec::new();
+    // Settings > Contacts: whether this stage looks at a sender's signature
+    // and forwarding headers at all. Read once per batch.
+    let suggestions = postio_storage::repository::ContactSuggestionRepository::new(connection)
+        .get()
+        .await
+        .unwrap_or_default();
     for &message in batch {
         if let Ok(Some(row)) = MessageRepository::new(connection).get(message).await
             && let Some(bounce) = bounce_of(blobs, &row).await
@@ -274,10 +280,13 @@ async fn classify(
             bounced.push((bounce, row.received_at));
         }
         // What the mail says about its sender, for the review.
-        if let Ok(Some(stored)) = MessageRepository::new(connection).body(message).await {
+        if suggestions.is_on(postio_model::Suggestion::SuggestMerges)
+            && let Ok(Some(stored)) = MessageRepository::new(connection).body(message).await
+        {
             let found = postio_classify::duplicates::noticed(
                 stored.text.as_deref().unwrap_or(""),
                 stored.headers.as_deref().unwrap_or(""),
+                suggestions.is_on(postio_model::Suggestion::ReadSignatures),
             );
             if !found.is_empty() {
                 noticed.push((message, found));

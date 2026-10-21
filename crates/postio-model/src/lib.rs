@@ -103,7 +103,8 @@ pub use contact_form::{
 };
 pub use contact_group::ContactGroup;
 pub use contact_settings::{
-    CardSwitch, ContactArrival, ContactSettings, DigestSetting, StoppedMarker,
+    CardSwitch, ContactArrival, ContactSettings, ContactSuggestions, DigestSetting, StoppedMarker,
+    Suggestion,
 };
 pub use draft::{Draft, DraftKind, DraftState};
 pub use flag::{Flag, FlagSet};

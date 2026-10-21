@@ -135,6 +135,87 @@ impl CardSwitch {
     }
 }
 
+/// One of the four Suggestions switches in Settings > Contacts
+/// (specs/011-focus-contacts D7): each decides whether a piece of work is
+/// done at all, not whether its result is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Suggestion {
+    /// People the user writes to are saved without being asked.
+    SaveAutomatically,
+    /// Lists, newsletters and automated senders are told apart from people.
+    RecogniseKinds,
+    /// Signatures are read for a title, a company and phone numbers.
+    ReadSignatures,
+    /// Records that look like one person are looked for.
+    SuggestMerges,
+}
+
+impl Suggestion {
+    /// All four, in the order the pane lists them.
+    pub const ALL: [Self; 4] = [
+        Self::SaveAutomatically,
+        Self::RecogniseKinds,
+        Self::ReadSignatures,
+        Self::SuggestMerges,
+    ];
+
+    /// The stable name the store keeps.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::SaveAutomatically => "save_automatically",
+            Self::RecogniseKinds => "recognise_kinds",
+            Self::ReadSignatures => "read_signatures",
+            Self::SuggestMerges => "suggest_merges",
+        }
+    }
+
+    /// The inverse of [`Suggestion::name`]; `None` for anything else.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|one| one.name() == name)
+    }
+
+    /// Whether it is on until the person says otherwise: saving people
+    /// automatically is the one that is not.
+    pub fn default_on(self) -> bool {
+        !matches!(self, Self::SaveAutomatically)
+    }
+}
+
+/// Which Suggestions switches are on. The default is each switch's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContactSuggestions {
+    on: [bool; 4],
+}
+
+impl Default for ContactSuggestions {
+    fn default() -> Self {
+        Self {
+            on: Suggestion::ALL.map(Suggestion::default_on),
+        }
+    }
+}
+
+impl ContactSuggestions {
+    /// Whether `which` is on.
+    pub fn is_on(&self, which: Suggestion) -> bool {
+        self.on[Self::slot(which)]
+    }
+
+    /// These switches with `which` turned on or off.
+    #[must_use]
+    pub fn with(mut self, which: Suggestion, on: bool) -> Self {
+        self.on[Self::slot(which)] = on;
+        self
+    }
+
+    fn slot(which: Suggestion) -> usize {
+        Suggestion::ALL
+            .iter()
+            .position(|one| *one == which)
+            .expect("every suggestion is in ALL")
+    }
+}
+
 /// Everything decided about one correspondent. The default is "nothing", and
 /// a correspondent with nothing decided has no row.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -210,6 +291,31 @@ impl ContactSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_four_switches_start_as_the_spec_says_and_each_changes_alone() {
+        let start = ContactSuggestions::default();
+        assert!(!start.is_on(Suggestion::SaveAutomatically));
+        for which in [
+            Suggestion::RecogniseKinds,
+            Suggestion::ReadSignatures,
+            Suggestion::SuggestMerges,
+        ] {
+            assert!(start.is_on(which), "{which:?} is on by default");
+        }
+        for which in Suggestion::ALL {
+            let flipped = start.with(which, !start.is_on(which));
+            for other in Suggestion::ALL {
+                assert_eq!(
+                    flipped.is_on(other),
+                    start.is_on(other) != (other == which),
+                    "{which:?} moved {other:?}"
+                );
+            }
+            assert_eq!(Suggestion::from_name(which.name()), Some(which));
+        }
+        assert_eq!(Suggestion::from_name("autosave"), None);
+    }
 
     #[test]
     fn arrival_and_marker_names_round_trip_and_refuse_the_unknown() {

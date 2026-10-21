@@ -289,18 +289,28 @@ fn capital(text: &str) -> String {
 /// find look-alikes by: the signature (when it gives a name, a title and a
 /// company), each phone number, and the address a `Resent-From` header names.
 /// Facts about the sender, never message content.
-pub fn noticed(text: &str, headers: &str) -> Vec<(postio_model::EvidenceKind, String)> {
+///
+/// With `read_signatures` false the signature is not parsed at all
+/// (Settings > Contacts, "Read signatures for details"): only the forwarding
+/// header is looked at.
+pub fn noticed(
+    text: &str,
+    headers: &str,
+    read_signatures: bool,
+) -> Vec<(postio_model::EvidenceKind, String)> {
     use postio_model::EvidenceKind;
-    let signature = crate::signature::parse(text);
     let mut found = Vec::new();
-    if let Some(key) = signature.key() {
-        found.push((EvidenceKind::Signature, key));
-    }
-    for phone in &signature.phones {
-        found.push((
-            EvidenceKind::Phone,
-            phone.split_whitespace().collect::<Vec<_>>().join(" "),
-        ));
+    if read_signatures {
+        let signature = crate::signature::parse(text);
+        if let Some(key) = signature.key() {
+            found.push((EvidenceKind::Signature, key));
+        }
+        for phone in &signature.phones {
+            found.push((
+                EvidenceKind::Phone,
+                phone.split_whitespace().collect::<Vec<_>>().join(" "),
+            ));
+        }
     }
     if let Some(address) = resent_from(headers) {
         found.push((EvidenceKind::Resent, address));

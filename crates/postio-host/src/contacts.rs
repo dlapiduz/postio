@@ -188,6 +188,79 @@ pub async fn contact_glance(
     })
 }
 
+/// Which Suggestions switches are on (Settings > Contacts). A store that
+/// cannot be read says each switch's own default, so a failed read never
+/// switches work on that was off.
+pub async fn contact_suggestions(database: &Store) -> postio_model::ContactSuggestions {
+    let Ok(reader) = database.read().await else {
+        return postio_model::ContactSuggestions::default();
+    };
+    postio_storage::repository::ContactSuggestionRepository::new(&reader)
+        .get()
+        .await
+        .unwrap_or_default()
+}
+
+/// Turns one Suggestions switch on or off and returns all four. Turning one
+/// on does what it had skipped: kinds are told apart, and the people already
+/// written to are saved. Turning one off stops that work and leaves what it
+/// already made.
+pub async fn set_contact_suggestion(
+    database: &Store,
+    which: postio_model::Suggestion,
+    on: bool,
+) -> Result<postio_model::ContactSuggestions, String> {
+    let failed = |error: postio_storage::Error| {
+        tracing::warn!(%error, "could not save a Suggestions switch");
+        "Could not change that setting".to_owned()
+    };
+    {
+        let connection = database.connect().await.map_err(failed)?;
+        postio_storage::repository::ContactSuggestionRepository::new(&connection)
+            .set(which, on)
+            .await
+            .map_err(failed)?;
+    }
+    if on {
+        match which {
+            postio_model::Suggestion::RecogniseKinds => {
+                detect_kinds(database, 200).await?;
+            }
+            postio_model::Suggestion::SaveAutomatically => {
+                save_people_written_to(database).await?;
+            }
+            _ => {}
+        }
+    }
+    Ok(contact_suggestions(database).await)
+}
+
+/// Saves the people the user has written to, when "Save people I write to,
+/// automatically" is on, and does nothing at all when it is off. Returns how
+/// many it saved. Only people: a list or a company is not saved by being
+/// written to, and nobody put away is.
+pub async fn save_people_written_to(database: &Store) -> Result<usize, String> {
+    let failed = |error: postio_storage::Error| {
+        tracing::warn!(%error, "could not save the people written to");
+        "Could not save contacts".to_owned()
+    };
+    if !contact_suggestions(database)
+        .await
+        .is_on(postio_model::Suggestion::SaveAutomatically)
+    {
+        return Ok(0);
+    }
+    let connection = database.connect().await.map_err(failed)?;
+    let saved = ContactRepository::new(&connection)
+        .save_written_to()
+        .await
+        .map_err(failed)?;
+    if saved > 0 {
+        tracing::info!(saved, "saved the people written to");
+    }
+    Ok(saved)
+}
+
 /// What the newest mail from `person` says that the Edit form can keep: the
 /// phones and websites in its signature that are neither kept nor refused,
 /// then the ones kept. Empty when there is nothing, which is also what a
@@ -206,7 +279,12 @@ pub async fn contact_seen(
     };
     let known = contacts.details(person).await.unwrap_or_default();
     let mut items = Vec::new();
-    if let Ok(Some((message, _, _))) = contacts.introduction_facts(&held).await {
+    // "Read signatures for details" off: nothing is parsed, so nothing new is
+    // seen; the details the person already kept still show.
+    let reads = contact_suggestions(database)
+        .await
+        .is_on(postio_model::Suggestion::ReadSignatures);
+    if reads && let Ok(Some((message, _, _))) = contacts.introduction_facts(&held).await {
         let body = crate::search::stored_body(database, message).await;
         let parsed = postio_classify::signature::parse(body.text.as_deref().unwrap_or(""));
         for (kind, value) in parsed
@@ -315,6 +393,13 @@ pub async fn contact_review(
     database: &Store,
     first: &[postio_model::ContactId],
 ) -> Vec<postio_model::MergeGroup> {
+    let switches = contact_suggestions(database).await;
+    // "Suggest merging duplicates" off: nothing is looked for, so the queue is
+    // empty. Merging by hand (`contact_merge_of`) is not a suggestion.
+    if !switches.is_on(postio_model::Suggestion::SuggestMerges) {
+        return Vec::new();
+    }
+    let reads = switches.is_on(postio_model::Suggestion::ReadSignatures);
     let Ok(reader) = database.read().await else {
         return Vec::new();
     };
@@ -337,7 +422,9 @@ pub async fn contact_review(
     }
     let mut scored = Vec::new();
     for (a, b, replies) in pairs {
-        if let Some((evidence, score)) = evidence_of(database, &contacts, &a, &b, replies).await {
+        if let Some((evidence, score)) =
+            evidence_of(database, &contacts, &a, &b, replies, reads).await
+        {
             scored.push((a, b, evidence, score));
         }
     }
@@ -353,6 +440,9 @@ pub async fn contact_merge_of(
     database: &Store,
     ids: &[postio_model::ContactId],
 ) -> Option<postio_model::MergeGroup> {
+    let reads = contact_suggestions(database)
+        .await
+        .is_on(postio_model::Suggestion::ReadSignatures);
     let reader = database.read().await.ok()?;
     let contacts = ContactRepository::new(&reader);
     let mut people = Vec::new();
@@ -365,7 +455,7 @@ pub async fn contact_merge_of(
     let mut lists = Vec::new();
     for (i, a) in people.iter().enumerate() {
         for b in &people[i + 1..] {
-            if let Some((evidence, _)) = evidence_of(database, &contacts, a, b, 0).await {
+            if let Some((evidence, _)) = evidence_of(database, &contacts, a, b, 0, reads).await {
                 lists.push(evidence);
             }
         }
@@ -395,6 +485,7 @@ async fn evidence_of(
     a: &postio_model::Contact,
     b: &postio_model::Contact,
     replies: u32,
+    read_signatures: bool,
 ) -> Option<(Vec<postio_classify::duplicates::Evidence>, u32)> {
     use postio_classify::duplicates::{Pair, Side, score};
     let side = |person: &postio_model::Contact, signature: &postio_model::SignatureDetails| Side {
@@ -410,12 +501,22 @@ async fn evidence_of(
             .clone()
             .or_else(|| signature.company.clone()),
     };
-    let (sig_a, sig_b) = (
-        signature_of(database, contacts, a).await,
-        signature_of(database, contacts, b).await,
-    );
+    // "Read signatures" off: no signature is parsed, and what an earlier
+    // parse noted (a signature, a phone) is not used either.
+    let (sig_a, sig_b) = if read_signatures {
+        (
+            signature_of(database, contacts, a).await,
+            signature_of(database, contacts, b).await,
+        )
+    } else {
+        Default::default()
+    };
     let took = contacts.took_over(a, b).await.ok().flatten();
-    let noted = contacts.pair_evidence(a, b).await.unwrap_or_default();
+    let mut noted = contacts.pair_evidence(a, b).await.unwrap_or_default();
+    if !read_signatures {
+        noted.signature = None;
+        noted.phone = None;
+    }
     let pair = Pair {
         took_over_in_threads: took.as_ref().map_or(0, |(_, _, n)| *n),
         took_over: took.map(|(old, new, _)| (old, new)),
@@ -543,8 +644,17 @@ async fn introduction(
         .await
         .ok()
         .flatten()?;
-    let body = crate::search::stored_body(database, message).await;
-    let details = postio_classify::signature::parse(body.text.as_deref().unwrap_or(""));
+    // "Read signatures for details" off: who and when are still said, what
+    // they signed with is not parsed.
+    let details = if contact_suggestions(database)
+        .await
+        .is_on(postio_model::Suggestion::ReadSignatures)
+    {
+        let body = crate::search::stored_body(database, message).await;
+        postio_classify::signature::parse(body.text.as_deref().unwrap_or(""))
+    } else {
+        postio_model::SignatureDetails::default()
+    };
     Some(postio_model::Introduction {
         details,
         last_at: Some(received),
@@ -612,9 +722,12 @@ pub async fn contacts_filtered(
 pub async fn contacts_overview(
     database: &Store,
 ) -> Result<postio_model::ContactsOverview, postio_model::listing::StoreError> {
+    let duplicates = contact_suggestions(database)
+        .await
+        .is_on(postio_model::Suggestion::SuggestMerges);
     let reader = database.read().await?;
     ContactRepository::new(&reader)
-        .overview()
+        .overview(duplicates)
         .await
         .map_err(store_error)
 }
@@ -703,6 +816,14 @@ pub async fn detect_kinds(database: &Store, batch: u32) -> Result<usize, String>
         tracing::warn!(%error, "could not decide what sort of correspondents people are");
         "Could not sort contacts".to_owned()
     };
+    // "Recognise lists, newsletters and automated senders" off: nobody is
+    // sorted and no counts are read; everyone stays as they are.
+    if !contact_suggestions(database)
+        .await
+        .is_on(postio_model::Suggestion::RecogniseKinds)
+    {
+        return Ok(0);
+    }
     let connection = database.connect().await.map_err(failed)?;
     let contacts = ContactRepository::new(&connection);
     let rules = postio_classify::kind::KindRules::shipped();
@@ -1101,6 +1222,223 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
             contact_merge_of(&database, &[ada]).await.is_none(),
             "one is not a merge"
         );
+    }
+
+    async fn turn_off(database: &Store, which: postio_model::Suggestion) {
+        let connection = database.connect().await.expect("a connection");
+        postio_storage::repository::ContactSuggestionRepository::new(&connection)
+            .set(which, false)
+            .await
+            .expect("a switch");
+    }
+
+    #[tokio::test]
+    async fn with_read_signatures_off_nothing_reads_a_signature_and_the_rest_of_the_introduction_stays()
+     {
+        use chrono::TimeZone as _;
+        let database = test_support::memory().await;
+        first_mail(
+            &database,
+            "jonas@harbordata.example",
+            "Best,\nJonas Weber\nPartnerships \u{b7} Harbor Data Co.\n+1 555 0142\nharbordata.example\n",
+        )
+        .await;
+        let now = chrono::Utc.with_ymd_and_hms(2026, 3, 9, 12, 0, 0).unwrap();
+        let on = contact_glance(&database, "jonas@harbordata.example", now)
+            .await
+            .expect("a glance");
+        assert!(!contact_seen(&database, on.person.id).await.is_empty());
+
+        turn_off(&database, postio_model::Suggestion::ReadSignatures).await;
+        let off = contact_glance(&database, "jonas@harbordata.example", now)
+            .await
+            .expect("a glance");
+        let intro = off.introduction.expect("still introduced: who and when");
+        assert_eq!(intro.details, postio_model::SignatureDetails::default());
+        assert_eq!(intro.with, ["Ben Adeyemi"], "the copy is not a signature");
+        assert!(intro.last_at.is_some());
+        assert!(
+            contact_seen(&database, off.person.id).await.is_empty(),
+            "the Edit form's Seen in mail has nothing to offer"
+        );
+    }
+
+    #[tokio::test]
+    async fn with_suggest_merging_off_the_review_and_its_count_do_no_discovery() {
+        let database = test_support::memory().await;
+        {
+            let connection = database.connect().await.unwrap();
+            let contacts = ContactRepository::new(&connection);
+            for (name, address) in [
+                ("Ada Moreno", "ada@example.org"),
+                ("ada  moreno", "a.moreno@example.net"),
+            ] {
+                contacts
+                    .create(
+                        Some(name),
+                        &[postio_model::EmailAddress::new(None::<String>, address)],
+                    )
+                    .await
+                    .unwrap();
+            }
+        }
+        assert_eq!(contact_review(&database, &[]).await.len(), 1);
+        let counted = contacts_overview(&database).await.unwrap();
+        assert_eq!(counted.review.duplicates, 1);
+
+        turn_off(&database, postio_model::Suggestion::SuggestMerges).await;
+        assert!(
+            contact_review(&database, &[]).await.is_empty(),
+            "nothing is looked for, so nothing is offered"
+        );
+        assert_eq!(
+            contacts_overview(&database)
+                .await
+                .unwrap()
+                .review
+                .duplicates,
+            0
+        );
+        // Merging by hand is not a suggestion.
+        let (ada, other) = {
+            let connection = database.connect().await.unwrap();
+            let contacts = ContactRepository::new(&connection);
+            (
+                contacts
+                    .by_address("ada@example.org")
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .id,
+                contacts
+                    .by_address("a.moreno@example.net")
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .id,
+            )
+        };
+        assert!(contact_merge_of(&database, &[ada, other]).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn with_recognise_kinds_off_the_kind_pass_reads_nothing_and_decides_nobody_until_it_is_on()
+     {
+        use chrono::TimeZone as _;
+        let database = test_support::memory().await;
+        {
+            let connection = database.connect().await.expect("a connection");
+            let (account, inbox) = test_support::account_with_inbox(&connection).await;
+            for day in 0..6 {
+                let mut message = postio_model::Message::new(
+                    account.id,
+                    inbox,
+                    chrono::Utc.with_ymd_and_hms(2026, 3, 1, 12, 0, 0).unwrap()
+                        + chrono::Duration::days(day),
+                );
+                message.from = vec![postio_model::EmailAddress::new(
+                    Some("Ledger Weekly"),
+                    "news@ledger.example",
+                )];
+                message.to = vec![account.address.clone()];
+                message.promoted = Some(postio_model::promoted::PromotedHeaders {
+                    unsubscribe_offered: true,
+                    automation: postio_model::promoted::PRECEDENCE_BULK,
+                });
+                postio_storage::repository::MessageRepository::new(&connection)
+                    .create(&mut message)
+                    .await
+                    .expect("store");
+            }
+        }
+        catch_up(&database, 10, |_| {}).await.expect("people");
+        turn_off(&database, postio_model::Suggestion::RecogniseKinds).await;
+        assert_eq!(detect_kinds(&database, 10).await.unwrap(), 0);
+        let kind = || async {
+            let connection = database.connect().await.unwrap();
+            ContactRepository::new(&connection)
+                .by_address("news@ledger.example")
+                .await
+                .unwrap()
+                .unwrap()
+                .kind
+        };
+        assert_eq!(
+            kind().await,
+            postio_model::ContactKind::Person,
+            "never told apart"
+        );
+        // Turned back on, the same pass does the work it skipped.
+        {
+            let connection = database.connect().await.unwrap();
+            postio_storage::repository::ContactSuggestionRepository::new(&connection)
+                .set(postio_model::Suggestion::RecogniseKinds, true)
+                .await
+                .unwrap();
+        }
+        assert_eq!(detect_kinds(&database, 10).await.unwrap(), 1);
+        assert_eq!(kind().await, postio_model::ContactKind::Newsletter);
+    }
+
+    #[tokio::test]
+    async fn people_written_to_are_saved_only_while_the_switch_is_on() {
+        let database = test_support::memory().await;
+        let (written, only_read) = {
+            let connection = database.connect().await.unwrap();
+            let contacts = ContactRepository::new(&connection);
+            let make = |name: &'static str, address: &'static str| {
+                let contacts = &contacts;
+                async move {
+                    contacts
+                        .create(
+                            Some(name),
+                            &[postio_model::EmailAddress::new(None::<String>, address)],
+                        )
+                        .await
+                        .unwrap()
+                }
+            };
+            let written = make("Grace Oyelaran", "grace@example.org").await;
+            let read = make("Marco Ruiz", "marco@example.net").await;
+            postio_storage::sql::execute(
+                &connection,
+                "UPDATE contacts SET written = 2, saved_at = NULL WHERE id = ?1",
+                postio_storage::sql::bind![written.get()],
+            )
+            .await
+            .unwrap();
+            (written, read)
+        };
+        let saved = |who: postio_model::ContactId| {
+            let database = database.clone();
+            async move {
+                let connection = database.connect().await.unwrap();
+                ContactRepository::new(&connection)
+                    .get(who)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .is_saved()
+            }
+        };
+        // Off by default: the pass does nothing.
+        assert_eq!(save_people_written_to(&database).await.unwrap(), 0);
+        assert!(!saved(written).await);
+
+        {
+            let connection = database.connect().await.unwrap();
+            postio_storage::repository::ContactSuggestionRepository::new(&connection)
+                .set(postio_model::Suggestion::SaveAutomatically, true)
+                .await
+                .unwrap();
+        }
+        assert_eq!(save_people_written_to(&database).await.unwrap(), 1);
+        assert!(saved(written).await);
+        assert!(
+            !saved(only_read).await,
+            "mail they sent is not mail you wrote"
+        );
+        assert_eq!(save_people_written_to(&database).await.unwrap(), 0, "once");
     }
 
     /// Two messages, one from each of two addresses of one person nobody

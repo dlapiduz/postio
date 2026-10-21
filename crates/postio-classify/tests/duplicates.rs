@@ -220,7 +220,7 @@ fn what_a_body_notes_about_its_sender_is_the_signature_the_phones_and_the_resent
 
     let text = "Hello.\n\nThanks,\nAda Moreno\nFinance lead, Northwind Partners\n+1 555 0119\n";
     let headers = "From: ada@example.org\r\nResent-From: \"A. Moreno\" <a.moreno@example.net>\r\nSubject: hi\r\n";
-    let found = noticed(text, headers);
+    let found = noticed(text, headers, true);
     assert_eq!(
         found,
         [
@@ -232,11 +232,16 @@ fn what_a_body_notes_about_its_sender_is_the_signature_the_phones_and_the_resent
             (EvidenceKind::Resent, "a.moreno@example.net".to_owned()),
         ]
     );
-    assert!(noticed("Can you send it?\n", "From: ada@example.org\r\n").is_empty());
+    // "Read signatures" off: the signature is not parsed, the header still is.
+    assert_eq!(
+        noticed(text, headers, false),
+        [(EvidenceKind::Resent, "a.moreno@example.net".to_owned())]
+    );
+    assert!(noticed("Can you send it?\n", "From: ada@example.org\r\n", true).is_empty());
     // A folded header is still one header.
     let folded = "Resent-From:\r\n a.moreno@example.net\r\n";
     assert_eq!(
-        noticed("", folded),
+        noticed("", folded, true),
         [(EvidenceKind::Resent, "a.moreno@example.net".to_owned())]
     );
 }

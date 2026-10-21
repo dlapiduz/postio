@@ -238,7 +238,7 @@ async fn a_bounce_marks_the_address_counts_in_the_review_and_shows_on_the_card()
     )
     .await;
     let contacts = ContactRepository::new(&connection);
-    assert_eq!(contacts.overview().await.unwrap().review.bounced, 0);
+    assert_eq!(contacts.overview(true).await.unwrap().review.bounced, 0);
 
     let when = chrono::Utc::now() - chrono::Duration::days(2);
     assert!(
@@ -254,7 +254,7 @@ async fn a_bounce_marks_the_address_counts_in_the_review_and_shows_on_the_card()
             .unwrap(),
         "an address the store never saw is not marked"
     );
-    assert_eq!(contacts.overview().await.unwrap().review.bounced, 1);
+    assert_eq!(contacts.overview(true).await.unwrap().review.bounced, 1);
 
     let ada = person(&connection, "a.moreno@example.net").await;
     let notes = contacts.address_notes(ada).await.unwrap();
@@ -276,7 +276,7 @@ async fn a_bounce_marks_the_address_counts_in_the_review_and_shows_on_the_card()
         )
         .await
         .unwrap();
-    assert_eq!(contacts.overview().await.unwrap().review.bounced, 1);
+    assert_eq!(contacts.overview(true).await.unwrap().review.bounced, 1);
 }
 
 #[tokio::test]
@@ -306,5 +306,5 @@ async fn a_person_put_away_is_in_no_tab_and_no_count() {
         .unwrap();
     let ids: Vec<_> = page.iter().map(|row| row.id).collect();
     assert_eq!(ids, [kept], "only the live person is listed");
-    assert_eq!(contacts.overview().await.unwrap().total, 1, "and counted");
+    assert_eq!(contacts.overview(true).await.unwrap().total, 1, "and counted");
 }
