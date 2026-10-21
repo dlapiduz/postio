@@ -449,7 +449,7 @@ fn the_catch_up_shows_in_the_footer_and_the_review_line_when_something_waits() {
     let line = view.strip.review.expect("something is worth a look");
     assert_eq!(
         line.text,
-        "3 contacts may be the same person · 5 people you write to often aren't saved"
+        "3 sets of contacts may be the same person · 5 people you write to often aren't saved"
     );
 }
 

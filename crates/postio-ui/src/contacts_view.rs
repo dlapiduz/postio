@@ -58,7 +58,7 @@ pub struct TabView {
 pub struct ReviewLine {
     /// "Worth a look:".
     pub lead: String,
-    /// "3 contacts may be the same person · 2 addresses bounced recently".
+    /// "3 sets of contacts may be the same person · 2 addresses bounced recently".
     pub text: String,
     /// "Review".
     pub button: String,
@@ -93,7 +93,7 @@ pub struct StripView {
     pub review: Option<ReviewLine>,
 }
 
-/// "3 contacts may be the same person · 2 addresses bounced recently · 5
+/// "3 sets of contacts may be the same person · 2 addresses bounced recently · 5
 /// people you write to often aren't saved"; empty with nothing to say.
 pub fn review_text(review: &ReviewSummary) -> String {
     let plural = |n: u32, one: &str, many: &str| -> String {
@@ -108,8 +108,8 @@ pub fn review_text(review: &ReviewSummary) -> String {
     if review.duplicates > 0 {
         parts.push(plural(
             review.duplicates,
-            "contact may be the same person",
-            "contacts may be the same person",
+            "set of contacts may be the same person",
+            "sets of contacts may be the same person",
         ));
     }
     if review.bounced > 0 {
@@ -1046,7 +1046,7 @@ mod tests {
         };
         assert_eq!(
             review_text(&review),
-            "3 contacts may be the same person · 2 addresses bounced recently · 5 people you write to often aren't saved"
+            "3 sets of contacts may be the same person · 2 addresses bounced recently · 5 people you write to often aren't saved"
         );
         assert_eq!(
             review_text(&ReviewSummary {

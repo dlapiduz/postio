@@ -726,11 +726,21 @@ pub async fn contacts_overview(
     let duplicates = contact_suggestions(database)
         .await
         .is_on(postio_model::Suggestion::SuggestMerges);
-    let reader = database.read().await?;
-    ContactRepository::new(&reader)
-        .overview(duplicates)
-        .await
-        .map_err(store_error)
+    // The pairs are not counted in the store: the strip says how many groups
+    // of people the review will page through, which is the sheet's own count.
+    let mut overview = {
+        let reader = database.read().await?;
+        ContactRepository::new(&reader)
+            .overview(false)
+            .await
+            .map_err(store_error)?
+    };
+    if duplicates {
+        let groups = contact_review(database, &[]).await.len();
+        overview.review.duplicates =
+            u32::try_from(groups).map_or(postio_model::REVIEW_CAP, |n| n.min(postio_model::REVIEW_CAP));
+    }
+    Ok(overview)
 }
 
 /// What `person`'s card shows, as of `now`: the twelve months ending this
@@ -1323,6 +1333,54 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
     }
 
     #[tokio::test]
+    async fn the_review_count_is_the_groups_the_sheet_shows_and_falls_when_one_is_dismissed() {
+        let database = test_support::memory().await;
+        {
+            let connection = database.connect().await.unwrap();
+            let contacts = ContactRepository::new(&connection);
+            // Three records of one person make three suggested pairs and one
+            // group; two of another make one pair and one group.
+            for (name, address) in [
+                ("Ada Moreno", "ada@example.org"),
+                ("ada  moreno", "a.moreno@example.net"),
+                ("Ada  Moreno", "ada.m@example.com"),
+                ("Ben Adeyemi", "ben@example.org"),
+                ("ben adeyemi", "ben@example.net"),
+            ] {
+                contacts
+                    .create(
+                        Some(name),
+                        &[postio_model::EmailAddress::new(None::<String>, address)],
+                    )
+                    .await
+                    .unwrap();
+            }
+        }
+        let groups = contact_review(&database, &[]).await;
+        assert_eq!(groups.len(), 2, "{groups:?}");
+        assert_eq!(
+            contacts_overview(&database).await.unwrap().review.duplicates,
+            2,
+            "the strip counts what the sheet pages through, not suggested pairs"
+        );
+        // Not the same, for every pair of the first group.
+        {
+            let connection = database.connect().await.unwrap();
+            let contacts = ContactRepository::new(&connection);
+            let people = &groups[0].people;
+            for (i, a) in people.iter().enumerate() {
+                for b in &people[i + 1..] {
+                    contacts.dismiss(a.id, b.id).await.unwrap();
+                }
+            }
+        }
+        assert_eq!(
+            contacts_overview(&database).await.unwrap().review.duplicates,
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn with_recognise_kinds_off_the_kind_pass_reads_nothing_and_decides_nobody_until_it_is_on()
      {
         use chrono::TimeZone as _;
@@ -1767,6 +1825,21 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
                 "{}: the card says {} messages and the list {}",
                 row.name, card.stats.messages, row.messages
             );
+            // And the strip under the tiles reads the same stats: a person
+            // whose last mail falls in the twelve months it draws has a bar.
+            let this_month = postio_model::month_key(chrono::Utc::now());
+            if let Some(last) = card.stats.last
+                && postio_model::month_key(last) > this_month - 12
+                && postio_model::month_key(last) <= this_month
+                && card.stats.messages > 0
+            {
+                assert!(
+                    card.stats.months.iter().map(|(_, n)| *n).sum::<u32>() > 0,
+                    "{}: {} messages, the last on {last}, and a flat strip",
+                    row.name,
+                    card.stats.messages
+                );
+            }
         }
     }
 
