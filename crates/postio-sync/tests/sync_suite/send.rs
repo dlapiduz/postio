@@ -2130,6 +2130,23 @@ async fn with_it_off_a_send_saves_nobody() {
 }
 
 #[tokio::test]
+async fn a_refused_send_saves_nobody_even_with_the_switch_on() {
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, _sent) = account_with_sent(&connection).await;
+    turn_saving_on(&connection, true).await;
+    let report = send_one(
+        &connection,
+        &account,
+        a_draft(&account, "grace@example.net"),
+        script_replying_to_rcpt("550 no such user"),
+    )
+    .await;
+    assert_eq!(report.failed.len(), 1, "{report:?}");
+    assert!(!saved(&connection, "grace@example.net").await);
+}
+
+#[tokio::test]
 async fn a_send_the_server_refused_wrote_to_nobody() {
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
