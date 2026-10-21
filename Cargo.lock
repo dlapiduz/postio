@@ -4874,6 +4874,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "postio-contact-sync"
+version = "0.4.2"
+dependencies = [
+ "postio-model",
+ "postio-workspace-hack",
+]
+
+[[package]]
 name = "postio-core"
 version = "0.4.2"
 dependencies = [

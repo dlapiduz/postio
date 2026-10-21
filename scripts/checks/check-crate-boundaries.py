@@ -780,6 +780,27 @@ RULES: dict[str, dict[str, object]] = {
             "have (specs/005-contacts research R9)."
         ),
     },
+    "postio-contact-sync": {
+        "banned": [
+            "rusqlite",
+            "libsqlite3-sys",
+            "turso",
+            "turso_core",
+            "gtk4",
+            "gtk4-sys",
+            "gtk4-macros",
+            "tokio",
+            "postio-storage",
+        ],
+        "why": (
+            "postio-contact-sync decides what a sync would do, over snapshots "
+            "it is handed, and holds the gate that keeps writes shut. It has no "
+            "store, no toolkit and no runtime: the address book is a trait, "
+            "every test uses a fake, and a dependency that could open the real "
+            "one, or Postio's own database, arriving here would mean the plan "
+            "can reach what it only describes (specs/011-focus-contacts S12)."
+        ),
+    },
     "postio-model": {
         "banned": [
             "ammonia",
