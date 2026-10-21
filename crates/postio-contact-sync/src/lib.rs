@@ -151,6 +151,8 @@ pub struct Change {
     pub local: i64,
     /// The other side's id.
     pub external: String,
+    /// Who, in words, for the report.
+    pub label: String,
     /// Which side changes.
     pub side: Side,
     /// Which field.
@@ -258,7 +260,7 @@ impl Plan {
             };
             lines.push(format!(
                 "Update {} {who}: {} becomes {}",
-                change.local, change.field, change.to
+                change.label, change.field, change.to
             ));
         }
         for conflict in &self.conflicts {
@@ -601,6 +603,7 @@ fn change(
     Change {
         local: local.id,
         external: external.id.clone(),
+        label: local.label.clone(),
         side,
         field: field.to_owned(),
         to: to.to_owned(),

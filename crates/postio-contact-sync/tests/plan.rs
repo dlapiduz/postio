@@ -193,6 +193,7 @@ fn when_only_one_side_changed_a_field_since_the_last_sync_that_side_wins() {
         [Change {
             local: 1,
             external: "x1".into(),
+            label: "Ada Moreno".into(),
             side: Side::External,
             field: "title".into(),
             to: "Finance lead".into(),
@@ -360,4 +361,30 @@ fn the_report_names_people_and_the_counts_never_do() {
         "{report:?}"
     );
     assert!(!p.summary().contains("Grace"), "the summary is counts only");
+}
+
+#[test]
+fn an_update_line_names_the_person_never_an_id() {
+    let base = fields("Ada", "Moreno", &["ada@example.org"], &[]);
+    let mut theirs = base.clone();
+    theirs.organization = "Northwind Partners".to_owned();
+    let link = Link {
+        local: 93,
+        external: "x1".into(),
+        base: base.clone(),
+    };
+    let p = run(
+        &[local(93, base)],
+        &[external("x1", theirs)],
+        &[link],
+        Mode::TwoWay,
+    );
+    let report = p.report();
+    assert!(
+        report
+            .iter()
+            .any(|l| l.starts_with("Update Ada Moreno in Postio")),
+        "{report:?}"
+    );
+    assert!(!report.iter().any(|l| l.contains("93")), "{report:?}");
 }
