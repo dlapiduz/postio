@@ -75,6 +75,10 @@ public enum Intercepted {
     /// The reader's `i a`: the blocked-images notice's "Always allow", for
     /// the sender the notice names, and only where the notice is.
     public static let alwaysShowImages = "always_show_images"
+    /// `o`/`A` over the open message: its attachments to choose from. The
+    /// choice is a menu this frontend draws, and the file is handed to the
+    /// system here.
+    public static let openAttachmentOrLink = "open_attachment_or_link"
     /// The settings window's account verbs. Every one acts on the row the
     /// keyboard is on, which is `SettingsAccounts`'s cursor and this side's
     /// alone; two of them need a sheet on top of that.
@@ -100,6 +104,6 @@ public enum Intercepted {
         addAccount, editConfig, toggleAccountEnabled, removeAccount,
         updateCredential, rebuildAccountIndex, setDefaultAccount,
         showImages,
-        quit, unsubscribe, clearListMail, alwaysShowImages,
+        quit, unsubscribe, clearListMail, alwaysShowImages, openAttachmentOrLink,
     ] + composeVerbs
 }
