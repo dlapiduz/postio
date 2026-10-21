@@ -1522,6 +1522,7 @@ impl Session {
         use postio_model::ids::AttachmentId;
         let (database, blobs) = self.store_and_blobs().ok_or_else(no_store)?;
         let (message, attachment) = (message.into(), AttachmentId::new(attachment));
+        let engine = self.engine_for_message(message).await;
         let found = postio_host::parts::read_message(&database, message).await?;
         let name = found
             .attachments
@@ -1530,8 +1531,7 @@ impl Session {
             .and_then(|part| part.filename.clone());
         // The bytes first, so a part that cannot be had leaves no empty file.
         let bytes =
-            postio_host::parts::part_bytes(&database, &blobs, self.engine(), message, attachment)
-                .await?;
+            postio_host::parts::part_bytes(&database, &blobs, engine, message, attachment).await?;
         let to = postio_host::parts::private_copy_path(
             &std::env::temp_dir(),
             message,
@@ -4913,28 +4913,32 @@ impl Session {
         part_id: String,
     ) -> Result<Vec<u8>, crate::PartsError> {
         let (database, blobs) = self.store_and_blobs().ok_or_else(no_store)?;
-        Ok(postio_session::reading::part_bytes_at(
-            &database,
-            &blobs,
-            self.engine(),
-            message.into(),
-            &part_id,
+        let message = message.into();
+        let engine = self.engine_for_message(message).await;
+        Ok(
+            postio_session::reading::part_bytes_at(&database, &blobs, engine, message, &part_id)
+                .await?,
         )
-        .await?)
     }
 
-    /// The engine for this store, once one has been started.
+    /// The engine of the account `message` belongs to, once it has started.
     ///
     /// `None` is an ordinary state rather than a fault — a store nobody has
-    /// signed into yet — and it is what turns "fetch this part" into a
-    /// sentence saying the account is not syncing instead of a wait that
-    /// never ends.
-    fn engine(&self) -> Option<postio_runtime::Engine> {
+    /// signed into yet, or an account that is not syncing — and it is what
+    /// turns "fetch this part" into a sentence saying the account is not
+    /// syncing instead of a wait that never ends. Never another account's
+    /// engine: its server would answer for a different mailbox and UID.
+    async fn engine_for_message(
+        &self,
+        message: postio_model::MessageId,
+    ) -> Option<postio_runtime::Engine> {
+        let (database, _) = self.store_and_blobs()?;
+        let account = postio_host::parts::account_of(&database, message).await?;
         self.wiring
             .lock()
             .expect("wiring lock")
             .as_ref()
-            .and_then(|wiring| wiring.engine.first())
+            .and_then(|wiring| wiring.engine.get(account))
     }
 
     /// Every folder of every enabled account, for the sidebar.
@@ -5178,13 +5182,28 @@ impl Session {
     /// the seam CLAUDE.md names for it.
     #[cfg(feature = "testing")]
     pub fn adopt_mock_engine_for_test(&self) {
+        self.adopt_mock_engine_for(
+            postio_model::ids::AccountId::new(1),
+            Arc::new(postio_account::backend::MockBackend::new()),
+        );
+    }
+
+    /// [`Self::adopt_mock_engine_for_test`] for one named account, over the
+    /// server the caller built: what a two-account session needs, since each
+    /// account's engine must answer from its own server.
+    #[cfg(feature = "testing")]
+    pub fn adopt_mock_engine_for(
+        &self,
+        account: postio_model::ids::AccountId,
+        backend: Arc<postio_account::backend::MockBackend>,
+    ) {
         let guard = self.wiring.lock().expect("wiring lock");
         let Some(wiring) = guard.as_ref() else { return };
         let parts = postio_runtime::EngineParts {
-            account: 1.into(),
+            account,
             database: wiring.database.clone(),
             blobs: wiring.blobs.clone(),
-            backend: Arc::new(postio_account::backend::MockBackend::new()),
+            backend,
             smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
             tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
                 postio_account::secret::MemorySecretStore::default(),
@@ -5199,17 +5218,13 @@ impl Session {
             network: postio_runtime::NetworkSource::Ignored,
         };
         if let Ok(engine) = postio_runtime::Engine::spawn(parts) {
-            wiring
-                .engine
-                .fill(postio_model::ids::AccountId::new(1), engine.clone());
-            // Account 1, matching the `parts.account` above: the engines list
-            // is keyed by account now, so that `start_syncing` can tell an
-            // account that is already running from one that has just been
-            // added.
+            wiring.engine.fill(account, engine.clone());
+            // Keyed by account, so that `start_syncing` can tell an account
+            // that is already running from one that has just been added.
             self.engines
                 .lock()
                 .expect("engines lock")
-                .push((postio_model::ids::AccountId::new(1), engine));
+                .push((account, engine));
         }
     }
 
