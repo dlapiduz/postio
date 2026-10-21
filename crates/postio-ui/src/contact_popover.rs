@@ -618,6 +618,7 @@ mod tests {
         };
         let introduction = postio_model::Introduction {
             details: postio_model::SignatureDetails {
+                name: None,
                 title: Some("Partnerships".into()),
                 company: Some("Harbor Data Co.".into()),
                 phones: vec!["+1 555 0142".into()],

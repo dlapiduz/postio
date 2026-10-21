@@ -240,9 +240,22 @@ pub async fn contact_review(database: &Store) -> Vec<postio_model::MergeGroup> {
         return Vec::new();
     };
     let contacts = ContactRepository::new(&reader);
-    let Ok(pairs) = contacts.suggestion_pairs(40).await else {
+    let Ok(mut pairs) = contacts.suggestion_pairs(40).await else {
         return Vec::new();
     };
+    // And the pairs nobody suggested: what the mail noted (a signature, a
+    // phone, a Resent-From) and one address stopping as another began.
+    for (a, b) in contacts.discovered_pairs(40).await.unwrap_or_default() {
+        if pairs
+            .iter()
+            .any(|(x, y, _)| (x.id, y.id) == (a, b) || (x.id, y.id) == (b, a))
+        {
+            continue;
+        }
+        if let (Ok(Some(a)), Ok(Some(b))) = (contacts.get(a).await, contacts.get(b).await) {
+            pairs.push((a, b, 0));
+        }
+    }
     let mut scored = Vec::new();
     for (a, b, replies) in pairs {
         if let Some((evidence, score)) = evidence_of(database, &contacts, &a, &b, replies).await {
@@ -320,14 +333,49 @@ async fn evidence_of(
         signature_of(database, contacts, b).await,
     );
     let took = contacts.took_over(a, b).await.ok().flatten();
+    let noted = contacts.pair_evidence(a, b).await.unwrap_or_default();
     let pair = Pair {
         took_over_in_threads: took.as_ref().map_or(0, |(_, _, n)| *n),
         took_over: took.map(|(old, new, _)| (old, new)),
         replies,
-        ..Pair::default()
+        shared_phone: noted.phone,
+        signature: noted.signature.and_then(|key| {
+            let mut parts = key.split('|').skip(1);
+            // The spelling a record already has, else the folded words said
+            // the way a person would write them.
+            let spelled = |folded: &str, real: [&Option<String>; 2]| {
+                real.into_iter()
+                    .flatten()
+                    .find(|text| text.to_lowercase() == folded)
+                    .cloned()
+                    .unwrap_or_else(|| words_cased(folded))
+            };
+            Some((
+                spelled(parts.next()?, [&a.title, &b.title]),
+                spelled(parts.next()?, [&a.organization, &b.organization]),
+            ))
+        }),
+        forwards_from: noted.resent.as_ref().map(|(from, _)| from.clone()),
+        forwards_to: noted.resent.map(|(_, to)| to),
     };
     let scored = score(&side(a, &sig_a), &side(b, &sig_b), &pair)?;
     Some((scored.evidence, scored.score))
+}
+
+/// "finance lead" as "Finance Lead": what the key keeps folded, said the way a
+/// person would write it when no record has the real spelling.
+fn words_cased(folded: &str) -> String {
+    folded
+        .split_whitespace()
+        .map(|word| {
+            let mut chars = word.chars();
+            chars
+                .next()
+                .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// What the newest mail from `person` signs with.
@@ -972,6 +1020,92 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
         );
     }
 
+    /// Two messages, one from each of two addresses of one person nobody
+    /// told the store about, and the people the catch-up made of them.
+    async fn two_addresses_one_person(
+        database: &Store,
+    ) -> (postio_model::MessageId, postio_model::MessageId) {
+        use chrono::TimeZone as _;
+        let connection = database.connect().await.expect("a connection");
+        let (account, inbox) = test_support::account_with_inbox(&connection).await;
+        let repository = postio_storage::repository::MessageRepository::new(&connection);
+        let mut ids = Vec::new();
+        for (from, day) in [("a.moreno@example.net", 1), ("ada@example.org", 40)] {
+            let mut message = postio_model::Message::new(
+                account.id,
+                inbox,
+                chrono::Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap()
+                    + chrono::Duration::days(day),
+            );
+            message.from = vec![postio_model::EmailAddress::new(None::<String>, from)];
+            message.to = vec![account.address.clone()];
+            repository.create(&mut message).await.expect("a message");
+            ids.push(message.id);
+        }
+        test_support::mark_contacts_history(&connection).await;
+        ContactRepository::new(&connection)
+            .catch_up_batch(None, 100)
+            .await
+            .expect("people");
+        (ids[0], ids[1])
+    }
+
+    #[tokio::test]
+    async fn a_pair_with_only_a_signature_a_phone_or_a_resent_from_is_found_with_that_line() {
+        use postio_model::EvidenceKind;
+        for (kind, values, expect) in [
+            (
+                EvidenceKind::Signature,
+                ["ada moreno|finance lead|northwind partners"; 2],
+                "The same signature on both",
+            ),
+            (
+                EvidenceKind::Phone,
+                ["+1 555 0119"; 2],
+                "give the phone number +1 555 0119",
+            ),
+        ] {
+            let database = test_support::memory().await;
+            let (old, new) = two_addresses_one_person(&database).await;
+            {
+                let connection = database.connect().await.unwrap();
+                let contacts = ContactRepository::new(&connection);
+                for (message, value) in [old, new].into_iter().zip(values) {
+                    contacts
+                        .record_evidence(message, &[(kind, value.to_owned())])
+                        .await
+                        .unwrap();
+                }
+            }
+            let groups = contact_review(&database).await;
+            assert_eq!(groups.len(), 1, "{kind:?}: {groups:?}");
+            assert!(
+                groups[0].evidence.iter().any(|line| line.contains(expect)),
+                "{kind:?}: {:?}",
+                groups[0].evidence
+            );
+        }
+
+        let database = test_support::memory().await;
+        let (_old, new) = two_addresses_one_person(&database).await;
+        {
+            let connection = database.connect().await.unwrap();
+            ContactRepository::new(&connection)
+                .record_evidence(
+                    new,
+                    &[(EvidenceKind::Resent, "a.moreno@example.net".to_owned())],
+                )
+                .await
+                .unwrap();
+        }
+        let groups = contact_review(&database).await;
+        assert_eq!(groups.len(), 1);
+        assert_eq!(
+            groups[0].evidence,
+            ["ada@example.org forwards from a.moreno@example.net (Resent-From header)"]
+        );
+    }
+
     #[tokio::test]
     async fn the_demo_has_three_records_of_one_person_for_screen_07() {
         let (database, _) = postio_demo::demo().await;
@@ -986,7 +1120,14 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
             ada.people[0].is_saved(),
             "the saved record comes first, to be kept"
         );
-        assert!(ada.evidence[0].contains("Ada Moreno"), "{:?}", ada.evidence);
+        assert_eq!(
+            ada.evidence,
+            [
+                "The same signature on all three: \u{201c}Ada Moreno \u{b7} Finance lead, Northwind Partners\u{201d}",
+                "a.moreno@example.net stopped when ada.moreno@northwind.example began, in the same 2 threads",
+                "ada.m@example.org forwards from ada.moreno@northwind.example (Resent-From header)"
+            ]
+        );
     }
 
     #[tokio::test]

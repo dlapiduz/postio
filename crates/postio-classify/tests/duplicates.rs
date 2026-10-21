@@ -175,3 +175,68 @@ fn the_sheet_says_all_three_when_every_pair_shares_the_signature() {
         "ada.moreno@example.com forwards from ada@example.org (Resent-From header)"
     );
 }
+
+#[test]
+fn the_same_phone_number_alone_is_evidence_and_reads_as_a_line() {
+    let a = side("Ada Moreno", &["ada@example.org"], "", "");
+    let b = side("A. M.", &["a.m@example.net"], "", "");
+    let pair = Pair {
+        shared_phone: Some("+1 555 0119".to_owned()),
+        ..Pair::default()
+    };
+    let scored = score(&a, &b, &pair).expect("a candidate");
+    assert_eq!(
+        scored.evidence,
+        [Evidence::SamePhone("+1 555 0119".to_owned())]
+    );
+    assert_eq!(
+        describe(2, &[scored.evidence], "Ada")[0],
+        "Both give the phone number +1 555 0119"
+    );
+}
+
+#[test]
+fn a_signature_noted_as_the_same_is_evidence_even_with_no_sides_to_compare() {
+    let a = side("Ada Moreno", &["ada@example.org"], "", "");
+    let b = side("A.", &["a@example.net"], "", "");
+    let pair = Pair {
+        signature: Some(("Finance lead".to_owned(), "Northwind Partners".to_owned())),
+        ..Pair::default()
+    };
+    let scored = score(&a, &b, &pair).expect("a candidate");
+    assert_eq!(
+        scored.evidence,
+        [Evidence::SameSignature {
+            title: "Finance lead".into(),
+            company: "Northwind Partners".into()
+        }]
+    );
+}
+
+#[test]
+fn what_a_body_notes_about_its_sender_is_the_signature_the_phones_and_the_resent_from() {
+    use postio_classify::duplicates::noticed;
+    use postio_model::EvidenceKind;
+
+    let text = "Hello.\n\nThanks,\nAda Moreno\nFinance lead, Northwind Partners\n+1 555 0119\n";
+    let headers = "From: ada@example.org\r\nResent-From: \"A. Moreno\" <a.moreno@example.net>\r\nSubject: hi\r\n";
+    let found = noticed(text, headers);
+    assert_eq!(
+        found,
+        [
+            (
+                EvidenceKind::Signature,
+                "ada moreno|finance lead|northwind partners".to_owned()
+            ),
+            (EvidenceKind::Phone, "+1 555 0119".to_owned()),
+            (EvidenceKind::Resent, "a.moreno@example.net".to_owned()),
+        ]
+    );
+    assert!(noticed("Can you send it?\n", "From: ada@example.org\r\n").is_empty());
+    // A folded header is still one header.
+    let folded = "Resent-From:\r\n a.moreno@example.net\r\n";
+    assert_eq!(
+        noticed("", folded),
+        [(EvidenceKind::Resent, "a.moreno@example.net".to_owned())]
+    );
+}

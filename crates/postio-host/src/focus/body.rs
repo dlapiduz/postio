@@ -266,11 +266,22 @@ async fn classify(
     // A delivery failure names an address that did not work: it is marked
     // beside the rest of the batch (specs/011-focus-contacts S10).
     let mut bounced = Vec::new();
+    let mut noticed = Vec::new();
     for &message in batch {
         if let Ok(Some(row)) = MessageRepository::new(connection).get(message).await
             && let Some(bounce) = bounce_of(blobs, &row).await
         {
             bounced.push((bounce, row.received_at));
+        }
+        // What the mail says about its sender, for the review.
+        if let Ok(Some(stored)) = MessageRepository::new(connection).body(message).await {
+            let found = postio_classify::duplicates::noticed(
+                stored.text.as_deref().unwrap_or(""),
+                stored.headers.as_deref().unwrap_or(""),
+            );
+            if !found.is_empty() {
+                noticed.push((message, found));
+            }
         }
     }
     for &message in batch {
@@ -307,6 +318,11 @@ async fn classify(
             // FR-122: mail that asks something of the user is not held.
             // Filing held it on its headers alone; its body says otherwise.
             digests.release_waiting(marker.message).await?;
+        }
+        for (message, found) in &noticed {
+            postio_storage::repository::ContactRepository::new(&transaction)
+                .record_evidence(*message, found)
+                .await?;
         }
         for (bounce, at) in &bounced {
             postio_storage::repository::ContactRepository::new(&transaction)

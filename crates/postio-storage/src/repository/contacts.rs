@@ -3926,6 +3926,168 @@ impl ContactRepository<'_> {
 }
 
 impl ContactRepository<'_> {
+    /// Notes what a message said about its sender (specs/011-focus-contacts
+    /// S10): a signature, a phone, a `Resent-From`. Kept against the sender's
+    /// person, once however often the mail says it; what is noted is a fact
+    /// about them, never the message.
+    pub async fn record_evidence(
+        &self,
+        message: postio_model::MessageId,
+        items: &[(postio_model::EvidenceKind, String)],
+    ) -> Result<()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+        let sender: Option<i64> = sql::first(
+            self.connection,
+            "SELECT a.contact_id FROM recipients r JOIN addresses a ON a.id = r.address_id
+              WHERE r.message_id = ?1 AND r.kind = 'from' AND a.contact_id IS NOT NULL
+              LIMIT 1",
+            [message.get()],
+            |row| row.col(0),
+        )
+        .await?;
+        let Some(sender) = sender else {
+            return Ok(());
+        };
+        for (kind, value) in items {
+            sql::execute(
+                self.connection,
+                "INSERT OR IGNORE INTO contact_evidence (contact_id, kind, value) VALUES (?1, ?2, ?3)",
+                bind![sender, kind.as_str(), value.clone()],
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Pairs of live people the mail says may be one, found without being
+    /// told: the same signature or phone noted on both, a `Resent-From` that
+    /// names the other's address, or one stopping as the other begins in at
+    /// least two shared threads. Lower id first; pairs the user said are two
+    /// people are left out.
+    pub async fn discovered_pairs(&self, limit: u32) -> Result<Vec<(ContactId, ContactId)>> {
+        use std::collections::BTreeSet;
+        let cap = i64::from(limit) * 4;
+        let mut found: BTreeSet<(i64, i64)> = BTreeSet::new();
+        let shared: Vec<(i64, i64)> = sql::all_unbounded(
+            self.connection,
+            "SELECT e1.contact_id, e2.contact_id FROM contact_evidence e1
+               JOIN contact_evidence e2
+                 ON e2.kind = e1.kind AND e2.value = e1.value AND e2.contact_id > e1.contact_id
+               JOIN contacts c1 ON c1.id = e1.contact_id AND c1.state = 'live'
+               JOIN contacts c2 ON c2.id = e2.contact_id AND c2.state = 'live'
+              WHERE e1.kind IN ('signature', 'phone') LIMIT ?1",
+            [cap],
+            |row| Ok((row.col(0)?, row.col(1)?)),
+        )
+        .await?;
+        found.extend(shared);
+        let resent: Vec<(i64, i64)> = sql::all_unbounded(
+            self.connection,
+            "SELECT e.contact_id, a.contact_id FROM contact_evidence e
+               JOIN addresses a ON a.address_normalized = lower(e.value)
+               JOIN contacts c1 ON c1.id = e.contact_id AND c1.state = 'live'
+               JOIN contacts c2 ON c2.id = a.contact_id AND c2.state = 'live'
+              WHERE e.kind = 'resent' AND a.contact_id <> e.contact_id LIMIT ?1",
+            [cap],
+            |row| Ok((row.col(0)?, row.col(1)?)),
+        )
+        .await?;
+        found.extend(resent.into_iter().map(|(a, b)| (a.min(b), a.max(b))));
+        let took: Vec<(i64, i64)> = sql::all_unbounded(
+            self.connection,
+            "WITH f AS (
+               SELECT m.thread_id AS t, a.contact_id AS c,
+                      min(m.received_at) AS lo, max(m.received_at) AS hi
+                 FROM recipients r
+                 JOIN messages m ON m.id = r.message_id
+                 JOIN addresses a ON a.id = r.address_id
+                 JOIN contacts k ON k.id = a.contact_id AND k.state = 'live'
+                WHERE r.kind = 'from' AND m.thread_id IS NOT NULL
+                GROUP BY m.thread_id, a.contact_id)
+             SELECT x.c, y.c FROM f x JOIN f y ON y.t = x.t AND y.c <> x.c AND x.hi < y.lo
+              GROUP BY x.c, y.c HAVING count(*) >= 2 LIMIT ?1",
+            [cap],
+            |row| Ok((row.col(0)?, row.col(1)?)),
+        )
+        .await?;
+        found.extend(took.into_iter().map(|(a, b)| (a.min(b), a.max(b))));
+        let mut out = Vec::new();
+        for (a, b) in found {
+            let dismissed = sql::exists(
+                self.connection,
+                "SELECT 1 FROM addresses nx
+                   JOIN addresses ny ON ny.contact_id = ?2
+                   JOIN contact_join_dismissals d
+                     ON d.address_low = min(nx.id, ny.id) AND d.address_high = max(nx.id, ny.id)
+                  WHERE nx.contact_id = ?1",
+                bind![a, b],
+            )
+            .await?;
+            if !dismissed {
+                out.push((ContactId::new(a), ContactId::new(b)));
+            }
+            if out.len() >= limit as usize {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// What the noted evidence says the two records share.
+    pub async fn pair_evidence(
+        &self,
+        a: &postio_model::Contact,
+        b: &postio_model::Contact,
+    ) -> Result<postio_model::PairEvidence> {
+        let shared = |kind: &'static str| {
+            let (a, b) = (a.id.get(), b.id.get());
+            async move {
+                sql::first(
+                    self.connection,
+                    "SELECT e1.value FROM contact_evidence e1
+                       JOIN contact_evidence e2 ON e2.kind = e1.kind AND e2.value = e1.value
+                      WHERE e1.kind = ?3 AND e1.contact_id = ?1 AND e2.contact_id = ?2 LIMIT 1",
+                    bind![a, b, kind],
+                    |row| row.col::<String>(0),
+                )
+                .await
+            }
+        };
+        let signature = shared("signature").await?;
+        let phone = shared("phone").await?;
+        let mut resent = None;
+        for (sender, other) in [(a, b), (b, a)] {
+            let noted: Vec<String> = sql::all_unbounded(
+                self.connection,
+                "SELECT value FROM contact_evidence WHERE contact_id = ?1 AND kind = 'resent'",
+                [sender.id.get()],
+                |row| row.col(0),
+            )
+            .await?;
+            if let Some(from) = noted.into_iter().find(|value| {
+                other
+                    .addresses
+                    .iter()
+                    .any(|owned| owned.address.address.eq_ignore_ascii_case(value))
+            }) {
+                let to = sender
+                    .addresses
+                    .first()
+                    .map(|owned| owned.address.address.clone())
+                    .unwrap_or_default();
+                resent = Some((from, to));
+                break;
+            }
+        }
+        Ok(postio_model::PairEvidence {
+            signature,
+            phone,
+            resent,
+        })
+    }
+
     /// A delivery failure named `address`: it is marked, at the time of the
     /// report, unless a later failure already is. Returns whether the address
     /// is one the store knows.

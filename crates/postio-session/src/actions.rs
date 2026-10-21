@@ -7127,6 +7127,7 @@ mod tests {
                     action: ContactEditAction::AddSender {
                         address: "JONAS@harbordata.example".into(),
                         details: SignatureDetails {
+                            name: None,
                             title: Some("Partnerships".into()),
                             company: Some("Harbor Data Co.".into()),
                             phones: vec!["+1 555 0142".into()],

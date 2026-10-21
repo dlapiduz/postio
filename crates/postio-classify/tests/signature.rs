@@ -102,3 +102,33 @@ fn an_email_address_is_not_a_website_and_a_date_is_not_a_phone() {
     assert!(details.websites.is_empty(), "{details:?}");
     assert!(details.phones.is_empty(), "{details:?}");
 }
+
+#[test]
+fn the_name_line_under_the_sign_off_is_the_name_and_its_key_needs_all_three_parts() {
+    let details = parse(&lines(
+        "
+Thanks,
+Ada Moreno
+Finance lead, Northwind Partners
++1 555 0119
+",
+    ));
+    assert_eq!(details.name.as_deref(), Some("Ada Moreno"));
+    assert_eq!(
+        details.key().as_deref(),
+        Some("ada moreno|finance lead|northwind partners")
+    );
+
+    // A first name alone, or a line that is not a name, is no name.
+    assert_eq!(
+        parse("Best,\nAda\nFinance lead, Northwind Partners\n").name,
+        None
+    );
+    assert_eq!(parse("Best,\nada@example.org\n+1 555 0119\n").name, None);
+
+    // Without a title and a company there is no key: it would match
+    // colleagues and strangers.
+    let named = parse("Best,\nAda Moreno\n+1 555 0119\n");
+    assert_eq!(named.name.as_deref(), Some("Ada Moreno"));
+    assert_eq!(named.key(), None);
+}

@@ -34,6 +34,11 @@ pub struct Pair {
     pub forwards_to: Option<String>,
     /// How many answers crossed between them.
     pub replies: u32,
+    /// A phone number both give.
+    pub shared_phone: Option<String>,
+    /// The title and company both sign with, when the signatures were noted
+    /// as the same.
+    pub signature: Option<(String, String)>,
 }
 
 /// One reason to think two records are one person.
@@ -64,6 +69,8 @@ pub enum Evidence {
         /// The address that forwards.
         to: String,
     },
+    /// Both give the same phone number.
+    SamePhone(String),
     /// Mail sent to one was answered from the other.
     Replied {
         /// How many answers.
@@ -79,6 +86,7 @@ impl Evidence {
             Self::SameSignature { .. } => 4,
             Self::TookOver { threads, .. } => 3 + (*threads).min(5) / 2,
             Self::Forwards { .. } => 4,
+            Self::SamePhone(_) => 4,
             Self::Replied { answers } => 2 + (*answers).min(4) / 2,
         }
     }
@@ -122,6 +130,16 @@ pub fn score(a: &Side, b: &Side, pair: &Pair) -> Option<Scored> {
             company: ca.clone(),
         });
     }
+    if let Some((title, company)) = &pair.signature
+        && !evidence
+            .iter()
+            .any(|e| matches!(e, Evidence::SameSignature { .. }))
+    {
+        evidence.push(Evidence::SameSignature {
+            title: title.clone(),
+            company: company.clone(),
+        });
+    }
     if pair.took_over_in_threads >= 2
         && let Some((old, new)) = &pair.took_over
     {
@@ -146,6 +164,9 @@ pub fn score(a: &Side, b: &Side, pair: &Pair) -> Option<Scored> {
                 .or_else(|| b.addresses.first().cloned())
                 .unwrap_or_default(),
         });
+    }
+    if let Some(phone) = &pair.shared_phone {
+        evidence.push(Evidence::SamePhone(phone.clone()));
     }
     if pair.replies > 0 {
         evidence.push(Evidence::Replied {
@@ -199,6 +220,14 @@ pub fn describe(size: usize, pairs: &[Vec<Evidence>], name: &str) -> Vec<String>
             "The same signature on {on}: \u{201c}{name} \u{b7} {title}, {company}\u{201d}"
         ));
     }
+    for evidence in pairs.iter().flatten() {
+        if let Evidence::SamePhone(phone) = evidence {
+            let line = format!("{} give the phone number {phone}", capital(&everyone));
+            if !lines.contains(&line) {
+                lines.push(line);
+            }
+        }
+    }
     let mut seen_took = Vec::new();
     let mut seen_forwards = Vec::new();
     for evidence in pairs.iter().flatten() {
@@ -234,4 +263,53 @@ fn capital(text: &str) -> String {
         .next()
         .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
         .unwrap_or_default()
+}
+
+/// What a message's body and headers note about its sender, for the review to
+/// find look-alikes by: the signature (when it gives a name, a title and a
+/// company), each phone number, and the address a `Resent-From` header names.
+/// Facts about the sender, never message content.
+pub fn noticed(text: &str, headers: &str) -> Vec<(postio_model::EvidenceKind, String)> {
+    use postio_model::EvidenceKind;
+    let signature = crate::signature::parse(text);
+    let mut found = Vec::new();
+    if let Some(key) = signature.key() {
+        found.push((EvidenceKind::Signature, key));
+    }
+    for phone in &signature.phones {
+        found.push((
+            EvidenceKind::Phone,
+            phone.split_whitespace().collect::<Vec<_>>().join(" "),
+        ));
+    }
+    if let Some(address) = resent_from(headers) {
+        found.push((EvidenceKind::Resent, address));
+    }
+    found
+}
+
+/// The first address of a `Resent-From` header, lowercased.
+fn resent_from(headers: &str) -> Option<String> {
+    let mut lines = headers.lines().peekable();
+    while let Some(line) = lines.next() {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if !name.trim().eq_ignore_ascii_case("resent-from") {
+            continue;
+        }
+        let mut value = value.to_owned();
+        while lines
+            .peek()
+            .is_some_and(|next| next.starts_with(' ') || next.starts_with('\t'))
+        {
+            value.push(' ');
+            value.push_str(lines.next()?.trim());
+        }
+        return postio_model::address::parse_list(&value)
+            .into_iter()
+            .find(|address| address.is_plausible())
+            .map(|address| address.address.to_ascii_lowercase());
+    }
+    None
 }

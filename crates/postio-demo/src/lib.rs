@@ -1343,6 +1343,11 @@ pub async fn demo() -> (Store, AccountId) {
 /// people say what they are -- the newsletters of the digest, a list, a
 /// builder -- as the kind detector would have decided, so Contacts has its
 /// tabs to show (specs/011-focus-contacts S7).
+/// The corpus's hostile-markup fixtures all send from here: Beacon Works,
+/// Big Pictures, Account Desk and the rest. Mail from it is in the demo; none
+/// of it is a person a screenshot should show.
+const ABUSE_DOMAIN: &str = "abuse.example.com";
+
 /// Senders whose names or addresses exist to attack the header parsers
 /// (`encoded-word-*` in the corpus). Their mail is in the demo; they are not
 /// among its people.
@@ -1394,8 +1399,9 @@ async fn people(connection: &postio_storage::Connection) {
             // nothing is left "waiting" for the catch-up, and no list shows
             // them.
             "UPDATE contacts SET state = 'deleted'
-              WHERE id IN (SELECT contact_id FROM addresses WHERE address_normalized = ?1)",
-            postio_storage::sql::bind![*hostile],
+              WHERE id IN (SELECT contact_id FROM addresses
+                            WHERE address_normalized = ?1 OR address_normalized LIKE ?2)",
+            postio_storage::sql::bind![*hostile, format!("%@{ABUSE_DOMAIN}")],
         )
         .await
         .expect("a hostile sender put away");
@@ -1450,8 +1456,8 @@ async fn people(connection: &postio_storage::Connection) {
         let contacts = ContactRepository::new(connection);
         for (name, address, seen, saved) in [
             ("Ada Moreno", "ada.moreno@northwind.example", 412, true),
-            ("ada  moreno", "a.moreno@example.net", 14, false),
-            ("Ada Moreno", "ada.m@example.org", 6, false),
+            ("A. Moreno", "a.moreno@example.net", 14, false),
+            ("Ada M.", "ada.m@example.org", 6, false),
         ] {
             let person = contacts
                 .create(
@@ -1481,6 +1487,81 @@ async fn people(connection: &postio_storage::Connection) {
             )
             .await
             .expect("their counts");
+        }
+        // What the review finds them by, as the body stage would have noted
+        // it: the same signature on all three, one address that stopped as
+        // another began in the same threads, and a Resent-From.
+        let signature = "ada moreno|finance lead|northwind partners";
+        for address in [
+            "ada.moreno@northwind.example",
+            "a.moreno@example.net",
+            "ada.m@example.org",
+        ] {
+            postio_storage::sql::execute(
+                connection,
+                "INSERT INTO contact_evidence (contact_id, kind, value)
+                 SELECT contact_id, 'signature', ?2 FROM addresses WHERE address_normalized = ?1",
+                postio_storage::sql::bind![address, signature],
+            )
+            .await
+            .expect("a signature noted");
+        }
+        postio_storage::sql::execute(
+            connection,
+            "INSERT INTO contact_evidence (contact_id, kind, value)
+             SELECT contact_id, 'resent', 'ada.moreno@northwind.example'
+               FROM addresses WHERE address_normalized = 'ada.m@example.org'",
+            (),
+        )
+        .await
+        .expect("a Resent-From noted");
+        // Two threads in the archive where a.moreno@example.net stops and
+        // ada.moreno@northwind.example begins.
+        for n in 0..2_i64 {
+            postio_storage::sql::execute(
+                connection,
+                "INSERT INTO threads (account_id, subject) SELECT id, ?1 FROM accounts LIMIT 1",
+                postio_storage::sql::bind![format!("Atlas actuals {n}")],
+            )
+            .await
+            .expect("a thread");
+            let thread = connection.last_insert_rowid();
+            for (name, address, days) in [
+                ("A. Moreno", "a.moreno@example.net", 40_i64),
+                ("Ada Moreno", "ada.moreno@northwind.example", 20_i64),
+            ] {
+                let account: i64 =
+                    postio_storage::sql::scalar(connection, "SELECT id FROM accounts LIMIT 1", ())
+                        .await
+                        .expect("the account");
+                let archive: i64 = postio_storage::sql::scalar(
+                    connection,
+                    "SELECT id FROM mailboxes WHERE role = 'archive' LIMIT 1",
+                    (),
+                )
+                .await
+                .expect("the archive");
+                let mut message = Message::new(
+                    AccountId::new(account),
+                    MailboxId::new(archive),
+                    today() - chrono::Duration::days(days) - chrono::Duration::minutes(n),
+                );
+                message.from = vec![EmailAddress::new(Some(name), address)];
+                message.to = vec![EmailAddress::new(Some("You"), "you@example.com")];
+                message.subject = Some(format!("Atlas actuals {n}"));
+                message.flags.insert(Flag::Seen);
+                MessageRepository::new(connection)
+                    .create(&mut message)
+                    .await
+                    .expect("a message in the archive");
+                postio_storage::sql::execute(
+                    connection,
+                    "UPDATE messages SET thread_id = ?2 WHERE id = ?1",
+                    postio_storage::sql::bind![message.id.get(), thread],
+                )
+                .await
+                .expect("threaded");
+            }
         }
     }
     // Ben is someone the user saved, so he is who is "on copy" with the new
@@ -1745,6 +1826,18 @@ mod tests {
         assert_eq!(
             waiting, 0,
             "every address with mail has a person, so the footer never says Building contacts"
+        );
+        let abuse = scalar(
+            &connection,
+            "SELECT count(*) FROM contacts c JOIN addresses a ON a.contact_id = c.id
+              WHERE a.address_normalized LIKE '%@abuse.example.com' AND c.state = 'live'",
+            (),
+        )
+        .await
+        .expect("a count");
+        assert_eq!(
+            abuse, 0,
+            "the corpus's abuse.example.com senders are not demo contacts"
         );
         for hostile in [
             "mallory@sender.invalid",

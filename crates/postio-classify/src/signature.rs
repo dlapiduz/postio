@@ -28,11 +28,19 @@ fn words() -> &'static Words {
 pub fn parse(text: &str) -> SignatureDetails {
     let block = signature_block(text);
     let mut details = SignatureDetails::default();
+    // The name, when there is one, is the first line of the block.
+    let mut first_line = true;
     for line in &block {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
+        if details.name.is_none() && first_line && is_name(line) {
+            details.name = Some(line.split_whitespace().collect::<Vec<_>>().join(" "));
+            first_line = false;
+            continue;
+        }
+        first_line = false;
         if let Some(phone) = phone_in(line) {
             if !details.phones.contains(&phone) {
                 details.phones.push(phone);
@@ -217,4 +225,19 @@ fn looks_like_company(text: &str) -> bool {
         && words_of(text)
             .last()
             .is_some_and(|word| words().company_suffixes.contains(word))
+}
+
+/// A person's full name: two to four words, each starting with a capital and
+/// made of letters, apostrophes, dots and hyphens.
+fn is_name(line: &str) -> bool {
+    let words: Vec<&str> = line.split_whitespace().collect();
+    (2..=4).contains(&words.len())
+        && words.iter().all(|word| {
+            word.chars().next().is_some_and(char::is_uppercase)
+                && word
+                    .chars()
+                    .all(|c| c.is_alphabetic() || matches!(c, '\'' | '.' | '-' | '\u{2019}'))
+        })
+        && !looks_like_title(line)
+        && !looks_like_company(line)
 }

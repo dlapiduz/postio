@@ -9,6 +9,7 @@ use postio_storage::test_support;
 
 fn jonas() -> SignatureDetails {
     SignatureDetails {
+        name: None,
         title: Some("Partnerships".into()),
         company: Some("Harbor Data Co.".into()),
         phones: vec!["+1 555 0142".into()],
@@ -276,4 +277,34 @@ async fn a_bounce_marks_the_address_counts_in_the_review_and_shows_on_the_card()
         .await
         .unwrap();
     assert_eq!(contacts.overview().await.unwrap().review.bounced, 1);
+}
+
+#[tokio::test]
+async fn a_person_put_away_is_in_no_tab_and_no_count() {
+    use postio_model::{ContactState, ContactTab};
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let contacts = ContactRepository::new(&connection);
+    let kept = contacts
+        .create(
+            Some("Ada"),
+            &[EmailAddress::new(None::<String>, "ada@example.org")],
+        )
+        .await
+        .unwrap();
+    let gone = contacts
+        .create(
+            Some("Beacon Works"),
+            &[EmailAddress::new(None::<String>, "b@abuse.example.com")],
+        )
+        .await
+        .unwrap();
+    assert_eq!(contacts.delete(gone).await.unwrap(), ContactState::Live);
+    let page = contacts
+        .page_kinds(ContactTab::All.kinds(), None, 0, 50)
+        .await
+        .unwrap();
+    let ids: Vec<_> = page.iter().map(|row| row.id).collect();
+    assert_eq!(ids, [kept], "only the live person is listed");
+    assert_eq!(contacts.overview().await.unwrap().total, 1, "and counted");
 }

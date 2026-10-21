@@ -108,6 +108,8 @@ impl FormAddress {
 /// newest mail they sent (specs/011-focus-contacts S9).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SignatureDetails {
+    /// The name the signature is signed with, when it gives a full one.
+    pub name: Option<String>,
     /// "Partnerships".
     pub title: Option<String>,
     /// "Harbor Data Co.".
@@ -119,6 +121,28 @@ pub struct SignatureDetails {
 }
 
 impl SignatureDetails {
+    /// What two signatures share when they are the same person's: name,
+    /// title and company, folded. `None` unless all three are there, since
+    /// any two of them match colleagues and namesakes.
+    pub fn key(&self) -> Option<String> {
+        let fold = |text: &Option<String>| {
+            text.as_deref()
+                .map(|t| {
+                    t.split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .to_lowercase()
+                })
+                .filter(|t| !t.is_empty())
+        };
+        Some(format!(
+            "{}|{}|{}",
+            fold(&self.name)?,
+            fold(&self.title)?,
+            fold(&self.company)?
+        ))
+    }
+
     /// Whether the signature said nothing worth showing.
     pub fn is_empty(&self) -> bool {
         self.title.is_none()
@@ -126,6 +150,43 @@ impl SignatureDetails {
             && self.phones.is_empty()
             && self.websites.is_empty()
     }
+}
+
+/// What the body stage can note about a sender for the review to find look-alikes
+/// by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum EvidenceKind {
+    /// The signature's name, title and company, folded
+    /// ([`SignatureDetails::key`]).
+    Signature,
+    /// A phone number.
+    Phone,
+    /// The address a `Resent-From` header named.
+    Resent,
+}
+
+impl EvidenceKind {
+    /// The stored word.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Signature => "signature",
+            Self::Phone => "phone",
+            Self::Resent => "resent",
+        }
+    }
+}
+
+/// What two records share that was noted from mail, besides what the threads
+/// say.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PairEvidence {
+    /// The same signature on both, as [`SignatureDetails::key`] folds it.
+    pub signature: Option<String>,
+    /// A phone number both give.
+    pub phone: Option<String>,
+    /// A `Resent-From` naming one record's address on the other's mail:
+    /// the address it forwards from, and the address that forwards.
+    pub resent: Option<(String, String)>,
 }
 
 /// A phone number or website kept for a person, or refused.

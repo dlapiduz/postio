@@ -714,7 +714,7 @@ CREATE INDEX idx_reminders_anchor ON reminders (anchor_message_id);
     // and refused) have a table (specs/011-focus-contacts S9).
     Migration {
         from: stamp(0xb926_0dd0),
-        to: FINGERPRINT,
+        to: stamp(0x06ab_fba2),
         statements: r#"
 ALTER TABLE contact_settings ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0;
 CREATE TABLE contact_details (
@@ -725,6 +725,22 @@ CREATE TABLE contact_details (
     state      TEXT    NOT NULL CHECK (state IN ('added', 'ignored')),
     UNIQUE (contact_id, kind, value)
 );
+"#,
+    },
+    // `feature/focus-contacts`: what the body stage noticed about a sender,
+    // for the review to find records that look like one person.
+    Migration {
+        from: stamp(0x06ab_fba2),
+        to: FINGERPRINT,
+        statements: r#"
+CREATE TABLE contact_evidence (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    kind       TEXT    NOT NULL CHECK (kind IN ('signature', 'phone', 'resent')),
+    value      TEXT    NOT NULL,
+    UNIQUE (contact_id, kind, value)
+);
+CREATE INDEX idx_contact_evidence_value ON contact_evidence (kind, value);
 "#,
     },
 ];
@@ -985,6 +1001,20 @@ CREATE TABLE contact_details (
     state      TEXT    NOT NULL CHECK (state IN ('added', 'ignored')),
     UNIQUE (contact_id, kind, value)
 );
+
+CREATE TABLE contact_evidence (
+    -- What the body stage noticed in mail a person sent, kept so the review
+    -- can find records that look like one person without reading mail again
+    -- (specs/011-focus-contacts S10): the same signature (name, title and
+    -- company, folded), a phone number, or the address a `Resent-From`
+    -- header named. A fact about the sender, never message content.
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    kind       TEXT    NOT NULL CHECK (kind IN ('signature', 'phone', 'resent')),
+    value      TEXT    NOT NULL,
+    UNIQUE (contact_id, kind, value)
+);
+CREATE INDEX idx_contact_evidence_value ON contact_evidence (kind, value);
 
 CREATE TABLE contact_sightings (
     -- What the mail says about one address in one account: evidence, so it

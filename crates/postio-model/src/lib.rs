@@ -98,8 +98,8 @@ pub use contact::{
     month_key,
 };
 pub use contact_form::{
-    AddressLabel, AddressNote, ContactForm, DetailKind, FormAddress, FormProblem, Introduction,
-    KeptDetail, SeenItem, SenderPrior, SignatureDetails, split_name,
+    AddressLabel, AddressNote, ContactForm, DetailKind, EvidenceKind, FormAddress, FormProblem,
+    Introduction, KeptDetail, PairEvidence, SeenItem, SenderPrior, SignatureDetails, split_name,
 };
 pub use contact_group::ContactGroup;
 pub use contact_settings::{

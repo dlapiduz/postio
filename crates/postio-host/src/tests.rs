@@ -5429,3 +5429,57 @@ fn an_agent_with_no_window_to_stand_beside_keeps_its_own_undo() {
     });
     assert_eq!(world.inbox_rows(&agent), 0);
 }
+
+#[test]
+fn a_body_that_lands_notes_what_it_says_about_its_sender_for_the_review() {
+    // Specs/011-focus-contacts S10: the body stage notes the signature, a
+    // phone and a Resent-From against the sender, so the review can find a
+    // second record of the same person without reading mail.
+    let world = World::new();
+    let inbox = folder(&world, postio_model::MailboxRole::Inbox);
+    world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        let repository = MessageRepository::new(&connection);
+        let mut message = Message::new(world.account, inbox, Utc::now() - chrono::TimeDelta::hours(2));
+        message.from = vec![postio_model::EmailAddress::new(None::<String>, "ada@example.org")];
+        message.to = vec![postio_model::EmailAddress::new(None::<String>, "test@example.com")];
+        let id = repository.create(&mut message).await.expect("a message");
+        repository
+            .set_body(
+                id,
+                &postio_storage::repository::StoredBody {
+                    text: Some(
+                        "See you then.\n\nThanks,\nAda Moreno\nFinance lead, Northwind Partners\n+1 555 0119\n"
+                            .to_owned(),
+                    ),
+                    html: None,
+                    headers: Some("Resent-From: a.moreno@example.net\r\n".to_owned()),
+                    headers_truncated: false,
+                    encoding_problems: false,
+                },
+                postio_model::BodyState::Full,
+            )
+            .await
+            .expect("a body");
+        // The sender's person exists, as the catch-up makes them.
+        postio_storage::repository::ContactRepository::new(&connection)
+            .catch_up_batch(None, 100)
+            .await
+            .expect("people");
+    });
+
+    focus_caught_up(&world);
+
+    let kinds = world.rt.block_on(async {
+        let connection = world.database.connect().await.expect("a connection");
+        postio_storage::sql::all(
+            &connection,
+            "SELECT kind FROM contact_evidence ORDER BY kind",
+            (),
+            |row| postio_storage::sql::RowExt::text(row, 0),
+        )
+        .await
+        .expect("kinds")
+    });
+    assert_eq!(kinds, ["phone", "resent", "signature"]);
+}
