@@ -5691,6 +5691,9 @@ impl FocusWindow {
         // A message open beside the list, the keyboard on it (T232): the
         // window's own context says so, as it does for every key.
         let reading_here = self.visible_dialog().is_none() && self.reading_beside();
+        // The merge sheet over the Contacts view takes every key until it is
+        // answered: the keyboard is the sheet's, not the dimmed list's.
+        let merging = self.contacts().is_some_and(|view| view.merge_open());
 
         let region = if menu.is_some() {
             Region::Menu
@@ -5703,6 +5706,7 @@ impl FocusWindow {
             || small_dialog.is_some()
             || dialog_named(crate::capture::DIALOG_NAME)
             || sign_in
+            || merging
         {
             Region::Dialog
         } else if compose_open || composition_detached {
@@ -5806,6 +5810,11 @@ impl FocusWindow {
             OverlayState {
                 kind: Overlay::Dialog,
                 mode: Some("settings".to_owned()),
+            }
+        } else if merging {
+            OverlayState {
+                kind: Overlay::Dialog,
+                mode: Some("merge".to_owned()),
             }
         } else if let Some(name) = small_dialog {
             OverlayState {

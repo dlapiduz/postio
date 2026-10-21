@@ -426,13 +426,39 @@ impl ContactsView {
         self.show_cursor(self.feed.contacts_cursor());
     }
 
+    /// How far the list is scrolled, in pixels.
+    pub fn scroll_offset(&self) -> f64 {
+        self.list
+            .vadjustment()
+            .map_or(0.0, |adjustment| adjustment.value())
+    }
+
+    /// Whether row `at` is wholly inside what the list shows. Rows are all
+    /// `ROW_HEIGHT` tall, so this is arithmetic; a list not yet laid out
+    /// shows nothing.
+    fn row_on_screen(&self, at: u32) -> bool {
+        let Some(adjustment) = self.list.vadjustment() else {
+            return false;
+        };
+        if adjustment.page_size() <= 0.0 {
+            return false;
+        }
+        let top = f64::from(at) * f64::from(ROW_HEIGHT);
+        top >= adjustment.value()
+            && top + f64::from(ROW_HEIGHT) <= adjustment.value() + adjustment.page_size()
+    }
+
     /// The cursor is on `index` now.
     pub fn show_cursor(&self, index: Option<u32>) {
         self.placing.set(true);
         match index {
             Some(at) if at < self.model.n_items() => {
                 self.selection.set_selected(at);
-                self.list.scroll_to(at, gtk::ListScrollFlags::NONE, None);
+                // A row already on screen stays where it is: marking it, or
+                // the rows refreshing under it, must not move the list.
+                if !self.row_on_screen(at) {
+                    self.list.scroll_to(at, gtk::ListScrollFlags::NONE, None);
+                }
             }
             _ => {
                 self.selection.set_selected(gtk::INVALID_LIST_POSITION);
@@ -526,6 +552,11 @@ impl ContactsView {
         }
         self.footer.set(&self.frame_hints.borrow().clone());
         self.list.grab_focus();
+    }
+
+    /// Whether the merge sheet is up over the view.
+    pub fn merge_open(&self) -> bool {
+        self.merge.borrow().is_some()
     }
 
     /// The merge sheet over the view, or put away.
@@ -634,6 +665,14 @@ impl ContactsView {
         (0..count.min(self.total()))
             .filter_map(|index| self.name_at(index))
             .collect()
+    }
+
+    /// How many of the people the list holds are marked.
+    pub fn marked_count(&self) -> usize {
+        (0..self.total())
+            .filter_map(|index| self.feed.contacts_row(index))
+            .filter(|row| row.marked)
+            .count()
     }
 
     /// The row the cursor is on.

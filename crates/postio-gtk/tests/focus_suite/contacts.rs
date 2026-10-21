@@ -266,6 +266,16 @@ pub fn g_w_offers_the_look_alikes_return_merges_and_escape_is_later() {
             "g w opens the sheet"
         );
         let view = window.contacts().expect("the view");
+        {
+            use postio_ui::observe::{Overlay, Region};
+            let seen = window.observe();
+            assert_eq!(
+                seen.keyboard.region,
+                Region::Dialog,
+                "the sheet holds the keyboard, not the dimmed list: {seen:#?}"
+            );
+            assert_eq!(seen.overlay.kind, Overlay::Dialog);
+        }
         let said = view.merge_texts();
         assert!(said.iter().any(|line| line == "Not the same"), "{said:?}");
         assert!(said.iter().any(|line| line == "Later"), "{said:?}");
@@ -285,6 +295,38 @@ pub fn g_w_offers_the_look_alikes_return_merges_and_escape_is_later() {
             crate::settle_until(async || view.total() == 2 && view.merge_texts().is_empty()).await,
             "two records became one person"
         );
+    });
+}
+
+/// Marking a row with `x` ticks it and leaves the list where it was.
+pub fn x_marks_a_row_without_moving_the_list() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        for n in 0..40 {
+            fixture
+                .correspondent(&format!("Person {n:02}"), &format!("p{n:02}@example.test"))
+                .await;
+        }
+        let (window, _client) = fixture.open().await;
+        support::keys(&window, &["g", "c"]);
+        assert!(
+            crate::settle_until(async || window
+                .contacts()
+                .is_some_and(|view| view.total() == 40 && view.cursor() == Some(0)))
+            .await
+        );
+        let view = window.contacts().expect("the view");
+        support::keys(&window, &["j", "j", "j", "j", "j", "j", "j", "j", "j", "j"]);
+        assert!(crate::settle_until(async || view.cursor() == Some(10)).await);
+        crate::settle();
+        let before = view.scroll_offset();
+        support::keys(&window, &["x"]);
+        assert!(crate::settle_until(async || view.marked_count() == 1).await);
+        crate::settle();
+        assert_eq!(view.scroll_offset(), before, "marking moved the list");
     });
 }
 

@@ -162,6 +162,10 @@ const CASES: &[(&str, fn())] = &[
         contacts::g_w_offers_the_look_alikes_return_merges_and_escape_is_later as fn(),
     ),
     (
+        "contacts::x_marks_a_row_without_moving_the_list",
+        contacts::x_marks_a_row_without_moving_the_list as fn(),
+    ),
+    (
         "contacts::i_opens_the_popover_the_arrows_choose_where_mail_arrives_and_escape_closes",
         contacts::i_opens_the_popover_the_arrows_choose_where_mail_arrives_and_escape_closes
             as fn(),
