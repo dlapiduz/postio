@@ -1486,6 +1486,28 @@ async fn people(connection: &postio_storage::Connection) {
             )
             .await
             .expect("their sightings");
+            // The strip under the tiles reads the months: the same count,
+            // spread over the six months up to the last sighting, so the
+            // strip and the tiles say one thing.
+            for back in 0..6_i64 {
+                let share = seen / 6 + if back == 0 { seen % 6 } else { 0 };
+                postio_storage::sql::execute(
+                    connection,
+                    "INSERT OR REPLACE INTO address_months (address_id, month, n)
+                     SELECT a.id, ?2 - ?3, ?4 FROM addresses a WHERE a.contact_id = ?1",
+                    postio_storage::sql::bind![
+                        person.get(),
+                        postio_model::month_key(
+                            chrono::DateTime::from_timestamp_millis(1_790_000_000_000)
+                                .expect("a date")
+                        ),
+                        back,
+                        share
+                    ],
+                )
+                .await
+                .expect("their months");
+            }
             postio_storage::sql::execute(
                 connection,
                 "UPDATE contacts SET times_seen = ?2, last_seen_at = ?3, source = ?4,
