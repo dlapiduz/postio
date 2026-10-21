@@ -104,10 +104,10 @@ pub struct Capabilities {
     /// `from:` and `to:` know people: a word that names a contact finds
     /// mail from every address they own, `from:@Group` every member
     /// (specs/011-focus-contacts S4). The Mac has it; Linux keeps the words
-    /// in the header until it adopts Contacts (S13).
+    /// in the header until its search adopts the bar (S2).
     pub people_search: bool,
     /// The Contacts view, a mode of the main window (specs/011-focus-contacts
-    /// S7). The Mac has it; Linux adopts it at S13.
+    /// S7). Both platforms have it (Linux's came at S13).
     pub contacts_view: bool,
 }
 
@@ -122,7 +122,7 @@ impl Policy {
                 stacking: linux,
                 results_view: !linux,
                 people_search: !linux,
-                contacts_view: !linux,
+                contacts_view: true,
             },
         }
     }

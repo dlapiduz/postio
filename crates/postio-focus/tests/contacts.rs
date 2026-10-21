@@ -454,7 +454,7 @@ fn the_catch_up_shows_in_the_footer_and_the_review_line_when_something_waits() {
 }
 
 #[test]
-fn a_change_to_the_people_reads_the_counts_again_and_gtk_has_no_such_view() {
+fn a_change_to_the_people_reads_the_counts_again_and_linux_opens_the_same_view() {
     let mut focus = mac();
     let _ = open(&mut focus);
     let effects = focus.handle_on(
@@ -469,13 +469,21 @@ fn a_change_to_the_people_reads_the_counts_again_and_gtk_has_no_such_view() {
             .any(|(_, request)| matches!(request, Request::ContactsOverview))
     );
 
+    // The same rules on Linux (specs/011-focus-contacts S13): its policy
+    // differs in geometry, not in what `g c` does.
     let mut linux = FocusController::new(Policy::for_platform(Platform::Freedesktop));
+    let _ = linux.handle(Input::Keymap(postio_core::Keymap::resolve_on(
+        &postio_config::KeyBindings::default(),
+        Platform::Freedesktop,
+    )));
     let effects = run(&mut linux, CommandId::OpenContacts);
     assert!(
-        effects.is_empty(),
-        "Linux adopts Contacts later: {effects:?}"
+        asks(&effects)
+            .iter()
+            .any(|(_, request)| matches!(request, Request::ContactsOverview)),
+        "Linux's `g c` reads the counts as the Mac's does: {effects:?}"
     );
-    assert_eq!(linux.key_context(), KeyContext::List);
+    assert_eq!(linux.key_context(), KeyContext::Contacts);
 }
 
 #[test]

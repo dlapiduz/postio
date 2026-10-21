@@ -2136,8 +2136,10 @@ static SPECS: &[CommandSpec] = &[
         title: "Next scope",
         // `g` is already the app's "go to" prefix (`g g`, `g f`), and this is
         // the same gesture aimed at an account rather than a row or a folder.
-        // `c` to cycle: Gmail's `g a` is all mail, the archive here.
-        default_binding: "g c",
+        // `n` for next: `g c` was this until Contacts took it
+        // (specs/011-focus-contacts S13); Gmail's `g a` is all mail, the
+        // archive here.
+        default_binding: "g n",
         alternate_bindings: &[],
         // Reachable from the surfaces a scope actually changes -- the folder
         // list it re-roots and the message list it re-fills. Not from the
@@ -2491,10 +2493,9 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::OpenContacts,
         title: "Contacts",
-        // Beside `g i`, `g d`, `g s`: a destination. On the Mac only until
-        // Linux adopts the surface, because Linux's `next_scope` is `g c`
-        // today and moves to `g n` when it does (plan 011 section 9); the
-        // Mac has no `next_scope`, so the key is free there. On the
+        // Beside `g i`, `g d`, `g s`: a destination. Linux's `next_scope` was
+        // `g c` and moved to `g n` when Linux adopted Contacts (plan 011
+        // section 9, S13); the Mac has no `next_scope`. On the
         // destinations' surfaces and not `ContextSet::ANY`, for the reason
         // `GO_SURFACES` gives -- `g` is a letter in the composer.
         default_binding: "g c",
@@ -3267,41 +3268,8 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             | (ActionId::Builtin(C::PickRelaxation3), Platform::Freedesktop)
             | (ActionId::Builtin(C::PickRelaxation4), Platform::Freedesktop)
             | (ActionId::Builtin(C::SaveFile), Platform::Freedesktop)
-            // Contacts is the Mac's until Linux adopts the surface
-            // (specs/005-contacts; plan 011 section 11), and its `g c`
-            // is Linux's `next_scope`.
-            | (ActionId::Builtin(C::OpenContacts), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactPopover), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactOpenCard), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactAdd), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactIgnore), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactArrivalPrev), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactArrivalNext), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactSetArrival), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactShowMail), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactCompose), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactsFilter), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactsTabPrevious), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactsTabNext), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactsToggleEveryone), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactJoin), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactAddAddress), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactDetachAddress), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactSetPreferred), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactNew), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactEdit), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactSave), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactDelete), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactRestore), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactsToggleDeleted), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactsSuggestions), Platform::Freedesktop)
-            | (ActionId::Builtin(C::SuggestionDismiss), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactGroupNew), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactGroupRename), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactGroupAdd), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactGroupRemove), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactsImport), Platform::Freedesktop)
-            | (ActionId::Builtin(C::ContactsExport), Platform::Freedesktop)
+            // Syncing with an address book is the Mac's: Linux has Contacts
+            // (specs/011-focus-contacts S13) and leaves sync out.
             | (ActionId::Builtin(C::ContactsSync), Platform::Freedesktop)
     )
 }
@@ -3378,8 +3346,9 @@ mod tests {
     ];
 
     /// What only the Mac draws, until Linux adopts it: the search dropdown
-    /// and results view (spec 010 D23, D25) and Contacts (specs/005).
-    const NOT_ON_LINUX_YET: [CommandId; 51] = [
+    /// and results view (spec 010 D23, D25), and syncing with an address
+    /// book (specs/011-focus-contacts S12).
+    const NOT_ON_LINUX_YET: [CommandId; 19] = [
         CommandId::ShowAllResults,
         CommandId::ForgetRecent,
         CommandId::ExcludeSuggestion,
@@ -3398,38 +3367,6 @@ mod tests {
         CommandId::PickRelaxation3,
         CommandId::PickRelaxation4,
         CommandId::SaveFile,
-        CommandId::OpenContacts,
-        CommandId::ContactPopover,
-        CommandId::ContactOpenCard,
-        CommandId::ContactAdd,
-        CommandId::ContactIgnore,
-        CommandId::ContactArrivalPrev,
-        CommandId::ContactArrivalNext,
-        CommandId::ContactSetArrival,
-        CommandId::ContactShowMail,
-        CommandId::ContactCompose,
-        CommandId::ContactsFilter,
-        CommandId::ContactsTabPrevious,
-        CommandId::ContactsTabNext,
-        CommandId::ContactsToggleEveryone,
-        CommandId::ContactJoin,
-        CommandId::ContactAddAddress,
-        CommandId::ContactDetachAddress,
-        CommandId::ContactSetPreferred,
-        CommandId::ContactNew,
-        CommandId::ContactEdit,
-        CommandId::ContactSave,
-        CommandId::ContactDelete,
-        CommandId::ContactRestore,
-        CommandId::ContactsToggleDeleted,
-        CommandId::ContactsSuggestions,
-        CommandId::SuggestionDismiss,
-        CommandId::ContactGroupNew,
-        CommandId::ContactGroupRename,
-        CommandId::ContactGroupAdd,
-        CommandId::ContactGroupRemove,
-        CommandId::ContactsImport,
-        CommandId::ContactsExport,
         CommandId::ContactsSync,
     ];
 
