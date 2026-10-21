@@ -122,6 +122,7 @@ impl Req {
             Req::ContactCard(_) => "ContactCard",
             Req::ContactGroups => "ContactGroups",
             Req::ContactsImport(_) => "ContactsImport",
+            Req::ContactsSyncPlan { .. } => "ContactsSyncPlan",
             Req::ContactsExport => "ContactsExport",
             Req::ContactSeen(_) => "ContactSeen",
             Req::ContactReview(_) => "ContactReview",
@@ -712,6 +713,24 @@ impl Client {
             "a contact's card",
             |answer| match answer {
                 Resp::ContactCard(card) => Some(card.map(|card| *card)),
+                _ => None,
+            },
+        )
+        .await
+    }
+
+    /// What a sync with the Mac's Contacts would do, from a snapshot of their
+    /// side. A dry run: nothing is written to either side.
+    pub async fn contacts_sync_plan(
+        &self,
+        records: Vec<postio_contact_sync::ExternalRecord>,
+        scope: postio_contact_sync::Scope,
+    ) -> Result<postio_contact_sync::Plan, StoreError> {
+        self.read(
+            Req::ContactsSyncPlan { records, scope },
+            "the sync plan",
+            |answer| match answer {
+                Resp::ContactsSyncPlan(plan) => Some(*plan),
                 _ => None,
             },
         )

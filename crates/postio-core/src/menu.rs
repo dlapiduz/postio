@@ -151,7 +151,7 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         }
         C::Refresh => Some(M::File),
         // The Mac presents the panels; the file is the user's.
-        C::ContactsImport | C::ContactsExport => Some(M::File),
+        C::ContactsImport | C::ContactsExport | C::ContactsSync => Some(M::File),
 
         // ── Edit ─────────────────────────────────────────────────────────
         C::Undo | C::SelectAll | C::ToggleSelection => Some(M::Edit),

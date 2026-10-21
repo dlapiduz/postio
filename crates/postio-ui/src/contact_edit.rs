@@ -199,6 +199,8 @@ pub struct EditContext<'a> {
     pub seen: &'a [postio_model::SeenItem],
     /// What is typed in the group picker, while it is open.
     pub group_query: Option<&'a str>,
+    /// The account this contact syncs with, once a sync has linked it.
+    pub synced_with: Option<&'a str>,
 }
 
 /// The kind's words in the segmented control.
@@ -316,7 +318,7 @@ pub fn view(ctx: &EditContext<'_>, keymap: &Keymap) -> EditView {
     .collect();
     EditView {
         title,
-        note: "saved in Postio".to_owned(),
+        note: crate::contacts_sync::synced_bar_note(ctx.synced_with),
         cancel: button("Cancel", CommandId::Back),
         save: button("Save", CommandId::ContactSave),
         avatar: avatar(
@@ -410,6 +412,7 @@ mod tests {
             known_groups: &[],
             seen: &[],
             group_query: None,
+            synced_with: None,
         }
     }
 
@@ -423,6 +426,18 @@ mod tests {
         assert_eq!(view.cancel.key.as_deref(), Some("Escape"));
         assert_eq!(view.save.label, "Save");
         assert_eq!(view.save.key.as_deref(), Some("cmd+s"));
+    }
+
+    #[test]
+    fn the_bar_says_synced_only_for_a_contact_a_sync_has_linked() {
+        let form = ada();
+        let mut context = ctx(&form);
+        assert_eq!(view(&context, &keymap()).note, "saved in Postio");
+        context.synced_with = Some("Contacts (iCloud)");
+        assert_eq!(
+            view(&context, &keymap()).note,
+            "saved in Postio, then synced to Contacts (iCloud) and your other devices"
+        );
     }
 
     #[test]

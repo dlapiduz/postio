@@ -363,6 +363,7 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         // panel the user used, which this frontend presents (spec 011 S11).
         C::ContactsImport,
         C::ContactsExport,
+        C::ContactsSync,
         C::ExpandAll,
         C::ToggleFold,
         C::NextInConversation,

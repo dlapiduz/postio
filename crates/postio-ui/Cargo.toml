@@ -23,6 +23,7 @@ postio-core = { version = "0.4.2", path = "../postio-core" }
 # what a result set turned out to be; neither is a toolkit's business (#1157).
 postio-search = { version = "0.4.2", path = "../postio-search" }
 postio-model = { version = "0.4.2", path = "../postio-model" }
+postio-contact-sync.workspace = true
 serde = { workspace = true }
 # `Observation.app` carries app-specific values of any shape.
 serde_json = { workspace = true }

@@ -182,3 +182,4 @@ contact_group_add
 contact_group_remove	
 contacts_import	
 contacts_export	
+contacts_sync	

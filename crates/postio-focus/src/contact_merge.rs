@@ -37,6 +37,7 @@ impl MergeSheet {
             position,
             controller.bar.keymap(),
             controller.bar.now(),
+            None,
         )
     }
 }

@@ -2859,6 +2859,17 @@ static SPECS: &[CommandSpec] = &[
         recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
     },
+    CommandSpec {
+        id: CommandId::ContactsSync,
+        title: "Sync contacts",
+        default_binding: "v y",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        // A dry run writes nothing; there is nothing to take back.
+        recovery: Recovery::None,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
 ];
 
 /// Every command, in cheat-sheet order.
@@ -3291,6 +3302,7 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             | (ActionId::Builtin(C::ContactGroupRemove), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactsImport), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactsExport), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactsSync), Platform::Freedesktop)
     )
 }
 
@@ -3367,7 +3379,7 @@ mod tests {
 
     /// What only the Mac draws, until Linux adopts it: the search dropdown
     /// and results view (spec 010 D23, D25) and Contacts (specs/005).
-    const NOT_ON_LINUX_YET: [CommandId; 50] = [
+    const NOT_ON_LINUX_YET: [CommandId; 51] = [
         CommandId::ShowAllResults,
         CommandId::ForgetRecent,
         CommandId::ExcludeSuggestion,
@@ -3418,6 +3430,7 @@ mod tests {
         CommandId::ContactGroupRemove,
         CommandId::ContactsImport,
         CommandId::ContactsExport,
+        CommandId::ContactsSync,
     ];
 
     #[test]

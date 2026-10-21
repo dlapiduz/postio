@@ -889,6 +889,9 @@ commands! {
     /// Export people to a vCard file (FR-050): the marked people, or what the
     /// list shows; the surface asks where.
     ContactsExport => "contacts_export",
+    /// Sync with the Mac's Contacts, as a dry run: turn it on, and see what
+    /// would happen before anything does (specs/011-focus-contacts S12).
+    ContactsSync => "contacts_sync",
     ;
     /// Mark one message read because the cursor rested on it long enough to
     /// have been read — not because anyone asked.

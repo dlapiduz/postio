@@ -153,6 +153,7 @@ impl ContactEdit {
                 known_groups: &self.known_groups,
                 seen: &self.seen,
                 group_query: self.group_query.as_deref(),
+                synced_with: None,
             },
             keymap,
         )

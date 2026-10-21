@@ -1,0 +1,32 @@
+# Sync with Contacts, as a dry run only (specs/011-focus-contacts S12, handoff
+# screen 08 and its sync section). A demo uses a fake address book in memory:
+# nothing here reads or writes anyone's real Contacts, and the real store is
+# never constructed. The person turns sync on, which is the only moment access
+# would be asked for; Postio then reads a snapshot and says what it WOULD do,
+# and nothing is written to either side. Writes are shut behind a build flag
+# and the person's confirmation of the plan, and the sheet says so.
+apps   = ["macos"]
+source = { kind = "spec", ref = "specs/011-focus-contacts S12" }
+seed   = "small"
+design = "08-settings-sync"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+command = "open_contacts"
+
+[[step]]
+id      = "intro"
+command = "contacts_sync"
+expect  = "A sheet over the window titled “Sync with Contacts”: your contacts live in Postio and sync is optional; a row “Contacts on this Mac (iCloud)” marked Read only with “Read only until writes are reviewed”; What syncs with People, People and companies (chosen) and Everything saved and its note; and Turn on and preview Return filled beside Not now Esc. Nothing has been asked of the Mac yet."
+
+[[step]]
+id      = "plan"
+key     = "Return"
+expect  = "The sheet reads “Dry run: nothing was written”, then a summary in counts, “Would add N, update N, ask about N, delete 0”, then the plan a line each with names (what would be added to Contacts, what would change in either, what Postio would ask about), and “Read only until writes are reviewed. Postio changed nothing in Contacts and nothing in Postio.” with Done Esc."
+
+[[step]]
+id      = "done"
+command = "back"
+expect  = "Done: the sheet is gone and the Contacts view is as it was; no contact changed."

@@ -33,6 +33,7 @@ postio-config.workspace = true
 postio-account.workspace = true
 postio-index.workspace = true
 postio-model.workspace = true
+postio-contact-sync.workspace = true
 postio-runtime.workspace = true
 postio-search.workspace = true
 postio-session.workspace = true

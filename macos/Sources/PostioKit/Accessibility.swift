@@ -80,6 +80,9 @@ public enum Intercepted {
     /// user used (specs/011-focus-contacts S11).
     public static let contactsImport = "contacts_import"
     public static let contactsExport = "contacts_export"
+    /// File ▸ Sync Contacts: the dry-run sheet, which this frontend presents
+    /// because it holds the address book behind the sync (specs/011 S12).
+    public static let contactsSync = "contacts_sync"
     /// The settings window's account verbs. Every one acts on the row the
     /// keyboard is on, which is `SettingsAccounts`'s cursor and this side's
     /// alone; two of them need a sheet on top of that.
@@ -105,6 +108,6 @@ public enum Intercepted {
         addAccount, editConfig, toggleAccountEnabled, removeAccount,
         updateCredential, rebuildAccountIndex, setDefaultAccount,
         showImages,
-        quit, unsubscribe, clearListMail, alwaysShowImages, contactsImport, contactsExport,
+        quit, unsubscribe, clearListMail, alwaysShowImages, contactsImport, contactsExport, contactsSync,
     ] + composeVerbs
 }

@@ -4008,6 +4008,40 @@ impl ContactRepository<'_> {
 }
 
 impl ContactRepository<'_> {
+    /// Everyone sync would consider: live people the user saved, with their
+    /// addresses, and the phones they kept. Read only.
+    pub async fn saved_for_sync(&self) -> Result<Vec<(Contact, Vec<String>)>> {
+        let people: Vec<Contact> = sql::all_unbounded(
+            self.connection,
+            &format!(
+                "SELECT {PERSON_COLUMNS} FROM contacts
+                  WHERE state = 'live' AND saved_at IS NOT NULL ORDER BY id LIMIT 20000"
+            ),
+            (),
+            read_person,
+        )
+        .await?;
+        let people = self.with_addresses(people).await?;
+        let phones: Vec<(i64, String)> = sql::all_unbounded(
+            self.connection,
+            "SELECT contact_id, value FROM contact_details WHERE kind = 'phone' AND state = 'added'",
+            (),
+            |row| Ok((row.col(0)?, row.col(1)?)),
+        )
+        .await?;
+        Ok(people
+            .into_iter()
+            .map(|person| {
+                let kept: Vec<String> = phones
+                    .iter()
+                    .filter(|(id, _)| *id == person.id.get())
+                    .map(|(_, value)| value.clone())
+                    .collect();
+                (person, kept)
+            })
+            .collect())
+    }
+
     /// Notes a fact about `person` the way the body stage does for a sender:
     /// what an import read from their card.
     pub async fn note_evidence(

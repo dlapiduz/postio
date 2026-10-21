@@ -52,6 +52,7 @@ mod focus_contact_edit;
 mod focus_contact_merge;
 mod focus_contacts;
 mod focus_contacts_io;
+mod focus_contacts_sync;
 mod focus_keymap;
 mod focus_list;
 mod focus_message;
@@ -119,6 +120,10 @@ pub use focus_contacts::{
 };
 pub use focus_contacts_io::{
     ContactsExportResultFfi, ContactsImportResultFfi, ContactsIoSheetFfi, ContactsPanelWordsFfi,
+};
+pub use focus_contacts_sync::{
+    ExternalRecordFfi, SyncAccountFfi, SyncPlanFfi, SyncResultFfi, SyncScopeFfi,
+    SyncScopeOptionFfi, SyncSheetFfi,
 };
 pub use focus_keymap::{KeyMapGroupFfi, KeyMapRowFfi, KeyMapSheetFfi};
 pub use focus_list::{

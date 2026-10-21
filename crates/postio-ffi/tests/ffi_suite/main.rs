@@ -26,6 +26,7 @@ mod config;
 mod contact_for_address;
 mod contact_popover;
 mod contacts_io;
+mod contacts_sync;
 mod contacts_view;
 mod conversation;
 mod dwell;

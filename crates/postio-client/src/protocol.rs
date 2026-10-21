@@ -253,6 +253,14 @@ pub enum Req {
     ContactCard(postio_model::ContactId),
     /// The name of every contact group, by name.
     ContactGroups,
+    /// What a sync with the Mac's Contacts would do, from a snapshot of their
+    /// side: a dry run, which writes nothing anywhere.
+    ContactsSyncPlan {
+        /// The other side's records.
+        records: Vec<postio_contact_sync::ExternalRecord>,
+        /// What syncs.
+        scope: postio_contact_sync::Scope,
+    },
     /// Read the cards in a `.vcf` the user chose and apply them.
     ContactsImport(Vec<u8>),
     /// One `.vcf` of the people the Contacts list holds.
@@ -842,6 +850,8 @@ pub enum Resp {
     ContactCard(Option<Box<postio_model::ContactCardRead>>),
     /// The answer to [`Req::ContactGroups`].
     ContactGroups(Vec<String>),
+    /// The answer to [`Req::ContactsSyncPlan`].
+    ContactsSyncPlan(Box<postio_contact_sync::Plan>),
     /// The answer to [`Req::ContactsImport`].
     ContactsImported(Box<postio_model::card::ImportSummary>),
     /// The answer to [`Req::ContactsExport`]: the file's text and how many

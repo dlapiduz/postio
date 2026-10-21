@@ -106,6 +106,7 @@ pub fn view(
     position: Option<(usize, usize)>,
     keymap: &Keymap,
     now: DateTime<Local>,
+    synced_with: Option<&str>,
 ) -> MergeSheetView {
     let kept = kept.min(group.people.len().saturating_sub(1));
     let keeper = &group.people[kept];
@@ -178,7 +179,8 @@ pub fn view(
         if total == 1 { "" } else { "s" }
     );
     if saved {
-        line.push_str(" \u{b7} saved");
+        line.push_str(" \u{b7} ");
+        line.push_str(&crate::contacts_sync::synced_status(true, synced_with));
     }
     if unsaved > 0 {
         line.push_str(&format!(
@@ -258,7 +260,7 @@ mod tests {
 
     #[test]
     fn the_sheet_says_how_many_and_what_it_keeps() {
-        let sheet = view(&group(), 0, Some((0, 2)), &keymap(), now());
+        let sheet = view(&group(), 0, Some((0, 2)), &keymap(), now(), None);
         assert_eq!(sheet.title, "These 3 look like the same person");
         assert!(sheet.subtitle.starts_with("Merging keeps every address"));
         assert_eq!(sheet.position.as_deref(), Some("1 of 2"));
@@ -268,7 +270,7 @@ mod tests {
 
     #[test]
     fn each_card_says_what_it_is_and_the_kept_one_has_the_ring() {
-        let sheet = view(&group(), 0, None, &keymap(), now());
+        let sheet = view(&group(), 0, None, &keymap(), now(), None);
         let cards: Vec<(&str, &str, bool, &str)> = sheet
             .cards
             .iter()
@@ -288,7 +290,7 @@ mod tests {
 
     #[test]
     fn choosing_another_record_moves_the_ring_and_the_name_of_the_result() {
-        let sheet = view(&group(), 1, None, &keymap(), now());
+        let sheet = view(&group(), 1, None, &keymap(), now(), None);
         assert!(sheet.cards[1].kept && !sheet.cards[0].kept);
         assert_eq!(sheet.result.name, "A. Moreno");
         assert!(
@@ -302,7 +304,7 @@ mod tests {
 
     #[test]
     fn the_result_adds_up_the_mail_and_says_what_is_folded_in() {
-        let sheet = view(&group(), 0, None, &keymap(), now());
+        let sheet = view(&group(), 0, None, &keymap(), now(), None);
         assert_eq!(sheet.result.name, "Ada Moreno");
         assert_eq!(sheet.result.role, "Finance lead, Northwind Partners");
         assert_eq!(
@@ -321,7 +323,7 @@ mod tests {
 
     #[test]
     fn the_three_ways_out_carry_the_keys_that_do_them() {
-        let sheet = view(&group(), 0, None, &keymap(), now());
+        let sheet = view(&group(), 0, None, &keymap(), now(), None);
         let keys: Vec<(&str, Option<&str>)> = [&sheet.not_same, &sheet.later, &sheet.merge]
             .iter()
             .map(|b| (b.label.as_str(), b.key.as_deref()))
@@ -333,6 +335,32 @@ mod tests {
                 ("Later", Some("Escape")),
                 ("Merge", Some("Return"))
             ]
+        );
+    }
+
+    #[test]
+    fn a_result_that_syncs_says_so_and_one_that_does_not_does_not() {
+        let plain = view(&group(), 0, None, &keymap(), now(), None);
+        assert!(
+            plain.result.line.contains("\u{b7} saved \u{b7} the two"),
+            "{}",
+            plain.result.line
+        );
+        let synced = view(
+            &group(),
+            0,
+            None,
+            &keymap(),
+            now(),
+            Some("Contacts (iCloud)"),
+        );
+        assert!(
+            synced
+                .result
+                .line
+                .contains("saved, synced with Contacts (iCloud)"),
+            "{}",
+            synced.result.line
         );
     }
 }

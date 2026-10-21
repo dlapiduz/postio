@@ -1078,6 +1078,12 @@ impl Inner {
                     Err(error) => Resp::Failed(error),
                 }
             }
+            Req::ContactsSyncPlan { records, scope } => {
+                match contacts::contacts_sync_plan(&self.wiring.database, &records, scope).await {
+                    Ok(plan) => Resp::ContactsSyncPlan(Box::new(plan)),
+                    Err(reason) => Resp::Failed(postio_model::listing::StoreError::new(reason)),
+                }
+            }
             Req::ContactsImport(bytes) => {
                 match contacts::import_vcards(&self.wiring.database, &bytes).await {
                     Ok(summary) => {

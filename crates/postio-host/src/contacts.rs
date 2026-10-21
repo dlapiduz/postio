@@ -232,6 +232,66 @@ pub async fn contact_seen(
     items
 }
 
+/// What a sync with the Mac's Contacts would do, from a snapshot of their
+/// side: a dry run. Reads Postio's saved people and nothing else, writes
+/// nothing to either side, and logs counts only; the plan holds names, for the
+/// person to read.
+pub async fn contacts_sync_plan(
+    database: &Store,
+    externals: &[postio_contact_sync::ExternalRecord],
+    scope: postio_contact_sync::Scope,
+) -> Result<postio_contact_sync::Plan, String> {
+    use postio_contact_sync::{Fields, LocalRecord, Mode, plan};
+    let failed = |error: postio_storage::Error| {
+        tracing::warn!(%error, "could not read contacts to plan a sync");
+        "Could not read your contacts".to_owned()
+    };
+    let reader = database.read().await.map_err(|error| {
+        tracing::warn!(%error, "could not open the store to plan a sync");
+        "Could not read your contacts".to_owned()
+    })?;
+    let saved = ContactRepository::new(&reader)
+        .saved_for_sync()
+        .await
+        .map_err(failed)?;
+    let locals: Vec<LocalRecord> = saved
+        .into_iter()
+        .map(|(person, phones)| {
+            let (given, family) = match (&person.given_name, &person.family_name) {
+                (None, None) => postio_model::split_name(person.display_name()),
+                (given, family) => (
+                    given.clone().unwrap_or_default(),
+                    family.clone().unwrap_or_default(),
+                ),
+            };
+            LocalRecord {
+                id: person.id.get(),
+                label: person.shown_as().into_owned(),
+                fields: Fields {
+                    given,
+                    family,
+                    emails: person
+                        .addresses
+                        .iter()
+                        .map(|owned| owned.address.address.to_lowercase())
+                        .collect(),
+                    phones,
+                    organization: person.organization.clone().unwrap_or_default(),
+                    title: person.title.clone().unwrap_or_default(),
+                },
+                saved: true,
+                kind: person.kind,
+            }
+        })
+        .collect();
+    // The dry run is what a two-way sync would do; nothing is written either
+    // way, and the gate (`postio_contact_sync::write`) is not called.
+    let plan = plan(&locals, externals, &[], scope, Mode::TwoWay);
+    let (add, update, ask, delete) = plan.counts();
+    tracing::info!(add, update, ask, delete, "planned a contacts sync, dry run");
+    Ok(plan)
+}
+
 /// Where `person` is in `tab`'s list: what a cursor moves to after an import
 /// made them.
 pub async fn contact_position(
@@ -1193,6 +1253,91 @@ MEMBER:mailto:yara@work.example\r\nEND:VCARD\r\n";
                 .collect::<Vec<_>>()
         );
         assert_eq!(first.len(), plain.len(), "the rest still follow");
+    }
+
+    #[tokio::test]
+    async fn a_sync_dry_run_over_the_demo_says_what_would_happen_and_writes_nothing() {
+        use postio_contact_sync::{ExternalRecord, Fields, Scope};
+        let (database, _) = postio_demo::demo().await;
+        let theirs =
+            |id: &str, given: &str, family: &str, address: &str, title: &str| ExternalRecord {
+                id: id.to_owned(),
+                label: format!("{given} {family}"),
+                fields: Fields {
+                    given: given.to_owned(),
+                    family: family.to_owned(),
+                    emails: [address.to_owned()].into_iter().collect(),
+                    phones: Vec::new(),
+                    organization: String::new(),
+                    title: title.to_owned(),
+                },
+            };
+        // Marisol is saved in the demo, and the other side has her too, with
+        // another title and no organisation; Zed is nobody Postio has.
+        let externals = vec![
+            theirs(
+                "x1",
+                "Marisol",
+                "Quint",
+                "marisol@example.com",
+                "Head of finance",
+            ),
+            theirs("x9", "Zed", "Zimmer", "zed@example.org", ""),
+        ];
+        let before = fingerprint(&database).await;
+        let plan = contacts_sync_plan(&database, &externals, Scope::PeopleAndCompanies)
+            .await
+            .expect("a plan");
+        assert_eq!(
+            fingerprint(&database).await,
+            before,
+            "a dry run writes nothing in Postio"
+        );
+        assert!(plan.deletes.is_empty());
+        assert_eq!(
+            plan.matches.len(),
+            1,
+            "Marisol is matched by her address: {plan:?}"
+        );
+        assert_eq!(plan.left_alone, 1, "Zed stays where he is");
+        let (add, _, _, delete) = plan.counts();
+        assert!(
+            add >= 1,
+            "the saved people the other side lacks would be added: {}",
+            plan.summary()
+        );
+        assert_eq!(delete, 0);
+        assert!(
+            plan.creates.iter().all(|c| c.label != "Caspian Holt"),
+            "someone not saved never syncs"
+        );
+        assert!(
+            plan.conflicts.iter().any(|c| c.field == "title"),
+            "both sides name a different title and neither is overwritten: {plan:?}"
+        );
+        assert!(
+            plan.updates.iter().any(|c| c.field == "organization"),
+            "the organisation only Postio has would go across: {plan:?}"
+        );
+    }
+
+    /// Everything a sync could change in Postio, summed: a dry run leaves it
+    /// exactly as it was.
+    async fn fingerprint(database: &Store) -> (i64, i64, i64) {
+        let reader = database.read().await.expect("a reader");
+        let one = |sql: &'static str| {
+            let reader = &reader;
+            async move {
+                postio_storage::sql::scalar(reader, sql, ())
+                    .await
+                    .expect("a number")
+            }
+        };
+        (
+            one("SELECT count(*) * 1000003 + coalesce(sum(updated_at), 0) FROM contacts").await,
+            one("SELECT count(*) FROM addresses WHERE contact_id IS NOT NULL").await,
+            one("SELECT count(*) FROM contact_details").await,
+        )
     }
 
     #[tokio::test]
