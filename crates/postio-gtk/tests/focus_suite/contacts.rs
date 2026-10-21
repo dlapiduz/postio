@@ -323,7 +323,13 @@ pub fn x_marks_a_row_without_moving_the_list() {
         );
         let view = window.contacts().expect("the view");
         support::keys(&window, &["j", "j", "j", "j", "j", "j", "j", "j", "j", "j"]);
-        assert!(crate::settle_until(async || view.cursor() == Some(10)).await);
+        assert!(
+            crate::settle_until(async || view.cursor() == Some(10)
+                && view.card_name().is_some()
+                && view.card_name() == view.name_at(10))
+            .await,
+            "the cursor is on the tenth person and its card has been read"
+        );
         crate::settle();
         let before = view.scroll_offset();
         support::keys(&window, &["x"]);
