@@ -60,8 +60,7 @@ pub fn a_marked_row_is_two_lines_whatever_its_state() {
             crate::settle_until(async || row.drawn().texts.iter().any(|text| text == "Question"))
                 .await,
             "the chip was never drawn: {:?}",
-            row.drawn().texts,
-            nodes_of(&row)
+            row.drawn().texts
         );
         let drawn = row.drawn().texts;
         let reply = postio_ui::hints::key(Keymap::defaults(), CommandId::Reply).expect("a key");
@@ -161,12 +160,11 @@ pub fn a_selected_marked_row_shows_its_check_not_its_dot() {
             gutter_marks(&row),
             1,
             "selected, the gutter holds the checked box alone, not the box over the dot \
-             ({}x{}, picked {}, {:?})\n{}",
+             ({}x{}, picked {}, {:?})",
             row.width(),
             row.height(),
             row.drawn().picked,
-            row.drawn().texts,
-            nodes_of(&row)
+            row.drawn().texts
         );
         assert!(
             row.drawn().texts.iter().any(|text| text == "Question"),
@@ -238,16 +236,6 @@ pub fn the_dot_is_unread_mail_not_a_marker() {
 
 /// How many marks `row` paints in its gutter on the first line: the dot, the
 /// checked box, a digest's stack -- anything small standing there.
-fn nodes_of(row: &postio_gtk::list::RowWidget) -> String {
-    let paintable = gtk::WidgetPaintable::new(Some(row));
-    let snapshot = gtk::Snapshot::new();
-    paintable.snapshot(&snapshot, f64::from(row.width()), f64::from(row.height()));
-    snapshot
-        .to_node()
-        .map(|node| String::from_utf8_lossy(&node.serialize()).chars().take(1500).collect())
-        .unwrap_or_default()
-}
-
 fn gutter_marks(row: &postio_gtk::list::RowWidget) -> u32 {
     let paintable = gtk::WidgetPaintable::new(Some(row));
     let snapshot = gtk::Snapshot::new();
