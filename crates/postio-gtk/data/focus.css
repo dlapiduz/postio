@@ -1477,6 +1477,121 @@ button.focus-compose-detach {
   font-size: var(--postio-text-label);
 }
 
+.focus-contact-form-bar {
+  min-height: 44px;
+  padding: 0 var(--postio-space-6) 0 36px;
+  background-color: var(--postio-ground);
+  border-bottom: 1px solid var(--postio-hairline);
+}
+
+.focus-contact-form-title {
+  font-weight: bold;
+  font-size: var(--postio-text-ui);
+}
+
+.focus-contact-armed {
+  font-weight: 600;
+  color: var(--postio-error);
+  font-size: var(--postio-text-ui);
+}
+
+.focus-contact-form-rows {
+  padding: 22px 36px;
+}
+
+.focus-contact-form-label {
+  padding-top: var(--postio-space-2);
+  font-size: var(--postio-text-ui);
+}
+
+.focus-contact-field {
+  min-height: 32px;
+  padding: 0 var(--postio-space-3);
+}
+
+.focus-contact-problem {
+  font-weight: 600;
+  color: var(--postio-error);
+}
+
+.focus-contact-seen {
+  min-height: 30px;
+  padding: 0 var(--postio-space-3);
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-ground);
+}
+
+.focus-contact-type {
+  min-width: 96px;
+}
+
+.focus-contact-group-options {
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-surface);
+}
+
+.focus-contact-group-new {
+  font-weight: 600;
+}
+
+.focus-contacts-scrim {
+  background-color: var(--postio-scrim);
+}
+
+.focus-merge {
+  margin-top: var(--postio-space-6);
+  padding-bottom: var(--postio-space-4);
+}
+
+.focus-merge-head {
+  padding: 20px 24px 14px 24px;
+}
+
+.focus-merge-title {
+  font-weight: bold;
+  font-size: var(--postio-text-reading);
+}
+
+.focus-merge-cards {
+  padding: 0 24px;
+}
+
+.focus-merge-card {
+  padding: var(--postio-space-3);
+  border: 2px solid transparent;
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-ground);
+}
+
+.focus-merge-card-kept {
+  border-color: var(--postio-hairline-strong);
+  box-shadow: inset 0 0 0 1px var(--postio-hairline-strong);
+}
+
+.focus-merge-keep {
+  font-weight: 600;
+  font-size: var(--postio-text-label);
+}
+
+.focus-merge-why {
+  margin: 14px 24px 0 24px;
+  padding: var(--postio-space-4);
+  border: 1px solid var(--postio-hairline);
+  border-radius: var(--postio-radius-lg);
+}
+
+.focus-merge-result {
+  margin: 12px 24px 0 24px;
+  padding: var(--postio-space-4);
+  border-radius: var(--postio-radius-lg);
+  background-color: var(--postio-selected-strong-bg);
+}
+
+.focus-merge-foot {
+  padding: 14px 24px 4px 24px;
+}
+
 /* ── The digest rules list (g d; C15): 21's frame ───────────────────── */
 .focus-rules-name {
   font-weight: bold;

@@ -136,6 +136,14 @@ const SCREENS: &[(&str, &str)] = &[
         "50",
         "Contacts: the people, a card beside them (handoff 01, 02)",
     ),
+    (
+        "51",
+        "Contacts: the merge sheet over the people (handoff 07)",
+    ),
+    (
+        "52",
+        "Contacts: the Edit form in the card's place (handoff 06)",
+    ),
 ];
 
 /// The screens drawn with messages opening beside the list (T232).
@@ -749,6 +757,34 @@ fn stage(
             }
             let shown = Instant::now();
             settle_until(|| shown.elapsed() > Duration::from_millis(400));
+        }
+        "51" | "52" => {
+            window.act(CommandId::OpenContacts);
+            let ready = || {
+                window
+                    .contacts()
+                    .is_some_and(|view| view.total() > 0 && view.card_name().is_some())
+            };
+            if !settle_until(ready) {
+                return Err("the Contacts view never listed anyone".into());
+            }
+            if screen == "51" {
+                window.press_command(CommandId::ContactsSuggestions);
+                if !settle_until(|| {
+                    window
+                        .contacts()
+                        .is_some_and(|view| !view.merge_texts().is_empty())
+                }) {
+                    return Err("the merge sheet never opened".into());
+                }
+            } else {
+                window.press_command(CommandId::ContactEdit);
+                if !settle_until(|| window.contacts().is_some_and(|view| view.has_form())) {
+                    return Err("the Edit form never opened".into());
+                }
+            }
+            let shown = Instant::now();
+            settle_until(|| shown.elapsed() > Duration::from_millis(500));
         }
         "40" | "41" | "42" | "43" => {
             pick_three();

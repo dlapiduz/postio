@@ -9,13 +9,17 @@ use std::rc::{Rc, Weak};
 use gtk::prelude::*;
 use postio_core::CommandId;
 use postio_focus::Input;
+use postio_ui::contact_edit::EditView;
+use postio_ui::contact_merge::MergeSheetView;
 use postio_ui::contacts_view::{CardView, RowView, StripView};
 use postio_widgets::widgets::button::{self, Kind, Size};
 use postio_widgets::widgets::keyhint::{self, KeyLine};
 use postio_widgets::widgets::space::{S1, S2, S3, S4};
 
 use super::card::{self, CardHooks};
+use super::form::{self, Form, FormHooks, Slot};
 use super::list::{self, ContactsList};
+use super::merge::{self, MergeHooks};
 use crate::list::Feed;
 
 /// A row's height without a letter heading over it.
@@ -42,12 +46,24 @@ pub struct ContactsView {
     model: ContactsList,
     selection: gtk::SingleSelection,
     list: gtk::ListView,
-    card_host: gtk::ScrolledWindow,
+    card_host: gtk::Stack,
+    card_scroller: gtk::ScrolledWindow,
     footer: KeyLine,
     status: gtk::Label,
     /// What the card was last drawn from, so a redraw can be told from a
     /// repeat.
     card: RefCell<Option<CardView>>,
+    /// The Edit form, while one is open.
+    form: RefCell<Option<Form>>,
+    /// The form the controller last asked for, until it is drawn.
+    pending_form: RefCell<Option<EditView>>,
+    /// Where the controller last said the keyboard goes in the form.
+    form_focus: Cell<Option<Slot>>,
+    /// The sheet over the view, while there is one.
+    merge: RefCell<Option<gtk::Widget>>,
+    /// The footer's hints as the frame set them, for when a form hands the
+    /// footer back.
+    frame_hints: RefCell<Vec<postio_ui::hints::Hint>>,
     /// Set while the controller moves the cursor, so the selection model's
     /// answer is not reported back as a click.
     placing: Cell<bool>,
@@ -122,12 +138,19 @@ impl ContactsView {
             .width_request(440)
             .build();
 
-        let card_host = gtk::ScrolledWindow::builder()
+        let card_scroller = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
             .hexpand(true)
             .vexpand(true)
             .build();
+        // The card, or the Edit form in its place: no transition (pane
+        // switches are instant).
+        let card_host = gtk::Stack::new();
+        card_host.set_transition_type(gtk::StackTransitionType::None);
+        card_host.set_hexpand(true);
+        card_host.set_vexpand(true);
         card_host.add_css_class("focus-contacts-card-host");
+        card_host.add_named(&card_scroller, Some("card"));
 
         let divider = gtk::Separator::new(gtk::Orientation::Vertical);
         let body = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -177,9 +200,15 @@ impl ContactsView {
             selection,
             list,
             card_host,
+            card_scroller,
             footer,
             status,
             card: RefCell::default(),
+            form: RefCell::default(),
+            pending_form: RefCell::default(),
+            form_focus: Cell::default(),
+            merge: RefCell::default(),
+            frame_hints: RefCell::default(),
             placing: Cell::new(false),
             typing_echo: Cell::new(false),
             me: RefCell::default(),
@@ -291,7 +320,10 @@ impl ContactsView {
             self.filter.set_position(-1);
             self.typing_echo.set(false);
         }
-        self.footer.set(&view.footer.hints);
+        self.frame_hints.replace(view.footer.hints.clone());
+        if self.form.borrow().is_none() {
+            self.footer.set(&view.footer.hints);
+        }
         self.status.set_text(&view.footer.status);
         self.show_cursor(self.feed.contacts_cursor());
     }
@@ -400,11 +432,111 @@ impl ContactsView {
         match &card {
             Some(card) => {
                 let hooks = self.card_hooks();
-                self.card_host.set_child(Some(&card::build(card, &hooks)));
+                self.card_scroller
+                    .set_child(Some(&card::build(card, &hooks)));
             }
-            None => self.card_host.set_child(None::<&gtk::Widget>),
+            None => self.card_scroller.set_child(None::<&gtk::Widget>),
         }
         self.card.replace(card);
+    }
+
+    /// The Edit form, whole; `None` puts it away and the card is back.
+    pub fn show_edit(&self, edit: Option<EditView>) {
+        let Some(edit) = edit else {
+            self.pending_form.take();
+            self.close_form();
+            return;
+        };
+        // Drawn once the signal that asked for it has returned: a letter
+        // typed in a field redraws the form, and a field cannot be taken
+        // out of the window while it is still announcing its own change.
+        if self.pending_form.replace(Some(edit)).is_none() {
+            let weak = self.weak();
+            gtk::glib::idle_add_local_once(move || {
+                if let Some(view) = weak.upgrade()
+                    && let Some(edit) = view.pending_form.take()
+                {
+                    view.draw_form(edit);
+                }
+            });
+        }
+    }
+
+    fn draw_form(&self, edit: EditView) {
+        let before = self.form.borrow().as_ref().and_then(Form::focus);
+        let weak = self.weak();
+        let hooks = FormHooks {
+            change: Rc::new({
+                let weak = weak.clone();
+                move |change| {
+                    if let Some(view) = weak.upgrade() {
+                        view.feed.input(Input::ContactEditChange(change));
+                    }
+                }
+            }),
+            command: Rc::new({
+                let act = Rc::clone(&self.act);
+                move |command| act(command)
+            }),
+        };
+        let built = form::build(&edit, &hooks);
+        if let Some(old) = self.card_host.child_by_name("form") {
+            self.card_host.remove(&old);
+        }
+        self.card_host.add_named(built.widget(), Some("form"));
+        self.card_host.set_visible_child_name("form");
+        self.footer.set(&edit.hints);
+        // The keyboard stays where it was, caret and all, unless the
+        // controller moved it (a new address row, the group picker).
+        let wanted: Slot = edit.focus.into();
+        match (before, self.form_focus.get() == Some(wanted)) {
+            (Some((slot, at)), true) => built.put_focus(slot, Some(at)),
+            _ => built.put_focus(wanted, None),
+        }
+        self.form_focus.set(Some(wanted));
+        self.form.replace(Some(built));
+    }
+
+    fn close_form(&self) {
+        if self.form.borrow().is_none() {
+            return;
+        }
+        self.form.replace(None);
+        self.form_focus.set(None);
+        self.card_host.set_visible_child_name("card");
+        if let Some(old) = self.card_host.child_by_name("form") {
+            self.card_host.remove(&old);
+        }
+        self.footer.set(&self.frame_hints.borrow().clone());
+        self.list.grab_focus();
+    }
+
+    /// The merge sheet over the view, or put away.
+    pub fn show_merge(&self, sheet: Option<MergeSheetView>) {
+        if let Some(old) = self.merge.take() {
+            self.shell.remove_overlay(&old);
+        }
+        let Some(sheet) = sheet else {
+            return;
+        };
+        let weak = self.weak();
+        let hooks = MergeHooks {
+            keep: Rc::new({
+                let weak = weak.clone();
+                move |index| {
+                    if let Some(view) = weak.upgrade() {
+                        view.feed.input(Input::ContactMergeKeep(index));
+                    }
+                }
+            }),
+            command: Rc::new({
+                let act = Rc::clone(&self.act);
+                move |command| act(command)
+            }),
+        };
+        let widget = merge::build(&sheet, &hooks);
+        self.shell.add_overlay(&widget);
+        self.merge.replace(Some(widget));
     }
 
     fn card_hooks(&self) -> CardHooks {
@@ -487,6 +619,50 @@ impl ContactsView {
     /// The card, as last drawn.
     pub fn card(&self) -> Option<CardView> {
         self.card.borrow().clone()
+    }
+
+    /// Every text the Edit form shows, while one is open.
+    pub fn form_texts(&self) -> Vec<String> {
+        self.form
+            .borrow()
+            .as_ref()
+            .map(form::texts)
+            .unwrap_or_default()
+    }
+
+    /// The text of the form's field in `slot`.
+    pub fn form_text(&self, slot: Slot) -> Option<String> {
+        self.form
+            .borrow()
+            .as_ref()
+            .and_then(|form| form.text_of(slot))
+    }
+
+    /// Type into the form's field as a person would.
+    pub fn test_type_form(&self, slot: Slot, text: &str) {
+        // Not under the borrow: a typed letter redraws the form.
+        let entry = self
+            .form
+            .borrow()
+            .as_ref()
+            .and_then(|form| form.entry_of(slot));
+        if let Some(entry) = entry {
+            entry.set_text(text);
+        }
+    }
+
+    /// Whether the Edit form is up.
+    pub fn has_form(&self) -> bool {
+        self.form.borrow().is_some()
+    }
+
+    /// Every text the merge sheet shows, while there is one.
+    pub fn merge_texts(&self) -> Vec<String> {
+        self.merge
+            .borrow()
+            .as_ref()
+            .map(merge::texts)
+            .unwrap_or_default()
     }
 
     /// What the filter field holds.

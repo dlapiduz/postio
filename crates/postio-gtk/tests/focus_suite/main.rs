@@ -154,6 +154,14 @@ const CASES: &[(&str, fn())] = &[
         contacts::the_strip_says_its_tabs_and_a_click_on_one_is_the_key as fn(),
     ),
     (
+        "contacts::ctrl_e_edits_escape_arms_before_it_discards_and_ctrl_s_saves",
+        contacts::ctrl_e_edits_escape_arms_before_it_discards_and_ctrl_s_saves as fn(),
+    ),
+    (
+        "contacts::g_w_offers_the_look_alikes_return_merges_and_escape_is_later",
+        contacts::g_w_offers_the_look_alikes_return_merges_and_escape_is_later as fn(),
+    ),
+    (
         "contacts::slash_filters_the_list_and_escape_clears_before_it_closes",
         contacts::slash_filters_the_list_and_escape_clears_before_it_closes as fn(),
     ),

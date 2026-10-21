@@ -154,3 +154,136 @@ pub fn slash_filters_the_list_and_escape_clears_before_it_closes() {
         assert!(crate::settle_until(async || window.contacts().is_none()).await);
     });
 }
+
+/// `ctrl+e` opens the form over the card, a typed field comes back drawn from
+/// what the controller answers, the first Escape arms and the second
+/// discards, and `ctrl+s` saves what was typed (handoff screen 06).
+pub fn ctrl_e_edits_escape_arms_before_it_discards_and_ctrl_s_saves() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        use postio_gtk::contacts::Slot;
+        let fixture = fixture().await;
+        let (window, _client) = fixture.open().await;
+        support::keys(&window, &["g", "c"]);
+        assert!(
+            crate::settle_until(async || window
+                .contacts()
+                .is_some_and(|view| view.card_name().as_deref() == Some("Ada Moreno")))
+            .await
+        );
+        let view = window.contacts().expect("the view");
+        support::press(&window, "e", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || view.has_form()).await,
+            "ctrl+e opens the form"
+        );
+        assert!(
+            view.form_texts()
+                .iter()
+                .any(|line| line.starts_with("Editing")),
+            "{:?}",
+            view.form_texts()
+        );
+        view.test_type_form(Slot::Title, "Finance lead");
+        assert!(
+            crate::settle_until(
+                async || view.form_text(Slot::Title).as_deref() == Some("Finance lead")
+            )
+            .await,
+            "the field is drawn from the controller's answer"
+        );
+
+        // The first Escape arms, and says so.
+        support::keys(&window, &["Escape"]);
+        assert!(
+            crate::settle_until(async || view
+                .form_texts()
+                .iter()
+                .any(|line| line.contains("Esc again")))
+            .await,
+            "{:?}",
+            view.form_texts()
+        );
+        assert!(view.has_form(), "armed, not discarded");
+        support::keys(&window, &["Escape"]);
+        assert!(
+            crate::settle_until(async || !view.has_form()).await,
+            "the second Escape discards"
+        );
+
+        // And saving keeps it.
+        support::press(&window, "e", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert!(crate::settle_until(async || view.has_form()).await);
+        view.test_type_form(Slot::Title, "Finance lead");
+        assert!(
+            crate::settle_until(
+                async || view.form_text(Slot::Title).as_deref() == Some("Finance lead")
+            )
+            .await
+        );
+        support::press(&window, "s", gtk::gdk::ModifierType::CONTROL_MASK);
+        assert!(
+            crate::settle_until(async || !view.has_form()
+                && view
+                    .card()
+                    .is_some_and(|card| card.role.contains("Finance lead")))
+            .await,
+            "ctrl+s saves, and the card says what was typed"
+        );
+    });
+}
+
+/// Two records of one person: `g w` opens the merge sheet with its reasons,
+/// Return merges and the list says one person where it said two, and
+/// Escape is Later.
+pub fn g_w_offers_the_look_alikes_return_merges_and_escape_is_later() {
+    crate::gtk_case(async {
+        if !support::display() {
+            return;
+        }
+        let fixture = Fixture::empty().await;
+        fixture
+            .correspondent("Ada Moreno", "ada@example.test")
+            .await;
+        fixture
+            .correspondent("ada  moreno", "a.moreno@example.net")
+            .await;
+        fixture
+            .correspondent("Ben Adeyemi", "ben@example.test")
+            .await;
+        fixture
+            .file(("Ben Adeyemi", "ben@example.test"), "Hello", "Hi.", 5)
+            .await;
+        let (window, _client) = fixture.open().await;
+        support::keys(&window, &["g", "w"]);
+        assert!(
+            crate::settle_until(async || window
+                .contacts()
+                .is_some_and(|view| !view.merge_texts().is_empty()))
+            .await,
+            "g w opens the sheet"
+        );
+        let view = window.contacts().expect("the view");
+        let said = view.merge_texts();
+        assert!(said.iter().any(|line| line == "Not the same"), "{said:?}");
+        assert!(said.iter().any(|line| line == "Later"), "{said:?}");
+        assert!(said.iter().any(|line| line == "Merge"), "{said:?}");
+        assert_eq!(view.total(), 3);
+
+        // Later puts it away and leaves the people as they were.
+        support::keys(&window, &["Escape"]);
+        assert!(crate::settle_until(async || view.merge_texts().is_empty()).await);
+        assert_eq!(view.total(), 3);
+
+        // Again, and merge.
+        support::keys(&window, &["g", "w"]);
+        assert!(crate::settle_until(async || !view.merge_texts().is_empty()).await);
+        support::keys(&window, &["Return"]);
+        assert!(
+            crate::settle_until(async || view.total() == 2 && view.merge_texts().is_empty()).await,
+            "two records became one person"
+        );
+    });
+}

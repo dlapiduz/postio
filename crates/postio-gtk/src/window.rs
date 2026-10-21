@@ -2112,6 +2112,16 @@ impl FocusWindow {
                     view.show_card(card.as_deref().cloned());
                 }
             }
+            Intent::ContactEdit(edit) => {
+                if let Some(view) = self.contacts() {
+                    view.show_edit(edit.as_deref().cloned());
+                }
+            }
+            Intent::ContactMerge(sheet) => {
+                if let Some(view) = self.contacts() {
+                    view.show_merge(sheet.as_deref().cloned());
+                }
+            }
             Intent::ContactsFocusFilter => {
                 if let Some(view) = self.contacts() {
                     view.focus_filter();
@@ -3756,7 +3766,7 @@ impl FocusWindow {
 
     /// A control drawn for a command does what its key does: the
     /// controller's when it owns the command over what is on screen.
-    pub(crate) fn press_command(&self, command: CommandId) {
+    pub fn press_command(&self, command: CommandId) {
         match self.route(command) {
             Route::Controller => self.run_in_controller(command),
             _ => self.act(command),

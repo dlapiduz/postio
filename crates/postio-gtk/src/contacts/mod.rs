@@ -8,7 +8,10 @@
 
 mod avatar;
 mod card;
+mod form;
 mod list;
+mod merge;
 mod view;
 
+pub use form::Slot;
 pub use view::ContactsView;
