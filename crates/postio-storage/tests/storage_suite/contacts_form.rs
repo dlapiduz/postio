@@ -90,7 +90,10 @@ async fn editing_changes_what_changed_and_hands_back_the_form_it_found() {
     assert_eq!(after.groups, ["Finance"]);
     let addresses: Vec<&str> = after.addresses.iter().map(|a| a.address.as_str()).collect();
     assert!(addresses.contains(&"a.moreno@example.net"));
-    assert!(!addresses.contains(&"ada@example.org"), "let go: {addresses:?}");
+    assert!(
+        !addresses.contains(&"ada@example.org"),
+        "let go: {addresses:?}"
+    );
     // The released address belongs to nobody now, and is not deleted.
     let freed = contacts
         .by_address("ada@example.org")
@@ -132,7 +135,10 @@ async fn an_address_a_live_person_owns_refuses_the_whole_save() {
     let connection = database.connect().await.expect("checkout");
     let contacts = ContactRepository::new(&connection);
     contacts
-        .create(Some("Ben"), &[EmailAddress::new(None::<String>, "ben@example.net")])
+        .create(
+            Some("Ben"),
+            &[EmailAddress::new(None::<String>, "ben@example.net")],
+        )
         .await
         .unwrap();
 
@@ -144,7 +150,11 @@ async fn an_address_a_live_person_owns_refuses_the_whole_save() {
         "{error:?}"
     );
     assert!(
-        contacts.by_address("ada@example.org").await.unwrap().is_none(),
+        contacts
+            .by_address("ada@example.org")
+            .await
+            .unwrap()
+            .is_none(),
         "nothing was half-saved"
     );
 }
@@ -158,5 +168,8 @@ async fn a_form_that_cannot_be_saved_says_why() {
         .save_form(None, &ContactForm::blank())
         .await
         .unwrap_err();
-    assert!(error.to_string().contains("Add at least one address"), "{error}");
+    assert!(
+        error.to_string().contains("Add at least one address"),
+        "{error}"
+    );
 }

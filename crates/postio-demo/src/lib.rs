@@ -1653,7 +1653,10 @@ mod tests {
         )
         .await
         .expect("a count");
-        assert!(companies >= 1, "the Companies tab is not empty: {companies}");
+        assert!(
+            companies >= 1,
+            "the Companies tab is not empty: {companies}"
+        );
         assert_eq!(
             scalar(
                 &connection,

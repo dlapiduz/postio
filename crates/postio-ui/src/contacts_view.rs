@@ -307,6 +307,9 @@ pub struct SwitchLine {
     pub note: String,
     /// Whether it is on.
     pub on: bool,
+    /// What a click on it changes; `None` for a line that says something the
+    /// arrival control changes (a newsletter's digest).
+    pub switch: Option<postio_model::CardSwitch>,
 }
 
 /// The twelve-month strip.
@@ -624,6 +627,7 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
                 title: format!("Notify me when {first} writes"),
                 note: "A quiet badge, even when Focus is in the background".to_owned(),
                 on: card.settings.notify,
+                switch: Some(postio_model::CardSwitch::Notify),
             },
             SwitchLine {
                 title: format!("Always show {first}\u{2019}s HTML as sent"),
@@ -634,6 +638,7 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
                 }
                 .to_owned(),
                 on: html_on,
+                switch: Some(postio_model::CardSwitch::HtmlAsSent),
             },
             SwitchLine {
                 title: "Remind if no reply, by default".to_owned(),
@@ -651,6 +656,7 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
                     None => format!("Off: nothing waits on {first}'s reply unless you ask"),
                 },
                 on: card.settings.remind_days.is_some(),
+                switch: Some(postio_model::CardSwitch::Remind),
             },
         ]
     } else {
@@ -671,6 +677,7 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
                 title: digest,
                 note: "Edit the rule with d".to_owned(),
                 on: in_force == ContactArrival::Digest,
+                switch: None,
             },
             SwitchLine {
                 title: "Always show its HTML as sent".to_owned(),
@@ -681,6 +688,7 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
                 }
                 .to_owned(),
                 on: html_on,
+                switch: Some(postio_model::CardSwitch::HtmlAsSent),
             },
             SwitchLine {
                 title: match card.settings.archive_after_days {
@@ -689,6 +697,7 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
                 },
                 note: "Read or not; they stay searchable".to_owned(),
                 on: card.settings.archive_after_days.is_some(),
+                switch: Some(postio_model::CardSwitch::Archive),
             },
         ]
     };
@@ -1123,6 +1132,7 @@ mod tests {
                 mime: "application/vnd.ms-excel".into(),
             }],
             issues: Vec::new(),
+            address_notes: Vec::new(),
         }
     }
 

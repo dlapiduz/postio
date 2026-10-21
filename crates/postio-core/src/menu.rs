@@ -263,6 +263,7 @@ pub fn section_for(command: CommandId) -> Option<MenuSection> {
         | C::ContactSetPreferred
         | C::ContactNew
         | C::ContactEdit
+        | C::ContactSave
         | C::ContactDelete
         | C::ContactRestore
         | C::ContactsToggleDeleted

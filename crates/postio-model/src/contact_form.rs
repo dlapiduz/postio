@@ -8,8 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::contact::{ContactAddress, ContactCardRead, ContactKind, ShowAs};
 use crate::EmailAddress;
+use crate::contact::{ContactAddress, ContactCardRead, ContactKind, ShowAs};
 use crate::ids::AddressId;
 
 /// What the user calls one of a person's addresses (the type menu).
@@ -120,7 +120,9 @@ impl FormProblem {
     pub fn text(&self) -> String {
         match self {
             Self::NoAddress => "Add at least one address.".to_owned(),
-            Self::NotAnAddress(typed) => format!("\u{201c}{typed}\u{201d} is not an email address."),
+            Self::NotAnAddress(typed) => {
+                format!("\u{201c}{typed}\u{201d} is not an email address.")
+            }
             Self::Twice(typed) => format!("{typed} is in the list twice."),
             Self::NoName => "Give them a name.".to_owned(),
         }
@@ -171,7 +173,12 @@ impl ContactForm {
     pub fn of(card: &ContactCardRead, notes: &[AddressNote]) -> Self {
         let person = &card.person;
         let (given, family) = match (&person.given_name, &person.family_name) {
-            (None, None) => split_name(person.name.as_deref().unwrap_or("")),
+            // Never split by the user: what the person is called now, unless
+            // that is only an address, which is not a name to start from.
+            (None, None) => {
+                let shown = person.display_name();
+                split_name(if shown.contains('@') { "" } else { shown })
+            }
             (given, family) => (
                 given.clone().unwrap_or_default(),
                 family.clone().unwrap_or_default(),

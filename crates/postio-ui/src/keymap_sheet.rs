@@ -273,6 +273,7 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::ContactSetPreferred
         | C::ContactNew
         | C::ContactEdit
+        | C::ContactSave
         | C::ContactDelete
         | C::ContactRestore
         | C::ContactsToggleDeleted

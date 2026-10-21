@@ -825,6 +825,9 @@ commands! {
         /// What is asked: a keystroke opens the editor on the focused person.
         action: ContactEditAction = ContactEditAction::Ask,
     } => "contact_edit",
+    /// Save the Edit form in front of the person (specs/011-focus-contacts
+    /// S8). The form is the controller's, so the command carries nothing.
+    ContactSave => "contact_save",
     /// Delete a person (FR-023), or a group (FR-040). Both `None` means
     /// whichever row is focused.
     ContactDelete {

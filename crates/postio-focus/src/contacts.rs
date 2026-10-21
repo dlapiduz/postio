@@ -60,9 +60,11 @@ pub(crate) struct Contacts {
     filtered: Option<Vec<ContactListRow>>,
     filter_stamp: u64,
     cursor: Option<u32>,
-    card: Option<ContactCardRead>,
+    pub(crate) card: Option<ContactCardRead>,
     card_for: Option<ContactId>,
     card_stamp: u64,
+    /// The Edit form, while one is open over the card.
+    pub(crate) edit: Option<crate::contact_edit::ContactEdit>,
 }
 
 impl Contacts {
@@ -80,6 +82,7 @@ impl Contacts {
             card: None,
             card_for: None,
             card_stamp: 0,
+            edit: None,
         }
     }
 
@@ -161,6 +164,9 @@ impl FocusController {
                 | CommandId::ContactShowMail
                 | CommandId::ContactCompose
                 | CommandId::ContactPopover
+                | CommandId::ContactEdit
+                | CommandId::ContactNew
+                | CommandId::ContactSave
         )
     }
 
@@ -168,7 +174,19 @@ impl FocusController {
     /// what is not its own does nothing, but the key map and Quit.
     pub(crate) fn contacts_command(&mut self, id: CommandId, rows: &dyn Rows) -> Option<Vec<Step>> {
         let contacts = self.contacts.as_mut()?;
+        // A form open in front of the list holds the keyboard: what is not
+        // its own does nothing, but the key map.
+        if contacts.edit.is_some() {
+            return match id {
+                CommandId::Back => Some(self.contact_edit_back()),
+                CommandId::ContactSave => Some(self.contact_edit_save()),
+                CommandId::CheatSheet => None,
+                _ => Some(Vec::new()),
+            };
+        }
         match id {
+            CommandId::ContactEdit => Some(self.contact_edit_open()),
+            CommandId::ContactNew => Some(self.contact_new_open()),
             CommandId::Back => {
                 if contacts.filter.is_empty() {
                     return Some(self.close_contacts());

@@ -2512,7 +2512,9 @@ static SPECS: &[CommandSpec] = &[
         default_binding: "i",
         alternate_bindings: &[],
         // Not the search bar: `i` there is a letter being typed.
-        contexts: ctx(MESSAGE_SURFACES).with(Context::Results).with(Context::Contacts),
+        contexts: ctx(MESSAGE_SURFACES)
+            .with(Context::Results)
+            .with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,
@@ -2692,6 +2694,18 @@ static SPECS: &[CommandSpec] = &[
         // The handoff's ⌘E (maintainer, 2026-10-19), not 005's `e`;
         // `edit_config` has it in no context Contacts shares.
         default_binding: "mod+e",
+        alternate_bindings: &[],
+        contexts: ctx(CONTACTS),
+        destructive: false,
+        recovery: Recovery::Undo,
+        requires: FOCUS_GRAPHICAL_MAIL,
+    },
+    CommandSpec {
+        id: CommandId::ContactSave,
+        title: "Save contact",
+        // The form's own save, as every Mac form has it. The composer's
+        // `mod+s` is in a context Contacts does not share.
+        default_binding: "mod+s",
         alternate_bindings: &[],
         contexts: ctx(CONTACTS),
         destructive: false,
@@ -3242,6 +3256,7 @@ pub fn offered_on(action: ActionId, platform: Platform) -> bool {
             | (ActionId::Builtin(C::ContactSetPreferred), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactNew), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactEdit), Platform::Freedesktop)
+            | (ActionId::Builtin(C::ContactSave), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactDelete), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactRestore), Platform::Freedesktop)
             | (ActionId::Builtin(C::ContactsToggleDeleted), Platform::Freedesktop)
@@ -3329,7 +3344,7 @@ mod tests {
 
     /// What only the Mac draws, until Linux adopts it: the search dropdown
     /// and results view (spec 010 D23, D25) and Contacts (specs/005).
-    const NOT_ON_LINUX_YET: [CommandId; 47] = [
+    const NOT_ON_LINUX_YET: [CommandId; 48] = [
         CommandId::ShowAllResults,
         CommandId::ForgetRecent,
         CommandId::ExcludeSuggestion,
@@ -3366,6 +3381,7 @@ mod tests {
         CommandId::ContactSetPreferred,
         CommandId::ContactNew,
         CommandId::ContactEdit,
+        CommandId::ContactSave,
         CommandId::ContactDelete,
         CommandId::ContactRestore,
         CommandId::ContactsToggleDeleted,

@@ -25,6 +25,7 @@ mod bar;
 mod capture;
 mod compose;
 mod confirm;
+mod contact_edit;
 mod contact_popover;
 mod contacts;
 mod cursor;
@@ -45,6 +46,7 @@ pub use bar::{BarLine, BarLineKind, BarMode, BarView, Found, FoundRow, PlacesRea
 pub use capture::{CaptureProject, CaptureView};
 pub use compose::{AUTOSAVE, ComposerKind};
 pub use confirm::Confirm;
+pub use contact_edit::EditChange;
 pub use contacts::{ContactsView, FILTER_CAP};
 pub use cursor::{NoRows, RowFacts, Rows};
 pub use digest::{
@@ -338,6 +340,10 @@ pub enum Input {
     ContactsFilterTyped(String),
     /// A click on the Contacts row at this index.
     ContactsPoint(u32),
+    /// A change to the open Edit contact form.
+    ContactEditChange(contact_edit::EditChange),
+    /// A click on the card's switch at this index.
+    ContactCardSwitch(u32),
     /// Something was written in the open composer: a recipient, the
     /// subject, a word of the body. What its autosave waits out.
     ComposerEdited,
@@ -654,6 +660,8 @@ pub enum Intent {
     ContactsCursor(Option<u32>),
     /// The card beside the list, whole; `None` while it is being read.
     ContactsCard(Option<Box<postio_ui::contacts_view::CardView>>),
+    /// Draw the Edit contact form over the card, or put it away.
+    ContactEdit(Option<Box<postio_ui::contact_edit::EditView>>),
     /// Put the keyboard in the Contacts filter.
     ContactsFocusFilter,
 }
@@ -1780,6 +1788,14 @@ impl FocusController {
             }
             Input::ContactsPoint(index) => {
                 let steps = self.contacts_point(index);
+                self.effects(steps)
+            }
+            Input::ContactEditChange(change) => {
+                let steps = self.contact_edit_changed(change);
+                self.effects(steps)
+            }
+            Input::ContactCardSwitch(index) => {
+                let steps = self.contact_card_switch(index);
                 self.effects(steps)
             }
             Input::ContactArrival(arrival) => {

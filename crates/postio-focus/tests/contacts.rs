@@ -126,6 +126,7 @@ fn card(id: i64, name: &str) -> ContactCardRead {
         default_arrival: ContactArrival::Inbox,
         files: Vec::new(),
         issues: Vec::new(),
+        address_notes: Vec::new(),
     }
 }
 

@@ -168,6 +168,7 @@ contact_detach_address
 contact_set_preferred	
 contact_new	
 contact_edit	
+contact_save	
 contact_delete	
 contact_restore	
 contacts_toggle_deleted	

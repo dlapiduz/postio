@@ -3586,7 +3586,12 @@ impl ContactRepository<'_> {
         let labels: Vec<(String, Option<&'static str>)> = form
             .addresses
             .iter()
-            .map(|row| (row.address.clone(), row.label.map(postio_model::AddressLabel::as_str)))
+            .map(|row| {
+                (
+                    row.address.clone(),
+                    row.label.map(postio_model::AddressLabel::as_str),
+                )
+            })
             .collect();
         sql::in_scope(self.connection, |transaction| async move {
             let filled = |text: &str| {
@@ -3658,7 +3663,11 @@ impl ContactRepository<'_> {
             )
             .await?;
             for (group, name) in &held {
-                if !form.groups.iter().any(|wanted| wanted.eq_ignore_ascii_case(name)) {
+                if !form
+                    .groups
+                    .iter()
+                    .any(|wanted| wanted.eq_ignore_ascii_case(name))
+                {
                     sql::execute(
                         &transaction,
                         "DELETE FROM contact_group_members WHERE group_id = ?1 AND contact_id = ?2",
