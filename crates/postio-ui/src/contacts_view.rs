@@ -545,7 +545,7 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
         };
         vec![
             button(all, CommandId::ContactShowMail, true, true),
-            button("Unsubscribe", CommandId::ContactsSuggestions, false, false),
+            button("Unsubscribe", CommandId::Unsubscribe, false, false),
             button("Edit", CommandId::ContactEdit, false, false),
         ]
     };

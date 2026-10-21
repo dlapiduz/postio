@@ -2676,11 +2676,11 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::ContactNew,
         title: "New contact",
-        // `n` as 005 had it, and the Mac's ⌘⇧N (maintainer, 2026-10-19). In
-        // Contacts the surface's own binding wins over the global
-        // `add_account` that holds `mod+shift+n` everywhere else.
-        default_binding: "n",
-        alternate_bindings: &["mod+shift+n"],
+        // The handoff's ⌘⇧N (maintainer, 2026-10-19), not 005's `n`. Contacts
+        // is excluded from `add_account`, which holds `mod+shift+n` in every
+        // other context (plan 011 section 9).
+        default_binding: "mod+shift+n",
+        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
         destructive: false,
         recovery: Recovery::Undo,
@@ -2689,10 +2689,10 @@ static SPECS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::ContactEdit,
         title: "Edit contact",
-        // `e`, and the Mac's ⌘E (maintainer, 2026-10-19), which is
-        // `edit_config` in every other context.
-        default_binding: "e",
-        alternate_bindings: &["mod+e"],
+        // The handoff's ⌘E (maintainer, 2026-10-19), not 005's `e`;
+        // `edit_config` has it in no context Contacts shares.
+        default_binding: "mod+e",
+        alternate_bindings: &[],
         contexts: ctx(CONTACTS),
         destructive: false,
         recovery: Recovery::Undo,
@@ -2732,10 +2732,13 @@ static SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId::ContactsSuggestions,
-        title: "Possible duplicates",
-        default_binding: "v s",
+        title: "Review contacts",
+        // "Worth a look": the review queue, `g w` as the plan has it (`g a`
+        // is Go to archive). A destination, so it is reached from where
+        // `g c` is, and from Contacts itself.
+        default_binding: "g w",
         alternate_bindings: &[],
-        contexts: ctx(CONTACTS),
+        contexts: ctx(GO_SURFACES).with(Context::Contacts),
         destructive: false,
         recovery: Recovery::None,
         requires: FOCUS_GRAPHICAL_MAIL,

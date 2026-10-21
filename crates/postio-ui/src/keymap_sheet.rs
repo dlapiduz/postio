@@ -190,6 +190,7 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::GoToJunk
         | C::GoToTrash
         | C::OpenContacts
+        | C::ContactsSuggestions
         | C::GoToFlagged
         | C::SavedSearch1
         | C::SavedSearch2
@@ -275,7 +276,6 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::ContactDelete
         | C::ContactRestore
         | C::ContactsToggleDeleted
-        | C::ContactsSuggestions
         | C::SuggestionDismiss
         | C::ContactGroupNew
         | C::ContactGroupRename
