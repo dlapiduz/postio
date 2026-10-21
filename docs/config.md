@@ -44,6 +44,8 @@ The macOS app's appearance. The desktop app and the terminal read none of these:
 | `notify` | boolean | `true` | Master switch for desktop notifications on new mail. |
 | `notify_roles` | array of strings | `["inbox"]` | Which mailbox roles produce a notification when mail arrives in them. |
 | `badge` | boolean | `true` | Show how many inbox conversations are unread on the app's icon (the Dock, on the Mac). Nothing is shown at zero. |
+| `empty_junk_after_days` | integer | `0 (never)` | Permanently delete Junk older than this many days, here and on the server. Flagged mail is kept. 0 leaves Junk alone. |
+| `empty_trash_after_days` | integer | `0 (never)` | Permanently delete Trash older than this many days, here and on the server. Flagged mail is kept. 0 leaves Trash alone. |
 
 ## `[storage]`
 

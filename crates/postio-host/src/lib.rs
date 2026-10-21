@@ -480,6 +480,10 @@ impl Host {
                 .with_backfill(postio_session::backfill_policy(&sync_config))
                 .with_watch(postio_session::watch_policy(&sync_config))
                 .with_storage_ceiling(storage_ceiling)
+                .with_auto_empty(postio_core::retention::AutoEmpty {
+                    junk_days: sync_config.empty_junk_after_days,
+                    trash_days: sync_config.empty_trash_after_days,
+                })
                 .with_secrets(secrets)
         })
         .map_err(Refusal::try_again)?;

@@ -43,6 +43,7 @@
 pub mod actions;
 pub mod attaching;
 mod attachment_text;
+pub mod auto_empty;
 pub mod blocking;
 pub mod checkup;
 pub mod diag;
@@ -377,6 +378,10 @@ pub struct Wiring {
     /// [`enforce_storage_ceiling`], which is the one place that decision is
     /// made.
     pub storage_ceiling: Option<u64>,
+    /// How long Junk and Trash keep mail before it is purged, from `[sync]
+    /// empty_junk_after_days` and `empty_trash_after_days`. Off by default;
+    /// see [`auto_empty`].
+    pub auto_empty: postio_core::retention::AutoEmpty,
     /// The mail transport every account's engine uses instead of the one its
     /// settings name, when one is given: `None` in the application.
     ///
@@ -446,6 +451,7 @@ impl Wiring {
             backfill: postio_runtime::BackfillPolicy::default(),
             watch: postio_sync::WatchPolicy::default(),
             storage_ceiling: None,
+            auto_empty: postio_core::retention::AutoEmpty::default(),
             mail: None,
             filing: postio_runtime::FilingSlot::default(),
             focus: focus::FocusSettings::default(),
@@ -485,6 +491,12 @@ impl Wiring {
     /// unbounded, exactly as before this was wired up.
     pub fn with_storage_ceiling(mut self, max_bytes: Option<u64>) -> Self {
         self.storage_ceiling = max_bytes;
+        self
+    }
+
+    /// The same wiring, emptying Junk and Trash as `policy` says (#1932).
+    pub fn with_auto_empty(mut self, policy: postio_core::retention::AutoEmpty) -> Self {
+        self.auto_empty = policy;
         self
     }
 

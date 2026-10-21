@@ -290,6 +290,10 @@ pub struct SyncingFfi {
     pub notify: bool,
     /// The unread count on the app's icon.
     pub badge: bool,
+    /// Permanently delete Junk older than this many days; `0` never (#1932).
+    pub empty_junk_after_days: u32,
+    /// The same for Trash.
+    pub empty_trash_after_days: u32,
 }
 
 /// One saved search, as the Filters pane draws it.
@@ -406,6 +410,36 @@ pub fn settings_patch_after_unsubscribe(
     )
 }
 
+/// One choice of the Empty Junk and Trash control (#1932).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AutoEmptyChoiceFfi {
+    /// Days to keep mail; `0` is never.
+    pub days: u32,
+    /// What the segment says.
+    pub label: String,
+}
+
+/// The choices the Empty Junk and Trash control offers, in order.
+#[uniffi::export]
+pub fn settings_auto_empty_choices() -> Vec<AutoEmptyChoiceFfi> {
+    postio_ui::auto_empty::CHOICES
+        .iter()
+        .map(|days| AutoEmptyChoiceFfi {
+            days: *days,
+            label: postio_ui::auto_empty::label(*days),
+        })
+        .collect()
+}
+
+/// The control's heading and the sentence under it.
+#[uniffi::export]
+pub fn settings_auto_empty_words() -> Vec<String> {
+    vec![
+        postio_ui::auto_empty::HEADING.to_owned(),
+        postio_ui::auto_empty::NOTE.to_owned(),
+    ]
+}
+
 /// Validate `text` and describe it the way the footer shows it.
 #[uniffi::export]
 pub fn settings_status(text: String) -> SettingsStatusFfi {
@@ -509,6 +543,8 @@ pub fn settings_syncing(text: String) -> Option<SyncingFfi> {
         initial_sync_messages: sync.initial_sync_messages,
         notify: sync.notify,
         badge: sync.badge,
+        empty_junk_after_days: sync.empty_junk_after_days,
+        empty_trash_after_days: sync.empty_trash_after_days,
     })
 }
 
@@ -529,6 +565,8 @@ pub fn settings_patch_syncing(text: String, syncing: SyncingFfi) -> Result<Strin
     sync.initial_sync_messages = syncing.initial_sync_messages;
     sync.notify = syncing.notify;
     sync.badge = syncing.badge;
+    sync.empty_junk_after_days = syncing.empty_junk_after_days;
+    sync.empty_trash_after_days = syncing.empty_trash_after_days;
     patch_sync(&text, &sync).map_err(|err| SettingsError::Invalid {
         message: err.to_string(),
     })

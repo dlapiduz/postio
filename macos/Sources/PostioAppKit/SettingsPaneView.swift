@@ -1138,11 +1138,43 @@ public struct SettingsPaneView: View {
                     }
                     .toggleStyle(.checkbox)
                 }
+                Divider()
+                // Empty Junk and Trash (#1932): the choices and the sentence
+                // are the boundary's, so GTK says the same ones.
+                let words = settingsAutoEmptyWords()
+                field(words[0].uppercased()) {
+                    VStack(alignment: .leading, spacing: PostioTokens.space2) {
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Text("Junk").frame(width: 40, alignment: .leading)
+                            autoEmptyPicker(syncBinding(current, \.emptyJunkAfterDays))
+                        }
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Text("Trash").frame(width: 40, alignment: .leading)
+                            autoEmptyPicker(syncBinding(current, \.emptyTrashAfterDays))
+                        }
+                        Text(words[1])
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Spacer(minLength: 0)
             }
         } else {
             unreadable
         }
+    }
+
+    /// The Empty Junk and Trash choices as a segmented control.
+    private func autoEmptyPicker(_ days: Binding<UInt32>) -> some View {
+        let choices = settingsAutoEmptyChoices()
+        return Picker("", selection: days) {
+            ForEach(choices, id: \.days) { choice in
+                Text(choice.label).tag(choice.days)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .equalSegments(choices.count, each: 76)
     }
 
     private func syncBinding<T>(

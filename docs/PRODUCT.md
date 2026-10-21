@@ -632,6 +632,12 @@ notice never takes the keyboard (a toast on the desktop, the status line in
 the terminal, the banner row on the Mac): ignoring it, or `Esc`, keeps
 everything. The action is one command, so one undo.
 
+**The one thing that is not undoable is emptying Junk and Trash on a clock.**
+It is off until the user turns it on (`[sync] empty_junk_after_days`,
+`empty_trash_after_days`, set in Sync & storage), it deletes for good both
+here and on the server, and it never touches a Flagged message. Everything
+else that removes mail goes to the Trash first.
+
 ---
 
 ## 17. Notifications
