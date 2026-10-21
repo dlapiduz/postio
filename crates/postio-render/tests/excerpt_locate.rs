@@ -463,11 +463,13 @@ fn a_sentence_is_found_again_from_its_excerpt() {
     // renderer change that loses text from the index shows here first. A
     // new fixture moves the rates, so the floors are measured again when
     // the corpus grows -- the eight invitations did, and their plain parts
-    // hold text the HTML never draws.
+    // hold text the HTML never draws. So did the hard-wrapped header
+    // fixtures (#1948): their sentences cross a newline, which `find` keeps
+    // as typed, so they count only once whitespace is collapsed.
     for (label, tally) in &tallies {
         let [as_read, collapsed, present, located] = match *label {
-            "text first" => [0.90, 0.95, 0.96, 0.96],
-            _ => [0.92, 0.97, 0.98, 0.98],
+            "text first" => [0.89, 0.95, 0.96, 0.96],
+            _ => [0.91, 0.97, 0.98, 0.98],
         };
         assert!(
             tally.total() >= 100,

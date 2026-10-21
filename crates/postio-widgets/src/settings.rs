@@ -600,6 +600,10 @@ pub struct SyncControls {
     pub sync_on_startup: CheckRow,
     /// Whether new mail raises a notification.
     pub notify: CheckRow,
+    /// Days Junk keeps mail before it is emptied; Never first (#1932).
+    pub empty_junk: SegmentedControl,
+    /// The same for Trash.
+    pub empty_trash: SegmentedControl,
     /// `index 38 MB · stores 7.9 GB` and `3 accounts · last pass 41 min`,
     /// the bordered block's two lines.
     pub stats_size: gtk::Label,
@@ -3083,6 +3087,19 @@ impl SettingsPanel {
             .sync_on_startup
             .set_active(config.sync.sync_on_startup);
         controls.notify.set_active(config.sync.notify);
+        for (control, days) in [
+            (&controls.empty_junk, config.sync.empty_junk_after_days),
+            (&controls.empty_trash, config.sync.empty_trash_after_days),
+        ] {
+            // A count only the file could have written selects nothing
+            // rather than a neighbour that would overwrite it on a press.
+            if let Some(index) = postio_ui::auto_empty::CHOICES
+                .iter()
+                .position(|choice| *choice == days)
+            {
+                control.set_selected(index);
+            }
+        }
         // Set before anything reads it back: an `Entry` has no silent
         // setter of its own, and `changed` is not what commits this field —
         // `activate` is, so a redraw cannot write anything.
@@ -3231,6 +3248,32 @@ impl SettingsPanel {
             move |active| panel.apply_sync_mutation(move |sync| sync.notify = active)
         ));
 
+        let choices: Vec<String> = postio_ui::auto_empty::CHOICES
+            .iter()
+            .map(|days| postio_ui::auto_empty::label(*days))
+            .collect();
+        let choices: Vec<&str> = choices.iter().map(String::as_str).collect();
+        let empty_junk = SegmentedControl::new("Empty Junk", &choices);
+        empty_junk.connect_selected(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |index| {
+                if let Some(days) = postio_ui::auto_empty::CHOICES.get(index).copied() {
+                    panel.apply_sync_mutation(move |sync| sync.empty_junk_after_days = days);
+                }
+            }
+        ));
+        let empty_trash = SegmentedControl::new("Empty Trash", &choices);
+        empty_trash.connect_selected(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |index| {
+                if let Some(days) = postio_ui::auto_empty::CHOICES.get(index).copied() {
+                    panel.apply_sync_mutation(move |sync| sync.empty_trash_after_days = days);
+                }
+            }
+        ));
+
         let notify_roles = gtk::Entry::new();
         notify_roles.add_css_class("postio-settings-notify-roles");
         notify_roles.set_placeholder_text(Some("inbox, flagged"));
@@ -3269,6 +3312,13 @@ impl SettingsPanel {
         notify_roles.set_halign(gtk::Align::Start);
         notify_roles.set_width_chars(24);
         left.control(&notify_roles);
+        left.section("Empty Junk");
+        left.control(empty_junk.widget());
+        left.section("Empty Trash");
+        let empty_note = stat_line(postio_ui::auto_empty::NOTE);
+        empty_note.set_ellipsize(pango::EllipsizeMode::None);
+        empty_note.set_wrap(true);
+        left.control(empty_trash.widget()).note(&empty_note);
         let elsewhere = stat_line("remote images are allowed per sender, under Privacy");
         // Wraps rather than ellipsising: it is a sentence, not a column of
         // numbers, and half of it is worse than two lines of it.
@@ -3327,6 +3377,8 @@ impl SettingsPanel {
             attachments,
             sync_on_startup,
             notify,
+            empty_junk,
+            empty_trash,
             stats_size,
             stats_accounts,
             notify_roles,

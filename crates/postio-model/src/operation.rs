@@ -215,6 +215,13 @@ pub enum Operation {
         /// The mailbox to expunge.
         mailbox: MailboxId,
     },
+    /// Permanently remove the target message from a mailbox: mark it
+    /// `\Deleted` and expunge exactly it, never the mailbox's other marked
+    /// mail. What auto-emptying Junk and Trash queues (#1932).
+    Purge {
+        /// The mailbox the message is in.
+        mailbox: MailboxId,
+    },
     /// Upload a message into a mailbox, from a blob already in the store.
     Append {
         /// Where it goes.
@@ -288,6 +295,7 @@ impl Operation {
             Self::Move { .. } => "move",
             Self::Delete { .. } => "delete",
             Self::Expunge { .. } => "expunge",
+            Self::Purge { .. } => "purge",
             Self::Append { .. } => "append",
             Self::Send { .. } => "send",
             Self::SaveDraft { .. } => "save_draft",
@@ -338,6 +346,7 @@ impl Operation {
                 to: *from,
             }),
             Self::Expunge { .. }
+            | Self::Purge { .. }
             | Self::Append { .. }
             | Self::Send { .. }
             | Self::SaveDraft { .. }
@@ -360,6 +369,7 @@ impl Operation {
         match self {
             Self::Move { from, .. } | Self::Delete { from, .. } => Some(*from),
             Self::Expunge { mailbox }
+            | Self::Purge { mailbox }
             | Self::Append { mailbox, .. }
             | Self::SaveDraft { mailbox }
             | Self::DiscardDraft { mailbox, .. } => Some(*mailbox),
@@ -396,6 +406,9 @@ mod tests {
             Operation::Delete {
                 from: MailboxId::new(1),
                 trash: MailboxId::new(9),
+            },
+            Operation::Purge {
+                mailbox: MailboxId::new(9),
             },
             Operation::Expunge {
                 mailbox: MailboxId::new(9),
@@ -436,6 +449,7 @@ mod tests {
                 | Operation::Move { .. }
                 | Operation::Delete { .. } => true,
                 Operation::Expunge { .. }
+                | Operation::Purge { .. }
                 | Operation::Append { .. }
                 | Operation::Send { .. }
                 | Operation::SaveDraft { .. }

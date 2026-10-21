@@ -83,6 +83,10 @@ public enum Intercepted {
     /// File ▸ Sync Contacts: the dry-run sheet, which this frontend presents
     /// because it holds the address book behind the sync (specs/011 S12).
     public static let contactsSync = "contacts_sync"
+    /// `o`/`A` over the open message: its attachments to choose from. The
+    /// choice is a menu this frontend draws, and the file is handed to the
+    /// system here.
+    public static let openAttachmentOrLink = "open_attachment_or_link"
     /// The settings window's account verbs. Every one acts on the row the
     /// keyboard is on, which is `SettingsAccounts`'s cursor and this side's
     /// alone; two of them need a sheet on top of that.
@@ -108,6 +112,7 @@ public enum Intercepted {
         addAccount, editConfig, toggleAccountEnabled, removeAccount,
         updateCredential, rebuildAccountIndex, setDefaultAccount,
         showImages,
-        quit, unsubscribe, clearListMail, alwaysShowImages, contactsImport, contactsExport, contactsSync,
+        quit, unsubscribe, clearListMail, alwaysShowImages, openAttachmentOrLink,
+        contactsImport, contactsExport, contactsSync,
     ] + composeVerbs
 }

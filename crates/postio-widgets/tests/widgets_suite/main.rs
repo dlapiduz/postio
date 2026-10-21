@@ -757,6 +757,10 @@ const CASES: &[(&str, fn())] = &[
         settings_unsubscribe::a_file_that_says_delete_shows_delete as fn(),
     ),
     (
+        "settings_sync::emptying_junk_and_trash_is_off_and_chosen_per_folder",
+        settings_sync::emptying_junk_and_trash_is_off_and_chosen_per_folder as fn(),
+    ),
+    (
         "settings_sync::the_pane_shows_the_files_values",
         settings_sync::the_pane_shows_the_files_values as fn(),
     ),

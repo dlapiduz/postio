@@ -53,6 +53,21 @@ struct MessageWindowModelTests {
         /// Every message an unsubscribe was recorded for, in order.
         var activated: [Int64] { lock.withLock { _activated } }
 
+        private var _opened: [(Int64, Int64)] = []
+        /// Every attachment asked to be written for opening.
+        var opened: [(Int64, Int64)] { lock.withLock { _opened } }
+        /// What opening answers: the file's path, or why not.
+        var written: Result<String, Error> = .success("/tmp/postio-test/report.pdf")
+        /// What `o` finds.
+        var choices = OpenChoicesFfi(parts: [], nothing: "Nothing to open")
+
+        func openChoices(_ message: Int64) -> OpenChoicesFfi { choices }
+
+        func openAttachment(_ message: Int64, _ attachment: Int64) throws -> String {
+            lock.withLock { _opened.append((message, attachment)) }
+            return try written.get()
+        }
+
         func activateUnsubscribe(_ message: Int64) -> String? {
             lock.withLock { _activated.append(message) }
             return refusal
@@ -490,5 +505,64 @@ struct MessageWindowModelTests {
         try await Self.until { model.unsubscribeState(of: 7) == .left }
         model.closed()
         #expect(model.unsubscribeState(of: 7) == .offered)
+    }
+
+    // MARK: attachments
+
+    /// Waits for the model's detached work to land on the main actor.
+    private func settle(_ model: MessageWindowModel, until done: () -> Bool) async {
+        for _ in 0..<200 where !done() { try? await Task.sleep(for: .milliseconds(10)) }
+    }
+
+    @Test func clickingAChipWritesThePartAndHandsItToTheSystem() async {
+        let source = Source()
+        var handed: [URL] = []
+        let model = MessageWindowModel(source: source, report: { _, _ in }, handOff: { handed.append($0) })
+        _ = model.open(message: 7, index: 0, total: 1, mainWidth: 1440)
+        await model.settled()
+        model.openAttachment(41)
+        await settle(model) { !handed.isEmpty }
+        #expect(source.opened.map(\.1) == [41])
+        #expect(source.opened.map(\.0) == [7], "the part of the message on screen")
+        #expect(handed == [URL(fileURLWithPath: "/tmp/postio-test/report.pdf")])
+    }
+
+    @Test func aPartThatCannotBeHadIsASentenceAndOpensNothing() async {
+        let source = Source()
+        source.written = .failure(PartsError.Refused(message: "This account is not syncing"))
+        var handed: [URL] = []
+        let model = MessageWindowModel(source: source, report: { _, _ in }, handOff: { handed.append($0) })
+        _ = model.open(message: 7, index: 0, total: 1, mainWidth: 1440)
+        await model.settled()
+        model.openAttachment(41)
+        await settle(model) { model.notice != nil }
+        #expect(model.notice == "This account is not syncing")
+        #expect(handed.isEmpty)
+    }
+
+    @Test func oWithNothingToOpenSaysSoAndOffersNoMenu() async {
+        let source = Source()
+        let (model, _) = Self.model(source)
+        _ = model.open(message: 7, index: 0, total: 1, mainWidth: 1440)
+        await model.settled()
+        var offered: [[FocusAttachmentFfi]] = []
+        model.offerAttachments { offered.append($0) }
+        await settle(model) { model.notice != nil }
+        #expect(model.notice == "Nothing to open")
+        #expect(offered.isEmpty)
+    }
+
+    @Test func oOffersTheParts() async {
+        let source = Source()
+        source.choices = OpenChoicesFfi(
+            parts: [FocusAttachmentFfi(id: 41, name: "report.pdf", size: "48 KB")], nothing: nil)
+        let (model, _) = Self.model(source)
+        _ = model.open(message: 7, index: 0, total: 1, mainWidth: 1440)
+        await model.settled()
+        var offered: [[FocusAttachmentFfi]] = []
+        model.offerAttachments { offered.append($0) }
+        await settle(model) { !offered.isEmpty }
+        #expect(offered.first?.map(\.id) == [41])
+        #expect(model.notice == nil)
     }
 }

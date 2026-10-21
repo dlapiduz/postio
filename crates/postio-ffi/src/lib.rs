@@ -137,7 +137,7 @@ pub use focus_list::{
 };
 pub use focus_message::{
     FocusAttachmentFfi, FocusFieldFfi, FocusMessageViewFfi, FocusPersonFfi, FocusThreadChipFfi,
-    FocusVerbFfi,
+    FocusVerbFfi, OpenChoicesFfi,
 };
 pub use focus_pickers::{
     PickerAnchorFfi, PickerFieldFfi, PickerKindFfi, PickerRowFfi, PickerViewFfi,
@@ -189,13 +189,14 @@ pub use saved_search::{SavedSearchEditFfi, SavedSearchFfi, save_search, saved_se
 pub use search::{ChipFfi, MatchRangeFfi, SnippetFfi, query_chips};
 pub use session::{Session, SessionError, SessionOptions, StartedOverFfi, start_over_with};
 pub use settings::{
-    AfterUnsubscribeFfi, AppearanceFfi, AttachmentFetchFfi, BodyFetchFfi, CheckForMailFfi,
-    ComposingFfi, DensityFfi, FilterFfi, FilteringEntryFfi, FilteringPageFfi, FilteringUndoFfi,
-    FoundEditorFfi, GroupFfi, HandoffTargetFfi, KeyHintFfi, RowActionFfi, RowMetricsFfi,
-    SettingsError, SettingsSectionFfi, SettingsStatusFfi, SignaturePlacementFfi, SyncingFfi,
-    ThemeFfi, row_actions, row_metrics, row_timestamp, settings_add_filter,
-    settings_after_unsubscribe, settings_appearance, settings_composing, settings_filtering,
-    settings_filters, settings_group_label, settings_handoff_label, settings_handoff_target,
+    AfterUnsubscribeFfi, AppearanceFfi, AttachmentFetchFfi, AutoEmptyChoiceFfi, BodyFetchFfi,
+    CheckForMailFfi, ComposingFfi, DensityFfi, FilterFfi, FilteringEntryFfi, FilteringPageFfi,
+    FilteringUndoFfi, FoundEditorFfi, GroupFfi, HandoffTargetFfi, KeyHintFfi, RowActionFfi,
+    RowMetricsFfi, SettingsError, SettingsSectionFfi, SettingsStatusFfi, SignaturePlacementFfi,
+    SyncingFfi, ThemeFfi, row_actions, row_metrics, row_timestamp, settings_add_filter,
+    settings_after_unsubscribe, settings_appearance, settings_auto_empty_choices,
+    settings_auto_empty_words, settings_composing, settings_filtering, settings_filters,
+    settings_group_label, settings_handoff_label, settings_handoff_target,
     settings_humanize_interval, settings_load, settings_patch_after_unsubscribe,
     settings_patch_appearance, settings_patch_composing, settings_patch_filter,
     settings_patch_filtering, settings_patch_syncing, settings_path, settings_remove_filter,

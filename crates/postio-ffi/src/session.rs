@@ -1498,6 +1498,85 @@ impl Session {
         blocking(self.part_bytes(message, part_id))
     }
 
+    /// What `o` offers for `message`: its attachments as the chips list
+    /// them, or the shared sentence when there are none. A read of the
+    /// stored message; nothing is fetched.
+    #[uniffi::method(name = "openChoices")]
+    pub fn open_choices(&self, message: i64) -> crate::OpenChoicesFfi {
+        let found = self.store_and_blobs().and_then(|(database, _)| {
+            blocking(postio_host::parts::read_message(&database, message.into())).ok()
+        });
+        let parts = found
+            .map(|found| {
+                crate::focus_message::chips(
+                    found.content_type.as_deref(),
+                    &found.body,
+                    &found.attachments,
+                )
+            })
+            .unwrap_or_default();
+        crate::OpenChoicesFfi {
+            nothing: parts
+                .is_empty()
+                .then(|| postio_ui::focus_target::NOTHING_TO_OPEN.to_owned()),
+            parts,
+        }
+    }
+
+    /// Write one attachment to a private file under its own name, fetching
+    /// it first if it was never downloaded, and answer the file's path for
+    /// the frontend to hand to the system. Only because a person chose it.
+    ///
+    /// **Never from the main actor**, for the reason `partBytes` gives.
+    /// Logs carry the ids, never the name.
+    #[uniffi::method(name = "openAttachment")]
+    pub fn open_attachment_ffi(
+        &self,
+        message: i64,
+        attachment: i64,
+    ) -> Result<String, crate::PartsError> {
+        blocking(self.open_attachment(message, attachment))
+    }
+}
+
+impl Session {
+    /// [`Self::open_attachment_ffi`]'s body.
+    pub async fn open_attachment(
+        &self,
+        message: i64,
+        attachment: i64,
+    ) -> Result<String, crate::PartsError> {
+        use postio_model::ids::AttachmentId;
+        let (database, blobs) = self.store_and_blobs().ok_or_else(no_store)?;
+        let (message, attachment) = (message.into(), AttachmentId::new(attachment));
+        let found = postio_host::parts::read_message(&database, message).await?;
+        let name = found
+            .attachments
+            .iter()
+            .find(|part| part.id == attachment)
+            .and_then(|part| part.filename.clone());
+        // The bytes first, so a part that cannot be had leaves no empty file.
+        let bytes =
+            postio_host::parts::part_bytes(&database, &blobs, self.engine(), message, attachment)
+                .await?;
+        let to = postio_host::parts::private_copy_path(
+            &std::env::temp_dir(),
+            message,
+            attachment,
+            name.as_deref(),
+        )?;
+        std::fs::write(&to, bytes).map_err(|error| error.to_string())?;
+        tracing::debug!(
+            message = message.get(),
+            attachment = attachment.get(),
+            "an attachment was written to open"
+        );
+        Ok(to.to_string_lossy().into_owned())
+    }
+}
+
+#[uniffi::export]
+impl Session {
     /// Tell the engine whether the machine currently has a connection.
     ///
     /// Pushed down from Swift's `NWPathMonitor`: reachability is a platform
@@ -4910,7 +4989,7 @@ impl Session {
             .lock()
             .expect("wiring lock")
             .as_ref()
-            .and_then(|wiring| wiring.engine.get().cloned())
+            .and_then(|wiring| wiring.engine.first())
     }
 
     /// Every folder of every enabled account, for the sidebar.
@@ -5050,7 +5129,7 @@ impl Session {
             .lock()
             .expect("wiring lock")
             .as_ref()
-            .is_some_and(|wiring| wiring.engine.get().is_some())
+            .is_some_and(|wiring| !wiring.engine.is_empty())
     }
 
     /// Start syncing every configured account, and answer how many started.
@@ -5136,7 +5215,7 @@ impl Session {
             // The slot is what `Refresh` reads, and it is pressed long after
             // the bus was built. An engine that ran but never reached it
             // would sync happily and leave the refresh command inert.
-            wiring.engine.fill(engine.clone());
+            wiring.engine.fill(account, engine.clone());
             postio_runtime::retain(engine.clone());
             self.engines
                 .lock()
@@ -5175,7 +5254,9 @@ impl Session {
             network: postio_runtime::NetworkSource::Ignored,
         };
         if let Ok(engine) = postio_runtime::Engine::spawn(parts) {
-            wiring.engine.fill(engine.clone());
+            wiring
+                .engine
+                .fill(postio_model::ids::AccountId::new(1), engine.clone());
             // Account 1, matching the `parts.account` above: the engines list
             // is keyed by account now, so that `start_syncing` can tell an
             // account that is already running from one that has just been

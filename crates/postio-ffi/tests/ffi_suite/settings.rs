@@ -565,6 +565,43 @@ fn the_sync_pane_reads_the_sync_table() {
 }
 
 #[test]
+fn emptying_junk_and_trash_is_off_until_chosen_and_written_back() {
+    // #1932: the pane's two day counts. Absent from the file is 0, never.
+    let mut syncing = settings_syncing(SYNCING.to_owned()).expect("parses");
+    assert_eq!(
+        (
+            syncing.empty_junk_after_days,
+            syncing.empty_trash_after_days
+        ),
+        (0, 0)
+    );
+    syncing.empty_trash_after_days = 30;
+    let written = settings_patch_syncing(SYNCING.to_owned(), syncing).expect("patch");
+    assert!(written.contains("empty_trash_after_days = 30"), "{written}");
+    let again = settings_syncing(written).expect("reads back");
+    assert_eq!(
+        (again.empty_junk_after_days, again.empty_trash_after_days),
+        (0, 30)
+    );
+}
+
+#[test]
+fn the_empty_junk_and_trash_choices_are_the_shared_ones() {
+    let choices = postio_ffi::settings_auto_empty_choices();
+    let named: Vec<(u32, &str)> = choices.iter().map(|c| (c.days, c.label.as_str())).collect();
+    assert_eq!(
+        named,
+        [
+            (0, "Never"),
+            (7, "7 days"),
+            (30, "30 days"),
+            (90, "90 days")
+        ]
+    );
+    assert!(postio_ffi::settings_auto_empty_words()[1].contains("Flagged"));
+}
+
+#[test]
 fn changing_how_mail_is_checked_leaves_the_rest_of_the_file_alone() {
     let mut syncing = settings_syncing(SYNCING.to_owned()).expect("parses");
     syncing.check_for_mail = postio_ffi::CheckForMailFfi::Idle;

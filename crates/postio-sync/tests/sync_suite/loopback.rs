@@ -552,6 +552,42 @@ async fn a_local_delete_still_reaches_the_server() {
 }
 
 #[tokio::test]
+async fn a_purge_removes_exactly_that_message_from_the_server() {
+    // Auto-empty (#1932): the queued Purge marks the one message \\Deleted and
+    // expunges it alone, so another message the server already holds in the
+    // mailbox is neither touched nor lost.
+    let server = server().await;
+    let backend = backend_for(&server).await;
+    let database = test_support::memory().await;
+    let connection = database.connect().await.expect("checkout");
+    let (account, inbox, _trash) = local(&connection).await;
+    bootstrap(&connection, &backend, &inbox).await;
+
+    let message = message_at(&connection, &inbox, Uid::new(2)).await;
+    enqueue(
+        &connection,
+        account,
+        message,
+        Operation::Purge { mailbox: inbox.id },
+        at(9),
+    )
+    .await;
+
+    let report = Drainer::new(&backend)
+        .drain(&connection, account, at(10))
+        .await
+        .expect("drain");
+
+    assert_eq!(report.applied, 1, "{report:?}");
+    assert!(report.failed.is_empty(), "{report:?}");
+    assert_eq!(
+        server.uids(INBOX),
+        vec![Uid::new(1), Uid::new(3)],
+        "exactly the purged message is gone"
+    );
+}
+
+#[tokio::test]
 async fn a_bulk_move_over_a_predicate_still_reaches_the_server() {
     // The bulk path: enqueue_set materializes one row per message before
     // move_set nulls their identities, all in one transaction (#289). The

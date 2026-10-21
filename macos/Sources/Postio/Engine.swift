@@ -119,7 +119,14 @@ final class Engine {
                 report: { [weak session] more, finding in
                     session?.focusReaderState(moreOpen: more, finding: finding)
                 },
-                markRead: { [weak session] message in session?.markReadOnDwell(message) })
+                markRead: { [weak session] message in session?.markReadOnDwell(message) },
+                handOff: { file in
+                    // POSTIO-CONSENT: runs only when a person clicked an
+                    // attachment's chip or chose it from the menu `o` offers,
+                    // one at a time; nothing opens on render, on arrival or
+                    // from a setting.
+                    NSWorkspace.shared.open(file)
+                })
             makeBar(session)
             makePicker(session)
             filtered = FilteredModel(engine: session)
@@ -434,6 +441,7 @@ final class Engine {
         // The pointer is told to the controller; the ring and the boxes move
         // when its intents come back, never here.
         table.onPoint = { [weak session] row in session?.focusPoint(row) }
+        table.onActivate = { [weak session] row in session?.focusActivate(row) }
         table.onPick = { [weak session] row, range in session?.focusPick(row, range: range) }
         // A click on a sender's name hangs the known-sender popover from it.
         table.onContactName = { [weak self, weak session] row, address in
@@ -602,6 +610,16 @@ final class Engine {
                 self.secondary.window?.title = model.view?.subject ?? ""
             }
         }
+    }
+
+    /// Hold the attachment menu until it is chosen from, then open the part.
+    private var attachmentMenu: AttachmentMenu?
+
+    private func presentAttachmentMenu(_ parts: [FocusAttachmentFfi]) {
+        guard let view = secondary.window?.contentView else { return }
+        let menu = AttachmentMenu { [weak self] id in self?.messageWindow?.openAttachment(id) }
+        attachmentMenu = menu
+        menu.present(parts, in: view)
     }
 
     private func showMessageWindow(_ model: MessageWindowModel, session: PostioSession, over main: NSWindow) {
@@ -1923,6 +1941,12 @@ final class Engine {
             // deliberate act, recorded by the boundary (#1585). The
             // controller has no message window of its own to do it in.
             messageWindow?.unsubscribe()
+        case Intercepted.openAttachmentOrLink where keyWindow.current == .message && messageWindow?.displayed != nil:
+            // `o`: the open message's attachments, as a menu at the window's
+            // centre. Native menu keys choose; nothing opens until one is.
+            messageWindow?.offerAttachments { [weak self] parts in
+                self?.presentAttachmentMenu(parts)
+            }
         case Intercepted.clearListMail where keyWindow.current == .message && messageWindow?.displayed != nil:
             // The banner's one offer, by key (#1953): the verb the setting
             // names, on exactly the mail the offer counted.

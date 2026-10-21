@@ -48,6 +48,61 @@ pub fn the_pane_shows_the_files_values() {
     window.destroy();
 }
 
+/// The segment labelled `label` inside Junk's control (`group` "Empty Junk")
+/// or Trash's ("Empty Trash"). Both offer the same words, so they are told
+/// apart by their place: the two controls whose segments say "90 days", in
+/// the order the pane draws them, Junk first.
+fn segment_in(panel: &SettingsPanel, group: &str, label: &str) -> gtk::ToggleButton {
+    let segments_of = |root: &gtk::Widget| -> Vec<gtk::ToggleButton> {
+        collect(root, "postio-segment")
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<gtk::ToggleButton>().ok())
+            .collect()
+    };
+    let emptying: Vec<gtk::Widget> = collect(panel.upcast_ref::<gtk::Widget>(), "postio-segmented")
+        .into_iter()
+        .filter(|root| {
+            segments_of(root)
+                .iter()
+                .any(|button| button.label().is_some_and(|text| text == "90 days"))
+        })
+        .collect();
+    assert_eq!(emptying.len(), 2, "Junk's control and Trash's");
+    let root = &emptying[usize::from(group == "Empty Trash")];
+    segments_of(root)
+        .into_iter()
+        .find(|button| button.label().is_some_and(|text| text == label))
+        .unwrap_or_else(|| panic!("no {label:?} segment in {group:?}"))
+}
+
+/// Emptying Junk and Trash (#1932): off until chosen, each folder its own
+/// choice, written to the two keys and nothing else.
+pub fn emptying_junk_and_trash_is_off_and_chosen_per_folder() {
+    let Some((window, panel)) = panel_with_text(SAMPLE) else {
+        return;
+    };
+    assert!(
+        segment_in(&panel, "Empty Junk", "Never").is_active()
+            && segment_in(&panel, "Empty Trash", "Never").is_active(),
+        "a file that says nothing about it is off"
+    );
+
+    segment_in(&panel, "Empty Trash", "30 days").set_active(true);
+    pump();
+
+    let text = panel.text();
+    assert!(text.contains("empty_trash_after_days = 30"), "{text}");
+    assert!(
+        text.contains("empty_junk_after_days = 0"),
+        "Junk stayed off: {text}"
+    );
+    assert!(
+        text.contains("# a hand-written comment nobody wants to lose"),
+        "{text}"
+    );
+    window.destroy();
+}
+
 pub fn the_interval_the_file_actually_holds_is_still_stated() {
     let Some((window, panel)) = panel_with_text(SAMPLE) else {
         return;

@@ -136,6 +136,18 @@ const ENTRIES: &[Entry] = &[
         default: "true",
         description: "Show how many inbox conversations are unread on the app's icon (the Dock, on the Mac). Nothing is shown at zero.",
     },
+    Entry {
+        path: "sync.empty_junk_after_days",
+        kind: "integer",
+        default: "0 (never)",
+        description: "Permanently delete Junk older than this many days, here and on the server. Flagged mail is kept. 0 leaves Junk alone.",
+    },
+    Entry {
+        path: "sync.empty_trash_after_days",
+        kind: "integer",
+        default: "0 (never)",
+        description: "Permanently delete Trash older than this many days, here and on the server. Flagged mail is kept. 0 leaves Trash alone.",
+    },
     // ── [storage] ─────────────────────────────────────────────────────
     Entry {
         path: "storage.max_bytes",

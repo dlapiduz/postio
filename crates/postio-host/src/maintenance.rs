@@ -36,6 +36,39 @@ pub fn spawn_idle_passes(wiring: &Wiring) {
     catch_up_the_header_index(wiring);
     build_contacts(wiring);
     reclaim_disk(wiring);
+    empty_junk_and_trash(wiring);
+}
+
+/// How often a running Postio looks again for Junk and Trash mail that has
+/// become old enough: the setting counts days, so hours are plenty.
+const AUTO_EMPTY_EVERY: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+
+/// Purge Junk and Trash mail older than `[sync] empty_*_after_days`, now and
+/// every few hours after (#1932). Off by default, and then it does not even
+/// start a task. It queues like any delete, so it is the drainer that tells
+/// the server, offline or not.
+pub fn empty_junk_and_trash(wiring: &Wiring) {
+    let policy = wiring.auto_empty;
+    if !policy.is_on() {
+        return;
+    }
+    let database = wiring.database.clone();
+    wiring.runtime.spawn(async move {
+        loop {
+            match postio_session::auto_empty::run(&database, policy, chrono::Utc::now()).await {
+                Ok(report) if report.purged > 0 => {
+                    tracing::info!(
+                        purged = report.purged,
+                        more = report.more,
+                        "emptied Junk and Trash"
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => tracing::warn!(%error, "could not empty Junk and Trash"),
+            }
+            tokio::time::sleep(AUTO_EMPTY_EVERY).await;
+        }
+    });
 }
 
 /// Bring the store under `max_bytes`, off the caller's thread: `[storage]

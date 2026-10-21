@@ -321,6 +321,9 @@ pub const INTERCEPTED: &[postio_core::CommandId] = {
         // one deliberate act, from the keyboard and the palette (#1706).
         C::AlwaysShowImages,
         C::Unsubscribe,
+        // `o`: the message window's attachments, as a menu this frontend
+        // draws and hands the chosen one to the system.
+        C::OpenAttachmentOrLink,
         // The unsubscribe banner's one offer (#1953): its button, from the
         // keyboard and the palette, and only while the banner offers it.
         C::ClearListMail,

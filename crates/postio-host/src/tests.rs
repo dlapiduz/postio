@@ -3237,6 +3237,27 @@ fn focus_mode_files_what_an_incremental_pass_brings_and_nothing_a_first_sync_doe
 }
 
 #[test]
+fn refresh_in_the_focus_inbox_brings_in_new_mail() {
+    // The maintainer's report: R in the Focus inbox said "No folder is
+    // open". Focus is a view over the accounts, not one folder, and the key
+    // has to sync each account's inbox all the same.
+    let mock = server_with_one_message();
+    let world = syncing_world(mock.clone());
+    let state = SharedState::default();
+    let (quiet, _) = event_channel();
+    state.update(&quiet, |app| {
+        app.open_view(postio_core::state::ViewScope::Focus {
+            accounts: vec![world.account],
+        })
+    });
+    let client = world.host().connect(ClientKind::Focus).with_state(state);
+    world.host().start_syncing();
+    eventually(&world, || row_titled(&world, &client, "Tide gate"));
+
+    deliver_and_refresh(&world, &mock, &client);
+}
+
+#[test]
 fn a_host_that_never_enables_focus_mode_files_nothing() {
     // The classic app: the same store, the same sync and the same arrival,
     // and no call to `enable_focus`. (The terminal is Focus too, and makes
