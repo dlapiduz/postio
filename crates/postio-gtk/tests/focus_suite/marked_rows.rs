@@ -165,7 +165,8 @@ pub fn a_selected_marked_row_shows_its_check_not_its_dot() {
             row.width(),
             row.height(),
             row.drawn().picked,
-            row.drawn().texts
+            row.drawn().texts,
+            nodes_of(&row)
         );
         assert!(
             row.drawn().texts.iter().any(|text| text == "Question"),
