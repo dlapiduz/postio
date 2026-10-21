@@ -1588,6 +1588,8 @@ impl ContactRepository<'_> {
             let mut added: Vec<postio_model::ContactGroupId> = Vec::new();
             let mut notes: Vec<String> = survivor.note.iter().cloned().collect();
             let mut fallback_organization = survivor.organization.clone();
+            let prior_title = title_of(&transaction, into).await?;
+            let mut fallback_title = prior_title.clone();
             for other in &others {
                 let absorbed = fields(&transaction, *other).await?;
                 let owned: Vec<i64> = sql::all(
@@ -1621,6 +1623,9 @@ impl ContactRepository<'_> {
                 if fallback_organization.is_none() {
                     fallback_organization = absorbed.organization;
                 }
+                if fallback_title.is_none() {
+                    fallback_title = title_of(&transaction, *other).await?;
+                }
                 sql::execute(
                     &transaction,
                     "UPDATE contacts SET state = 'merged', merged_into = ?2 WHERE id = ?1",
@@ -1639,14 +1644,15 @@ impl ContactRepository<'_> {
                 &transaction,
                 "UPDATE contacts
                     SET name = ?2, organization = ?3, note = ?4, source = 'user',
-                        updated_at = ?5
+                        updated_at = ?5, title = ?6
                   WHERE id = ?1",
                 bind![
                     into.get(),
                     name,
                     organization.or(fallback_organization),
                     note,
-                    to_millis(Utc::now())
+                    to_millis(Utc::now()),
+                    fallback_title
                 ],
             )
             .await?;
@@ -1658,6 +1664,7 @@ impl ContactRepository<'_> {
                 into,
                 restore,
                 prior: survivor,
+                prior_title,
                 added_memberships: added,
                 prior_settings: Box::new(prior_settings),
             })
@@ -1699,7 +1706,7 @@ impl ContactRepository<'_> {
                 &transaction,
                 "UPDATE contacts
                     SET name = ?2, organization = ?3, note = ?4, source = ?5,
-                        preferred_address = ?6
+                        preferred_address = ?6, title = ?7
                   WHERE id = ?1",
                 bind![
                     receipt.into.get(),
@@ -1707,7 +1714,8 @@ impl ContactRepository<'_> {
                     prior.organization,
                     prior.note,
                     prior.source.as_str(),
-                    prior.preferred.get()
+                    prior.preferred.get(),
+                    receipt.prior_title.clone()
                 ],
             )
             .await?;
@@ -2789,6 +2797,18 @@ async fn fields(connection: &Connection, person: ContactId) -> Result<PersonFiel
         })?,
         preferred: AddressId::new(preferred.unwrap_or(0)),
     })
+}
+
+/// A person's job title, if they have one.
+async fn title_of(connection: &Connection, person: ContactId) -> Result<Option<String>> {
+    let title: Option<Option<String>> = sql::first(
+        connection,
+        "SELECT title FROM contacts WHERE id = ?1",
+        [person.get()],
+        |row| row.col(0),
+    )
+    .await?;
+    Ok(title.flatten().filter(|t| !t.trim().is_empty()))
 }
 
 /// The groups a person is in.

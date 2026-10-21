@@ -829,6 +829,10 @@ pub struct JoinReceipt {
     pub restore: Vec<(ContactId, Vec<AddressId>)>,
     /// The survivor's fields before the join.
     pub prior: PersonFields,
+    /// The survivor's title before the join, which the join fills from an
+    /// absorbed person when it had none.
+    #[serde(default)]
+    pub prior_title: Option<String>,
     /// Groups the survivor joined only because an absorbed person was in them.
     pub added_memberships: Vec<ContactGroupId>,
     /// What the survivor had decided before the join, which the join fills

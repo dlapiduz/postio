@@ -109,6 +109,22 @@ fn undo_key(keymap: &Keymap) -> String {
     }
 }
 
+/// The person the merge makes: the kept record, with the title and company
+/// of the others where it has none, which is what the join does.
+fn result_of(keeper: &Contact, others: &[&Contact]) -> Contact {
+    let mut result = keeper.clone();
+    let blank = |value: &Option<String>| value.as_deref().is_none_or(|v| v.trim().is_empty());
+    for other in others {
+        if blank(&result.title) && !blank(&other.title) {
+            result.title = other.title.clone();
+        }
+        if blank(&result.organization) && !blank(&other.organization) {
+            result.organization = other.organization.clone();
+        }
+    }
+    result
+}
+
 /// The sheet for `group`, with the record at `kept` keeping its name and
 /// photo.
 pub fn view(
@@ -212,7 +228,7 @@ pub fn view(
         evidence: group.evidence.clone(),
         result: MergeResult {
             avatar: avatar(keeper.id, &name, ContactKind::Person),
-            role: role_line(keeper),
+            role: role_line(&result_of(keeper, &others)),
             name,
             addresses: shown,
             line,
@@ -314,6 +330,17 @@ mod tests {
                 .starts_with("\u{2605} a.moreno@example.net")
         );
         assert_eq!(sheet.cards[0].keep, "Address kept");
+    }
+
+    #[test]
+    fn choosing_an_unsaved_record_keeps_the_role_the_group_has() {
+        for kept in 0..3 {
+            let sheet = view(&group(), kept, None, &keymap(), now(), None);
+            assert_eq!(
+                sheet.result.role, "Finance lead, Northwind Partners",
+                "keeping card {kept} loses the role"
+            );
+        }
     }
 
     #[test]

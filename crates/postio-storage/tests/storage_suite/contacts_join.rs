@@ -196,6 +196,36 @@ async fn unjoining_puts_both_people_back_exactly() {
 }
 
 #[tokio::test]
+async fn a_join_keeps_the_title_the_survivor_lacked_and_unjoining_takes_it_back() {
+    let (_db, connection, account, inbox) = setup().await;
+    mail(&connection, &account, inbox, "ada@work.example", 3, false).await;
+    mail(&connection, &account, inbox, "ada@home.example", 2, false).await;
+    let work = owner(&connection, "ada@work.example").await;
+    let home = owner(&connection, "ada@home.example").await;
+    postio_storage::sql::execute(
+        &connection,
+        "UPDATE contacts SET title = 'Finance lead' WHERE id = ?1",
+        [home.id.get()],
+    )
+    .await
+    .expect("a title");
+    let contacts = ContactRepository::new(&connection);
+
+    let receipt = contacts
+        .join(work.id, &[home.id], "Ada", None)
+        .await
+        .expect("join");
+    assert_eq!(
+        get(&connection, work.id).await.title.as_deref(),
+        Some("Finance lead"),
+        "choosing the record without a title does not lose the title"
+    );
+
+    contacts.unjoin(&receipt).await.expect("unjoin");
+    assert_eq!(get(&connection, work.id).await.title, None);
+}
+
+#[tokio::test]
 async fn detaching_an_address_gives_it_a_person_of_its_own_with_its_history() {
     let (_db, connection, account, inbox) = setup().await;
     mail(&connection, &account, inbox, "ada@work.example", 3, false).await;
