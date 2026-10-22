@@ -1,4 +1,6 @@
 //! The package is Focus (spec 007, decision C27; ADR 0043): one app named
+//!
+//! POSTIO-OWN-BINARY: plain libtest, and `focus_suite` is a `harness = false` GTK harness.
 //! Postio, the binary `postio`, the application id `dev.postio.Postio`, one
 //! desktop entry, one AppStream component, in the desktop Flatpak.
 //!

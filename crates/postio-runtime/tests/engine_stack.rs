@@ -1,5 +1,7 @@
 //! The sync engine's thread does not borrow the ambient stack size (#1541).
 //!
+//! POSTIO-OWN-BINARY: it runs itself again as a child, with the stack-size variable set.
+//!
 //! `Engine::spawn` puts the whole engine on a thread of its own and then
 //! `block_on`s the sync loop there, so every frame of `sync_wave` →
 //! `sync_pass` → `resync_mailbox` → the backend's `select` future is stacked

@@ -1,4 +1,6 @@
 //! The terminal refuses to start over a store another Postio has open, and
+//!
+//! POSTIO-OWN-BINARY: it runs itself again as a child by exact test name.
 //! says to close it.
 //!
 //! One Postio at a time has the store -- the desktop app or the terminal --

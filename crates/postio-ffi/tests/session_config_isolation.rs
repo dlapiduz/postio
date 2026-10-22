@@ -1,5 +1,7 @@
 //! An in-memory session must not read the machine's own `config.toml` (#1219).
 //!
+//! POSTIO-OWN-BINARY: it sets environment variables, which are process-global.
+//!
 //! `SessionOptions::in_memory()` is what every test needing a `Session` opens.
 //! With no config text it fell through to `Config::load()`, so a test
 //! inherited whatever was in `~/.config/postio/config.toml` — green on CI,

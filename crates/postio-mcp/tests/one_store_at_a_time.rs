@@ -1,4 +1,6 @@
 //! The server holds the store only while a call is being answered (ADR
+//!
+//! POSTIO-OWN-BINARY: it runs itself again as a child by exact test name.
 //! 0041: one Postio has the store at a time).
 //!
 //! An agent's MCP server runs for as long as its session does. If it kept

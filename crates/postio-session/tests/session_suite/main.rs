@@ -16,35 +16,35 @@
 //! checked rather than assumed. A test that grows one has to move back out, or
 //! it will change what its neighbours see.
 
+mod attaching;
 mod attachment_extraction;
 mod attachment_index_pass;
 mod auto_empty;
 mod backfill_policy;
 mod body_failed_reading;
 mod body_index_pass;
+mod checkup;
 mod cid_scoping;
 mod correlation;
 mod drag_reclaim;
 mod event_fanout;
 mod focus_contacts;
+mod handoff;
 mod header_index_pass;
 mod header_repair;
 mod inline_images;
 mod interactive_write;
 mod mailbox_roles;
+mod onboarding;
+mod provision;
 mod reachability;
 mod reading_cost;
 mod reclaim;
 mod reindex_account;
-mod search_passages;
-mod sender_warning;
-mod store_key;
-mod watch_policy;
-mod attaching;
-mod checkup;
-mod handoff;
-mod onboarding;
-mod provision;
 mod search_budget;
 mod search_execution;
+mod search_passages;
+mod sender_warning;
 mod signin;
+mod store_key;
+mod watch_policy;

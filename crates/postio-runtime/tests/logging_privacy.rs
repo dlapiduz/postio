@@ -1,5 +1,7 @@
 //! No level, ever, puts message content in the log.
 //!
+//! POSTIO-OWN-BINARY: it installs the global tracing subscriber.
+//!
 //! Email is the most sensitive thing on most people's machines, and a debug
 //! log full of it is exactly the leak `CLAUDE.md` states as a rule. A rule
 //! nothing checks is a rule that lasts until the next person adds a `?message`

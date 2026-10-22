@@ -1,5 +1,7 @@
 //! The browser sign-in, end to end, through the host (#534).
 //!
+//! POSTIO-OWN-BINARY: it runs itself again as a child by exact test name, and the provider table is computed once per process.
+//!
 //! Everything runs on loopback and in memory: the provider is a user-overlay
 //! preset row, the IdP is a scripted HTTP server on a thread, the person's
 //! browser is played by a plain GET to the redirect the host announced, the

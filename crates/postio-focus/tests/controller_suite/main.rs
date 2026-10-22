@@ -26,7 +26,7 @@ mod keymap;
 mod keys;
 mod pickers;
 mod results;
+mod search_support;
 mod states;
 mod surfaces;
 mod verbs;
-mod search_support;

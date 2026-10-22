@@ -7,7 +7,7 @@
 //! term, and gives way to the inbox on Esc's last rung. The Mac draws what
 //! it is told; GTK never enters it (`results_view` off).
 
-
+use crate::search_support::*;
 use postio_config::paths::Platform;
 use postio_core::CommandId;
 use postio_focus::{
@@ -18,7 +18,6 @@ use postio_model::MessageId;
 use postio_search::results::{ConversationOrder, Counted};
 use postio_ui::keymap::KeyContext;
 use postio_ui::search_view::FilterKind;
-use crate::search_support::*;
 
 fn text(runs: &[postio_focus::Run]) -> String {
     runs.iter().map(|run| run.text.as_str()).collect()

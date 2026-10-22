@@ -1,5 +1,7 @@
 //! A store another process has open is refused, in a sentence that says so.
 //!
+//! POSTIO-OWN-BINARY: it needs a second process, which is this binary run again by exact test name.
+//!
 //! Only one Postio may have the store open at a time -- the desktop app or
 //! the terminal, never both (docs/archive/specs/005-tui-frontend). The engine enforces
 //! that with a lock on the file; this is what the second one hears.

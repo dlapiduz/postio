@@ -1,5 +1,7 @@
 //! Correlating one invocation with the events it caused.
 //!
+//! POSTIO-OWN-BINARY: it writes the process-global command registry, which `core_suite`'s `platform_bindings` reads back whole.
+//!
 //! `send` is fire-and-forget, and that is right for GTK: a repaint does not
 //! care which keystroke caused it. A programmatic caller — MCP, AI, a future
 //! CLI — needs the opposite. It has to know whether *its* archive succeeded,

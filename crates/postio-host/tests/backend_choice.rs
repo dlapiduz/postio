@@ -1,5 +1,7 @@
 //! The backend choice, end to end, through the host (#545, ADR 0018 Q5).
 //!
+//! POSTIO-OWN-BINARY: it runs itself again as a child by exact test name, and the provider table is computed once per process.
+//!
 //! Two adds against user-overlay preset rows that advertise
 //! `backend = ["jmap", "imap"]`, all on loopback, from a client's side:
 //!

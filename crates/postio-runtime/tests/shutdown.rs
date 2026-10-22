@@ -1,5 +1,7 @@
 //! `Engine::stop()` keeps its promise while a backfill is pumping (#759).
 //!
+//! POSTIO-OWN-BINARY: it installs the global tracing subscriber.
+//!
 //! Closing the job channel is the engine's only stop signal, and for a long
 //! time three of the loop's phases could not hear it: the body-backfill
 //! drains gated on `inbox.is_empty()` — and a **closed** channel is also
