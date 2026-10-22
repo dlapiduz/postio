@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The linker for every binary on this target, wired up in `.cargo/config.toml`
-# as `[target.x86_64-unknown-linux-gnu] linker`: use mold when the machine has
+# The linker for every binary on Linux x86_64 and macOS, wired up in
+# `.cargo/config.toml`: on Linux, mold when the machine has
 # it, and rustc's own lld when it does not.
 #
 # # Why mold, when it is not faster
@@ -55,7 +55,67 @@
 # `-fuse-ld=lld` are already in `"$@"`, so plain `cc` reproduces exactly
 # today's behaviour. Fail open, like `scripts/rustc-wrapper.sh` and
 # `scripts/cc-wrapper.sh`.
+#
+# # Test binaries are stripped, and only test binaries
+#
+# Each test binary links the crate's whole dependency stack, and close to a
+# third of it is the symbol table: `ffi_suite` is 124 MB as linked and 85 MB
+# stripped, on macOS, 2026-10-22. Nothing reads those symbols but a
+# `RUST_BACKTRACE` dump; a failing test prints its `file:line` from data
+# compiled in, not from symbols. Set `POSTIO_KEEP_SYMBOLS=1` for a run whose
+# backtraces you want named.
+#
+# Here and not in `[profile.test] strip`, which was measured: a test-profile
+# setting gives every workspace crate a second build, one for `cargo build`
+# and one for `cargo test`, which today share theirs. The linker sees only
+# the link, so nothing else changes.
+#
+# A test binary is one cargo builds with `CARGO_TARGET_TMPDIR` set, which it
+# does only for integration tests and benches, or one that links libtest,
+# which is every unit-test binary. An application or library is untouched.
+#
+# On macOS this is also the linker (`.cargo/config.toml`), for the strip
+# alone: ld64 cannot drop global symbols, so `strip` runs on the output after
+# the link, as rustc's own `strip = "symbols"` does there. It re-signs the
+# binary, which Apple silicon requires.
 set -euo pipefail
+
+test_binary=0
+if [ "${POSTIO_KEEP_SYMBOLS:-0}" != 1 ]; then
+    if [ -n "${CARGO_TARGET_TMPDIR:-}" ]; then
+        test_binary=1
+    else
+        for arg in "$@"; do
+            case "$arg" in
+                */libtest-*.rlib) test_binary=1; break ;;
+            esac
+        done
+    fi
+fi
+
+if [ "$(uname -s)" = Darwin ]; then
+    if [ "$test_binary" = 0 ]; then
+        exec cc "$@"
+    fi
+    output=""
+    previous=""
+    for arg in "$@"; do
+        if [ "$previous" = -o ]; then
+            output="$arg"
+        fi
+        previous="$arg"
+    done
+    cc "$@"
+    if [ -n "$output" ]; then
+        strip "$output"
+    fi
+    exit 0
+fi
+
+# `-fuse-ld=mold` stays last, after the strip flag, for the reason above.
+if [ "$test_binary" = 1 ]; then
+    set -- "$@" -Wl,--strip-all
+fi
 
 if command -v mold >/dev/null 2>&1; then
     exec cc "$@" -fuse-ld=mold
