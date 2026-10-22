@@ -51,6 +51,18 @@ fn load_synced(editor: &Editor, document: Document, expected_text: &str) {
         eval_str(editor.widget(), "document.body.textContent") == expected_text
             && eval_str(editor.widget(), crate::support_compose::EDITOR_LISTENING) == "true"
     });
+    // And on screen, laid out (#1800). A selection in text that has no
+    // layout yet is not one WebKit can format: it collapses it to a caret
+    // and `execCommand` toggles a typing style. A person selects what they
+    // can see, and the view is mapped and laid out by then; under load the
+    // window lags the page, so wait for what they would see.
+    settle("the editor to be on screen with its text laid out", || {
+        editor.widget().is_mapped()
+            && eval_str(
+                editor.widget(),
+                "String(document.body.firstChild.getClientRects().length > 0)",
+            ) == "true"
+    });
 }
 
 fn eval(view: &webkit6::WebView, script: &str) {
