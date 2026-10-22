@@ -1292,14 +1292,17 @@ pub async fn request_body(
 ///
 /// Under ADR 0017 the text axis stores no raw source, so those bytes are not
 /// on this machine for any message the background lane fetched, and there is
-/// nowhere to get them but the server.
+/// nowhere to get them but the server. So the question is whether the raw
+/// blob is stored, not what `body_state` says: a text-only message is `full`
+/// without one (#1984). Returns `false` only when it is stored, or the
+/// message is gone or has no `UID`.
 pub async fn request_whole(
     connection: &Connection,
     backfill: &mut Backfill,
     message_id: MessageId,
 ) -> Result<bool> {
     let Some(candidate) = MessageRepository::new(connection)
-        .backfill_candidate(message_id)
+        .whole_candidate(message_id)
         .await?
     else {
         return Ok(false);

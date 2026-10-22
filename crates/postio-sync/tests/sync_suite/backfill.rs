@@ -14,7 +14,7 @@ use postio_storage::test_support::{self, TempStore};
 use postio_sync::backfill::{
     AttachmentPolicy, BATCH_BYTES, BATCH_LEN, Backfill, BackfillPolicy, BodyRequest, Outcome,
     Prefetched, Priority, Want, fetch_body, prefetch_text_sections, request_body, request_payloads,
-    seed, seed_header_blocks, seed_payloads,
+    request_whole, seed, seed_header_blocks, seed_payloads,
 };
 use postio_sync::sync_mailbox;
 
@@ -1220,6 +1220,82 @@ async fn a_message_with_no_attachments_is_full_once_its_text_is_local() {
         .expect("get")
         .expect("row");
     assert_eq!(stored.sync.body_state, BodyState::Full);
+}
+
+#[tokio::test]
+async fn the_whole_message_is_wanted_when_a_full_row_has_no_raw_source() {
+    // The text axis stores no raw source (ADR 0017) and a message with no
+    // attachments is `full` once its text is local. View source, export and
+    // drag-out still need the bytes, and `full` must not read as "nothing to
+    // fetch" while `raw_blob_id` is empty (#1984).
+    let inbox = MockMailbox::new(INBOX)
+        .uid_validity(UidValidity::new(VALIDITY))
+        .message(
+            MockMessage::new(note(1))
+                .with_internal_date(at(1))
+                .with_structure(postio_account::backend::BodyStructure::from_parts(
+                    "text/plain",
+                    [
+                        postio_account::backend::PartNode::new("1", "text/plain", 26)
+                            .with_charset("utf-8"),
+                    ],
+                ))
+                .with_part("1", &b"The body of note 1.\r\n"[..]),
+        );
+    let backend = MockBackend::builder().mailbox(inbox).build();
+    backend.connect().await.expect("connect");
+
+    let local = local().await;
+    let rows = headers(&local, &backend).await;
+    let (id, uid) = rows[0];
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &request(&local.inbox, id, uid, 1_024),
+        BackfillPolicy::default().max_inline_bytes,
+        None,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch");
+    let messages = MessageRepository::new(&local.connection);
+    let stored = messages.get(id).await.expect("get").expect("row");
+    assert_eq!(stored.sync.body_state, BodyState::Full);
+    assert_eq!(
+        stored.raw_blob_id, None,
+        "the text axis keeps no raw source"
+    );
+
+    let mut backfill = Backfill::new(BackfillPolicy::default());
+    assert!(
+        request_whole(&local.connection, &mut backfill, id)
+            .await
+            .expect("lookup"),
+        "a full row without its raw source still has something to fetch"
+    );
+    let claim = backfill.next_interactive_body().expect("the request");
+    assert_eq!(claim.request.want, Want::Whole);
+    fetch_body(
+        &local.connection,
+        &local.blobs,
+        &backend,
+        &claim.request,
+        BackfillPolicy::default().max_inline_bytes,
+        None,
+        &CancelToken::new(),
+    )
+    .await
+    .expect("fetch whole");
+    let stored = messages.get(id).await.expect("get").expect("row");
+    assert!(stored.raw_blob_id.is_some(), "the raw message is now local");
+
+    assert!(
+        !request_whole(&local.connection, &mut backfill, id)
+            .await
+            .expect("lookup"),
+        "with the raw source local there is nothing left to fetch"
+    );
 }
 
 #[tokio::test]

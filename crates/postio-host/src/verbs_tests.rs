@@ -2001,6 +2001,52 @@ fn view_source_fetches_the_raw_message_when_asked_and_not_before() {
 }
 
 #[test]
+fn view_source_of_a_message_whose_text_was_downloaded_fetches_the_raw_message() {
+    // #1984: with a `BODYSTRUCTURE` the text axis stores the words and no raw
+    // source, and a message without attachments is then `full`. `v` must
+    // still fetch the bytes, because the person asked for them.
+    use crate::tests::{eventually, row_titled, syncing_world};
+    use postio_account::backend::{BodyStructure, MockBackend, MockMailbox, MockMessage, PartNode};
+    use postio_core::Event;
+    let text = "The tide gate opens at nine.";
+    let raw = format!(
+        "Message-ID: <tide@example.com>\r\nFrom: ada@example.com\r\nSubject: Tide gate\r\n\
+         Content-Type: text/plain\r\n\r\n{text}\r\n"
+    );
+    let mock =
+        MockBackend::builder()
+            .mailbox(
+                MockMailbox::new("INBOX").message(
+                    MockMessage::new(raw.into_bytes())
+                        .with_structure(BodyStructure::from_parts(
+                            "text/plain",
+                            [PartNode::new("1", "text/plain", text.len() as u64)
+                                .with_encoding("7bit")],
+                        ))
+                        .with_part("1", text.as_bytes()),
+                ),
+            )
+            .mailbox(MockMailbox::new("Archive"))
+            .mailbox(MockMailbox::new("Trash"))
+            .build();
+    let world = syncing_world(mock.clone());
+    let (client, events) = world.frontend(ClientKind::Focus);
+    world.host().start_syncing();
+    let message = eventually(&world, || row_titled(&world, &client, "Tide gate"));
+    client.fetch_body(message);
+    world.hear(
+        &events,
+        |event| matches!(event, Event::BodyLoaded { message: loaded, .. } if *loaded == message),
+    );
+
+    let raw = world
+        .rt
+        .block_on(client.raw_source(message))
+        .unwrap_or_else(|error| panic!("view source failed: {error:?}"));
+    assert!(String::from_utf8_lossy(&raw).contains("Subject: Tide gate"));
+}
+
+#[test]
 fn a_first_sync_that_lands_between_ticks_is_not_sorted_at_the_next_open() {
     // Spec 007 T164, FR-118: a first sync files its backlog, which is never
     // filtered. Focus keeps its mark on its tick, so a first sync that lands
