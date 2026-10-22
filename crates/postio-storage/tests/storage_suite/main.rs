@@ -57,6 +57,7 @@ mod focus_classified;
 mod focus_inbox;
 mod focus_plans;
 mod glib_main_context;
+mod header_refresh_keeps_body;
 mod labels;
 mod list_mail;
 mod list_statement_count;
