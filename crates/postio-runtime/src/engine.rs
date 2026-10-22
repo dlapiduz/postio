@@ -4738,15 +4738,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_body_fetch_renumbered_under_it_queues_the_resync_of_its_folder() {
+    async fn a_body_fetch_that_asks_for_a_full_resync_queues_the_resync_of_its_folder() {
         let database = postio_storage::test_support::memory().await;
         let (parts, _events, _directory) = parts_over(database).await;
         let mut state = empty_state();
 
-        let renumbered = BackendError::UidValidityChanged {
+        let renumbered = BackendError::ResyncIntegrityLost {
             mailbox: "INBOX".to_owned(),
-            known: postio_model::UidValidity::new(1),
-            observed: postio_model::UidValidity::new(2),
+            skipped: 1,
         };
         settle_claimed(&parts, &mut state, 1, Err(SyncError::Backend(renumbered))).await;
 
