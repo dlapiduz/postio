@@ -15,6 +15,7 @@
 #   scripts/issue-land.sh --full                # integration suites too, not just units
 #   scripts/issue-land.sh --refs-only           # Refs, not Closes: the issue is not done yet
 #   scripts/issue-land.sh --full-suite          # CI runs the whole nightly on the PR too
+#                                               # (automatic for a high-risk diff: scripts/risk-of-diff.sh)
 #   scripts/issue-land.sh --detach [args]       # the same, in a process no tool call can kill
 #   scripts/issue-land.sh --status              # what the detached run did, or is doing
 #
@@ -1102,6 +1103,18 @@ echo "$URL"
 # what asks, and `Full suite on request` -- a required check -- then passes
 # only if that run does, so auto-merge waits for it. Added here, with this
 # session's own token: a label the workflow token adds triggers nothing.
+#
+# It is also asked for when the diff itself is risky: the seeded mail and
+# fixtures, postio-focus, storage migrations, postio-sync, or three or more
+# crates (`scripts/risk-of-diff.sh`). An explicit `--full-suite` still forces
+# it; there is no flag that declines it.
+if [ "$FULL_SUITE" = 0 ]; then
+    RISK=$(git diff --name-only "origin/$BASE...HEAD" | scripts/risk-of-diff.sh || true)
+    if [ "$(printf '%s\n' "$RISK" | sed -n 1p)" = high ]; then
+        FULL_SUITE=1
+        echo "full suite: this diff is high risk ($(printf '%s\n' "$RISK" | sed -n 2p))."
+    fi
+fi
 if [ "$FULL_SUITE" = 1 ]; then
     if gh pr edit "$URL" --add-label full-suite >/dev/null; then
         echo "full suite requested: labelled full-suite; CI runs the nightly on this PR."

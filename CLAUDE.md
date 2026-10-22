@@ -75,7 +75,11 @@ are covered by tests.
   not `RUST_LOG`. To see the app at a pinned commit,
   `scripts/run-isolated.sh [commit] [--shot]`.
 
-**Landing.** Use the default tier; `--full` needs a specific reason. A CI
+**Landing.** Use the default tier; `--full` needs a specific reason. A high-risk
+diff (seeded mail or fixtures, `postio-focus`, storage migrations,
+`postio-sync`, or 3+ crates; `scripts/risk-of-diff.sh`) gets the `full-suite`
+label from `issue-land.sh` by itself, and the required `Frontends` check
+fails on any GTK suite failure, with no bypass. A CI
 failure on your PR is yours, on the same branch (`issue-claim.sh --resume
 <n>`). A failure in code your diff does not touch is probably someone
 else's: reproduce it alone and search the issues before re-running. While
