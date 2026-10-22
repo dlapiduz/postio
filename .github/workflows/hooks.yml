@@ -50,3 +50,15 @@ jobs:
         # as broken as one that only ever allows -- it just fails in the
         # direction that teaches people to switch it off.
         run: python3 .claude/hooks/test-guard-shared-tree.py
+
+  session-start:
+    name: Session start
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Prove the session start fetches, reports and never fails
+        # A sandbox origin, shared checkout and private worktree: the shared
+        # one fast-forwards only when clean on main, the private one is only
+        # told, and a dead remote is a line of output rather than an error.
+        run: python3 .claude/hooks/test-session-start.py
